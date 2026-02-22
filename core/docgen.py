@@ -2678,9 +2678,39 @@ def _add_compilation_report(doc, entity, fy):
 # Main Generation Function
 # =============================================================================
 
-def _add_audit_risk_watermark(doc):
-    """Add a diagonal 'AUDIT RISK' watermark to all sections of the document.
-    Uses a Word-compatible shape in the default header."""
+def _add_watermark(doc, text="DRAFT", position="top-right", color="#c0c0c0", opacity=".30"):
+    """Add a watermark to all sections of the document.
+    
+    Args:
+        doc: python-docx Document object
+        text: Watermark text (e.g., 'DRAFT', 'AUDIT RISK')
+        position: 'diagonal' for centre-page rotated, 'top-right' for corner placement
+        color: Fill colour hex code
+        opacity: Fill opacity (0-1 as string)
+    """
+    if position == "top-right":
+        # Top-right corner watermark — clean, professional, non-intrusive
+        style_str = (
+            "position:absolute;"
+            "margin-left:350pt;margin-top:-20pt;"
+            "width:120pt;height:30pt;rotation:0;"
+            "z-index:-251658752;"
+            "mso-position-horizontal-relative:margin;"
+            "mso-position-vertical-relative:margin"
+        )
+        font_size = "14pt"
+    else:
+        # Diagonal centre watermark — traditional full-page watermark
+        style_str = (
+            "position:absolute;margin-left:0;margin-top:0;"
+            "width:500pt;height:120pt;rotation:315;"
+            "z-index:-251658752;mso-position-horizontal:center;"
+            "mso-position-horizontal-relative:margin;"
+            "mso-position-vertical:center;"
+            "mso-position-vertical-relative:margin"
+        )
+        font_size = "1pt"
+
     watermark_xml = (
         f'<w:r {nsdecls("w", "v", "o", "w10")}>' 
         '  <w:rPr><w:noProof/></w:rPr>'
@@ -2713,16 +2743,11 @@ def _add_audit_risk_watermark(doc):
         '    </v:shapetype>'
         '    <v:shape id="PowerPlusWaterMarkObject" '
         '      o:spid="_x0000_s2049" type="#_x0000_t136" '
-        '      style="position:absolute;margin-left:0;margin-top:0;'
-        '        width:500pt;height:120pt;rotation:315;'
-        '        z-index:-251658752;mso-position-horizontal:center;'
-        '        mso-position-horizontal-relative:margin;'
-        '        mso-position-vertical:center;'
-        '        mso-position-vertical-relative:margin" '
-        '      o:allowincell="f" fillcolor="#d3d3d3" stroked="f">'
-        '      <v:fill opacity=".35"/>'
-        '      <v:textpath style="font-family:&quot;Times New Roman&quot;;'
-        '        font-size:1pt" string="AUDIT RISK"/>'
+        f'      style="{style_str}" '
+        f'      o:allowincell="f" fillcolor="{color}" stroked="f">'
+        f'      <v:fill opacity="{opacity}"/>'
+        '      <v:textpath style="font-family:&amp;quot;Arial&amp;quot;;'
+        f'        font-size:{font_size}" string="{text}"/>'
         '    </v:shape>'
         '  </w:pict>'
         '</w:r>'
@@ -2738,12 +2763,24 @@ def _add_audit_risk_watermark(doc):
         p._element.append(parse_xml(watermark_xml))
 
 
-def generate_financial_statements(financial_year_id, has_open_risks=False) -> io.BytesIO:
+def _add_draft_watermark(doc):
+    """Add a 'DRAFT' watermark to the top-right corner of every page."""
+    _add_watermark(doc, text="DRAFT", position="top-right", color="#cc0000", opacity=".40")
+
+
+def _add_audit_risk_watermark(doc):
+    """Add a diagonal 'AUDIT RISK' watermark to all sections of the document."""
+    _add_watermark(doc, text="AUDIT RISK", position="diagonal", color="#d3d3d3", opacity=".35")
+
+
+def generate_financial_statements(financial_year_id, has_open_risks=False, is_final=False) -> io.BytesIO:
     """
     Generate a complete set of financial statements for a financial year.
     Returns a BytesIO object containing the Word document.
     
-    If has_open_risks is True, an 'AUDIT RISK' watermark is added to every page.
+    If is_final is False (default), a 'DRAFT' watermark is added to the top-right
+    corner of every page. Only finalised documents are generated without a watermark.
+    If has_open_risks is True, an additional 'AUDIT RISK' diagonal watermark is added.
     """
     fy = FinancialYear.objects.select_related(
         "entity", "entity__client", "prior_year"
@@ -2847,6 +2884,10 @@ def generate_financial_statements(financial_year_id, has_open_risks=False) -> io
         _add_depreciation_schedule(doc, entity, fy, show_cents=show_cents)
         _add_compilation_report(doc, entity, fy)
         _add_declaration(doc, entity, fy)
+
+    # Add DRAFT watermark if not a final version
+    if not is_final:
+        _add_draft_watermark(doc)
 
     # Add AUDIT RISK watermark if there are open risk flags
     if has_open_risks:

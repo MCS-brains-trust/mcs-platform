@@ -278,4 +278,4 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 RATELIMIT_IP_META_KEY = "HTTP_X_FORWARDED_FOR"
 
 # Build version timestamp — updated with each deployment
-BUILD_TIMESTAMP = "2026-02-23 00:00 AEDT"
+BUILD_TIMESTAMP = "2026-02-23 14:30 AEDT"

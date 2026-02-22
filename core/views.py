@@ -595,16 +595,101 @@ def financial_year_status(request, pk):
                 )
                 request.session.pop("finalisation_gate_warn", None)
 
+    # ── Last-minute AI Risk Check on Finalisation ──────────────────────
+    if new_status == "finalised":
+        try:
+            from .risk_engine import RiskEngine
+            engine = RiskEngine(fy)
+            new_flags = engine.run_full_analysis()
+            _log_action(
+                request, "audit_run",
+                f"Last-minute AI risk check before finalisation: {new_flags} flags generated", fy
+            )
+
+            # Re-check: did the last-minute sweep produce new CRITICAL flags?
+            critical_open = fy.risk_flags.filter(status="open", severity="CRITICAL").count()
+            if critical_open > 0:
+                messages.error(
+                    request,
+                    f"BLOCKED: Last-minute AI risk check found {critical_open} new CRITICAL "
+                    f"flag(s). These must be resolved before finalisation can proceed. "
+                    f"Please review the Audit Risk tab."
+                )
+                return redirect("core:financial_year_detail", pk=pk)
+
+            # Re-check: did the sweep produce new HIGH flags?
+            high_open = fy.risk_flags.filter(status="open", severity="HIGH").count()
+            if high_open > 0 and not (request.POST.get("force_override") == "1" and request.POST.get("override_reason", "").strip()):
+                messages.warning(
+                    request,
+                    f"WARNING: Last-minute AI risk check found {high_open} new HIGH "
+                    f"flag(s). You may override with a reason, or resolve them first."
+                )
+                request.session["finalisation_gate_warn"] = {
+                    "high_open": high_open,
+                    "fy_pk": pk,
+                    "ai_check_triggered": True,
+                }
+                return redirect("core:financial_year_detail", pk=pk)
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Last-minute AI risk check failed: {e}")
+            # Log the failure but don't block finalisation if the engine itself errors
+            _log_action(
+                request, "audit_run",
+                f"Last-minute AI risk check failed (non-blocking): {e}", fy
+            )
+
     old_status = fy.status
     fy.status = new_status
     if new_status == "reviewed":
         fy.reviewed_by = request.user
     if new_status == "finalised":
         fy.finalised_at = timezone.now()
-        # Lock comparatives and mark final documents
+        # Lock comparatives
         fy.trial_balance_lines.update(comparatives_locked=True)
-        # Lock and mark the latest version of each document type as final
-        from django.db.models import Max
+
+        # ── Auto-regenerate clean (no watermark) final documents ─────────
+        try:
+            from .docgen import generate_financial_statements
+            from django.core.files.base import ContentFile
+
+            buffer = generate_financial_statements(fy.pk, has_open_risks=False, is_final=True)
+            entity_name = fy.entity.entity_name.replace(" ", "_")
+            filename = f"{entity_name}_Financial_Statements_{fy.year_label}_FINAL.docx"
+
+            # Determine next version number
+            latest_version = fy.generated_documents.filter(
+                document_type="financial_statements"
+            ).order_by("-version").values_list("version", flat=True).first() or 0
+
+            doc = GeneratedDocument(
+                financial_year=fy,
+                file_format="docx",
+                document_type="financial_statements",
+                version=latest_version + 1,
+                status="final",
+                is_locked=True,
+                generated_by=request.user,
+            )
+            doc.file.save(filename, ContentFile(buffer.getvalue()), save=True)
+
+            _log_action(
+                request, "generate",
+                f"Auto-generated final financial statements (v{latest_version + 1}, no watermark) for {fy}", fy
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Final document auto-regeneration failed: {e}")
+            messages.warning(
+                request,
+                f"Financial year finalised, but auto-regeneration of clean documents failed: {e}. "
+                f"You can manually regenerate from the Documents tab."
+            )
+
+        # Mark all previous draft documents as superseded
+        fy.generated_documents.filter(status="draft").update(status="draft")
+        # Lock the latest version of each document type as final
         for doc_type in fy.generated_documents.values_list('document_type', flat=True).distinct():
             latest = fy.generated_documents.filter(document_type=doc_type).order_by('-version').first()
             if latest:
