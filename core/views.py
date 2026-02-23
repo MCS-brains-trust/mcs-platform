@@ -1582,9 +1582,8 @@ def generate_distribution_minutes(request, pk):
 @login_required
 def htmx_client_search(request):
     """HTMX search endpoint for entities (replaces client search)."""
-    query = request.GET.get("q", "")
-    if len(query) < 2:
-        return HttpResponse("")
+    query = request.GET.get("q", "").strip()
+    entity_type = request.GET.get("entity_type", "")
 
     if request.user.can_view_all_entities:
         entities = Entity.objects.filter(is_archived=False)
@@ -1593,11 +1592,17 @@ def htmx_client_search(request):
             assigned_accountant=request.user, is_archived=False
         )
 
-    entities = entities.filter(
-        Q(entity_name__icontains=query)
-        | Q(abn__icontains=query)
-        | Q(trading_as__icontains=query)
-    ).distinct().annotate(num_fys=Count("financial_years"))[:20]
+    if entity_type:
+        entities = entities.filter(entity_type=entity_type)
+
+    if len(query) >= 2:
+        entities = entities.filter(
+            Q(entity_name__icontains=query)
+            | Q(abn__icontains=query)
+            | Q(trading_as__icontains=query)
+        )
+
+    entities = entities.distinct().annotate(num_fys=Count("financial_years")).order_by("entity_name")[:50]
 
     return render(request, "partials/entity_list_rows.html", {"entities": entities})
 

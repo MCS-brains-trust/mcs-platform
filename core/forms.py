@@ -49,6 +49,15 @@ class EntityForm(forms.ModelForm):
             self.fields.pop("assigned_accountant", None)
             self.fields.pop("xpm_client_id", None)
 
+    def save(self, commit=True):
+        entity = super().save(commit=False)
+        # Keep primary_accountant in sync with assigned_accountant
+        if entity.assigned_accountant and not entity.primary_accountant:
+            entity.primary_accountant = entity.assigned_accountant
+        if commit:
+            entity.save()
+        return entity
+
 
 class FinancialYearForm(forms.ModelForm):
     class Meta:
