@@ -31,6 +31,7 @@
                             <th>Email</th>
                             <th>Role</th>
                             <th>Status</th>
+                            <th>Email</th>
                             <th>Sent</th>
                             <th>Expires</th>
                             <th>Actions</th>
@@ -53,21 +54,47 @@
                                     <span class="badge bg-danger">Revoked</span>
                                 {% endif %}
                             </td>
+                            <td>
+                                {% if inv.email_sent_at %}
+                                    <span class="badge bg-success" title="Sent {{ inv.email_sent_at|date:'d M Y H:i' }}">
+                                        <i class="bi bi-check-circle"></i> Delivered
+                                    </span>
+                                {% elif inv.email_error %}
+                                    <span class="badge bg-danger" title="{{ inv.email_error }}">
+                                        <i class="bi bi-exclamation-triangle"></i> Failed
+                                    </span>
+                                {% elif inv.status == 'pending' %}
+                                    <span class="badge bg-info text-dark">
+                                        <i class="bi bi-hourglass-split"></i> Sending...
+                                    </span>
+                                {% else %}
+                                    <span class="text-muted">—</span>
+                                {% endif %}
+                            </td>
                             <td>{{ inv.created_at|date:"d M Y" }}</td>
                             <td>{{ inv.expires_at|date:"d M Y" }}</td>
                             <td>
                                 {% if inv.status == 'pending' %}
-                                    <a href="{% url 'accounts:invitation_resend' inv.pk %}" class="btn btn-sm btn-outline-primary" title="Resend">
-                                        <i class="bi bi-arrow-repeat"></i>
-                                    </a>
-                                    <a href="{% url 'accounts:invitation_revoke' inv.pk %}" class="btn btn-sm btn-outline-danger" title="Revoke"
-                                       onclick="return confirm('Revoke invitation for {{ inv.first_name }} {{ inv.last_name }}?');">
-                                        <i class="bi bi-x-circle"></i>
-                                    </a>
+                                    <form method="post" action="{% url 'accounts:invitation_resend' inv.pk %}" class="d-inline">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-sm btn-outline-primary" title="Resend">
+                                            <i class="bi bi-arrow-repeat"></i>
+                                        </button>
+                                    </form>
+                                    <form method="post" action="{% url 'accounts:invitation_revoke' inv.pk %}" class="d-inline"
+                                          onsubmit="return confirm('Revoke invitation for {{ inv.first_name }} {{ inv.last_name }}?');">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-sm btn-outline-danger" title="Revoke">
+                                            <i class="bi bi-x-circle"></i>
+                                        </button>
+                                    </form>
                                 {% elif inv.status == 'expired' %}
-                                    <a href="{% url 'accounts:invitation_resend' inv.pk %}" class="btn btn-sm btn-outline-primary" title="Resend (reactivates)">
-                                        <i class="bi bi-arrow-repeat"></i> Resend
-                                    </a>
+                                    <form method="post" action="{% url 'accounts:invitation_resend' inv.pk %}" class="d-inline">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-sm btn-outline-primary" title="Resend (reactivates)">
+                                            <i class="bi bi-arrow-repeat"></i> Resend
+                                        </button>
+                                    </form>
                                 {% endif %}
                             </td>
                         </tr>
