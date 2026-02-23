@@ -918,9 +918,18 @@ def _process_trial_balance_upload(fy, file):
         try:
             account_code = str(row[0]).strip()
             account_name = str(row[1]).strip() if row[1] else ""
-            opening_balance = Decimal(str(row[2] or 0))
-            debit = Decimal(str(row[3] or 0))
-            credit = Decimal(str(row[4] or 0))
+            # Support both 4-column (Code, Name, Dr, Cr) and
+            # legacy 5-column (Code, Name, Opening, Dr, Cr) formats
+            if len(row) >= 5 and row[4] is not None:
+                # Legacy 5-column format with Opening Balance
+                opening_balance = Decimal(str(row[2] or 0))
+                debit = Decimal(str(row[3] or 0))
+                credit = Decimal(str(row[4] or 0))
+            else:
+                # New 4-column format (no Opening Balance)
+                opening_balance = Decimal("0")
+                debit = Decimal(str(row[2] or 0))
+                credit = Decimal(str(row[3] or 0))
             closing_balance = opening_balance + debit - credit
         except (InvalidOperation, ValueError, IndexError) as e:
             errors.append(f"Row {i}: {str(e)}")
@@ -4860,17 +4869,45 @@ def _tb_download_excel(fy, entity, sections, current_year, prior_year,
         ws.cell(row=row, column=col_idx).fill = total_fill
         ws.cell(row=row, column=col_idx).border = total_border
 
-    # Net profit row
+    # Net profit row - calculate from P&L sections only
     row += 1
-    net_current = float(grand_cr - grand_dr)
-    net_prior = float(grand_prior_cr - grand_prior_dr)
-    ws.cell(row=row, column=2, value='Net Profit').font = total_font
-    net_cell = ws.cell(row=row, column=4, value=abs(net_current))
-    net_cell.font = total_font
+    pl_section_names = {'Income', 'Cost of Sales', 'Expenses'}
+    pl_dr_total = Decimal('0')
+    pl_cr_total = Decimal('0')
+    pl_prior_dr_total = Decimal('0')
+    pl_prior_cr_total = Decimal('0')
+    for section_name, lines in sections.items():
+        if section_name in pl_section_names:
+            for line in lines:
+                cb = line.closing_balance or Decimal('0')
+                if cb > 0:
+                    pl_dr_total += cb
+                elif cb < 0:
+                    pl_cr_total += abs(cb)
+                else:
+                    pl_dr_total += line.debit or Decimal('0')
+                    pl_cr_total += line.credit or Decimal('0')
+                pl_prior_dr_total += line.prior_debit or Decimal('0')
+                pl_prior_cr_total += line.prior_credit or Decimal('0')
+    net_current = float(pl_cr_total - pl_dr_total)
+    net_prior = float(pl_prior_cr_total - pl_prior_dr_total)
+    profit_font = Font(name='Calibri', size=10, bold=True, color='198754')
+    loss_font = Font(name='Calibri', size=10, bold=True, color='DC3545')
+    ws.cell(row=row, column=2, value='Net Profit / (Loss)').font = profit_font
+    if net_current >= 0:
+        net_cell = ws.cell(row=row, column=4, value=net_current)
+        net_cell.font = profit_font
+    else:
+        net_cell = ws.cell(row=row, column=4, value=net_current)
+        net_cell.font = loss_font
     net_cell.number_format = num_fmt
     net_cell.alignment = Alignment(horizontal='right')
-    prior_net_cell = ws.cell(row=row, column=6, value=abs(net_prior))
-    prior_net_cell.font = total_font
+    if net_prior >= 0:
+        prior_net_cell = ws.cell(row=row, column=6, value=net_prior)
+        prior_net_cell.font = profit_font
+    else:
+        prior_net_cell = ws.cell(row=row, column=6, value=net_prior)
+        prior_net_cell.font = loss_font
     prior_net_cell.number_format = num_fmt
     prior_net_cell.alignment = Alignment(horizontal='right')
 
