@@ -4436,6 +4436,11 @@ def trial_balance_download(request, pk):
             fy, entity, ordered, current_year, prior_year,
             abn_display, grand_dr, grand_cr, grand_prior_dr, grand_prior_cr, safe_name
         )
+    elif fmt == "xlsx":
+        return _tb_download_excel(
+            fy, entity, ordered, current_year, prior_year,
+            abn_display, grand_dr, grand_cr, grand_prior_dr, grand_prior_cr, safe_name
+        )
     else:
         # Reuse existing trial_balance_pdf
         return trial_balance_pdf(request, pk)
@@ -4636,6 +4641,215 @@ def _tb_download_word(fy, entity, sections, current_year, prior_year,
     response = HttpResponse(
         buffer,
         content_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+    )
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    return response
+
+
+def _tb_download_excel(fy, entity, sections, current_year, prior_year,
+                       abn_display, grand_dr, grand_cr, grand_prior_dr, grand_prior_cr, safe_name):
+    """Generate an Excel workbook for the comparative trial balance."""
+    from io import BytesIO
+    from decimal import Decimal
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, Border, Side, PatternFill, numbers
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Comparative Trial Balance"
+
+    # Column widths
+    ws.column_dimensions['A'].width = 14
+    ws.column_dimensions['B'].width = 45
+    ws.column_dimensions['C'].width = 16
+    ws.column_dimensions['D'].width = 16
+    ws.column_dimensions['E'].width = 16
+    ws.column_dimensions['F'].width = 16
+    ws.column_dimensions['G'].width = 14
+    ws.column_dimensions['H'].width = 10
+
+    # Styles
+    title_font = Font(name='Calibri', size=14, bold=True)
+    subtitle_font = Font(name='Calibri', size=11, color='555555')
+    header_font = Font(name='Calibri', size=10, bold=True, color='FFFFFF')
+    header_fill = PatternFill(start_color='2C3E50', end_color='2C3E50', fill_type='solid')
+    section_font = Font(name='Calibri', size=10, bold=True, color='1A5276')
+    section_fill = PatternFill(start_color='EBF5FB', end_color='EBF5FB', fill_type='solid')
+    data_font = Font(name='Calibri', size=10)
+    code_font = Font(name='Calibri', size=10, bold=True)
+    total_font = Font(name='Calibri', size=10, bold=True)
+    total_fill = PatternFill(start_color='D5F5E3', end_color='D5F5E3', fill_type='solid')
+    thin_border = Border(
+        bottom=Side(style='thin', color='CCCCCC')
+    )
+    total_border = Border(
+        top=Side(style='double', color='333333'),
+        bottom=Side(style='double', color='333333')
+    )
+    num_fmt = '#,##0.00'
+
+    # Title rows
+    row = 1
+    ws.merge_cells('A1:F1')
+    ws['A1'] = entity.entity_name.upper()
+    ws['A1'].font = title_font
+    ws['A1'].alignment = Alignment(horizontal='center')
+
+    row = 2
+    if abn_display:
+        ws.merge_cells('A2:F2')
+        ws['A2'] = abn_display
+        ws['A2'].font = subtitle_font
+        ws['A2'].alignment = Alignment(horizontal='center')
+        row = 3
+
+    ws.merge_cells(f'A{row}:F{row}')
+    ws[f'A{row}'] = f"Comparative Trial Balance as at {fy.end_date.strftime('%d %B %Y')}"
+    ws[f'A{row}'].font = Font(name='Calibri', size=11, bold=True)
+    ws[f'A{row}'].alignment = Alignment(horizontal='center')
+    row += 2
+
+    # Header rows
+    headers_row1 = ['', '', current_year, current_year, prior_year, prior_year, '', '']
+    headers_row2 = ['Code', 'Account Name', '$ Dr', '$ Cr', '$ Dr', '$ Cr', 'Variance $', 'Var %']
+
+    for col_idx, val in enumerate(headers_row1, 1):
+        cell = ws.cell(row=row, column=col_idx, value=val)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal='center' if col_idx >= 3 else 'left')
+    row += 1
+    for col_idx, val in enumerate(headers_row2, 1):
+        cell = ws.cell(row=row, column=col_idx, value=val)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal='right' if col_idx >= 3 else 'left')
+    row += 1
+
+    # Data rows by section
+    for section_name, lines in sections.items():
+        # Section header row
+        ws.merge_cells(f'A{row}:F{row}')
+        cell = ws.cell(row=row, column=1, value=section_name)
+        cell.font = section_font
+        cell.fill = section_fill
+        for col_idx in range(1, 9):
+            ws.cell(row=row, column=col_idx).fill = section_fill
+        row += 1
+
+        for line in lines:
+            # Current year: use closing_balance split into Dr/Cr
+            cb = line.closing_balance or Decimal('0')
+            if cb > 0:
+                dr = float(cb)
+                cr = None
+            elif cb < 0:
+                dr = None
+                cr = float(abs(cb))
+            else:
+                dr_val = line.debit or Decimal('0')
+                cr_val = line.credit or Decimal('0')
+                dr = float(dr_val) if dr_val != 0 else None
+                cr = float(cr_val) if cr_val != 0 else None
+
+            prior_dr_val = line.prior_debit or Decimal('0')
+            prior_cr_val = line.prior_credit or Decimal('0')
+            prior_dr = float(prior_dr_val) if prior_dr_val != 0 else None
+            prior_cr = float(prior_cr_val) if prior_cr_val != 0 else None
+
+            # Variance calculation
+            current_net = float(cb) if cb else 0
+            prior_net = float(prior_dr_val - prior_cr_val)
+            variance = current_net - prior_net
+            if prior_net != 0:
+                var_pct = (variance / abs(prior_net)) * 100
+            else:
+                var_pct = None
+
+            # Write row
+            code_cell = ws.cell(row=row, column=1, value=line.account_code)
+            code_cell.font = code_font
+            code_cell.border = thin_border
+
+            name_cell = ws.cell(row=row, column=2, value=line.account_name)
+            name_cell.font = data_font
+            name_cell.border = thin_border
+
+            for col_idx, val in [(3, dr), (4, cr), (5, prior_dr), (6, prior_cr)]:
+                cell = ws.cell(row=row, column=col_idx, value=val)
+                cell.font = data_font
+                cell.number_format = num_fmt
+                cell.alignment = Alignment(horizontal='right')
+                cell.border = thin_border
+
+            var_cell = ws.cell(row=row, column=7, value=round(variance, 2) if variance != 0 else None)
+            var_cell.font = data_font
+            var_cell.number_format = num_fmt
+            var_cell.alignment = Alignment(horizontal='right')
+            var_cell.border = thin_border
+
+            pct_cell = ws.cell(row=row, column=8, value=round(var_pct, 1) if var_pct is not None else None)
+            pct_cell.font = data_font
+            pct_cell.number_format = '0.0%' if var_pct is not None else 'General'
+            if var_pct is not None:
+                pct_cell.value = round(var_pct / 100, 3)  # Store as decimal for % format
+            pct_cell.alignment = Alignment(horizontal='right')
+            pct_cell.border = thin_border
+
+            row += 1
+
+    # Grand totals row
+    row += 1
+    ws.cell(row=row, column=1, value='').border = total_border
+    total_label = ws.cell(row=row, column=2, value='TOTALS')
+    total_label.font = total_font
+    total_label.fill = total_fill
+    total_label.border = total_border
+
+    for col_idx, val in [(3, float(grand_dr)), (4, float(grand_cr)),
+                          (5, float(grand_prior_dr)), (6, float(grand_prior_cr))]:
+        cell = ws.cell(row=row, column=col_idx, value=val)
+        cell.font = total_font
+        cell.fill = total_fill
+        cell.number_format = num_fmt
+        cell.alignment = Alignment(horizontal='right')
+        cell.border = total_border
+
+    for col_idx in [1, 7, 8]:
+        ws.cell(row=row, column=col_idx).fill = total_fill
+        ws.cell(row=row, column=col_idx).border = total_border
+
+    # Net profit row
+    row += 1
+    net_current = float(grand_cr - grand_dr)
+    net_prior = float(grand_prior_cr - grand_prior_dr)
+    ws.cell(row=row, column=2, value='Net Profit').font = total_font
+    net_cell = ws.cell(row=row, column=4, value=abs(net_current))
+    net_cell.font = total_font
+    net_cell.number_format = num_fmt
+    net_cell.alignment = Alignment(horizontal='right')
+    prior_net_cell = ws.cell(row=row, column=6, value=abs(net_prior))
+    prior_net_cell.font = total_font
+    prior_net_cell.number_format = num_fmt
+    prior_net_cell.alignment = Alignment(horizontal='right')
+
+    # Freeze panes (freeze below header)
+    ws.freeze_panes = 'A8' if abn_display else 'A7'
+
+    # Print setup
+    ws.sheet_properties.pageSetUpPr = None
+    ws.page_setup.orientation = 'landscape'
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToHeight = 0
+
+    buffer = BytesIO()
+    wb.save(buffer)
+    buffer.seek(0)
+
+    filename = f"Comparative_TB_{safe_name}_{fy.year_label}.xlsx"
+    response = HttpResponse(
+        buffer,
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     )
     response['Content-Disposition'] = f'attachment; filename="{filename}"'
     return response
