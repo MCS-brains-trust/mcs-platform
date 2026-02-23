@@ -397,14 +397,8 @@ def financial_year_detail(request, pk):
     # Annotate TB lines with risk flag info and variance calculations
     for line in tb_lines:
         line.risk_flags_list = flagged_accounts.get(line.account_code, [])
-        # Variance calculations for Prior Year Comparatives Engine
-        current_net = (line.debit or Decimal('0')) - (line.credit or Decimal('0'))
-        prior_net = (line.prior_debit or Decimal('0')) - (line.prior_credit or Decimal('0'))
-        line.variance_amount = current_net - prior_net
-        if prior_net != 0:
-            line.variance_percentage = round(((current_net - prior_net) / abs(prior_net)) * 100, 1)
-        else:
-            line.variance_percentage = None
+        # Variance calculations are now handled by model properties
+        # (variance_amount and variance_percentage on TrialBalanceLine)
 
     # Depreciation assets
     depreciation_assets = DepreciationAsset.objects.filter(financial_year=fy)
