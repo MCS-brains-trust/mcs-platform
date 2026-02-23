@@ -330,7 +330,53 @@ def invitation_signup_view(request, token):
 
 @login_required
 def profile_view(request):
-    return render(request, "accounts/profile.html")
+    from core.models import AuditLog
+
+    context = {}
+
+    if request.method == "POST":
+        form_type = request.POST.get("form_type")
+
+        if form_type == "profile":
+            request.user.first_name = request.POST.get("first_name", "").strip()
+            request.user.last_name = request.POST.get("last_name", "").strip()
+            request.user.email = request.POST.get("email", "").strip()
+            request.user.phone = request.POST.get("phone", "").strip()
+            request.user.save(update_fields=["first_name", "last_name", "email", "phone"])
+            context["profile_updated"] = True
+
+        elif form_type == "password":
+            current_password = request.POST.get("current_password", "")
+            new_password1 = request.POST.get("new_password1", "")
+            new_password2 = request.POST.get("new_password2", "")
+            errors = []
+
+            if not request.user.check_password(current_password):
+                errors.append("Current password is incorrect.")
+            elif new_password1 != new_password2:
+                errors.append("New passwords do not match.")
+            elif len(new_password1) < 8:
+                errors.append("New password must be at least 8 characters.")
+            else:
+                try:
+                    validate_password(new_password1, request.user)
+                except DjangoValidationError as e:
+                    errors.extend(e.messages)
+
+            if errors:
+                context["password_errors"] = errors
+            else:
+                request.user.set_password(new_password1)
+                request.user.save()
+                # Re-authenticate so the user isn't logged out
+                from django.contrib.auth import update_session_auth_hash
+                update_session_auth_hash(request, request.user)
+                context["password_changed"] = True
+
+    # Activity history — last 50 audit log entries for this user
+    context["audit_logs"] = AuditLog.objects.filter(user=request.user)[:50]
+
+    return render(request, "accounts/profile.html", context)
 
 
 @login_required

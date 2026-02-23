@@ -2,18 +2,162 @@
 {% block title %}Profile - StatementHub{% endblock %}
 
 {% block content %}
-<div class="row">
-    <div class="col-md-6 mx-auto">
-        <div class="card">
-            <div class="card-header"><h5 class="mb-0">My Profile</h5></div>
+<div class="row g-4">
+    <!-- Left Column: Profile Details + Password Change -->
+    <div class="col-lg-5">
+        <!-- Profile Card -->
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-person-circle"></i> My Profile</h5>
+            </div>
             <div class="card-body">
-                <table class="table table-borderless">
-                    <tr><th>Username</th><td>{{ user.username }}</td></tr>
-                    <tr><th>Name</th><td>{{ user.get_full_name }}</td></tr>
-                    <tr><th>Email</th><td>{{ user.email }}</td></tr>
-                    <tr><th>Role</th><td><span class="badge bg-primary">{{ user.get_role_display }}</span></td></tr>
-                    <tr><th>Phone</th><td>{{ user.phone|default:"—" }}</td></tr>
-                </table>
+                {% if profile_updated %}
+                <div class="alert alert-success alert-dismissible fade show" role="alert">
+                    Profile updated successfully.
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+                {% endif %}
+                <form method="post" action="{% url 'accounts:profile' %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="form_type" value="profile">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Username</label>
+                        <input type="text" class="form-control" value="{{ user.username }}" disabled>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">First Name</label>
+                            <input type="text" class="form-control" name="first_name" value="{{ user.first_name }}">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Last Name</label>
+                            <input type="text" class="form-control" name="last_name" value="{{ user.last_name }}">
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Email</label>
+                        <input type="email" class="form-control" name="email" value="{{ user.email }}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Phone</label>
+                        <input type="text" class="form-control" name="phone" value="{{ user.phone }}">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Role</label>
+                        <input type="text" class="form-control" value="{{ user.get_role_display }}" disabled>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">2FA Status</label>
+                        <div>
+                            {% if user.has_2fa %}
+                            <span class="badge bg-success"><i class="bi bi-shield-check"></i> Enabled</span>
+                            {% else %}
+                            <span class="badge bg-warning text-dark"><i class="bi bi-shield-exclamation"></i> Not Set Up</span>
+                            <a href="{% url 'accounts:setup_2fa' %}" class="btn btn-sm btn-outline-primary ms-2">Set Up 2FA</a>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Save Changes</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Password Change Card -->
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-key"></i> Change Password</h5>
+            </div>
+            <div class="card-body">
+                {% if password_changed %}
+                <div class="alert alert-success alert-dismissible fade show" role="alert">
+                    Password changed successfully.
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+                {% endif %}
+                {% if password_errors %}
+                <div class="alert alert-danger alert-dismissible fade show" role="alert">
+                    {% for error in password_errors %}
+                    <div>{{ error }}</div>
+                    {% endfor %}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+                {% endif %}
+                <form method="post" action="{% url 'accounts:profile' %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="form_type" value="password">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Current Password</label>
+                        <input type="password" class="form-control" name="current_password" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">New Password</label>
+                        <input type="password" class="form-control" name="new_password1" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Confirm New Password</label>
+                        <input type="password" class="form-control" name="new_password2" required>
+                    </div>
+                    <button type="submit" class="btn btn-warning"><i class="bi bi-key"></i> Change Password</button>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Right Column: Activity History -->
+    <div class="col-lg-7">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="bi bi-clock-history"></i> Activity History</h5>
+                <span class="badge bg-secondary">Last 50</span>
+            </div>
+            <div class="card-body p-0">
+                {% if audit_logs %}
+                <div class="table-responsive">
+                    <table class="table table-hover table-sm mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th style="width: 160px;">Date/Time</th>
+                                <th style="width: 130px;">Action</th>
+                                <th>Description</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for log in audit_logs %}
+                            <tr>
+                                <td class="text-muted small">{{ log.timestamp|date:"d M Y H:i" }}</td>
+                                <td>
+                                    {% if log.action == "login" %}
+                                    <span class="badge bg-success">Login</span>
+                                    {% elif log.action == "logout" %}
+                                    <span class="badge bg-secondary">Logout</span>
+                                    {% elif log.action == "import" %}
+                                    <span class="badge bg-info text-dark">Import</span>
+                                    {% elif log.action == "generate" %}
+                                    <span class="badge bg-primary">Generate</span>
+                                    {% elif log.action == "adjustment" %}
+                                    <span class="badge bg-warning text-dark">Adjustment</span>
+                                    {% elif log.action == "status_change" %}
+                                    <span class="badge bg-info text-dark">Status</span>
+                                    {% elif log.action == "mapping_change" %}
+                                    <span class="badge bg-dark">Mapping</span>
+                                    {% elif log.action == "view" %}
+                                    <span class="badge bg-light text-dark">View</span>
+                                    {% else %}
+                                    <span class="badge bg-secondary">{{ log.get_action_display }}</span>
+                                    {% endif %}
+                                </td>
+                                <td class="small">{{ log.description|truncatewords:20 }}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="text-center text-muted py-5">
+                    <i class="bi bi-clock-history" style="font-size: 2rem;"></i>
+                    <p class="mt-2">No activity recorded yet.</p>
+                </div>
+                {% endif %}
             </div>
         </div>
     </div>
