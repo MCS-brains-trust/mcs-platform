@@ -288,7 +288,9 @@ def _parse_entity_info(reader):
 def _parse_chart(reader, year):
     """
     Parse Chart.txt to build account code -> name mapping.
-    Returns dict: {account_code_int: {"name": str, "type": str, "formatted_code": str}}
+    Uses (code, sub) tuples as keys to properly handle sub-accounts
+    (e.g., 1798.01 Management fees - MAJOTI, 3565.03 Loan - Matt).
+    Returns dict: {(code, sub): {"name": str, "type": str, "formatted_code": str}}
     """
     rows = reader.read_csv(year, "Chart.txt")
     chart = {}
@@ -296,11 +298,12 @@ def _parse_chart(reader, year):
         if len(row) < 7:
             continue
         code = _safe_int(row[0])
+        sub = _safe_int(row[1]) if len(row) > 1 else 0
         name = _safe_str(row[3])
         acc_type = _safe_str(row[6])  # "C" or "D"
         formatted = _safe_str(row[13]) if len(row) > 13 else f"{code:04d}"
         if name and name != "********** SUSPENSE **********":
-            chart[code] = {
+            chart[(code, sub)] = {
                 "name": name,
                 "type": acc_type,
                 "formatted_code": formatted,
@@ -321,137 +324,127 @@ def _parse_balance(reader, year, chart):
         [0]  Year
         [1]  Division (0=current, 2=prior year comparative)
         [2]  Account code (integer)
-        [3]  Unknown (always 0)
+        [3]  Sub-account code (integer, 0 = parent)
         [4]  Opening balance (for BS accounts; 0 for P&L)
-        [5]-[15] Monthly amounts (12 months)
-        [16] YTD total amount
+        [5]-[15] Monthly amounts (11 columns)
+        [16] YTD total amount (may be 0 for div=2 prior year rows)
         [17] Always 0.00 for most accounts
-        [18] Net / closing balance (used for equity/appropriation accounts)
+        [18] Net / closing balance (absolute value for P&L; profit for equity)
         [19] Unknown (always 0)
 
-    Sign conventions in Access Ledger:
-        - Assets (2000-2999): negative = debit balance (normal)
-        - Liabilities (3000-3999): positive = credit balance (normal)
-        - Income (0-999): positive in [16] = credit balance (income)
-        - Expenses (1000-1999): negative in [16] = debit balance (expense)
-        - Equity (4100-4499): positive = credit balance
+    Sign conventions in Access Ledger (determined by Chart.txt type D/C):
+        - Type D accounts: negative values = debit balance (normal)
+        - Type C accounts: positive values = credit balance (normal)
+        - Assets (2000-2999, type=D): opening/closing negative = debit
+        - Accum depreciation (type=C): opening/closing positive = credit
+        - Liabilities (3000-3999, type=C): positive = credit
+        - Income (0-999, type=C): positive ytd = credit
+        - Expenses (1000-1999, type=D): negative ytd = debit
+        - Equity (4000+): varies by account type in Chart.txt
 
-    For financial statements, we need the closing balance split into debit/credit:
-        - BS accounts: closing = opening + ytd_movement (from [4] + [16])
-        - P&L accounts: closing = ytd_total (from [16])
-        - Equity/Appropriation: closing = net (from [18]) if non-zero, else opening + ytd
+    Closing balance calculation:
+        - BS accounts: closing = opening + movement (ytd or sum of monthly cols)
+        - P&L accounts: closing = movement (ytd or sum of monthly cols)
+        - Retained profits (4199): closing = opening (pre-close working TB)
 
     Returns list of dicts with trial balance line data.
     """
     rows = reader.read_csv(year, "Balance.txt")
 
-    # Group by account code, separating current (div=0) and prior (div=2)
-    current_data = {}  # account_code -> row
-    prior_data = {}    # account_code -> row
+    # Group by (account_code, sub_code), separating current (div=0) and prior (div=2)
+    current_data = {}  # (code, sub) -> row
+    prior_data = {}    # (code, sub) -> row
 
     for row in rows:
         if len(row) < 20:
             continue
         division = _safe_int(row[1])
         account_code = _safe_int(row[2])
+        sub_code = _safe_int(row[3])
 
         if account_code == 0:
             continue  # Skip suspense
 
+        key = (account_code, sub_code)
         if division == 0:
-            current_data[account_code] = row
+            current_data[key] = row
         elif division == 2:
-            prior_data[account_code] = row
+            prior_data[key] = row
 
-    def _extract_closing_balance(row, code):
+    def _sum_monthly(row):
+        """Sum the monthly columns [5]-[15]."""
+        total = Decimal("0")
+        for i in range(5, 16):
+            total += _safe_decimal(row[i])
+        return total
+
+    def _extract_closing_balance(row, code, chart_entry):
         """
         Extract the closing balance from a Balance.txt row.
+        Uses Chart.txt account type (D/C) for sign convention.
         Returns (debit, credit) as positive Decimal values.
         """
         opening = _safe_decimal(row[4])
         ytd = _safe_decimal(row[16])
-        net_col = _safe_decimal(row[18])
+        acc_type = chart_entry.get("type", "D") if chart_entry else "D"
 
-        # Determine the closing balance
-        if code >= 4100:
-            # Equity/Appropriation accounts: use [18] (net) if non-zero,
-            # otherwise use opening + ytd
-            if net_col != 0:
-                closing = net_col
-            elif opening != 0 or ytd != 0:
-                closing = opening + ytd
-            else:
-                closing = Decimal("0")
+        # Calculate movement: prefer ytd, fall back to summing monthly columns
+        if ytd != Decimal("0"):
+            movement = ytd
+        else:
+            movement = _sum_monthly(row)
+
+        # Determine the raw closing balance
+        if code == 4199:
+            # Retained profits: use opening balance (pre-close working TB)
+            # The P&L accounts show the current year profit separately
+            raw = opening
         elif code >= 2000:
-            # Balance Sheet accounts: closing = opening + ytd_movement
-            closing = opening + ytd
+            # Balance Sheet + Equity: closing = opening + movement
+            raw = opening + movement
         else:
-            # P&L accounts: closing = ytd total (column 16)
-            closing = ytd
+            # P&L accounts: closing = movement only (no opening balance)
+            raw = movement
 
-        # Convert to debit/credit based on sign
-        # Access Ledger convention:
-        #   Assets (2000-2999): negative closing = debit balance (asset)
-        #   Accum depreciation: positive closing = credit balance
-        #   Liabilities (3000-3999): positive closing = credit balance
-        #   Income (0-999): positive in ytd = credit (income earned)
-        #   COGS/Expenses (1000-1999): negative = debit (expense incurred)
-        #   Equity (4100+): positive = credit balance
-        if code >= 2000 and code < 3000:
-            # Asset accounts: negative = debit (normal for assets)
-            if closing <= 0:
-                return (abs(closing), Decimal("0"))
+        # Convert to Dr/Cr based on sign and Chart.txt account type
+        # Type D: negative = debit (normal), positive = credit (abnormal)
+        # Type C: positive = credit (normal), negative = debit (abnormal)
+        if acc_type == "D":
+            if raw <= 0:
+                return (abs(raw), Decimal("0"))
             else:
-                return (Decimal("0"), abs(closing))
-        elif code >= 3000 and code < 4000:
-            # Liability accounts: positive = credit (normal for liabilities)
-            if closing >= 0:
-                return (Decimal("0"), abs(closing))
-            else:
-                return (abs(closing), Decimal("0"))
-        elif code >= 4100:
-            # Equity/Appropriation: positive = credit (normal)
-            # But retained profits (4199) can be debit if losses accumulated
-            if closing >= 0:
-                return (Decimal("0"), abs(closing))
-            else:
-                return (abs(closing), Decimal("0"))
-        elif code < 1000:
-            # Income accounts: positive ytd = credit (income)
-            if closing >= 0:
-                return (Decimal("0"), abs(closing))
-            else:
-                return (abs(closing), Decimal("0"))
+                return (Decimal("0"), abs(raw))
         else:
-            # Expense/COGS accounts (1000-1999): negative ytd = debit (expense)
-            if closing <= 0:
-                return (abs(closing), Decimal("0"))
+            if raw >= 0:
+                return (Decimal("0"), abs(raw))
             else:
-                return (Decimal("0"), abs(closing))
+                return (abs(raw), Decimal("0"))
 
     # Build trial balance lines
     lines = []
-    all_codes = sorted(set(list(current_data.keys()) + list(prior_data.keys())))
+    all_keys = sorted(set(list(current_data.keys()) + list(prior_data.keys())))
 
-    for code in all_codes:
-        chart_entry = chart.get(code, {})
+    for key in all_keys:
+        code, sub = key
+        # Look up chart entry: try exact (code, sub), fall back to parent (code, 0)
+        chart_entry = chart.get(key, chart.get((code, 0), {}))
         account_name = chart_entry.get("name", f"Account {code}")
         formatted_code = chart_entry.get("formatted_code", f"{code:04d}")
 
         # Current year data
-        cur_row = current_data.get(code)
+        cur_row = current_data.get(key)
         if cur_row:
             opening = _safe_decimal(cur_row[4])
-            debit, credit = _extract_closing_balance(cur_row, code)
+            debit, credit = _extract_closing_balance(cur_row, code, chart_entry)
         else:
             opening = Decimal("0")
             debit = Decimal("0")
             credit = Decimal("0")
 
         # Prior year data
-        prior_row = prior_data.get(code)
+        prior_row = prior_data.get(key)
         if prior_row:
-            prior_debit, prior_credit = _extract_closing_balance(prior_row, code)
+            prior_debit, prior_credit = _extract_closing_balance(prior_row, code, chart_entry)
         else:
             prior_debit = Decimal("0")
             prior_credit = Decimal("0")
@@ -826,16 +819,22 @@ def _apply_auto_mappings(entity, chart_by_year):
     
     for cam in ClientAccountMapping.objects.filter(entity=entity):
         code_str = cam.client_account_code.lstrip("0") or "0"
-        # Handle decimal account codes like 2565.01 -> use integer part
+        # Handle decimal account codes like 2565.01 -> (2565, 1)
+        sub_int = 0
         if "." in code_str:
-            code_str = code_str.split(".")[0]
+            parts = code_str.split(".")
+            code_str = parts[0]
+            try:
+                sub_int = int(parts[1])
+            except (ValueError, IndexError):
+                sub_int = 0
         try:
             code_int = int(code_str)
         except ValueError:
             unmapped_codes.append(cam.client_account_code)
             continue
         
-        chart_entry = latest_chart.get(code_int)
+        chart_entry = latest_chart.get((code_int, sub_int), latest_chart.get((code_int, 0)))
         std_code = _auto_map_account(code_int, cam.client_account_name, chart_entry)
         
         if std_code and std_code in am_cache:
