@@ -2344,7 +2344,7 @@ def entity_link_create(request, entity_pk):
         return redirect("core:entity_detail", pk=entity_pk)
     if request.method == "POST":
         to_entity_id = request.POST.get("to_entity")
-        relationship_type = request.POST.get("relationship_type", "related_party")
+        relationship_type = request.POST.get("relationship_type", "associated_entity")
         notes = request.POST.get("notes", "")
         if not to_entity_id:
             messages.error(request, "Please select an entity to link.")

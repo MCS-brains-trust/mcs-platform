@@ -1386,7 +1386,6 @@ class EntityRelationship(models.Model):
         DIRECTOR_OF = "director_of", "Director of"
         SHAREHOLDER_OF = "shareholder_of", "Shareholder of"
         PARTNER_IN = "partner_in", "Partner in"
-        RELATED_PARTY = "related_party", "Related Party"
         PARENT_ENTITY = "parent_entity", "Parent Entity"
         SUBSIDIARY = "subsidiary", "Subsidiary"
         ASSOCIATED_ENTITY = "associated_entity", "Associated Entity"
@@ -1406,7 +1405,7 @@ class EntityRelationship(models.Model):
     relationship_type = models.CharField(
         max_length=50,
         choices=RelationshipType.choices,
-        default=RelationshipType.RELATED_PARTY,
+        default=RelationshipType.ASSOCIATED_ENTITY,
     )
     notes = models.TextField(blank=True, help_text="Optional notes about this relationship")
     created_by = models.ForeignKey(
@@ -1434,7 +1433,6 @@ class EntityRelationship(models.Model):
             "partner_in": "Partner in",
             "parent_entity": "Subsidiary of",
             "subsidiary": "Parent entity of",
-            "related_party": "Related party",
             "associated_entity": "Associated entity",
             "other": "Other",
         }
