@@ -28,6 +28,7 @@ urlpatterns = [
     path("years/<uuid:pk>/trial-balance/", views.trial_balance_view, name="trial_balance_view"),
     path("years/<uuid:pk>/trial-balance/pdf/", views.trial_balance_pdf, name="trial_balance_pdf"),
     path("years/<uuid:pk>/trial-balance/download/", views.trial_balance_download, name="trial_balance_download"),
+    path("trial-balance/template/", views.trial_balance_template_download, name="trial_balance_template_download"),
 
     # Account Mapping
     path("mapping/", views.account_mapping_list, name="account_mapping_list"),

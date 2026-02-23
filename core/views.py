@@ -4608,3 +4608,22 @@ def delete_document(request, pk):
     doc.delete()
     messages.success(request, "Document deleted.")
     return redirect("core:financial_year_detail", pk=fy_pk)
+
+
+
+@login_required
+def trial_balance_template_download(request):
+    """Serve the trial balance import template .xlsx file."""
+    import os
+    from django.conf import settings as _settings
+    template_path = os.path.join(_settings.BASE_DIR, "static", "trial_balance_template.xlsx")
+    if not os.path.exists(template_path):
+        from django.http import Http404
+        raise Http404("Template file not found.")
+    with open(template_path, "rb") as f:
+        response = HttpResponse(
+            f.read(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response["Content-Disposition"] = 'attachment; filename="StatementHub_Trial_Balance_Template.xlsx"'
+        return response
