@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load humanize %}
 {% block title %}Trial Balance - {{ fy.entity.entity_name }} - {{ fy.year_label }} - StatementHub{% endblock %}
 
 {% block content %}
@@ -50,10 +51,10 @@
                 <tr>
                     <td><code class="fw-bold">{{ line.account_code }}</code></td>
                     <td>{{ line.account_name }}{% if line.is_adjustment %} <span class="badge bg-info text-dark">Adj</span>{% endif %}</td>
-                    <td class="text-end">{% if line.debit %}{{ line.debit|floatformat:2 }}{% endif %}</td>
-                    <td class="text-end">{% if line.credit %}{{ line.credit|floatformat:2 }}{% endif %}</td>
-                    <td class="text-end">{% if line.prior_debit %}{{ line.prior_debit|floatformat:2 }}{% endif %}</td>
-                    <td class="text-end">{% if line.prior_credit %}{{ line.prior_credit|floatformat:2 }}{% endif %}</td>
+                    <td class="text-end">{% if line.display_dr %}{{ line.display_dr|floatformat:2|intcomma }}{% endif %}</td>
+                    <td class="text-end">{% if line.display_cr %}{{ line.display_cr|floatformat:2|intcomma }}{% endif %}</td>
+                    <td class="text-end">{% if line.prior_debit %}{{ line.prior_debit|floatformat:2|intcomma }}{% endif %}</td>
+                    <td class="text-end">{% if line.prior_credit %}{{ line.prior_credit|floatformat:2|intcomma }}{% endif %}</td>
                 </tr>
                 {% endfor %}
             </tbody>
@@ -70,19 +71,19 @@
                 <tr class="fw-bold">
                     <td style="width: 80px;"></td>
                     <td>Totals</td>
-                    <td class="text-end" style="width: 100px;">{{ grand_total_dr|floatformat:2 }}</td>
-                    <td class="text-end" style="width: 100px;">{{ grand_total_cr|floatformat:2 }}</td>
-                    <td class="text-end" style="width: 100px;">{{ grand_total_prior_dr|floatformat:2 }}</td>
-                    <td class="text-end" style="width: 100px;">{{ grand_total_prior_cr|floatformat:2 }}</td>
+                    <td class="text-end" style="width: 100px;">{{ grand_total_dr|floatformat:2|intcomma }}</td>
+                    <td class="text-end" style="width: 100px;">{{ grand_total_cr|floatformat:2|intcomma }}</td>
+                    <td class="text-end" style="width: 100px;">{{ grand_total_prior_dr|floatformat:2|intcomma }}</td>
+                    <td class="text-end" style="width: 100px;">{{ grand_total_prior_cr|floatformat:2|intcomma }}</td>
                 </tr>
                 <tr class="fw-bold" style="border-top: 2px solid #198754;">
                     <td></td>
                     <td class="text-success"><i class="bi bi-graph-up-arrow"></i> Net Profit / (Loss)</td>
                     <td class="text-end text-success" colspan="2">
-                        {% if net_profit >= 0 %}${{ net_profit|floatformat:2 }}{% else %}<span class="text-danger">(${{ net_profit_abs|floatformat:2 }})</span>{% endif %}
+                        {% if net_profit >= 0 %}${{ net_profit|floatformat:2|intcomma }}{% else %}<span class="text-danger">(${{ net_profit_abs|floatformat:2|intcomma }})</span>{% endif %}
                     </td>
                     <td class="text-end text-muted" colspan="2">
-                        {% if prior_net_profit >= 0 %}${{ prior_net_profit|floatformat:2 }}{% else %}<span class="text-danger">(${{ prior_net_profit_abs|floatformat:2 }})</span>{% endif %}
+                        {% if prior_net_profit >= 0 %}${{ prior_net_profit|floatformat:2|intcomma }}{% else %}<span class="text-danger">(${{ prior_net_profit_abs|floatformat:2|intcomma }})</span>{% endif %}
                     </td>
                 </tr>
             </tbody>

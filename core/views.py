@@ -320,9 +320,6 @@ def financial_year_detail(request, pk):
     unmapped_count = tb_lines.filter(mapped_line_item__isnull=True).count()
     documents = fy.generated_documents.all().order_by('-version', '-generated_at')
 
-    # Calculate totals
-    total_debit = tb_lines.aggregate(total=Sum("debit"))["total"] or Decimal("0")
-    total_credit = tb_lines.aggregate(total=Sum("credit"))["total"] or Decimal("0")
     total_prior_debit = tb_lines.aggregate(total=Sum("prior_debit"))["total"] or Decimal("0")
     total_prior_credit = tb_lines.aggregate(total=Sum("prior_credit"))["total"] or Decimal("0")
 
@@ -373,8 +370,8 @@ def financial_year_detail(request, pk):
     for section_name, lines_list in ordered_sections.items():
         if section_name in pl_sections:
             for line in lines_list:
-                pl_dr += line.debit or Decimal('0')
-                pl_cr += line.credit or Decimal('0')
+                pl_dr += line.display_dr or Decimal('0')
+                pl_cr += line.display_cr or Decimal('0')
                 pl_prior_dr += line.prior_debit or Decimal('0')
                 pl_prior_cr += line.prior_credit or Decimal('0')
     net_profit = pl_cr - pl_dr
@@ -410,11 +407,24 @@ def financial_year_detail(request, pk):
                     'description': flag.description[:120],
                 })
 
-    # Annotate TB lines with risk flag info and variance calculations
+    # Annotate TB lines with risk flag info, display values, and variance calculations
     for line in tb_lines:
         line.risk_flags_list = flagged_accounts.get(line.account_code, [])
-        # Variance calculations are now handled by model properties
-        # (variance_amount and variance_percentage on TrialBalanceLine)
+        # Display Dr/Cr: use closing_balance when no movements (rolled-forward BS items)
+        if line.debit == 0 and line.credit == 0 and line.closing_balance != 0:
+            if line.closing_balance > 0:
+                line.display_dr = line.closing_balance
+                line.display_cr = Decimal('0')
+            else:
+                line.display_dr = Decimal('0')
+                line.display_cr = abs(line.closing_balance)
+        else:
+            line.display_dr = line.debit
+            line.display_cr = line.credit
+
+    # Calculate totals from display values (accounts for opening balances in rolled-forward years)
+    total_debit = sum(line.display_dr for line in tb_lines)
+    total_credit = sum(line.display_cr for line in tb_lines)
 
     # Depreciation assets
     depreciation_assets = DepreciationAsset.objects.filter(financial_year=fy)
@@ -1009,6 +1019,18 @@ def trial_balance_view(request, pk):
     grand_total_prior_cr = Decimal('0')
 
     for line in tb_lines:
+        # Display Dr/Cr: use closing_balance when no movements (rolled-forward BS items)
+        if line.debit == 0 and line.credit == 0 and line.closing_balance != 0:
+            if line.closing_balance > 0:
+                line.display_dr = line.closing_balance
+                line.display_cr = Decimal('0')
+            else:
+                line.display_dr = Decimal('0')
+                line.display_cr = abs(line.closing_balance)
+        else:
+            line.display_dr = line.debit
+            line.display_cr = line.credit
+
         if line.mapped_line_item:
             raw_section = line.mapped_line_item.statement_section
             display_section = SECTION_DISPLAY.get(raw_section, raw_section)
@@ -1017,8 +1039,8 @@ def trial_balance_view(request, pk):
         if display_section not in sections:
             sections[display_section] = []
         sections[display_section].append(line)
-        grand_total_dr += line.debit or Decimal('0')
-        grand_total_cr += line.credit or Decimal('0')
+        grand_total_dr += line.display_dr or Decimal('0')
+        grand_total_cr += line.display_cr or Decimal('0')
         grand_total_prior_dr += line.prior_debit or Decimal('0')
         grand_total_prior_cr += line.prior_credit or Decimal('0')
 
@@ -1054,8 +1076,8 @@ def trial_balance_view(request, pk):
     for section_name, lines in ordered_sections.items():
         if section_name in pl_sections:
             for line in lines:
-                pl_dr += line.debit or Decimal('0')
-                pl_cr += line.credit or Decimal('0')
+                pl_dr += line.display_dr or Decimal('0')
+                pl_cr += line.display_cr or Decimal('0')
                 pl_prior_dr += line.prior_debit or Decimal('0')
                 pl_prior_cr += line.prior_credit or Decimal('0')
     net_profit = pl_cr - pl_dr

@@ -654,7 +654,14 @@ class TrialBalanceLine(models.Model):
     def variance_amount(self):
         """Dollar variance: current net minus prior net."""
         from decimal import Decimal
-        current = self.debit - self.credit
+        # Use closing_balance for display when no movements (rolled-forward BS items)
+        if self.debit == 0 and self.credit == 0 and self.closing_balance != 0:
+            if self.closing_balance > 0:
+                current = self.closing_balance  # Dr
+            else:
+                current = self.closing_balance  # negative = Cr, so net is negative
+        else:
+            current = self.debit - self.credit
         prior = self.prior_debit - self.prior_credit
         return current - prior
 
