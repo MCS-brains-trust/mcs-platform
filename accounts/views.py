@@ -2,6 +2,7 @@
 import io
 import base64
 import logging
+import threading
 import pyotp
 import qrcode
 from django.conf import settings
@@ -16,9 +17,10 @@ from django.template.loader import render_to_string
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.utils.html import strip_tags
+from django.views.decorators.http import require_POST
 from django_ratelimit.decorators import ratelimit
 
-from .models import User, Invitation
+from .models import User, Invitation, _default_token
 from .forms import (
     MCSLoginForm,
     TOTPVerifyForm,
@@ -135,12 +137,13 @@ def invitation_create(request):
             invitation.invited_by = request.user
             invitation.save()
 
-            # Send invitation email
+            # Send invitation email (non-blocking)
             _send_invitation_email(request, invitation)
 
             messages.success(
                 request,
-                f"Invitation sent to {invitation.first_name} {invitation.last_name} ({invitation.email})."
+                f"Invitation created for {invitation.first_name} {invitation.last_name} "
+                f"({invitation.email}). The email is being sent — check the status on this page."
             )
             return redirect("accounts:invitation_list")
     else:
@@ -153,6 +156,7 @@ def invitation_create(request):
 
 
 @login_required
+@require_POST
 def invitation_resend(request, pk):
     """Resend an invitation email. Admin only."""
     if not request.user.is_admin:
@@ -160,18 +164,27 @@ def invitation_resend(request, pk):
         return redirect("review:dashboard")
 
     invitation = get_object_or_404(Invitation, pk=pk)
-    if not invitation.is_valid:
-        # Reset expiry and status
+    if invitation.status in (Invitation.Status.EXPIRED, Invitation.Status.REVOKED):
+        # Reactivate: new token, reset expiry
+        invitation.token = _default_token()
         invitation.expires_at = timezone.now() + timezone.timedelta(days=7)
         invitation.status = Invitation.Status.PENDING
-        invitation.save(update_fields=["expires_at", "status"])
+        invitation.email_error = ""
+        invitation.email_sent_at = None
+        invitation.save(update_fields=["token", "expires_at", "status", "email_error", "email_sent_at"])
+    elif invitation.status == Invitation.Status.PENDING:
+        # Clear previous email status before resending
+        invitation.email_error = ""
+        invitation.email_sent_at = None
+        invitation.save(update_fields=["email_error", "email_sent_at"])
 
     _send_invitation_email(request, invitation)
-    messages.success(request, f"Invitation resent to {invitation.email}.")
+    messages.success(request, f"Invitation is being resent to {invitation.email}.")
     return redirect("accounts:invitation_list")
 
 
 @login_required
+@require_POST
 def invitation_revoke(request, pk):
     """Revoke a pending invitation. Admin only."""
     if not request.user.is_admin:
@@ -187,7 +200,13 @@ def invitation_revoke(request, pk):
 
 
 def _send_invitation_email(request, invitation):
-    """Send the invitation email with signup link."""
+    """Send the invitation email with signup link in a background thread.
+
+    Renders the email template synchronously (needs request context), then
+    dispatches the actual SMTP send to a daemon thread so the admin isn't
+    left waiting on a slow mail server.  Delivery status is persisted on the
+    Invitation row so it can be checked from the list page later.
+    """
     signup_url = request.build_absolute_uri(f"/accounts/signup/{invitation.token}/")
 
     subject = "You're invited to StatementHub — MC & S Pty Ltd"
@@ -196,24 +215,33 @@ def _send_invitation_email(request, invitation):
         "signup_url": signup_url,
     })
     plain_message = strip_tags(html_message)
+    from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@statementhub.com.au")
+    invitation_pk = invitation.pk
 
-    try:
-        send_mail(
-            subject=subject,
-            message=plain_message,
-            from_email=getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@statementhub.com.au"),
-            recipient_list=[invitation.email],
-            html_message=html_message,
-            fail_silently=False,
-        )
-    except Exception as e:
-        # Log but don't crash — the invitation link is still valid
-        logger.error(f"Failed to send invitation email (invitation_id={invitation.pk}): {e}")
-        messages.warning(
-            request,
-            f"Invitation created but email could not be sent. "
-            f"You can share the signup link manually: {signup_url}"
-        )
+    def _send():
+        from accounts.models import Invitation as InvModel
+        try:
+            send_mail(
+                subject=subject,
+                message=plain_message,
+                from_email=from_email,
+                recipient_list=[invitation.email],
+                html_message=html_message,
+                fail_silently=False,
+            )
+            InvModel.objects.filter(pk=invitation_pk).update(
+                email_sent_at=timezone.now(),
+                email_error="",
+            )
+            logger.info("Invitation email sent (invitation_id=%s)", invitation_pk)
+        except Exception as e:
+            logger.error("Failed to send invitation email (invitation_id=%s): %s", invitation_pk, e)
+            InvModel.objects.filter(pk=invitation_pk).update(
+                email_error=str(e)[:500],
+            )
+
+    thread = threading.Thread(target=_send, daemon=True)
+    thread.start()
 
 
 # ---------------------------------------------------------------------------

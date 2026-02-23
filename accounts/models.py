@@ -142,6 +142,8 @@ class Invitation(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField(default=_default_expiry)
     accepted_at = models.DateTimeField(null=True, blank=True)
+    email_sent_at = models.DateTimeField(null=True, blank=True)
+    email_error = models.TextField(blank=True, default="")
 
     class Meta:
         ordering = ["-created_at"]
