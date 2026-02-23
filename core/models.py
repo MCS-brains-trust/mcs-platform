@@ -187,6 +187,14 @@ class Entity(models.Model):
     state = models.CharField(max_length=20, blank=True)
     postcode = models.CharField(max_length=10, blank=True)
     country = models.CharField(max_length=50, blank=True, default="Australia")
+    trustee_name = models.CharField(
+        max_length=255, blank=True, default="",
+        help_text="Trustee company name (trusts and SMSFs only)",
+    )
+    trustee_acn = models.CharField(
+        max_length=9, blank=True, default="", verbose_name="Trustee ACN",
+        help_text="ACN of the trustee company (trusts and SMSFs only)",
+    )
     is_archived = models.BooleanField(
         default=False,
         help_text="Archived entities are hidden from the default list but data is preserved.",
