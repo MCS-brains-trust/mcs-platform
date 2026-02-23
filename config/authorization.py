@@ -12,7 +12,7 @@ from django.shortcuts import get_object_or_404
 def get_entity_for_user(request, pk):
     """
     Retrieve an Entity by PK, verifying the user has access.
-    Admins and Senior Accountants can access all entities.
+    Admins, Senior Accountants, and Office Admins can access all entities.
     Accountants can only access entities assigned to them.
     Read-only users can view all entities (enforced at action level).
     """
@@ -20,7 +20,7 @@ def get_entity_for_user(request, pk):
 
     entity = get_object_or_404(Entity, pk=pk)
 
-    if request.user.is_senior:
+    if request.user.can_view_all_entities:
         return entity
 
     # Accountants and read-only: check assignment
@@ -45,7 +45,7 @@ def get_financial_year_for_user(request, pk):
         pk=pk,
     )
 
-    if request.user.is_senior:
+    if request.user.can_view_all_entities:
         return fy
 
     entity = fy.entity
@@ -66,7 +66,7 @@ def get_review_job_for_user(request, pk):
 
     job = get_object_or_404(ReviewJob.objects.select_related("entity"), pk=pk)
 
-    if request.user.is_senior:
+    if request.user.can_view_all_entities:
         return job
 
     # If job is linked to an entity, check access

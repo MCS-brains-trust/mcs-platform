@@ -44,7 +44,7 @@ def _log_action(request, action, description, obj=None):
 @login_required
 def dashboard(request):
     user = request.user
-    if user.is_admin:
+    if user.can_view_all_entities:
         clients = Client.objects.filter(is_active=True)
     else:
         clients = Client.objects.filter(
@@ -127,14 +127,14 @@ def entity_list(request):
     show_archived = request.GET.get("show_archived", "") == "1"
 
     if show_archived:
-        if request.user.is_admin:
+        if request.user.can_view_all_entities:
             entities = Entity.objects.filter(is_archived=True)
         else:
             entities = Entity.objects.filter(
                 assigned_accountant=request.user, is_archived=True
             )
     else:
-        if request.user.is_admin:
+        if request.user.can_view_all_entities:
             entities = Entity.objects.filter(is_archived=False)
         else:
             entities = Entity.objects.filter(
@@ -278,7 +278,7 @@ def entity_edit(request, pk):
 @login_required
 def financial_year_create(request, entity_pk):
     entity = get_entity_for_user(request, entity_pk)
-    if not request.user.can_edit:
+    if not request.user.can_do_accounting:
         messages.error(request, "You do not have permission.")
         return redirect("core:entity_detail", pk=entity_pk)
 
@@ -712,7 +712,7 @@ def roll_forward(request, pk):
     current_fy = get_financial_year_for_user(request, pk)
     entity = current_fy.entity
 
-    if not request.user.can_edit:
+    if not request.user.can_do_accounting:
         messages.error(request, "You do not have permission.")
         return redirect("core:financial_year_detail", pk=pk)
 
@@ -812,7 +812,7 @@ def trial_balance_import(request, pk):
         messages.error(request, "Cannot import into a finalised financial year.")
         return redirect("core:financial_year_detail", pk=pk)
 
-    if not request.user.can_edit:
+    if not request.user.can_do_accounting:
         messages.error(request, "You do not have permission.")
         return redirect("core:financial_year_detail", pk=pk)
 
@@ -1090,7 +1090,7 @@ def adjustment_create(request, pk):
         messages.error(request, "Cannot add journals to a finalised year.")
         return redirect("core:financial_year_detail", pk=pk)
 
-    if not request.user.can_edit:
+    if not request.user.can_do_accounting:
         messages.error(request, "You do not have permission.")
         return redirect("core:financial_year_detail", pk=pk)
 
@@ -1226,7 +1226,7 @@ def journal_delete(request, pk):
         messages.error(request, "Cannot delete journals in a finalised year.")
         return redirect("core:journal_detail", pk=pk)
 
-    if not request.user.can_edit:
+    if not request.user.can_do_accounting:
         messages.error(request, "You do not have permission to delete journals.")
         return redirect("core:journal_detail", pk=pk)
 
@@ -1584,7 +1584,7 @@ def htmx_client_search(request):
     if len(query) < 2:
         return HttpResponse("")
 
-    if request.user.is_admin:
+    if request.user.can_view_all_entities:
         entities = Entity.objects.filter(is_archived=False)
     else:
         entities = Entity.objects.filter(
@@ -1605,7 +1605,7 @@ def htmx_map_tb_line(request, pk):
     """HTMX endpoint to map a single trial balance line."""
     line = get_object_or_404(TrialBalanceLine, pk=pk)
     get_financial_year_for_user(request, line.financial_year.pk)  # IDOR check
-    if not request.user.can_edit:
+    if not request.user.can_do_accounting:
         return HttpResponse("Permission denied", status=403)
     mapping_id = request.POST.get("mapped_line_item")
 
@@ -2985,7 +2985,7 @@ def depreciation_add(request, pk):
     fy = get_financial_year_for_user(request, pk)
     if request.method != "POST":
         return JsonResponse({"error": "POST required"}, status=405)
-    if not request.user.can_edit:
+    if not request.user.can_do_accounting:
         return JsonResponse({"error": "Permission denied"}, status=403)
 
     try:
@@ -3024,7 +3024,7 @@ def depreciation_edit(request, pk):
     get_financial_year_for_user(request, fy_pk)  # IDOR check
     if request.method != "POST":
         return JsonResponse({"error": "POST required"}, status=405)
-    if not request.user.can_edit:
+    if not request.user.can_do_accounting:
         return JsonResponse({"error": "Permission denied"}, status=403)
 
     try:
@@ -3058,7 +3058,7 @@ def depreciation_delete(request, pk):
     asset = get_object_or_404(DepreciationAsset, pk=pk)
     fy_pk = asset.financial_year.pk
     get_financial_year_for_user(request, fy_pk)  # IDOR check
-    if not request.user.can_edit:
+    if not request.user.can_do_accounting:
         messages.error(request, "You do not have permission.")
         return redirect("core:financial_year_detail", pk=fy_pk)
     name = asset.asset_name
@@ -3073,7 +3073,7 @@ def depreciation_delete(request, pk):
 def depreciation_roll_forward(request, pk):
     """Roll forward depreciation schedule from prior year."""
     fy = get_financial_year_for_user(request, pk)
-    if not request.user.can_edit:
+    if not request.user.can_do_accounting:
         messages.error(request, "You do not have permission.")
         return redirect("core:financial_year_detail", pk=pk)
     if not fy.prior_year:
@@ -3160,7 +3160,7 @@ def stock_add(request, pk):
     fy = get_financial_year_for_user(request, pk)
     if request.method != "POST":
         return JsonResponse({"error": "POST required"}, status=405)
-    if not request.user.can_edit:
+    if not request.user.can_do_accounting:
         return JsonResponse({"error": "Permission denied"}, status=403)
 
     try:
@@ -3188,7 +3188,7 @@ def stock_edit(request, pk):
     get_financial_year_for_user(request, fy_pk)  # IDOR check
     if request.method != "POST":
         return JsonResponse({"error": "POST required"}, status=405)
-    if not request.user.can_edit:
+    if not request.user.can_do_accounting:
         return JsonResponse({"error": "Permission denied"}, status=403)
 
     try:
@@ -3213,7 +3213,7 @@ def stock_delete(request, pk):
     item = get_object_or_404(StockItem, pk=pk)
     fy_pk = item.financial_year.pk
     get_financial_year_for_user(request, fy_pk)  # IDOR check
-    if not request.user.can_edit:
+    if not request.user.can_do_accounting:
         messages.error(request, "You do not have permission.")
         return redirect("core:financial_year_detail", pk=fy_pk)
     name = item.item_name
@@ -3226,7 +3226,7 @@ def stock_delete(request, pk):
 def stock_push_to_tb(request, pk):
     """Push stock values to the trial balance."""
     fy = get_financial_year_for_user(request, pk)
-    if not request.user.can_edit:
+    if not request.user.can_do_accounting:
         messages.error(request, "You do not have permission.")
         return redirect("core:financial_year_detail", pk=pk)
     stock_items = StockItem.objects.filter(financial_year=fy)
@@ -3286,7 +3286,7 @@ def stock_push_to_tb(request, pk):
 def review_push_to_tb(request, pk):
     """Push confirmed review transactions to the trial balance as journal entries."""
     fy = get_financial_year_for_user(request, pk)
-    if not request.user.can_edit:
+    if not request.user.can_do_accounting:
         messages.error(request, "You do not have permission.")
         return redirect("core:financial_year_detail", pk=pk)
     from review.models import PendingTransaction
@@ -3354,7 +3354,7 @@ def review_approve_transaction(request, pk):
 
     if request.method != "POST":
         return JsonResponse({"error": "POST required"}, status=405)
-    if not request.user.can_edit:
+    if not request.user.can_do_accounting:
         return JsonResponse({"error": "Permission denied"}, status=403)
 
     txn.confirmed_code = request.POST.get("confirmed_code", txn.ai_suggested_code)
@@ -3512,7 +3512,7 @@ def review_approve_all(request, pk):
     Also auto-pushes all approved transactions to the trial balance.
     """
     fy = get_financial_year_for_user(request, pk)
-    if not request.user.can_edit:
+    if not request.user.can_do_accounting:
         messages.error(request, "You do not have permission.")
         return redirect("core:financial_year_detail", pk=pk)
     from review.models import PendingTransaction
@@ -3609,7 +3609,7 @@ def client_bulk_action(request):
     if request.method != "POST":
         return redirect("core:entity_list")
 
-    if not request.user.can_edit:
+    if not request.user.can_do_accounting:
         messages.error(request, "You do not have permission.")
         return redirect("core:entity_list")
 
@@ -3664,7 +3664,7 @@ def entity_import_handiledger(request, pk):
 
     entity = get_entity_for_user(request, pk)
 
-    if not request.user.can_edit:
+    if not request.user.can_do_accounting:
         messages.error(request, "You do not have permission.")
         return redirect("core:entity_detail", pk=pk)
 
@@ -3725,7 +3725,7 @@ def delete_unfinalised_fy(request, pk):
     if request.method != "POST":
         return redirect("core:entity_detail", pk=pk)
 
-    if not request.user.can_edit:
+    if not request.user.can_do_accounting:
         messages.error(request, "You do not have permission.")
         return redirect("core:entity_detail", pk=pk)
 
@@ -3752,7 +3752,7 @@ def htmx_update_tb_mapping(request, pk):
     """HTMX endpoint to update the mapping of a trial balance line via dropdown."""
     line = get_object_or_404(TrialBalanceLine, pk=pk)
     get_financial_year_for_user(request, line.financial_year.pk)  # IDOR check
-    if not request.user.can_edit:
+    if not request.user.can_do_accounting:
         return HttpResponse("Permission denied", status=403)
 
     if request.method == "POST":
@@ -3833,7 +3833,7 @@ def xrm_search(request, pk):
     if request.method != "POST":
         return JsonResponse({"status": "error", "message": "POST required"}, status=405)
 
-    if not request.user.can_edit:
+    if not request.user.can_do_accounting:
         return JsonResponse({"status": "error", "message": "Permission denied"}, status=403)
 
     from integrations.models import XPMConnection
@@ -3911,7 +3911,7 @@ def xrm_pull(request, pk):
     if request.method != "POST":
         return JsonResponse({"status": "error", "message": "POST required"}, status=405)
 
-    if not request.user.can_edit:
+    if not request.user.can_do_accounting:
         return JsonResponse({"status": "error", "message": "Permission denied"}, status=403)
 
     # Accept xpm_client_id from POST body (set during confirmation)

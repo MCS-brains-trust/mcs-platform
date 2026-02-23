@@ -391,6 +391,54 @@ def review_dashboard(request):
     else:
         all_unfinalised_years = my_unfinalised_years
 
+    # --- OFFICE ADMIN DASHBOARD ---
+    if user.is_office_admin:
+        from core.models import MeetingNote
+        all_entities = Entity.objects.filter(is_archived=False)
+        total_entity_count = all_entities.count()
+        recently_added = all_entities.order_by("-created_at")[:5]
+        unassigned_count = all_entities.filter(primary_accountant__isnull=True).count()
+
+        # Entity type breakdown
+        entity_type_counts = {}
+        for et_val, et_label in Entity.EntityType.choices:
+            c = all_entities.filter(entity_type=et_val).count()
+            if c > 0:
+                entity_type_counts[et_label] = c
+
+        # Upcoming follow-ups across all entities
+        from django.utils import timezone as tz
+        upcoming_followups = (
+            MeetingNote.objects.filter(
+                follow_up_completed=False,
+                follow_up_date__isnull=False,
+                follow_up_date__gte=tz.now().date(),
+            )
+            .select_related("entity", "created_by")
+            .order_by("follow_up_date")[:15]
+        )
+        overdue_followups = (
+            MeetingNote.objects.filter(
+                follow_up_completed=False,
+                follow_up_date__isnull=False,
+                follow_up_date__lt=tz.now().date(),
+            )
+            .select_related("entity", "created_by")
+            .order_by("follow_up_date")[:10]
+        )
+
+        office_context = {
+            "greeting": greeting,
+            "first_name": first_name,
+            "total_entity_count": total_entity_count,
+            "recently_added": recently_added,
+            "unassigned_count": unassigned_count,
+            "entity_type_counts": entity_type_counts,
+            "upcoming_followups": upcoming_followups,
+            "overdue_followups": overdue_followups,
+        }
+        return render(request, "review/dashboard_office_admin.html", office_context)
+
     context = {
         "greeting": greeting,
         "first_name": first_name,

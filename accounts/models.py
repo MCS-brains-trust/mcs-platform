@@ -18,6 +18,7 @@ class User(AbstractUser):
         ADMIN = "admin", "Administrator"
         SENIOR_ACCOUNTANT = "senior_accountant", "Senior Accountant"
         ACCOUNTANT = "accountant", "Accountant"
+        OFFICE_ADMIN = "office_admin", "Office Admin"
         READ_ONLY = "read_only", "Read Only"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -48,19 +49,39 @@ class User(AbstractUser):
         return self.role == self.Role.ADMIN
 
     @property
+    def is_office_admin(self):
+        return self.role == self.Role.OFFICE_ADMIN
+
+    @property
     def is_senior(self):
         return self.role in (self.Role.ADMIN, self.Role.SENIOR_ACCOUNTANT)
+
+    @property
+    def can_view_all_entities(self):
+        """Admin and Office Admin can see all entities firm-wide."""
+        return self.role in (self.Role.ADMIN, self.Role.SENIOR_ACCOUNTANT, self.Role.OFFICE_ADMIN)
 
     @property
     def can_finalise(self):
         return self.role in (self.Role.ADMIN, self.Role.SENIOR_ACCOUNTANT)
 
     @property
-    def can_edit(self):
+    def can_do_accounting(self):
+        """Can perform accounting work: journals, trial balances, risk engine, documents."""
         return self.role in (
             self.Role.ADMIN,
             self.Role.SENIOR_ACCOUNTANT,
             self.Role.ACCOUNTANT,
+        )
+
+    @property
+    def can_edit(self):
+        """Can create/edit entities, notes, associates, details."""
+        return self.role in (
+            self.Role.ADMIN,
+            self.Role.SENIOR_ACCOUNTANT,
+            self.Role.ACCOUNTANT,
+            self.Role.OFFICE_ADMIN,
         )
 
     @property

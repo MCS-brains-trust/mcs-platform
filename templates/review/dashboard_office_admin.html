@@ -1,0 +1,340 @@
+{% extends "base.html" %}
+{% load humanize %}
+{% block title %}Dashboard - StatementHub{% endblock %}
+
+{% block extra_head %}
+<style>
+    .dashboard-greeting {
+        text-align: center;
+        padding: 30px 0 10px;
+    }
+    .dashboard-greeting h3 {
+        font-weight: 700;
+        color: #1a1a2e;
+        margin-bottom: 4px;
+    }
+    .dashboard-greeting .datetime {
+        font-size: 0.95rem;
+        color: #6c757d;
+    }
+    .metric-card {
+        background: white;
+        border-radius: 12px;
+        padding: 20px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        text-align: center;
+        transition: all 0.2s;
+    }
+    .metric-card:hover {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+        transform: translateY(-1px);
+    }
+    .metric-card .metric-value {
+        font-size: 2rem;
+        font-weight: 700;
+        line-height: 1;
+    }
+    .metric-card .metric-label {
+        font-size: 0.82rem;
+        color: #6c757d;
+        margin-top: 4px;
+    }
+    .section-header {
+        font-weight: 700;
+        font-size: 1.1rem;
+        color: #1a1a2e;
+        margin-bottom: 16px;
+    }
+    .sidebar-widget {
+        background: white;
+        border-radius: 12px;
+        padding: 16px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        margin-bottom: 16px;
+    }
+    .sidebar-widget h6 {
+        font-size: 0.9rem;
+        margin-bottom: 12px;
+    }
+    .entity-table {
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        overflow: hidden;
+    }
+    .entity-table table { margin-bottom: 0; }
+    .entity-table th {
+        background: #f8f9fa;
+        font-size: 0.82rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+        color: #6c757d;
+        border-bottom: 2px solid #e9ecef;
+    }
+    .entity-table td {
+        vertical-align: middle;
+        font-size: 0.9rem;
+    }
+    .entity-table .entity-link {
+        text-decoration: none;
+        color: #1a1a2e;
+        font-weight: 600;
+    }
+    .entity-table .entity-link:hover { color: #0d6efd; }
+    .followup-card {
+        background: white;
+        border-radius: 12px;
+        padding: 14px 18px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        margin-bottom: 10px;
+        transition: all 0.2s;
+        text-decoration: none;
+        color: inherit;
+        display: block;
+    }
+    .followup-card:hover {
+        box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+        transform: translateY(-1px);
+        color: inherit;
+    }
+    .followup-card.overdue {
+        border-left: 4px solid #dc3545;
+    }
+    .followup-card.upcoming {
+        border-left: 4px solid #0d6efd;
+    }
+    .no-data-box {
+        text-align: center;
+        padding: 30px;
+        background: white;
+        border-radius: 12px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    .type-badge {
+        display: inline-block;
+        padding: 2px 10px;
+        border-radius: 20px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        background: #e9ecef;
+        color: #495057;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Personalised Greeting with Live Clock -->
+<div class="dashboard-greeting">
+    <h3>{{ greeting }}, {{ first_name }}.</h3>
+    <div class="datetime" id="liveClock"></div>
+</div>
+
+<!-- ENTITIES OVERVIEW CARDS -->
+<div class="row g-3 mt-2 mb-4">
+    <div class="col-md-4">
+        <a href="{% url 'core:entity_list' %}" class="text-decoration-none">
+            <div class="metric-card border-start border-4 border-primary">
+                <div class="metric-value text-primary">{{ total_entity_count }}</div>
+                <div class="metric-label">Total Entities</div>
+            </div>
+        </a>
+    </div>
+    <div class="col-md-4">
+        <a href="{% url 'core:entity_list' %}?status=unassigned" class="text-decoration-none">
+            <div class="metric-card border-start border-4 border-warning">
+                <div class="metric-value text-warning">{{ unassigned_count }}</div>
+                <div class="metric-label">Unassigned Entities</div>
+            </div>
+        </a>
+    </div>
+    <div class="col-md-4">
+        <div class="metric-card border-start border-4 border-danger">
+            <div class="metric-value text-danger">{{ overdue_followups|length }}</div>
+            <div class="metric-label">Overdue Follow-ups</div>
+        </div>
+    </div>
+</div>
+
+<!-- Entity Type Breakdown -->
+{% if entity_type_counts %}
+<div class="card border-0 shadow-sm mb-4">
+    <div class="card-header bg-white fw-bold py-2">
+        <i class="bi bi-pie-chart text-primary"></i> Entity Breakdown
+    </div>
+    <div class="card-body py-2">
+        <div class="row">
+            {% for type_name, count in entity_type_counts.items %}
+            <div class="col text-center py-2">
+                <div style="font-size: 1.4rem; font-weight: 700; color: #1a1a2e;">{{ count }}</div>
+                <small class="text-muted">{{ type_name }}</small>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<div class="row g-4">
+    <!-- Main Column -->
+    <div class="col-lg-8">
+
+        <!-- OVERDUE FOLLOW-UPS -->
+        {% if overdue_followups %}
+        <div class="d-flex justify-content-between align-items-center mb-3">
+            <div class="section-header mb-0">
+                <i class="bi bi-exclamation-triangle text-danger"></i> Overdue Follow-ups
+            </div>
+            <span class="badge bg-danger rounded-pill px-3">{{ overdue_followups|length }}</span>
+        </div>
+
+        {% for note in overdue_followups %}
+        <a href="{% url 'core:meeting_note_detail' pk=note.pk %}" class="followup-card overdue">
+            <div class="d-flex justify-content-between align-items-start">
+                <div>
+                    <div class="fw-bold">{{ note.title }}</div>
+                    <div class="text-muted" style="font-size: 0.85rem;">
+                        <i class="bi bi-building me-1"></i>{{ note.entity.entity_name|default:"No entity" }}
+                    </div>
+                </div>
+                <div class="text-end">
+                    <span class="badge bg-danger rounded-pill">{{ note.follow_up_date }}</span>
+                    {% if note.created_by %}
+                    <div class="text-muted" style="font-size: 0.75rem;">by {{ note.created_by.get_full_name|default:note.created_by.username }}</div>
+                    {% endif %}
+                </div>
+            </div>
+        </a>
+        {% endfor %}
+        {% endif %}
+
+        <!-- UPCOMING FOLLOW-UPS -->
+        <div class="d-flex justify-content-between align-items-center mb-3 {% if overdue_followups %}mt-4{% endif %}">
+            <div class="section-header mb-0">
+                <i class="bi bi-calendar-check text-primary"></i> Upcoming Follow-ups
+            </div>
+            {% if upcoming_followups %}
+            <span class="badge bg-primary rounded-pill px-3">{{ upcoming_followups|length }}</span>
+            {% endif %}
+        </div>
+
+        {% for note in upcoming_followups %}
+        <a href="{% url 'core:meeting_note_detail' pk=note.pk %}" class="followup-card upcoming">
+            <div class="d-flex justify-content-between align-items-start">
+                <div>
+                    <div class="fw-bold">{{ note.title }}</div>
+                    <div class="text-muted" style="font-size: 0.85rem;">
+                        <i class="bi bi-building me-1"></i>{{ note.entity.entity_name|default:"No entity" }}
+                    </div>
+                </div>
+                <div class="text-end">
+                    <span class="badge bg-primary rounded-pill">{{ note.follow_up_date }}</span>
+                    {% if note.created_by %}
+                    <div class="text-muted" style="font-size: 0.75rem;">by {{ note.created_by.get_full_name|default:note.created_by.username }}</div>
+                    {% endif %}
+                </div>
+            </div>
+        </a>
+        {% empty %}
+        <div class="no-data-box">
+            <i class="bi bi-calendar-check text-success" style="font-size: 2.5rem;"></i>
+            <h6 class="mt-2 text-muted">No upcoming follow-ups</h6>
+            <p class="text-muted small mb-0">Follow-ups from meeting notes will appear here.</p>
+        </div>
+        {% endfor %}
+
+        <!-- RECENTLY ADDED ENTITIES -->
+        <div class="section-header mt-4">
+            <i class="bi bi-clock-history text-info"></i> Recently Added Entities
+        </div>
+
+        {% if recently_added %}
+        <div class="entity-table">
+            <table class="table table-hover mb-0">
+                <thead>
+                    <tr>
+                        <th class="ps-3">Entity Name</th>
+                        <th>Type</th>
+                        <th>Primary Accountant</th>
+                        <th class="text-end pe-3">Added</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for entity in recently_added %}
+                    <tr>
+                        <td class="ps-3">
+                            <a href="{% url 'core:entity_detail' pk=entity.pk %}" class="entity-link">
+                                {{ entity.entity_name }}
+                            </a>
+                        </td>
+                        <td>
+                            <span class="type-badge">{{ entity.get_entity_type_display }}</span>
+                        </td>
+                        <td>
+                            {% if entity.primary_accountant %}
+                                <small>{{ entity.primary_accountant.get_full_name|default:entity.primary_accountant.username }}</small>
+                            {% else %}
+                                <small class="text-warning"><i class="bi bi-exclamation-circle"></i> Unassigned</small>
+                            {% endif %}
+                        </td>
+                        <td class="text-end pe-3">
+                            <small class="text-muted">{{ entity.created_at|timesince }} ago</small>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="no-data-box">
+            <i class="bi bi-building text-muted" style="font-size: 2.5rem;"></i>
+            <h6 class="mt-2 text-muted">No entities yet</h6>
+        </div>
+        {% endif %}
+
+    </div>
+
+    <!-- Right Sidebar -->
+    <div class="col-lg-4">
+
+        <!-- Quick Actions -->
+        <div class="sidebar-widget">
+            <h6 class="fw-bold"><i class="bi bi-lightning-charge"></i> Quick Actions</h6>
+            <div class="d-grid gap-2">
+                <a href="{% url 'core:entity_list' %}" class="btn btn-sm btn-outline-primary text-start">
+                    <i class="bi bi-building me-1"></i> View All Entities
+                </a>
+                <a href="{% url 'core:entity_create' %}" class="btn btn-sm btn-outline-success text-start">
+                    <i class="bi bi-plus-circle me-1"></i> Create Entity
+                </a>
+                <a href="{% url 'core:entity_list' %}?q=" class="btn btn-sm btn-outline-secondary text-start">
+                    <i class="bi bi-search me-1"></i> Search Entities
+                </a>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<script>
+// Live clock - Melbourne timezone
+function updateClock() {
+    const now = new Date();
+    const options = {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        timeZone: 'Australia/Melbourne',
+        hour12: true,
+    };
+    const formatted = now.toLocaleString('en-AU', options);
+    document.getElementById('liveClock').textContent = formatted;
+}
+updateClock();
+setInterval(updateClock, 1000);
+</script>
+{% endblock %}
