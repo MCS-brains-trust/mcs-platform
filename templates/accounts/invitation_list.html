@@ -63,6 +63,7 @@
                                     <span class="badge bg-danger" title="{{ inv.email_error }}">
                                         <i class="bi bi-exclamation-triangle"></i> Failed
                                     </span>
+                                    <small class="d-block text-danger mt-1" style="font-size: 0.75em; max-width: 220px; word-break: break-word;">{{ inv.email_error|truncatechars:120 }}</small>
                                 {% elif inv.status == 'pending' %}
                                     <span class="badge bg-info text-dark">
                                         <i class="bi bi-hourglass-split"></i> Sending...
