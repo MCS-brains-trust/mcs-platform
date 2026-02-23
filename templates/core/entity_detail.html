@@ -355,11 +355,72 @@
         <div class="d-flex justify-content-between align-items-center mb-3">
             <h5 class="mb-0">Relationships</h5>
             {% if user.can_edit %}
-            <a href="{% url 'core:associate_create' entity_pk=entity.pk %}" class="btn btn-sm btn-primary">
-                <i class="bi bi-plus-lg"></i> Add Relationship
-            </a>
+            <div>
+                <button type="button" class="btn btn-sm btn-success me-1" data-bs-toggle="modal" data-bs-target="#linkEntityModal">
+                    <i class="bi bi-link-45deg"></i> Link Entity
+                </button>
+                <a href="{% url 'core:associate_create' entity_pk=entity.pk %}" class="btn btn-sm btn-primary">
+                    <i class="bi bi-plus-lg"></i> Add Relationship
+                </a>
+            </div>
             {% endif %}
         </div>
+
+        <!-- Linked Entities Section -->
+        {% if outgoing_rels or incoming_rels %}
+        <h6 class="text-muted mb-2"><i class="bi bi-diagram-3"></i> Linked Entities</h6>
+        <div class="table-responsive mb-4">
+            <table class="table table-sm table-hover">
+                <thead class="table-light">
+                    <tr><th>Entity</th><th>Type</th><th>Relationship</th><th>Notes</th><th></th></tr>
+                </thead>
+                <tbody>
+                    {% for rel in outgoing_rels %}
+                    <tr>
+                        <td class="fw-semibold">
+                            <a href="{% url 'core:entity_detail' pk=rel.to_entity.pk %}" class="text-decoration-none">
+                                {{ rel.to_entity.entity_name }}
+                            </a>
+                        </td>
+                        <td><span class="badge bg-secondary">{{ rel.to_entity.get_entity_type_display }}</span></td>
+                        <td>{{ rel.get_relationship_type_display }}</td>
+                        <td>{{ rel.notes|default:"\u2014" }}</td>
+                        <td class="text-end">
+                            {% if user.can_edit %}
+                            <form method="post" action="{% url 'core:entity_link_delete' pk=rel.pk %}" class="d-inline" onsubmit="return confirm('Unlink this entity?');">
+                                {% csrf_token %}
+                                <input type="hidden" name="return_to" value="{{ entity.pk }}">
+                                <button class="btn btn-sm btn-outline-danger" title="Unlink"><i class="bi bi-x-lg"></i></button>
+                            </form>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                    {% for rel in incoming_rels %}
+                    <tr>
+                        <td class="fw-semibold">
+                            <a href="{% url 'core:entity_detail' pk=rel.from_entity.pk %}" class="text-decoration-none">
+                                {{ rel.from_entity.entity_name }}
+                            </a>
+                        </td>
+                        <td><span class="badge bg-secondary">{{ rel.from_entity.get_entity_type_display }}</span></td>
+                        <td>{{ rel.reverse_label }}</td>
+                        <td>{{ rel.notes|default:"\u2014" }}</td>
+                        <td class="text-end">
+                            {% if user.can_edit %}
+                            <form method="post" action="{% url 'core:entity_link_delete' pk=rel.pk %}" class="d-inline" onsubmit="return confirm('Unlink this entity?');">
+                                {% csrf_token %}
+                                <input type="hidden" name="return_to" value="{{ entity.pk }}">
+                                <button class="btn btn-sm btn-outline-danger" title="Unlink"><i class="bi bi-x-lg"></i></button>
+                            </form>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
 
         {% if family_associates %}
         <h6 class="text-muted mb-2"><i class="bi bi-heart"></i> Family</h6>
@@ -373,9 +434,9 @@
                     <tr>
                         <td class="fw-semibold">{{ a.name }}</td>
                         <td>{{ a.get_relationship_type_display }}</td>
-                        <td>{{ a.date_of_birth|date:"d M Y"|default:"—" }}</td>
-                        <td>{{ a.email|default:"—" }}</td>
-                        <td>{{ a.phone|default:"—" }}</td>
+                        <td>{{ a.date_of_birth|date:"d M Y"|default:"\u2014" }}</td>
+                        <td>{{ a.email|default:"\u2014" }}</td>
+                        <td>{{ a.phone|default:"\u2014" }}</td>
                         <td class="text-end">
                             <a href="{% url 'core:associate_edit' pk=a.pk %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-pencil"></i></a>
                             <form method="post" action="{% url 'core:associate_delete' pk=a.pk %}" class="d-inline" onsubmit="return confirm('Delete relationship?');">
@@ -402,9 +463,9 @@
                     <tr>
                         <td class="fw-semibold">{{ a.name }}</td>
                         <td>{{ a.get_relationship_type_display }}</td>
-                        <td>{{ a.occupation|default:"—" }}</td>
-                        <td>{{ a.email|default:"—" }}</td>
-                        <td>{{ a.phone|default:"—" }}</td>
+                        <td>{{ a.occupation|default:"\u2014" }}</td>
+                        <td>{{ a.email|default:"\u2014" }}</td>
+                        <td>{{ a.phone|default:"\u2014" }}</td>
                         <td class="text-end">
                             <a href="{% url 'core:associate_edit' pk=a.pk %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-pencil"></i></a>
                             <form method="post" action="{% url 'core:associate_delete' pk=a.pk %}" class="d-inline" onsubmit="return confirm('Delete relationship?');">
@@ -419,12 +480,62 @@
         </div>
         {% endif %}
 
-        {% if not family_associates and not business_associates %}
+        {% if not family_associates and not business_associates and not outgoing_rels and not incoming_rels %}
         <div class="text-center py-4 text-muted">
             <i class="bi bi-people display-6"></i>
-            <p class="mt-2">No relationships yet. <a href="{% url 'core:associate_create' entity_pk=entity.pk %}">Add a relationship</a> or pull from XRM.</p>
+            <p class="mt-2">No relationships yet. <a href="#" data-bs-toggle="modal" data-bs-target="#linkEntityModal">Link an entity</a> or <a href="{% url 'core:associate_create' entity_pk=entity.pk %}">add a relationship</a>.</p>
         </div>
         {% endif %}
+
+        <!-- Link Entity Modal -->
+        <div class="modal fade" id="linkEntityModal" tabindex="-1" aria-labelledby="linkEntityModalLabel" aria-hidden="true">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <form method="post" action="{% url 'core:entity_link_create' entity_pk=entity.pk %}">
+                        {% csrf_token %}
+                        <div class="modal-header">
+                            <h5 class="modal-title" id="linkEntityModalLabel"><i class="bi bi-link-45deg"></i> Link Entity</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Search Entity *</label>
+                                <input type="text" id="entityLinkSearch" class="form-control" placeholder="Type entity name, ABN, or trading name..." autocomplete="off">
+                                <input type="hidden" name="to_entity" id="entityLinkId">
+                                <div id="entityLinkResults" class="list-group mt-1" style="max-height: 250px; overflow-y: auto;"></div>
+                                <div id="entityLinkSelected" class="mt-2" style="display:none;">
+                                    <span class="badge bg-primary fs-6" id="entityLinkSelectedName"></span>
+                                    <button type="button" class="btn btn-sm btn-outline-secondary ms-1" id="entityLinkClear"><i class="bi bi-x"></i></button>
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label fw-semibold">Relationship Type *</label>
+                                <select name="relationship_type" class="form-select">
+                                    <option value="related_party">Related Party</option>
+                                    <option value="trustee_of">Trustee of</option>
+                                    <option value="beneficiary_of">Beneficiary of</option>
+                                    <option value="director_of">Director of</option>
+                                    <option value="shareholder_of">Shareholder of</option>
+                                    <option value="partner_in">Partner in</option>
+                                    <option value="parent_entity">Parent Entity</option>
+                                    <option value="subsidiary">Subsidiary</option>
+                                    <option value="associated_entity">Associated Entity</option>
+                                    <option value="other">Other</option>
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Notes</label>
+                                <textarea name="notes" class="form-control" rows="2" placeholder="Optional notes about this relationship..."></textarea>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                            <button type="submit" class="btn btn-success" id="entityLinkSubmit" disabled><i class="bi bi-link-45deg"></i> Link Entity</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- ============ SOFTWARE TAB ============ -->
@@ -700,6 +811,71 @@ function escHtml(str) {
     div.textContent = str;
     return div.innerHTML;
 }
+
+// Entity Link Search
+(function() {
+    const searchInput = document.getElementById('entityLinkSearch');
+    const resultsDiv = document.getElementById('entityLinkResults');
+    const hiddenId = document.getElementById('entityLinkId');
+    const selectedDiv = document.getElementById('entityLinkSelected');
+    const selectedName = document.getElementById('entityLinkSelectedName');
+    const clearBtn = document.getElementById('entityLinkClear');
+    const submitBtn = document.getElementById('entityLinkSubmit');
+    const entityPk = '{{ entity.pk }}';
+    let debounceTimer;
+
+    if (!searchInput) return;
+
+    searchInput.addEventListener('input', function() {
+        clearTimeout(debounceTimer);
+        const q = this.value.trim();
+        if (q.length < 2) { resultsDiv.innerHTML = ''; return; }
+        debounceTimer = setTimeout(() => {
+            fetch(`{% url 'core:entity_link_search' %}?q=${encodeURIComponent(q)}&exclude=${entityPk}`)
+                .then(r => r.json())
+                .then(data => {
+                    resultsDiv.innerHTML = '';
+                    if (data.length === 0) {
+                        resultsDiv.innerHTML = '<div class="list-group-item text-muted">No entities found</div>';
+                        return;
+                    }
+                    data.forEach(e => {
+                        const item = document.createElement('a');
+                        item.href = '#';
+                        item.className = 'list-group-item list-group-item-action';
+                        item.innerHTML = `<strong>${escHtml(e.name)}</strong> <span class="badge bg-secondary ms-1">${escHtml(e.type)}</span>${e.abn ? ' <small class="text-muted">ABN: ' + escHtml(e.abn) + '</small>' : ''}`;
+                        item.addEventListener('click', function(ev) {
+                            ev.preventDefault();
+                            hiddenId.value = e.id;
+                            selectedName.textContent = e.name + ' (' + e.type + ')';
+                            selectedDiv.style.display = 'block';
+                            searchInput.style.display = 'none';
+                            resultsDiv.innerHTML = '';
+                            submitBtn.disabled = false;
+                        });
+                        resultsDiv.appendChild(item);
+                    });
+                });
+        }, 300);
+    });
+
+    clearBtn.addEventListener('click', function() {
+        hiddenId.value = '';
+        selectedDiv.style.display = 'none';
+        searchInput.style.display = 'block';
+        searchInput.value = '';
+        searchInput.focus();
+        submitBtn.disabled = true;
+    });
+
+    // Reset modal on close
+    const modal = document.getElementById('linkEntityModal');
+    if (modal) {
+        modal.addEventListener('hidden.bs.modal', function() {
+            clearBtn.click();
+        });
+    }
+})();
 
 // Preserve tab state on page reload
 document.addEventListener('DOMContentLoaded', function() {

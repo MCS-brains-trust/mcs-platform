@@ -233,6 +233,11 @@ def entity_detail(request, pk):
     associates = entity.associates.filter(is_active=True)
     family_associates = [a for a in associates if a.is_family]
     business_associates = [a for a in associates if not a.is_family]
+    # Entity-to-entity relationships (both directions)
+    from core.models import EntityRelationship
+    outgoing_rels = EntityRelationship.objects.filter(from_entity=entity).select_related("to_entity")
+    incoming_rels = EntityRelationship.objects.filter(to_entity=entity).select_related("from_entity")
+    entity_relationships = list(outgoing_rels) + list(incoming_rels)
     software_configs = entity.software_configs.all()
     meeting_notes = entity.meeting_notes.all()[:20]
     pending_followups = entity.meeting_notes.filter(
@@ -245,6 +250,9 @@ def entity_detail(request, pk):
         "unfinalised_count": unfinalised_count,
         "family_associates": family_associates,
         "business_associates": business_associates,
+        "entity_relationships": entity_relationships,
+        "outgoing_rels": outgoing_rels,
+        "incoming_rels": incoming_rels,
         "software_configs": software_configs,
         "meeting_notes": meeting_notes,
         "pending_followups": pending_followups,
@@ -2295,6 +2303,95 @@ def associate_delete(request, pk):
         assoc.delete()
         messages.success(request, f"Associate '{name}' removed.")
     return redirect("core:entity_detail", pk=entity.pk)
+
+
+# ---------------------------------------------------------------------------
+# Entity-to-Entity Relationships
+# ---------------------------------------------------------------------------
+@login_required
+def entity_link_search(request):
+    """HTMX/JSON endpoint to search entities for the link modal."""
+    query = request.GET.get("q", "")
+    exclude_pk = request.GET.get("exclude", "")
+    if len(query) < 2:
+        return JsonResponse([], safe=False)
+    entities = Entity.objects.filter(is_archived=False).filter(
+        Q(entity_name__icontains=query)
+        | Q(abn__icontains=query)
+        | Q(trading_as__icontains=query)
+    )
+    if exclude_pk:
+        entities = entities.exclude(pk=exclude_pk)
+    entities = entities[:15]
+    results = [
+        {
+            "id": str(e.pk),
+            "name": e.entity_name,
+            "type": e.get_entity_type_display(),
+            "abn": e.abn or "",
+        }
+        for e in entities
+    ]
+    return JsonResponse(results, safe=False)
+
+
+@login_required
+def entity_link_create(request, entity_pk):
+    """Create an entity-to-entity relationship."""
+    entity = get_entity_for_user(request, entity_pk)
+    if not request.user.can_edit:
+        messages.error(request, "You do not have permission to link entities.")
+        return redirect("core:entity_detail", pk=entity_pk)
+    if request.method == "POST":
+        to_entity_id = request.POST.get("to_entity")
+        relationship_type = request.POST.get("relationship_type", "related_party")
+        notes = request.POST.get("notes", "")
+        if not to_entity_id:
+            messages.error(request, "Please select an entity to link.")
+            return redirect("core:entity_detail", pk=entity_pk)
+        try:
+            to_entity = Entity.objects.get(pk=to_entity_id)
+        except Entity.DoesNotExist:
+            messages.error(request, "Selected entity not found.")
+            return redirect("core:entity_detail", pk=entity_pk)
+        if to_entity.pk == entity.pk:
+            messages.error(request, "Cannot link an entity to itself.")
+            return redirect("core:entity_detail", pk=entity_pk)
+        from core.models import EntityRelationship
+        _, created = EntityRelationship.objects.get_or_create(
+            from_entity=entity,
+            to_entity=to_entity,
+            relationship_type=relationship_type,
+            defaults={"notes": notes, "created_by": request.user},
+        )
+        if created:
+            _log_action(request, "import", f"Linked entity: {entity.entity_name} → {relationship_type} → {to_entity.entity_name}", entity)
+            messages.success(request, f"Linked to '{to_entity.entity_name}' as {dict(EntityRelationship.RelationshipType.choices).get(relationship_type, relationship_type)}.")
+        else:
+            messages.info(request, "This relationship already exists.")
+    return redirect("core:entity_detail", pk=entity_pk)
+
+
+@login_required
+def entity_link_delete(request, pk):
+    """Delete an entity-to-entity relationship."""
+    from core.models import EntityRelationship
+    rel = get_object_or_404(EntityRelationship, pk=pk)
+    # Check user has access to at least one side
+    try:
+        get_entity_for_user(request, rel.from_entity.pk)
+    except Exception:
+        get_entity_for_user(request, rel.to_entity.pk)
+    if not request.user.can_edit:
+        messages.error(request, "You do not have permission to unlink entities.")
+        return redirect("core:entity_detail", pk=rel.from_entity.pk)
+    if request.method == "POST":
+        entity_pk = request.POST.get("return_to", rel.from_entity.pk)
+        other_name = rel.to_entity.entity_name if str(rel.from_entity.pk) == str(entity_pk) else rel.from_entity.entity_name
+        rel.delete()
+        messages.success(request, f"Unlinked from '{other_name}'.")
+        return redirect("core:entity_detail", pk=entity_pk)
+    return redirect("core:entity_detail", pk=rel.from_entity.pk)
 
 
 # ---------------------------------------------------------------------------

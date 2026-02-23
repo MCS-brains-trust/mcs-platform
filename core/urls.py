@@ -82,6 +82,11 @@ urlpatterns = [
     path("associates/<uuid:pk>/edit/", views.associate_edit, name="associate_edit"),
     path("associates/<uuid:pk>/delete/", views.associate_delete, name="associate_delete"),
 
+    # Entity-to-Entity Relationships
+    path("api/entity-link-search/", views.entity_link_search, name="entity_link_search"),
+    path("entities/<uuid:entity_pk>/link/", views.entity_link_create, name="entity_link_create"),
+    path("entity-links/<uuid:pk>/delete/", views.entity_link_delete, name="entity_link_delete"),
+
     # Accounting Software (now entity-level)
     path("entities/<uuid:entity_pk>/software/create/", views.software_create, name="software_create"),
     path("software/<uuid:pk>/edit/", views.software_edit, name="software_edit"),

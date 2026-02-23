@@ -1370,6 +1370,78 @@ class ClientAssociate(models.Model):
 
 
 # ---------------------------------------------------------------------------
+# Entity-to-Entity Relationships
+# ---------------------------------------------------------------------------
+class EntityRelationship(models.Model):
+    """
+    Links two entities together for the audit risk AI engine.
+    E.g., a Trust linked to its Corporate Trustee, an Individual linked
+    to their Company, or related party entities in a family group.
+    Relationships are bidirectional — creating A→B also implies B→A.
+    """
+
+    class RelationshipType(models.TextChoices):
+        TRUSTEE_OF = "trustee_of", "Trustee of"
+        BENEFICIARY_OF = "beneficiary_of", "Beneficiary of"
+        DIRECTOR_OF = "director_of", "Director of"
+        SHAREHOLDER_OF = "shareholder_of", "Shareholder of"
+        PARTNER_IN = "partner_in", "Partner in"
+        RELATED_PARTY = "related_party", "Related Party"
+        PARENT_ENTITY = "parent_entity", "Parent Entity"
+        SUBSIDIARY = "subsidiary", "Subsidiary"
+        ASSOCIATED_ENTITY = "associated_entity", "Associated Entity"
+        OTHER = "other", "Other"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    from_entity = models.ForeignKey(
+        Entity, on_delete=models.CASCADE,
+        related_name="relationships_from",
+        help_text="The entity this relationship originates from",
+    )
+    to_entity = models.ForeignKey(
+        Entity, on_delete=models.CASCADE,
+        related_name="relationships_to",
+        help_text="The entity this relationship points to",
+    )
+    relationship_type = models.CharField(
+        max_length=50,
+        choices=RelationshipType.choices,
+        default=RelationshipType.RELATED_PARTY,
+    )
+    notes = models.TextField(blank=True, help_text="Optional notes about this relationship")
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["relationship_type", "to_entity"]
+        unique_together = ["from_entity", "to_entity", "relationship_type"]
+
+    def __str__(self):
+        return f"{self.from_entity.entity_name} → {self.get_relationship_type_display()} → {self.to_entity.entity_name}"
+
+    @property
+    def reverse_label(self):
+        """Human-readable label for the reverse direction."""
+        reverse_map = {
+            "trustee_of": "Has trustee",
+            "beneficiary_of": "Has beneficiary",
+            "director_of": "Has director",
+            "shareholder_of": "Has shareholder",
+            "partner_in": "Partner in",
+            "parent_entity": "Subsidiary of",
+            "subsidiary": "Parent entity of",
+            "related_party": "Related party",
+            "associated_entity": "Associated entity",
+            "other": "Other",
+        }
+        return reverse_map.get(self.relationship_type, "Related")
+
+
+# ---------------------------------------------------------------------------
 # Accounting Software Configuration
 # ---------------------------------------------------------------------------
 class AccountingSoftware(models.Model):
