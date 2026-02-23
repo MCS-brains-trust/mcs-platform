@@ -338,6 +338,23 @@ def financial_year_detail(request, pk):
         'Current Liabilities': 'Current Liabilities', 'Non-Current Liabilities': 'Non Current Liabilities',
         'Equity': 'Equity', 'Income Tax': 'Equity',
     }
+    # Annotate TB lines with display Dr/Cr values FIRST (before grouping/totals)
+    for line in tb_lines:
+        if line.debit == 0 and line.credit == 0 and line.closing_balance != 0:
+            if line.closing_balance > 0:
+                line.display_dr = line.closing_balance
+                line.display_cr = Decimal('0')
+            else:
+                line.display_dr = Decimal('0')
+                line.display_cr = abs(line.closing_balance)
+        else:
+            line.display_dr = line.debit
+            line.display_cr = line.credit
+
+    # Calculate totals from display values (accounts for opening balances in rolled-forward years)
+    total_debit = sum(line.display_dr for line in tb_lines)
+    total_credit = sum(line.display_cr for line in tb_lines)
+
     sections = OrderedDict()
     for line in tb_lines:
         if line.mapped_line_item:
@@ -407,24 +424,9 @@ def financial_year_detail(request, pk):
                     'description': flag.description[:120],
                 })
 
-    # Annotate TB lines with risk flag info, display values, and variance calculations
+    # Annotate TB lines with risk flag info
     for line in tb_lines:
         line.risk_flags_list = flagged_accounts.get(line.account_code, [])
-        # Display Dr/Cr: use closing_balance when no movements (rolled-forward BS items)
-        if line.debit == 0 and line.credit == 0 and line.closing_balance != 0:
-            if line.closing_balance > 0:
-                line.display_dr = line.closing_balance
-                line.display_cr = Decimal('0')
-            else:
-                line.display_dr = Decimal('0')
-                line.display_cr = abs(line.closing_balance)
-        else:
-            line.display_dr = line.debit
-            line.display_cr = line.credit
-
-    # Calculate totals from display values (accounts for opening balances in rolled-forward years)
-    total_debit = sum(line.display_dr for line in tb_lines)
-    total_credit = sum(line.display_cr for line in tb_lines)
 
     # Depreciation assets
     depreciation_assets = DepreciationAsset.objects.filter(financial_year=fy)
