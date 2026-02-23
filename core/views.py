@@ -364,6 +364,22 @@ def financial_year_detail(request, pk):
         if key not in ordered_sections:
             ordered_sections[key] = sections[key]
 
+    # Calculate Net Profit: Income (Cr) - Expenses (Dr) for P&L sections
+    pl_sections = {'Income', 'Cost of Sales', 'Expenses'}
+    pl_dr = Decimal('0')
+    pl_cr = Decimal('0')
+    pl_prior_dr = Decimal('0')
+    pl_prior_cr = Decimal('0')
+    for section_name, lines_list in ordered_sections.items():
+        if section_name in pl_sections:
+            for line in lines_list:
+                pl_dr += line.debit or Decimal('0')
+                pl_cr += line.credit or Decimal('0')
+                pl_prior_dr += line.prior_debit or Decimal('0')
+                pl_prior_cr += line.prior_credit or Decimal('0')
+    net_profit = pl_cr - pl_dr
+    prior_net_profit = pl_prior_cr - pl_prior_dr
+
     # Year labels
     current_year = str(fy.year_label)
     # Extract year number from label like "FY2026" or "2026"
@@ -457,6 +473,10 @@ def financial_year_detail(request, pk):
         "total_credit": total_credit,
         "total_prior_debit": total_prior_debit,
         "total_prior_credit": total_prior_credit,
+        "net_profit": net_profit,
+        "net_profit_abs": abs(net_profit),
+        "prior_net_profit": prior_net_profit,
+        "prior_net_profit_abs": abs(prior_net_profit),
         "current_year": current_year,
         "prior_year": prior_year,
         # Audit Risk
@@ -1015,6 +1035,23 @@ def trial_balance_view(request, pk):
     else:
         prior_year_label = 'Prior'
 
+    # Calculate Net Profit: Income (Cr) - Expenses (Dr) for P&L sections
+    # Net Profit = Total Cr from P&L sections - Total Dr from P&L sections
+    pl_sections = {'Income', 'Cost of Sales', 'Expenses'}
+    pl_dr = Decimal('0')
+    pl_cr = Decimal('0')
+    pl_prior_dr = Decimal('0')
+    pl_prior_cr = Decimal('0')
+    for section_name, lines in ordered_sections.items():
+        if section_name in pl_sections:
+            for line in lines:
+                pl_dr += line.debit or Decimal('0')
+                pl_cr += line.credit or Decimal('0')
+                pl_prior_dr += line.prior_debit or Decimal('0')
+                pl_prior_cr += line.prior_credit or Decimal('0')
+    net_profit = pl_cr - pl_dr
+    prior_net_profit = pl_prior_cr - pl_prior_dr
+
     return render(request, "core/trial_balance_view.html", {
         "fy": fy,
         "sections": ordered_sections,
@@ -1024,6 +1061,10 @@ def trial_balance_view(request, pk):
         "grand_total_cr": grand_total_cr,
         "grand_total_prior_dr": grand_total_prior_dr,
         "grand_total_prior_cr": grand_total_prior_cr,
+        "net_profit": net_profit,
+        "net_profit_abs": abs(net_profit),
+        "prior_net_profit": prior_net_profit,
+        "prior_net_profit_abs": abs(prior_net_profit),
     })
 
 

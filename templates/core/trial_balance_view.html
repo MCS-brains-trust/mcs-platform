@@ -14,6 +14,9 @@
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h5 class="mb-0">Comparative Trial Balance &mdash; {{ fy.entity.entity_name }} &mdash; {{ fy.year_label }}</h5>
     <div class="d-flex gap-2">
+        <a href="{% url 'core:trial_balance_download' pk=fy.pk %}?format=xlsx" class="btn btn-success btn-sm">
+            <i class="bi bi-file-earmark-excel"></i> Download Excel
+        </a>
         <a href="{% url 'core:trial_balance_download' pk=fy.pk %}?format=docx" class="btn btn-dark btn-sm">
             <i class="bi bi-file-earmark-word"></i> Download Word
         </a>
@@ -71,6 +74,16 @@
                     <td class="text-end" style="width: 100px;">{{ grand_total_cr|floatformat:2 }}</td>
                     <td class="text-end" style="width: 100px;">{{ grand_total_prior_dr|floatformat:2 }}</td>
                     <td class="text-end" style="width: 100px;">{{ grand_total_prior_cr|floatformat:2 }}</td>
+                </tr>
+                <tr class="fw-bold" style="border-top: 2px solid #198754;">
+                    <td></td>
+                    <td class="text-success"><i class="bi bi-graph-up-arrow"></i> Net Profit / (Loss)</td>
+                    <td class="text-end text-success" colspan="2">
+                        {% if net_profit >= 0 %}${{ net_profit|floatformat:2 }}{% else %}<span class="text-danger">(${{ net_profit_abs|floatformat:2 }})</span>{% endif %}
+                    </td>
+                    <td class="text-end text-muted" colspan="2">
+                        {% if prior_net_profit >= 0 %}${{ prior_net_profit|floatformat:2 }}{% else %}<span class="text-danger">(${{ prior_net_profit_abs|floatformat:2 }})</span>{% endif %}
+                    </td>
                 </tr>
             </tbody>
         </table>

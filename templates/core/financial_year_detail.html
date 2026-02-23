@@ -120,10 +120,6 @@
                         <i class="bi bi-file-earmark-pdf"></i> Download PDF
                     </button>
                     {% endif %}
-                    <a href="{% url 'core:trial_balance_download' pk=fy.pk %}?format=xlsx" class="btn btn-sm btn-success">
-                        <i class="bi bi-file-earmark-excel"></i> Download Excel
-                    </a>
-
                     {% if entity.entity_type == 'trust' %}
                     <div class="vr d-none d-md-block"></div>
                     <!-- Distribution Minutes -->
@@ -360,18 +356,25 @@
                         <td></td>
                         <td></td>
                     </tr>
-                    {% if total_debit != total_credit %}
-                    <tr class="fw-bold">
+                    <tr class="fw-bold" style="border-top: 2px solid #198754;">
                         <td></td>
-                        <td class="text-end">Net Profit</td>
+                        <td class="text-end"><span class="text-success"><i class="bi bi-graph-up-arrow"></i> Net Profit / (Loss)</span></td>
                         <td class="text-end" colspan="2">
-                            <span class="{% if total_credit > total_debit %}text-success{% else %}text-danger{% endif %}">
-                                ${{ total_credit|floatformat:2|intcomma }}
-                            </span>
+                            {% if net_profit >= 0 %}
+                            <span class="text-success">${{ net_profit|floatformat:2|intcomma }}</span>
+                            {% else %}
+                            <span class="text-danger">(${{ net_profit_abs|floatformat:2|intcomma }})</span>
+                            {% endif %}
                         </td>
-                        <td colspan="5"></td>
+                        <td class="text-end text-muted" colspan="2">
+                            {% if prior_net_profit >= 0 %}
+                            ${{ prior_net_profit|floatformat:2|intcomma }}
+                            {% else %}
+                            <span class="text-danger">(${{ prior_net_profit_abs|floatformat:2|intcomma }})</span>
+                            {% endif %}
+                        </td>
+                        <td colspan="3"></td>
                     </tr>
-                    {% endif %}
                 </tfoot>
             </table>
         </div>
