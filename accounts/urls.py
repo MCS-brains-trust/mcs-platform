@@ -28,6 +28,7 @@ urlpatterns = [
     path("invitations/create/", views.invitation_create, name="invitation_create"),
     path("invitations/<uuid:pk>/resend/", views.invitation_resend, name="invitation_resend"),
     path("invitations/<uuid:pk>/revoke/", views.invitation_revoke, name="invitation_revoke"),
+    path("invitations/<uuid:pk>/delete/", views.invitation_delete, name="invitation_delete"),
 
     # 2FA setup
     path("setup-2fa/", views.setup_2fa_view, name="setup_2fa"),

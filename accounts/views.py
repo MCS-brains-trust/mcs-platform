@@ -199,6 +199,24 @@ def invitation_revoke(request, pk):
     return redirect("accounts:invitation_list")
 
 
+@login_required
+@require_POST
+def invitation_delete(request, pk):
+    """Delete a revoked or expired invitation. Admin only."""
+    if not request.user.is_admin:
+        messages.error(request, "You do not have permission.")
+        return redirect("review:dashboard")
+
+    invitation = get_object_or_404(Invitation, pk=pk)
+    if invitation.status in (Invitation.Status.REVOKED, Invitation.Status.EXPIRED):
+        email = invitation.email
+        invitation.delete()
+        messages.success(request, f"Invitation for {email} deleted.")
+    else:
+        messages.error(request, "Only revoked or expired invitations can be deleted.")
+    return redirect("accounts:invitation_list")
+
+
 def _send_invitation_email(request, invitation):
     """Send the invitation email with signup link in a background thread.
 

@@ -96,6 +96,15 @@
                                         </button>
                                     </form>
                                 {% endif %}
+                                {% if inv.status == 'revoked' or inv.status == 'expired' %}
+                                    <form method="post" action="{% url 'accounts:invitation_delete' inv.pk %}" class="d-inline"
+                                          onsubmit="return confirm('Delete invitation for {{ inv.first_name }} {{ inv.last_name }}? This cannot be undone.');">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete">
+                                            <i class="bi bi-trash"></i>
+                                        </button>
+                                    </form>
+                                {% endif %}
                             </td>
                         </tr>
                         {% endfor %}
