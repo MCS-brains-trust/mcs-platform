@@ -373,8 +373,8 @@ def profile_view(request):
                 update_session_auth_hash(request, request.user)
                 context["password_changed"] = True
 
-    # Activity history — last 50 audit log entries for this user
-    context["audit_logs"] = AuditLog.objects.filter(user=request.user)[:50]
+    # Activity history — last 5 audit log entries for this user
+    context["audit_logs"] = AuditLog.objects.filter(user=request.user)[:5]
 
     return render(request, "accounts/profile.html", context)
 
