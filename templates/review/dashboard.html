@@ -458,60 +458,7 @@
             </div>
         </div>
 
-        <!-- Recent Activity -->
-        <div class="sidebar-widget" style="max-height: 500px; overflow-y: auto;">
-            <h6 class="fw-bold"><i class="bi bi-activity"></i> Recent Activity</h6>
 
-            {% for activity in activities %}
-            <div class="activity-item d-flex gap-2">
-                <div class="activity-icon flex-shrink-0
-                    {% if activity.activity_type == 'new_statement' %}bg-primary bg-opacity-10 text-primary
-                    {% elif activity.activity_type == 'review_completed' %}bg-success bg-opacity-10 text-success
-                    {% elif activity.activity_type == 'ai_improved' %}bg-info bg-opacity-10 text-info
-                    {% else %}bg-warning bg-opacity-10 text-warning{% endif %}">
-                    {% if activity.activity_type == 'new_statement' %}<i class="bi bi-envelope"></i>
-                    {% elif activity.activity_type == 'review_completed' %}<i class="bi bi-check2-all"></i>
-                    {% elif activity.activity_type == 'ai_improved' %}<i class="bi bi-robot"></i>
-                    {% else %}<i class="bi bi-play-circle"></i>{% endif %}
-                </div>
-                <div>
-                    <div style="font-size: 0.85rem;"><strong>{{ activity.get_activity_type_display }}</strong></div>
-                    <div style="font-size: 0.78rem; color: #6c757d;">{{ activity.description }}</div>
-                    <div style="font-size: 0.72rem; color: #adb5bd;">{{ activity.created_at|timesince }} ago</div>
-                </div>
-            </div>
-            {% empty %}
-            {% endfor %}
-
-            {% if recent_audit_logs %}
-            {% if activities %}<hr class="my-2">{% endif %}
-            {% for log in recent_audit_logs %}
-            <div class="activity-item d-flex gap-2">
-                <div class="activity-icon flex-shrink-0
-                    {% if log.action == 'generate' %}bg-success bg-opacity-10 text-success
-                    {% elif log.action == 'import' %}bg-primary bg-opacity-10 text-primary
-                    {% elif log.action == 'status_change' %}bg-info bg-opacity-10 text-info
-                    {% elif log.action == 'adjustment' %}bg-warning bg-opacity-10 text-warning
-                    {% else %}bg-secondary bg-opacity-10 text-secondary{% endif %}">
-                    {% if log.action == 'generate' %}<i class="bi bi-file-earmark-check"></i>
-                    {% elif log.action == 'import' %}<i class="bi bi-cloud-upload"></i>
-                    {% elif log.action == 'status_change' %}<i class="bi bi-arrow-repeat"></i>
-                    {% elif log.action == 'adjustment' %}<i class="bi bi-pencil-square"></i>
-                    {% else %}<i class="bi bi-clock-history"></i>{% endif %}
-                </div>
-                <div>
-                    <div style="font-size: 0.85rem;"><strong>{{ log.get_action_display }}</strong></div>
-                    <div style="font-size: 0.78rem; color: #6c757d;">{{ log.description|truncatewords:15 }}</div>
-                    <div style="font-size: 0.72rem; color: #adb5bd;">{{ log.timestamp|timesince }} ago</div>
-                </div>
-            </div>
-            {% endfor %}
-            {% endif %}
-
-            {% if not activities and not recent_audit_logs %}
-            <p class="text-muted text-center py-3" style="font-size: 0.85rem;">No recent activity.</p>
-            {% endif %}
-        </div>
 
         <!-- AI Learning Stats -->
         {% if total_patterns > 0 %}
