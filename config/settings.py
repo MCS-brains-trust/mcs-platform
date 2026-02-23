@@ -147,21 +147,25 @@ CSRF_TRUSTED_ORIGINS = [
 CSRF_COOKIE_SAMESITE = "Lax"
 
 # Email configuration
+# Production: uses Resend HTTP API (bypasses SMTP port blocking)
 # Development: console backend (emails printed to terminal)
-# Production: set EMAIL_BACKEND, EMAIL_HOST, EMAIL_PORT, etc. in .env
+# Set RESEND_API_KEY in .env to enable Resend, otherwise falls back to console
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
 EMAIL_BACKEND = os.environ.get(
     "EMAIL_BACKEND",
-    "django.core.mail.backends.console.EmailBackend",
+    "config.email_backend.ResendEmailBackend" if RESEND_API_KEY else "django.core.mail.backends.console.EmailBackend",
 )
-EMAIL_HOST = os.environ.get("EMAIL_HOST", "")
-EMAIL_PORT = int(os.environ.get("EMAIL_PORT", 587))
-EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "True").lower() == "true"
-EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
-EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
 DEFAULT_FROM_EMAIL = os.environ.get(
     "DEFAULT_FROM_EMAIL",
     "StatementHub <noreply@statementhub.com.au>",
 )
+# Legacy SMTP settings (kept for fallback if needed)
+EMAIL_HOST = os.environ.get("EMAIL_HOST", "")
+EMAIL_PORT = int(os.environ.get("EMAIL_PORT", 587))
+EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "True").lower() == "true"
+EMAIL_USE_SSL = os.environ.get("EMAIL_USE_SSL", "False").lower() == "true"
+EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
+EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
 
 # ─── Caching (for concurrent user performance) ───────────────────────────────
 # Use database-backed cache in production; falls back to local memory for dev.
