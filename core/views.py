@@ -759,7 +759,8 @@ def roll_forward(request, pk):
             ).values_list("account_code", "section")
         )
 
-        carried = 0
+        carried_bs = 0
+        carried_pl = 0
         for line in current_fy.trial_balance_lines.filter(is_adjustment=False):
             # Determine if this is a balance sheet account
             is_bs = False
@@ -774,30 +775,48 @@ def roll_forward(request, pk):
                 if code_prefix.isdigit():
                     is_bs = int(code_prefix) >= 2000
 
-            if not is_bs:
-                continue  # Skip P&L accounts (revenue, expenses, COGS)
+            if is_bs:
+                # Balance sheet: carry forward opening balance + comparatives
+                if line.closing_balance == 0:
+                    continue
 
-            # Only carry forward if there's actually a balance
-            if line.closing_balance == 0:
-                continue
+                TrialBalanceLine.objects.create(
+                    financial_year=new_fy,
+                    account_code=line.account_code,
+                    account_name=line.account_name,
+                    opening_balance=line.closing_balance,
+                    debit=Decimal("0"),
+                    credit=Decimal("0"),
+                    closing_balance=line.closing_balance,  # = opening, waiting for movement
+                    prior_debit=line.debit,
+                    prior_credit=line.credit,
+                    mapped_line_item=line.mapped_line_item,
+                    is_adjustment=False,
+                )
+                carried_bs += 1
+            else:
+                # P&L accounts: carry as comparative-only lines (no current year balances)
+                if line.debit == 0 and line.credit == 0:
+                    continue  # Skip if no prior year activity
 
-            TrialBalanceLine.objects.create(
-                financial_year=new_fy,
-                account_code=line.account_code,
-                account_name=line.account_name,
-                opening_balance=line.closing_balance,
-                debit=Decimal("0"),
-                credit=Decimal("0"),
-                closing_balance=line.closing_balance,  # = opening, waiting for movement
-                prior_debit=line.debit,
-                prior_credit=line.credit,
-                mapped_line_item=line.mapped_line_item,
-                is_adjustment=False,
-            )
-            carried += 1
+                TrialBalanceLine.objects.create(
+                    financial_year=new_fy,
+                    account_code=line.account_code,
+                    account_name=line.account_name,
+                    opening_balance=Decimal("0"),
+                    debit=Decimal("0"),
+                    credit=Decimal("0"),
+                    closing_balance=Decimal("0"),
+                    prior_debit=line.debit,
+                    prior_credit=line.credit,
+                    mapped_line_item=line.mapped_line_item,
+                    is_adjustment=False,
+                )
+                carried_pl += 1
 
-        _log_action(request, "import", f"Rolled forward to {new_label} with {carried} balance sheet items", new_fy)
-        messages.success(request, f"Rolled forward to {new_label}. {carried} balance sheet items carried with opening balances and comparatives.")
+        total_carried = carried_bs + carried_pl
+        _log_action(request, "import", f"Rolled forward to {new_label} with {carried_bs} balance sheet items and {carried_pl} P&L comparatives", new_fy)
+        messages.success(request, f"Rolled forward to {new_label}. {carried_bs} balance sheet items carried with opening balances, {carried_pl} P&L accounts carried as comparatives.")
         return redirect("core:financial_year_detail", pk=new_fy.pk)
 
     return render(request, "core/roll_forward_confirm.html", {"fy": current_fy})
@@ -2008,8 +2027,20 @@ def trial_balance_pdf(request, pk):
 
         data = []
         for line in lines:
-            dr = line.debit if line.debit else Decimal('0')
-            cr = line.credit if line.credit else Decimal('0')
+            # Current year: use closing_balance split into Dr/Cr
+            # This correctly shows opening balances for rolled-forward years
+            # and full balances (opening + movements) for active years
+            cb = line.closing_balance if line.closing_balance else Decimal('0')
+            if cb > 0:
+                dr = cb
+                cr = Decimal('0')
+            elif cb < 0:
+                dr = Decimal('0')
+                cr = abs(cb)
+            else:
+                dr = line.debit if line.debit else Decimal('0')
+                cr = line.credit if line.credit else Decimal('0')
+
             prior_dr = line.prior_debit if line.prior_debit else Decimal('0')
             prior_cr = line.prior_credit if line.prior_credit else Decimal('0')
 
@@ -4355,8 +4386,15 @@ def trial_balance_download(request, pk):
         else:
             display_section = 'Unmapped'
         sections.setdefault(display_section, []).append(line)
-        grand_dr += line.debit or Decimal('0')
-        grand_cr += line.credit or Decimal('0')
+        # Use closing_balance split into Dr/Cr for current year totals
+        cb = line.closing_balance or Decimal('0')
+        if cb > 0:
+            grand_dr += cb
+        elif cb < 0:
+            grand_cr += abs(cb)
+        else:
+            grand_dr += line.debit or Decimal('0')
+            grand_cr += line.credit or Decimal('0')
         grand_prior_dr += line.prior_debit or Decimal('0')
         grand_prior_cr += line.prior_credit or Decimal('0')
 
@@ -4516,8 +4554,17 @@ def _tb_download_word(fy, entity, sections, current_year, prior_year,
         table.autofit = True
 
         for i, line in enumerate(lines):
-            dr = line.debit or Decimal('0')
-            cr = line.credit or Decimal('0')
+            # Current year: use closing_balance split into Dr/Cr
+            cb = line.closing_balance or Decimal('0')
+            if cb > 0:
+                dr = cb
+                cr = Decimal('0')
+            elif cb < 0:
+                dr = Decimal('0')
+                cr = abs(cb)
+            else:
+                dr = line.debit or Decimal('0')
+                cr = line.credit or Decimal('0')
             prior_dr = line.prior_debit or Decimal('0')
             prior_cr = line.prior_credit or Decimal('0')
 
