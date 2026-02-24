@@ -249,6 +249,106 @@
         background: #90caf9;
         color: white;
     }
+
+    /* Search/Filter/Group styles */
+    .group-card {
+        background: white;
+        border-radius: 10px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        margin-bottom: 12px;
+        overflow: hidden;
+    }
+    .group-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 12px 16px;
+        background: #f8f9fa;
+        border-bottom: 1px solid #e9ecef;
+        cursor: pointer;
+    }
+    .group-card-header:hover {
+        background: #e9ecef;
+    }
+    .group-card-header .group-title {
+        font-weight: 700;
+        font-size: 0.9rem;
+        color: #1a1a2e;
+    }
+    .group-card-header .group-code {
+        font-weight: 700;
+        color: #1565c0;
+        margin-right: 8px;
+    }
+    .group-card-header .group-count {
+        font-size: 0.78rem;
+        color: #6c757d;
+        background: #e3f2fd;
+        padding: 2px 10px;
+        border-radius: 12px;
+        font-weight: 600;
+    }
+    .group-card-header .group-total {
+        font-size: 0.85rem;
+        font-weight: 600;
+        margin-left: 12px;
+    }
+    .group-card-body {
+        padding: 0;
+        display: none;
+    }
+    .group-card-body.show {
+        display: block;
+    }
+    .group-card-body table {
+        font-size: 0.82rem;
+        margin: 0;
+    }
+    .group-card-body table td {
+        padding: 6px 10px;
+        vertical-align: middle;
+    }
+    .btn-approve-group {
+        background: #e8f5e9;
+        border: 1px solid #a5d6a7;
+        color: #2e7d32;
+        font-weight: 600;
+        font-size: 0.78rem;
+        padding: 4px 12px;
+        border-radius: 6px;
+        white-space: nowrap;
+    }
+    .btn-approve-group:hover {
+        background: #c8e6c9;
+        color: #1b5e20;
+    }
+    .btn-approve-group:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+    .group-status-badge {
+        font-size: 0.72rem;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-weight: 600;
+    }
+    .group-status-pending {
+        background: #fff3e0;
+        color: #e65100;
+    }
+    .group-status-confirmed {
+        background: #e8f5e9;
+        color: #2e7d32;
+    }
+    .group-checkbox {
+        width: 16px;
+        height: 16px;
+        cursor: pointer;
+    }
+    .filter-active {
+        border-color: #1565c0;
+        box-shadow: 0 0 0 2px rgba(21,101,192,0.15);
+    }
 </style>
 {% endblock %}
 
@@ -339,8 +439,44 @@
     </div>
 </div>
 
+<!-- Search / Filter / Group Toolbar -->
+<div class="bg-white rounded-3 mb-3 p-3" style="box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
+    <div class="d-flex flex-wrap gap-2 align-items-center">
+        <!-- Search -->
+        <div class="flex-grow-1" style="min-width: 200px; max-width: 350px;">
+            <div class="input-group input-group-sm">
+                <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+                <input type="text" id="txn-search" class="form-control" placeholder="Search description..." oninput="applyFilters()">
+            </div>
+        </div>
+        <!-- Filter by status -->
+        <select id="filter-status" class="form-select form-select-sm" style="width: auto; min-width: 150px;" onchange="applyFilters()">
+            <option value="all">All Transactions</option>
+            <option value="unclassified">Unclassified</option>
+            <option value="pending">AI Classified (Pending)</option>
+            <option value="confirmed">Confirmed</option>
+            <option value="learning">From Learning DB</option>
+        </select>
+        <!-- Filter by account code -->
+        <select id="filter-account" class="form-select form-select-sm" style="width: auto; min-width: 180px;" onchange="applyFilters()">
+            <option value="all">All Account Codes</option>
+        </select>
+        <!-- Group toggle -->
+        <button id="btn-group-view" class="btn btn-sm btn-outline-primary" onclick="toggleGroupView()">
+            <i class="bi bi-collection"></i> Group by Code
+        </button>
+        <!-- Filter count -->
+        <span id="filter-count" class="text-muted" style="font-size: 0.8rem;"></span>
+    </div>
+</div>
+
+<!-- Grouped View (hidden by default) -->
+<div id="grouped-view" style="display: none;">
+    <div id="grouped-cards"></div>
+</div>
+
 <!-- Transaction Table -->
-<div class="bg-white rounded-3" style="box-shadow: 0 1px 3px rgba(0,0,0,0.08); overflow: hidden;">
+<div id="table-view" class="bg-white rounded-3" style="box-shadow: 0 1px 3px rgba(0,0,0,0.08); overflow: hidden;">
     <div class="table-responsive">
         <table class="table txn-table mb-0">
             <thead>
@@ -878,5 +1014,285 @@ function updateTransactionRow(c) {
         document.getElementById('btn-submit-bottom').disabled = false;
     }
 })();
+
+// ---- Search / Filter / Group ----
+let isGroupView = false;
+
+// Populate the account code filter dropdown from existing rows
+(function populateAccountFilter() {
+    const rows = document.querySelectorAll('#txn-body tr');
+    const codes = new Map(); // code -> name
+    rows.forEach(row => {
+        const code = row.dataset.aiCode;
+        const name = row.dataset.aiName;
+        if (code && code.trim()) {
+            if (!codes.has(code)) codes.set(code, name || '');
+        }
+    });
+    const select = document.getElementById('filter-account');
+    // Sort by code
+    const sorted = [...codes.entries()].sort((a, b) => a[0].localeCompare(b[0], undefined, {numeric: true}));
+    sorted.forEach(([code, name]) => {
+        const opt = document.createElement('option');
+        opt.value = code;
+        opt.textContent = code + ' — ' + name;
+        select.appendChild(opt);
+    });
+})();
+
+function applyFilters() {
+    const searchVal = (document.getElementById('txn-search').value || '').toLowerCase().trim();
+    const statusVal = document.getElementById('filter-status').value;
+    const accountVal = document.getElementById('filter-account').value;
+    const rows = document.querySelectorAll('#txn-body tr');
+    let visible = 0;
+
+    rows.forEach(row => {
+        let show = true;
+
+        // Search filter — match description
+        if (searchVal) {
+            const desc = (row.cells[2] ? row.cells[2].textContent : '').toLowerCase();
+            if (!desc.includes(searchVal)) show = false;
+        }
+
+        // Status filter
+        if (statusVal !== 'all') {
+            const isConfirmed = row.dataset.confirmed === 'true';
+            const isLearning = row.classList.contains('txn-row-learning');
+            const isUnclassified = row.classList.contains('txn-row-unclassified');
+            const isPending = row.classList.contains('txn-row-pending');
+
+            if (statusVal === 'confirmed' && !isConfirmed) show = false;
+            if (statusVal === 'pending' && !isPending) show = false;
+            if (statusVal === 'unclassified' && !isUnclassified) show = false;
+            if (statusVal === 'learning' && !isLearning) show = false;
+        }
+
+        // Account code filter
+        if (accountVal !== 'all') {
+            const aiCode = row.dataset.aiCode || '';
+            if (aiCode !== accountVal) show = false;
+        }
+
+        row.style.display = show ? '' : 'none';
+        if (show) visible++;
+    });
+
+    document.getElementById('filter-count').textContent =
+        visible + ' of ' + rows.length + ' transactions shown';
+
+    // Highlight active filters
+    ['txn-search', 'filter-status', 'filter-account'].forEach(id => {
+        const el = document.getElementById(id);
+        const isActive = (id === 'txn-search' && searchVal) ||
+                         (id === 'filter-status' && statusVal !== 'all') ||
+                         (id === 'filter-account' && accountVal !== 'all');
+        el.classList.toggle('filter-active', isActive);
+    });
+
+    // If in group view, rebuild groups
+    if (isGroupView) buildGroupView();
+}
+
+function toggleGroupView() {
+    isGroupView = !isGroupView;
+    const btn = document.getElementById('btn-group-view');
+    const tableView = document.getElementById('table-view');
+    const groupedView = document.getElementById('grouped-view');
+
+    if (isGroupView) {
+        btn.classList.remove('btn-outline-primary');
+        btn.classList.add('btn-primary');
+        btn.innerHTML = '<i class="bi bi-table"></i> Table View';
+        tableView.style.display = 'none';
+        groupedView.style.display = 'block';
+        buildGroupView();
+    } else {
+        btn.classList.remove('btn-primary');
+        btn.classList.add('btn-outline-primary');
+        btn.innerHTML = '<i class="bi bi-collection"></i> Group by Code';
+        tableView.style.display = '';
+        groupedView.style.display = 'none';
+    }
+}
+
+function buildGroupView() {
+    const rows = document.querySelectorAll('#txn-body tr');
+    const groups = new Map(); // code -> {name, txns: [{id, date, desc, amount, confirmed, aiCode}]}
+
+    rows.forEach(row => {
+        if (row.style.display === 'none') return; // respect current filters
+        const aiCode = row.dataset.aiCode || 'Unclassified';
+        const aiName = row.dataset.aiName || '';
+        const txnId = row.dataset.txnId;
+        const isConfirmed = row.dataset.confirmed === 'true';
+        const date = row.cells[1] ? row.cells[1].textContent.trim() : '';
+        const desc = row.cells[2] ? row.cells[2].textContent.trim() : '';
+        const amount = row.cells[3] ? row.cells[3].textContent.trim() : '';
+
+        if (!groups.has(aiCode)) {
+            groups.set(aiCode, {name: aiName, txns: []});
+        }
+        groups.get(aiCode).txns.push({id: txnId, date, desc, amount, confirmed: isConfirmed});
+    });
+
+    // Sort groups by code
+    const sorted = [...groups.entries()].sort((a, b) =>
+        a[0].localeCompare(b[0], undefined, {numeric: true})
+    );
+
+    let html = '';
+    sorted.forEach(([code, group]) => {
+        const pendingCount = group.txns.filter(t => !t.confirmed).length;
+        const confirmedCount = group.txns.filter(t => t.confirmed).length;
+        const totalCount = group.txns.length;
+        const allConfirmed = pendingCount === 0;
+
+        // Calculate total amount
+        let totalAmt = 0;
+        group.txns.forEach(t => {
+            const num = parseFloat(t.amount.replace(/[^\d.-]/g, ''));
+            if (!isNaN(num)) totalAmt += num;
+        });
+        const totalStr = '$' + totalAmt.toFixed(2);
+        const totalClass = totalAmt < 0 ? 'text-danger' : 'text-success';
+
+        html += `<div class="group-card" data-group-code="${code}">`;
+        html += `<div class="group-card-header" onclick="toggleGroupBody('${code}')">`;
+        html += `<div class="d-flex align-items-center gap-2">`;
+        html += `<span class="group-code">${code}</span>`;
+        html += `<span class="group-title">${group.name}</span>`;
+        html += `<span class="group-count">${totalCount} txn${totalCount !== 1 ? 's' : ''}</span>`;
+        if (pendingCount > 0) {
+            html += `<span class="group-status-badge group-status-pending">${pendingCount} pending</span>`;
+        }
+        if (confirmedCount > 0) {
+            html += `<span class="group-status-badge group-status-confirmed">${confirmedCount} confirmed</span>`;
+        }
+        html += `<span class="group-total ${totalClass}">${totalStr}</span>`;
+        html += `</div>`;
+        html += `<div class="d-flex align-items-center gap-2">`;
+        if (!allConfirmed && code !== 'Unclassified') {
+            html += `<button class="btn-approve-group" onclick="event.stopPropagation(); approveGroup('${code}')" id="btn-grp-${code.replace(/[^a-zA-Z0-9]/g, '_')}">`;
+            html += `<i class="bi bi-check2-all"></i> Approve All (${pendingCount})`;
+            html += `</button>`;
+        } else if (allConfirmed) {
+            html += `<span class="group-status-badge group-status-confirmed"><i class="bi bi-check-circle-fill"></i> All Approved</span>`;
+        }
+        html += `<i class="bi bi-chevron-down" id="chevron-${code.replace(/[^a-zA-Z0-9]/g, '_')}"></i>`;
+        html += `</div>`;
+        html += `</div>`;
+
+        // Group body — transaction list
+        html += `<div class="group-card-body" id="body-${code.replace(/[^a-zA-Z0-9]/g, '_')}">`;
+        html += `<table class="table table-sm table-hover mb-0">`;
+        html += `<thead><tr><th style="width:30px;"></th><th>Date</th><th>Description</th><th class="text-end">Amount</th><th>Status</th></tr></thead>`;
+        html += `<tbody>`;
+        group.txns.forEach(t => {
+            const statusIcon = t.confirmed
+                ? '<i class="bi bi-check-circle-fill text-success"></i>'
+                : '<i class="bi bi-circle text-warning"></i>';
+            const amtClass = t.amount.includes('-') ? 'text-danger' : 'text-success';
+            html += `<tr>`;
+            html += `<td>${statusIcon}</td>`;
+            html += `<td style="white-space:nowrap;">${t.date}</td>`;
+            html += `<td>${t.desc}</td>`;
+            html += `<td class="text-end ${amtClass}" style="white-space:nowrap;">${t.amount}</td>`;
+            html += `<td>${t.confirmed ? '<span class="group-status-badge group-status-confirmed">Confirmed</span>' : '<span class="group-status-badge group-status-pending">Pending</span>'}</td>`;
+            html += `</tr>`;
+        });
+        html += `</tbody></table></div></div>`;
+    });
+
+    document.getElementById('grouped-cards').innerHTML = html;
+}
+
+function toggleGroupBody(code) {
+    const safeCode = code.replace(/[^a-zA-Z0-9]/g, '_');
+    const body = document.getElementById('body-' + safeCode);
+    const chevron = document.getElementById('chevron-' + safeCode);
+    if (body) {
+        body.classList.toggle('show');
+        if (chevron) {
+            chevron.classList.toggle('bi-chevron-down', !body.classList.contains('show'));
+            chevron.classList.toggle('bi-chevron-up', body.classList.contains('show'));
+        }
+    }
+}
+
+function approveGroup(accountCode) {
+    const safeCode = accountCode.replace(/[^a-zA-Z0-9]/g, '_');
+    const btn = document.getElementById('btn-grp-' + safeCode);
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Approving...';
+    }
+
+    fetch(`/api/review/${JOB_ID}/bulk-approve-group/`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': CSRF_TOKEN,
+        },
+        body: JSON.stringify({account_code: accountCode}),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            // Update the main table rows
+            (data.approved_ids || []).forEach(txnId => {
+                const row = document.getElementById('row-' + txnId);
+                if (row) {
+                    row.classList.remove('txn-row-pending', 'txn-row-learning');
+                    row.classList.add('txn-row-confirmed');
+                    row.dataset.confirmed = 'true';
+                    row.querySelector('.status-icon').innerHTML = '<i class="bi bi-check-circle-fill text-success"></i>';
+
+                    // Update the account picker and tax select to show confirmed values
+                    const acctInput = document.getElementById('acct-' + txnId);
+                    const taxSelect = document.getElementById('tax-' + txnId);
+                    if (acctInput) {
+                        acctInput.classList.add('confirmed');
+                        if (!acctInput.dataset.code) {
+                            acctInput.value = row.dataset.aiCode + ' \u2014 ' + row.dataset.aiName;
+                            acctInput.dataset.code = row.dataset.aiCode;
+                            acctInput.dataset.name = row.dataset.aiName;
+                        }
+                    }
+                    if (taxSelect) taxSelect.classList.add('confirmed');
+                }
+            });
+
+            // Update progress
+            if (data.confirmed_count !== undefined) {
+                document.getElementById('confirmed-count').textContent = data.confirmed_count;
+                const progressPct = FLAGGED_COUNT > 0 ? Math.round((data.confirmed_count / FLAGGED_COUNT) * 100) : 0;
+                document.getElementById('progress-bar').style.width = progressPct + '%';
+
+                const allConfirmed = data.confirmed_count >= FLAGGED_COUNT;
+                document.getElementById('btn-submit').disabled = !allConfirmed;
+                document.getElementById('btn-submit-bottom').disabled = !allConfirmed;
+            }
+
+            // Rebuild group view
+            buildGroupView();
+        } else {
+            alert('Error: ' + (data.message || 'Unknown error'));
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-check2-all"></i> Retry';
+            }
+        }
+    })
+    .catch(err => {
+        alert('Network error: ' + err.message);
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-check2-all"></i> Retry';
+        }
+    });
+}
 </script>
+{% endblock %}
 {% endblock %}

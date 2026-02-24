@@ -39,6 +39,10 @@ urlpatterns = [
     path("api/review/<uuid:pk>/classify-batch/",
          views.classify_batch, name="classify_batch"),
 
+    # Bulk approve by group
+    path("api/review/<uuid:pk>/bulk-approve-group/",
+         views.bulk_approve_group, name="bulk_approve_group"),
+
     # Webhook (n8n)
     path("api/notify/new-review-job/",
          views.notify_new_review_job, name="notify_new_job"),

@@ -693,6 +693,78 @@ def accept_all_suggestions(request, pk):
 
 
 # ---------------------------------------------------------------------------
+# Bulk Approve by Group (account code)
+# ---------------------------------------------------------------------------
+
+@login_required
+@require_POST
+def bulk_approve_group(request, pk):
+    """
+    AJAX endpoint to bulk-approve a group of transactions that share
+    the same AI-suggested account code.
+
+    POST /api/review/<pk>/bulk-approve-group/
+    Body: {"account_code": "1510", "transaction_ids": ["uuid1", "uuid2", ...]}
+
+    If transaction_ids is provided, only those transactions are approved.
+    If only account_code is provided, all unconfirmed transactions with
+    that AI-suggested code are approved.
+    """
+    job = get_review_job_for_user(request, pk)
+    is_gst = job.is_gst_registered
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({"status": "error", "message": "Invalid JSON"}, status=400)
+
+    account_code = data.get("account_code", "")
+    txn_ids = data.get("transaction_ids", [])
+
+    if txn_ids:
+        # Approve specific transactions
+        txns = job.transactions.filter(pk__in=txn_ids, is_confirmed=False)
+    elif account_code:
+        # Approve all unconfirmed with this AI-suggested code
+        txns = job.transactions.filter(
+            ai_suggested_code=account_code, is_confirmed=False
+        )
+    else:
+        return JsonResponse({"status": "error", "message": "Provide account_code or transaction_ids"}, status=400)
+
+    approved_ids = []
+    for txn in txns:
+        txn.confirmed_code = txn.ai_suggested_code
+        txn.confirmed_name = txn.ai_suggested_name
+        if txn.ai_suggested_tax_type:
+            txn.confirmed_tax_type = txn.ai_suggested_tax_type
+        elif not is_gst:
+            txn.confirmed_tax_type = "BAS Excluded"
+        elif txn.amount > 0:
+            txn.confirmed_tax_type = "GST on Income"
+        else:
+            txn.confirmed_tax_type = "GST on Expenses"
+        txn.calculate_gst(tax_type=txn.confirmed_tax_type, is_gst_registered=is_gst)
+        txn.is_confirmed = True
+        txn.save()
+        approved_ids.append(str(txn.pk))
+
+    job.confirmed_count = job.transactions.filter(is_confirmed=True).count()
+    if job.status == "awaiting_review":
+        job.status = "in_progress"
+    job.save()
+
+    return JsonResponse({
+        "status": "ok",
+        "approved_ids": approved_ids,
+        "approved_count": len(approved_ids),
+        "confirmed_count": job.confirmed_count,
+        "flagged_count": job.flagged_count,
+        "progress_percent": job.progress_percent,
+    })
+
+
+# ---------------------------------------------------------------------------
 # Bank Statement Upload (manual PDF/Excel upload)
 # ---------------------------------------------------------------------------
 
