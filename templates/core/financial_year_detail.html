@@ -306,12 +306,11 @@
                         </td>
                     </tr>
                     {% for line in lines %}
-                    <tr class="{% if line.risk_flags_list %}table-danger{% elif not line.mapped_line_item %}table-warning{% endif %}{% if line.is_adjustment %} fst-italic{% endif %}" style="border-color: #e9ecef;{% if line.is_aggregated %} cursor: pointer;{% endif %}" {% if line.is_aggregated %}onclick="toggleSubEntries('sub-{{ section_name|slugify }}-{{ line.account_code }}')" title="Click to expand {{ line.sub_count }} entries"{% endif %}>
+                    <tr class="{% if line.risk_flags_list %}table-danger{% elif not line.mapped_line_item %}table-warning{% endif %}{% if line.is_adjustment %} fst-italic{% endif %}" style="border-color: #e9ecef;">
                         <td><code class="{% if line.risk_flags_list %}text-danger fw-bold{% else %}text-muted{% endif %}">{{ line.account_code }}</code></td>
                         <td>
                             {% if line.risk_flags_list %}<i class="bi bi-exclamation-octagon-fill text-danger me-1" title="{% for rf in line.risk_flags_list %}{{ rf.title }}{% if not forloop.last %}; {% endif %}{% endfor %}"></i>{% endif %}
                             {{ line.account_name }}
-                            {% if line.is_aggregated %}<span class="badge bg-secondary ms-1" style="font-size: 0.65rem;"><i class="bi bi-layers"></i> {{ line.sub_count }} entries</span>{% endif %}
                             {% if line.is_adjustment %}<span class="badge bg-info text-dark ms-1" style="font-size: 0.7rem;">Adj</span>{% endif %}
                             {% if not line.mapped_line_item %}<small class="text-danger ms-1"><i class="bi bi-exclamation-triangle"></i></small>{% endif %}
                             {% if line.risk_flags_list %}
@@ -322,8 +321,8 @@
                             </div>
                             {% endif %}
                         </td>
-                        <td class="text-end">{% if line.display_dr and line.display_dr != 0 %}{{ line.display_dr|floatformat:2|intcomma }}{% endif %}</td>
-                        <td class="text-end">{% if line.display_cr and line.display_cr != 0 %}{{ line.display_cr|floatformat:2|intcomma }}{% endif %}</td>
+                        <td class="text-end">{% if line.display_dr and line.display_dr != 0 %}{% if line.is_aggregated %}<a href="{% url 'core:account_code_breakdown' pk=fy.pk account_code=line.account_code %}" target="_blank" class="text-decoration-none" title="View {{ line.sub_count }} entries breakdown">{{ line.display_dr|floatformat:2|intcomma }}</a>{% else %}{{ line.display_dr|floatformat:2|intcomma }}{% endif %}{% endif %}</td>
+                        <td class="text-end">{% if line.display_cr and line.display_cr != 0 %}{% if line.is_aggregated %}<a href="{% url 'core:account_code_breakdown' pk=fy.pk account_code=line.account_code %}" target="_blank" class="text-decoration-none" title="View {{ line.sub_count }} entries breakdown">{{ line.display_cr|floatformat:2|intcomma }}</a>{% else %}{{ line.display_cr|floatformat:2|intcomma }}{% endif %}{% endif %}</td>
                         <td class="text-end text-muted">{% if line.prior_debit and line.prior_debit != 0 %}{{ line.prior_debit|floatformat:2|intcomma }}{% endif %}{% if line.prior_balance_override %}<i class="bi bi-pencil-fill text-info ms-1" style="font-size:0.65rem;" title="Manually overridden"></i>{% endif %}{% if line.reclassified %}<i class="bi bi-arrow-left-right text-warning ms-1" style="font-size:0.65rem;" title="Reclassified from prior year"></i>{% endif %}</td>
                         <td class="text-end text-muted">{% if line.prior_credit and line.prior_credit != 0 %}{{ line.prior_credit|floatformat:2|intcomma }}{% endif %}</td>
                         <td class="text-end {% if line.variance_amount > 0 %}text-success{% elif line.variance_amount < 0 %}text-danger{% endif %}" style="font-size:0.82rem;">{% if line.variance_amount %}{{ line.variance_amount|floatformat:0|intcomma }}{% endif %}</td>
@@ -334,23 +333,6 @@
                             {% endif %}
                         </td>
                     </tr>
-                    {% if line.is_aggregated %}
-                    {% for sub in line.sub_entries %}
-                    <tr class="sub-entry-row" id="sub-{{ section_name|slugify }}-{{ line.account_code }}" style="display: none; background-color: #f8f9fa; border-color: #e9ecef;">
-                        <td></td>
-                        <td style="padding-left: 2rem; font-size: 0.82rem;">
-                            <i class="bi bi-arrow-return-right text-muted me-1"></i>
-                            <span class="text-secondary">{{ sub.account_name }}</span>
-                            {% if sub.is_adjustment %}<span class="badge bg-info text-dark ms-1" style="font-size: 0.65rem;">Adj</span>{% endif %}
-                        </td>
-                        <td class="text-end" style="font-size: 0.82rem;">{% if sub.display_dr and sub.display_dr != 0 %}{{ sub.display_dr|floatformat:2|intcomma }}{% endif %}</td>
-                        <td class="text-end" style="font-size: 0.82rem;">{% if sub.display_cr and sub.display_cr != 0 %}{{ sub.display_cr|floatformat:2|intcomma }}{% endif %}</td>
-                        <td class="text-end text-muted" style="font-size: 0.82rem;">{% if sub.prior_debit and sub.prior_debit != 0 %}{{ sub.prior_debit|floatformat:2|intcomma }}{% endif %}</td>
-                        <td class="text-end text-muted" style="font-size: 0.82rem;">{% if sub.prior_credit and sub.prior_credit != 0 %}{{ sub.prior_credit|floatformat:2|intcomma }}{% endif %}</td>
-                        <td colspan="3"></td>
-                    </tr>
-                    {% endfor %}
-                    {% endif %}
                     {% endfor %}
                     {% endfor %}
                 </tbody>
@@ -2406,15 +2388,4 @@ function bulkApproveGroup(accountCode, btn) {
 }
 </script>
 
-<script>
-// ===== Trial Balance Sub-Entry Drill-Down =====
-function toggleSubEntries(groupId) {
-    const rows = document.querySelectorAll('tr[id="' + groupId + '"]');
-    if (!rows.length) return;
-    const isHidden = rows[0].style.display === 'none';
-    rows.forEach(function(row) {
-        row.style.display = isHidden ? 'table-row' : 'none';
-    });
-}
-</script>
 {% endblock %}
