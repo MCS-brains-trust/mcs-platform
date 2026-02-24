@@ -794,7 +794,7 @@ def roll_forward(request, pk):
         # -----------------------------------------------------------------
         # Pass 1: Classify all lines and calculate net P&L result
         # -----------------------------------------------------------------
-        net_pl_result = Decimal("0")  # Credits (income) positive, Debits (expenses) negative
+        net_pl_result = Decimal("0")  # Positive = net expense (loss), Negative = net income (profit)
         retained_profits_line = None
         bs_lines = []
         pl_lines = []
@@ -830,8 +830,9 @@ def roll_forward(request, pk):
                 bs_lines.append(line)
             else:
                 pl_lines.append(line)
-                # Accumulate net P&L: credits (income) minus debits (expenses)
-                net_pl_result += line.credit - line.debit
+                # Accumulate net P&L: debits (expenses) minus credits (income)
+                # Sign matches closing_balance convention where credits are negative
+                net_pl_result += line.debit - line.credit
 
         # -----------------------------------------------------------------
         # Pass 2: Create balance sheet lines, adjusting retained profits
@@ -843,10 +844,11 @@ def roll_forward(request, pk):
 
             opening = line.closing_balance
 
-            # Close P&L to retained profits: add net profit (credit) to
-            # the retained profits opening balance
+            # Close P&L to retained profits: the net P&L result uses the
+            # same sign convention as closing_balance (credits negative),
+            # so we subtract it to increase a credit balance (profit)
             if line == retained_profits_line:
-                opening = line.closing_balance + net_pl_result
+                opening = line.closing_balance - net_pl_result
                 # If retained profits was zero but net P&L is non-zero,
                 # we still need to create the line
                 if opening == 0:
@@ -889,10 +891,10 @@ def roll_forward(request, pk):
                 financial_year=new_fy,
                 account_code=rp_code,
                 account_name=rp_name,
-                opening_balance=net_pl_result,
+                opening_balance=-net_pl_result,
                 debit=Decimal("0"),
                 credit=Decimal("0"),
-                closing_balance=net_pl_result,
+                closing_balance=-net_pl_result,
                 prior_debit=Decimal("0"),
                 prior_credit=Decimal("0"),
                 mapped_line_item=None,
@@ -924,7 +926,7 @@ def roll_forward(request, pk):
             carried_pl += 1
 
         total_carried = carried_bs + carried_pl
-        pl_direction = "profit" if net_pl_result > 0 else "loss"
+        pl_direction = "profit" if net_pl_result < 0 else "loss"
         _log_action(request, "import", f"Rolled forward to {new_label} with {carried_bs} BS items, {carried_pl} P&L comparatives. Net {pl_direction} of ${abs(net_pl_result):,.2f} closed to retained earnings.", new_fy)
         messages.success(request, f"Rolled forward to {new_label}. {carried_bs} balance sheet items carried, {carried_pl} P&L comparatives. Net {pl_direction} of ${abs(net_pl_result):,.2f} closed to retained earnings.")
         return redirect("core:financial_year_detail", pk=new_fy.pk)
