@@ -791,8 +791,14 @@ def roll_forward(request, pk):
             ).values_list("account_code", "section")
         )
 
-        carried_bs = 0
-        carried_pl = 0
+        # -----------------------------------------------------------------
+        # Pass 1: Classify all lines and calculate net P&L result
+        # -----------------------------------------------------------------
+        net_pl_result = Decimal("0")  # Credits (income) positive, Debits (expenses) negative
+        retained_profits_line = None
+        bs_lines = []
+        pl_lines = []
+
         for line in current_fy.trial_balance_lines.filter(is_adjustment=False):
             # Determine if this is a balance sheet account
             is_bs = False
@@ -808,47 +814,119 @@ def roll_forward(request, pk):
                     is_bs = int(code_prefix) >= 2000
 
             if is_bs:
-                # Balance sheet: carry forward opening balance + comparatives
-                if line.closing_balance == 0:
+                # Check if this is the retained profits / undistributed income account
+                name_lower = line.account_name.lower()
+                is_retained = (
+                    "retained" in name_lower
+                    or "undistributed" in name_lower
+                    or "accumulated" in name_lower
+                    or "unappropriated" in name_lower
+                )
+                if not is_retained and line.mapped_line_item:
+                    mapped_code = line.mapped_line_item.account_code or ""
+                    is_retained = mapped_code in ("BS-EQ-002", "BS-EQ-005", "BS-EQ-006", "BS-EQ-008")
+                if is_retained:
+                    retained_profits_line = line
+                bs_lines.append(line)
+            else:
+                pl_lines.append(line)
+                # Accumulate net P&L: credits (income) minus debits (expenses)
+                net_pl_result += line.credit - line.debit
+
+        # -----------------------------------------------------------------
+        # Pass 2: Create balance sheet lines, adjusting retained profits
+        # -----------------------------------------------------------------
+        carried_bs = 0
+        for line in bs_lines:
+            if line.closing_balance == 0 and line != retained_profits_line:
+                continue
+
+            opening = line.closing_balance
+
+            # Close P&L to retained profits: add net profit (credit) to
+            # the retained profits opening balance
+            if line == retained_profits_line:
+                opening = line.closing_balance + net_pl_result
+                # If retained profits was zero but net P&L is non-zero,
+                # we still need to create the line
+                if opening == 0:
                     continue
 
-                TrialBalanceLine.objects.create(
-                    financial_year=new_fy,
-                    account_code=line.account_code,
-                    account_name=line.account_name,
-                    opening_balance=line.closing_balance,
-                    debit=Decimal("0"),
-                    credit=Decimal("0"),
-                    closing_balance=line.closing_balance,  # = opening, waiting for movement
-                    prior_debit=line.debit,
-                    prior_credit=line.credit,
-                    mapped_line_item=line.mapped_line_item,
-                    is_adjustment=False,
-                )
-                carried_bs += 1
-            else:
-                # P&L accounts: carry as comparative-only lines (no current year balances)
-                if line.debit == 0 and line.credit == 0:
-                    continue  # Skip if no prior year activity
+            TrialBalanceLine.objects.create(
+                financial_year=new_fy,
+                account_code=line.account_code,
+                account_name=line.account_name,
+                opening_balance=opening,
+                debit=Decimal("0"),
+                credit=Decimal("0"),
+                closing_balance=opening,  # = opening, waiting for movement
+                prior_debit=line.debit,
+                prior_credit=line.credit,
+                mapped_line_item=line.mapped_line_item,
+                is_adjustment=False,
+            )
+            carried_bs += 1
 
-                TrialBalanceLine.objects.create(
-                    financial_year=new_fy,
-                    account_code=line.account_code,
-                    account_name=line.account_name,
-                    opening_balance=Decimal("0"),
-                    debit=Decimal("0"),
-                    credit=Decimal("0"),
-                    closing_balance=Decimal("0"),
-                    prior_debit=line.debit,
-                    prior_credit=line.credit,
-                    mapped_line_item=line.mapped_line_item,
-                    is_adjustment=False,
-                )
-                carried_pl += 1
+        # If there was no retained profits line but there IS a net P&L
+        # result, create a new retained profits line to hold it
+        if retained_profits_line is None and net_pl_result != 0:
+            # Determine the appropriate account code and mapping
+            etype = entity.entity_type
+            if etype == "trust":
+                rp_name = "Undistributed income"
+                rp_code = "4199"
+            elif etype == "partnership":
+                rp_name = "Partners' current accounts"
+                rp_code = "4199"
+            elif etype == "sole_trader":
+                rp_name = "Proprietor's funds"
+                rp_code = "4199"
+            else:
+                rp_name = "Retained profits"
+                rp_code = "4199"
+
+            TrialBalanceLine.objects.create(
+                financial_year=new_fy,
+                account_code=rp_code,
+                account_name=rp_name,
+                opening_balance=net_pl_result,
+                debit=Decimal("0"),
+                credit=Decimal("0"),
+                closing_balance=net_pl_result,
+                prior_debit=Decimal("0"),
+                prior_credit=Decimal("0"),
+                mapped_line_item=None,
+                is_adjustment=False,
+            )
+            carried_bs += 1
+
+        # -----------------------------------------------------------------
+        # Pass 3: Create P&L comparative lines (zero current, prior only)
+        # -----------------------------------------------------------------
+        carried_pl = 0
+        for line in pl_lines:
+            if line.debit == 0 and line.credit == 0:
+                continue  # Skip if no prior year activity
+
+            TrialBalanceLine.objects.create(
+                financial_year=new_fy,
+                account_code=line.account_code,
+                account_name=line.account_name,
+                opening_balance=Decimal("0"),
+                debit=Decimal("0"),
+                credit=Decimal("0"),
+                closing_balance=Decimal("0"),
+                prior_debit=line.debit,
+                prior_credit=line.credit,
+                mapped_line_item=line.mapped_line_item,
+                is_adjustment=False,
+            )
+            carried_pl += 1
 
         total_carried = carried_bs + carried_pl
-        _log_action(request, "import", f"Rolled forward to {new_label} with {carried_bs} balance sheet items and {carried_pl} P&L comparatives", new_fy)
-        messages.success(request, f"Rolled forward to {new_label}. {carried_bs} balance sheet items carried with opening balances, {carried_pl} P&L accounts carried as comparatives.")
+        pl_direction = "profit" if net_pl_result > 0 else "loss"
+        _log_action(request, "import", f"Rolled forward to {new_label} with {carried_bs} BS items, {carried_pl} P&L comparatives. Net {pl_direction} of ${abs(net_pl_result):,.2f} closed to retained earnings.", new_fy)
+        messages.success(request, f"Rolled forward to {new_label}. {carried_bs} balance sheet items carried, {carried_pl} P&L comparatives. Net {pl_direction} of ${abs(net_pl_result):,.2f} closed to retained earnings.")
         return redirect("core:financial_year_detail", pk=new_fy.pk)
 
     return render(request, "core/roll_forward_confirm.html", {"fy": current_fy})
