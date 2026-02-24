@@ -100,6 +100,16 @@ def tax_planning_tab(request, pk):
         messages.error(request, "Tax Planning is only available for Trust entities.")
         return redirect("core:financial_year_detail", pk=pk)
 
+    # Staff Accountant (role=accountant) can only view/edit own entities
+    if request.user.role == "accountant":
+        is_own = (
+            entity.primary_accountant == request.user
+            or entity.assigned_accountant == request.user
+        )
+        if not is_own:
+            messages.error(request, "You can only access Tax Planning for your own entities.")
+            return redirect("core:financial_year_detail", pk=pk)
+
     worksheet = _get_or_create_worksheet(fy, request.user)
 
     # Sync beneficiary rows (picks up new beneficiaries added to entity)
@@ -171,6 +181,11 @@ def tax_planning_tab(request, pk):
         ]),
         "is_finalised": worksheet.is_finalised,
         "can_finalise": request.user.can_finalise,
+        "can_generate_docs": request.user.can_finalise,  # Admin/Senior only
+        "is_own_entity": (
+            entity.primary_accountant == request.user
+            or entity.assigned_accountant == request.user
+        ) if request.user.role == "accountant" else True,
         "trustee_rate": str(rates.get("trustee_default_tax_rate", Decimal("0.47"))),
         "tax_free_threshold": str(rates.get("tax_free_threshold", Decimal("18200"))),
     }
@@ -185,6 +200,12 @@ def tax_planning_calculate(request, pk):
     Recalculates all beneficiary tax positions. Does NOT save.
     """
     fy = get_financial_year_for_user(request, pk)
+
+    # Staff Accountant: own entities only
+    if request.user.role == "accountant":
+        entity = fy.entity
+        if entity.primary_accountant != request.user and entity.assigned_accountant != request.user:
+            return JsonResponse({"error": "Access denied — not your entity."}, status=403)
     worksheet = _get_or_create_worksheet(fy, request.user)
     rates = get_tax_rates(fy.year_label)
 
@@ -213,6 +234,12 @@ def tax_planning_save(request, pk):
     Persists the current beneficiary row values and recalculates.
     """
     fy = get_financial_year_for_user(request, pk)
+
+    # Staff Accountant: own entities only
+    if request.user.role == "accountant":
+        entity = fy.entity
+        if entity.primary_accountant != request.user and entity.assigned_accountant != request.user:
+            return JsonResponse({"error": "Access denied — not your entity."}, status=403)
     worksheet = _get_or_create_worksheet(fy, request.user)
 
     if worksheet.is_finalised:
@@ -493,6 +520,11 @@ def generate_trust_election_view(request, pk):
     fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
+    # Staff Accountant cannot generate documents
+    if not request.user.can_finalise:
+        messages.error(request, "You do not have permission to generate documents.")
+        return redirect("core:tax_planning_tab", pk=pk)
+
     if entity.entity_type != "trust":
         messages.error(request, "Trust elections are only applicable to trust entities.")
         return redirect("core:financial_year_detail", pk=pk)
@@ -597,6 +629,11 @@ def generate_tax_planning_summary_view(request, pk):
     """
     fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
+
+    # Staff Accountant cannot generate documents
+    if not request.user.can_finalise:
+        messages.error(request, "You do not have permission to generate documents.")
+        return redirect("core:tax_planning_tab", pk=pk)
 
     if entity.entity_type != "trust":
         messages.error(request, "Tax Planning Summary is only applicable to trust entities.")
