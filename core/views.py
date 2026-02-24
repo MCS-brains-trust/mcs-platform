@@ -4530,6 +4530,10 @@ def coa_search_api(request):
             "code": a.account_code,
             "name": a.account_name,
             "section": a.get_section_display(),
+            "section_value": a.section,
+            "classification": a.classification or "",
+            "tax_code": a.tax_code or "",
+            "maps_to_id": str(a.maps_to.pk) if a.maps_to else "",
             "mapping_label": a.maps_to.line_item_label if a.maps_to else "Unmapped",
         })
     return JsonResponse({"items": items})

@@ -1277,16 +1277,23 @@
                     </div>
                     <div class="modal-body">
                         <div class="mb-3">
+                            <label class="form-label fw-bold">Select from Template</label>
+                            <input type="text" id="addAcctTemplatePicker" class="form-control form-control-sm" placeholder="Search template accounts by code or name...">
+                            <div id="addAcctTemplateResults" class="border rounded mt-1 overflow-auto" style="max-height:200px; display:none;"></div>
+                            <small class="text-muted">Pick a template account to auto-fill, or enter details manually below.</small>
+                        </div>
+                        <hr class="my-2">
+                        <div class="mb-3">
                             <label class="form-label">Account Code</label>
-                            <input type="text" name="account_code" class="form-control" required>
+                            <input type="text" name="account_code" id="addAcctCode" class="form-control" required>
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Account Name</label>
-                            <input type="text" name="account_name" class="form-control" required>
+                            <input type="text" name="account_name" id="addAcctName" class="form-control" required>
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Section</label>
-                            <select name="section" class="form-select" required>
+                            <select name="section" id="addAcctSection" class="form-select" required>
                                 <option value="revenue">Revenue</option>
                                 <option value="cost_of_sales">Cost of Sales</option>
                                 <option value="expenses">Expenses</option>
@@ -1299,15 +1306,15 @@
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Classification</label>
-                            <input type="text" name="classification" class="form-control">
+                            <input type="text" name="classification" id="addAcctClassification" class="form-control">
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Tax Code</label>
-                            <input type="text" name="tax_code" class="form-control" placeholder="GST, FRE, INP, etc.">
+                            <input type="text" name="tax_code" id="addAcctTaxCode" class="form-control" placeholder="GST, FRE, INP, etc.">
                         </div>
                         <div class="mb-3">
                             <label class="form-label">Maps To (Financial Statement Line)</label>
-                            <select name="maps_to" class="form-select">
+                            <select name="maps_to" id="addAcctMapsTo" class="form-select">
                                 <option value="">— None —</option>
                                 {% for mapping in account_mappings %}
                                 <option value="{{ mapping.pk }}">{{ mapping.line_item_label }} ({{ mapping.get_statement_type_display }})</option>
@@ -3072,6 +3079,110 @@ document.addEventListener('click', function(e) {
         btn.innerHTML = '<i class="bi bi-check"></i> Approve';
     });
 });
+
+// --- Add Account: Template Picker ---
+(function() {
+    let pickerTimer = null;
+    const picker = document.getElementById('addAcctTemplatePicker');
+    const resultsDiv = document.getElementById('addAcctTemplateResults');
+    if (!picker || !resultsDiv) return;
+
+    picker.addEventListener('input', function() {
+        const query = picker.value.trim();
+        if (pickerTimer) clearTimeout(pickerTimer);
+
+        if (query.length < 1) {
+            resultsDiv.style.display = 'none';
+            resultsDiv.innerHTML = '';
+            return;
+        }
+
+        pickerTimer = setTimeout(function() {
+            fetch('{% url "core:coa_search_api" %}?entity_type=' + entityType + '&q=' + encodeURIComponent(query))
+            .then(resp => resp.json())
+            .then(data => {
+                if (data.items.length === 0) {
+                    resultsDiv.innerHTML = '<div class="text-center text-muted py-2"><small>No matching template accounts.</small></div>';
+                    resultsDiv.style.display = 'block';
+                    return;
+                }
+                // Group by section
+                const grouped = {};
+                data.items.forEach(function(item) {
+                    const sec = item.section || 'Other';
+                    if (!grouped[sec]) grouped[sec] = [];
+                    grouped[sec].push(item);
+                });
+                let html = '';
+                Object.keys(grouped).forEach(function(sec) {
+                    html += '<div class="px-2 py-1 bg-light border-bottom"><small class="fw-bold text-uppercase text-muted">' + sec + '</small></div>';
+                    grouped[sec].sort(function(a, b) { return a.name.localeCompare(b.name); });
+                    grouped[sec].forEach(function(item) {
+                        html += '<a href="#" class="d-block px-2 py-1 text-decoration-none text-dark template-acct-option" '
+                            + 'data-code="' + item.code + '" '
+                            + 'data-name="' + item.name.replace(/"/g, '&quot;') + '" '
+                            + 'data-section="' + item.section_value + '" '
+                            + 'data-classification="' + (item.classification || '').replace(/"/g, '&quot;') + '" '
+                            + 'data-tax-code="' + (item.tax_code || '') + '" '
+                            + 'data-maps-to="' + (item.maps_to_id || '') + '"'
+                            + ' style="font-size:0.85rem;"'
+                            + '>'
+                            + '<code class="me-1">' + item.code + '</code> ' + item.name;
+                        if (item.classification) html += ' <small class="text-muted">(' + item.classification + ')</small>';
+                        html += '</a>';
+                    });
+                });
+                resultsDiv.innerHTML = html;
+                resultsDiv.style.display = 'block';
+            });
+        }, 200);
+    });
+
+    resultsDiv.addEventListener('click', function(e) {
+        const option = e.target.closest('.template-acct-option');
+        if (!option) return;
+        e.preventDefault();
+
+        // Auto-fill all form fields
+        document.getElementById('addAcctCode').value = option.dataset.code || '';
+        document.getElementById('addAcctName').value = option.dataset.name || '';
+        document.getElementById('addAcctClassification').value = option.dataset.classification || '';
+        document.getElementById('addAcctTaxCode').value = option.dataset.taxCode || '';
+
+        // Set section dropdown
+        const sectionSelect = document.getElementById('addAcctSection');
+        if (sectionSelect && option.dataset.section) {
+            sectionSelect.value = option.dataset.section;
+        }
+
+        // Set maps_to dropdown
+        const mapsToSelect = document.getElementById('addAcctMapsTo');
+        if (mapsToSelect && option.dataset.mapsTo) {
+            mapsToSelect.value = option.dataset.mapsTo;
+        }
+
+        // Hide results and update picker text
+        picker.value = option.dataset.code + ' — ' + option.dataset.name;
+        resultsDiv.style.display = 'none';
+    });
+
+    // Hide results when clicking outside
+    document.addEventListener('click', function(e) {
+        if (!picker.contains(e.target) && !resultsDiv.contains(e.target)) {
+            resultsDiv.style.display = 'none';
+        }
+    });
+
+    // Reset picker when modal is opened
+    const modal = document.getElementById('addAccountModal');
+    if (modal) {
+        modal.addEventListener('show.bs.modal', function() {
+            picker.value = '';
+            resultsDiv.style.display = 'none';
+            resultsDiv.innerHTML = '';
+        });
+    }
+})();
 
 // --- Chart of Accounts: Search, Filter, Edit ---
 function filterCOA() {
