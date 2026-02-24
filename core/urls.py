@@ -83,6 +83,7 @@ urlpatterns = [
     path("audit-library/", views_audit.audit_library, name="audit_library"),
 
     # Risk Flags & Risk Engine
+    path("years/<uuid:pk>/risk-badge/", views.risk_badge_api, name="risk_badge_api"),
     path("years/<uuid:pk>/risk-flags/", views_audit.risk_flags_view, name="risk_flags"),
     path("risk-flags/<uuid:pk>/resolve/", views_audit.resolve_risk_flag, name="resolve_risk_flag"),
     path("years/<uuid:pk>/run-risk-engine/", views_audit.run_risk_engine_view, name="run_risk_engine"),

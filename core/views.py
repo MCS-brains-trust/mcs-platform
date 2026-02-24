@@ -712,16 +712,31 @@ def financial_year_status(request, pk):
                 )
                 request.session.pop("finalisation_gate_warn", None)
 
-    # ── Last-minute AI Risk Check on Finalisation ──────────────────────
+    # ── Last-minute Full Risk Check on Finalisation ──────────────────────
     if new_status == "finalised":
         try:
+            # Re-run Tier 1+2 to ensure flags are current
             from .risk_engine import RiskEngine
             engine = RiskEngine(fy)
             new_flags = engine.run_full_analysis()
             _log_action(
                 request, "audit_run",
-                f"Last-minute AI risk check before finalisation: {new_flags} flags generated", fy
+                f"Finalisation gate: Tier 1+2 re-run produced {new_flags} flags", fy
             )
+            # Run Tier 3 AI analysis on all open flags
+            try:
+                from .ai_service import batch_analyse_flags
+                ai_result = batch_analyse_flags(fy, force=False)
+                _log_action(
+                    request, "audit_run",
+                    f"Finalisation gate: Tier 3 AI analysis — "
+                    f"{ai_result.get('analysed', 0)} analysed, "
+                    f"{ai_result.get('skipped', 0)} cached",
+                    fy
+                )
+            except Exception as ai_err:
+                import logging
+                logging.getLogger(__name__).error(f"Finalisation Tier 3 AI failed: {ai_err}")
 
             # Re-check: did the last-minute sweep produce new CRITICAL flags?
             critical_open = fy.risk_flags.filter(status="open", severity="CRITICAL").count()
@@ -756,6 +771,26 @@ def financial_year_status(request, pk):
                 request, "audit_run",
                 f"Last-minute AI risk check failed (non-blocking): {e}", fy
             )
+
+    # ── Tier 3 auto-trigger on milestone status changes ────────────
+    if new_status == "in_review":
+        # Auto-run Tier 1+2 to ensure flags are current
+        from core.signals import trigger_risk_recalc
+        trigger_risk_recalc(fy, "status_in_review", force=True)
+        # Auto-run Tier 3 AI analysis on all open flags
+        try:
+            from .ai_service import batch_analyse_flags
+            ai_result = batch_analyse_flags(fy, force=False)
+            _log_action(
+                request, "audit_run",
+                f"Auto Tier 3 AI analysis on status→In Review: "
+                f"{ai_result.get('analysed', 0)} analysed, "
+                f"{ai_result.get('skipped', 0)} cached",
+                fy
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Auto Tier 3 on In Review failed: {e}")
 
     old_status = fy.status
     fy.status = new_status
@@ -1117,6 +1152,9 @@ def trial_balance_import(request, pk):
             try:
                 result = _process_trial_balance_upload(fy, file)
                 _log_action(request, "import", f"Imported trial balance: {result['imported']} lines", fy)
+                # Auto-trigger risk engine after TB import
+                from core.signals import trigger_risk_recalc
+                trigger_risk_recalc(fy, "tb_import")
                 messages.success(
                     request,
                     f"Imported {result['imported']} lines. "
@@ -1795,6 +1833,9 @@ def journal_post(request, pk):
     journal.save(update_fields=["status", "posted_by", "posted_at"])
 
     _log_action(request, "adjustment", f"Posted journal {journal.reference_number}", journal)
+    # Auto-trigger risk engine after journal post
+    from core.signals import trigger_risk_recalc
+    trigger_risk_recalc(fy, "journal_posted")
     messages.success(request, f"Journal {journal.reference_number} has been posted.")
     return redirect("core:financial_year_detail", pk=fy.pk)
 
@@ -1836,6 +1877,10 @@ def journal_delete(request, pk):
 
     journal.delete()
     _log_action(request, "adjustment", f"Deleted {status} journal {ref}")
+    # Auto-trigger risk engine after journal deletion
+    if status == AdjustingJournal.JournalStatus.POSTED:
+        from core.signals import trigger_risk_recalc
+        trigger_risk_recalc(fy, "journal_deleted")
     messages.success(request, f"Journal {ref} has been deleted.")
     return redirect("core:financial_year_detail", pk=fy.pk)
 
@@ -2364,6 +2409,10 @@ def access_ledger_import(request):
                     f"({result['years_imported']} years)",
                     result.get("entity"),
                 )
+                # Auto-trigger risk engine for all imported years
+                from core.signals import trigger_risk_recalc
+                for _imp_fy in result.get('financial_years', []):
+                    trigger_risk_recalc(_imp_fy, "access_ledger_import")
             except Exception as e:
                 messages.error(request, "Import failed. Please check the file format and try again.")
 
@@ -4076,6 +4125,9 @@ def depreciation_post_to_tb(request, pk):
         f"Cr {accum_dep_code} ${total_depreciation:,.2f}",
         journal,
     )
+    # Auto-trigger risk engine after depreciation post
+    from core.signals import trigger_risk_recalc
+    trigger_risk_recalc(fy, "depreciation_post")
     messages.success(
         request,
         f"Depreciation journal {journal.reference_number} posted: "
@@ -4212,6 +4264,9 @@ def stock_push_to_tb(request, pk):
     # Mark as pushed
     stock_items.update(pushed_to_tb=True)
 
+    # Auto-trigger risk engine after stock push
+    from core.signals import trigger_risk_recalc
+    trigger_risk_recalc(fy, "stock_push")
     messages.success(request, f"Stock pushed to trial balance: Opening ${total_opening}, Closing ${total_closing}.")
     return redirect("core:financial_year_detail", pk=pk)
 
@@ -4272,6 +4327,9 @@ def review_push_to_tb(request, pk):
             tb_line.save()
         count += 1
 
+    # Auto-trigger risk engine after review push to TB
+    from core.signals import trigger_risk_recalc
+    trigger_risk_recalc(fy, "review_push")
     messages.success(request, f"Pushed {count} account lines to trial balance from {confirmed.count()} transactions.")
     return redirect("core:financial_year_detail", pk=pk)
 
@@ -4491,6 +4549,9 @@ def review_approve_all(request, pk):
                     tb_line.save()
                 tb_count += 1
 
+    # Auto-trigger risk engine after bulk approve
+    from core.signals import trigger_risk_recalc
+    trigger_risk_recalc(fy, "review_approve_all")
     messages.success(request, f"Approved {count} transactions with AI suggestions. {tb_count} lines pushed to trial balance.")
     return redirect("core:financial_year_detail", pk=pk)
 
@@ -4514,6 +4575,38 @@ def mark_all_notifications_read(request):
     """Mark all unread notifications as read for the current user."""
     ActivityLog.objects.filter(is_read=False, user=request.user).update(is_read=True)
     return JsonResponse({"status": "ok"})
+
+
+@login_required
+def risk_badge_api(request, pk):
+    """JSON API for polling risk flag badge count and engine status.
+    Returns open flag count, severity breakdown, and whether the engine
+    is currently running (debounce pending).
+    """
+    fy = get_financial_year_for_user(request, pk)
+    from django.core.cache import cache
+    flags = fy.risk_flags.filter(status='open')
+    total = flags.count()
+    critical = flags.filter(severity='CRITICAL').count()
+    high = flags.filter(severity='HIGH').count()
+    medium = flags.filter(severity='MEDIUM').count()
+    low = flags.filter(severity='LOW').count()
+
+    # Check if the engine is currently in debounce (pending run)
+    engine_pending = cache.get(f'risk_engine_pending_{fy.pk}', False)
+    # Check last run timestamp
+    last_run = cache.get(f'risk_engine_last_run_{fy.pk}')
+
+    return JsonResponse({
+        'open_count': total,
+        'critical': critical,
+        'high': high,
+        'medium': medium,
+        'low': low,
+        'engine_pending': engine_pending,
+        'last_run': last_run.isoformat() if last_run else None,
+        'status': fy.status,
+    })
 
 
 @login_required

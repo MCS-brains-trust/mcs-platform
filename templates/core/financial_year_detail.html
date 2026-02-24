@@ -57,11 +57,12 @@
         <a href="{% url 'core:trial_balance_view' pk=fy.pk %}" class="btn btn-outline-dark btn-sm" target="_blank">
             <i class="bi bi-file-earmark-text"></i> Preview Trial Balance
         </a>
-        {% if open_risk_count > 0 %}
-        <span class="badge bg-danger fs-6" title="Documents will include AUDIT RISK watermark until all risk flags are resolved">
+        <span class="badge bg-danger fs-6" data-risk-banner title="Documents will include AUDIT RISK watermark until all risk flags are resolved" {% if open_risk_count == 0 %}style="display:none"{% endif %}>
             <i class="bi bi-exclamation-triangle-fill"></i> AUDIT RISK
         </span>
-        {% endif %}
+        <span class="badge bg-info fs-6" data-risk-engine-status style="display:none">
+            <i class="bi bi-arrow-repeat"></i> Risk engine running...
+        </span>
     </div>
 </div>
 
@@ -218,12 +219,12 @@
         </button>
     </li>
     <li class="nav-item">
-        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-audit" type="button">
+        <button class="nav-link" id="audit-risk-tab" data-bs-toggle="tab" data-bs-target="#tab-audit" type="button">
             <i class="bi bi-shield-exclamation"></i> Audit Risk
             {% if open_risk_count > 0 %}
-            <span class="badge bg-danger">{{ open_risk_count }}</span>
+            <span class="badge bg-danger" data-risk-badge>{{ open_risk_count }}</span>
             {% else %}
-            <span class="badge bg-secondary">0</span>
+            <span class="badge bg-secondary" data-risk-badge>0</span>
             {% endif %}
         </button>
     </li>
@@ -2058,7 +2059,23 @@ function showAuditRiskWarning() {
 }
 
 function confirmFinalise() {
-    if (confirm('Are you sure you want to finalise this financial year? This will lock the data and enable financial statement downloads.')) {
+    const msg = 'Are you sure you want to finalise this financial year?\n\n' +
+        'This will:\n' +
+        '• Run a final Tier 1+2 risk analysis\n' +
+        '• Run Tier 3 AI analysis on all open flags\n' +
+        '• Lock all data (trial balance, journals, comparatives)\n' +
+        '• Enable financial statement downloads\n\n' +
+        'This may take a moment while the AI analysis completes.';
+    if (confirm(msg)) {
+        const btn = document.getElementById('finaliseBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span> Running risk analysis...';
+        // Show the engine status indicator
+        const statusEl = document.querySelector('[data-risk-engine-status]');
+        if (statusEl) {
+            statusEl.innerHTML = '<i class="bi bi-arrow-repeat spin"></i> Finalisation gate: running full risk analysis...';
+            statusEl.style.display = '';
+        }
         document.getElementById('finaliseForm').submit();
     }
 }
@@ -3046,6 +3063,75 @@ document.getElementById('coaSectionFilter')?.addEventListener('change', filterCO
         // No tab switch needed, just highlight
         setTimeout(highlightRow, 200);
     }
+})();
+</script>
+
+<script>
+// ===== Risk Engine Badge Polling =====
+(function() {
+    const POLL_INTERVAL = 10000; // 10 seconds
+    const badgeUrl = '{% url "core:risk_badge_api" pk=financial_year.pk %}';
+    let polling = true;
+
+    function updateBadges(data) {
+        // Update all badge elements that show risk count
+        document.querySelectorAll('[data-risk-badge]').forEach(function(el) {
+            const count = data.open_count;
+            el.textContent = count;
+            if (count > 0) {
+                el.className = 'badge bg-danger';
+            } else {
+                el.className = 'badge bg-secondary';
+                el.textContent = '0';
+            }
+        });
+
+        // Update the Audit Risk tab badge specifically
+        const tabBadge = document.querySelector('#audit-risk-tab .badge');
+        if (tabBadge) {
+            tabBadge.textContent = data.open_count > 0 ? data.open_count : '0';
+            tabBadge.className = data.open_count > 0 ? 'badge bg-danger' : 'badge bg-secondary';
+        }
+
+        // Update the header AUDIT RISK banner
+        const riskBanner = document.querySelector('[data-risk-banner]');
+        if (riskBanner) {
+            riskBanner.style.display = data.open_count > 0 ? '' : 'none';
+        }
+
+        // Show engine pending indicator
+        const pendingIndicator = document.querySelector('[data-risk-engine-status]');
+        if (pendingIndicator) {
+            if (data.engine_pending) {
+                pendingIndicator.innerHTML = '<i class="bi bi-arrow-repeat spin"></i> Risk engine running...';
+                pendingIndicator.style.display = '';
+            } else {
+                pendingIndicator.style.display = 'none';
+            }
+        }
+    }
+
+    function pollBadge() {
+        if (!polling) return;
+        fetch(badgeUrl)
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                updateBadges(data);
+                setTimeout(pollBadge, POLL_INTERVAL);
+            })
+            .catch(function() {
+                setTimeout(pollBadge, POLL_INTERVAL * 3);
+            });
+    }
+
+    // Start polling after initial page load
+    setTimeout(pollBadge, POLL_INTERVAL);
+
+    // Stop polling when page is hidden, resume when visible
+    document.addEventListener('visibilitychange', function() {
+        polling = !document.hidden;
+        if (polling) pollBadge();
+    });
 })();
 </script>
 

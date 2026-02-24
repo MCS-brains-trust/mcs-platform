@@ -631,6 +631,10 @@ def commit_import(request, fy_pk):
 
     request.session.pop("staged_import", None)
 
+    # Auto-trigger risk engine after cloud import
+    from core.signals import trigger_risk_recalc
+    trigger_risk_recalc(fy, "cloud_import")
+
     messages.success(
         request,
         f"Imported {imported} lines from cloud. "
