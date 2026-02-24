@@ -796,6 +796,7 @@ def roll_forward(request, pk):
         # -----------------------------------------------------------------
         net_pl_result = Decimal("0")  # Positive = net expense (loss), Negative = net income (profit)
         retained_profits_line = None
+        income_tax_line = None  # Track income tax (4110) separately
         bs_lines = []
         pl_lines = []
 
@@ -827,6 +828,16 @@ def roll_forward(request, pk):
                     is_retained = mapped_code in ("BS-EQ-002", "BS-EQ-005", "BS-EQ-006", "BS-EQ-008")
                 if is_retained:
                     retained_profits_line = line
+
+                # Check if this is the income tax line (4110 or mapped to BS-EQ-011)
+                is_income_tax = False
+                if line.account_name and "income tax" in line.account_name.lower():
+                    is_income_tax = True
+                if line.mapped_line_item and (line.mapped_line_item.standard_code or "") == "BS-EQ-011":
+                    is_income_tax = True
+                if is_income_tax:
+                    income_tax_line = line
+
                 bs_lines.append(line)
             else:
                 pl_lines.append(line)
@@ -844,16 +855,41 @@ def roll_forward(request, pk):
 
             opening = line.closing_balance
 
-            # Close P&L to retained profits: net_pl_result uses debit-credit
-            # convention (negative = net income/profit, positive = net loss).
-            # closing_balance also uses this convention (negative = credit).
-            # Adding them: -517904.75 + (-71939.41) = -589844.16 (correct)
+            # Close P&L to retained profits:
+            # Formula: New RP = Prior RP + Net Profit After Tax
+            # In closing_balance convention (credits negative, debits positive):
+            #   net_pl_result (before tax) is negative for profit
+            #   income_tax closing_balance is positive (debit)
+            #   After-tax P&L = net_pl_result + tax_amount
+            #     e.g. -95919.16 + 23979.75 = -71939.41 (profit after tax)
+            #   opening = RP.closing + after-tax P&L
+            #     e.g. -517904.75 + (-71939.41) = -589844.16
             if line == retained_profits_line:
-                opening = line.closing_balance + net_pl_result
+                tax_amount = income_tax_line.closing_balance if income_tax_line else Decimal("0")
+                opening = line.closing_balance + net_pl_result + tax_amount
                 # If retained profits was zero but net P&L is non-zero,
                 # we still need to create the line
                 if opening == 0:
                     continue
+
+            # Skip income tax line — it has been absorbed into retained profits
+            if line == income_tax_line:
+                # Carry as comparative only (zero current, prior values preserved)
+                TrialBalanceLine.objects.create(
+                    financial_year=new_fy,
+                    account_code=line.account_code,
+                    account_name=line.account_name,
+                    opening_balance=Decimal("0"),
+                    debit=Decimal("0"),
+                    credit=Decimal("0"),
+                    closing_balance=Decimal("0"),
+                    prior_debit=line.debit,
+                    prior_credit=line.credit,
+                    mapped_line_item=line.mapped_line_item,
+                    is_adjustment=False,
+                )
+                carried_bs += 1
+                continue
 
             TrialBalanceLine.objects.create(
                 financial_year=new_fy,
@@ -872,7 +908,8 @@ def roll_forward(request, pk):
 
         # If there was no retained profits line but there IS a net P&L
         # result, create a new retained profits line to hold it
-        if retained_profits_line is None and net_pl_result != 0:
+        tax_amount = income_tax_line.closing_balance if income_tax_line else Decimal("0")
+        if retained_profits_line is None and (net_pl_result != 0 or tax_amount != 0):
             # Determine the appropriate account code and mapping
             etype = entity.entity_type
             if etype == "trust":
@@ -888,20 +925,38 @@ def roll_forward(request, pk):
                 rp_name = "Retained profits"
                 rp_code = "4199"
 
+            rp_opening = net_pl_result + tax_amount
             TrialBalanceLine.objects.create(
                 financial_year=new_fy,
                 account_code=rp_code,
                 account_name=rp_name,
-                opening_balance=net_pl_result,
+                opening_balance=rp_opening,
                 debit=Decimal("0"),
                 credit=Decimal("0"),
-                closing_balance=net_pl_result,
+                closing_balance=rp_opening,
                 prior_debit=Decimal("0"),
                 prior_credit=Decimal("0"),
                 mapped_line_item=None,
                 is_adjustment=False,
             )
             carried_bs += 1
+
+            # Also create comparative-only line for income tax if it existed
+            if income_tax_line:
+                TrialBalanceLine.objects.create(
+                    financial_year=new_fy,
+                    account_code=income_tax_line.account_code,
+                    account_name=income_tax_line.account_name,
+                    opening_balance=Decimal("0"),
+                    debit=Decimal("0"),
+                    credit=Decimal("0"),
+                    closing_balance=Decimal("0"),
+                    prior_debit=income_tax_line.debit,
+                    prior_credit=income_tax_line.credit,
+                    mapped_line_item=income_tax_line.mapped_line_item,
+                    is_adjustment=False,
+                )
+                carried_bs += 1
 
         # -----------------------------------------------------------------
         # Pass 3: Create P&L comparative lines (zero current, prior only)
@@ -928,9 +983,9 @@ def roll_forward(request, pk):
 
         total_carried = carried_bs + carried_pl
         pl_direction = "profit" if net_pl_result < 0 else "loss"
-        # Also flag if income tax (4110) was classified as P&L instead of BS
-        _log_action(request, "import", f"Rolled forward to {new_label} with {carried_bs} BS items, {carried_pl} P&L comparatives. Net {pl_direction} of ${abs(net_pl_result):,.2f} closed to retained earnings.", new_fy)
-        messages.success(request, f"Rolled forward to {new_label}. {carried_bs} balance sheet items carried, {carried_pl} P&L comparatives. Net {pl_direction} of ${abs(net_pl_result):,.2f} closed to retained earnings.")
+        tax_msg = f" Income tax of ${abs(tax_amount):,.2f} absorbed." if tax_amount else ""
+        _log_action(request, "import", f"Rolled forward to {new_label} with {carried_bs} BS items, {carried_pl} P&L comparatives. Net {pl_direction} of ${abs(net_pl_result):,.2f} closed to retained earnings.{tax_msg}", new_fy)
+        messages.success(request, f"Rolled forward to {new_label}. {carried_bs} balance sheet items carried, {carried_pl} P&L comparatives. Net {pl_direction} of ${abs(net_pl_result):,.2f} less tax ${abs(tax_amount):,.2f} closed to retained earnings.")
         return redirect("core:financial_year_detail", pk=new_fy.pk)
 
     return render(request, "core/roll_forward_confirm.html", {"fy": current_fy})
