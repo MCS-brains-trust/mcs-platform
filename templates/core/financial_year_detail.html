@@ -927,7 +927,7 @@
                             ${{ txn.net_amount|floatformat:2|intcomma }}
                             {% else %}${{ txn.amount|floatformat:2|intcomma }}{% endif %}
                         </td>
-                        <td><code>{{ txn.ai_suggested_code|default:"-" }}</code></td>
+                        <td><code class="review-ai-code">{{ txn.ai_suggested_code|default:"-" }}</code></td>
                         <td>
                             <div class="dropdown d-inline">
                                 <button class="btn btn-sm btn-outline-info dropdown-toggle py-0 review-coa-btn" type="button"
@@ -2616,12 +2616,15 @@ function buildGroupedView() {
         const amountCell = row.querySelector('td:nth-child(3)');
         const descCell = row.querySelector('td:nth-child(2)');
         const dateCell = row.querySelector('td:nth-child(1)');
+        const gstCell = row.querySelector('td:nth-child(4) input');
         const amount = amountCell ? parseFloat(amountCell.textContent.replace(/[^\d.-]/g, '')) || 0 : 0;
+        const hasGst = gstCell ? gstCell.checked : false;
 
         groups[key].transactions.push({
             date: dateCell ? dateCell.textContent.trim() : '',
             description: descCell ? descCell.textContent.trim() : '',
             amount: amount,
+            hasGst: hasGst,
         });
         groups[key].total += amount;
     });
@@ -2634,51 +2637,197 @@ function buildGroupedView() {
     });
 
     let html = '';
-    sortedKeys.forEach(function(key) {
+    sortedKeys.forEach(function(key, idx) {
         const g = groups[key];
         const isUnclassified = key === 'unclassified';
-        const badgeClass = isUnclassified ? 'bg-secondary' : 'bg-primary';
+        const badgeClass = isUnclassified ? 'bg-warning text-dark' : 'bg-primary';
+        const borderClass = isUnclassified ? 'border-warning' : 'border-primary';
         const totalFormatted = '$' + Math.abs(g.total).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
         const totalSign = g.total < 0 ? '-' : '';
+        const groupId = 'group-' + idx;
+        const safeCode = g.code.replace(/'/g, "\\'");
+        const safeName = g.name.replace(/'/g, "\\'");
 
-        html += '<div class="card mb-2 border-start border-3 ' + (isUnclassified ? 'border-secondary' : 'border-primary') + '">';
-        html += '<div class="card-header bg-white py-2 d-flex justify-content-between align-items-center" style="cursor:pointer" onclick="this.nextElementSibling.classList.toggle(\'d-none\')">';
+        html += '<div class="card mb-2 border-start border-3 ' + borderClass + '" id="' + groupId + '">';
+
+        // --- Card Header ---
+        html += '<div class="card-header bg-white py-2" style="cursor:pointer">';
+        html += '<div class="d-flex justify-content-between align-items-center" onclick="document.getElementById(\'' + groupId + '-body\').classList.toggle(\'d-none\')">';
         html += '<div>';
-        html += '<span class="badge ' + badgeClass + ' me-2">' + g.transactions.length + '</span>';
-        html += '<strong>' + g.label + '</strong>';
+        html += '<span class="badge ' + badgeClass + ' me-2">' + g.transactions.length + ' txn' + (g.transactions.length > 1 ? 's' : '') + '</span>';
+        html += '<strong style="font-size:0.95rem">' + g.label + '</strong>';
         html += '<span class="text-muted ms-3" style="font-size:0.85rem">Total: ' + totalSign + totalFormatted + '</span>';
         html += '</div>';
-        html += '<div class="d-flex gap-2 align-items-center">';
-        if (!isUnclassified) {
-            html += '<button class="btn btn-success btn-sm" onclick="event.stopPropagation(); bulkApproveGroup(\'' + g.code + '\', this)">';
-            html += '<i class="bi bi-check-all"></i> Approve All (' + g.transactions.length + ')';
-            html += '</button>';
-        }
-        html += '<i class="bi bi-chevron-down"></i>';
+        html += '<i class="bi bi-chevron-down text-muted"></i>';
+        html += '</div>';
+
+        // --- Action bar (always visible) ---
+        html += '<div class="d-flex gap-2 align-items-center mt-2 flex-wrap" onclick="event.stopPropagation()">';
+
+        // Change Account button with search
+        html += '<div class="dropdown">';
+        html += '<button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" style="font-size:0.8rem">';
+        html += '<i class="bi bi-pencil-square me-1"></i>Change Account';
+        html += '</button>';
+        html += '<div class="dropdown-menu p-2" style="width:380px; max-height:350px;">';
+        html += '<input type="text" class="form-control form-control-sm mb-2 group-coa-search" placeholder="Search by code or name..." data-group-id="' + groupId + '">';
+        html += '<div class="group-coa-results overflow-auto" style="max-height:280px;" data-group-id="' + groupId + '">';
+        html += '<div class="text-center text-muted py-2"><small>Type to search chart of accounts...</small></div>';
+        html += '</div>';
         html += '</div>';
         html += '</div>';
 
-        html += '<div class="d-none">';
+        // Current account display (changes when user picks a new one)
+        html += '<span class="text-muted" style="font-size:0.8rem" id="' + groupId + '-current">Current: <code>' + (g.code || '-') + '</code> ' + g.name + '</span>';
+
+        // Hidden fields for override
+        html += '<input type="hidden" id="' + groupId + '-override-code" value="">';
+        html += '<input type="hidden" id="' + groupId + '-override-name" value="">';
+
+        // Approve All button
+        if (!isUnclassified) {
+            html += '<button class="btn btn-success btn-sm ms-auto" onclick="event.stopPropagation(); bulkApproveGroup(\'' + safeCode + '\', \'' + groupId + '\', this)">';
+            html += '<i class="bi bi-check-all me-1"></i>Approve All (' + g.transactions.length + ')';
+            html += '</button>';
+        } else {
+            html += '<span class="text-warning ms-auto" style="font-size:0.8rem"><i class="bi bi-exclamation-triangle me-1"></i>Change account before approving</span>';
+        }
+
+        html += '</div>'; // end action bar
+        html += '</div>'; // end card-header
+
+        // --- Card Body (transaction list, collapsed by default) ---
+        html += '<div class="d-none" id="' + groupId + '-body">';
         html += '<table class="table table-sm table-hover mb-0" style="font-size:0.82rem">';
-        html += '<thead><tr><th style="width:100px">Date</th><th>Description</th><th class="text-end" style="width:120px">Amount</th></tr></thead>';
+        html += '<thead class="table-light"><tr><th style="width:90px">Date</th><th>Description</th><th class="text-center" style="width:50px">GST</th><th class="text-end" style="width:120px">Amount</th></tr></thead>';
         html += '<tbody>';
         g.transactions.forEach(function(t) {
-            const amtClass = t.amount < 0 ? 'text-danger' : '';
+            const amtClass = t.amount < 0 ? 'text-danger' : 'text-success';
             const amtStr = '$' + Math.abs(t.amount).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-            html += '<tr><td>' + t.date + '</td><td>' + t.description + '</td><td class="text-end ' + amtClass + '">' + (t.amount < 0 ? '-' : '') + amtStr + '</td></tr>';
+            const gstIcon = t.hasGst ? '<i class="bi bi-check-circle-fill text-success"></i>' : '<i class="bi bi-x-circle text-muted"></i>';
+            html += '<tr>';
+            html += '<td class="text-muted">' + t.date + '</td>';
+            html += '<td>' + t.description + '</td>';
+            html += '<td class="text-center">' + gstIcon + '</td>';
+            html += '<td class="text-end ' + amtClass + '">' + (t.amount < 0 ? '-' : '') + amtStr + '</td>';
+            html += '</tr>';
         });
+        // Totals row
+        html += '<tr class="table-light fw-bold"><td></td><td>Total</td><td></td>';
+        html += '<td class="text-end">' + totalSign + totalFormatted + '</td></tr>';
         html += '</tbody></table></div></div>';
     });
+
+    if (sortedKeys.length === 0) {
+        html = '<div class="text-center text-muted py-4">No pending transactions to group.</div>';
+    }
 
     container.innerHTML = html;
 }
 
+// --- Group COA Search Handler ---
+(function() {
+    const groupSearchTimers = {};
+    document.addEventListener('input', function(e) {
+        if (!e.target.classList.contains('group-coa-search')) return;
+        const groupId = e.target.dataset.groupId;
+        const query = e.target.value.trim();
+        const resultsDiv = document.querySelector('.group-coa-results[data-group-id="' + groupId + '"]');
+
+        if (groupSearchTimers[groupId]) clearTimeout(groupSearchTimers[groupId]);
+
+        if (query.length < 1) {
+            resultsDiv.innerHTML = '<div class="text-center text-muted py-2"><small>Type to search chart of accounts...</small></div>';
+            return;
+        }
+
+        groupSearchTimers[groupId] = setTimeout(function() {
+            fetch('{% url "core:coa_search_api" %}?entity_type=' + entityType + '&q=' + encodeURIComponent(query))
+            .then(resp => resp.json())
+            .then(data => {
+                if (data.items.length === 0) {
+                    resultsDiv.innerHTML = '<div class="text-center text-muted py-2"><small>No matching accounts found.</small></div>';
+                    return;
+                }
+                resultsDiv.innerHTML = data.items.map(item =>
+                    '<a href="#" class="dropdown-item small py-1 group-coa-option" ' +
+                    'data-group-id="' + groupId + '" ' +
+                    'data-code="' + item.code + '" ' +
+                    'data-name="' + item.name + '">' +
+                    '<code>' + item.code + '</code> ' + item.name +
+                    '<small class="text-muted d-block">' + item.section + '</small>' +
+                    '</a>'
+                ).join('');
+            });
+        }, 250);
+    });
+
+    document.addEventListener('click', function(e) {
+        const option = e.target.closest('.group-coa-option');
+        if (!option) return;
+        e.preventDefault();
+
+        const groupId = option.dataset.groupId;
+        const code = option.dataset.code;
+        const name = option.dataset.name;
+
+        // Update the hidden override fields
+        document.getElementById(groupId + '-override-code').value = code;
+        document.getElementById(groupId + '-override-name').value = name;
+
+        // Update the current display
+        const currentSpan = document.getElementById(groupId + '-current');
+        if (currentSpan) {
+            currentSpan.innerHTML = 'Changed to: <code class="text-success">' + code + '</code> <strong>' + name + '</strong>';
+        }
+
+        // If this was an unclassified group, show an approve button now
+        const card = document.getElementById(groupId);
+        const actionBar = card.querySelector('.card-header .d-flex.gap-2');
+        const warningSpan = actionBar.querySelector('.text-warning');
+        if (warningSpan) {
+            warningSpan.outerHTML = '<button class="btn btn-success btn-sm ms-auto" onclick="event.stopPropagation(); bulkApproveGroup(\'\', \'' + groupId + '\', this)">' +
+                '<i class="bi bi-check-all me-1"></i>Approve All</button>';
+        }
+
+        // Update the card header label
+        const headerStrong = card.querySelector('.card-header strong');
+        if (headerStrong) {
+            headerStrong.textContent = code + ' — ' + name;
+            headerStrong.classList.add('text-success');
+        }
+
+        // Close the dropdown
+        const dropdownBtn = card.querySelector('.dropdown-toggle');
+        const bsDropdown = bootstrap.Dropdown.getInstance(dropdownBtn);
+        if (bsDropdown) bsDropdown.hide();
+    });
+})();
+
 // --- Bulk Approve Group ---
-function bulkApproveGroup(accountCode, btn) {
-    if (!confirm('Approve all transactions classified as ' + accountCode + '? This will also push them to the trial balance.')) return;
+function bulkApproveGroup(accountCode, groupId, btn) {
+    // Check for override
+    const overrideCode = document.getElementById(groupId + '-override-code')?.value || '';
+    const overrideName = document.getElementById(groupId + '-override-name')?.value || '';
+    const finalCode = overrideCode || accountCode;
+    const finalName = overrideName;
+
+    if (!finalCode) {
+        alert('Please select an account before approving.');
+        return;
+    }
+
+    const displayLabel = finalCode + (finalName ? ' — ' + finalName : '');
+    if (!confirm('Approve all transactions in this group as ' + displayLabel + '?\n\nThis will push them to the trial balance.')) return;
 
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Approving...';
+
+    const payload = { account_code: accountCode || 'unclassified' };
+    if (overrideCode) {
+        payload.override_code = overrideCode;
+        payload.override_name = overrideName;
+    }
 
     fetch(BULK_APPROVE_URL, {
         method: 'POST',
@@ -2686,16 +2835,17 @@ function bulkApproveGroup(accountCode, btn) {
             'X-CSRFToken': CSRF_TOKEN,
             'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ account_code: accountCode })
+        body: JSON.stringify(payload)
     })
     .then(r => r.json())
     .then(data => {
         if (data.status === 'ok') {
-            // Remove the card from grouped view
-            const card = btn.closest('.card');
+            // Animate card removal
+            const card = document.getElementById(groupId);
             if (card) {
-                card.style.transition = 'opacity 0.3s';
+                card.style.transition = 'all 0.3s ease';
                 card.style.opacity = '0';
+                card.style.transform = 'translateX(50px)';
                 setTimeout(function() { card.remove(); }, 300);
             }
             // Update badges
@@ -2707,7 +2857,8 @@ function bulkApproveGroup(accountCode, btn) {
             // Show notification
             const notif = document.getElementById('reviewNotification');
             if (notif) {
-                notif.querySelector('span') && (notif.querySelector('span').textContent = data.message);
+                const notifText = notif.querySelector('#reviewNotificationText');
+                if (notifText) notifText.textContent = data.message;
                 notif.classList.remove('d-none');
             }
 
@@ -2718,13 +2869,13 @@ function bulkApproveGroup(accountCode, btn) {
         } else {
             alert('Error: ' + (data.message || 'Unknown error'));
             btn.disabled = false;
-            btn.innerHTML = '<i class="bi bi-check-all"></i> Approve All';
+            btn.innerHTML = '<i class="bi bi-check-all me-1"></i> Approve All';
         }
     })
     .catch(err => {
         alert('Network error. Please try again.');
         btn.disabled = false;
-        btn.innerHTML = '<i class="bi bi-check-all"></i> Approve All';
+        btn.innerHTML = '<i class="bi bi-check-all me-1"></i> Approve All';
     });
 }
 

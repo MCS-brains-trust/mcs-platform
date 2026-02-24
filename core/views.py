@@ -5797,6 +5797,9 @@ def review_bulk_approve_group(request, pk):
 
     body = json.loads(request.body) if request.content_type == "application/json" else request.POST
     account_code = body.get("account_code", "")
+    # Optional override: accountant can change the AI suggestion before approving
+    override_code = body.get("override_code", "").strip()
+    override_name = body.get("override_name", "").strip()
 
     if not account_code:
         return JsonResponse({"status": "error", "message": "No account code specified."}, status=400)
@@ -5807,11 +5810,15 @@ def review_bulk_approve_group(request, pk):
         ai_suggested_code=account_code,
     )
 
+    # Determine the final code/name to use
+    final_code = override_code or account_code
+    final_name = override_name
+
     count = 0
     tb_count = 0
     for txn in pending:
-        txn.confirmed_code = txn.ai_suggested_code
-        txn.confirmed_name = txn.ai_suggested_name
+        txn.confirmed_code = final_code
+        txn.confirmed_name = final_name or txn.ai_suggested_name
         txn.confirmed_tax_type = txn.ai_suggested_tax_type
         txn.is_confirmed = True
 
@@ -5826,7 +5833,7 @@ def review_bulk_approve_group(request, pk):
 
         # Auto-push to trial balance
         amount = txn.amount
-        code = txn.confirmed_code
+        code = final_code
         name = txn.confirmed_name
         if code and amount != 0:
             tb_line, created = TrialBalanceLine.objects.get_or_create(
@@ -5860,7 +5867,7 @@ def review_bulk_approve_group(request, pk):
         "tb_count": tb_count,
         "remaining_pending": remaining_pending,
         "remaining_confirmed": remaining_confirmed,
-        "message": f"Approved {count} transactions for {account_code}. {tb_count} pushed to TB.",
+        "message": f"Approved {count} transactions for {final_code}. {tb_count} pushed to TB.",
     })
 
 
