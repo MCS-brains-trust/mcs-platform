@@ -112,6 +112,45 @@
                         <div class="form-text">Which financial statement line item this account rolls up to.</div>
                     </div>
 
+                    <!-- Trust Tax Planning Tags -->
+                    {% if entity.entity_type == 'trust' %}
+                    <hr>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold"><i class="bi bi-calculator"></i> Trust Tax Planning Tags</label>
+                        <div class="form-text mb-2">Tag this account for the Tax Planning Worksheet. Multiple tags can be applied.</div>
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" id="is_non_deductible" name="is_non_deductible" {% if is_edit and account.is_non_deductible %}checked{% endif %}>
+                            <label class="form-check-label" for="is_non_deductible">
+                                <span class="badge bg-warning text-dark me-1">Non-Deductible</span> Added back to net profit for distributable income
+                            </label>
+                        </div>
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" id="is_non_assessable" name="is_non_assessable" {% if is_edit and account.is_non_assessable %}checked{% endif %}>
+                            <label class="form-check-label" for="is_non_assessable">
+                                <span class="badge bg-info me-1">Non-Assessable</span> Deducted from net profit for distributable income
+                            </label>
+                        </div>
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" id="is_cgt" name="is_cgt" {% if is_edit and account.is_cgt %}checked{% endif %}>
+                            <label class="form-check-label" for="is_cgt">
+                                <span class="badge bg-success me-1">Capital Gains</span> Streamed separately in trust distributions
+                            </label>
+                        </div>
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" id="is_franked_dividend" name="is_franked_dividend" {% if is_edit and account.is_franked_dividend %}checked{% endif %}>
+                            <label class="form-check-label" for="is_franked_dividend">
+                                <span class="badge bg-primary me-1">Franked Dividend</span> Franked dividend income &mdash; streamed separately
+                            </label>
+                        </div>
+                        <div class="form-check form-switch mb-2">
+                            <input class="form-check-input" type="checkbox" id="is_franking_credit" name="is_franking_credit" {% if is_edit and account.is_franking_credit %}checked{% endif %}>
+                            <label class="form-check-label" for="is_franking_credit">
+                                <span class="badge bg-secondary me-1">Franking Credit</span> Grossed up in beneficiary tax calculations
+                            </label>
+                        </div>
+                    </div>
+                    {% endif %}
+
                     <!-- Step 4: Control Account with Sub-Accounts -->
                     {% if not is_edit %}
                     <hr>

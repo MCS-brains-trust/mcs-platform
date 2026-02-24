@@ -3,6 +3,7 @@ from django.urls import path
 from . import views
 from . import views_audit
 from . import views_upgrades
+from . import views_tax_planning
 
 app_name = "core"
 
@@ -204,4 +205,15 @@ urlpatterns = [
     path("assignments/", views_upgrades.entity_assignments, name="entity_assignments"),
     path("assignments/bulk-assign/", views_upgrades.bulk_assign_entities, name="bulk_assign_entities"),
     path("entities/<uuid:pk>/assign/", views_upgrades.update_entity_assignment, name="update_entity_assignment"),
+
+    # ===== TRUST TAX PLANNING WORKSHEET =====
+    path("years/<uuid:pk>/tax-planning/", views_tax_planning.tax_planning_tab, name="tax_planning_tab"),
+    path("years/<uuid:pk>/tax-planning/calculate/", views_tax_planning.tax_planning_calculate, name="tax_planning_calculate"),
+    path("years/<uuid:pk>/tax-planning/save/", views_tax_planning.tax_planning_save, name="tax_planning_save"),
+    path("years/<uuid:pk>/tax-planning/save-notes/", views_tax_planning.tax_planning_save_notes, name="tax_planning_save_notes"),
+    path("years/<uuid:pk>/tax-planning/scenario/save/", views_tax_planning.tax_planning_scenario_save, name="tax_planning_scenario_save"),
+    path("years/<uuid:pk>/tax-planning/scenario/<uuid:scenario_pk>/delete/", views_tax_planning.tax_planning_scenario_delete, name="tax_planning_scenario_delete"),
+    path("years/<uuid:pk>/tax-planning/scenario/<uuid:scenario_pk>/apply/", views_tax_planning.tax_planning_scenario_apply, name="tax_planning_scenario_apply"),
+    path("years/<uuid:pk>/tax-planning/finalise/", views_tax_planning.tax_planning_finalise, name="tax_planning_finalise"),
+    path("years/<uuid:pk>/tax-planning/reopen/", views_tax_planning.tax_planning_reopen, name="tax_planning_reopen"),
 ]

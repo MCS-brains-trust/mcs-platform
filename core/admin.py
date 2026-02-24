@@ -98,4 +98,29 @@ class AuditLogAdmin(admin.ModelAdmin):
     readonly_fields = ("user", "action", "description", "affected_object_type",
                        "affected_object_id", "metadata", "timestamp", "ip_address")
 
+# Tax Planning
+from .models import TaxReferenceData, TaxPlanningWorksheet, TaxPlanningBeneficiaryRow, TaxPlanningScenario
+
+@admin.register(TaxReferenceData)
+class TaxReferenceDataAdmin(admin.ModelAdmin):
+    list_display = ("financial_year_label", "key", "value", "description")
+    list_filter = ("financial_year_label",)
+    search_fields = ("key", "description")
+    list_editable = ("value",)
+
+@admin.register(TaxPlanningWorksheet)
+class TaxPlanningWorksheetAdmin(admin.ModelAdmin):
+    list_display = ("financial_year", "status", "distributable_income", "last_updated_at")
+    list_filter = ("status",)
+    readonly_fields = ("created_at", "last_updated_at")
+
+@admin.register(TaxPlanningBeneficiaryRow)
+class TaxPlanningBeneficiaryRowAdmin(admin.ModelAdmin):
+    list_display = ("beneficiary", "beneficiary_type", "proposed_distribution", "net_tax_payable", "effective_tax_rate")
+    list_filter = ("beneficiary_type",)
+
+@admin.register(TaxPlanningScenario)
+class TaxPlanningScenarioAdmin(admin.ModelAdmin):
+    list_display = ("scenario_name", "financial_year", "total_tax", "total_distributed", "created_at")
+
 from . import admin_office_admin  # noqa: F401

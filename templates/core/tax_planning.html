@@ -1,0 +1,867 @@
+{% extends "base.html" %}
+{% load humanize %}
+{% block title %}Tax Planning — {{ fy.entity.entity_name }} — {{ fy.year_label }}{% endblock %}
+
+{% block extra_head %}
+<style>
+    .sticky-bar {
+        position: sticky;
+        top: 56px;
+        z-index: 100;
+        background: #1a1a2e;
+        color: #fff;
+        padding: 10px 20px;
+        border-radius: 6px;
+        margin-bottom: 16px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    }
+    .sticky-bar .metric {
+        text-align: center;
+        padding: 0 16px;
+    }
+    .sticky-bar .metric .label {
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        opacity: 0.7;
+    }
+    .sticky-bar .metric .value {
+        font-size: 1.15rem;
+        font-weight: 700;
+    }
+    .sticky-bar .metric .value.text-success { color: #2ecc71 !important; }
+    .sticky-bar .metric .value.text-danger { color: #e74c3c !important; }
+    .sticky-bar .metric .value.text-warning { color: #f39c12 !important; }
+    .section-card {
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        margin-bottom: 16px;
+        overflow: hidden;
+    }
+    .section-header {
+        background: #f8f9fa;
+        padding: 12px 16px;
+        font-weight: 600;
+        border-bottom: 1px solid #dee2e6;
+        cursor: pointer;
+        user-select: none;
+    }
+    .section-header:hover { background: #e9ecef; }
+    .section-body { padding: 16px; }
+    .beneficiary-input {
+        width: 120px;
+        text-align: right;
+    }
+    .type-badge {
+        font-size: 0.75rem;
+        padding: 2px 8px;
+        border-radius: 4px;
+    }
+    .type-individual { background: #e8f5e9; color: #2e7d32; }
+    .type-company { background: #e3f2fd; color: #1565c0; }
+    .type-trust { background: #fff3e0; color: #e65100; }
+    .finalised-overlay {
+        position: relative;
+    }
+    .finalised-overlay::after {
+        content: '';
+        position: absolute;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(255,255,255,0.5);
+        pointer-events: all;
+        z-index: 10;
+    }
+    .scenario-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 12px;
+        border-radius: 20px;
+        border: 1px solid #dee2e6;
+        font-size: 0.82rem;
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+    .scenario-chip:hover { border-color: #0d6efd; background: #e7f1ff; }
+    .notes-area {
+        min-height: 120px;
+        border: 1px solid #dee2e6;
+        border-radius: 6px;
+        padding: 12px;
+    }
+    .tag-pill {
+        display: inline-block;
+        font-size: 0.7rem;
+        padding: 1px 6px;
+        border-radius: 3px;
+        margin-right: 2px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy.year_label }}</a></li>
+        <li class="breadcrumb-item active">Tax Planning</li>
+    </ol>
+</nav>
+
+<!-- Header -->
+<div class="d-flex justify-content-between align-items-start mb-3">
+    <div>
+        <h4 class="mb-1"><i class="bi bi-calculator"></i> Trust Tax Planning Worksheet</h4>
+        <p class="text-muted mb-0">
+            {{ entity.entity_name }} &mdash; {{ fy.year_label }}
+            &middot;
+            {% if is_finalised %}
+            <span class="badge bg-success fs-6"><i class="bi bi-lock-fill"></i> Finalised</span>
+            {% else %}
+            <span class="badge bg-warning text-dark fs-6">Draft</span>
+            {% endif %}
+        </p>
+    </div>
+    <div class="d-flex gap-2">
+        <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-arrow-left"></i> Back to Workspace
+        </a>
+        {% if is_finalised and can_finalise %}
+        <button class="btn btn-outline-warning btn-sm" id="btnReopen">
+            <i class="bi bi-unlock"></i> Re-open
+        </button>
+        {% elif not is_finalised and can_finalise %}
+        <button class="btn btn-success btn-sm" id="btnFinalise">
+            <i class="bi bi-check-circle"></i> Finalise Tax Plan
+        </button>
+        {% endif %}
+    </div>
+</div>
+
+<!-- ===== STICKY OPTIMISER BAR ===== -->
+<div class="sticky-bar" id="optimiserBar">
+    <div class="d-flex justify-content-between align-items-center flex-wrap">
+        <div class="metric">
+            <div class="label">Distributable Income</div>
+            <div class="value" id="barDistributable">${{ section1.distributable_income|floatformat:2|intcomma }}</div>
+        </div>
+        <div class="metric">
+            <div class="label">Total Distributed</div>
+            <div class="value" id="barDistributed">${{ optimiser.total_distributed }}</div>
+        </div>
+        <div class="metric">
+            <div class="label">Undistributed</div>
+            <div class="value {% if optimiser.undistributed != '0.00' %}text-danger{% else %}text-success{% endif %}" id="barUndistributed">${{ optimiser.undistributed }}</div>
+        </div>
+        <div class="metric">
+            <div class="label">Total Tax Payable</div>
+            <div class="value text-warning" id="barTotalTax">${{ optimiser.total_tax }}</div>
+        </div>
+        <div class="metric">
+            <div class="label">Weighted Effective Rate</div>
+            <div class="value" id="barEffRate">{{ optimiser.weighted_effective_rate }}%</div>
+        </div>
+        <div class="metric">
+            <div class="label">Trustee Default Rate</div>
+            <div class="value text-danger">{{ trustee_rate }}%</div>
+        </div>
+    </div>
+</div>
+
+<!-- ===== SECTION 1: DISTRIBUTABLE INCOME ===== -->
+<div class="section-card">
+    <div class="section-header d-flex justify-content-between align-items-center" data-bs-toggle="collapse" data-bs-target="#section1Body">
+        <span><i class="bi bi-1-circle-fill text-primary me-2"></i> Distributable Income (Auto-Calculated from Trial Balance)</span>
+        <i class="bi bi-chevron-down"></i>
+    </div>
+    <div class="collapse show" id="section1Body">
+        <div class="section-body">
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <table class="table table-sm mb-0">
+                        <tbody>
+                            <tr>
+                                <td>Net Profit Before Distributions</td>
+                                <td class="text-end fw-bold">${{ section1.net_profit_before_distributions|floatformat:2|intcomma }}</td>
+                            </tr>
+                            <tr class="table-warning">
+                                <td><i class="bi bi-plus-circle text-warning"></i> Non-Deductible Expenses (Add Back)</td>
+                                <td class="text-end">${{ section1.non_deductible_expenses|floatformat:2|intcomma }}</td>
+                            </tr>
+                            <tr class="table-info">
+                                <td><i class="bi bi-dash-circle text-info"></i> Non-Assessable Income (Deduct)</td>
+                                <td class="text-end">(${{ section1.non_assessable_income|floatformat:2|intcomma }})</td>
+                            </tr>
+                            <tr class="table-success fw-bold" style="font-size: 1.05rem;">
+                                <td>Distributable Income</td>
+                                <td class="text-end">${{ section1.distributable_income|floatformat:2|intcomma }}</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="col-md-6">
+                    <div class="card bg-light">
+                        <div class="card-body py-2">
+                            <h6 class="card-title mb-2"><i class="bi bi-funnel"></i> Streamable Components</h6>
+                            <table class="table table-sm mb-0">
+                                <tbody>
+                                    <tr>
+                                        <td><span class="tag-pill bg-success text-white">CGT</span> Capital Gains</td>
+                                        <td class="text-end">${{ section1.capital_gains|floatformat:2|intcomma }}</td>
+                                    </tr>
+                                    <tr>
+                                        <td><span class="tag-pill bg-primary text-white">FD</span> Franked Dividends</td>
+                                        <td class="text-end">${{ section1.franked_dividends|floatformat:2|intcomma }}</td>
+                                    </tr>
+                                    <tr>
+                                        <td><span class="tag-pill bg-secondary text-white">FC</span> Franking Credits</td>
+                                        <td class="text-end">${{ section1.franking_credits|floatformat:2|intcomma }}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                            <div class="form-text mt-2">
+                                <i class="bi bi-info-circle"></i>
+                                Tag accounts in the <a href="{% url 'core:financial_year_detail' pk=fy.pk %}?tab=coa">Chart of Accounts</a> tab to populate these values.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ===== SECTION 2: BENEFICIARY LIST ===== -->
+<div class="section-card">
+    <div class="section-header d-flex justify-content-between align-items-center" data-bs-toggle="collapse" data-bs-target="#section2Body">
+        <span><i class="bi bi-2-circle-fill text-primary me-2"></i> Beneficiary List &amp; Types</span>
+        <i class="bi bi-chevron-down"></i>
+    </div>
+    <div class="collapse show" id="section2Body">
+        <div class="section-body">
+            <div class="table-responsive">
+                <table class="table table-sm table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Beneficiary</th>
+                            <th style="width: 140px;">Type</th>
+                            <th class="text-end" style="width: 160px;">Outside Income ($)</th>
+                            <th class="text-end" style="width: 180px;">Proposed Distribution ($)</th>
+                            <th class="text-center" style="width: 80px;">% Share</th>
+                        </tr>
+                    </thead>
+                    <tbody id="beneficiaryTableBody">
+                        {% for row in rows %}
+                        <tr data-beneficiary-id="{{ row.beneficiary.pk }}" data-type="{{ row.beneficiary_type }}">
+                            <td>
+                                <strong>{{ row.beneficiary.full_name }}</strong>
+                                {% if row.beneficiary_type == 'company' %}
+                                <br><small class="text-muted">
+                                    <i class="bi bi-building"></i>
+                                    {% if row.company_tax_rate_override %}
+                                        Non-base rate ({{ row.company_tax_rate_override|floatformat:0 }}%)
+                                    {% else %}
+                                        Base rate (25%)
+                                    {% endif %}
+                                </small>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <select class="form-select form-select-sm ben-type-select" {% if is_finalised %}disabled{% endif %}>
+                                    <option value="individual" {% if row.beneficiary_type == 'individual' %}selected{% endif %}>Individual</option>
+                                    <option value="company" {% if row.beneficiary_type == 'company' %}selected{% endif %}>Company</option>
+                                    <option value="trust" {% if row.beneficiary_type == 'trust' %}selected{% endif %}>Trust</option>
+                                </select>
+                            </td>
+                            <td class="text-end">
+                                {% if row.beneficiary_type != 'company' %}
+                                <input type="number" class="form-control form-control-sm beneficiary-input outside-income"
+                                       value="{{ row.outside_income|floatformat:2 }}" step="0.01" min="0"
+                                       {% if is_finalised %}disabled{% endif %}>
+                                {% else %}
+                                <span class="text-muted">N/A</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-end">
+                                <input type="number" class="form-control form-control-sm beneficiary-input proposed-dist"
+                                       value="{{ row.proposed_distribution|floatformat:2 }}" step="0.01" min="0"
+                                       {% if is_finalised %}disabled{% endif %}>
+                            </td>
+                            <td class="text-center">
+                                <span class="pct-share">0.0%</span>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                    <tfoot class="table-light fw-bold">
+                        <tr>
+                            <td colspan="3" class="text-end">Total Distributed:</td>
+                            <td class="text-end" id="totalDistributed">$0.00</td>
+                            <td class="text-center" id="totalPct">0%</td>
+                        </tr>
+                        <tr>
+                            <td colspan="3" class="text-end">Undistributed:</td>
+                            <td class="text-end" id="undistributedAmount">$0.00</td>
+                            <td></td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+            {% if not is_finalised %}
+            <div class="mt-3 d-flex gap-2">
+                <button class="btn btn-sm btn-outline-primary" id="btnEqualSplit">
+                    <i class="bi bi-distribute-horizontal"></i> Equal Split
+                </button>
+                <button class="btn btn-primary btn-sm" id="btnCalculate">
+                    <i class="bi bi-arrow-repeat"></i> Calculate Tax
+                </button>
+                <button class="btn btn-success btn-sm" id="btnSave">
+                    <i class="bi bi-save"></i> Save
+                </button>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- ===== SECTION 3: TAX CALCULATION RESULTS ===== -->
+<div class="section-card">
+    <div class="section-header d-flex justify-content-between align-items-center" data-bs-toggle="collapse" data-bs-target="#section3Body">
+        <span><i class="bi bi-3-circle-fill text-primary me-2"></i> Tax Calculation Results</span>
+        <i class="bi bi-chevron-down"></i>
+    </div>
+    <div class="collapse show" id="section3Body">
+        <div class="section-body">
+            <div class="table-responsive">
+                <table class="table table-sm table-bordered align-middle mb-0" style="font-size: 0.85rem;">
+                    <thead class="table-dark">
+                        <tr>
+                            <th>Beneficiary</th>
+                            <th class="text-end">Distribution</th>
+                            <th class="text-end">Outside Income</th>
+                            <th class="text-end">Franking Cr.</th>
+                            <th class="text-end">Total Taxable</th>
+                            <th class="text-end">Gross Tax</th>
+                            <th class="text-end">Medicare</th>
+                            <th class="text-end">LITO</th>
+                            <th class="text-end">FC Offset</th>
+                            <th class="text-end fw-bold">Net Tax</th>
+                            <th class="text-end">Eff. Rate</th>
+                        </tr>
+                    </thead>
+                    <tbody id="taxResultsBody">
+                        {% for row in rows %}
+                        <tr data-result-id="{{ row.beneficiary.pk }}">
+                            <td>
+                                {{ row.beneficiary.full_name }}
+                                <span class="type-badge type-{{ row.beneficiary_type }}">{{ row.beneficiary_type|title }}</span>
+                            </td>
+                            <td class="text-end res-dist">$0.00</td>
+                            <td class="text-end res-outside">$0.00</td>
+                            <td class="text-end res-fc">$0.00</td>
+                            <td class="text-end res-taxable">$0.00</td>
+                            <td class="text-end res-gross">$0.00</td>
+                            <td class="text-end res-medicare">$0.00</td>
+                            <td class="text-end res-lito">$0.00</td>
+                            <td class="text-end res-fc-offset">$0.00</td>
+                            <td class="text-end fw-bold res-net">$0.00</td>
+                            <td class="text-end res-rate">0.00%</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                    <tfoot class="table-light fw-bold">
+                        <tr>
+                            <td>TOTAL</td>
+                            <td class="text-end" id="resTotalDist">$0.00</td>
+                            <td class="text-end" id="resTotalOutside">$0.00</td>
+                            <td class="text-end" id="resTotalFc">$0.00</td>
+                            <td class="text-end" id="resTotalTaxable">$0.00</td>
+                            <td class="text-end" id="resTotalGross">$0.00</td>
+                            <td class="text-end" id="resTotalMedicare">$0.00</td>
+                            <td class="text-end" id="resTotalLito">$0.00</td>
+                            <td class="text-end" id="resTotalFcOffset">$0.00</td>
+                            <td class="text-end" id="resTotalNet">$0.00</td>
+                            <td class="text-end" id="resTotalRate">0.00%</td>
+                        </tr>
+                    </tfoot>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ===== SECTION 4: SCENARIO MODELLING ===== -->
+<div class="section-card">
+    <div class="section-header d-flex justify-content-between align-items-center" data-bs-toggle="collapse" data-bs-target="#section4Body">
+        <span><i class="bi bi-4-circle-fill text-primary me-2"></i> Scenario Modelling (Save up to 3)</span>
+        <i class="bi bi-chevron-down"></i>
+    </div>
+    <div class="collapse show" id="section4Body">
+        <div class="section-body">
+            <div class="d-flex flex-wrap gap-2 mb-3" id="scenarioChips">
+                {% for s in scenarios %}
+                <div class="scenario-chip" data-scenario-id="{{ s.pk }}">
+                    <i class="bi bi-bookmark-fill text-primary"></i>
+                    <span>{{ s.scenario_name }}</span>
+                    <small class="text-muted">(Tax: ${{ s.total_tax|floatformat:2|intcomma }})</small>
+                    <button class="btn btn-sm btn-link text-primary p-0 ms-1 scenario-load" title="Load"><i class="bi bi-box-arrow-in-down"></i></button>
+                    <button class="btn btn-sm btn-link text-danger p-0 ms-1 scenario-delete" title="Delete"><i class="bi bi-x-circle"></i></button>
+                </div>
+                {% endfor %}
+                {% if scenarios.count == 0 %}
+                <div class="text-muted" id="noScenariosMsg"><i class="bi bi-info-circle"></i> No saved scenarios yet.</div>
+                {% endif %}
+            </div>
+            {% if not is_finalised %}
+            <div class="d-flex gap-2 align-items-center">
+                <input type="text" class="form-control form-control-sm" id="scenarioName" placeholder="Scenario name..." style="max-width: 250px;">
+                <button class="btn btn-sm btn-outline-primary" id="btnSaveScenario">
+                    <i class="bi bi-bookmark-plus"></i> Save Current as Scenario
+                </button>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- ===== SECTION 5: RECOMMENDATION & NOTES ===== -->
+<div class="section-card">
+    <div class="section-header d-flex justify-content-between align-items-center" data-bs-toggle="collapse" data-bs-target="#section5Body">
+        <span><i class="bi bi-5-circle-fill text-primary me-2"></i> Recommendation &amp; Notes</span>
+        <i class="bi bi-chevron-down"></i>
+    </div>
+    <div class="collapse show" id="section5Body">
+        <div class="section-body">
+            <textarea class="form-control notes-area" id="recommendationNotes" rows="6"
+                      placeholder="Enter your recommendation and notes here. This auto-saves on blur."
+                      {% if is_finalised %}disabled{% endif %}>{{ worksheet.recommendation_notes }}</textarea>
+            <div class="form-text mt-1">
+                <i class="bi bi-info-circle"></i> Auto-saves when you click outside the text area.
+                <span id="notesSaveStatus" class="ms-2"></span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Finalise Confirmation Modal -->
+<div class="modal fade" id="finaliseModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-success text-white">
+                <h5 class="modal-title"><i class="bi bi-check-circle"></i> Finalise Tax Plan</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="finaliseErrors" class="alert alert-danger d-none"></div>
+                <div id="finaliseWarnings" class="alert alert-warning d-none"></div>
+                <p id="finaliseConfirmText">Are you sure you want to finalise this Tax Planning Worksheet? This will lock all fields.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-success" id="btnConfirmFinalise">
+                    <i class="bi bi-check-circle"></i> Confirm Finalise
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function() {
+    'use strict';
+
+    const csrfToken = '{{ csrf_token }}';
+    const fyPk = '{{ fy.pk }}';
+    const distributableIncome = parseFloat('{{ section1.distributable_income }}');
+    const frankingCredits = parseFloat('{{ section1.franking_credits }}');
+    const isFinalised = {{ is_finalised|yesno:"true,false" }};
+    let scenarios = JSON.parse('{{ scenarios_json|escapejs }}');
+
+    // ===== HELPERS =====
+    function fmt(n) {
+        return '$' + parseFloat(n).toLocaleString('en-AU', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    }
+    function fmtPct(n) {
+        return (parseFloat(n) * 100).toFixed(2) + '%';
+    }
+
+    // ===== GATHER BENEFICIARY DATA =====
+    function gatherBeneficiaryData() {
+        const rows = [];
+        document.querySelectorAll('#beneficiaryTableBody tr').forEach(tr => {
+            const benId = tr.dataset.beneficiaryId;
+            const btype = tr.querySelector('.ben-type-select').value;
+            const outsideEl = tr.querySelector('.outside-income');
+            const outside = outsideEl ? parseFloat(outsideEl.value) || 0 : 0;
+            const proposed = parseFloat(tr.querySelector('.proposed-dist').value) || 0;
+            rows.push({
+                beneficiary_id: benId,
+                beneficiary_type: btype,
+                outside_income: outside,
+                proposed_distribution: proposed,
+            });
+        });
+        return rows;
+    }
+
+    // ===== UPDATE SUMMARY =====
+    function updateSummary() {
+        let totalDist = 0;
+        document.querySelectorAll('.proposed-dist').forEach(el => {
+            totalDist += parseFloat(el.value) || 0;
+        });
+        const undist = distributableIncome - totalDist;
+        document.getElementById('totalDistributed').textContent = fmt(totalDist);
+        document.getElementById('undistributedAmount').textContent = fmt(undist);
+        document.getElementById('undistributedAmount').className = undist === 0 ? 'text-end text-success' : 'text-end text-danger';
+
+        // Update % shares
+        document.querySelectorAll('#beneficiaryTableBody tr').forEach(tr => {
+            const proposed = parseFloat(tr.querySelector('.proposed-dist').value) || 0;
+            const pct = distributableIncome > 0 ? (proposed / distributableIncome * 100).toFixed(1) : 0;
+            tr.querySelector('.pct-share').textContent = pct + '%';
+        });
+
+        // Update sticky bar
+        document.getElementById('barDistributed').textContent = fmt(totalDist);
+        const barUndist = document.getElementById('barUndistributed');
+        barUndist.textContent = fmt(undist);
+        barUndist.className = undist === 0 ? 'value text-success' : 'value text-danger';
+    }
+
+    // ===== CALCULATE =====
+    async function calculate() {
+        const data = gatherBeneficiaryData();
+        const resp = await fetch(`/years/${fyPk}/tax-planning/calculate/`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+            body: JSON.stringify({beneficiary_rows: data}),
+        });
+        const result = await resp.json();
+        if (result.error) {
+            alert(result.error);
+            return;
+        }
+        updateTaxResults(result);
+    }
+
+    function updateTaxResults(result) {
+        const rows = result.rows || [];
+        let totals = {dist: 0, outside: 0, fc: 0, taxable: 0, gross: 0, medicare: 0, lito: 0, fcOffset: 0, net: 0};
+
+        rows.forEach(r => {
+            const tr = document.querySelector(`[data-result-id="${r.beneficiary_id}"]`);
+            if (!tr) return;
+
+            // Get proposed from input
+            const inputTr = document.querySelector(`[data-beneficiary-id="${r.beneficiary_id}"]`);
+            const proposed = inputTr ? parseFloat(inputTr.querySelector('.proposed-dist').value) || 0 : 0;
+            const outsideEl = inputTr ? inputTr.querySelector('.outside-income') : null;
+            const outside = outsideEl ? parseFloat(outsideEl.value) || 0 : 0;
+
+            tr.querySelector('.res-dist').textContent = fmt(proposed);
+            tr.querySelector('.res-outside').textContent = fmt(outside);
+            tr.querySelector('.res-fc').textContent = fmt(r.grossed_up_franking_credits);
+            tr.querySelector('.res-taxable').textContent = fmt(r.total_taxable_income);
+            tr.querySelector('.res-gross').textContent = fmt(r.gross_tax_payable);
+            tr.querySelector('.res-medicare').textContent = fmt(r.medicare_levy);
+            tr.querySelector('.res-lito').textContent = fmt(r.lito_offset);
+            tr.querySelector('.res-fc-offset').textContent = fmt(r.franking_credit_offset);
+            tr.querySelector('.res-net').textContent = fmt(r.net_tax_payable);
+            tr.querySelector('.res-rate').textContent = fmtPct(r.effective_tax_rate);
+
+            totals.dist += proposed;
+            totals.outside += outside;
+            totals.fc += parseFloat(r.grossed_up_franking_credits) || 0;
+            totals.taxable += parseFloat(r.total_taxable_income) || 0;
+            totals.gross += parseFloat(r.gross_tax_payable) || 0;
+            totals.medicare += parseFloat(r.medicare_levy) || 0;
+            totals.lito += parseFloat(r.lito_offset) || 0;
+            totals.fcOffset += parseFloat(r.franking_credit_offset) || 0;
+            totals.net += parseFloat(r.net_tax_payable) || 0;
+        });
+
+        document.getElementById('resTotalDist').textContent = fmt(totals.dist);
+        document.getElementById('resTotalOutside').textContent = fmt(totals.outside);
+        document.getElementById('resTotalFc').textContent = fmt(totals.fc);
+        document.getElementById('resTotalTaxable').textContent = fmt(totals.taxable);
+        document.getElementById('resTotalGross').textContent = fmt(totals.gross);
+        document.getElementById('resTotalMedicare').textContent = fmt(totals.medicare);
+        document.getElementById('resTotalLito').textContent = fmt(totals.lito);
+        document.getElementById('resTotalFcOffset').textContent = fmt(totals.fcOffset);
+        document.getElementById('resTotalNet').textContent = fmt(totals.net);
+
+        const avgRate = totals.dist > 0 ? totals.net / totals.dist : 0;
+        document.getElementById('resTotalRate').textContent = (avgRate * 100).toFixed(2) + '%';
+
+        // Update sticky bar
+        document.getElementById('barTotalTax').textContent = fmt(totals.net);
+        document.getElementById('barEffRate').textContent = (avgRate * 100).toFixed(2) + '%';
+
+        if (result.optimiser) {
+            document.getElementById('barDistributed').textContent = fmt(result.optimiser.total_distributed);
+            const barUndist = document.getElementById('barUndistributed');
+            barUndist.textContent = fmt(result.optimiser.undistributed);
+            barUndist.className = parseFloat(result.optimiser.undistributed) === 0 ? 'value text-success' : 'value text-danger';
+        }
+    }
+
+    // ===== SAVE =====
+    async function save() {
+        const data = gatherBeneficiaryData();
+        const resp = await fetch(`/years/${fyPk}/tax-planning/save/`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+            body: JSON.stringify({beneficiary_rows: data}),
+        });
+        const result = await resp.json();
+        if (result.error) {
+            alert(result.error);
+            return;
+        }
+        updateTaxResults(result);
+        // Flash save confirmation
+        const btn = document.getElementById('btnSave');
+        if (btn) {
+            btn.innerHTML = '<i class="bi bi-check-circle"></i> Saved!';
+            btn.classList.replace('btn-success', 'btn-outline-success');
+            setTimeout(() => {
+                btn.innerHTML = '<i class="bi bi-save"></i> Save';
+                btn.classList.replace('btn-outline-success', 'btn-success');
+            }, 2000);
+        }
+    }
+
+    // ===== EQUAL SPLIT =====
+    function equalSplit() {
+        const inputs = document.querySelectorAll('.proposed-dist');
+        if (inputs.length === 0) return;
+        const each = (distributableIncome / inputs.length).toFixed(2);
+        inputs.forEach(el => { el.value = each; });
+        // Adjust rounding on last
+        let total = 0;
+        inputs.forEach(el => { total += parseFloat(el.value); });
+        const diff = distributableIncome - total;
+        if (diff !== 0 && inputs.length > 0) {
+            const last = inputs[inputs.length - 1];
+            last.value = (parseFloat(last.value) + diff).toFixed(2);
+        }
+        updateSummary();
+    }
+
+    // ===== NOTES AUTO-SAVE =====
+    const notesArea = document.getElementById('recommendationNotes');
+    if (notesArea && !isFinalised) {
+        notesArea.addEventListener('blur', async function() {
+            const status = document.getElementById('notesSaveStatus');
+            status.textContent = 'Saving...';
+            status.className = 'ms-2 text-muted';
+            try {
+                const resp = await fetch(`/years/${fyPk}/tax-planning/save-notes/`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+                    body: JSON.stringify({recommendation_notes: notesArea.value}),
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    status.textContent = 'Saved ✓';
+                    status.className = 'ms-2 text-success';
+                } else {
+                    status.textContent = 'Error saving';
+                    status.className = 'ms-2 text-danger';
+                }
+            } catch(e) {
+                status.textContent = 'Error saving';
+                status.className = 'ms-2 text-danger';
+            }
+            setTimeout(() => { status.textContent = ''; }, 3000);
+        });
+    }
+
+    // ===== SCENARIOS =====
+    async function saveScenario() {
+        const name = document.getElementById('scenarioName').value.trim();
+        if (!name) { alert('Please enter a scenario name.'); return; }
+
+        const data = gatherBeneficiaryData();
+        const totalTax = document.getElementById('resTotalNet').textContent.replace(/[$,]/g, '');
+        const totalDist = document.getElementById('resTotalDist').textContent.replace(/[$,]/g, '');
+
+        const resp = await fetch(`/years/${fyPk}/tax-planning/scenario/save/`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+            body: JSON.stringify({
+                scenario_name: name,
+                distributions: data,
+                total_tax: totalTax,
+                total_distributed: totalDist,
+            }),
+        });
+        const result = await resp.json();
+        if (result.error) {
+            alert(result.error);
+            return;
+        }
+        // Reload to show new scenario
+        location.reload();
+    }
+
+    async function loadScenario(scenarioId) {
+        const resp = await fetch(`/years/${fyPk}/tax-planning/scenario/${scenarioId}/apply/`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+        });
+        const result = await resp.json();
+        if (!result.success) { alert('Failed to load scenario.'); return; }
+
+        // Apply distributions to inputs
+        (result.distributions || []).forEach(d => {
+            const tr = document.querySelector(`[data-beneficiary-id="${d.beneficiary_id}"]`);
+            if (!tr) return;
+            const distInput = tr.querySelector('.proposed-dist');
+            const outsideInput = tr.querySelector('.outside-income');
+            if (distInput) distInput.value = parseFloat(d.proposed_distribution || 0).toFixed(2);
+            if (outsideInput) outsideInput.value = parseFloat(d.outside_income || 0).toFixed(2);
+        });
+        updateSummary();
+        calculate();
+    }
+
+    async function deleteScenario(scenarioId) {
+        if (!confirm('Delete this scenario?')) return;
+        const resp = await fetch(`/years/${fyPk}/tax-planning/scenario/${scenarioId}/delete/`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+        });
+        const result = await resp.json();
+        if (result.success) location.reload();
+    }
+
+    // ===== FINALISE / REOPEN =====
+    async function attemptFinalise(acknowledged) {
+        const resp = await fetch(`/years/${fyPk}/tax-planning/finalise/`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+            body: JSON.stringify({acknowledged: acknowledged}),
+        });
+        const result = await resp.json();
+
+        if (result.success) {
+            location.reload();
+            return;
+        }
+
+        // Show errors/warnings in modal
+        const errDiv = document.getElementById('finaliseErrors');
+        const warnDiv = document.getElementById('finaliseWarnings');
+        const confirmBtn = document.getElementById('btnConfirmFinalise');
+
+        if (result.errors && result.errors.length > 0) {
+            errDiv.innerHTML = '<strong>Cannot Finalise:</strong><ul>' +
+                result.errors.map(e => `<li>${e}</li>`).join('') + '</ul>';
+            errDiv.classList.remove('d-none');
+            confirmBtn.disabled = true;
+        } else {
+            errDiv.classList.add('d-none');
+            confirmBtn.disabled = false;
+        }
+
+        if (result.warnings && result.warnings.length > 0) {
+            warnDiv.innerHTML = '<strong>Warnings:</strong><ul>' +
+                result.warnings.map(w => `<li>${w}</li>`).join('') + '</ul>';
+            warnDiv.classList.remove('d-none');
+        } else {
+            warnDiv.classList.add('d-none');
+        }
+
+        if (result.require_acknowledgement) {
+            confirmBtn.disabled = false;
+            confirmBtn.onclick = () => attemptFinalise(true);
+        }
+
+        const modal = new bootstrap.Modal(document.getElementById('finaliseModal'));
+        modal.show();
+    }
+
+    async function reopenPlan() {
+        if (!confirm('Re-open this Tax Plan for editing?')) return;
+        const resp = await fetch(`/years/${fyPk}/tax-planning/reopen/`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
+        });
+        const result = await resp.json();
+        if (result.success) location.reload();
+        else alert(result.error || 'Failed to re-open.');
+    }
+
+    // ===== EVENT LISTENERS =====
+    // Input changes
+    document.querySelectorAll('.proposed-dist, .outside-income').forEach(el => {
+        el.addEventListener('input', updateSummary);
+    });
+
+    // Buttons
+    const btnCalc = document.getElementById('btnCalculate');
+    if (btnCalc) btnCalc.addEventListener('click', calculate);
+
+    const btnSave = document.getElementById('btnSave');
+    if (btnSave) btnSave.addEventListener('click', save);
+
+    const btnEqual = document.getElementById('btnEqualSplit');
+    if (btnEqual) btnEqual.addEventListener('click', equalSplit);
+
+    const btnSaveScenario = document.getElementById('btnSaveScenario');
+    if (btnSaveScenario) btnSaveScenario.addEventListener('click', saveScenario);
+
+    const btnFinalise = document.getElementById('btnFinalise');
+    if (btnFinalise) btnFinalise.addEventListener('click', () => attemptFinalise(false));
+
+    const btnReopen = document.getElementById('btnReopen');
+    if (btnReopen) btnReopen.addEventListener('click', reopenPlan);
+
+    // Scenario chips
+    document.querySelectorAll('.scenario-load').forEach(btn => {
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            const chip = this.closest('.scenario-chip');
+            loadScenario(chip.dataset.scenarioId);
+        });
+    });
+    document.querySelectorAll('.scenario-delete').forEach(btn => {
+        btn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            const chip = this.closest('.scenario-chip');
+            deleteScenario(chip.dataset.scenarioId);
+        });
+    });
+
+    // Type change handler
+    document.querySelectorAll('.ben-type-select').forEach(sel => {
+        sel.addEventListener('change', function() {
+            const tr = this.closest('tr');
+            tr.dataset.type = this.value;
+            const outsideInput = tr.querySelector('.outside-income');
+            if (this.value === 'company') {
+                if (outsideInput) {
+                    outsideInput.value = '0.00';
+                    outsideInput.disabled = true;
+                }
+            } else {
+                if (outsideInput) outsideInput.disabled = isFinalised;
+            }
+        });
+    });
+
+    // Initial summary update and calculate on page load
+    updateSummary();
+    if (distributableIncome > 0) {
+        calculate();
+    }
+
+})();
+</script>
+{% endblock %}

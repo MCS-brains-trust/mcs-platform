@@ -261,6 +261,13 @@
             <i class="bi bi-diagram-3"></i> Chart of Accounts ({{ entity_accounts_count }})
         </button>
     </li>
+    {% if entity.entity_type == 'trust' %}
+    <li class="nav-item">
+        <a class="nav-link" href="{% url 'core:tax_planning_tab' pk=fy.pk %}">
+            <i class="bi bi-calculator"></i> Tax Planning
+        </a>
+    </li>
+    {% endif %}
     <li class="nav-item">
         <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-activity" type="button">
             <i class="bi bi-clock-history"></i> Activity ({{ activity_logs.count }})

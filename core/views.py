@@ -6543,6 +6543,11 @@ def entity_coa_add(request, pk):
             maps_to=maps_to,
             is_active=True,
             is_custom=True,
+            is_non_deductible=request.POST.get("is_non_deductible") == "on",
+            is_non_assessable=request.POST.get("is_non_assessable") == "on",
+            is_cgt=request.POST.get("is_cgt") == "on",
+            is_franked_dividend=request.POST.get("is_franked_dividend") == "on",
+            is_franking_credit=request.POST.get("is_franking_credit") == "on",
         )
         _log_action(request, "create", f"Added entity account: {account_code} — {account_name}", fy)
 
@@ -6621,6 +6626,13 @@ def entity_coa_edit(request, pk):
                 acct.maps_to = None
         else:
             acct.maps_to = None
+
+        # Trust tax planning tags
+        acct.is_non_deductible = request.POST.get("is_non_deductible") == "on"
+        acct.is_non_assessable = request.POST.get("is_non_assessable") == "on"
+        acct.is_cgt = request.POST.get("is_cgt") == "on"
+        acct.is_franked_dividend = request.POST.get("is_franked_dividend") == "on"
+        acct.is_franking_credit = request.POST.get("is_franking_credit") == "on"
 
         acct.save()
         if fy:

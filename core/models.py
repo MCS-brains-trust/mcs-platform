@@ -159,6 +159,10 @@ class Entity(models.Model):
         default=True,
         help_text="Whether this entity is registered for GST. Affects bank statement coding.",
     )
+    is_base_rate_entity = models.BooleanField(
+        default=True,
+        help_text="Companies only: True = 25% base rate entity, False = 30% non-base rate. Used in trust tax planning.",
+    )
     show_cents = models.BooleanField(
         default=False,
         help_text="Show amounts with cents (2 decimal places). Default for trusts and sole traders.",
@@ -598,6 +602,27 @@ class EntityChartOfAccount(models.Model):
     is_custom = models.BooleanField(
         default=False,
         help_text="True if this account was added by the accountant (not from template)",
+    )
+    # Trust tax planning tags (used in Section 1 — Distributable Income calculation)
+    is_non_deductible = models.BooleanField(
+        default=False,
+        help_text="Non-deductible expense — added back for trust distributable income",
+    )
+    is_non_assessable = models.BooleanField(
+        default=False,
+        help_text="Non-assessable income — deducted for trust distributable income",
+    )
+    is_cgt = models.BooleanField(
+        default=False,
+        help_text="Capital gains account — streamed separately in trust distributions",
+    )
+    is_franked_dividend = models.BooleanField(
+        default=False,
+        help_text="Franked dividend income — streamed separately in trust distributions",
+    )
+    is_franking_credit = models.BooleanField(
+        default=False,
+        help_text="Franking credits account — grossed up in beneficiary calculations",
     )
     display_order = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -2373,5 +2398,230 @@ class EntityImportJob(models.Model):
         if self.total_rows == 0:
             return 0
         return int((self.created_count + self.skipped_count + self.error_count) / self.total_rows * 100)
+
+
+# ---------------------------------------------------------------------------
+# Tax Reference Data (configurable tax rates per FY)
+# ---------------------------------------------------------------------------
+class TaxReferenceData(models.Model):
+    """
+    Configurable tax rates and thresholds per financial year.
+    Used by the Trust Tax Planning calculation engine.
+    Never hardcode tax rates — always read from this table.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    financial_year_label = models.CharField(
+        max_length=10,
+        help_text='e.g. "FY2025". Blank = default for all years.',
+        blank=True, default="",
+    )
+    key = models.CharField(
+        max_length=100,
+        help_text='e.g. "tax_free_threshold", "bracket_1_rate"',
+    )
+    value = models.CharField(
+        max_length=255,
+        help_text='Numeric value stored as string, e.g. "18200", "0.19"',
+    )
+    description = models.TextField(blank=True, default="")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["financial_year_label", "key"]
+        unique_together = ["financial_year_label", "key"]
+        verbose_name = "Tax Reference Data"
+        verbose_name_plural = "Tax Reference Data"
+
+    def __str__(self):
+        return f"{self.key} = {self.value} ({self.financial_year_label or 'default'})"
+
+
+# ---------------------------------------------------------------------------
+# Trust Tax Planning Worksheet
+# ---------------------------------------------------------------------------
+class TaxPlanningWorksheet(models.Model):
+    """
+    One record per FinancialYear for Trust entities.
+    Created automatically when a Trust financial year workspace is opened.
+    """
+    class WorksheetStatus(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        FINALISED = "finalised", "Finalised"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    financial_year = models.OneToOneField(
+        FinancialYear, on_delete=models.CASCADE, related_name="tax_planning_worksheet"
+    )
+    # Section 1 — auto-calculated from TB, stored for audit trail
+    distributable_income = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Calculated from TB on each page load — stored for audit trail",
+    )
+    non_deductible_expenses = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+    )
+    non_assessable_income = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+    )
+    net_profit_before_distributions = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+    )
+    capital_gains = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Subset of distributable income",
+    )
+    franked_dividends = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Subset of distributable income",
+    )
+    franking_credits = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Subset of distributable income",
+    )
+    # Section 5 — Recommendation & Notes
+    recommendation_notes = models.TextField(
+        blank=True, default="",
+        help_text="Rich text — Section 5 content. Auto-saves on blur.",
+    )
+    # Status
+    status = models.CharField(
+        max_length=20, choices=WorksheetStatus.choices, default=WorksheetStatus.DRAFT,
+    )
+    finalised_at = models.DateTimeField(null=True, blank=True)
+    finalised_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="finalised_tax_plans",
+    )
+    last_updated_at = models.DateTimeField(auto_now=True)
+    last_updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="updated_tax_plans",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Tax Planning Worksheet"
+        verbose_name_plural = "Tax Planning Worksheets"
+
+    def __str__(self):
+        return f"Tax Planning — {self.financial_year}"
+
+    @property
+    def is_finalised(self):
+        return self.status == self.WorksheetStatus.FINALISED
+
+
+class TaxPlanningBeneficiaryRow(models.Model):
+    """
+    One record per beneficiary per TaxPlanningWorksheet.
+    Recalculated whenever Proposed Distribution or Outside Income changes.
+    """
+    class BeneficiaryType(models.TextChoices):
+        INDIVIDUAL = "individual", "Individual"
+        COMPANY = "company", "Company"
+        TRUST = "trust", "Trust"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    worksheet = models.ForeignKey(
+        TaxPlanningWorksheet, on_delete=models.CASCADE, related_name="beneficiary_rows"
+    )
+    beneficiary = models.ForeignKey(
+        EntityOfficer, on_delete=models.CASCADE, related_name="tax_planning_rows",
+        help_text="From Directors/Trustees/Beneficiaries tab",
+    )
+    beneficiary_type = models.CharField(
+        max_length=20, choices=BeneficiaryType.choices, default=BeneficiaryType.INDIVIDUAL,
+        help_text="Denormalised from beneficiary at row creation",
+    )
+    # Manual entry fields
+    outside_income = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Manual entry — default 0",
+    )
+    proposed_distribution = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Manual entry — must sum to distributable income",
+    )
+    # Calculated fields
+    grossed_up_franking_credits = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+    )
+    total_taxable_income = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+    )
+    gross_tax_payable = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+    )
+    medicare_levy = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Individuals only",
+    )
+    lito_offset = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Individuals only",
+    )
+    franking_credit_offset = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+    )
+    net_tax_payable = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Floored at 0",
+    )
+    effective_tax_rate = models.DecimalField(
+        max_digits=7, decimal_places=4, default=0,
+        help_text="4 decimal places, displayed as %",
+    )
+    company_tax_rate_override = models.DecimalField(
+        max_digits=5, decimal_places=4, null=True, blank=True,
+        help_text="Set if non-base-rate company (0.30). Null = use 0.25.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["beneficiary__full_name"]
+        unique_together = ["worksheet", "beneficiary"]
+        verbose_name = "Tax Planning Beneficiary Row"
+        verbose_name_plural = "Tax Planning Beneficiary Rows"
+
+    def __str__(self):
+        return f"{self.beneficiary.full_name} — {self.proposed_distribution}"
+
+
+class TaxPlanningScenario(models.Model):
+    """
+    Save up to 3 named distribution scenarios per financial year.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    financial_year = models.ForeignKey(
+        FinancialYear, on_delete=models.CASCADE, related_name="tax_planning_scenarios"
+    )
+    scenario_name = models.CharField(max_length=100)
+    distributions = models.JSONField(
+        default=list,
+        help_text='Array of {"beneficiary_id": "uuid", "proposed_amount": 0, "outside_income": 0}',
+    )
+    total_tax = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Total tax payable for this scenario (cached)",
+    )
+    total_distributed = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Total distributed for this scenario (cached)",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="created_tax_scenarios",
+    )
+
+    class Meta:
+        ordering = ["created_at"]
+        verbose_name = "Tax Planning Scenario"
+        verbose_name_plural = "Tax Planning Scenarios"
+
+    def __str__(self):
+        return f"{self.scenario_name} — {self.financial_year}"
+
 
 from .models_office_admin import *  # noqa: F401, F403
