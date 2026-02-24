@@ -405,6 +405,153 @@ def coa_check_code(request):
     return JsonResponse(result)
 
 
+@login_required
+def coa_suggest_code(request):
+    """
+    AJAX endpoint to suggest the next available account code.
+    Given a section and account_name, finds the correct position
+    alphabetically among existing accounts in that section and
+    returns an available code.
+
+    GET /chart-of-accounts/suggest-code/?section=expenses&account_name=Advertising&entity_type=company
+    Returns: {"suggested_code": "1015", "position_info": "Between 1010 (Accounting Fees) and 1020 (Bank Charges)"}
+    """
+    section = request.GET.get('section', '').strip()
+    account_name = request.GET.get('account_name', '').strip()
+    entity_type = request.GET.get('entity_type', 'company')
+
+    if not section or not account_name:
+        return JsonResponse({'suggested_code': '', 'position_info': 'Enter a section and account name.'})
+
+    # Get all active accounts in this section, ordered by account_name
+    existing = list(
+        ChartOfAccount.objects.filter(
+            entity_type=entity_type, section=section, is_active=True
+        ).order_by('account_name')
+    )
+
+    # Also handle related sections that share the same code range
+    # e.g., revenue and cost_of_sales both use 0-999
+    shared_sections = {
+        'revenue': ['revenue', 'cost_of_sales'],
+        'cost_of_sales': ['revenue', 'cost_of_sales'],
+        'equity': ['equity', 'capital_accounts', 'pl_appropriation'],
+        'capital_accounts': ['equity', 'capital_accounts', 'pl_appropriation'],
+        'pl_appropriation': ['equity', 'capital_accounts', 'pl_appropriation'],
+    }
+    related = shared_sections.get(section, [section])
+
+    # Get ALL accounts in the shared code range to avoid code collisions
+    all_in_range = list(
+        ChartOfAccount.objects.filter(
+            entity_type=entity_type, section__in=related, is_active=True
+        ).order_by('account_code')
+    )
+    used_codes = {int(a.account_code.split('.')[0]) for a in all_in_range if a.account_code.split('.')[0].isdigit()}
+
+    # Determine the code range for this section
+    # Use more specific sub-ranges where applicable
+    sub_ranges = {
+        'revenue':          (0, 999),
+        'cost_of_sales':    (0, 999),
+        'expenses':         (1000, 1999),
+        'assets':           (2000, 2999),
+        'liabilities':      (3000, 3999),
+        'equity':           (4000, 4999),
+        'capital_accounts': (4000, 4999),
+        'pl_appropriation': (4000, 4999),
+        'suspense':         (9000, 9999),
+    }
+    lo, hi = sub_ranges.get(section, (0, 9999))
+
+    # Find where this account_name fits alphabetically
+    name_lower = account_name.lower()
+    before = None  # account immediately before alphabetically
+    after = None   # account immediately after alphabetically
+
+    for acc in existing:
+        if acc.account_name.lower() < name_lower:
+            before = acc
+        elif acc.account_name.lower() > name_lower:
+            after = acc
+            break
+
+    # Determine the target code range
+    if before and after:
+        # Insert between two existing accounts
+        try:
+            code_before = int(before.account_code.split('.')[0])
+            code_after = int(after.account_code.split('.')[0])
+        except ValueError:
+            code_before = lo
+            code_after = hi
+        target_lo = code_before + 1
+        target_hi = code_after - 1
+        position_info = f'Between {before.account_code} ({before.account_name}) and {after.account_code} ({after.account_name})'
+    elif before and not after:
+        # Goes at the end of the section
+        try:
+            code_before = int(before.account_code.split('.')[0])
+        except ValueError:
+            code_before = lo
+        target_lo = code_before + 1
+        target_hi = hi
+        position_info = f'After {before.account_code} ({before.account_name})'
+    elif after and not before:
+        # Goes at the start of the section
+        try:
+            code_after = int(after.account_code.split('.')[0])
+        except ValueError:
+            code_after = hi
+        target_lo = lo
+        target_hi = code_after - 1
+        position_info = f'Before {after.account_code} ({after.account_name})'
+    else:
+        # No existing accounts in this section — use the section start
+        target_lo = lo
+        target_hi = hi
+        position_info = 'First account in this section'
+
+    # Find the first available code in the target range
+    suggested_code = ''
+    if target_lo <= target_hi:
+        # Try to find a code in the middle of the range first (for future insertions)
+        mid = (target_lo + target_hi) // 2
+        # Try mid first, then scan outward
+        if mid not in used_codes and lo <= mid <= hi:
+            suggested_code = str(mid)
+        else:
+            # Scan from target_lo upward
+            for c in range(target_lo, target_hi + 1):
+                if c not in used_codes and lo <= c <= hi:
+                    suggested_code = str(c)
+                    break
+
+    if not suggested_code:
+        # No space in the ideal range — find any available code in the section
+        for c in range(lo, hi + 1):
+            if c not in used_codes:
+                suggested_code = str(c)
+                position_info += ' (no space in ideal range, using next available)'
+                break
+
+    if not suggested_code:
+        return JsonResponse({
+            'suggested_code': '',
+            'position_info': 'No available codes in this section range. All codes are used.',
+            'error': True,
+        })
+
+    # Pad code to match existing convention (e.g., 4-digit for 1000+)
+    if int(suggested_code) >= 1000:
+        suggested_code = suggested_code.zfill(4)
+
+    return JsonResponse({
+        'suggested_code': suggested_code,
+        'position_info': position_info,
+    })
+
+
 # ---------------------------------------------------------------------------
 # Audit Library
 # ---------------------------------------------------------------------------

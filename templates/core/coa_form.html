@@ -31,33 +31,11 @@
                     {% csrf_token %}
                     <input type="hidden" name="entity_type" value="{{ entity_type }}">
 
-                    <!-- Account Code -->
+                    <!-- Step 1: Section (pick first) -->
                     <div class="mb-3">
-                        <label for="account_code" class="form-label fw-bold">Account Code <span class="text-danger">*</span></label>
-                        <div class="input-group">
-                            <input type="text" class="form-control" id="account_code" name="account_code"
-                                   value="{% if is_edit %}{{ account.account_code }}{% endif %}"
-                                   placeholder="e.g. 0500, 1510, 2000.01"
-                                   required maxlength="20">
-                            <span class="input-group-text" id="codeStatus">
-                                <i class="bi bi-question-circle text-muted"></i>
-                            </span>
-                        </div>
-                        <div id="codeFeedback" class="form-text"></div>
-                    </div>
-
-                    <!-- Account Name -->
-                    <div class="mb-3">
-                        <label for="account_name" class="form-label fw-bold">Account Name <span class="text-danger">*</span></label>
-                        <input type="text" class="form-control" id="account_name" name="account_name"
-                               value="{% if is_edit %}{{ account.account_name }}{% endif %}"
-                               placeholder="e.g. Sales, Accountancy, Motor Vehicle"
-                               required maxlength="255">
-                    </div>
-
-                    <!-- Section -->
-                    <div class="mb-3">
-                        <label for="section" class="form-label fw-bold">Section <span class="text-danger">*</span></label>
+                        <label for="section" class="form-label fw-bold">
+                            <span class="badge bg-primary me-1">1</span> Section <span class="text-danger">*</span>
+                        </label>
                         <select class="form-select" id="section" name="section" required>
                             <option value="">— Select Section —</option>
                             {% for value, label in section_choices %}
@@ -65,6 +43,38 @@
                             {% endfor %}
                         </select>
                         <div id="sectionHint" class="form-text"></div>
+                    </div>
+
+                    <!-- Step 2: Account Name (type second — triggers code suggestion) -->
+                    <div class="mb-3">
+                        <label for="account_name" class="form-label fw-bold">
+                            <span class="badge bg-primary me-1">2</span> Account Name <span class="text-danger">*</span>
+                        </label>
+                        <input type="text" class="form-control" id="account_name" name="account_name"
+                               value="{% if is_edit %}{{ account.account_name }}{% endif %}"
+                               placeholder="e.g. Sales, Accountancy, Motor Vehicle"
+                               required maxlength="255">
+                        <div id="nameFeedback" class="form-text"></div>
+                    </div>
+
+                    <!-- Step 3: Account Code (auto-populated, editable) -->
+                    <div class="mb-3">
+                        <label for="account_code" class="form-label fw-bold">
+                            <span class="badge bg-primary me-1">3</span> Account Code <span class="text-danger">*</span>
+                        </label>
+                        <div class="input-group">
+                            <input type="text" class="form-control" id="account_code" name="account_code"
+                                   value="{% if is_edit %}{{ account.account_code }}{% endif %}"
+                                   placeholder="Auto-populated based on section and name"
+                                   required maxlength="20">
+                            <span class="input-group-text" id="codeStatus">
+                                <i class="bi bi-question-circle text-muted"></i>
+                            </span>
+                        </div>
+                        <div id="codeFeedback" class="form-text"></div>
+                        <div id="positionInfo" class="form-text text-info" style="display:none;">
+                            <i class="bi bi-arrow-right"></i> <span id="positionText"></span>
+                        </div>
                     </div>
 
                     <!-- Classification -->
@@ -139,7 +149,7 @@
                     </thead>
                     <tbody>
                         {% for cr in code_ranges %}
-                        <tr>
+                        <tr id="range-row-{{ forloop.counter }}" class="range-row">
                             <td class="small">{{ cr.section }}</td>
                             <td class="text-end"><code>{{ cr.range }}</code></td>
                         </tr>
@@ -148,6 +158,23 @@
                 </table>
             </div>
         </div>
+
+        <!-- How it works card (only for Add mode) -->
+        {% if not is_edit %}
+        <div class="card mt-3">
+            <div class="card-header bg-success text-white">
+                <h6 class="mb-0"><i class="bi bi-lightbulb"></i> How Auto-Code Works</h6>
+            </div>
+            <div class="card-body small">
+                <ol class="mb-0 ps-3">
+                    <li class="mb-1"><strong>Select a section</strong> — this determines the code range</li>
+                    <li class="mb-1"><strong>Type the account name</strong> — the system finds where it fits alphabetically among existing accounts</li>
+                    <li class="mb-1"><strong>Code is auto-populated</strong> — placed between the correct neighbours to maintain alphabetical order</li>
+                    <li class="mb-0">You can always override the suggested code manually</li>
+                </ol>
+            </div>
+        </div>
+        {% endif %}
 
         {% if is_edit %}
         <div class="card mt-3">
@@ -199,8 +226,115 @@ document.addEventListener('DOMContentLoaded', function() {
     const codeFeedback = document.getElementById('codeFeedback');
     const sectionSelect = document.getElementById('section');
     const sectionHint = document.getElementById('sectionHint');
-    let debounceTimer;
+    const nameInput = document.getElementById('account_name');
+    const nameFeedback = document.getElementById('nameFeedback');
+    const positionInfo = document.getElementById('positionInfo');
+    const positionText = document.getElementById('positionText');
+    const isEdit = {% if is_edit %}true{% else %}false{% endif %};
 
+    let suggestTimer;
+    let checkTimer;
+    let userOverrodeCode = false;  // Track if user manually changed the code
+
+    // Mark if user manually edits the code field
+    codeInput.addEventListener('keydown', function() {
+        userOverrodeCode = true;
+    });
+
+    // ---------------------------------------------------------------
+    // Auto-suggest code when section + name are both filled
+    // ---------------------------------------------------------------
+    function suggestCode() {
+        const section = sectionSelect.value;
+        const name = nameInput.value.trim();
+
+        if (!section || !name || name.length < 2) {
+            positionInfo.style.display = 'none';
+            if (!isEdit && !userOverrodeCode) {
+                codeInput.value = '';
+                codeStatus.innerHTML = '<i class="bi bi-question-circle text-muted"></i>';
+                codeFeedback.textContent = '';
+            }
+            return;
+        }
+
+        // Show loading
+        if (!userOverrodeCode) {
+            codeStatus.innerHTML = '<span class="spinner-border spinner-border-sm text-primary"></span>';
+        }
+
+        clearTimeout(suggestTimer);
+        suggestTimer = setTimeout(function() {
+            const url = `/chart-of-accounts/suggest-code/?section=${encodeURIComponent(section)}&account_name=${encodeURIComponent(name)}&entity_type={{ entity_type }}`;
+
+            fetch(url)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.suggested_code) {
+                        // Show position info
+                        positionText.textContent = data.position_info;
+                        positionInfo.style.display = 'block';
+
+                        // Auto-fill code if user hasn't manually overridden
+                        if (!userOverrodeCode) {
+                            codeInput.value = data.suggested_code;
+                            codeStatus.innerHTML = '<i class="bi bi-check-circle-fill text-success"></i>';
+                            codeFeedback.innerHTML = '<i class="bi bi-magic"></i> Auto-assigned code <strong>' + data.suggested_code + '</strong>';
+                            codeFeedback.className = 'form-text text-success';
+                        }
+
+                        // Highlight the matching range row
+                        highlightRange(section);
+                    } else if (data.error) {
+                        positionText.textContent = data.position_info;
+                        positionInfo.style.display = 'block';
+                        if (!userOverrodeCode) {
+                            codeStatus.innerHTML = '<i class="bi bi-exclamation-triangle-fill text-warning"></i>';
+                            codeFeedback.textContent = data.position_info;
+                            codeFeedback.className = 'form-text text-warning';
+                        }
+                    }
+                })
+                .catch(() => {
+                    if (!userOverrodeCode) {
+                        codeStatus.innerHTML = '<i class="bi bi-question-circle text-muted"></i>';
+                    }
+                });
+        }, 500);
+    }
+
+    // Reset override flag when section changes (re-trigger auto-suggest)
+    sectionSelect.addEventListener('change', function() {
+        userOverrodeCode = false;
+        const section = sectionSelect.value;
+        if (section) {
+            // Show range hint
+            const ranges = {
+                'revenue': '0 — 999', 'cost_of_sales': '0 — 999',
+                'expenses': '1000 — 1999',
+                'assets': '2000 — 2999',
+                'liabilities': '3000 — 3999',
+                'equity': '4000+', 'capital_accounts': '4000+', 'pl_appropriation': '4000+',
+                'suspense': '9000 — 9999'
+            };
+            sectionHint.innerHTML = '<i class="bi bi-info-circle text-primary"></i> Code range: <code>' + (ranges[section] || '—') + '</code>';
+            highlightRange(section);
+        } else {
+            sectionHint.textContent = '';
+        }
+        suggestCode();
+    });
+
+    nameInput.addEventListener('input', function() {
+        if (!isEdit) {
+            userOverrodeCode = false;  // Re-trigger auto-suggest when name changes
+        }
+        suggestCode();
+    });
+
+    // ---------------------------------------------------------------
+    // Check code availability (manual entry or after auto-suggest)
+    // ---------------------------------------------------------------
     function checkCode() {
         const code = codeInput.value.trim();
         if (!code) {
@@ -210,8 +344,8 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
-        clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(function() {
+        clearTimeout(checkTimer);
+        checkTimer = setTimeout(function() {
             const excludePk = '{% if is_edit %}{{ account.pk }}{% endif %}';
             const url = `/chart-of-accounts/check-code/?code=${encodeURIComponent(code)}&entity_type={{ entity_type }}&exclude=${excludePk}`;
 
@@ -220,17 +354,17 @@ document.addEventListener('DOMContentLoaded', function() {
                 .then(data => {
                     if (data.available) {
                         codeStatus.innerHTML = '<i class="bi bi-check-circle-fill text-success"></i>';
-                        codeFeedback.textContent = 'Code is available.';
-                        codeFeedback.className = 'form-text text-success';
+                        if (userOverrodeCode) {
+                            codeFeedback.textContent = 'Code is available.';
+                            codeFeedback.className = 'form-text text-success';
+                        }
 
-                        // Auto-suggest section
+                        // Auto-suggest section if not set
                         if (data.sections && data.sections.length > 0) {
                             const suggested = data.sections[0];
-                            sectionHint.innerHTML = '<i class="bi bi-lightbulb text-warning"></i> Suggested section: <strong>' + suggested.label + '</strong>';
-
-                            // Auto-select if section is empty
                             if (!sectionSelect.value) {
                                 sectionSelect.value = suggested.value;
+                                sectionHint.innerHTML = '<i class="bi bi-lightbulb text-warning"></i> Auto-selected: <strong>' + suggested.label + '</strong>';
                             }
                         }
                     } else {
@@ -245,17 +379,46 @@ document.addEventListener('DOMContentLoaded', function() {
         }, 400);
     }
 
-    codeInput.addEventListener('input', checkCode);
+    codeInput.addEventListener('input', function() {
+        userOverrodeCode = true;
+        checkCode();
+    });
     codeInput.addEventListener('blur', checkCode);
 
-    // Validate section against code on form submit
+    // ---------------------------------------------------------------
+    // Highlight the matching range row in the reference card
+    // ---------------------------------------------------------------
+    function highlightRange(section) {
+        document.querySelectorAll('.range-row').forEach(r => {
+            r.style.backgroundColor = '';
+            r.style.fontWeight = '';
+        });
+        const sectionToRow = {
+            'revenue': 0, 'cost_of_sales': 0,
+            'expenses': 1,
+            'assets': 2,  // Current Assets row — also highlights Non-Current
+            'liabilities': 4,
+            'equity': 6, 'capital_accounts': 6, 'pl_appropriation': 6,
+        };
+        const rowIdx = sectionToRow[section];
+        if (rowIdx !== undefined) {
+            const rows = document.querySelectorAll('.range-row');
+            if (rows[rowIdx]) {
+                rows[rowIdx].style.backgroundColor = '#e8f5e9';
+                rows[rowIdx].style.fontWeight = '600';
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // Validate on form submit
+    // ---------------------------------------------------------------
     document.getElementById('coaForm').addEventListener('submit', function(e) {
         const code = codeInput.value.trim();
         const section = sectionSelect.value;
 
-        if (!code || !section) return; // Let server-side validation handle empty fields
+        if (!code || !section) return;
 
-        // Client-side range check
         const codeInt = parseInt(code.split('.')[0]);
         const ranges = {
             'revenue': [0, 999], 'cost_of_sales': [0, 999],
@@ -277,6 +440,11 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
     });
+
+    // Trigger initial state if editing
+    if (isEdit && sectionSelect.value) {
+        highlightRange(sectionSelect.value);
+    }
 });
 </script>
 {% endblock %}

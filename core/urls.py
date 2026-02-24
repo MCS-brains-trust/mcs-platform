@@ -67,6 +67,7 @@ urlpatterns = [
     path("chart-of-accounts/<uuid:pk>/edit/", views_audit.coa_edit, name="coa_edit"),
     path("chart-of-accounts/<uuid:pk>/delete/", views_audit.coa_delete, name="coa_delete"),
     path("chart-of-accounts/check-code/", views_audit.coa_check_code, name="coa_check_code"),
+    path("chart-of-accounts/suggest-code/", views_audit.coa_suggest_code, name="coa_suggest_code"),
     path("api/chart-of-accounts/", views_audit.chart_of_accounts_api, name="chart_of_accounts_api"),
 
     # Audit Library
