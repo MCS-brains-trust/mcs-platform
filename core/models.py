@@ -1143,6 +1143,8 @@ class GeneratedDocument(models.Model):
         DISTRIBUTION_MINUTES = "distribution_minutes", "Distribution Minutes"
         BENEFICIARY_STATEMENT = "beneficiary_statement", "Beneficiary Statement"
         PARTNER_STATEMENT = "partner_statement", "Partner Statement"
+        TRUST_ELECTION = "trust_election", "Trust Election (s97)"
+        TAX_PLANNING_SUMMARY = "tax_planning_summary", "Tax Planning Summary"
         WORKPAPER_NOTES = "workpaper_notes", "Working Paper Notes"
         OTHER = "other", "Other"
 

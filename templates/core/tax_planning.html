@@ -83,12 +83,6 @@
         transition: all 0.15s;
     }
     .scenario-chip:hover { border-color: #0d6efd; background: #e7f1ff; }
-    .notes-area {
-        min-height: 120px;
-        border: 1px solid #dee2e6;
-        border-radius: 6px;
-        padding: 12px;
-    }
     .tag-pill {
         display: inline-block;
         font-size: 0.7rem;
@@ -96,6 +90,64 @@
         border-radius: 3px;
         margin-right: 2px;
     }
+    .trust-row-note {
+        font-size: 0.75rem;
+        color: #e65100;
+        font-style: italic;
+    }
+    .refer-sub-trust {
+        color: #999;
+        font-style: italic;
+        font-size: 0.82rem;
+    }
+    .optimiser-panel .metric-card {
+        text-align: center;
+        padding: 12px;
+        border-radius: 8px;
+        border: 1px solid #dee2e6;
+    }
+    .optimiser-panel .metric-card .metric-label {
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        color: #6c757d;
+        margin-bottom: 4px;
+    }
+    .optimiser-panel .metric-card .metric-value {
+        font-size: 1.3rem;
+        font-weight: 700;
+    }
+    .undist-danger { background: #fff5f5; border-color: #e74c3c !important; }
+    .undist-success { background: #f0fff4; border-color: #2ecc71 !important; }
+    /* Scenario comparison table */
+    .scenario-compare-table th, .scenario-compare-table td {
+        font-size: 0.82rem;
+        padding: 6px 10px;
+    }
+    /* Rich text toolbar */
+    .notes-toolbar {
+        border: 1px solid #dee2e6;
+        border-bottom: none;
+        border-radius: 6px 6px 0 0;
+        padding: 4px 8px;
+        background: #f8f9fa;
+    }
+    .notes-toolbar button {
+        border: none;
+        background: none;
+        padding: 2px 8px;
+        cursor: pointer;
+        font-size: 0.85rem;
+        border-radius: 3px;
+    }
+    .notes-toolbar button:hover { background: #e9ecef; }
+    .notes-editor {
+        min-height: 120px;
+        border: 1px solid #dee2e6;
+        border-radius: 0 0 6px 6px;
+        padding: 12px;
+        outline: none;
+    }
+    .notes-editor:focus { border-color: #86b7fe; box-shadow: 0 0 0 0.25rem rgba(13,110,253,.25); }
 </style>
 {% endblock %}
 
@@ -127,11 +179,23 @@
         <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary btn-sm">
             <i class="bi bi-arrow-left"></i> Back to Workspace
         </a>
-        {% if is_finalised and can_finalise %}
-        <button class="btn btn-outline-warning btn-sm" id="btnReopen">
-            <i class="bi bi-unlock"></i> Re-open
-        </button>
-        {% elif not is_finalised and can_finalise %}
+        {% if is_finalised %}
+            {% if can_finalise %}
+            <button class="btn btn-outline-warning btn-sm" id="btnReopen">
+                <i class="bi bi-unlock"></i> Re-open
+            </button>
+            {% endif %}
+            <div class="dropdown">
+                <button class="btn btn-primary btn-sm dropdown-toggle" data-bs-toggle="dropdown">
+                    <i class="bi bi-file-earmark-word"></i> Generate Documents
+                </button>
+                <ul class="dropdown-menu">
+                    <li><a class="dropdown-item" href="{% url 'core:generate_distribution_minutes' pk=fy.pk %}"><i class="bi bi-file-text"></i> Distribution Minutes</a></li>
+                    <li><a class="dropdown-item" href="{% url 'core:generate_trust_election' pk=fy.pk %}"><i class="bi bi-file-text"></i> Trust Election (s97)</a></li>
+                    <li><a class="dropdown-item" href="{% url 'core:generate_tax_planning_summary' pk=fy.pk %}"><i class="bi bi-file-text"></i> Tax Planning Summary</a></li>
+                </ul>
+            </div>
+        {% elif can_finalise %}
         <button class="btn btn-success btn-sm" id="btnFinalise">
             <i class="bi bi-check-circle"></i> Finalise Tax Plan
         </button>
@@ -150,21 +214,17 @@
             <div class="label">Total Distributed</div>
             <div class="value" id="barDistributed">${{ optimiser.total_distributed }}</div>
         </div>
-        <div class="metric">
-            <div class="label">Undistributed</div>
+        <div class="metric" title="Undistributed income is taxed at 47% in the trustee's hands.">
+            <div class="label">Variance</div>
             <div class="value {% if optimiser.undistributed != '0.00' %}text-danger{% else %}text-success{% endif %}" id="barUndistributed">${{ optimiser.undistributed }}</div>
         </div>
         <div class="metric">
-            <div class="label">Total Tax Payable</div>
+            <div class="label">Total Estimated Tax</div>
             <div class="value text-warning" id="barTotalTax">${{ optimiser.total_tax }}</div>
         </div>
         <div class="metric">
             <div class="label">Weighted Effective Rate</div>
             <div class="value" id="barEffRate">{{ optimiser.weighted_effective_rate }}%</div>
-        </div>
-        <div class="metric">
-            <div class="label">Trustee Default Rate</div>
-            <div class="value text-danger">{{ trustee_rate }}%</div>
         </div>
     </div>
 </div>
@@ -232,23 +292,31 @@
     </div>
 </div>
 
-<!-- ===== SECTION 2: BENEFICIARY LIST ===== -->
-<div class="section-card">
+<!-- ===== SECTION 2: BENEFICIARY TAX POSITION (single unified table per spec) ===== -->
+<div class="section-card {% if is_finalised %}finalised-overlay{% endif %}">
     <div class="section-header d-flex justify-content-between align-items-center" data-bs-toggle="collapse" data-bs-target="#section2Body">
-        <span><i class="bi bi-2-circle-fill text-primary me-2"></i> Beneficiary List &amp; Types</span>
+        <span><i class="bi bi-2-circle-fill text-primary me-2"></i> Beneficiary Tax Position</span>
         <i class="bi bi-chevron-down"></i>
     </div>
     <div class="collapse show" id="section2Body">
         <div class="section-body">
             <div class="table-responsive">
-                <table class="table table-sm table-hover align-middle mb-0">
-                    <thead class="table-light">
+                <table class="table table-sm table-bordered table-hover align-middle mb-0" style="font-size: 0.82rem;">
+                    <thead class="table-dark">
                         <tr>
                             <th>Beneficiary</th>
-                            <th style="width: 140px;">Type</th>
-                            <th class="text-end" style="width: 160px;">Outside Income ($)</th>
-                            <th class="text-end" style="width: 180px;">Proposed Distribution ($)</th>
-                            <th class="text-center" style="width: 80px;">% Share</th>
+                            <th style="width: 120px;">Type</th>
+                            <th class="text-end" style="width: 130px;">Outside Income</th>
+                            <th class="text-end" style="width: 140px;">Proposed Distribution</th>
+                            <th class="text-end" style="width: 90px;">Franking Cr.</th>
+                            <th class="text-end" style="width: 110px;">Total Taxable</th>
+                            <th class="text-center" style="width: 60px;" title="Tax-Free Threshold Applied">TFT</th>
+                            <th class="text-end" style="width: 100px;">Gross Tax</th>
+                            <th class="text-end" style="width: 90px;">Medicare</th>
+                            <th class="text-end" style="width: 80px;">LITO</th>
+                            <th class="text-end" style="width: 90px;">FC Offset</th>
+                            <th class="text-end fw-bold" style="width: 100px;">Net Tax</th>
+                            <th class="text-end" style="width: 80px;">Eff. Rate</th>
                         </tr>
                     </thead>
                     <tbody id="beneficiaryTableBody">
@@ -263,8 +331,14 @@
                                         Non-base rate ({{ row.company_tax_rate_override|floatformat:0 }}%)
                                     {% else %}
                                         Base rate (25%)
+                                        {% if not entity.is_base_rate_entity %}
+                                        <span class="text-warning" title="Base-rate flag not set on company entity. Defaulting to 25%."><i class="bi bi-exclamation-triangle-fill"></i></span>
+                                        {% endif %}
                                     {% endif %}
                                 </small>
+                                {% endif %}
+                                {% if row.beneficiary_type == 'trust' %}
+                                <br><span class="trust-row-note"><i class="bi bi-info-circle"></i> Prepare a separate tax plan for this sub-trust.</span>
                                 {% endif %}
                             </td>
                             <td>
@@ -288,22 +362,32 @@
                                        value="{{ row.proposed_distribution|floatformat:2 }}" step="0.01" min="0"
                                        {% if is_finalised %}disabled{% endif %}>
                             </td>
-                            <td class="text-center">
-                                <span class="pct-share">0.0%</span>
-                            </td>
+                            <!-- Calculated columns — filled by JS after calculate -->
+                            <td class="text-end res-fc">—</td>
+                            <td class="text-end res-taxable">—</td>
+                            <td class="text-center res-tft">—</td>
+                            <td class="text-end res-gross">—</td>
+                            <td class="text-end res-medicare">—</td>
+                            <td class="text-end res-lito">—</td>
+                            <td class="text-end res-fc-offset">—</td>
+                            <td class="text-end fw-bold res-net">—</td>
+                            <td class="text-end res-rate">—</td>
                         </tr>
                         {% endfor %}
                     </tbody>
                     <tfoot class="table-light fw-bold">
                         <tr>
-                            <td colspan="3" class="text-end">Total Distributed:</td>
+                            <td colspan="3" class="text-end">TOTAL:</td>
                             <td class="text-end" id="totalDistributed">$0.00</td>
-                            <td class="text-center" id="totalPct">0%</td>
-                        </tr>
-                        <tr>
-                            <td colspan="3" class="text-end">Undistributed:</td>
-                            <td class="text-end" id="undistributedAmount">$0.00</td>
+                            <td class="text-end" id="resTotalFc">—</td>
+                            <td class="text-end" id="resTotalTaxable">—</td>
                             <td></td>
+                            <td class="text-end" id="resTotalGross">—</td>
+                            <td class="text-end" id="resTotalMedicare">—</td>
+                            <td class="text-end" id="resTotalLito">—</td>
+                            <td class="text-end" id="resTotalFcOffset">—</td>
+                            <td class="text-end" id="resTotalNet">—</td>
+                            <td class="text-end" id="resTotalRate">—</td>
                         </tr>
                     </tfoot>
                 </table>
@@ -325,67 +409,45 @@
     </div>
 </div>
 
-<!-- ===== SECTION 3: TAX CALCULATION RESULTS ===== -->
+<!-- ===== SECTION 3: DISTRIBUTION OPTIMISER (summary panel per spec) ===== -->
 <div class="section-card">
     <div class="section-header d-flex justify-content-between align-items-center" data-bs-toggle="collapse" data-bs-target="#section3Body">
-        <span><i class="bi bi-3-circle-fill text-primary me-2"></i> Tax Calculation Results</span>
+        <span><i class="bi bi-3-circle-fill text-primary me-2"></i> Distribution Optimiser</span>
         <i class="bi bi-chevron-down"></i>
     </div>
     <div class="collapse show" id="section3Body">
-        <div class="section-body">
-            <div class="table-responsive">
-                <table class="table table-sm table-bordered align-middle mb-0" style="font-size: 0.85rem;">
-                    <thead class="table-dark">
-                        <tr>
-                            <th>Beneficiary</th>
-                            <th class="text-end">Distribution</th>
-                            <th class="text-end">Outside Income</th>
-                            <th class="text-end">Franking Cr.</th>
-                            <th class="text-end">Total Taxable</th>
-                            <th class="text-end">Gross Tax</th>
-                            <th class="text-end">Medicare</th>
-                            <th class="text-end">LITO</th>
-                            <th class="text-end">FC Offset</th>
-                            <th class="text-end fw-bold">Net Tax</th>
-                            <th class="text-end">Eff. Rate</th>
-                        </tr>
-                    </thead>
-                    <tbody id="taxResultsBody">
-                        {% for row in rows %}
-                        <tr data-result-id="{{ row.beneficiary.pk }}">
-                            <td>
-                                {{ row.beneficiary.full_name }}
-                                <span class="type-badge type-{{ row.beneficiary_type }}">{{ row.beneficiary_type|title }}</span>
-                            </td>
-                            <td class="text-end res-dist">$0.00</td>
-                            <td class="text-end res-outside">$0.00</td>
-                            <td class="text-end res-fc">$0.00</td>
-                            <td class="text-end res-taxable">$0.00</td>
-                            <td class="text-end res-gross">$0.00</td>
-                            <td class="text-end res-medicare">$0.00</td>
-                            <td class="text-end res-lito">$0.00</td>
-                            <td class="text-end res-fc-offset">$0.00</td>
-                            <td class="text-end fw-bold res-net">$0.00</td>
-                            <td class="text-end res-rate">0.00%</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                    <tfoot class="table-light fw-bold">
-                        <tr>
-                            <td>TOTAL</td>
-                            <td class="text-end" id="resTotalDist">$0.00</td>
-                            <td class="text-end" id="resTotalOutside">$0.00</td>
-                            <td class="text-end" id="resTotalFc">$0.00</td>
-                            <td class="text-end" id="resTotalTaxable">$0.00</td>
-                            <td class="text-end" id="resTotalGross">$0.00</td>
-                            <td class="text-end" id="resTotalMedicare">$0.00</td>
-                            <td class="text-end" id="resTotalLito">$0.00</td>
-                            <td class="text-end" id="resTotalFcOffset">$0.00</td>
-                            <td class="text-end" id="resTotalNet">$0.00</td>
-                            <td class="text-end" id="resTotalRate">0.00%</td>
-                        </tr>
-                    </tfoot>
-                </table>
+        <div class="section-body optimiser-panel">
+            <div class="row g-3">
+                <div class="col-md">
+                    <div class="metric-card">
+                        <div class="metric-label">Total Distributable Income</div>
+                        <div class="metric-value" id="optDistributable">${{ section1.distributable_income|floatformat:2|intcomma }}</div>
+                    </div>
+                </div>
+                <div class="col-md">
+                    <div class="metric-card">
+                        <div class="metric-label">Total Proposed Distributions</div>
+                        <div class="metric-value" id="optDistributed">${{ optimiser.total_distributed }}</div>
+                    </div>
+                </div>
+                <div class="col-md">
+                    <div class="metric-card" id="optUndistCard" title="Undistributed income is taxed at 47% in the trustee's hands.">
+                        <div class="metric-label">Undistributed Balance</div>
+                        <div class="metric-value" id="optUndistributed">${{ optimiser.undistributed }}</div>
+                    </div>
+                </div>
+                <div class="col-md">
+                    <div class="metric-card">
+                        <div class="metric-label">Total Estimated Tax</div>
+                        <div class="metric-value text-warning" id="optTotalTax">${{ optimiser.total_tax }}</div>
+                    </div>
+                </div>
+                <div class="col-md">
+                    <div class="metric-card">
+                        <div class="metric-label">Weighted Avg Effective Rate</div>
+                        <div class="metric-value" id="optEffRate">{{ optimiser.weighted_effective_rate }}%</div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -399,33 +461,74 @@
     </div>
     <div class="collapse show" id="section4Body">
         <div class="section-body">
+            <!-- Save controls -->
+            {% if not is_finalised %}
+            <div class="d-flex gap-2 align-items-center mb-3">
+                <input type="text" class="form-control form-control-sm" id="scenarioName" placeholder="Scenario name (e.g. Option A — Equal Split)..." style="max-width: 300px;">
+                <button class="btn btn-sm btn-outline-primary" id="btnSaveScenario">
+                    <i class="bi bi-bookmark-plus"></i> Save Current as Scenario
+                </button>
+            </div>
+            {% endif %}
+
+            <!-- Scenario chips -->
             <div class="d-flex flex-wrap gap-2 mb-3" id="scenarioChips">
                 {% for s in scenarios %}
                 <div class="scenario-chip" data-scenario-id="{{ s.pk }}">
                     <i class="bi bi-bookmark-fill text-primary"></i>
                     <span>{{ s.scenario_name }}</span>
                     <small class="text-muted">(Tax: ${{ s.total_tax|floatformat:2|intcomma }})</small>
-                    <button class="btn btn-sm btn-link text-primary p-0 ms-1 scenario-load" title="Load"><i class="bi bi-box-arrow-in-down"></i></button>
+                    <button class="btn btn-sm btn-link text-primary p-0 ms-1 scenario-load" title="Apply this scenario"><i class="bi bi-box-arrow-in-down"></i></button>
+                    {% if not is_finalised %}
                     <button class="btn btn-sm btn-link text-danger p-0 ms-1 scenario-delete" title="Delete"><i class="bi bi-x-circle"></i></button>
+                    {% endif %}
                 </div>
                 {% endfor %}
                 {% if scenarios.count == 0 %}
-                <div class="text-muted" id="noScenariosMsg"><i class="bi bi-info-circle"></i> No saved scenarios yet.</div>
+                <div class="text-muted" id="noScenariosMsg"><i class="bi bi-info-circle"></i> No saved scenarios yet. Save your first distribution scenario above.</div>
                 {% endif %}
             </div>
-            {% if not is_finalised %}
-            <div class="d-flex gap-2 align-items-center">
-                <input type="text" class="form-control form-control-sm" id="scenarioName" placeholder="Scenario name..." style="max-width: 250px;">
-                <button class="btn btn-sm btn-outline-primary" id="btnSaveScenario">
-                    <i class="bi bi-bookmark-plus"></i> Save Current as Scenario
-                </button>
+
+            <!-- Side-by-side comparison table (only shown when scenarios exist) -->
+            {% if scenarios.count > 0 %}
+            <h6 class="mt-3 mb-2"><i class="bi bi-layout-three-columns"></i> Scenario Comparison</h6>
+            <div class="table-responsive">
+                <table class="table table-sm table-bordered scenario-compare-table">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Beneficiary</th>
+                            {% for s in scenarios %}
+                            <th class="text-center" colspan="2">
+                                {{ s.scenario_name }}
+                                <br><small class="text-muted">Total Tax: ${{ s.total_tax|floatformat:2|intcomma }}</small>
+                            </th>
+                            {% endfor %}
+                        </tr>
+                        <tr>
+                            <th></th>
+                            {% for s in scenarios %}
+                            <th class="text-end">Distribution</th>
+                            <th class="text-end">Net Tax</th>
+                            {% endfor %}
+                        </tr>
+                    </thead>
+                    <tbody id="scenarioCompareBody">
+                        <!-- Populated by JS from scenarios_json -->
+                    </tbody>
+                    <tfoot class="table-light fw-bold">
+                        <tr id="scenarioCompareTotals">
+                            <td>TOTAL</td>
+                            <!-- Populated by JS -->
+                        </tr>
+                    </tfoot>
+                </table>
             </div>
             {% endif %}
         </div>
     </div>
 </div>
 
-<!-- ===== SECTION 5: RECOMMENDATION & NOTES ===== -->
+<!-- ===== SECTION 5: RECOMMENDATION & NOTES (rich text per spec) ===== -->
 <div class="section-card">
     <div class="section-header d-flex justify-content-between align-items-center" data-bs-toggle="collapse" data-bs-target="#section5Body">
         <span><i class="bi bi-5-circle-fill text-primary me-2"></i> Recommendation &amp; Notes</span>
@@ -433,11 +536,18 @@
     </div>
     <div class="collapse show" id="section5Body">
         <div class="section-body">
-            <textarea class="form-control notes-area" id="recommendationNotes" rows="6"
-                      placeholder="Enter your recommendation and notes here. This auto-saves on blur."
-                      {% if is_finalised %}disabled{% endif %}>{{ worksheet.recommendation_notes }}</textarea>
+            {% if not is_finalised %}
+            <div class="notes-toolbar">
+                <button type="button" onclick="document.execCommand('bold')" title="Bold"><b>B</b></button>
+                <button type="button" onclick="document.execCommand('italic')" title="Italic"><i>I</i></button>
+                <button type="button" onclick="document.execCommand('insertUnorderedList')" title="Bullet List"><i class="bi bi-list-ul"></i></button>
+                <button type="button" onclick="document.execCommand('insertOrderedList')" title="Numbered List"><i class="bi bi-list-ol"></i></button>
+            </div>
+            {% endif %}
+            <div class="notes-editor" id="recommendationNotes" contenteditable="{% if is_finalised %}false{% else %}true{% endif %}"
+                 {% if is_finalised %}style="background: #f8f9fa; cursor: not-allowed;"{% endif %}>{{ worksheet.recommendation_notes|safe }}</div>
             <div class="form-text mt-1">
-                <i class="bi bi-info-circle"></i> Auto-saves when you click outside the text area.
+                <i class="bi bi-info-circle"></i> Auto-saves when you click outside the editor. Supports bold, italic, and lists.
                 <span id="notesSaveStatus" class="ms-2"></span>
             </div>
         </div>
@@ -479,6 +589,7 @@
     const distributableIncome = parseFloat('{{ section1.distributable_income }}');
     const frankingCredits = parseFloat('{{ section1.franking_credits }}');
     const isFinalised = {{ is_finalised|yesno:"true,false" }};
+    const taxFreeThreshold = parseFloat('{{ tax_free_threshold }}');
     let scenarios = JSON.parse('{{ scenarios_json|escapejs }}');
 
     // ===== HELPERS =====
@@ -516,21 +627,25 @@
         });
         const undist = distributableIncome - totalDist;
         document.getElementById('totalDistributed').textContent = fmt(totalDist);
-        document.getElementById('undistributedAmount').textContent = fmt(undist);
-        document.getElementById('undistributedAmount').className = undist === 0 ? 'text-end text-success' : 'text-end text-danger';
 
-        // Update % shares
-        document.querySelectorAll('#beneficiaryTableBody tr').forEach(tr => {
-            const proposed = parseFloat(tr.querySelector('.proposed-dist').value) || 0;
-            const pct = distributableIncome > 0 ? (proposed / distributableIncome * 100).toFixed(1) : 0;
-            tr.querySelector('.pct-share').textContent = pct + '%';
-        });
-
-        // Update sticky bar
+        // Sticky bar
         document.getElementById('barDistributed').textContent = fmt(totalDist);
         const barUndist = document.getElementById('barUndistributed');
         barUndist.textContent = fmt(undist);
         barUndist.className = undist === 0 ? 'value text-success' : 'value text-danger';
+
+        // Section 3 optimiser panel
+        document.getElementById('optDistributed').textContent = fmt(totalDist);
+        const optUndist = document.getElementById('optUndistributed');
+        optUndist.textContent = fmt(undist);
+        const optCard = document.getElementById('optUndistCard');
+        if (undist !== 0) {
+            optUndist.className = 'metric-value text-danger';
+            optCard.className = 'metric-card undist-danger';
+        } else {
+            optUndist.className = 'metric-value text-success';
+            optCard.className = 'metric-card undist-success';
+        }
     }
 
     // ===== CALCULATE =====
@@ -551,31 +666,55 @@
 
     function updateTaxResults(result) {
         const rows = result.rows || [];
-        let totals = {dist: 0, outside: 0, fc: 0, taxable: 0, gross: 0, medicare: 0, lito: 0, fcOffset: 0, net: 0};
+        let totals = {fc: 0, taxable: 0, gross: 0, medicare: 0, lito: 0, fcOffset: 0, net: 0, dist: 0};
 
         rows.forEach(r => {
-            const tr = document.querySelector(`[data-result-id="${r.beneficiary_id}"]`);
+            const tr = document.querySelector(`[data-beneficiary-id="${r.beneficiary_id}"]`);
             if (!tr) return;
 
-            // Get proposed from input
-            const inputTr = document.querySelector(`[data-beneficiary-id="${r.beneficiary_id}"]`);
-            const proposed = inputTr ? parseFloat(inputTr.querySelector('.proposed-dist').value) || 0 : 0;
-            const outsideEl = inputTr ? inputTr.querySelector('.outside-income') : null;
-            const outside = outsideEl ? parseFloat(outsideEl.value) || 0 : 0;
+            const btype = tr.querySelector('.ben-type-select').value;
+            const proposed = parseFloat(tr.querySelector('.proposed-dist').value) || 0;
 
-            tr.querySelector('.res-dist').textContent = fmt(proposed);
-            tr.querySelector('.res-outside').textContent = fmt(outside);
+            // Trust beneficiary — show "Refer to sub-trust" for all tax columns
+            if (r.is_trust_beneficiary || btype === 'trust') {
+                tr.querySelector('.res-fc').innerHTML = '<span class="refer-sub-trust">Refer to sub-trust</span>';
+                tr.querySelector('.res-taxable').innerHTML = '<span class="refer-sub-trust">Refer to sub-trust</span>';
+                tr.querySelector('.res-tft').innerHTML = '<span class="refer-sub-trust">—</span>';
+                tr.querySelector('.res-gross').innerHTML = '<span class="refer-sub-trust">Refer to sub-trust</span>';
+                tr.querySelector('.res-medicare').innerHTML = '<span class="refer-sub-trust">Refer to sub-trust</span>';
+                tr.querySelector('.res-lito').innerHTML = '<span class="refer-sub-trust">Refer to sub-trust</span>';
+                tr.querySelector('.res-fc-offset').innerHTML = '<span class="refer-sub-trust">Refer to sub-trust</span>';
+                tr.querySelector('.res-net').innerHTML = '<span class="refer-sub-trust">Refer to sub-trust</span>';
+                tr.querySelector('.res-rate').innerHTML = '<span class="refer-sub-trust">—</span>';
+                totals.dist += proposed;
+                return;
+            }
+
             tr.querySelector('.res-fc').textContent = fmt(r.grossed_up_franking_credits);
             tr.querySelector('.res-taxable').textContent = fmt(r.total_taxable_income);
+
+            // Tax-Free Threshold Applied (individuals only, where total taxable <= threshold)
+            const totalTaxable = parseFloat(r.total_taxable_income) || 0;
+            if (btype === 'individual') {
+                if (totalTaxable <= taxFreeThreshold && totalTaxable > 0) {
+                    tr.querySelector('.res-tft').innerHTML = '<span class="badge bg-success">Yes</span>';
+                } else if (totalTaxable > taxFreeThreshold) {
+                    tr.querySelector('.res-tft').innerHTML = '<span class="badge bg-secondary">No</span>';
+                } else {
+                    tr.querySelector('.res-tft').textContent = '—';
+                }
+            } else {
+                tr.querySelector('.res-tft').textContent = 'N/A';
+            }
+
             tr.querySelector('.res-gross').textContent = fmt(r.gross_tax_payable);
-            tr.querySelector('.res-medicare').textContent = fmt(r.medicare_levy);
-            tr.querySelector('.res-lito').textContent = fmt(r.lito_offset);
+            tr.querySelector('.res-medicare').textContent = btype === 'company' ? 'N/A' : fmt(r.medicare_levy);
+            tr.querySelector('.res-lito').textContent = btype === 'company' ? 'N/A' : fmt(r.lito_offset);
             tr.querySelector('.res-fc-offset').textContent = fmt(r.franking_credit_offset);
             tr.querySelector('.res-net').textContent = fmt(r.net_tax_payable);
             tr.querySelector('.res-rate').textContent = fmtPct(r.effective_tax_rate);
 
             totals.dist += proposed;
-            totals.outside += outside;
             totals.fc += parseFloat(r.grossed_up_franking_credits) || 0;
             totals.taxable += parseFloat(r.total_taxable_income) || 0;
             totals.gross += parseFloat(r.gross_tax_payable) || 0;
@@ -585,8 +724,7 @@
             totals.net += parseFloat(r.net_tax_payable) || 0;
         });
 
-        document.getElementById('resTotalDist').textContent = fmt(totals.dist);
-        document.getElementById('resTotalOutside').textContent = fmt(totals.outside);
+        // Footer totals
         document.getElementById('resTotalFc').textContent = fmt(totals.fc);
         document.getElementById('resTotalTaxable').textContent = fmt(totals.taxable);
         document.getElementById('resTotalGross').textContent = fmt(totals.gross);
@@ -598,15 +736,31 @@
         const avgRate = totals.dist > 0 ? totals.net / totals.dist : 0;
         document.getElementById('resTotalRate').textContent = (avgRate * 100).toFixed(2) + '%';
 
-        // Update sticky bar
+        // Sticky bar
         document.getElementById('barTotalTax').textContent = fmt(totals.net);
         document.getElementById('barEffRate').textContent = (avgRate * 100).toFixed(2) + '%';
 
+        // Section 3 optimiser
+        document.getElementById('optTotalTax').textContent = fmt(totals.net);
+        document.getElementById('optEffRate').textContent = (avgRate * 100).toFixed(2) + '%';
+
         if (result.optimiser) {
             document.getElementById('barDistributed').textContent = fmt(result.optimiser.total_distributed);
+            document.getElementById('optDistributed').textContent = fmt(result.optimiser.total_distributed);
             const barUndist = document.getElementById('barUndistributed');
             barUndist.textContent = fmt(result.optimiser.undistributed);
             barUndist.className = parseFloat(result.optimiser.undistributed) === 0 ? 'value text-success' : 'value text-danger';
+
+            const optUndist = document.getElementById('optUndistributed');
+            optUndist.textContent = fmt(result.optimiser.undistributed);
+            const optCard = document.getElementById('optUndistCard');
+            if (parseFloat(result.optimiser.undistributed) !== 0) {
+                optUndist.className = 'metric-value text-danger';
+                optCard.className = 'metric-card undist-danger';
+            } else {
+                optUndist.className = 'metric-value text-success';
+                optCard.className = 'metric-card undist-success';
+            }
         }
     }
 
@@ -624,7 +778,6 @@
             return;
         }
         updateTaxResults(result);
-        // Flash save confirmation
         const btn = document.getElementById('btnSave');
         if (btn) {
             btn.innerHTML = '<i class="bi bi-check-circle"></i> Saved!';
@@ -642,7 +795,6 @@
         if (inputs.length === 0) return;
         const each = (distributableIncome / inputs.length).toFixed(2);
         inputs.forEach(el => { el.value = each; });
-        // Adjust rounding on last
         let total = 0;
         inputs.forEach(el => { total += parseFloat(el.value); });
         const diff = distributableIncome - total;
@@ -653,10 +805,10 @@
         updateSummary();
     }
 
-    // ===== NOTES AUTO-SAVE =====
-    const notesArea = document.getElementById('recommendationNotes');
-    if (notesArea && !isFinalised) {
-        notesArea.addEventListener('blur', async function() {
+    // ===== NOTES AUTO-SAVE (rich text) =====
+    const notesEditor = document.getElementById('recommendationNotes');
+    if (notesEditor && !isFinalised) {
+        notesEditor.addEventListener('blur', async function() {
             const status = document.getElementById('notesSaveStatus');
             status.textContent = 'Saving...';
             status.className = 'ms-2 text-muted';
@@ -664,11 +816,11 @@
                 const resp = await fetch(`/years/${fyPk}/tax-planning/save-notes/`, {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json', 'X-CSRFToken': csrfToken},
-                    body: JSON.stringify({recommendation_notes: notesArea.value}),
+                    body: JSON.stringify({recommendation_notes: notesEditor.innerHTML}),
                 });
                 const result = await resp.json();
                 if (result.success) {
-                    status.textContent = 'Saved ✓';
+                    status.textContent = 'Saved';
                     status.className = 'ms-2 text-success';
                 } else {
                     status.textContent = 'Error saving';
@@ -688,8 +840,9 @@
         if (!name) { alert('Please enter a scenario name.'); return; }
 
         const data = gatherBeneficiaryData();
-        const totalTax = document.getElementById('resTotalNet').textContent.replace(/[$,]/g, '');
-        const totalDist = document.getElementById('resTotalDist').textContent.replace(/[$,]/g, '');
+        // Get current calculated totals
+        const totalTax = document.getElementById('resTotalNet')?.textContent.replace(/[$,]/g, '') || '0';
+        const totalDist = document.getElementById('totalDistributed')?.textContent.replace(/[$,]/g, '') || '0';
 
         const resp = await fetch(`/years/${fyPk}/tax-planning/scenario/save/`, {
             method: 'POST',
@@ -706,7 +859,6 @@
             alert(result.error);
             return;
         }
-        // Reload to show new scenario
         location.reload();
     }
 
@@ -718,7 +870,6 @@
         const result = await resp.json();
         if (!result.success) { alert('Failed to load scenario.'); return; }
 
-        // Apply distributions to inputs
         (result.distributions || []).forEach(d => {
             const tr = document.querySelector(`[data-beneficiary-id="${d.beneficiary_id}"]`);
             if (!tr) return;
@@ -741,6 +892,49 @@
         if (result.success) location.reload();
     }
 
+    // ===== SCENARIO COMPARISON TABLE =====
+    function buildComparisonTable() {
+        if (scenarios.length === 0) return;
+        const body = document.getElementById('scenarioCompareBody');
+        const totalsRow = document.getElementById('scenarioCompareTotals');
+        if (!body || !totalsRow) return;
+
+        // Collect all unique beneficiary IDs across scenarios
+        const benMap = {};
+        const benOrder = [];
+        document.querySelectorAll('#beneficiaryTableBody tr').forEach(tr => {
+            const id = tr.dataset.beneficiaryId;
+            const name = tr.querySelector('strong')?.textContent || id;
+            benMap[id] = name;
+            benOrder.push(id);
+        });
+
+        body.innerHTML = '';
+        const scenarioTotals = scenarios.map(() => ({dist: 0, tax: 0}));
+
+        benOrder.forEach(benId => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `<td>${benMap[benId] || benId}</td>`;
+            scenarios.forEach((s, i) => {
+                const dist_data = (s.distributions || []).find(d => d.beneficiary_id === benId);
+                const dist = dist_data ? parseFloat(dist_data.proposed_distribution || dist_data.proposed_amount || 0) : 0;
+                // We don't have per-beneficiary tax in scenario data, so show distribution only
+                tr.innerHTML += `<td class="text-end">${fmt(dist)}</td><td class="text-end text-muted">—</td>`;
+                scenarioTotals[i].dist += dist;
+            });
+            body.appendChild(tr);
+        });
+
+        // Totals row
+        let totalsHtml = '<td>TOTAL</td>';
+        scenarios.forEach((s, i) => {
+            totalsHtml += `<td class="text-end fw-bold">${fmt(scenarioTotals[i].dist)}</td>`;
+            totalsHtml += `<td class="text-end fw-bold">${fmt(s.total_tax)}</td>`;
+        });
+        totalsRow.innerHTML = totalsHtml;
+    }
+    buildComparisonTable();
+
     // ===== FINALISE / REOPEN =====
     async function attemptFinalise(acknowledged) {
         const resp = await fetch(`/years/${fyPk}/tax-planning/finalise/`, {
@@ -755,7 +949,6 @@
             return;
         }
 
-        // Show errors/warnings in modal
         const errDiv = document.getElementById('finaliseErrors');
         const warnDiv = document.getElementById('finaliseWarnings');
         const confirmBtn = document.getElementById('btnConfirmFinalise');
@@ -799,12 +992,10 @@
     }
 
     // ===== EVENT LISTENERS =====
-    // Input changes
     document.querySelectorAll('.proposed-dist, .outside-income').forEach(el => {
         el.addEventListener('input', updateSummary);
     });
 
-    // Buttons
     const btnCalc = document.getElementById('btnCalculate');
     if (btnCalc) btnCalc.addEventListener('click', calculate);
 
@@ -845,13 +1036,20 @@
             const tr = this.closest('tr');
             tr.dataset.type = this.value;
             const outsideInput = tr.querySelector('.outside-income');
+            const outsideTd = outsideInput?.closest('td');
             if (this.value === 'company') {
                 if (outsideInput) {
                     outsideInput.value = '0.00';
-                    outsideInput.disabled = true;
+                    outsideInput.style.display = 'none';
                 }
-            } else {
+                if (outsideTd) outsideTd.innerHTML = '<span class="text-muted">N/A</span>';
+            } else if (this.value === 'trust') {
                 if (outsideInput) outsideInput.disabled = isFinalised;
+            } else {
+                if (outsideInput) {
+                    outsideInput.disabled = isFinalised;
+                    outsideInput.style.display = '';
+                }
             }
         });
     });

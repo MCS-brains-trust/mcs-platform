@@ -16,7 +16,7 @@ from decimal import Decimal
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
@@ -172,6 +172,7 @@ def tax_planning_tab(request, pk):
         "is_finalised": worksheet.is_finalised,
         "can_finalise": request.user.can_finalise,
         "trustee_rate": str(rates.get("trustee_default_tax_rate", Decimal("0.47"))),
+        "tax_free_threshold": str(rates.get("tax_free_threshold", Decimal("18200"))),
     }
     return render(request, "core/tax_planning.html", context)
 
@@ -481,3 +482,213 @@ def tax_planning_reopen(request, pk):
     _log_action(request, "reopen", "Re-opened Tax Planning Worksheet", fy)
 
     return JsonResponse({"success": True, "message": "Tax Plan re-opened for editing."})
+
+
+@login_required
+def generate_trust_election_view(request, pk):
+    """
+    GET /years/<pk>/trust-election/
+    Generate Trust Election (s97/streaming) document.
+    """
+    fy = get_financial_year_for_user(request, pk)
+    entity = fy.entity
+
+    if entity.entity_type != "trust":
+        messages.error(request, "Trust elections are only applicable to trust entities.")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    fmt = request.GET.get("format", "docx").lower()
+    if fmt not in ("docx", "pdf"):
+        fmt = "docx"
+
+    from .taxplan_docgen import generate_trust_election
+
+    try:
+        buffer = generate_trust_election(fy.pk)
+    except (ValueError, FileNotFoundError) as e:
+        messages.error(request, f"Trust election generation failed: {e}")
+        return redirect("core:tax_planning_tab", pk=pk)
+    except Exception as e:
+        messages.error(request, f"Unexpected error: {e}")
+        return redirect("core:tax_planning_tab", pk=pk)
+
+    entity_name = entity.entity_name.replace(" ", "_")
+    base_filename = f"{entity_name}_Trust_Election_{fy.year_label}"
+
+    if fmt == "pdf":
+        import subprocess, tempfile, os
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                docx_path = os.path.join(tmpdir, f"{base_filename}.docx")
+                with open(docx_path, "wb") as f:
+                    f.write(buffer.getvalue())
+
+                lo_bin = None
+                for candidate in ["soffice", "libreoffice", "/usr/bin/soffice", "/usr/bin/libreoffice"]:
+                    try:
+                        subprocess.run([candidate, "--version"], capture_output=True, timeout=5)
+                        lo_bin = candidate
+                        break
+                    except (FileNotFoundError, subprocess.TimeoutExpired):
+                        continue
+
+                if not lo_bin:
+                    raise RuntimeError("LibreOffice is not installed.")
+
+                subprocess.run(
+                    [lo_bin, "--headless", "--norestore", "--convert-to", "pdf",
+                     "--outdir", tmpdir, docx_path],
+                    capture_output=True, timeout=120,
+                    env={**os.environ, "HOME": tmpdir},
+                )
+                pdf_path = os.path.join(tmpdir, f"{base_filename}.pdf")
+                if not os.path.exists(pdf_path):
+                    raise RuntimeError("PDF conversion failed.")
+                with open(pdf_path, "rb") as f:
+                    pdf_bytes = f.read()
+
+            filename = f"{base_filename}.pdf"
+            response = HttpResponse(pdf_bytes, content_type="application/pdf")
+            response["Content-Disposition"] = f'attachment; filename="{filename}"'
+            file_content = pdf_bytes
+            file_format = "pdf"
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"PDF conversion failed: {e}")
+            messages.error(request, f"PDF conversion failed: {e}. Falling back to DOCX.")
+            filename = f"{base_filename}.docx"
+            response = HttpResponse(
+                buffer.getvalue(),
+                content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+            response["Content-Disposition"] = f'attachment; filename="{filename}"'
+            file_content = buffer.getvalue()
+            file_format = "docx"
+    else:
+        filename = f"{base_filename}.docx"
+        response = HttpResponse(
+            buffer.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        file_content = buffer.getvalue()
+        file_format = "docx"
+
+    _log_action(request, "generate", f"Generated Trust Election ({file_format.upper()}) for {fy}", fy)
+
+    from django.core.files.base import ContentFile
+    from core.models import GeneratedDocument
+    doc = GeneratedDocument(
+        financial_year=fy,
+        file_format=file_format,
+        document_type=GeneratedDocument.DocumentType.TRUST_ELECTION,
+        generated_by=request.user,
+    )
+    doc.file.save(filename, ContentFile(file_content), save=True)
+
+    return response
+
+
+@login_required
+def generate_tax_planning_summary_view(request, pk):
+    """
+    GET /years/<pk>/tax-planning-summary/
+    Generate Tax Planning Summary (client-facing) document.
+    """
+    fy = get_financial_year_for_user(request, pk)
+    entity = fy.entity
+
+    if entity.entity_type != "trust":
+        messages.error(request, "Tax Planning Summary is only applicable to trust entities.")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    fmt = request.GET.get("format", "docx").lower()
+    if fmt not in ("docx", "pdf"):
+        fmt = "docx"
+
+    from .taxplan_docgen import generate_tax_planning_summary
+
+    try:
+        buffer = generate_tax_planning_summary(fy.pk)
+    except (ValueError, FileNotFoundError) as e:
+        messages.error(request, f"Tax Planning Summary generation failed: {e}")
+        return redirect("core:tax_planning_tab", pk=pk)
+    except Exception as e:
+        messages.error(request, f"Unexpected error: {e}")
+        return redirect("core:tax_planning_tab", pk=pk)
+
+    entity_name = entity.entity_name.replace(" ", "_")
+    base_filename = f"{entity_name}_Tax_Planning_Summary_{fy.year_label}"
+
+    if fmt == "pdf":
+        import subprocess, tempfile, os
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                docx_path = os.path.join(tmpdir, f"{base_filename}.docx")
+                with open(docx_path, "wb") as f:
+                    f.write(buffer.getvalue())
+
+                lo_bin = None
+                for candidate in ["soffice", "libreoffice", "/usr/bin/soffice", "/usr/bin/libreoffice"]:
+                    try:
+                        subprocess.run([candidate, "--version"], capture_output=True, timeout=5)
+                        lo_bin = candidate
+                        break
+                    except (FileNotFoundError, subprocess.TimeoutExpired):
+                        continue
+
+                if not lo_bin:
+                    raise RuntimeError("LibreOffice is not installed.")
+
+                subprocess.run(
+                    [lo_bin, "--headless", "--norestore", "--convert-to", "pdf",
+                     "--outdir", tmpdir, docx_path],
+                    capture_output=True, timeout=120,
+                    env={**os.environ, "HOME": tmpdir},
+                )
+                pdf_path = os.path.join(tmpdir, f"{base_filename}.pdf")
+                if not os.path.exists(pdf_path):
+                    raise RuntimeError("PDF conversion failed.")
+                with open(pdf_path, "rb") as f:
+                    pdf_bytes = f.read()
+
+            filename = f"{base_filename}.pdf"
+            response = HttpResponse(pdf_bytes, content_type="application/pdf")
+            response["Content-Disposition"] = f'attachment; filename="{filename}"'
+            file_content = pdf_bytes
+            file_format = "pdf"
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"PDF conversion failed: {e}")
+            messages.error(request, f"PDF conversion failed: {e}. Falling back to DOCX.")
+            filename = f"{base_filename}.docx"
+            response = HttpResponse(
+                buffer.getvalue(),
+                content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            )
+            response["Content-Disposition"] = f'attachment; filename="{filename}"'
+            file_content = buffer.getvalue()
+            file_format = "docx"
+    else:
+        filename = f"{base_filename}.docx"
+        response = HttpResponse(
+            buffer.getvalue(),
+            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        )
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        file_content = buffer.getvalue()
+        file_format = "docx"
+
+    _log_action(request, "generate", f"Generated Tax Planning Summary ({file_format.upper()}) for {fy}", fy)
+
+    from django.core.files.base import ContentFile
+    from core.models import GeneratedDocument
+    doc = GeneratedDocument(
+        financial_year=fy,
+        file_format=file_format,
+        document_type=GeneratedDocument.DocumentType.TAX_PLANNING_SUMMARY,
+        generated_by=request.user,
+    )
+    doc.file.save(filename, ContentFile(file_content), save=True)
+
+    return response

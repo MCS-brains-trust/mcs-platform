@@ -216,4 +216,6 @@ urlpatterns = [
     path("years/<uuid:pk>/tax-planning/scenario/<uuid:scenario_pk>/apply/", views_tax_planning.tax_planning_scenario_apply, name="tax_planning_scenario_apply"),
     path("years/<uuid:pk>/tax-planning/finalise/", views_tax_planning.tax_planning_finalise, name="tax_planning_finalise"),
     path("years/<uuid:pk>/tax-planning/reopen/", views_tax_planning.tax_planning_reopen, name="tax_planning_reopen"),
+    path("years/<uuid:pk>/trust-election/", views_tax_planning.generate_trust_election_view, name="generate_trust_election"),
+    path("years/<uuid:pk>/tax-planning-summary/", views_tax_planning.generate_tax_planning_summary_view, name="generate_tax_planning_summary"),
 ]
