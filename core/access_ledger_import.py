@@ -326,11 +326,15 @@ def _parse_balance(reader, year, chart):
         [2]  Account code (integer)
         [3]  Sub-account code (integer, 0 = parent)
         [4]  Opening balance (for BS accounts; 0 for P&L)
-        [5]-[15] Monthly amounts (11 columns)
-        [16] YTD total amount (may be 0 for div=2 prior year rows)
+        [5]-[16] Monthly amounts (12 columns: months 1-12)
         [17] Always 0.00 for most accounts
         [18] Net / closing balance (absolute value for P&L; profit for equity)
         [19] Unknown (always 0)
+
+    NOTE: Column [16] is month 12, NOT a YTD summary. For most accounts
+    months 1-11 are zero and only month 12 has a value, but for accounts
+    with activity across multiple months (e.g. depreciation), all 12
+    monthly columns must be summed to get the correct movement.
 
     Sign conventions in Access Ledger (determined by Chart.txt type D/C):
         - Type D accounts: negative values = debit balance (normal)
@@ -371,10 +375,10 @@ def _parse_balance(reader, year, chart):
         elif division == 2:
             prior_data[key] = row
 
-    def _sum_monthly(row):
-        """Sum the monthly columns [5]-[15]."""
+    def _sum_all_months(row):
+        """Sum all 12 monthly columns [5]-[16]."""
         total = Decimal("0")
-        for i in range(5, 16):
+        for i in range(5, 17):  # columns 5 through 16 inclusive
             total += _safe_decimal(row[i])
         return total
 
@@ -385,14 +389,11 @@ def _parse_balance(reader, year, chart):
         Returns (debit, credit) as positive Decimal values.
         """
         opening = _safe_decimal(row[4])
-        ytd = _safe_decimal(row[16])
         acc_type = chart_entry.get("type", "D") if chart_entry else "D"
 
-        # Calculate movement: prefer ytd, fall back to summing monthly columns
-        if ytd != Decimal("0"):
-            movement = ytd
-        else:
-            movement = _sum_monthly(row)
+        # Calculate movement: sum all 12 monthly columns [5]-[16]
+        # Column [16] is month 12, NOT a YTD total.
+        movement = _sum_all_months(row)
 
         # Determine the raw closing balance
         if code == 4199:
