@@ -823,7 +823,7 @@ def roll_forward(request, pk):
                     or "unappropriated" in name_lower
                 )
                 if not is_retained and line.mapped_line_item:
-                    mapped_code = line.mapped_line_item.account_code or ""
+                    mapped_code = line.mapped_line_item.standard_code or ""
                     is_retained = mapped_code in ("BS-EQ-002", "BS-EQ-005", "BS-EQ-006", "BS-EQ-008")
                 if is_retained:
                     retained_profits_line = line
