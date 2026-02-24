@@ -5879,54 +5879,69 @@ def review_bulk_approve_group(request, pk):
 # Entity Chart of Accounts (per-entity customisation)
 # ---------------------------------------------------------------------------
 @login_required
-@require_POST
 def entity_coa_add(request, pk):
-    """Add a new account to the entity's chart of accounts."""
+    """Add a new account to the entity's chart of accounts (full-page form)."""
     fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
-    account_code = request.POST.get("account_code", "").strip()
-    account_name = request.POST.get("account_name", "").strip()
-    section = request.POST.get("section", "")
-    classification = request.POST.get("classification", "").strip()
-    tax_code = request.POST.get("tax_code", "").strip()
-    maps_to_id = request.POST.get("maps_to", "").strip()
+    section_choices = EntityChartOfAccount.StatementSection.choices
+    tax_code_choices = ['GST', 'ADS', 'ITS', 'FRE', 'CAP', 'INP', 'GNR', 'N-T']
+    mapping_options = AccountMapping.objects.filter(
+        applicable_entities__contains=entity.entity_type
+    ).order_by('financial_statement', 'line_item_label')
 
-    if not account_code or not account_name or not section:
-        messages.error(request, "Account code, name, and section are required.")
+    if request.method == 'POST':
+        account_code = request.POST.get("account_code", "").strip()
+        account_name = request.POST.get("account_name", "").strip()
+        section = request.POST.get("section", "")
+        classification = request.POST.get("classification", "").strip()
+        tax_code = request.POST.get("tax_code", "").strip()
+        maps_to_id = request.POST.get("maps_to", "").strip()
+
+        if not account_code or not account_name or not section:
+            messages.error(request, "Account code, name, and section are required.")
+            return redirect("core:entity_coa_add", pk=pk)
+
+        if EntityChartOfAccount.objects.filter(entity=entity, account_code=account_code).exists():
+            messages.error(request, f"Account code {account_code} already exists for this entity.")
+            return redirect("core:entity_coa_add", pk=pk)
+
+        maps_to = None
+        if maps_to_id:
+            try:
+                maps_to = AccountMapping.objects.get(pk=maps_to_id)
+            except AccountMapping.DoesNotExist:
+                pass
+
+        EntityChartOfAccount.objects.create(
+            entity=entity,
+            account_code=account_code,
+            account_name=account_name,
+            section=section,
+            classification=classification,
+            tax_code=tax_code,
+            maps_to=maps_to,
+            is_active=True,
+            is_custom=True,
+        )
+        _log_action(request, "create", f"Added entity account: {account_code} — {account_name}", fy)
+        messages.success(request, f"Account {account_code} — {account_name} added.")
         return redirect("core:financial_year_detail", pk=pk)
 
-    if EntityChartOfAccount.objects.filter(entity=entity, account_code=account_code).exists():
-        messages.error(request, f"Account code {account_code} already exists for this entity.")
-        return redirect("core:financial_year_detail", pk=pk)
-
-    maps_to = None
-    if maps_to_id:
-        try:
-            maps_to = AccountMapping.objects.get(pk=maps_to_id)
-        except AccountMapping.DoesNotExist:
-            pass
-
-    EntityChartOfAccount.objects.create(
-        entity=entity,
-        account_code=account_code,
-        account_name=account_name,
-        section=section,
-        classification=classification,
-        tax_code=tax_code,
-        maps_to=maps_to,
-        is_active=True,
-        is_custom=True,
-    )
-    _log_action(request, "create", f"Added entity account: {account_code} — {account_name}", fy)
-    messages.success(request, f"Account {account_code} — {account_name} added.")
-    return redirect("core:financial_year_detail", pk=pk)
+    # GET — show the form
+    return render(request, "core/entity_coa_form.html", {
+        "fy": fy,
+        "entity": entity,
+        "is_edit": False,
+        "section_choices": section_choices,
+        "tax_code_choices": tax_code_choices,
+        "mapping_options": mapping_options,
+    })
 
 
 @login_required
-@require_POST
 def entity_coa_edit(request, pk):
-    """Edit an existing entity chart of accounts entry."""
+    """Edit an existing entity chart of accounts entry (full-page form)."""
     acct = get_object_or_404(EntityChartOfAccount, pk=pk)
     entity = acct.entity
 
@@ -5935,30 +5950,48 @@ def entity_coa_edit(request, pk):
     if fy:
         get_financial_year_for_user(request, fy.pk)
 
-    old_code = acct.account_code
-    acct.account_code = request.POST.get("account_code", acct.account_code).strip()
-    acct.account_name = request.POST.get("account_name", acct.account_name).strip()
-    acct.section = request.POST.get("section", acct.section)
-    acct.classification = request.POST.get("classification", "").strip()
-    acct.tax_code = request.POST.get("tax_code", "").strip()
+    section_choices = EntityChartOfAccount.StatementSection.choices
+    tax_code_choices = ['GST', 'ADS', 'ITS', 'FRE', 'CAP', 'INP', 'GNR', 'N-T']
+    mapping_options = AccountMapping.objects.filter(
+        applicable_entities__contains=entity.entity_type
+    ).order_by('financial_statement', 'line_item_label')
 
-    maps_to_id = request.POST.get("maps_to", "").strip()
-    if maps_to_id:
-        try:
-            acct.maps_to = AccountMapping.objects.get(pk=maps_to_id)
-        except AccountMapping.DoesNotExist:
+    if request.method == 'POST':
+        old_code = acct.account_code
+        acct.account_code = request.POST.get("account_code", acct.account_code).strip()
+        acct.account_name = request.POST.get("account_name", acct.account_name).strip()
+        acct.section = request.POST.get("section", acct.section)
+        acct.classification = request.POST.get("classification", "").strip()
+        acct.tax_code = request.POST.get("tax_code", "").strip()
+
+        maps_to_id = request.POST.get("maps_to", "").strip()
+        if maps_to_id:
+            try:
+                acct.maps_to = AccountMapping.objects.get(pk=maps_to_id)
+            except AccountMapping.DoesNotExist:
+                acct.maps_to = None
+        else:
             acct.maps_to = None
-    else:
-        acct.maps_to = None
 
-    acct.save()
-    if fy:
-        _log_action(request, "update", f"Edited entity account: {old_code} → {acct.account_code} — {acct.account_name}", fy)
-    messages.success(request, f"Account {acct.account_code} updated.")
+        acct.save()
+        if fy:
+            _log_action(request, "update", f"Edited entity account: {old_code} → {acct.account_code} — {acct.account_name}", fy)
+        messages.success(request, f"Account {acct.account_code} updated.")
 
-    if fy:
-        return redirect("core:financial_year_detail", pk=fy.pk)
-    return redirect("core:entity_detail", pk=entity.pk)
+        if fy:
+            return redirect("core:financial_year_detail", pk=fy.pk)
+        return redirect("core:entity_detail", pk=entity.pk)
+
+    # GET — show the edit form
+    return render(request, "core/entity_coa_form.html", {
+        "fy": fy,
+        "entity": entity,
+        "account": acct,
+        "is_edit": True,
+        "section_choices": section_choices,
+        "tax_code_choices": tax_code_choices,
+        "mapping_options": mapping_options,
+    })
 
 
 @login_required
@@ -5984,3 +6017,171 @@ def entity_coa_delete(request, pk):
     if fy:
         return redirect("core:financial_year_detail", pk=fy.pk)
     return redirect("core:entity_detail", pk=entity.pk)
+
+
+# ---------------------------------------------------------------------------
+# Entity COA: Auto-code suggestion and code availability check
+# ---------------------------------------------------------------------------
+@login_required
+def entity_coa_suggest_code(request, pk):
+    """
+    AJAX endpoint to suggest the next available account code for an entity.
+    Works against the entity's own chart of accounts (EntityChartOfAccount).
+    """
+    fy = get_financial_year_for_user(request, pk)
+    entity = fy.entity
+
+    section = request.GET.get('section', '').strip()
+    account_name = request.GET.get('account_name', '').strip()
+    exclude_pk = request.GET.get('exclude', '').strip()
+
+    if not section or not account_name:
+        return JsonResponse({'suggested_code': '', 'position_info': 'Enter a section and account name.'})
+
+    # Get all active accounts in this section for the entity, ordered by name
+    existing = list(
+        EntityChartOfAccount.objects.filter(
+            entity=entity, section=section, is_active=True
+        ).order_by('account_name')
+    )
+    if exclude_pk:
+        existing = [a for a in existing if str(a.pk) != exclude_pk]
+
+    # Shared sections that use the same code range
+    shared_sections = {
+        'revenue': ['revenue', 'cost_of_sales'],
+        'cost_of_sales': ['revenue', 'cost_of_sales'],
+        'equity': ['equity', 'capital_accounts', 'pl_appropriation'],
+        'capital_accounts': ['equity', 'capital_accounts', 'pl_appropriation'],
+        'pl_appropriation': ['equity', 'capital_accounts', 'pl_appropriation'],
+    }
+    related = shared_sections.get(section, [section])
+
+    # Get ALL accounts in the shared code range to avoid collisions
+    all_in_range_qs = EntityChartOfAccount.objects.filter(
+        entity=entity, section__in=related, is_active=True
+    )
+    if exclude_pk:
+        all_in_range_qs = all_in_range_qs.exclude(pk=exclude_pk)
+    all_in_range = list(all_in_range_qs.order_by('account_code'))
+    used_codes = set()
+    for a in all_in_range:
+        code_part = a.account_code.split('.')[0]
+        if code_part.isdigit():
+            used_codes.add(int(code_part))
+
+    # Code ranges
+    sub_ranges = {
+        'revenue': (0, 999), 'cost_of_sales': (0, 999),
+        'expenses': (1000, 1999),
+        'assets': (2000, 2999),
+        'liabilities': (3000, 3999),
+        'equity': (4000, 4999), 'capital_accounts': (4000, 4999), 'pl_appropriation': (4000, 4999),
+        'suspense': (9000, 9999),
+    }
+    lo, hi = sub_ranges.get(section, (0, 9999))
+
+    # Find alphabetical position
+    name_lower = account_name.lower()
+    before = None
+    after = None
+    for acc in existing:
+        if acc.account_name.lower() < name_lower:
+            before = acc
+        elif acc.account_name.lower() > name_lower:
+            after = acc
+            break
+
+    # Determine target code range
+    if before and after:
+        try:
+            code_before = int(before.account_code.split('.')[0])
+            code_after = int(after.account_code.split('.')[0])
+        except ValueError:
+            code_before, code_after = lo, hi
+        target_lo = code_before + 1
+        target_hi = code_after - 1
+        position_info = f'Between {before.account_code} ({before.account_name}) and {after.account_code} ({after.account_name})'
+    elif before and not after:
+        try:
+            code_before = int(before.account_code.split('.')[0])
+        except ValueError:
+            code_before = lo
+        target_lo = code_before + 1
+        target_hi = hi
+        position_info = f'After {before.account_code} ({before.account_name})'
+    elif after and not before:
+        try:
+            code_after = int(after.account_code.split('.')[0])
+        except ValueError:
+            code_after = hi
+        target_lo = lo
+        target_hi = code_after - 1
+        position_info = f'Before {after.account_code} ({after.account_name})'
+    else:
+        target_lo = lo
+        target_hi = hi
+        position_info = 'First account in this section'
+
+    # Find available code
+    suggested_code = ''
+    if target_lo <= target_hi:
+        mid = (target_lo + target_hi) // 2
+        if mid not in used_codes and lo <= mid <= hi:
+            suggested_code = str(mid)
+        else:
+            for c in range(target_lo, target_hi + 1):
+                if c not in used_codes and lo <= c <= hi:
+                    suggested_code = str(c)
+                    break
+
+    if not suggested_code:
+        for c in range(lo, hi + 1):
+            if c not in used_codes:
+                suggested_code = str(c)
+                position_info += ' (no space in ideal range, using next available)'
+                break
+
+    if not suggested_code:
+        return JsonResponse({
+            'suggested_code': '',
+            'position_info': 'No available codes in this section range.',
+            'error': True,
+        })
+
+    if int(suggested_code) >= 1000:
+        suggested_code = suggested_code.zfill(4)
+
+    return JsonResponse({
+        'suggested_code': suggested_code,
+        'position_info': position_info,
+    })
+
+
+@login_required
+def entity_coa_check_code(request, pk):
+    """
+    AJAX endpoint to check if an account code is available for an entity.
+    """
+    fy = get_financial_year_for_user(request, pk)
+    entity = fy.entity
+
+    code = request.GET.get('code', '').strip()
+    exclude_pk = request.GET.get('exclude', '').strip()
+
+    result = {'available': False, 'error': ''}
+
+    if not code:
+        result['error'] = 'Enter an account code.'
+        return JsonResponse(result)
+
+    qs = EntityChartOfAccount.objects.filter(entity=entity, account_code=code)
+    if exclude_pk:
+        qs = qs.exclude(pk=exclude_pk)
+    if qs.exists():
+        existing = qs.first()
+        result['error'] = f'Code {code} is already used by "{existing.account_name}".'
+        return JsonResponse(result)
+
+    result['available'] = True
+    return JsonResponse(result)

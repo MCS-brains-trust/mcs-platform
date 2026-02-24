@@ -76,6 +76,8 @@ urlpatterns = [
     path("years/<uuid:pk>/entity-coa/add/", views.entity_coa_add, name="entity_coa_add"),
     path("entity-account/<uuid:pk>/edit/", views.entity_coa_edit, name="entity_coa_edit"),
     path("entity-account/<uuid:pk>/delete/", views.entity_coa_delete, name="entity_coa_delete"),
+    path("years/<uuid:pk>/entity-coa/suggest-code/", views.entity_coa_suggest_code, name="entity_coa_suggest_code"),
+    path("years/<uuid:pk>/entity-coa/check-code/", views.entity_coa_check_code, name="entity_coa_check_code"),
 
     # Audit Library
     path("audit-library/", views_audit.audit_library, name="audit_library"),
