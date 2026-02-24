@@ -125,6 +125,8 @@ urlpatterns = [
     path("years/<uuid:pk>/review/push-to-tb/", views.review_push_to_tb, name="review_push_to_tb"),
     path("review-txn/<uuid:pk>/approve/", views.review_approve_transaction, name="review_approve_transaction"),
     path("years/<uuid:pk>/review/approve-all/", views.review_approve_all, name="review_approve_all"),
+    path("years/<uuid:pk>/review/classify-ai/", views.review_classify_ai, name="review_classify_ai"),
+    path("years/<uuid:pk>/review/bulk-approve-group/", views.review_bulk_approve_group, name="review_bulk_approve_group"),
 
     # Notifications / Activity
     path("api/notifications/", views.notifications_api, name="notifications_api"),

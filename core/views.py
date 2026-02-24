@@ -508,6 +508,7 @@ def financial_year_detail(request, pk):
         # Review
         "pending_review": pending_review,
         "confirmed_review": confirmed_review,
+        "review_jobs": review_jobs,
         # Activity
         "activity_logs": activity_logs,
     }
@@ -5151,3 +5152,212 @@ def trial_balance_template_download(request):
         )
         response["Content-Disposition"] = 'attachment; filename="StatementHub_Trial_Balance_Template.xlsx"'
         return response
+
+
+# ============================================================
+# AI Classification for Bank Statement Review (Financial Year Tab)
+# ============================================================
+
+@login_required
+@require_POST
+def review_classify_ai(request, pk):
+    """
+    AJAX endpoint to classify unclassified bank statement transactions
+    using AI for a financial year's entity. Processes in batches.
+    Called repeatedly from the Review tab to classify in small batches.
+    """
+    import json
+    fy = get_financial_year_for_user(request, pk)
+    from review.models import PendingTransaction
+    from review.email_ingestion import classify_transactions
+
+    batch_size = int(request.POST.get("batch_size", 20))
+    entity = fy.entity
+
+    # Get unclassified transactions for this entity
+    unclassified = PendingTransaction.objects.filter(
+        job__entity=entity,
+        is_confirmed=False,
+        ai_suggested_code__isnull=True,
+    ).union(
+        PendingTransaction.objects.filter(
+            job__entity=entity,
+            is_confirmed=False,
+            ai_suggested_code="",
+        )
+    ).order_by("date")[:batch_size]
+
+    unclassified = list(unclassified)
+
+    if not unclassified:
+        # Check total counts
+        total_pending = PendingTransaction.objects.filter(
+            job__entity=entity, is_confirmed=False
+        ).count()
+        total_classified = PendingTransaction.objects.filter(
+            job__entity=entity, is_confirmed=False
+        ).exclude(ai_suggested_code__isnull=True).exclude(ai_suggested_code="").count()
+        return JsonResponse({
+            "status": "complete",
+            "classified_count": 0,
+            "total_classified": total_classified,
+            "total_pending": total_pending,
+            "message": "All transactions have been classified.",
+        })
+
+    # Build transaction dicts for the classify function
+    txn_dicts = []
+    txn_map = {}
+    for txn in unclassified:
+        txn_dicts.append({
+            "date": str(txn.date),
+            "description": txn.description,
+            "amount": float(txn.amount),
+        })
+        txn_map[len(txn_dicts) - 1] = txn
+
+    # Determine GST registration from the first review job
+    from review.models import ReviewJob
+    job = ReviewJob.objects.filter(entity=entity).first()
+    is_gst = job.is_gst_registered if job else True
+
+    try:
+        classifications = classify_transactions(
+            txn_dicts, entity=entity, is_gst_registered=is_gst
+        )
+    except Exception as exc:
+        return JsonResponse({
+            "status": "error",
+            "message": f"Classification error: {str(exc)}",
+        }, status=500)
+
+    # Apply classifications
+    classified_count = 0
+    for i, result in enumerate(classifications):
+        txn = txn_map.get(i)
+        if not txn:
+            continue
+        code = result.get("code", "")
+        name = result.get("name", "")
+        confidence = result.get("confidence", 0)
+        tax_type = result.get("tax_type", "")
+        source = result.get("source", "ai")
+
+        if code:
+            txn.ai_suggested_code = code
+            txn.ai_suggested_name = name
+            txn.ai_confidence = 5 if source == "learning_db" else confidence
+            txn.ai_suggested_tax_type = tax_type
+
+            # Calculate GST amounts
+            if tax_type in ("GST on Income", "GST on Expenses"):
+                txn.gst_amount = (txn.amount / Decimal("11")).quantize(Decimal("0.01"))
+                txn.net_amount = txn.amount - txn.gst_amount
+            else:
+                txn.gst_amount = Decimal("0.00")
+                txn.net_amount = txn.amount
+
+            txn.save()
+            classified_count += 1
+
+    # Get updated counts
+    total_pending = PendingTransaction.objects.filter(
+        job__entity=entity, is_confirmed=False
+    ).count()
+    total_classified = PendingTransaction.objects.filter(
+        job__entity=entity, is_confirmed=False
+    ).exclude(ai_suggested_code__isnull=True).exclude(ai_suggested_code="").count()
+    remaining = total_pending - total_classified
+
+    return JsonResponse({
+        "status": "in_progress" if remaining > 0 else "complete",
+        "classified_count": classified_count,
+        "total_classified": total_classified,
+        "total_pending": total_pending,
+        "remaining": remaining,
+        "message": f"Classified {classified_count} transactions. {remaining} remaining." if remaining > 0 else "All transactions classified.",
+    })
+
+
+@login_required
+@require_POST
+def review_bulk_approve_group(request, pk):
+    """
+    AJAX endpoint to bulk-approve all pending transactions that share
+    the same AI-suggested account code for a financial year's entity.
+    Also auto-pushes approved transactions to the trial balance.
+    """
+    import json
+    fy = get_financial_year_for_user(request, pk)
+    if not request.user.can_do_accounting:
+        return JsonResponse({"status": "error", "message": "Permission denied."}, status=403)
+
+    from review.models import PendingTransaction
+
+    body = json.loads(request.body) if request.content_type == "application/json" else request.POST
+    account_code = body.get("account_code", "")
+
+    if not account_code:
+        return JsonResponse({"status": "error", "message": "No account code specified."}, status=400)
+
+    pending = PendingTransaction.objects.filter(
+        job__entity=fy.entity,
+        is_confirmed=False,
+        ai_suggested_code=account_code,
+    )
+
+    count = 0
+    tb_count = 0
+    for txn in pending:
+        txn.confirmed_code = txn.ai_suggested_code
+        txn.confirmed_name = txn.ai_suggested_name
+        txn.confirmed_tax_type = txn.ai_suggested_tax_type
+        txn.is_confirmed = True
+
+        # Preserve GST amounts
+        if txn.ai_suggested_tax_type in ("GST on Income", "GST on Expenses"):
+            txn.confirmed_gst_amount = txn.gst_amount
+        else:
+            txn.confirmed_gst_amount = Decimal("0.00")
+
+        txn.save()
+        count += 1
+
+        # Auto-push to trial balance
+        amount = txn.amount
+        code = txn.confirmed_code
+        name = txn.confirmed_name
+        if code and amount != 0:
+            tb_line, created = TrialBalanceLine.objects.get_or_create(
+                financial_year=fy,
+                account_code=code,
+                defaults={
+                    "account_name": name,
+                    "debit": max(Decimal("0"), amount),
+                    "credit": abs(min(Decimal("0"), amount)),
+                },
+            )
+            if not created:
+                if amount > 0:
+                    tb_line.debit += amount
+                else:
+                    tb_line.credit += abs(amount)
+                tb_line.save()
+            tb_count += 1
+
+    # Get remaining counts
+    remaining_pending = PendingTransaction.objects.filter(
+        job__entity=fy.entity, is_confirmed=False
+    ).count()
+    remaining_confirmed = PendingTransaction.objects.filter(
+        job__entity=fy.entity, is_confirmed=True
+    ).count()
+
+    return JsonResponse({
+        "status": "ok",
+        "approved_count": count,
+        "tb_count": tb_count,
+        "remaining_pending": remaining_pending,
+        "remaining_confirmed": remaining_confirmed,
+        "message": f"Approved {count} transactions for {account_code}. {tb_count} pushed to TB.",
+    })

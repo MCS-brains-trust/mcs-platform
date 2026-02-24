@@ -816,6 +816,12 @@
             </h6>
             <div class="d-flex gap-2">
                 {% if pending_review.count > 0 %}
+                <button type="button" class="btn btn-primary btn-sm" id="classifyAiBtn" onclick="startAiClassification()">
+                    <i class="bi bi-robot"></i> Classify with AI
+                </button>
+                <button type="button" class="btn btn-outline-info btn-sm" id="groupByCodeBtn" onclick="toggleGroupView()">
+                    <i class="bi bi-collection"></i> Group by Code
+                </button>
                 <form method="post" action="{% url 'core:review_approve_all' pk=fy.pk %}" class="d-inline"
                       onsubmit="return confirm('Approve all pending transactions with their AI-suggested codes? This will also push them to the trial balance.');">
                     {% csrf_token %}
@@ -827,17 +833,50 @@
             </div>
         </div>
 
-        <!-- AI Classification Filter -->
+        <!-- Search / Filter / Group Toolbar -->
         {% if pending_review %}
-        <div class="d-flex align-items-center gap-2 mb-3" id="reviewFilterBar">
-            <label for="aiClassFilter" class="form-label mb-0 text-muted" style="font-size: 0.85rem; white-space: nowrap;">
-                <i class="bi bi-funnel"></i> Filter by AI Classification:
-            </label>
-            <select id="aiClassFilter" class="form-select form-select-sm" style="max-width: 300px; font-size: 0.85rem;">
-                <option value="">All Classifications</option>
-            </select>
-            <span id="filterCount" class="text-muted" style="font-size: 0.8rem;"></span>
+        <div class="card border-0 bg-light mb-3" id="reviewToolbar">
+            <div class="card-body py-2 px-3">
+                <div class="row g-2 align-items-center">
+                    <div class="col-md-4">
+                        <div class="input-group input-group-sm">
+                            <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+                            <input type="text" class="form-control" id="reviewSearchBox" placeholder="Search by description..." oninput="applyReviewFilters()">
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <select id="reviewStatusFilter" class="form-select form-select-sm" onchange="applyReviewFilters()">
+                            <option value="">All Statuses</option>
+                            <option value="unclassified">Unclassified</option>
+                            <option value="classified">AI Classified (Pending)</option>
+                            <option value="learning">From Learning DB</option>
+                        </select>
+                    </div>
+                    <div class="col-md-3">
+                        <select id="aiClassFilter" class="form-select form-select-sm">
+                            <option value="">All Account Codes</option>
+                        </select>
+                    </div>
+                    <div class="col-md-2 text-end">
+                        <span id="filterCount" class="text-muted" style="font-size: 0.8rem;"></span>
+                    </div>
+                </div>
+            </div>
         </div>
+
+        <!-- AI Classification Progress Bar -->
+        <div id="classifyProgress" class="d-none mb-3">
+            <div class="d-flex align-items-center gap-2 mb-1">
+                <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+                <span id="classifyProgressText" style="font-size: 0.85rem;">Classifying transactions...</span>
+            </div>
+            <div class="progress" style="height: 6px;">
+                <div class="progress-bar bg-primary" role="progressbar" id="classifyProgressBar" style="width: 0%"></div>
+            </div>
+        </div>
+
+        <!-- Grouped View Container (hidden by default) -->
+        <div id="groupedViewContainer" class="d-none mb-3"></div>
         {% endif %}
 
         <!-- Live notification area -->
@@ -2026,30 +2065,42 @@ document.querySelectorAll('.wp-note, .wp-status').forEach(el => {
 </script>
 
 <script>
-// ===== AI Classification Filter for Bank Statement Review =====
+// ===== AI Classification, Search, Filter, Group for Bank Statement Review =====
+const CLASSIFY_URL = '{% url "core:review_classify_ai" pk=fy.pk %}';
+const BULK_APPROVE_URL = '{% url "core:review_bulk_approve_group" pk=fy.pk %}';
+const CSRF_TOKEN = '{{ csrf_token }}';
+let isGroupView = false;
+
+// --- Populate filter dropdowns on load ---
 document.addEventListener('DOMContentLoaded', function() {
+    populateFilters();
+});
+
+function populateFilters() {
     const filterSelect = document.getElementById('aiClassFilter');
-    const filterCount = document.getElementById('filterCount');
     const pendingTableBody = document.getElementById('pendingTableBody');
     if (!filterSelect || !pendingTableBody) return;
 
-    // Build unique list of AI-suggested account names from pending rows
     const rows = pendingTableBody.querySelectorAll('tr');
-    const classMap = {};  // name -> count
+    const classMap = {};
 
     rows.forEach(function(row) {
         const coaBtn = row.querySelector('.review-coa-btn');
         if (coaBtn) {
             const name = coaBtn.textContent.trim();
+            const code = row.querySelector('.review-ai-code') ? row.querySelector('.review-ai-code').textContent.trim() : '';
+            const key = code ? code + ' — ' + name : (name || 'Unclassified');
             if (name && name !== 'Unclassified') {
-                classMap[name] = (classMap[name] || 0) + 1;
-            } else if (name === 'Unclassified' || !name) {
+                classMap[key] = (classMap[key] || 0) + 1;
+            } else {
                 classMap['Unclassified'] = (classMap['Unclassified'] || 0) + 1;
             }
         }
     });
 
-    // Sort by name and populate the dropdown
+    // Clear existing options except the first
+    while (filterSelect.options.length > 1) filterSelect.remove(1);
+
     const sortedNames = Object.keys(classMap).sort(function(a, b) {
         if (a === 'Unclassified') return 1;
         if (b === 'Unclassified') return -1;
@@ -2063,35 +2114,285 @@ document.addEventListener('DOMContentLoaded', function() {
         filterSelect.appendChild(opt);
     });
 
-    // Filter handler
-    filterSelect.addEventListener('change', function() {
-        const selected = this.value;
-        let visibleCount = 0;
-        let totalCount = rows.length;
+    filterSelect.addEventListener('change', function() { applyReviewFilters(); });
+}
 
-        rows.forEach(function(row) {
-            const coaBtn = row.querySelector('.review-coa-btn');
-            let rowName = '';
-            if (coaBtn) {
-                rowName = coaBtn.textContent.trim();
-                if (!rowName) rowName = 'Unclassified';
+// --- Search and Filter ---
+function applyReviewFilters() {
+    const searchBox = document.getElementById('reviewSearchBox');
+    const statusFilter = document.getElementById('reviewStatusFilter');
+    const codeFilter = document.getElementById('aiClassFilter');
+    const filterCount = document.getElementById('filterCount');
+    const pendingTableBody = document.getElementById('pendingTableBody');
+    if (!pendingTableBody) return;
+
+    const searchTerm = searchBox ? searchBox.value.toLowerCase() : '';
+    const statusVal = statusFilter ? statusFilter.value : '';
+    const codeVal = codeFilter ? codeFilter.value : '';
+    const rows = pendingTableBody.querySelectorAll('tr');
+    let visibleCount = 0;
+    let totalCount = rows.length;
+
+    rows.forEach(function(row) {
+        let show = true;
+
+        // Search by description
+        if (searchTerm) {
+            const desc = row.querySelector('td:nth-child(2)');
+            if (desc && !desc.textContent.toLowerCase().includes(searchTerm)) {
+                show = false;
             }
-
-            if (!selected || rowName === selected) {
-                row.style.display = '';
-                visibleCount++;
-            } else {
-                row.style.display = 'none';
-            }
-        });
-
-        // Update count display
-        if (selected) {
-            filterCount.textContent = 'Showing ' + visibleCount + ' of ' + totalCount + ' transactions';
-        } else {
-            filterCount.textContent = '';
         }
+
+        // Filter by status
+        if (statusVal && show) {
+            const coaBtn = row.querySelector('.review-coa-btn');
+            const btnText = coaBtn ? coaBtn.textContent.trim() : '';
+            const isUnclassified = !btnText || btnText === 'Unclassified';
+            if (statusVal === 'unclassified' && !isUnclassified) show = false;
+            if (statusVal === 'classified' && isUnclassified) show = false;
+            if (statusVal === 'learning') {
+                const conf = row.querySelector('.review-confidence');
+                const confVal = conf ? parseInt(conf.textContent) : 0;
+                if (confVal < 5) show = false;
+            }
+        }
+
+        // Filter by account code
+        if (codeVal && show) {
+            const coaBtn = row.querySelector('.review-coa-btn');
+            const codeEl = row.querySelector('.review-ai-code');
+            const btnText = coaBtn ? coaBtn.textContent.trim() : '';
+            const codeText = codeEl ? codeEl.textContent.trim() : '';
+            const rowKey = codeText ? codeText + ' — ' + btnText : (btnText || 'Unclassified');
+            if (rowKey !== codeVal) show = false;
+        }
+
+        row.style.display = show ? '' : 'none';
+        if (show) visibleCount++;
     });
-});
+
+    if (filterCount) {
+        if (searchTerm || statusVal || codeVal) {
+            filterCount.textContent = visibleCount + ' of ' + totalCount + ' shown';
+        } else {
+            filterCount.textContent = totalCount + ' transactions';
+        }
+    }
+}
+
+// --- AI Classification ---
+function startAiClassification() {
+    const btn = document.getElementById('classifyAiBtn');
+    const progress = document.getElementById('classifyProgress');
+    const progressText = document.getElementById('classifyProgressText');
+    const progressBar = document.getElementById('classifyProgressBar');
+
+    if (!btn || !progress) return;
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Classifying...';
+    progress.classList.remove('d-none');
+
+    classifyBatch();
+
+    function classifyBatch() {
+        fetch(CLASSIFY_URL, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': CSRF_TOKEN,
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: 'batch_size=20'
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.status === 'error') {
+                progressText.textContent = 'Error: ' + data.message;
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-robot"></i> Retry Classification';
+                return;
+            }
+
+            const pct = data.total_pending > 0 ? Math.round((data.total_classified / data.total_pending) * 100) : 100;
+            progressBar.style.width = pct + '%';
+            progressText.textContent = 'Classified ' + data.total_classified + ' of ' + data.total_pending + ' transactions...';
+
+            if (data.status === 'in_progress') {
+                setTimeout(classifyBatch, 500);
+            } else {
+                progressText.textContent = 'Classification complete! Refreshing...';
+                progressBar.style.width = '100%';
+                progressBar.classList.add('bg-success');
+                setTimeout(function() { location.reload(); }, 1000);
+            }
+        })
+        .catch(err => {
+            progressText.textContent = 'Network error. Please try again.';
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-robot"></i> Retry Classification';
+        });
+    }
+}
+
+// --- Group by Code View ---
+function toggleGroupView() {
+    const container = document.getElementById('groupedViewContainer');
+    const pendingSection = document.getElementById('pendingSection');
+    const btn = document.getElementById('groupByCodeBtn');
+    if (!container) return;
+
+    isGroupView = !isGroupView;
+
+    if (isGroupView) {
+        buildGroupedView();
+        container.classList.remove('d-none');
+        if (pendingSection) pendingSection.style.display = 'none';
+        btn.innerHTML = '<i class="bi bi-table"></i> Table View';
+        btn.classList.remove('btn-outline-info');
+        btn.classList.add('btn-info', 'text-white');
+    } else {
+        container.classList.add('d-none');
+        if (pendingSection) pendingSection.style.display = '';
+        btn.innerHTML = '<i class="bi bi-collection"></i> Group by Code';
+        btn.classList.remove('btn-info', 'text-white');
+        btn.classList.add('btn-outline-info');
+    }
+}
+
+function buildGroupedView() {
+    const container = document.getElementById('groupedViewContainer');
+    const pendingTableBody = document.getElementById('pendingTableBody');
+    if (!container || !pendingTableBody) return;
+
+    const rows = pendingTableBody.querySelectorAll('tr');
+    const groups = {};
+
+    rows.forEach(function(row) {
+        const coaBtn = row.querySelector('.review-coa-btn');
+        const codeEl = row.querySelector('.review-ai-code');
+        const btnText = coaBtn ? coaBtn.textContent.trim() : 'Unclassified';
+        const code = codeEl ? codeEl.textContent.trim() : '';
+        const key = code || 'unclassified';
+        const label = code ? code + ' — ' + btnText : 'Unclassified';
+
+        if (!groups[key]) {
+            groups[key] = { label: label, code: code, name: btnText, transactions: [], total: 0 };
+        }
+
+        const amountCell = row.querySelector('td:nth-child(3)');
+        const descCell = row.querySelector('td:nth-child(2)');
+        const dateCell = row.querySelector('td:nth-child(1)');
+        const amount = amountCell ? parseFloat(amountCell.textContent.replace(/[^\d.-]/g, '')) || 0 : 0;
+
+        groups[key].transactions.push({
+            date: dateCell ? dateCell.textContent.trim() : '',
+            description: descCell ? descCell.textContent.trim() : '',
+            amount: amount,
+        });
+        groups[key].total += amount;
+    });
+
+    // Sort groups: classified first, then unclassified
+    const sortedKeys = Object.keys(groups).sort(function(a, b) {
+        if (a === 'unclassified') return 1;
+        if (b === 'unclassified') return -1;
+        return groups[a].label.localeCompare(groups[b].label);
+    });
+
+    let html = '';
+    sortedKeys.forEach(function(key) {
+        const g = groups[key];
+        const isUnclassified = key === 'unclassified';
+        const badgeClass = isUnclassified ? 'bg-secondary' : 'bg-primary';
+        const totalFormatted = '$' + Math.abs(g.total).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+        const totalSign = g.total < 0 ? '-' : '';
+
+        html += '<div class="card mb-2 border-start border-3 ' + (isUnclassified ? 'border-secondary' : 'border-primary') + '">';
+        html += '<div class="card-header bg-white py-2 d-flex justify-content-between align-items-center" style="cursor:pointer" onclick="this.nextElementSibling.classList.toggle(\'d-none\')">';
+        html += '<div>';
+        html += '<span class="badge ' + badgeClass + ' me-2">' + g.transactions.length + '</span>';
+        html += '<strong>' + g.label + '</strong>';
+        html += '<span class="text-muted ms-3" style="font-size:0.85rem">Total: ' + totalSign + totalFormatted + '</span>';
+        html += '</div>';
+        html += '<div class="d-flex gap-2 align-items-center">';
+        if (!isUnclassified) {
+            html += '<button class="btn btn-success btn-sm" onclick="event.stopPropagation(); bulkApproveGroup(\'' + g.code + '\', this)">';
+            html += '<i class="bi bi-check-all"></i> Approve All (' + g.transactions.length + ')';
+            html += '</button>';
+        }
+        html += '<i class="bi bi-chevron-down"></i>';
+        html += '</div>';
+        html += '</div>';
+
+        html += '<div class="d-none">';
+        html += '<table class="table table-sm table-hover mb-0" style="font-size:0.82rem">';
+        html += '<thead><tr><th style="width:100px">Date</th><th>Description</th><th class="text-end" style="width:120px">Amount</th></tr></thead>';
+        html += '<tbody>';
+        g.transactions.forEach(function(t) {
+            const amtClass = t.amount < 0 ? 'text-danger' : '';
+            const amtStr = '$' + Math.abs(t.amount).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+            html += '<tr><td>' + t.date + '</td><td>' + t.description + '</td><td class="text-end ' + amtClass + '">' + (t.amount < 0 ? '-' : '') + amtStr + '</td></tr>';
+        });
+        html += '</tbody></table></div></div>';
+    });
+
+    container.innerHTML = html;
+}
+
+// --- Bulk Approve Group ---
+function bulkApproveGroup(accountCode, btn) {
+    if (!confirm('Approve all transactions classified as ' + accountCode + '? This will also push them to the trial balance.')) return;
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Approving...';
+
+    fetch(BULK_APPROVE_URL, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': CSRF_TOKEN,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ account_code: accountCode })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            // Remove the card from grouped view
+            const card = btn.closest('.card');
+            if (card) {
+                card.style.transition = 'opacity 0.3s';
+                card.style.opacity = '0';
+                setTimeout(function() { card.remove(); }, 300);
+            }
+            // Update badges
+            const pendingBadge = document.getElementById('pendingBadge');
+            const confirmedBadge = document.getElementById('confirmedBadge');
+            if (pendingBadge) pendingBadge.textContent = data.remaining_pending + ' pending';
+            if (confirmedBadge) confirmedBadge.textContent = data.remaining_confirmed + ' confirmed';
+
+            // Show notification
+            const notif = document.getElementById('reviewNotification');
+            if (notif) {
+                notif.querySelector('span') && (notif.querySelector('span').textContent = data.message);
+                notif.classList.remove('d-none');
+            }
+
+            // If no more groups, reload
+            if (data.remaining_pending === 0) {
+                setTimeout(function() { location.reload(); }, 1000);
+            }
+        } else {
+            alert('Error: ' + (data.message || 'Unknown error'));
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-check-all"></i> Approve All';
+        }
+    })
+    .catch(err => {
+        alert('Network error. Please try again.');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-check-all"></i> Approve All';
+    });
+}
 </script>
 {% endblock %}
