@@ -1,0 +1,101 @@
+{% extends "base.html" %}
+{% block title %}Document Templates - StatementHub{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h4 class="fw-bold mb-1"><i class="bi bi-file-earmark-text"></i> Document Templates</h4>
+        <p class="text-muted mb-0">JSON-driven, version-controlled document templates — {{ total_count }} templates ({{ active_count }} active)</p>
+    </div>
+    <a href="{% url 'core:template_create' %}" class="btn btn-primary">
+        <i class="bi bi-plus-circle"></i> New Template
+    </a>
+</div>
+
+{% if not categories %}
+<div class="card">
+    <div class="card-body text-center py-5">
+        <i class="bi bi-file-earmark-text display-4 text-muted"></i>
+        <p class="text-muted mt-3 mb-0">No document templates yet. Click <strong>New Template</strong> to create one.</p>
+    </div>
+</div>
+{% else %}
+{% for cat_label, cat_data in categories.items %}
+<div class="card mb-4">
+    <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+        <h6 class="mb-0"><i class="bi bi-folder2-open me-2"></i>{{ cat_label }}</h6>
+        <span class="badge bg-light text-dark">{{ cat_data.templates|length }} template{{ cat_data.templates|length|pluralize }}</span>
+    </div>
+    <div class="card-body p-0">
+        <table class="table table-hover mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Template Name</th>
+                    <th>Entity Type</th>
+                    <th class="text-center">Version</th>
+                    <th class="text-center">Status</th>
+                    <th>Merge Fields</th>
+                    <th class="text-center">Updated</th>
+                    <th class="text-end">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for tpl in cat_data.templates %}
+                <tr>
+                    <td>
+                        <a href="{% url 'core:template_edit' pk=tpl.pk %}" class="text-decoration-none fw-semibold">
+                            {{ tpl.name }}
+                        </a>
+                        {% if tpl.description %}
+                        <br><small class="text-muted">{{ tpl.description|truncatewords:12 }}</small>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if tpl.entity_type %}
+                        <span class="badge bg-info text-dark">{{ tpl.get_entity_type_display }}</span>
+                        {% else %}
+                        <span class="text-muted">All</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-center">
+                        <span class="badge bg-secondary">v{{ tpl.version }}</span>
+                    </td>
+                    <td class="text-center">
+                        {% if tpl.is_active %}
+                        <span class="badge bg-success">Active</span>
+                        {% else %}
+                        <span class="badge bg-warning text-dark">Inactive</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% with fields=tpl.get_merge_field_names %}
+                        <small class="text-muted">{{ fields|length }} field{{ fields|length|pluralize }}</small>
+                        {% endwith %}
+                    </td>
+                    <td class="text-center">
+                        <small class="text-muted">{{ tpl.updated_at|date:"d M Y" }}</small>
+                    </td>
+                    <td class="text-end">
+                        <div class="btn-group btn-group-sm">
+                            <a href="{% url 'core:template_edit' pk=tpl.pk %}" class="btn btn-outline-primary" title="Edit">
+                                <i class="bi bi-pencil"></i>
+                            </a>
+                            <a href="{% url 'core:template_preview' pk=tpl.pk %}" class="btn btn-outline-secondary" title="Preview">
+                                <i class="bi bi-eye"></i>
+                            </a>
+                            <form method="post" action="{% url 'core:template_toggle_active' pk=tpl.pk %}" class="d-inline">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-outline-{{ tpl.is_active|yesno:'warning,success' }}" title="{{ tpl.is_active|yesno:'Deactivate,Activate' }}">
+                                    <i class="bi bi-{{ tpl.is_active|yesno:'pause,play' }}"></i>
+                                </button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endfor %}
+{% endif %}
+{% endblock %}

@@ -123,4 +123,13 @@ class TaxPlanningBeneficiaryRowAdmin(admin.ModelAdmin):
 class TaxPlanningScenarioAdmin(admin.ModelAdmin):
     list_display = ("scenario_name", "financial_year", "total_tax", "total_distributed", "created_at")
 
+from .models import DocumentTemplate
+
+@admin.register(DocumentTemplate)
+class DocumentTemplateAdmin(admin.ModelAdmin):
+    list_display = ("name", "document_category", "entity_type", "version", "is_active", "updated_at")
+    list_filter = ("document_category", "entity_type", "is_active")
+    search_fields = ("name", "description")
+    readonly_fields = ("created_at", "updated_at")
+
 from . import admin_office_admin  # noqa: F401

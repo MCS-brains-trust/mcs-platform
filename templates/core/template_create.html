@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}New Document Template - StatementHub{% endblock %}
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h4 class="fw-bold mb-1"><i class="bi bi-plus-circle"></i> New Document Template</h4>
+        <p class="text-muted mb-0">Create a new JSON-driven document template</p>
+    </div>
+    <a href="{% url 'core:template_list' %}" class="btn btn-outline-secondary">
+        <i class="bi bi-arrow-left"></i> Back to Templates
+    </a>
+</div>
+
+<div class="card">
+    <div class="card-body">
+        <form method="post">
+            {% csrf_token %}
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Template Name <span class="text-danger">*</span></label>
+                    <input type="text" name="name" class="form-control" required
+                           placeholder="e.g. Trust Distribution Minutes v1">
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label fw-semibold">Document Category <span class="text-danger">*</span></label>
+                    <select name="document_category" class="form-select" required>
+                        <option value="">Select...</option>
+                        {% for value, label in category_choices %}
+                        <option value="{{ value }}">{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label fw-semibold">Entity Type</label>
+                    <select name="entity_type" class="form-select">
+                        {% for value, label in entity_type_choices %}
+                        <option value="{{ value }}">{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                    <small class="text-muted">Leave as "All" for generic templates</small>
+                </div>
+                <div class="col-12">
+                    <label class="form-label fw-semibold">Description</label>
+                    <textarea name="description" class="form-control" rows="2"
+                              placeholder="Internal notes about this template..."></textarea>
+                </div>
+                <div class="col-12">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-plus-circle"></i> Create Template
+                    </button>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

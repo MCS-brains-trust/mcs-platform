@@ -1105,8 +1105,9 @@ class JournalLine(models.Model):
 # ---------------------------------------------------------------------------
 class FinancialStatementTemplate(models.Model):
     """
-    A Word document template for a specific entity type.
-    Contains the base template file that gets populated with data.
+    LEGACY — A Word document template for a specific entity type.
+    Retained for backward compatibility. See DocumentTemplate for the new
+    JSON-driven architecture.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -1126,6 +1127,159 @@ class FinancialStatementTemplate(models.Model):
 
     def __str__(self):
         return f"{self.name} (v{self.version})"
+
+
+class DocumentTemplate(models.Model):
+    """
+    JSON-driven document template stored in PostgreSQL.
+    Defines the structure, content, merge fields, and styling for a generated
+    Word document. Configured via admin UI; read at generation time by the
+    template renderer engine.
+
+    The `structure` JSONField holds the full template definition:
+    {
+        "metadata": {
+            "page_setup": {"orientation": "portrait", "margin_top": 2.54, ...}
+        },
+        "styles": {
+            "font_name": "Times New Roman",
+            "font_size_body": 11,
+            "font_size_heading": 14,
+            ...
+        },
+        "sections": [
+            {"type": "heading", "text": "...", "level": 1},
+            {"type": "paragraph", "text": "Dear {{trustee_name}}, ..."},
+            {"type": "table", "columns": [...], "data_source": "beneficiary_rows"},
+            {"type": "conditional", "field": "has_streaming", "children": [...]},
+            {"type": "signature_block", "name_field": "chairperson_name", ...},
+            ...
+        ]
+    }
+    """
+
+    class DocumentCategory(models.TextChoices):
+        DISTRIBUTION_MINUTES = "distribution_minutes", "Distribution Minutes"
+        TRUST_ELECTION = "trust_election", "Trust Election (s97)"
+        TAX_PLANNING_SUMMARY = "tax_planning_summary", "Tax Planning Summary"
+        FINANCIAL_STATEMENTS = "financial_statements", "Financial Statements"
+        BENEFICIARY_STATEMENT = "beneficiary_statement", "Beneficiary Statement"
+        PARTNER_STATEMENT = "partner_statement", "Partner Statement"
+        OTHER = "other", "Other"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(
+        max_length=255,
+        help_text="Human-readable template name, e.g. 'Trust Distribution Minutes v2'",
+    )
+    document_category = models.CharField(
+        max_length=30,
+        choices=DocumentCategory.choices,
+        help_text="The type of document this template generates.",
+    )
+    entity_type = models.CharField(
+        max_length=20,
+        choices=Entity.EntityType.choices,
+        blank=True,
+        help_text="Restrict to a specific entity type, or leave blank for all.",
+    )
+    description = models.TextField(
+        blank=True,
+        help_text="Internal notes about this template.",
+    )
+    structure = models.JSONField(
+        default=dict,
+        help_text="JSON template definition (metadata, styles, sections with merge fields).",
+    )
+    version = models.PositiveIntegerField(
+        default=1,
+        help_text="Auto-incremented on each save via admin.",
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Only one active template per document_category + entity_type.",
+    )
+    superseded_by = models.ForeignKey(
+        "self",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="supersedes",
+        help_text="Points to the newer version that replaced this one.",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_templates",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["document_category", "entity_type", "-version"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["document_category", "entity_type", "version"],
+                name="unique_template_version",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.name} v{self.version} ({'active' if self.is_active else 'inactive'})"
+
+    @classmethod
+    def get_active(cls, document_category, entity_type=""):
+        """
+        Return the active template for a given category and entity type.
+        Falls back to a template with blank entity_type if no exact match.
+        """
+        # Try exact match first
+        tpl = cls.objects.filter(
+            document_category=document_category,
+            entity_type=entity_type,
+            is_active=True,
+        ).first()
+        if tpl:
+            return tpl
+        # Fallback to generic (blank entity_type)
+        if entity_type:
+            tpl = cls.objects.filter(
+                document_category=document_category,
+                entity_type="",
+                is_active=True,
+            ).first()
+        return tpl
+
+    def get_merge_field_names(self):
+        """Extract all {{field_name}} references from the structure."""
+        import re
+        fields = set()
+        text = json.dumps(self.structure)
+        for match in re.finditer(r"\{\{(\w+)\}\}", text):
+            fields.add(match.group(1))
+        return sorted(fields)
+
+    def create_new_version(self, user=None):
+        """Create a new version of this template, deactivating the current one."""
+        import copy
+        new_version = self.version + 1
+        new_tpl = DocumentTemplate(
+            name=self.name,
+            document_category=self.document_category,
+            entity_type=self.entity_type,
+            description=self.description,
+            structure=copy.deepcopy(self.structure),
+            version=new_version,
+            is_active=True,
+            created_by=user,
+        )
+        self.is_active = False
+        self.superseded_by = new_tpl
+        new_tpl.save()
+        self.save(update_fields=["is_active", "superseded_by", "updated_at"])
+        return new_tpl
 
 
 # ---------------------------------------------------------------------------

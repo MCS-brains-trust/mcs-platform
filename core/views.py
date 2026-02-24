@@ -2423,10 +2423,10 @@ def generate_distribution_minutes(request, pk):
     if fmt not in ("docx", "pdf"):
         fmt = "docx"
 
-    from .distmin_gen import generate_distribution_minutes as gen_distmin
+    from .template_docgen import generate_from_template
 
     try:
-        buffer = gen_distmin(fy.pk)
+        buffer = generate_from_template("distribution_minutes", "trust", fy.pk)
     except (ValueError, FileNotFoundError) as e:
         messages.error(request, f"Distribution minutes generation failed: {e}")
         return redirect("core:financial_year_detail", pk=pk)

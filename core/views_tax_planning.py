@@ -533,10 +533,10 @@ def generate_trust_election_view(request, pk):
     if fmt not in ("docx", "pdf"):
         fmt = "docx"
 
-    from .taxplan_docgen import generate_trust_election
+    from .template_docgen import generate_from_template
 
     try:
-        buffer = generate_trust_election(fy.pk)
+        buffer = generate_from_template("trust_election", "trust", fy.pk)
     except (ValueError, FileNotFoundError) as e:
         messages.error(request, f"Trust election generation failed: {e}")
         return redirect("core:tax_planning_tab", pk=pk)
@@ -643,10 +643,10 @@ def generate_tax_planning_summary_view(request, pk):
     if fmt not in ("docx", "pdf"):
         fmt = "docx"
 
-    from .taxplan_docgen import generate_tax_planning_summary
+    from .template_docgen import generate_from_template
 
     try:
-        buffer = generate_tax_planning_summary(fy.pk)
+        buffer = generate_from_template("tax_planning_summary", "trust", fy.pk)
     except (ValueError, FileNotFoundError) as e:
         messages.error(request, f"Tax Planning Summary generation failed: {e}")
         return redirect("core:tax_planning_tab", pk=pk)

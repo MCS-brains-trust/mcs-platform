@@ -4,6 +4,7 @@ from . import views
 from . import views_audit
 from . import views_upgrades
 from . import views_tax_planning
+from . import views_templates
 
 app_name = "core"
 
@@ -218,4 +219,13 @@ urlpatterns = [
     path("years/<uuid:pk>/tax-planning/reopen/", views_tax_planning.tax_planning_reopen, name="tax_planning_reopen"),
     path("years/<uuid:pk>/trust-election/", views_tax_planning.generate_trust_election_view, name="generate_trust_election"),
     path("years/<uuid:pk>/tax-planning-summary/", views_tax_planning.generate_tax_planning_summary_view, name="generate_tax_planning_summary"),
+    # ===== DOCUMENT TEMPLATE MANAGER =====
+    path("templates/", views_templates.template_list, name="template_list"),
+    path("templates/create/", views_templates.template_create, name="template_create"),
+    path("templates/<uuid:pk>/edit/", views_templates.template_edit, name="template_edit"),
+    path("templates/<uuid:pk>/preview/", views_templates.template_preview, name="template_preview"),
+    path("templates/<uuid:pk>/new-version/", views_templates.template_new_version, name="template_new_version"),
+    path("templates/<uuid:pk>/delete/", views_templates.template_delete, name="template_delete"),
+    path("templates/<uuid:pk>/toggle-active/", views_templates.template_toggle_active, name="template_toggle_active"),
+    path("templates/<uuid:pk>/update-structure/", views_templates.template_update_structure, name="template_update_structure"),
 ]

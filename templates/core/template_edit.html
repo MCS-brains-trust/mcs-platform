@@ -1,0 +1,345 @@
+{% extends "base.html" %}
+{% block title %}Edit Template: {{ template.name }} - StatementHub{% endblock %}
+
+{% block extra_head %}
+<style>
+    .json-editor {
+        font-family: 'Fira Code', 'Consolas', 'Monaco', monospace;
+        font-size: 13px;
+        line-height: 1.5;
+        tab-size: 2;
+        min-height: 500px;
+        border: 1px solid #dee2e6;
+        border-radius: 0.375rem;
+        padding: 12px;
+        background: #1e1e1e;
+        color: #d4d4d4;
+        resize: vertical;
+    }
+    .json-editor:focus {
+        outline: none;
+        border-color: #0d6efd;
+        box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.15);
+    }
+    .merge-field-badge {
+        cursor: pointer;
+        transition: all 0.15s;
+    }
+    .merge-field-badge:hover {
+        transform: scale(1.05);
+    }
+    .section-type-card {
+        cursor: pointer;
+        transition: all 0.15s;
+        border: 1px solid #dee2e6;
+    }
+    .section-type-card:hover {
+        border-color: #0d6efd;
+        background: #f0f7ff;
+    }
+    .version-badge {
+        font-size: 0.75rem;
+    }
+    .json-status {
+        font-size: 0.8rem;
+        font-weight: 600;
+    }
+    #sectionPreview {
+        max-height: 300px;
+        overflow-y: auto;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h4 class="fw-bold mb-1">
+            <i class="bi bi-pencil-square"></i> {{ template.name }}
+            <span class="badge bg-secondary version-badge ms-2">v{{ template.version }}</span>
+            {% if template.is_active %}
+            <span class="badge bg-success version-badge">Active</span>
+            {% else %}
+            <span class="badge bg-warning text-dark version-badge">Inactive</span>
+            {% endif %}
+        </h4>
+        <p class="text-muted mb-0">{{ template.get_document_category_display }} — {{ template.get_entity_type_display|default:"All Entity Types" }}</p>
+    </div>
+    <div class="d-flex gap-2">
+        <a href="{% url 'core:template_preview' pk=template.pk %}" class="btn btn-outline-secondary">
+            <i class="bi bi-eye"></i> Preview
+        </a>
+        <form method="post" action="{% url 'core:template_new_version' pk=template.pk %}" class="d-inline">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-outline-primary">
+                <i class="bi bi-copy"></i> New Version
+            </button>
+        </form>
+        <a href="{% url 'core:template_list' %}" class="btn btn-outline-secondary">
+            <i class="bi bi-arrow-left"></i> Back
+        </a>
+    </div>
+</div>
+
+<div class="row g-4">
+    <!-- Left Column: Editor -->
+    <div class="col-lg-8">
+        <form method="post" id="templateForm">
+            {% csrf_token %}
+            <!-- Metadata Card -->
+            <div class="card mb-3">
+                <div class="card-header bg-light">
+                    <h6 class="mb-0"><i class="bi bi-info-circle me-1"></i> Template Metadata</h6>
+                </div>
+                <div class="card-body">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Name</label>
+                            <input type="text" name="name" class="form-control" value="{{ template.name }}">
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label fw-semibold">Entity Type</label>
+                            <select name="entity_type" class="form-select">
+                                {% for value, label in entity_type_choices %}
+                                <option value="{{ value }}" {% if template.entity_type == value %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label fw-semibold">Status</label>
+                            <div class="form-control-plaintext">
+                                {% if template.is_active %}
+                                <span class="badge bg-success">Active</span>
+                                {% else %}
+                                <span class="badge bg-warning text-dark">Inactive</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label fw-semibold">Description</label>
+                            <textarea name="description" class="form-control" rows="2">{{ template.description }}</textarea>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- JSON Structure Editor -->
+            <div class="card mb-3">
+                <div class="card-header bg-light d-flex justify-content-between align-items-center">
+                    <h6 class="mb-0"><i class="bi bi-code-slash me-1"></i> Template Structure (JSON)</h6>
+                    <div>
+                        <span id="jsonStatus" class="json-status me-3"></span>
+                        <button type="button" class="btn btn-sm btn-outline-secondary" onclick="formatJson()">
+                            <i class="bi bi-braces"></i> Format
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-info" onclick="validateJson()">
+                            <i class="bi bi-check-circle"></i> Validate
+                        </button>
+                    </div>
+                </div>
+                <div class="card-body p-0">
+                    <textarea name="structure" id="jsonEditor" class="json-editor w-100">{{ structure_json }}</textarea>
+                </div>
+            </div>
+
+            <div class="d-flex gap-2">
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-check-circle"></i> Save Template
+                </button>
+                <form method="post" action="{% url 'core:template_delete' pk=template.pk %}" class="d-inline"
+                      onsubmit="return confirm('Delete this template permanently?')">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-outline-danger">
+                        <i class="bi bi-trash"></i> Delete
+                    </button>
+                </form>
+            </div>
+        </form>
+    </div>
+
+    <!-- Right Column: Reference Panel -->
+    <div class="col-lg-4">
+        <!-- Merge Fields Reference -->
+        <div class="card mb-3">
+            <div class="card-header bg-light">
+                <h6 class="mb-0"><i class="bi bi-braces me-1"></i> Available Merge Fields</h6>
+            </div>
+            <div class="card-body">
+                <p class="text-muted small mb-2">Click a field to copy its merge tag to clipboard.</p>
+                {% for field in available_fields %}
+                <div class="mb-2">
+                    <span class="badge bg-primary merge-field-badge" onclick="copyField('{{ field.name }}')"
+                          title="Click to copy {% templatetag openvariable %}{{ field.name }}{% templatetag closevariable %}">
+                        {% templatetag openvariable %}{{ field.name }}{% templatetag closevariable %}
+                    </span>
+                    <br><small class="text-muted">{{ field.description }}</small>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- Currently Used Fields -->
+        <div class="card mb-3">
+            <div class="card-header bg-light">
+                <h6 class="mb-0"><i class="bi bi-check2-square me-1"></i> Fields Used in Template</h6>
+            </div>
+            <div class="card-body">
+                {% if merge_fields %}
+                {% for field in merge_fields %}
+                <span class="badge bg-success me-1 mb-1">{{ field }}</span>
+                {% endfor %}
+                {% else %}
+                <p class="text-muted small mb-0">No merge fields detected yet.</p>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- Section Types Reference -->
+        <div class="card mb-3">
+            <div class="card-header bg-light">
+                <h6 class="mb-0"><i class="bi bi-puzzle me-1"></i> Section Types</h6>
+            </div>
+            <div class="card-body p-2">
+                {% for st in section_types %}
+                <div class="section-type-card rounded p-2 mb-1" onclick="insertSection('{{ st.type }}')" title="{{ st.description }}">
+                    <i class="bi {{ st.icon }} me-1 text-primary"></i>
+                    <strong class="small">{{ st.label }}</strong>
+                    <br><small class="text-muted">{{ st.description }}</small>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- Version History -->
+        <div class="card">
+            <div class="card-header bg-light">
+                <h6 class="mb-0"><i class="bi bi-clock-history me-1"></i> Version History</h6>
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-sm mb-0">
+                    <tbody>
+                        {% for h in history %}
+                        <tr {% if h.pk == template.pk %}class="table-active"{% endif %}>
+                            <td>
+                                <a href="{% url 'core:template_edit' pk=h.pk %}" class="text-decoration-none">
+                                    v{{ h.version }}
+                                </a>
+                            </td>
+                            <td>
+                                {% if h.is_active %}
+                                <span class="badge bg-success">Active</span>
+                                {% else %}
+                                <span class="badge bg-secondary">Inactive</span>
+                                {% endif %}
+                            </td>
+                            <td class="text-muted small">{{ h.updated_at|date:"d M Y" }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// JSON validation
+function validateJson() {
+    const editor = document.getElementById('jsonEditor');
+    const status = document.getElementById('jsonStatus');
+    try {
+        JSON.parse(editor.value);
+        status.textContent = '✓ Valid JSON';
+        status.className = 'json-status text-success';
+    } catch (e) {
+        status.textContent = '✗ ' + e.message;
+        status.className = 'json-status text-danger';
+    }
+}
+
+// Format JSON
+function formatJson() {
+    const editor = document.getElementById('jsonEditor');
+    try {
+        const obj = JSON.parse(editor.value);
+        editor.value = JSON.stringify(obj, null, 2);
+        validateJson();
+    } catch (e) {
+        validateJson();
+    }
+}
+
+// Copy merge field to clipboard
+function copyField(name) {
+    const tag = '{{' + name + '}}';
+    navigator.clipboard.writeText(tag).then(() => {
+        // Brief visual feedback
+        const badges = document.querySelectorAll('.merge-field-badge');
+        badges.forEach(b => {
+            if (b.textContent.trim().includes(name)) {
+                b.classList.remove('bg-primary');
+                b.classList.add('bg-success');
+                setTimeout(() => {
+                    b.classList.remove('bg-success');
+                    b.classList.add('bg-primary');
+                }, 500);
+            }
+        });
+    });
+}
+
+// Insert section template
+const sectionTemplates = {
+    heading: { type: "heading", text: "Section Title", level: 1, alignment: "left", bold: true },
+    paragraph: { type: "paragraph", text: "Your text here with {{merge_field}} support." },
+    paragraph_list: { type: "paragraph_list", items: [{ text: "First paragraph." }, { text: "Second paragraph." }] },
+    table: {
+        type: "table",
+        columns: [
+            { header: "Name", field: "name", width_cm: 4, alignment: "left" },
+            { header: "Amount", field: "amount", width_cm: 3, alignment: "right", format: "money" }
+        ],
+        data_source: "beneficiary_rows"
+    },
+    key_value_table: {
+        type: "key_value_table",
+        items: [
+            { label: "Total Income", value: "{{distributable_income}}" },
+            { label: "Total Tax", value: "{{total_tax_payable}}" }
+        ]
+    },
+    conditional: { type: "conditional", field: "has_streaming", children: [{ type: "paragraph", text: "This shows when streaming applies." }] },
+    signature_block: { type: "signature_block", name_field: "chairperson_name", title_field: "", date_field: "resolution_date", label: "Signed" },
+    disclaimer: { type: "disclaimer", heading: "DISCLAIMER", text: "This document is for informational purposes only." },
+    spacer: { type: "spacer", lines: 1 },
+    page_break: { type: "page_break" },
+    horizontal_rule: { type: "horizontal_rule" },
+    numbered_list: { type: "numbered_list", items: [{ text: "First item" }, { text: "Second item" }] },
+    bullet_list: { type: "bullet_list", items: [{ text: "First item" }, { text: "Second item" }] },
+    firm_header: { type: "firm_header", firm_name: "M C & S Pty Ltd", lines: ["Chartered Accountants", "123 Main Street, Melbourne VIC 3000"] }
+};
+
+function insertSection(type) {
+    const template = sectionTemplates[type];
+    if (!template) return;
+    const json = JSON.stringify(template, null, 2);
+    navigator.clipboard.writeText(json).then(() => {
+        alert('Section template copied to clipboard. Paste it into the sections array in the JSON editor.');
+    });
+}
+
+// Auto-validate on load
+document.addEventListener('DOMContentLoaded', validateJson);
+
+// Tab key support in editor
+document.getElementById('jsonEditor').addEventListener('keydown', function(e) {
+    if (e.key === 'Tab') {
+        e.preventDefault();
+        const start = this.selectionStart;
+        const end = this.selectionEnd;
+        this.value = this.value.substring(0, start) + '  ' + this.value.substring(end);
+        this.selectionStart = this.selectionEnd = start + 2;
+    }
+});
+</script>
+{% endblock %}
