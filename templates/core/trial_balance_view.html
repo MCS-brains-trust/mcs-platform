@@ -54,8 +54,8 @@
                         {{ line.account_name }}
                         {% if line.is_adjustment %} <span class="badge bg-info text-dark">Adj</span>{% endif %}
                     </td>
-                    <td class="text-end">{% if line.display_dr %}{% if line.is_aggregated %}<a href="{% url 'core:account_code_breakdown' pk=fy.pk account_code=line.account_code %}" target="_blank" class="text-decoration-none" title="View {{ line.sub_count }} entries breakdown">{{ line.display_dr|floatformat:2|intcomma }}</a>{% else %}{{ line.display_dr|floatformat:2|intcomma }}{% endif %}{% endif %}</td>
-                    <td class="text-end">{% if line.display_cr %}{% if line.is_aggregated %}<a href="{% url 'core:account_code_breakdown' pk=fy.pk account_code=line.account_code %}" target="_blank" class="text-decoration-none" title="View {{ line.sub_count }} entries breakdown">{{ line.display_cr|floatformat:2|intcomma }}</a>{% else %}{{ line.display_cr|floatformat:2|intcomma }}{% endif %}{% endif %}</td>
+                    <td class="text-end">{% if line.display_dr %}<a href="{% url 'core:account_code_breakdown' pk=fy.pk account_code=line.account_code %}" target="_blank" class="text-decoration-none" title="View {% if line.is_aggregated %}{{ line.sub_count }} entries{% else %}account details{% endif %} &amp; re-allocate">{{ line.display_dr|floatformat:2|intcomma }}</a>{% endif %}</td>
+                    <td class="text-end">{% if line.display_cr %}<a href="{% url 'core:account_code_breakdown' pk=fy.pk account_code=line.account_code %}" target="_blank" class="text-decoration-none" title="View {% if line.is_aggregated %}{{ line.sub_count }} entries{% else %}account details{% endif %} &amp; re-allocate">{{ line.display_cr|floatformat:2|intcomma }}</a>{% endif %}</td>
                     <td class="text-end">{% if line.prior_debit %}{{ line.prior_debit|floatformat:2|intcomma }}{% endif %}</td>
                     <td class="text-end">{% if line.prior_credit %}{{ line.prior_credit|floatformat:2|intcomma }}{% endif %}</td>
                 </tr>
