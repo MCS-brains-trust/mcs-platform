@@ -1,0 +1,86 @@
+{% extends "office_admin/base.html" %}
+
+{% block title %}Log Correspondence — StatementHub Office Admin{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+    <h2 style="font-size: 22px; font-weight: 700;">Log Correspondence</h2>
+    <p style="font-size: 13.5px; color: #888; margin-top: 4px;">Record incoming or outgoing mail, documents, and notices.</p>
+</div>
+
+<div class="oa-section-card" style="max-width: 700px;">
+    <div style="padding: 24px;">
+        <form method="post">
+            {% csrf_token %}
+
+            <div class="mb-3">
+                <label class="form-label fw-semibold" style="font-size: 13px;">Direction</label>
+                <select name="direction" class="form-select" style="font-size: 13px;">
+                    {% for val, label in direction_choices %}
+                    <option value="{{ val }}">{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label fw-semibold" style="font-size: 13px;">Client Entity</label>
+                <select name="entity" class="form-select" style="font-size: 13px;">
+                    <option value="">— General (no specific entity) —</option>
+                    {% for entity in entities %}
+                    <option value="{{ entity.pk }}">{{ entity.entity_name }} ({{ entity.get_entity_type_display }})</option>
+                    {% endfor %}
+                </select>
+                <div class="form-text" style="font-size: 11px;">Start typing to filter, or leave blank for general correspondence.</div>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label fw-semibold" style="font-size: 13px;">Type</label>
+                <select name="correspondence_type" class="form-select" style="font-size: 13px;">
+                    {% for val, label in type_choices %}
+                    <option value="{{ val }}">{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="mb-3">
+                <label class="form-label fw-semibold" style="font-size: 13px;">Subject / Description</label>
+                <input type="text" name="subject" class="form-control" style="font-size: 13px;"
+                       placeholder="Brief description of the correspondence...">
+            </div>
+
+            <div class="row mb-3">
+                <div class="col-6">
+                    <label class="form-label fw-semibold" style="font-size: 13px;">Date</label>
+                    <input type="date" name="date_received" class="form-control" style="font-size: 13px;"
+                           value="{{ today|date:'Y-m-d' }}">
+                </div>
+                <div class="col-6">
+                    <label class="form-label fw-semibold" style="font-size: 13px;">Status</label>
+                    <select name="status" class="form-select" style="font-size: 13px;">
+                        {% for val, label in status_choices %}
+                        <option value="{{ val }}">{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+
+            <div class="mb-4">
+                <label class="form-label fw-semibold" style="font-size: 13px;">Notes</label>
+                <textarea name="notes" class="form-control" rows="3" style="font-size: 13px;"
+                          placeholder="Any additional notes..."></textarea>
+            </div>
+
+            <div class="d-flex gap-2">
+                <button type="submit" class="btn btn-primary"
+                        style="background: #6c8cff; border-color: #6c8cff; font-size: 13px; padding: 8px 20px; border-radius: 8px;">
+                    <i class="bi bi-check-lg"></i> Log Correspondence
+                </button>
+                <a href="{% url 'office_admin:correspondence_list' %}" class="btn btn-outline-secondary"
+                   style="font-size: 13px; padding: 8px 20px; border-radius: 8px;">
+                    Cancel
+                </a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

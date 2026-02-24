@@ -1,0 +1,50 @@
+{% extends "office_admin/base.html" %}
+{% load humanize %}
+
+{% block title %}{{ page_title }} — StatementHub Office Admin{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+    <h2 style="font-size: 22px; font-weight: 700;">{{ page_title }}</h2>
+    <p style="font-size: 13.5px; color: #888; margin-top: 4px;">
+        Active payment plans and instalment arrangements.
+    </p>
+</div>
+
+<div class="oa-section-card">
+    <div class="oa-section-header">
+        <h3><i class="bi bi-credit-card-2-front-fill"></i> {{ page_title }}</h3>
+    </div>
+    {% if items %}
+    <div class="oa-table-header" style="grid-template-columns: 1fr 110px 110px 110px 110px 100px;">
+        <span>Client</span>
+        <span>Total</span>
+        <span>Instalment</span>
+        <span>Frequency</span>
+        <span>Next Payment</span>
+        <span>Remaining</span>
+    </div>
+    {% for item in items %}
+    <div class="oa-table-row" style="grid-template-columns: 1fr 110px 110px 110px 110px 100px;">
+        <span class="oa-client">
+            <a href="{% url 'core:entity_detail' pk=item.entity.pk %}" style="color: #1a1a2e; text-decoration: none;">
+                {{ item.entity.entity_name }}
+            </a>
+        </span>
+        <span class="oa-amount">${{ item.total_amount|floatformat:0|intcomma }}</span>
+        <span class="oa-type">${{ item.instalment_amount|floatformat:0|intcomma }}</span>
+        <span class="oa-type">{{ item.get_frequency_display }}</span>
+        <span class="oa-date">
+            {% if item.next_payment_date %}{{ item.next_payment_date|date:"j M Y" }}{% else %}—{% endif %}
+        </span>
+        <span class="oa-amount oa-amount-red">${{ item.remaining_balance|floatformat:0|intcomma }}</span>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="oa-empty">
+        <i class="bi bi-credit-card-2-front-fill"></i>
+        <p>No active payment plans.</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

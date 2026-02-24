@@ -1,0 +1,268 @@
+{% extends "office_admin/base.html" %}
+{% load humanize %}
+
+{% block title %}Dashboard — StatementHub Office Admin{% endblock %}
+
+{% block content %}
+<!-- Page Header -->
+<div class="mb-4">
+    <h2 style="font-size: 22px; font-weight: 700;">{{ greeting }}, {{ request.user.first_name|default:"Eliza" }}</h2>
+    <p style="font-size: 13.5px; color: #888; margin-top: 4px;">Here's your overview for today</p>
+</div>
+
+<!-- ── STAT CARDS ── -->
+<div class="oa-stat-grid">
+    <!-- Correspondence -->
+    <a href="{% url 'office_admin:correspondence_list' %}" class="oa-stat-card text-decoration-none">
+        <div class="oa-stat-header">
+            <div class="oa-stat-icon icon-blue"><i class="bi bi-envelope-fill"></i></div>
+            {% if correspondence_new %}
+            <span class="oa-stat-trend trend-amber">{{ correspondence_new }} new</span>
+            {% endif %}
+        </div>
+        <div class="oa-stat-label">Correspondence</div>
+        <div class="oa-stat-value">{{ correspondence_total }}</div>
+        <div class="oa-stat-sub">{{ correspondence_awaiting }} awaiting reply</div>
+    </a>
+
+    <!-- ASIC / ATO -->
+    <a href="{% url 'office_admin:asic_returns' %}" class="oa-stat-card text-decoration-none">
+        <div class="oa-stat-header">
+            <div class="oa-stat-icon icon-purple"><i class="bi bi-bank2"></i></div>
+            {% if asic_burning %}
+            <span class="oa-stat-trend trend-red">{{ asic_burning }} burning</span>
+            {% endif %}
+        </div>
+        <div class="oa-stat-label">ASIC / ATO</div>
+        <div class="oa-stat-value">{{ asic_total }}</div>
+        <div class="oa-stat-sub">{{ noa_to_send }} NOAs to process</div>
+    </a>
+
+    <!-- Debtors -->
+    <a href="{% url 'office_admin:debtors_overdue' %}" class="oa-stat-card text-decoration-none">
+        <div class="oa-stat-header">
+            <div class="oa-stat-icon icon-red"><i class="bi bi-cash-coin"></i></div>
+            {% if overdue_count %}
+            <span class="oa-stat-trend trend-red">{{ overdue_count }} overdue</span>
+            {% endif %}
+        </div>
+        <div class="oa-stat-label">Debtors</div>
+        <div class="oa-stat-value">${{ total_overdue_amount|floatformat:0|intcomma }}</div>
+        <div class="oa-stat-sub">Outstanding 60+ days</div>
+    </a>
+
+    <!-- Today's Tasks -->
+    <div class="oa-stat-card">
+        <div class="oa-stat-header">
+            <div class="oa-stat-icon icon-green"><i class="bi bi-check2-square"></i></div>
+        </div>
+        <div class="oa-stat-label">Today's Tasks</div>
+        <div class="oa-stat-value">{{ tasks_completed }} / {{ tasks_total }}</div>
+        <div class="oa-stat-sub">{{ tasks_total|add:"-"|add:tasks_completed }} remaining</div>
+    </div>
+</div>
+
+<!-- ── ROW 1: Today's Tasks + Recent Correspondence ── -->
+<div class="oa-two-col">
+
+    <!-- Today's Tasks -->
+    <div class="oa-section-card">
+        <div class="oa-section-header">
+            <h3><i class="bi bi-clipboard-check"></i> Today's Tasks</h3>
+            <span style="font-size: 11px; color: #999; font-weight: 500;">
+                {{ tasks_completed }} of {{ tasks_total }} complete
+            </span>
+        </div>
+        {% for task in task_list %}
+        <div class="oa-task-item" data-task-id="{{ task.pk }}">
+            <div class="oa-task-checkbox {% if task.is_completed %}checked{% endif %}"
+                 onclick="toggleTask('{{ task.pk }}', this)"></div>
+            <span class="oa-task-text {% if task.is_completed %}done{% endif %}">{{ task.title }}</span>
+            <span class="oa-task-tag tag-{{ task.frequency }}">{{ task.frequency_display }}</span>
+            <span class="oa-task-time">
+                {% if task.scheduled_time %}{{ task.scheduled_time|time:"g:ia" }}{% else %}—{% endif %}
+            </span>
+        </div>
+        {% empty %}
+        <div class="oa-empty">
+            <i class="bi bi-clipboard-check"></i>
+            <p>No tasks scheduled for today. Add tasks in the admin panel.</p>
+        </div>
+        {% endfor %}
+    </div>
+
+    <!-- Recent Correspondence -->
+    <div class="oa-section-card">
+        <div class="oa-section-header">
+            <h3><i class="bi bi-envelope-fill"></i> Recent Correspondence</h3>
+            <a class="view-all" href="{% url 'office_admin:correspondence_list' %}">View All →</a>
+        </div>
+        {% if recent_correspondence %}
+        <div class="oa-table-header corr-grid">
+            <span>Date</span>
+            <span>Client / Subject</span>
+            <span>Type</span>
+            <span>Direction</span>
+            <span>Status</span>
+        </div>
+        {% for item in recent_correspondence %}
+        <div class="oa-table-row corr-grid">
+            <span class="oa-date">{{ item.date_received|date:"j M" }}</span>
+            <span class="oa-client">
+                {% if item.entity %}{{ item.entity.entity_name }}{% else %}General{% endif %}
+            </span>
+            <span class="oa-type">{{ item.get_correspondence_type_display }}</span>
+            <span class="oa-type">{{ item.get_direction_display }}</span>
+            <span class="oa-badge oa-badge-{{ item.status }}">{{ item.get_status_display }}</span>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="oa-empty">
+            <i class="bi bi-envelope"></i>
+            <p>No correspondence logged yet. <a href="{% url 'office_admin:correspondence_create' %}">Log your first item</a>.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- ── ROW 2: ASIC/ATO + Debtors ── -->
+<div class="oa-two-col">
+
+    <!-- ASIC / ATO Action Required -->
+    <div class="oa-section-card">
+        <div class="oa-section-header">
+            <h3><i class="bi bi-bank2"></i> ASIC / ATO — Action Required</h3>
+            {% if asic_burning %}
+            <span class="header-badge">{{ asic_burning }} burning</span>
+            {% endif %}
+        </div>
+        {% if asic_action_items %}
+        <div class="oa-table-header asic-grid">
+            <span>Entity</span>
+            <span>Item</span>
+            <span>Due</span>
+            <span>Status</span>
+        </div>
+        {% for item in asic_action_items %}
+        <div class="oa-table-row asic-grid">
+            <span class="oa-client">
+                <span class="priority-dot {% if item.is_burning %}priority-high{% elif item.status == 'to_send' %}priority-med{% else %}priority-low{% endif %}"></span>
+                {{ item.entity_name }}
+            </span>
+            <span class="oa-type">{{ item.item }}</span>
+            <span class="oa-date {% if item.is_burning %}text-danger fw-bold{% endif %}">
+                {% if item.due_date %}{{ item.due_date|date:"j M Y" }}{% else %}—{% endif %}
+            </span>
+            <span class="oa-badge oa-badge-{{ item.status }}">{{ item.status_display }}</span>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="oa-empty">
+            <i class="bi bi-bank2"></i>
+            <p>No ASIC/ATO items requiring action.</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Debtors — Overdue -->
+    <div class="oa-section-card">
+        <div class="oa-section-header">
+            <h3><i class="bi bi-cash-coin"></i> Debtors — Overdue</h3>
+            <a class="view-all" href="{% url 'office_admin:aged_receivables' %}">Full Report →</a>
+        </div>
+        {% if overdue_debtors %}
+        <div class="oa-table-header debtor-grid">
+            <span>Client</span>
+            <span>Amount</span>
+            <span>Age</span>
+            <span>Escalation</span>
+            <span>Status</span>
+        </div>
+        {% for debtor in overdue_debtors %}
+        <div class="oa-table-row debtor-grid">
+            <span class="oa-client">{{ debtor.entity.entity_name }}</span>
+            <span class="oa-amount oa-amount-red">${{ debtor.amount_outstanding|floatformat:0|intcomma }}</span>
+            <span class="oa-type">{{ debtor.days_overdue }} days</span>
+            <span class="oa-type">{{ debtor.get_escalation_stage_display }}</span>
+            <span class="oa-badge oa-badge-{{ debtor.status }}">{{ debtor.get_status_display }}</span>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="oa-empty">
+            <i class="bi bi-cash-coin"></i>
+            <p>No overdue debtors. Looking good!</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- ── ROW 3: Recently Viewed Entities ── -->
+<div class="oa-section-card" style="margin-bottom: 24px;">
+    <div class="oa-section-header">
+        <h3><i class="bi bi-building"></i> Recently Viewed Entities</h3>
+        <a class="view-all" href="{% url 'core:entity_list' %}">View All →</a>
+    </div>
+    <div id="recentEntities">
+        <!-- Populated by recent entity views or a default set -->
+        <div class="oa-empty">
+            <i class="bi bi-building"></i>
+            <p>Use the search bar above to find and view client entities.</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    function toggleTask(taskId, el) {
+        fetch(`/office-admin/tasks/${taskId}/toggle/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': getCookie('csrftoken'),
+                'Content-Type': 'application/json',
+            },
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.status === 'ok') {
+                el.classList.toggle('checked', data.is_completed);
+                const textEl = el.nextElementSibling;
+                textEl.classList.toggle('done', data.is_completed);
+                updateTaskCounter();
+            }
+        })
+        .catch(() => {
+            // Optimistic toggle for demo
+            const isChecked = el.classList.toggle('checked');
+            const textEl = el.nextElementSibling;
+            textEl.classList.toggle('done', isChecked);
+            updateTaskCounter();
+        });
+    }
+
+    function updateTaskCounter() {
+        const total = document.querySelectorAll('.oa-task-checkbox').length;
+        const completed = document.querySelectorAll('.oa-task-checkbox.checked').length;
+        // Update stat card if visible
+        const statValues = document.querySelectorAll('.oa-stat-value');
+        if (statValues.length >= 4) {
+            statValues[3].textContent = `${completed} / ${total}`;
+        }
+    }
+
+    function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
+</script>
+{% endblock %}

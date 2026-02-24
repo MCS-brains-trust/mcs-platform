@@ -8,6 +8,10 @@ from config.media_serving import serve_protected_media
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("accounts/", include("accounts.urls")),
+
+    # Office Admin dashboard (must be before core catch-all)
+    path("office-admin/", include("core.urls_office_admin")),
+
     # Review app handles the dashboard (homepage) and review pages
     path("", include("review.urls")),
     # Core app handles clients, entities, financial years, etc.

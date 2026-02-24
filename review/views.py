@@ -219,6 +219,10 @@ def review_dashboard(request):
     My Entities, My Open Flags, My Pending Reviews, practice-wide metrics,
     and recent activity.
     """
+    # Redirect Office Admin users to their dedicated dashboard
+    if getattr(request.user, 'is_office_admin', False):
+        return redirect('office_admin:dashboard')
+
     from core.models import (
         Client, Entity, FinancialYear, RiskFlag, AuditLog,
     )

@@ -1,0 +1,57 @@
+{% extends "office_admin/base.html" %}
+{% load humanize %}
+
+{% block title %}{{ page_title }} — StatementHub Office Admin{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h2 style="font-size: 22px; font-weight: 700;">{{ page_title }}</h2>
+        <p style="font-size: 13.5px; color: #888; margin-top: 4px;">
+            {{ items|length }} item{{ items|length|pluralize }}
+            {% if burning_count %} · <span style="color: #c62828; font-weight: 600;">{{ burning_count }} burning</span>{% endif %}
+        </p>
+    </div>
+</div>
+
+<div class="oa-section-card">
+    <div class="oa-section-header">
+        <h3><i class="bi bi-clipboard-check-fill"></i> {{ page_title }}</h3>
+        {% if burning_count %}
+        <span class="header-badge">{{ burning_count }} burning</span>
+        {% endif %}
+    </div>
+    {% if items %}
+    <div class="oa-table-header" style="grid-template-columns: 1fr 160px 110px 100px 100px;">
+        <span>Entity</span>
+        <span>Return Type</span>
+        <span>Due Date</span>
+        <span>Amount</span>
+        <span>Status</span>
+    </div>
+    {% for item in items %}
+    <div class="oa-table-row" style="grid-template-columns: 1fr 160px 110px 100px 100px;">
+        <span class="oa-client">
+            {% if item.is_burning %}<span class="priority-dot priority-high"></span>
+            {% elif item.status == 'pending' %}<span class="priority-dot priority-med"></span>
+            {% else %}<span class="priority-dot priority-low"></span>{% endif %}
+            {{ item.entity.entity_name }}
+        </span>
+        <span class="oa-type">{{ item.get_return_type_display }}</span>
+        <span class="oa-date {% if item.is_burning %}text-danger fw-bold{% endif %}">
+            {% if item.due_date %}{{ item.due_date|date:"j M Y" }}{% else %}—{% endif %}
+        </span>
+        <span class="oa-type">
+            {% if item.amount %}${{ item.amount|floatformat:0|intcomma }}{% else %}—{% endif %}
+        </span>
+        <span class="oa-badge oa-badge-{{ item.status }}">{{ item.get_status_display }}</span>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="oa-empty">
+        <i class="bi bi-clipboard-check-fill"></i>
+        <p>No ASIC returns found.</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

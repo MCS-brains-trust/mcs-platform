@@ -1,0 +1,103 @@
+{% extends "office_admin/base.html" %}
+{% load humanize %}
+
+{% block title %}{{ page_title }} — StatementHub Office Admin{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h2 style="font-size: 22px; font-weight: 700;">{{ page_title }}</h2>
+        <p style="font-size: 13.5px; color: #888; margin-top: 4px;">
+            {{ items|length }} item{{ items|length|pluralize }}
+        </p>
+    </div>
+    <a href="{% url 'office_admin:correspondence_create' %}" class="btn btn-primary btn-sm"
+       style="background: #6c8cff; border-color: #6c8cff; font-size: 13px; padding: 8px 16px; border-radius: 8px;">
+        <i class="bi bi-plus-lg"></i> Log Correspondence
+    </a>
+</div>
+
+<!-- Filters -->
+<div class="oa-section-card mb-4">
+    <div style="padding: 14px 20px;">
+        <form method="get" class="d-flex gap-3 align-items-center flex-wrap">
+            <div>
+                <select name="direction" class="form-select form-select-sm" style="font-size: 12px; border-radius: 6px;" onchange="this.form.submit()">
+                    <option value="">All Directions</option>
+                    {% for val, label in direction_choices %}
+                    <option value="{{ val }}" {% if direction_filter == val %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div>
+                <select name="status" class="form-select form-select-sm" style="font-size: 12px; border-radius: 6px;" onchange="this.form.submit()">
+                    <option value="">All Statuses</option>
+                    {% for val, label in status_choices %}
+                    <option value="{{ val }}" {% if status_filter == val %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="flex-grow-1">
+                <input type="text" name="q" value="{{ query }}" placeholder="Search by client name or subject..."
+                       class="form-control form-control-sm" style="font-size: 12px; border-radius: 6px;">
+            </div>
+            <button type="submit" class="btn btn-outline-secondary btn-sm" style="font-size: 12px; border-radius: 6px;">
+                <i class="bi bi-search"></i> Filter
+            </button>
+        </form>
+    </div>
+</div>
+
+<!-- Correspondence Table -->
+<div class="oa-section-card">
+    <div class="oa-section-header">
+        <h3><i class="bi bi-envelope-fill"></i> {{ page_title }}</h3>
+    </div>
+    {% if items %}
+    <div class="oa-table-header" style="grid-template-columns: 90px 1fr 140px 90px 100px 80px;">
+        <span>Date</span>
+        <span>Client / Subject</span>
+        <span>Type</span>
+        <span>Direction</span>
+        <span>Status</span>
+        <span>Actions</span>
+    </div>
+    {% for item in items %}
+    <div class="oa-table-row" style="grid-template-columns: 90px 1fr 140px 90px 100px 80px;">
+        <span class="oa-date">{{ item.date_received|date:"j M Y" }}</span>
+        <span>
+            <span class="oa-client">{% if item.entity %}{{ item.entity.entity_name }}{% else %}General{% endif %}</span>
+            {% if item.subject %}<br><span class="oa-type">{{ item.subject }}</span>{% endif %}
+        </span>
+        <span class="oa-type">{{ item.get_correspondence_type_display }}</span>
+        <span class="oa-type">{{ item.get_direction_display }}</span>
+        <span class="oa-badge oa-badge-{{ item.status }}">{{ item.get_status_display }}</span>
+        <span>
+            <div class="dropdown">
+                <button class="btn btn-sm btn-outline-secondary dropdown-toggle" type="button"
+                        data-bs-toggle="dropdown" style="font-size: 11px; padding: 2px 8px; border-radius: 4px;">
+                    Update
+                </button>
+                <ul class="dropdown-menu" style="font-size: 12px;">
+                    {% for val, label in status_choices %}
+                    <li>
+                        <form method="post" action="{% url 'office_admin:correspondence_update_status' pk=item.pk %}" style="display: inline;">
+                            {% csrf_token %}
+                            <input type="hidden" name="status" value="{{ val }}">
+                            <button type="submit" class="dropdown-item">{{ label }}</button>
+                        </form>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+        </span>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="oa-empty">
+        <i class="bi bi-envelope"></i>
+        <p>No correspondence found matching your filters.</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

@@ -97,3 +97,5 @@ class AuditLogAdmin(admin.ModelAdmin):
     search_fields = ("description",)
     readonly_fields = ("user", "action", "description", "affected_object_type",
                        "affected_object_id", "metadata", "timestamp", "ip_address")
+
+from . import admin_office_admin  # noqa: F401

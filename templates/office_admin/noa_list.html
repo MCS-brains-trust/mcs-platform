@@ -1,0 +1,46 @@
+{% extends "office_admin/base.html" %}
+{% load humanize %}
+
+{% block title %}{{ page_title }} — StatementHub Office Admin{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+    <h2 style="font-size: 22px; font-weight: 700;">{{ page_title }}</h2>
+    <p style="font-size: 13.5px; color: #888; margin-top: 4px;">
+        Track Notices of Assessment — refunds to send and payable amounts to notify.
+    </p>
+</div>
+
+<div class="oa-section-card">
+    <div class="oa-section-header">
+        <h3><i class="bi bi-bank2"></i> {{ page_title }}</h3>
+    </div>
+    {% if items %}
+    <div class="oa-table-header" style="grid-template-columns: 1fr 100px 110px 100px 110px 100px;">
+        <span>Entity</span>
+        <span>Type</span>
+        <span>Amount</span>
+        <span>Received</span>
+        <span>Sent to Client</span>
+        <span>Status</span>
+    </div>
+    {% for item in items %}
+    <div class="oa-table-row" style="grid-template-columns: 1fr 100px 110px 100px 110px 100px;">
+        <span class="oa-client">{{ item.entity.entity_name }}</span>
+        <span class="oa-type">{{ item.get_noa_type_display }}</span>
+        <span class="oa-amount {% if item.noa_type == 'payable' %}oa-amount-red{% endif %}">
+            ${{ item.amount|floatformat:0|intcomma }}
+        </span>
+        <span class="oa-date">{{ item.date_received|date:"j M Y" }}</span>
+        <span class="oa-date">{% if item.date_sent %}{{ item.date_sent|date:"j M Y" }}{% else %}—{% endif %}</span>
+        <span class="oa-badge oa-badge-{{ item.status }}">{{ item.get_status_display }}</span>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="oa-empty">
+        <i class="bi bi-bank2"></i>
+        <p>No NOA records found.</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

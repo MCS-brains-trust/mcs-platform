@@ -2256,3 +2256,5 @@ class EntityImportJob(models.Model):
         if self.total_rows == 0:
             return 0
         return int((self.created_count + self.skipped_count + self.error_count) / self.total_rows * 100)
+
+from .models_office_admin import *  # noqa: F401, F403
