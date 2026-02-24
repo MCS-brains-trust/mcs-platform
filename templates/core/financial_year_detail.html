@@ -2619,12 +2619,28 @@ function buildGroupedView() {
         const gstCell = row.querySelector('td:nth-child(4) input');
         const amount = amountCell ? parseFloat(amountCell.textContent.replace(/[^\d.-]/g, '')) || 0 : 0;
         const hasGst = gstCell ? gstCell.checked : false;
+        // Extract transaction UUID from row id (format: pending-row-{uuid})
+        const txnId = row.id ? row.id.replace('pending-row-', '') : '';
+        // Get the approve form URL
+        const approveForm = row.querySelector('.review-approve-form');
+        const approveUrl = approveForm ? approveForm.action : '';
+        // Get current confirmed values from hidden fields
+        const confirmedCode = approveForm ? (approveForm.querySelector('.review-code-input')?.value || '') : '';
+        const confirmedName = approveForm ? (approveForm.querySelector('.review-name-input')?.value || '') : '';
+        const confirmedTax = approveForm ? (approveForm.querySelector('.review-tax-input')?.value || '') : '';
+        const gstFlag = approveForm ? (approveForm.querySelector('.review-gst-flag')?.value || '0') : '0';
 
         groups[key].transactions.push({
             date: dateCell ? dateCell.textContent.trim() : '',
             description: descCell ? descCell.textContent.trim() : '',
             amount: amount,
             hasGst: hasGst,
+            txnId: txnId,
+            approveUrl: approveUrl,
+            confirmedCode: confirmedCode,
+            confirmedName: confirmedName,
+            confirmedTax: confirmedTax,
+            gstFlag: gstFlag,
         });
         groups[key].total += amount;
     });
@@ -2699,22 +2715,44 @@ function buildGroupedView() {
         // --- Card Body (transaction list, collapsed by default) ---
         html += '<div class="d-none" id="' + groupId + '-body">';
         html += '<table class="table table-sm table-hover mb-0" style="font-size:0.82rem">';
-        html += '<thead class="table-light"><tr><th style="width:90px">Date</th><th>Description</th><th class="text-center" style="width:50px">GST</th><th class="text-end" style="width:120px">Amount</th></tr></thead>';
+        html += '<thead class="table-light"><tr><th style="width:90px">Date</th><th>Description</th><th class="text-center" style="width:50px">GST</th><th class="text-end" style="width:120px">Amount</th><th style="width:180px">Account</th><th style="width:90px">Action</th></tr></thead>';
         html += '<tbody>';
         g.transactions.forEach(function(t) {
             const amtClass = t.amount < 0 ? 'text-danger' : 'text-success';
             const amtStr = '$' + Math.abs(t.amount).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
             const gstIcon = t.hasGst ? '<i class="bi bi-check-circle-fill text-success"></i>' : '<i class="bi bi-x-circle text-muted"></i>';
-            html += '<tr>';
+            html += '<tr id="grouped-txn-' + t.txnId + '">';
             html += '<td class="text-muted">' + t.date + '</td>';
             html += '<td>' + t.description + '</td>';
             html += '<td class="text-center">' + gstIcon + '</td>';
             html += '<td class="text-end ' + amtClass + '">' + (t.amount < 0 ? '-' : '') + amtStr + '</td>';
+            // Per-transaction Change Account dropdown
+            html += '<td>';
+            html += '<div class="dropdown d-inline">';
+            html += '<button class="btn btn-sm btn-outline-secondary dropdown-toggle py-0 txn-change-btn" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" style="font-size:0.75rem" data-txn-id="' + t.txnId + '">';
+            html += '<i class="bi bi-pencil-square me-1"></i>Change';
+            html += '</button>';
+            html += '<div class="dropdown-menu p-2" style="width:350px; max-height:320px;">';
+            html += '<input type="text" class="form-control form-control-sm mb-2 txn-coa-search" placeholder="Search accounts..." data-txn-id="' + t.txnId + '">';
+            html += '<div class="txn-coa-results overflow-auto" style="max-height:250px;" data-txn-id="' + t.txnId + '">';
+            html += '<div class="text-center text-muted py-2"><small>Type to search...</small></div>';
+            html += '</div></div></div>';
+            html += '</td>';
+            // Per-transaction Approve button
+            html += '<td>';
+            if (t.confirmedCode) {
+                html += '<button class="btn btn-sm btn-outline-success py-0 txn-approve-btn" style="font-size:0.75rem" data-txn-id="' + t.txnId + '" data-approve-url="' + t.approveUrl + '" data-code="' + t.confirmedCode + '" data-name="' + (t.confirmedName || '').replace(/"/g, '&quot;') + '" data-tax="' + (t.confirmedTax || '').replace(/"/g, '&quot;') + '" data-gst="' + t.gstFlag + '">';
+                html += '<i class="bi bi-check"></i> Approve';
+                html += '</button>';
+            } else {
+                html += '<span class="text-muted" style="font-size:0.75rem">Set account</span>';
+            }
+            html += '</td>';
             html += '</tr>';
         });
         // Totals row
         html += '<tr class="table-light fw-bold"><td></td><td>Total</td><td></td>';
-        html += '<td class="text-end">' + totalSign + totalFormatted + '</td></tr>';
+        html += '<td class="text-end">' + totalSign + totalFormatted + '</td><td></td><td></td></tr>';
         html += '</tbody></table></div></div>';
     });
 
@@ -2878,6 +2916,162 @@ function bulkApproveGroup(accountCode, groupId, btn) {
         btn.innerHTML = '<i class="bi bi-check-all me-1"></i> Approve All';
     });
 }
+
+// --- Per-Transaction COA Search Handler (in grouped view) ---
+(function() {
+    const txnSearchTimers = {};
+    document.addEventListener('input', function(e) {
+        if (!e.target.classList.contains('txn-coa-search')) return;
+        const txnId = e.target.dataset.txnId;
+        const query = e.target.value.trim();
+        const resultsDiv = document.querySelector('.txn-coa-results[data-txn-id="' + txnId + '"]');
+
+        if (txnSearchTimers[txnId]) clearTimeout(txnSearchTimers[txnId]);
+
+        if (query.length < 1) {
+            resultsDiv.innerHTML = '<div class="text-center text-muted py-2"><small>Type to search...</small></div>';
+            return;
+        }
+
+        txnSearchTimers[txnId] = setTimeout(function() {
+            fetch('{% url "core:coa_search_api" %}?entity_type=' + entityType + '&q=' + encodeURIComponent(query))
+            .then(resp => resp.json())
+            .then(data => {
+                if (data.items.length === 0) {
+                    resultsDiv.innerHTML = '<div class="text-center text-muted py-2"><small>No matching accounts.</small></div>';
+                    return;
+                }
+                resultsDiv.innerHTML = data.items.map(item =>
+                    '<a href="#" class="dropdown-item small py-1 txn-coa-option" ' +
+                    'data-txn-id="' + txnId + '" ' +
+                    'data-code="' + item.code + '" ' +
+                    'data-name="' + item.name + '">' +
+                    '<code>' + item.code + '</code> ' + item.name +
+                    '<small class="text-muted d-block">' + item.section + '</small>' +
+                    '</a>'
+                ).join('');
+            });
+        }, 250);
+    });
+
+    document.addEventListener('click', function(e) {
+        const option = e.target.closest('.txn-coa-option');
+        if (!option) return;
+        e.preventDefault();
+
+        const txnId = option.dataset.txnId;
+        const code = option.dataset.code;
+        const name = option.dataset.name;
+
+        // Update the underlying pending table row's hidden form fields
+        const pendingRow = document.getElementById('pending-row-' + txnId);
+        if (pendingRow) {
+            const form = pendingRow.querySelector('.review-approve-form');
+            if (form) {
+                form.querySelector('.review-code-input').value = code;
+                form.querySelector('.review-name-input').value = name;
+            }
+            // Update the COA button text in the pending table
+            const coaBtn = pendingRow.querySelector('.review-coa-btn');
+            if (coaBtn) coaBtn.textContent = code + ' - ' + name;
+            // Update the AI code element
+            const codeEl = pendingRow.querySelector('.review-ai-code');
+            if (codeEl) codeEl.textContent = code;
+        }
+
+        // Close the dropdown
+        const changeBtn = document.querySelector('.txn-change-btn[data-txn-id="' + txnId + '"]');
+        if (changeBtn) {
+            const bsDropdown = bootstrap.Dropdown.getInstance(changeBtn);
+            if (bsDropdown) bsDropdown.hide();
+        }
+
+        // Rebuild the grouped view so the transaction moves to the correct group
+        buildGroupedView();
+    });
+})();
+
+// --- Per-Transaction Approve Handler (in grouped view) ---
+document.addEventListener('click', function(e) {
+    const btn = e.target.closest('.txn-approve-btn');
+    if (!btn) return;
+    e.preventDefault();
+
+    const txnId = btn.dataset.txnId;
+    const approveUrl = btn.dataset.approveUrl;
+    const code = btn.dataset.code;
+    const name = btn.dataset.name;
+    const tax = btn.dataset.tax;
+    const gst = btn.dataset.gst;
+
+    if (!approveUrl) {
+        alert('Cannot approve: missing approve URL.');
+        return;
+    }
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+    // Build form data
+    const formData = new FormData();
+    formData.append('confirmed_code', code);
+    formData.append('confirmed_name', name);
+    formData.append('confirmed_tax_type', tax);
+    formData.append('has_gst', gst);
+
+    fetch(approveUrl, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': CSRF_TOKEN },
+        body: formData
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            // Remove the row from the pending table
+            const pendingRow = document.getElementById('pending-row-' + txnId);
+            if (pendingRow) pendingRow.remove();
+
+            // Remove the row from the grouped view
+            const groupedRow = document.getElementById('grouped-txn-' + txnId);
+            if (groupedRow) {
+                groupedRow.style.transition = 'all 0.3s ease';
+                groupedRow.style.opacity = '0';
+                setTimeout(function() {
+                    groupedRow.remove();
+                    // Rebuild to update counts and totals
+                    buildGroupedView();
+                }, 300);
+            }
+
+            // Update badges
+            const pendingBadge = document.getElementById('pendingBadge');
+            const confirmedBadge = document.getElementById('confirmedBadge');
+            if (pendingBadge && data.remaining_pending !== undefined) pendingBadge.textContent = data.remaining_pending + ' pending';
+            if (confirmedBadge && data.remaining_confirmed !== undefined) confirmedBadge.textContent = data.remaining_confirmed + ' confirmed';
+
+            // Show notification
+            const notif = document.getElementById('reviewNotification');
+            if (notif) {
+                const notifText = notif.querySelector('#reviewNotificationText');
+                if (notifText) notifText.textContent = 'Transaction approved as ' + code + ' — ' + name;
+                notif.classList.remove('d-none');
+            }
+
+            if (data.remaining_pending === 0) {
+                setTimeout(function() { location.reload(); }, 1000);
+            }
+        } else {
+            alert('Error: ' + (data.message || 'Unknown error'));
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-check"></i> Approve';
+        }
+    })
+    .catch(err => {
+        alert('Network error. Please try again.');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-check"></i> Approve';
+    });
+});
 
 // --- Chart of Accounts: Search, Filter, Edit ---
 function filterCOA() {
