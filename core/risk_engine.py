@@ -131,7 +131,14 @@ def run_risk_engine(financial_year, tiers=None):
 # ============================================================================
 
 def _load_trial_balance(financial_year):
-    """Load and structure trial balance data for analysis."""
+    """Load and structure trial balance data for analysis.
+
+    IMPORTANT: For rolled-forward balance-sheet items and some Xero imports,
+    debit/credit may both be zero while closing_balance holds the real value.
+    We compute effective_dr / effective_cr (mirroring the view's display_dr /
+    display_cr logic) so that variance analysis and Tier 2 rules see the
+    correct balances.
+    """
     from core.models import TrialBalanceLine
 
     lines = TrialBalanceLine.objects.filter(
@@ -139,7 +146,7 @@ def _load_trial_balance(financial_year):
     ).select_related("mapped_line_item")
 
     data = {
-        "lines": list(lines),
+        "lines": [],
         "by_code": {},
         "by_section": {},
         "totals": {
@@ -161,6 +168,22 @@ def _load_trial_balance(financial_year):
     }
 
     for line in lines:
+        # Compute effective debit/credit — same logic as the view's
+        # display_dr / display_cr calculation.  When debit and credit are
+        # both zero but closing_balance is non-zero (rolled-forward BS
+        # items, Xero imports), use closing_balance instead.
+        if line.debit == 0 and line.credit == 0 and line.closing_balance != 0:
+            if line.closing_balance > 0:
+                line.effective_dr = line.closing_balance
+                line.effective_cr = ZERO
+            else:
+                line.effective_dr = ZERO
+                line.effective_cr = abs(line.closing_balance)
+        else:
+            line.effective_dr = line.debit
+            line.effective_cr = line.credit
+
+        data["lines"].append(line)
         data["by_code"][line.account_code] = line
 
         section = ""
@@ -170,8 +193,8 @@ def _load_trial_balance(financial_year):
             data["by_section"][section] = []
         data["by_section"][section].append(line)
 
-        # Net balance = debit - credit
-        net = line.debit - line.credit
+        # Net balance using effective values
+        net = line.effective_dr - line.effective_cr
         prior_net = line.prior_debit - line.prior_credit
 
         if section == "revenue":
@@ -243,7 +266,7 @@ def _run_tier1_variance(financial_year, tb_data, ref_data, entity_context, run_i
     expense_pct_threshold = ref_data.get("expense_variance_pct", Decimal("20"))
 
     for line in tb_data["lines"]:
-        current_net = line.debit - line.credit
+        current_net = line.effective_dr - line.effective_cr
         prior_net = line.prior_debit - line.prior_credit
 
         # Skip if both are zero
@@ -481,7 +504,7 @@ def _eval_account_threshold(rule, fy, tb, ref, ctx, config):
     if not matched_lines:
         return None
 
-    total = sum(line.debit - line.credit for line in matched_lines)
+    total = sum(line.effective_dr - line.effective_cr for line in matched_lines)
 
     triggered = False
     if comparison == "gt" and total > threshold:
@@ -538,7 +561,7 @@ def _eval_ratio_check(rule, fy, tb, ref, ctx, config):
     for line in tb["lines"]:
         code = line.account_code
         name_lower = line.account_name.lower()
-        net = line.debit - line.credit
+        net = line.effective_dr - line.effective_cr
 
         if code in numerator_codes or any(kw.lower() in name_lower for kw in numerator_keywords):
             num += net
@@ -594,7 +617,7 @@ def _eval_balance_sign(rule, fy, tb, ref, ctx, config):
     for line in tb["lines"]:
         name_lower = line.account_name.lower()
         if any(kw.lower() in name_lower for kw in account_keywords):
-            net = line.debit - line.credit
+            net = line.effective_dr - line.effective_cr
             if expected_sign == "credit" and net > ZERO:
                 flagged.append(line)
             elif expected_sign == "debit" and net < ZERO:
@@ -634,7 +657,7 @@ def _eval_solvency(rule, fy, tb, ref, ctx, config):
         if not line.mapped_line_item:
             continue
         section = line.mapped_line_item.section
-        net = line.debit - line.credit
+        net = line.effective_dr - line.effective_cr
         code_lower = line.account_name.lower()
 
         if section == "assets":
@@ -711,7 +734,7 @@ def _eval_loan_check(rule, fy, tb, ref, ctx, config):
     for line in tb["lines"]:
         name_lower = line.account_name.lower()
         if any(kw.lower() in name_lower for kw in account_keywords):
-            net = line.debit - line.credit
+            net = line.effective_dr - line.effective_cr
             if net > ZERO:  # Debit balance = amount owed TO the company
                 flagged.append(line)
 
@@ -827,7 +850,7 @@ def _eval_superannuation(rule, fy, tb, ref, ctx, config):
 
     for line in tb["lines"]:
         name_lower = line.account_name.lower()
-        net = abs(line.debit - line.credit)
+        net = abs(line.effective_dr - line.effective_cr)
 
         if any(kw in name_lower for kw in wages_keywords):
             wages_total += net
@@ -920,7 +943,7 @@ def _eval_expense_benchmark(rule, fy, tb, ref, ctx, config):
     for line in tb["lines"]:
         name_lower = line.account_name.lower()
         if any(kw.lower() in name_lower for kw in expense_keywords):
-            expense_total += abs(line.debit - line.credit)
+            expense_total += abs(line.effective_dr - line.effective_cr)
             expense_accounts.append(line.account_code)
 
     if expense_total == ZERO:
