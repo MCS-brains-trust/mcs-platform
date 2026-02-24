@@ -3070,7 +3070,7 @@ document.getElementById('coaSectionFilter')?.addEventListener('change', filterCO
 // ===== Risk Engine Badge Polling =====
 (function() {
     const POLL_INTERVAL = 10000; // 10 seconds
-    const badgeUrl = '{% url "core:risk_badge_api" pk=financial_year.pk %}';
+    const badgeUrl = '{% url "core:risk_badge_api" pk=fy.pk %}';
     let polling = true;
 
     function updateBadges(data) {
