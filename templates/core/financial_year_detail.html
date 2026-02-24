@@ -3007,30 +3007,44 @@ document.getElementById('coaSectionFilter')?.addEventListener('change', filterCO
     const tab = params.get('tab');
     const highlight = params.get('highlight');
 
+    function highlightRow() {
+        if (!highlight) return;
+        const row = document.querySelector(`.coa-row[data-code="${highlight}"]`);
+        if (!row) return;
+        // Make sure the section containing this row is visible
+        const section = row.closest('.coa-section');
+        if (section) section.style.display = '';
+        // Highlight with animation
+        row.style.transition = 'background-color 0.5s';
+        row.style.backgroundColor = '#d4edda';
+        // Scroll into view
+        row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        // Fade through yellow then back to normal
+        setTimeout(function() {
+            row.style.backgroundColor = '#fff3cd';
+            setTimeout(function() {
+                row.style.backgroundColor = '';
+            }, 3000);
+        }, 2000);
+    }
+
     if (tab) {
         const tabBtn = document.querySelector(`[data-bs-target="#tab-${tab}"]`);
         if (tabBtn) {
+            // Listen for the tab to fully show before highlighting
+            tabBtn.addEventListener('shown.bs.tab', function() {
+                // Give DOM a moment to paint
+                setTimeout(highlightRow, 200);
+            }, { once: true });
             const bsTab = new bootstrap.Tab(tabBtn);
             bsTab.show();
+        } else {
+            // Fallback if tab button not found
+            setTimeout(highlightRow, 500);
         }
-    }
-
-    if (highlight) {
-        // Wait for tab to render
-        setTimeout(function() {
-            const row = document.querySelector(`.coa-row[data-code="${highlight}"]`);
-            if (row) {
-                row.style.transition = 'background-color 0.3s';
-                row.style.backgroundColor = '#d4edda';
-                row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                setTimeout(function() {
-                    row.style.backgroundColor = '#fff3cd';
-                    setTimeout(function() {
-                        row.style.backgroundColor = '';
-                    }, 3000);
-                }, 1500);
-            }
-        }, 300);
+    } else if (highlight) {
+        // No tab switch needed, just highlight
+        setTimeout(highlightRow, 200);
     }
 })();
 </script>
