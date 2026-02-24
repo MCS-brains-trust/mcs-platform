@@ -1062,7 +1062,7 @@ def _process_trial_balance_upload(fy, file):
     # Snapshot existing comparative data BEFORE deleting lines.
     # Key = account_code.  We keep the first occurrence per code.
     # ------------------------------------------------------------------
-    prior_data = {}  # account_code -> dict of comparative fields
+    prior_data = {}  # account_code -> dict of comparative fields + original mapping
     for line in fy.trial_balance_lines.filter(is_adjustment=False).order_by("account_code"):
         if line.account_code not in prior_data:
             prior_data[line.account_code] = {
@@ -1073,6 +1073,10 @@ def _process_trial_balance_upload(fy, file):
                 "prior_mapped_line_item": line.prior_mapped_line_item,
                 "reclassified": line.reclassified,
                 "comparatives_locked": line.comparatives_locked,
+                # Also preserve the current mapping and account name so
+                # comparative-only lines don't become unmapped after upload
+                "mapped_line_item": line.mapped_line_item,
+                "account_name": line.account_name,
             }
 
     # Clear existing non-adjustment lines (current-year data will be
@@ -1179,12 +1183,12 @@ def _process_trial_balance_upload(fy, file):
         TrialBalanceLine.objects.create(
             financial_year=fy,
             account_code=code,
-            account_name="",  # Name not available; will be filled on next import
+            account_name=comp.get("account_name", ""),
             opening_balance=Decimal("0"),
             debit=Decimal("0"),
             credit=Decimal("0"),
             closing_balance=Decimal("0"),
-            mapped_line_item=comp.get("prior_mapped_line_item"),
+            mapped_line_item=comp.get("mapped_line_item") or comp.get("prior_mapped_line_item"),
             is_adjustment=False,
             prior_debit=comp["prior_debit"],
             prior_credit=comp["prior_credit"],
