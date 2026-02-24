@@ -542,6 +542,111 @@ class ChartOfAccount(models.Model):
 
 
 # ---------------------------------------------------------------------------
+# Entity Chart of Accounts (per-entity customisable copy of template)
+# ---------------------------------------------------------------------------
+class EntityChartOfAccount(models.Model):
+    """
+    Per-entity chart of accounts. Seeded from the master ChartOfAccount
+    template when the first financial year is created. Accountants can
+    then add, edit, or remove accounts for each entity without affecting
+    the master template.
+    """
+
+    class StatementSection(models.TextChoices):
+        SUSPENSE = "suspense", "Suspense"
+        REVENUE = "revenue", "Revenue"
+        COST_OF_SALES = "cost_of_sales", "Cost of Sales"
+        EXPENSES = "expenses", "Expenses"
+        ASSETS = "assets", "Assets"
+        LIABILITIES = "liabilities", "Liabilities"
+        EQUITY = "equity", "Equity"
+        CAPITAL_ACCOUNTS = "capital_accounts", "Capital Accounts"
+        PL_APPROPRIATION = "pl_appropriation", "P&L Appropriation"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entity = models.ForeignKey(
+        Entity, on_delete=models.CASCADE, related_name="entity_accounts",
+    )
+    account_code = models.CharField(
+        max_length=20,
+        help_text='Account code, e.g. "0500", "1510", "2000.01"',
+    )
+    account_name = models.CharField(
+        max_length=255,
+        help_text='Account name, e.g. "Sales", "Accountancy"',
+    )
+    classification = models.CharField(
+        max_length=255, blank=True, default="",
+        help_text='Tax classification, e.g. "Other sales revenue"',
+    )
+    section = models.CharField(
+        max_length=30, choices=StatementSection.choices,
+        help_text="Which section of the financial statements this belongs to",
+    )
+    tax_code = models.CharField(
+        max_length=20, blank=True, default="",
+        help_text='Default tax code: GST, ADS, ITS, FRE, CAP, INP, etc.',
+    )
+    maps_to = models.ForeignKey(
+        "AccountMapping",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="entity_detailed_accounts",
+        help_text="Which financial statement line item this rolls up to",
+    )
+    is_active = models.BooleanField(default=True)
+    is_custom = models.BooleanField(
+        default=False,
+        help_text="True if this account was added by the accountant (not from template)",
+    )
+    display_order = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["section", "account_code"]
+        unique_together = ["entity", "account_code"]
+        indexes = [
+            models.Index(fields=["entity", "section"]),
+            models.Index(fields=["entity", "is_active"]),
+        ]
+
+    def __str__(self):
+        return f"{self.account_code} — {self.account_name} ({self.entity.entity_name})"
+
+    @classmethod
+    def seed_from_template(cls, entity):
+        """
+        Copy all active ChartOfAccount entries for the entity's type
+        into EntityChartOfAccount records. Skips if entity already has accounts.
+        Returns the number of accounts created.
+        """
+        if cls.objects.filter(entity=entity).exists():
+            return 0
+
+        template_accounts = ChartOfAccount.objects.filter(
+            entity_type=entity.entity_type, is_active=True
+        )
+        created = []
+        for tpl in template_accounts:
+            created.append(cls(
+                entity=entity,
+                account_code=tpl.account_code,
+                account_name=tpl.account_name,
+                classification=tpl.classification,
+                section=tpl.section,
+                tax_code=tpl.tax_code,
+                maps_to=tpl.maps_to,
+                is_active=True,
+                is_custom=False,
+                display_order=tpl.display_order,
+            ))
+        if created:
+            cls.objects.bulk_create(created, ignore_conflicts=True)
+        return len(created)
+
+
+# ---------------------------------------------------------------------------
 # Client Account Mapping (per-entity mapping of client codes to standard codes)
 # ---------------------------------------------------------------------------
 class ClientAccountMapping(models.Model):

@@ -72,6 +72,11 @@ urlpatterns = [
     path("chart-of-accounts/suggest-code/", views_audit.coa_suggest_code, name="coa_suggest_code"),
     path("api/chart-of-accounts/", views_audit.chart_of_accounts_api, name="chart_of_accounts_api"),
 
+    # Entity Chart of Accounts (per-entity customisation)
+    path("years/<uuid:pk>/entity-coa/add/", views.entity_coa_add, name="entity_coa_add"),
+    path("entity-account/<uuid:pk>/edit/", views.entity_coa_edit, name="entity_coa_edit"),
+    path("entity-account/<uuid:pk>/delete/", views.entity_coa_delete, name="entity_coa_delete"),
+
     # Audit Library
     path("audit-library/", views_audit.audit_library, name="audit_library"),
 

@@ -14,7 +14,7 @@ from .models import (
     AccountMapping, ChartOfAccount, ClientAccountMapping, AdjustingJournal,
     JournalLine, GeneratedDocument, AuditLog, EntityOfficer,
     ClientAssociate, AccountingSoftware, MeetingNote,
-    DepreciationAsset, RiskFlag, StockItem, ActivityLog,
+    DepreciationAsset, RiskFlag, StockItem, ActivityLog, EntityChartOfAccount,
 )
 from .forms import (
     ClientForm, EntityForm, FinancialYearForm,
@@ -302,6 +302,10 @@ def financial_year_create(request, entity_pk):
             if prior:
                 fy.prior_year = prior
             fy.save()
+            # Seed entity chart of accounts from template if not already done
+            seeded = EntityChartOfAccount.seed_from_template(entity)
+            if seeded:
+                _log_action(request, "import", f"Seeded {seeded} chart of accounts from template for {entity.entity_name}", fy)
             _log_action(request, "import", f"Created financial year: {fy.year_label}", fy)
             messages.success(request, f"Financial year '{fy.year_label}' created.")
             return redirect("core:financial_year_detail", pk=fy.pk)
@@ -578,6 +582,16 @@ def financial_year_detail(request, pk):
         "review_jobs": review_jobs,
         # Activity
         "activity_logs": activity_logs,
+        # Chart of Accounts (entity-level)
+        "entity_accounts": EntityChartOfAccount.objects.filter(
+            entity=fy.entity, is_active=True
+        ).select_related('maps_to').order_by('section', 'account_code'),
+        "entity_accounts_count": EntityChartOfAccount.objects.filter(
+            entity=fy.entity, is_active=True
+        ).count(),
+        "account_mappings": AccountMapping.objects.filter(
+            entity_type=fy.entity.entity_type, is_active=True
+        ).order_by('statement_type', 'line_item_label'),
     }
     return render(request, "core/financial_year_detail.html", context)
 
@@ -847,6 +861,9 @@ def roll_forward(request, pk):
             prior_year=current_fy,
             status=FinancialYear.Status.DRAFT,
         )
+
+        # Seed entity chart of accounts from template if not already done
+        EntityChartOfAccount.seed_from_template(entity)
 
         # Determine which sections are balance sheet
         BS_SECTIONS = {"assets", "liabilities", "equity", "capital_accounts"}
@@ -5845,3 +5862,114 @@ def review_bulk_approve_group(request, pk):
         "remaining_confirmed": remaining_confirmed,
         "message": f"Approved {count} transactions for {account_code}. {tb_count} pushed to TB.",
     })
+
+
+# ---------------------------------------------------------------------------
+# Entity Chart of Accounts (per-entity customisation)
+# ---------------------------------------------------------------------------
+@login_required
+@require_POST
+def entity_coa_add(request, pk):
+    """Add a new account to the entity's chart of accounts."""
+    fy = get_financial_year_for_user(request, pk)
+    entity = fy.entity
+
+    account_code = request.POST.get("account_code", "").strip()
+    account_name = request.POST.get("account_name", "").strip()
+    section = request.POST.get("section", "")
+    classification = request.POST.get("classification", "").strip()
+    tax_code = request.POST.get("tax_code", "").strip()
+    maps_to_id = request.POST.get("maps_to", "").strip()
+
+    if not account_code or not account_name or not section:
+        messages.error(request, "Account code, name, and section are required.")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    if EntityChartOfAccount.objects.filter(entity=entity, account_code=account_code).exists():
+        messages.error(request, f"Account code {account_code} already exists for this entity.")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    maps_to = None
+    if maps_to_id:
+        try:
+            maps_to = AccountMapping.objects.get(pk=maps_to_id)
+        except AccountMapping.DoesNotExist:
+            pass
+
+    EntityChartOfAccount.objects.create(
+        entity=entity,
+        account_code=account_code,
+        account_name=account_name,
+        section=section,
+        classification=classification,
+        tax_code=tax_code,
+        maps_to=maps_to,
+        is_active=True,
+        is_custom=True,
+    )
+    _log_action(request, "create", f"Added entity account: {account_code} — {account_name}", fy)
+    messages.success(request, f"Account {account_code} — {account_name} added.")
+    return redirect("core:financial_year_detail", pk=pk)
+
+
+@login_required
+@require_POST
+def entity_coa_edit(request, pk):
+    """Edit an existing entity chart of accounts entry."""
+    acct = get_object_or_404(EntityChartOfAccount, pk=pk)
+    entity = acct.entity
+
+    # Security: ensure user has access to this entity
+    fy = entity.financial_years.order_by("-end_date").first()
+    if fy:
+        get_financial_year_for_user(request, fy.pk)
+
+    old_code = acct.account_code
+    acct.account_code = request.POST.get("account_code", acct.account_code).strip()
+    acct.account_name = request.POST.get("account_name", acct.account_name).strip()
+    acct.section = request.POST.get("section", acct.section)
+    acct.classification = request.POST.get("classification", "").strip()
+    acct.tax_code = request.POST.get("tax_code", "").strip()
+
+    maps_to_id = request.POST.get("maps_to", "").strip()
+    if maps_to_id:
+        try:
+            acct.maps_to = AccountMapping.objects.get(pk=maps_to_id)
+        except AccountMapping.DoesNotExist:
+            acct.maps_to = None
+    else:
+        acct.maps_to = None
+
+    acct.save()
+    if fy:
+        _log_action(request, "update", f"Edited entity account: {old_code} → {acct.account_code} — {acct.account_name}", fy)
+    messages.success(request, f"Account {acct.account_code} updated.")
+
+    if fy:
+        return redirect("core:financial_year_detail", pk=fy.pk)
+    return redirect("core:entity_detail", pk=entity.pk)
+
+
+@login_required
+@require_POST
+def entity_coa_delete(request, pk):
+    """Delete an entity chart of accounts entry."""
+    acct = get_object_or_404(EntityChartOfAccount, pk=pk)
+    entity = acct.entity
+
+    # Security: ensure user has access
+    fy = entity.financial_years.order_by("-end_date").first()
+    if fy:
+        get_financial_year_for_user(request, fy.pk)
+
+    code = acct.account_code
+    name = acct.account_name
+    acct.delete()
+
+    if fy:
+        _log_action(request, "delete", f"Deleted entity account: {code} — {name}", fy)
+    messages.success(request, f"Account {code} — {name} deleted.")
+
+    if fy:
+        return redirect("core:financial_year_detail", pk=fy.pk)
+    return redirect("core:entity_detail", pk=entity.pk)
