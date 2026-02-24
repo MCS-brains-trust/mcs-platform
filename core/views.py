@@ -831,7 +831,7 @@ def roll_forward(request, pk):
         from dateutil.relativedelta import relativedelta
         new_start = current_fy.end_date + relativedelta(days=1)
         new_end = current_fy.end_date + relativedelta(years=1)
-        new_label = f"FY{new_end.year}"
+        new_label = str(new_end.year)
 
         # Check if already exists
         if entity.financial_years.filter(year_label=new_label).exists():
