@@ -2232,8 +2232,16 @@ def trial_balance_pdf(request, pk):
     grand_total_prior_dr = Decimal('0')
     grand_total_prior_cr = Decimal('0')
 
+    # P&L accumulators for net profit calculation
+    PL_SECTIONS = {'Income', 'Cost of Sales', 'Expenses'}
+    pl_dr = Decimal('0')
+    pl_cr = Decimal('0')
+    pl_prior_dr = Decimal('0')
+    pl_prior_cr = Decimal('0')
+
     # Build section tables
     for section_name, lines in ordered_sections.items():
+        is_pl_section = section_name in PL_SECTIONS
         elements.append(Paragraph(f"<b>{section_name}</b>", s_section))
 
         data = []
@@ -2259,6 +2267,12 @@ def trial_balance_pdf(request, pk):
             grand_total_cr += cr
             grand_total_prior_dr += prior_dr
             grand_total_prior_cr += prior_cr
+
+            if is_pl_section:
+                pl_dr += dr
+                pl_cr += cr
+                pl_prior_dr += prior_dr
+                pl_prior_cr += prior_cr
 
             row = [
                 Paragraph(f"<b>{line.account_code}</b>", ParagraphStyle('Code', fontName='Helvetica-Bold', fontSize=9)),
@@ -2304,14 +2318,25 @@ def trial_balance_pdf(request, pk):
     ]))
     elements.append(totals_table)
 
-    # Net Profit
-    net_profit_current = grand_total_cr - grand_total_dr
-    net_profit_prior = grand_total_prior_cr - grand_total_prior_dr
+    # Net Profit (P&L sections only: Income Cr - Expenses Dr)
+    net_profit_current = pl_cr - pl_dr
+    net_profit_prior = pl_prior_cr - pl_prior_dr
     elements.append(Spacer(1, 3*mm))
+
+    # Format with profit/loss indicator
+    if net_profit_current >= 0:
+        np_current_str = f"${net_profit_current:,.2f}"
+    else:
+        np_current_str = f"(${abs(net_profit_current):,.2f})"
+    if net_profit_prior >= 0:
+        np_prior_str = f"${net_profit_prior:,.2f}"
+    else:
+        np_prior_str = f"(${abs(net_profit_prior):,.2f})"
+
     profit_data = [[
-        '', Paragraph('<b>Net Profit</b>', s_cell_bold),
-        '', f"{abs(net_profit_current):,.2f}",
-        '', f"{abs(net_profit_prior):,.2f}",
+        '', Paragraph('<b>Net Profit / (Loss)</b>', s_cell_bold),
+        '', np_current_str,
+        '', np_prior_str,
     ]]
     profit_table = Table(profit_data, colWidths=col_widths)
     profit_table.setStyle(TableStyle([
