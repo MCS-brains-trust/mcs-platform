@@ -122,6 +122,290 @@ def chart_of_accounts_api(request):
 
 
 # ---------------------------------------------------------------------------
+# Chart of Accounts — Add / Edit / Delete
+# ---------------------------------------------------------------------------
+
+# Account code ranges by section
+CODE_RANGES = {
+    'revenue':          (0, 999,    'Revenue'),
+    'cost_of_sales':    (0, 999,    'Cost of Sales'),
+    'expenses':         (1000, 1999, 'Expenses'),
+    'assets':           (2000, 2999, 'Assets'),  # 2000-2499 Current, 2500-2999 Non-Current
+    'liabilities':      (3000, 3999, 'Liabilities'),  # 3000-3499 Current, 3500-3999 NCL
+    'equity':           (4000, 4999, 'Equity'),
+    'capital_accounts': (4000, 4999, 'Capital Accounts'),
+    'pl_appropriation': (4000, 4999, 'P&L Appropriation'),
+    'suspense':         (9000, 9999, 'Suspense'),
+}
+
+
+def _section_for_code(code_str):
+    """
+    Determine the expected section(s) for a given numeric account code.
+    Returns a list of (section_value, label) tuples.
+    """
+    try:
+        code_int = int(code_str.split('.')[0])
+    except (ValueError, IndexError):
+        return []
+    results = []
+    if 0 <= code_int <= 999:
+        results.append(('revenue', 'Revenue / Cost of Sales'))
+    elif 1000 <= code_int <= 1999:
+        results.append(('expenses', 'Expenses'))
+    elif 2000 <= code_int <= 2499:
+        results.append(('assets', 'Current Assets'))
+    elif 2500 <= code_int <= 2999:
+        results.append(('assets', 'Non-Current Assets'))
+    elif 3000 <= code_int <= 3499:
+        results.append(('liabilities', 'Current Liabilities'))
+    elif 3500 <= code_int <= 3999:
+        results.append(('liabilities', 'Non-Current Liabilities'))
+    elif 4000 <= code_int <= 4999:
+        results.append(('equity', 'Equity / Capital Accounts'))
+    return results
+
+
+def _validate_code_section(code_str, section):
+    """
+    Validate that the account code falls within the allowed range for the section.
+    Returns (is_valid, error_message).
+    """
+    try:
+        code_int = int(code_str.split('.')[0])
+    except (ValueError, IndexError):
+        return False, 'Account code must start with a numeric value.'
+
+    allowed = {
+        'revenue':          (0, 999),
+        'cost_of_sales':    (0, 999),
+        'expenses':         (1000, 1999),
+        'assets':           (2000, 2999),
+        'liabilities':      (3000, 3999),
+        'equity':           (4000, 4999),
+        'capital_accounts': (4000, 4999),
+        'pl_appropriation': (4000, 4999),
+        'suspense':         (9000, 9999),
+    }
+    if section not in allowed:
+        return False, f'Unknown section: {section}'
+    lo, hi = allowed[section]
+    if not (lo <= code_int <= hi):
+        return False, f'Code {code_str} must be between {lo} and {hi} for {dict(ChartOfAccount.StatementSection.choices).get(section, section)}.'
+    return True, ''
+
+
+@login_required
+def coa_add(request):
+    """
+    Add a new account to the Chart of Accounts.
+    """
+    entity_type = request.GET.get('entity_type', 'company')
+
+    if request.method == 'POST':
+        entity_type = request.POST.get('entity_type', 'company')
+        account_code = request.POST.get('account_code', '').strip()
+        account_name = request.POST.get('account_name', '').strip()
+        section = request.POST.get('section', '')
+        classification = request.POST.get('classification', '').strip()
+        tax_code = request.POST.get('tax_code', '').strip()
+        maps_to_id = request.POST.get('maps_to', '')
+
+        errors = []
+        if not account_code:
+            errors.append('Account code is required.')
+        if not account_name:
+            errors.append('Account name is required.')
+        if not section:
+            errors.append('Section is required.')
+
+        # Validate code range
+        if account_code and section:
+            valid, err = _validate_code_section(account_code, section)
+            if not valid:
+                errors.append(err)
+
+        # Check uniqueness
+        if account_code and ChartOfAccount.objects.filter(
+            entity_type=entity_type, account_code=account_code
+        ).exists():
+            errors.append(f'Account code {account_code} already exists for this entity type.')
+
+        if errors:
+            for e in errors:
+                messages.error(request, e)
+        else:
+            maps_to = None
+            if maps_to_id:
+                maps_to = AccountMapping.objects.filter(pk=maps_to_id).first()
+
+            # Determine display_order: place after the last account in this section with a lower code
+            last = ChartOfAccount.objects.filter(
+                entity_type=entity_type, section=section
+            ).order_by('-display_order').first()
+            display_order = (last.display_order + 10) if last else 10
+
+            ChartOfAccount.objects.create(
+                entity_type=entity_type,
+                account_code=account_code,
+                account_name=account_name,
+                section=section,
+                classification=classification,
+                tax_code=tax_code,
+                maps_to=maps_to,
+                display_order=display_order,
+                is_active=True,
+            )
+            messages.success(request, f'Account {account_code} — {account_name} added successfully.')
+            return redirect(f"/chart-of-accounts/?entity_type={entity_type}")
+
+    # Get AccountMapping options for the maps_to dropdown
+    mapping_options = AccountMapping.objects.all().order_by('financial_statement', 'display_order')
+
+    context = {
+        'entity_type': entity_type,
+        'section_choices': ChartOfAccount.StatementSection.choices,
+        'tax_code_choices': ['GST', 'FRE', 'ITS', 'ADS', 'CAP', 'INP', 'N-T', 'GNR'],
+        'mapping_options': mapping_options,
+        'code_ranges': [
+            {'section': 'Revenue / Cost of Sales', 'range': '0 — 999'},
+            {'section': 'Expenses', 'range': '1000 — 1999'},
+            {'section': 'Current Assets', 'range': '2000 — 2499'},
+            {'section': 'Non-Current Assets', 'range': '2500 — 2999'},
+            {'section': 'Current Liabilities', 'range': '3000 — 3499'},
+            {'section': 'Non-Current Liabilities', 'range': '3500 — 3999'},
+            {'section': 'Equity', 'range': '4000+'},
+        ],
+    }
+    return render(request, 'core/coa_form.html', context)
+
+
+@login_required
+def coa_edit(request, pk):
+    """
+    Edit an existing account in the Chart of Accounts.
+    """
+    account = get_object_or_404(ChartOfAccount, pk=pk)
+    entity_type = account.entity_type
+
+    if request.method == 'POST':
+        account_code = request.POST.get('account_code', '').strip()
+        account_name = request.POST.get('account_name', '').strip()
+        section = request.POST.get('section', '')
+        classification = request.POST.get('classification', '').strip()
+        tax_code = request.POST.get('tax_code', '').strip()
+        maps_to_id = request.POST.get('maps_to', '')
+
+        errors = []
+        if not account_code:
+            errors.append('Account code is required.')
+        if not account_name:
+            errors.append('Account name is required.')
+        if not section:
+            errors.append('Section is required.')
+
+        # Validate code range
+        if account_code and section:
+            valid, err = _validate_code_section(account_code, section)
+            if not valid:
+                errors.append(err)
+
+        # Check uniqueness (exclude self)
+        if account_code and ChartOfAccount.objects.filter(
+            entity_type=entity_type, account_code=account_code
+        ).exclude(pk=pk).exists():
+            errors.append(f'Account code {account_code} already exists for this entity type.')
+
+        if errors:
+            for e in errors:
+                messages.error(request, e)
+        else:
+            maps_to = None
+            if maps_to_id:
+                maps_to = AccountMapping.objects.filter(pk=maps_to_id).first()
+
+            account.account_code = account_code
+            account.account_name = account_name
+            account.section = section
+            account.classification = classification
+            account.tax_code = tax_code
+            account.maps_to = maps_to
+            account.save()
+            messages.success(request, f'Account {account_code} — {account_name} updated successfully.')
+            return redirect(f"/chart-of-accounts/?entity_type={entity_type}")
+
+    mapping_options = AccountMapping.objects.all().order_by('financial_statement', 'display_order')
+
+    context = {
+        'account': account,
+        'entity_type': entity_type,
+        'section_choices': ChartOfAccount.StatementSection.choices,
+        'tax_code_choices': ['GST', 'FRE', 'ITS', 'ADS', 'CAP', 'INP', 'N-T', 'GNR'],
+        'mapping_options': mapping_options,
+        'code_ranges': [
+            {'section': 'Revenue / Cost of Sales', 'range': '0 — 999'},
+            {'section': 'Expenses', 'range': '1000 — 1999'},
+            {'section': 'Current Assets', 'range': '2000 — 2499'},
+            {'section': 'Non-Current Assets', 'range': '2500 — 2999'},
+            {'section': 'Current Liabilities', 'range': '3000 — 3499'},
+            {'section': 'Non-Current Liabilities', 'range': '3500 — 3999'},
+            {'section': 'Equity', 'range': '4000+'},
+        ],
+        'is_edit': True,
+    }
+    return render(request, 'core/coa_form.html', context)
+
+
+@login_required
+def coa_delete(request, pk):
+    """
+    Soft-delete an account (set is_active=False).
+    """
+    account = get_object_or_404(ChartOfAccount, pk=pk)
+    entity_type = account.entity_type
+    if request.method == 'POST':
+        account.is_active = False
+        account.save()
+        messages.success(request, f'Account {account.account_code} — {account.account_name} has been deactivated.')
+    return redirect(f"/chart-of-accounts/?entity_type={entity_type}")
+
+
+@login_required
+def coa_check_code(request):
+    """
+    AJAX endpoint to check if an account code is available and return the expected section.
+    """
+    code = request.GET.get('code', '').strip()
+    entity_type = request.GET.get('entity_type', 'company')
+    exclude_pk = request.GET.get('exclude', '')
+
+    result = {'available': False, 'sections': [], 'error': ''}
+
+    if not code:
+        result['error'] = 'Enter an account code.'
+        return JsonResponse(result)
+
+    # Check availability
+    qs = ChartOfAccount.objects.filter(entity_type=entity_type, account_code=code)
+    if exclude_pk:
+        qs = qs.exclude(pk=exclude_pk)
+    if qs.exists():
+        existing = qs.first()
+        result['error'] = f'Code {code} is already used by "{existing.account_name}".'
+        return JsonResponse(result)
+
+    # Determine expected section
+    sections = _section_for_code(code)
+    if not sections:
+        result['error'] = f'Code {code} does not fall within any known range.'
+        return JsonResponse(result)
+
+    result['available'] = True
+    result['sections'] = [{'value': s[0], 'label': s[1]} for s in sections]
+    return JsonResponse(result)
+
+
+# ---------------------------------------------------------------------------
 # Audit Library
 # ---------------------------------------------------------------------------
 @login_required

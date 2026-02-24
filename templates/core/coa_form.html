@@ -1,0 +1,282 @@
+{% extends "base.html" %}
+{% block title %}{% if is_edit %}Edit{% else %}Add{% endif %} Account - Chart of Accounts - StatementHub{% endblock %}
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="/chart-of-accounts/?entity_type={{ entity_type }}">Chart of Accounts</a></li>
+        <li class="breadcrumb-item active">{% if is_edit %}Edit Account {{ account.account_code }}{% else %}Add Account{% endif %}</li>
+    </ol>
+</nav>
+
+<div class="row">
+    <div class="col-lg-8">
+        <div class="card">
+            <div class="card-header bg-dark text-white">
+                <h5 class="mb-0">
+                    <i class="bi bi-{% if is_edit %}pencil-square{% else %}plus-circle{% endif %}"></i>
+                    {% if is_edit %}Edit Account{% else %}Add New Account{% endif %}
+                </h5>
+            </div>
+            <div class="card-body">
+                {% if messages %}
+                {% for message in messages %}
+                <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+                    {{ message }}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                </div>
+                {% endfor %}
+                {% endif %}
+
+                <form method="post" id="coaForm">
+                    {% csrf_token %}
+                    <input type="hidden" name="entity_type" value="{{ entity_type }}">
+
+                    <!-- Account Code -->
+                    <div class="mb-3">
+                        <label for="account_code" class="form-label fw-bold">Account Code <span class="text-danger">*</span></label>
+                        <div class="input-group">
+                            <input type="text" class="form-control" id="account_code" name="account_code"
+                                   value="{% if is_edit %}{{ account.account_code }}{% endif %}"
+                                   placeholder="e.g. 0500, 1510, 2000.01"
+                                   required maxlength="20">
+                            <span class="input-group-text" id="codeStatus">
+                                <i class="bi bi-question-circle text-muted"></i>
+                            </span>
+                        </div>
+                        <div id="codeFeedback" class="form-text"></div>
+                    </div>
+
+                    <!-- Account Name -->
+                    <div class="mb-3">
+                        <label for="account_name" class="form-label fw-bold">Account Name <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="account_name" name="account_name"
+                               value="{% if is_edit %}{{ account.account_name }}{% endif %}"
+                               placeholder="e.g. Sales, Accountancy, Motor Vehicle"
+                               required maxlength="255">
+                    </div>
+
+                    <!-- Section -->
+                    <div class="mb-3">
+                        <label for="section" class="form-label fw-bold">Section <span class="text-danger">*</span></label>
+                        <select class="form-select" id="section" name="section" required>
+                            <option value="">— Select Section —</option>
+                            {% for value, label in section_choices %}
+                            <option value="{{ value }}" {% if is_edit and account.section == value %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                        <div id="sectionHint" class="form-text"></div>
+                    </div>
+
+                    <!-- Classification -->
+                    <div class="mb-3">
+                        <label for="classification" class="form-label fw-bold">Classification</label>
+                        <input type="text" class="form-control" id="classification" name="classification"
+                               value="{% if is_edit %}{{ account.classification }}{% endif %}"
+                               placeholder="e.g. Other sales revenue, Trading income"
+                               maxlength="255">
+                        <div class="form-text">Tax classification for BAS mapping (optional).</div>
+                    </div>
+
+                    <!-- Tax Code -->
+                    <div class="mb-3">
+                        <label for="tax_code" class="form-label fw-bold">Tax Code</label>
+                        <select class="form-select" id="tax_code" name="tax_code">
+                            <option value="">— None —</option>
+                            {% for tc in tax_code_choices %}
+                            <option value="{{ tc }}" {% if is_edit and account.tax_code == tc %}selected{% endif %}>{{ tc }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <!-- Maps To (AccountMapping) -->
+                    <div class="mb-3">
+                        <label for="maps_to" class="form-label fw-bold">Maps To (Financial Statement Line)</label>
+                        <select class="form-select" id="maps_to" name="maps_to">
+                            <option value="">— None (unmapped) —</option>
+                            {% for m in mapping_options %}
+                            <option value="{{ m.pk }}" {% if is_edit and account.maps_to_id == m.pk %}selected{% endif %}>
+                                {{ m.standard_code }} — {{ m.line_item_label }} ({{ m.get_financial_statement_display }})
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text">Which financial statement line item this account rolls up to.</div>
+                    </div>
+
+                    <hr>
+                    <div class="d-flex justify-content-between">
+                        <a href="/chart-of-accounts/?entity_type={{ entity_type }}" class="btn btn-outline-secondary">
+                            <i class="bi bi-arrow-left"></i> Cancel
+                        </a>
+                        <div>
+                            {% if is_edit %}
+                            <button type="button" class="btn btn-outline-danger me-2" data-bs-toggle="modal" data-bs-target="#deleteModal">
+                                <i class="bi bi-trash"></i> Deactivate
+                            </button>
+                            {% endif %}
+                            <button type="submit" class="btn btn-primary" id="submitBtn">
+                                <i class="bi bi-check-lg"></i> {% if is_edit %}Save Changes{% else %}Add Account{% endif %}
+                            </button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Code Range Reference Card -->
+    <div class="col-lg-4">
+        <div class="card">
+            <div class="card-header bg-primary text-white">
+                <h6 class="mb-0"><i class="bi bi-info-circle"></i> Account Code Ranges</h6>
+            </div>
+            <div class="card-body p-0">
+                <table class="table table-sm mb-0">
+                    <thead>
+                        <tr class="small text-muted">
+                            <th>Section</th>
+                            <th class="text-end">Code Range</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for cr in code_ranges %}
+                        <tr>
+                            <td class="small">{{ cr.section }}</td>
+                            <td class="text-end"><code>{{ cr.range }}</code></td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        {% if is_edit %}
+        <div class="card mt-3">
+            <div class="card-header bg-light">
+                <h6 class="mb-0"><i class="bi bi-clock-history"></i> Account Details</h6>
+            </div>
+            <div class="card-body small">
+                <p class="mb-1"><strong>Entity Type:</strong> {{ account.get_entity_type_display }}</p>
+                <p class="mb-1"><strong>Active:</strong> {% if account.is_active %}<span class="badge bg-success">Yes</span>{% else %}<span class="badge bg-danger">No</span>{% endif %}</p>
+                <p class="mb-1"><strong>Display Order:</strong> {{ account.display_order }}</p>
+                {% if account.maps_to %}
+                <p class="mb-0"><strong>Mapped To:</strong> {{ account.maps_to.standard_code }} — {{ account.maps_to.line_item_label }}</p>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{% if is_edit %}
+<!-- Delete Confirmation Modal -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title"><i class="bi bi-exclamation-triangle"></i> Deactivate Account</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to deactivate account <strong>{{ account.account_code }} — {{ account.account_name }}</strong>?</p>
+                <p class="text-muted small">This will hide the account from the chart of accounts. Existing trial balance lines using this code will not be affected.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                <form method="post" action="{% url 'core:coa_delete' pk=account.pk %}" class="d-inline">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-danger"><i class="bi bi-trash"></i> Deactivate</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const codeInput = document.getElementById('account_code');
+    const codeStatus = document.getElementById('codeStatus');
+    const codeFeedback = document.getElementById('codeFeedback');
+    const sectionSelect = document.getElementById('section');
+    const sectionHint = document.getElementById('sectionHint');
+    let debounceTimer;
+
+    function checkCode() {
+        const code = codeInput.value.trim();
+        if (!code) {
+            codeStatus.innerHTML = '<i class="bi bi-question-circle text-muted"></i>';
+            codeFeedback.textContent = '';
+            codeFeedback.className = 'form-text';
+            return;
+        }
+
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(function() {
+            const excludePk = '{% if is_edit %}{{ account.pk }}{% endif %}';
+            const url = `/chart-of-accounts/check-code/?code=${encodeURIComponent(code)}&entity_type={{ entity_type }}&exclude=${excludePk}`;
+
+            fetch(url)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.available) {
+                        codeStatus.innerHTML = '<i class="bi bi-check-circle-fill text-success"></i>';
+                        codeFeedback.textContent = 'Code is available.';
+                        codeFeedback.className = 'form-text text-success';
+
+                        // Auto-suggest section
+                        if (data.sections && data.sections.length > 0) {
+                            const suggested = data.sections[0];
+                            sectionHint.innerHTML = '<i class="bi bi-lightbulb text-warning"></i> Suggested section: <strong>' + suggested.label + '</strong>';
+
+                            // Auto-select if section is empty
+                            if (!sectionSelect.value) {
+                                sectionSelect.value = suggested.value;
+                            }
+                        }
+                    } else {
+                        codeStatus.innerHTML = '<i class="bi bi-x-circle-fill text-danger"></i>';
+                        codeFeedback.textContent = data.error;
+                        codeFeedback.className = 'form-text text-danger';
+                    }
+                })
+                .catch(() => {
+                    codeStatus.innerHTML = '<i class="bi bi-question-circle text-muted"></i>';
+                });
+        }, 400);
+    }
+
+    codeInput.addEventListener('input', checkCode);
+    codeInput.addEventListener('blur', checkCode);
+
+    // Validate section against code on form submit
+    document.getElementById('coaForm').addEventListener('submit', function(e) {
+        const code = codeInput.value.trim();
+        const section = sectionSelect.value;
+
+        if (!code || !section) return; // Let server-side validation handle empty fields
+
+        // Client-side range check
+        const codeInt = parseInt(code.split('.')[0]);
+        const ranges = {
+            'revenue': [0, 999], 'cost_of_sales': [0, 999],
+            'expenses': [1000, 1999],
+            'assets': [2000, 2999],
+            'liabilities': [3000, 3999],
+            'equity': [4000, 4999], 'capital_accounts': [4000, 4999], 'pl_appropriation': [4000, 4999],
+            'suspense': [9000, 9999]
+        };
+
+        if (ranges[section]) {
+            const [lo, hi] = ranges[section];
+            if (codeInt < lo || codeInt > hi) {
+                e.preventDefault();
+                codeFeedback.textContent = `Code ${code} must be between ${lo} and ${hi} for the selected section.`;
+                codeFeedback.className = 'form-text text-danger';
+                codeStatus.innerHTML = '<i class="bi bi-x-circle-fill text-danger"></i>';
+                codeInput.focus();
+            }
+        }
+    });
+});
+</script>
+{% endblock %}
