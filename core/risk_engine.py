@@ -23,6 +23,52 @@ logger = logging.getLogger(__name__)
 ZERO = Decimal("0.00")
 
 
+def _derive_section(mapped_line_item):
+    """Derive a risk-engine section category from an AccountMapping object.
+
+    AccountMapping has:
+      - financial_statement: income_statement | balance_sheet | equity | cash_flow
+      - statement_section: free text like 'Current Assets', 'Operating Revenue'
+
+    We map these to the categories the risk engine uses:
+      revenue, cost_of_sales, expenses, assets, liabilities, equity,
+      capital_accounts, pl_appropriation
+    """
+    if mapped_line_item is None:
+        return ""
+
+    fs = getattr(mapped_line_item, 'financial_statement', '')
+    ss = (getattr(mapped_line_item, 'statement_section', '') or '').lower()
+
+    # Balance sheet sections
+    if fs == 'balance_sheet':
+        if 'asset' in ss:
+            return 'assets'
+        elif 'liabilit' in ss:
+            return 'liabilities'
+        else:
+            return 'assets'  # default for balance sheet
+
+    # Equity statement
+    if fs == 'equity':
+        return 'equity'
+
+    # Income statement — derive from statement_section text
+    if fs == 'income_statement':
+        if 'revenue' in ss or 'income' in ss or 'sales' in ss or 'turnover' in ss:
+            return 'revenue'
+        elif 'cost of' in ss or 'cost_of' in ss or 'cogs' in ss:
+            return 'cost_of_sales'
+        else:
+            return 'expenses'  # default for income statement items
+
+    # Cash flow — not typically used for risk variance
+    if fs == 'cash_flow':
+        return ''
+
+    return ''
+
+
 # ============================================================================
 # MAIN ENTRY POINT
 # ============================================================================
@@ -186,9 +232,7 @@ def _load_trial_balance(financial_year):
         data["lines"].append(line)
         data["by_code"][line.account_code] = line
 
-        section = ""
-        if line.mapped_line_item:
-            section = line.mapped_line_item.section
+        section = _derive_section(line.mapped_line_item)
         if section not in data["by_section"]:
             data["by_section"][section] = []
         data["by_section"][section].append(line)
@@ -289,9 +333,7 @@ def _run_tier1_variance(financial_year, tb_data, ref_data, entity_context, run_i
         abs_pct = abs(variance_pct)
 
         # Determine section-specific threshold
-        section = ""
-        if line.mapped_line_item:
-            section = line.mapped_line_item.section
+        section = _derive_section(line.mapped_line_item)
 
         if section == "revenue":
             threshold = revenue_pct_threshold
@@ -656,7 +698,7 @@ def _eval_solvency(rule, fy, tb, ref, ctx, config):
     for line in tb["lines"]:
         if not line.mapped_line_item:
             continue
-        section = line.mapped_line_item.section
+        section = _derive_section(line.mapped_line_item)
         net = line.effective_dr - line.effective_cr
         code_lower = line.account_name.lower()
 
