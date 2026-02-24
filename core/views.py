@@ -380,7 +380,72 @@ def financial_year_detail(request, pk):
         if key not in ordered_sections:
             ordered_sections[key] = sections[key]
 
+    # ---- Aggregate multiple sub-entries per account_code ----
+    # Within each section, group lines by account_code.  If a code has
+    # multiple lines (e.g. from Excel sub-accounts, bank statement coding,
+    # and journal entries), create an aggregated summary row with the
+    # individual lines attached as `sub_entries` for drill-down display.
+    aggregated_sections = OrderedDict()
+    for section_name, lines_list in ordered_sections.items():
+        code_groups = OrderedDict()  # account_code -> [lines]
+        for line in lines_list:
+            code_groups.setdefault(line.account_code, []).append(line)
+
+        agg_lines = []
+        for code, group in code_groups.items():
+            if len(group) == 1:
+                # Single entry — no aggregation needed
+                group[0].sub_entries = []
+                group[0].is_aggregated = False
+                agg_lines.append(group[0])
+            else:
+                # Multiple entries — build an aggregated summary row
+                # Use the first line as the base (for mapping, risk flags, etc.)
+                # but use a generic account name derived from the code
+                first = group[0]
+                agg_dr = sum(l.display_dr or Decimal('0') for l in group)
+                agg_cr = sum(l.display_cr or Decimal('0') for l in group)
+                agg_prior_dr = sum(l.prior_debit or Decimal('0') for l in group)
+                agg_prior_cr = sum(l.prior_credit or Decimal('0') for l in group)
+
+                # Create a lightweight wrapper object for the aggregated row
+                class AggregatedLine:
+                    pass
+                agg = AggregatedLine()
+                agg.account_code = code
+                # Use the first line's name if all names match, else use
+                # a generic label showing the count
+                unique_names = list(dict.fromkeys(l.account_name for l in group if l.account_name))
+                if len(unique_names) == 1:
+                    agg.account_name = unique_names[0]
+                else:
+                    agg.account_name = unique_names[0] if unique_names else code
+                agg.display_dr = agg_dr
+                agg.display_cr = agg_cr
+                agg.prior_debit = agg_prior_dr
+                agg.prior_credit = agg_prior_cr
+                agg.mapped_line_item = first.mapped_line_item
+                agg.is_adjustment = any(l.is_adjustment for l in group)
+                agg.prior_balance_override = any(getattr(l, 'prior_balance_override', False) for l in group)
+                agg.reclassified = any(getattr(l, 'reclassified', False) for l in group)
+                agg.risk_flags_list = first.risk_flags_list if hasattr(first, 'risk_flags_list') else []
+                agg.sub_entries = group
+                agg.is_aggregated = True
+                agg.sub_count = len(group)
+                # Variance for aggregated row
+                current_net = agg_dr - agg_cr
+                prior_net = agg_prior_dr - agg_prior_cr
+                agg.variance_amount = current_net - prior_net
+                if prior_net != 0:
+                    agg.variance_percentage = ((current_net - prior_net) / abs(prior_net) * 100).quantize(Decimal('0.1'))
+                else:
+                    agg.variance_percentage = None
+                agg_lines.append(agg)
+
+        aggregated_sections[section_name] = agg_lines
+
     # Calculate Net Profit: Income (Cr) - Expenses (Dr) for P&L sections
+    # (use original ordered_sections with raw lines for accurate totals)
     pl_sections = {'Income', 'Cost of Sales', 'Expenses'}
     pl_dr = Decimal('0')
     pl_cr = Decimal('0')
@@ -479,7 +544,7 @@ def financial_year_detail(request, pk):
         "fy": fy,
         "entity": fy.entity,
         "tb_lines": tb_lines,
-        "tb_sections": ordered_sections,
+        "tb_sections": aggregated_sections,
         "adjustments": adjustments,
         "unmapped_count": unmapped_count,
         "documents": documents,
@@ -1290,8 +1355,43 @@ def trial_balance_view(request, pk):
     else:
         prior_year_label = 'Prior'
 
+    # ---- Aggregate multiple sub-entries per account_code ----
+    aggregated_sections = OrderedDict()
+    for section_name, lines_list in ordered_sections.items():
+        code_groups = OrderedDict()
+        for line in lines_list:
+            code_groups.setdefault(line.account_code, []).append(line)
+        agg_lines = []
+        for code, group in code_groups.items():
+            if len(group) == 1:
+                group[0].sub_entries = []
+                group[0].is_aggregated = False
+                agg_lines.append(group[0])
+            else:
+                first = group[0]
+                agg_dr = sum(l.display_dr or Decimal('0') for l in group)
+                agg_cr = sum(l.display_cr or Decimal('0') for l in group)
+                agg_prior_dr = sum(l.prior_debit or Decimal('0') for l in group)
+                agg_prior_cr = sum(l.prior_credit or Decimal('0') for l in group)
+                class AggregatedLine:
+                    pass
+                agg = AggregatedLine()
+                agg.account_code = code
+                unique_names = list(dict.fromkeys(l.account_name for l in group if l.account_name))
+                agg.account_name = unique_names[0] if unique_names else code
+                agg.display_dr = agg_dr
+                agg.display_cr = agg_cr
+                agg.prior_debit = agg_prior_dr
+                agg.prior_credit = agg_prior_cr
+                agg.mapped_line_item = first.mapped_line_item
+                agg.is_adjustment = any(l.is_adjustment for l in group)
+                agg.sub_entries = group
+                agg.is_aggregated = True
+                agg.sub_count = len(group)
+                agg_lines.append(agg)
+        aggregated_sections[section_name] = agg_lines
+
     # Calculate Net Profit: Income (Cr) - Expenses (Dr) for P&L sections
-    # Net Profit = Total Cr from P&L sections - Total Dr from P&L sections
     pl_sections = {'Income', 'Cost of Sales', 'Expenses'}
     pl_dr = Decimal('0')
     pl_cr = Decimal('0')
@@ -1309,7 +1409,7 @@ def trial_balance_view(request, pk):
 
     return render(request, "core/trial_balance_view.html", {
         "fy": fy,
-        "sections": ordered_sections,
+        "sections": aggregated_sections,
         "current_year_label": current_year_label,
         "prior_year_label": prior_year_label,
         "grand_total_dr": grand_total_dr,

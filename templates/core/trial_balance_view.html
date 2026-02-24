@@ -48,14 +48,34 @@
             </thead>
             <tbody>
                 {% for line in lines %}
-                <tr>
+                <tr style="{% if line.is_aggregated %}cursor: pointer;{% endif %}" {% if line.is_aggregated %}onclick="toggleSubEntries('preview-sub-{{ section_name|slugify }}-{{ line.account_code }}')" title="Click to expand {{ line.sub_count }} entries"{% endif %}>
                     <td><code class="fw-bold">{{ line.account_code }}</code></td>
-                    <td>{{ line.account_name }}{% if line.is_adjustment %} <span class="badge bg-info text-dark">Adj</span>{% endif %}</td>
+                    <td>
+                        {{ line.account_name }}
+                        {% if line.is_aggregated %}<span class="badge bg-secondary ms-1" style="font-size: 0.65rem;"><i class="bi bi-layers"></i> {{ line.sub_count }} entries</span>{% endif %}
+                        {% if line.is_adjustment %} <span class="badge bg-info text-dark">Adj</span>{% endif %}
+                    </td>
                     <td class="text-end">{% if line.display_dr %}{{ line.display_dr|floatformat:2|intcomma }}{% endif %}</td>
                     <td class="text-end">{% if line.display_cr %}{{ line.display_cr|floatformat:2|intcomma }}{% endif %}</td>
                     <td class="text-end">{% if line.prior_debit %}{{ line.prior_debit|floatformat:2|intcomma }}{% endif %}</td>
                     <td class="text-end">{% if line.prior_credit %}{{ line.prior_credit|floatformat:2|intcomma }}{% endif %}</td>
                 </tr>
+                {% if line.is_aggregated %}
+                {% for sub in line.sub_entries %}
+                <tr class="sub-entry-row" id="preview-sub-{{ section_name|slugify }}-{{ line.account_code }}" style="display: none; background-color: #f8f9fa;">
+                    <td></td>
+                    <td style="padding-left: 2rem; font-size: 0.82rem;">
+                        <i class="bi bi-arrow-return-right text-muted me-1"></i>
+                        <span class="text-secondary">{{ sub.account_name }}</span>
+                        {% if sub.is_adjustment %}<span class="badge bg-info text-dark ms-1" style="font-size: 0.65rem;">Adj</span>{% endif %}
+                    </td>
+                    <td class="text-end" style="font-size: 0.82rem;">{% if sub.display_dr and sub.display_dr != 0 %}{{ sub.display_dr|floatformat:2|intcomma }}{% endif %}</td>
+                    <td class="text-end" style="font-size: 0.82rem;">{% if sub.display_cr and sub.display_cr != 0 %}{{ sub.display_cr|floatformat:2|intcomma }}{% endif %}</td>
+                    <td class="text-end text-muted" style="font-size: 0.82rem;">{% if sub.prior_debit and sub.prior_debit != 0 %}{{ sub.prior_debit|floatformat:2|intcomma }}{% endif %}</td>
+                    <td class="text-end text-muted" style="font-size: 0.82rem;">{% if sub.prior_credit and sub.prior_credit != 0 %}{{ sub.prior_credit|floatformat:2|intcomma }}{% endif %}</td>
+                </tr>
+                {% endfor %}
+                {% endif %}
                 {% endfor %}
             </tbody>
         </table>
@@ -97,4 +117,15 @@
         <i class="bi bi-arrow-left"></i> Back to Workspace
     </a>
 </div>
+
+<script>
+function toggleSubEntries(groupId) {
+    const rows = document.querySelectorAll('tr[id="' + groupId + '"]');
+    if (!rows.length) return;
+    const isHidden = rows[0].style.display === 'none';
+    rows.forEach(function(row) {
+        row.style.display = isHidden ? 'table-row' : 'none';
+    });
+}
+</script>
 {% endblock %}
