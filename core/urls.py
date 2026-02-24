@@ -29,6 +29,7 @@ urlpatterns = [
     path("years/<uuid:pk>/trial-balance/pdf/", views.trial_balance_pdf, name="trial_balance_pdf"),
     path("years/<uuid:pk>/trial-balance/download/", views.trial_balance_download, name="trial_balance_download"),
     path("years/<uuid:pk>/trial-balance/account/<str:account_code>/", views.account_code_breakdown, name="account_code_breakdown"),
+    path("trial-balance/line/<uuid:pk>/reallocate/", views.tb_line_reallocate, name="tb_line_reallocate"),
     path("trial-balance/template/", views.trial_balance_template_download, name="trial_balance_template_download"),
 
     # Account Mapping

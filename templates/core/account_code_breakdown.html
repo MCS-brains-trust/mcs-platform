@@ -24,19 +24,31 @@
     </small>
 </div>
 
+{% if messages %}
+<div class="mb-3">
+    {% for message in messages %}
+    <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+        {{ message }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
 <div class="card">
     <div class="card-body p-0">
         <div class="table-responsive">
             <table class="table table-sm table-hover mb-0" style="font-size: 0.9rem;">
                 <thead class="table-light">
                     <tr class="border-bottom border-2 border-dark">
-                        <th style="width: 50px;" class="text-center">#</th>
+                        <th style="width: 40px;" class="text-center">#</th>
                         <th>Description</th>
-                        <th class="text-end" style="width: 130px;">{{ current_year }} Dr</th>
-                        <th class="text-end" style="width: 130px;">{{ current_year }} Cr</th>
-                        <th class="text-end" style="width: 130px;">{{ prior_year }} Dr</th>
-                        <th class="text-end" style="width: 130px;">{{ prior_year }} Cr</th>
-                        <th style="width: 60px;" class="text-center">Source</th>
+                        <th class="text-end" style="width: 120px;">{{ current_year }} Dr</th>
+                        <th class="text-end" style="width: 120px;">{{ current_year }} Cr</th>
+                        <th class="text-end" style="width: 120px;">{{ prior_year }} Dr</th>
+                        <th class="text-end" style="width: 120px;">{{ prior_year }} Cr</th>
+                        <th class="text-center" style="width: 130px;">Source</th>
+                        <th class="text-center" style="width: 100px;">Action</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -52,11 +64,22 @@
                         <td class="text-end text-muted">{% if line.prior_debit and line.prior_debit != 0 %}{{ line.prior_debit|floatformat:2|intcomma }}{% endif %}</td>
                         <td class="text-end text-muted">{% if line.prior_credit and line.prior_credit != 0 %}{{ line.prior_credit|floatformat:2|intcomma }}{% endif %}</td>
                         <td class="text-center">
-                            {% if line.is_adjustment %}
-                            <i class="bi bi-journal-text text-info" title="Adjusting Journal Entry"></i>
+                            {% if line.source == 'tb_import' %}
+                            <span class="badge bg-success" style="font-size: 0.75rem;"><i class="bi bi-file-earmark-excel me-1"></i>TB Import</span>
+                            {% elif line.source == 'manual_journal' %}
+                            <span class="badge bg-info text-dark" style="font-size: 0.75rem;"><i class="bi bi-journal-text me-1"></i>Manual Journal</span>
+                            {% elif line.source == 'bank_statement' %}
+                            <span class="badge bg-warning text-dark" style="font-size: 0.75rem;"><i class="bi bi-bank me-1"></i>Bank Statement</span>
+                            {% elif line.source == 'rollover' %}
+                            <span class="badge bg-secondary" style="font-size: 0.75rem;"><i class="bi bi-arrow-repeat me-1"></i>Rolled Forward</span>
                             {% else %}
-                            <i class="bi bi-file-earmark-excel text-success" title="Imported from Trial Balance"></i>
+                            <span class="badge bg-light text-dark" style="font-size: 0.75rem;">Unknown</span>
                             {% endif %}
+                        </td>
+                        <td class="text-center">
+                            <button type="button" class="btn btn-outline-primary btn-sm" style="font-size: 0.75rem; padding: 2px 8px;" data-bs-toggle="modal" data-bs-target="#reallocateModal-{{ forloop.counter }}">
+                                <i class="bi bi-arrow-left-right"></i> Reallocate
+                            </button>
                         </td>
                     </tr>
                     {% endfor %}
@@ -70,6 +93,7 @@
                         <td class="text-end text-muted">{% if total_prior_dr and total_prior_dr != 0 %}{{ total_prior_dr|floatformat:2|intcomma }}{% endif %}</td>
                         <td class="text-end text-muted">{% if total_prior_cr and total_prior_cr != 0 %}{{ total_prior_cr|floatformat:2|intcomma }}{% endif %}</td>
                         <td></td>
+                        <td></td>
                     </tr>
                 </tfoot>
             </table>
@@ -82,4 +106,57 @@
         <i class="bi bi-arrow-left"></i> Back to Workspace
     </a>
 </div>
+
+{% for line in lines %}
+<!-- Reallocation Modal for line {{ forloop.counter }} -->
+<div class="modal fade" id="reallocateModal-{{ forloop.counter }}" tabindex="-1" aria-labelledby="reallocateLabel-{{ forloop.counter }}" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="post" action="{% url 'core:tb_line_reallocate' pk=line.pk %}">
+                {% csrf_token %}
+                <div class="modal-header">
+                    <h6 class="modal-title" id="reallocateLabel-{{ forloop.counter }}">
+                        <i class="bi bi-arrow-left-right me-1"></i> Reallocate Entry
+                    </h6>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="mb-3">
+                        Moving <strong>{{ line.account_name }}</strong>
+                        {% if line.display_dr and line.display_dr != 0 %}(Dr {{ line.display_dr|floatformat:2|intcomma }}){% endif %}
+                        {% if line.display_cr and line.display_cr != 0 %}(Cr {{ line.display_cr|floatformat:2|intcomma }}){% endif %}
+                        from account <code>{{ line.account_code }}</code>.
+                    </p>
+                    <div class="mb-3">
+                        <label for="newAccount-{{ forloop.counter }}" class="form-label fw-bold">Reallocate to:</label>
+                        <select name="new_account_code" id="newAccount-{{ forloop.counter }}" class="form-select form-select-sm" required>
+                            <option value="">-- Select account --</option>
+                            {% for acct in available_accounts %}
+                            <option value="{{ acct.account_code }}">{{ acct.account_code }} &mdash; {{ acct.account_name }}{% if acct.maps_to %} ({{ acct.maps_to.line_item_label }}){% endif %}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-check-lg"></i> Reallocate</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endfor %}
+
+<script>
+// Make the account select searchable by filtering on typing
+document.querySelectorAll('[id^="newAccount-"]').forEach(function(select) {
+    // Add a search input above the select when modal opens
+    const modal = select.closest('.modal');
+    if (modal) {
+        modal.addEventListener('shown.bs.modal', function() {
+            select.focus();
+        });
+    }
+});
+</script>
 {% endblock %}

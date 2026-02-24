@@ -1092,6 +1092,7 @@ def import_access_ledger_zip(zip_file, client=None, entity=None, replace_existin
                 prior_credit=line_data["prior_credit"],
                 mapped_line_item=mapped_item,
                 is_adjustment=False,
+                source='tb_import',
             ))
 
         if tb_objects:

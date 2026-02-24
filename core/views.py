@@ -4,7 +4,7 @@ from decimal import Decimal, InvalidOperation
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.db.models import Q, Count, Sum
-from django.http import HttpResponse, JsonResponse
+from django.http import HttpResponse, HttpResponseNotAllowed, JsonResponse
 from django.views.decorators.http import require_POST
 from django.shortcuts import render, redirect, get_object_or_404
 from django.utils import timezone
@@ -955,6 +955,7 @@ def roll_forward(request, pk):
                     prior_credit=line.credit,
                     mapped_line_item=line.mapped_line_item,
                     is_adjustment=False,
+                    source='rollover',
                 )
                 carried_bs += 1
                 continue
@@ -971,6 +972,7 @@ def roll_forward(request, pk):
                 prior_credit=line.credit,
                 mapped_line_item=line.mapped_line_item,
                 is_adjustment=False,
+                source='rollover',
             )
             carried_bs += 1
 
@@ -1006,6 +1008,7 @@ def roll_forward(request, pk):
                 prior_credit=Decimal("0"),
                 mapped_line_item=None,
                 is_adjustment=False,
+                source='rollover',
             )
             carried_bs += 1
 
@@ -1023,6 +1026,7 @@ def roll_forward(request, pk):
                     prior_credit=income_tax_line.credit,
                     mapped_line_item=income_tax_line.mapped_line_item,
                     is_adjustment=False,
+                    source='rollover',
                 )
                 carried_bs += 1
 
@@ -1046,6 +1050,7 @@ def roll_forward(request, pk):
                 prior_credit=line.credit,
                 mapped_line_item=line.mapped_line_item,
                 is_adjustment=False,
+                source='rollover',
             )
             carried_pl += 1
 
@@ -1223,6 +1228,7 @@ def _process_trial_balance_upload(fy, file):
             closing_balance=closing_balance,
             mapped_line_item=mapped_item,
             is_adjustment=False,
+            source='tb_import',
             # Restore prior-year comparatives (first occurrence only)
             prior_debit=comp.get("prior_debit", Decimal("0")),
             prior_credit=comp.get("prior_credit", Decimal("0")),
@@ -1267,6 +1273,7 @@ def _process_trial_balance_upload(fy, file):
             closing_balance=Decimal("0"),
             mapped_line_item=comp.get("mapped_line_item") or comp.get("prior_mapped_line_item"),
             is_adjustment=False,
+            source='rollover',
             prior_debit=comp["prior_debit"],
             prior_credit=comp["prior_credit"],
             prior_closing_balance=comp.get("prior_closing_balance", Decimal("0")),
@@ -1473,6 +1480,14 @@ def account_code_breakdown(request, pk, account_code):
     first_line = lines[0]
     mapped_label = first_line.mapped_line_item.line_item_label if first_line.mapped_line_item else 'Unmapped'
 
+    # Get available accounts for reallocation dropdown
+    # Use ChartOfAccount for the entity type to show meaningful account names
+    from .models import ChartOfAccount
+    available_accounts = ChartOfAccount.objects.filter(
+        entity_type=fy.entity.entity_type,
+        is_active=True,
+    ).select_related('maps_to').order_by('account_code')
+
     return render(request, 'core/account_code_breakdown.html', {
         'fy': fy,
         'account_code': account_code,
@@ -1486,7 +1501,74 @@ def account_code_breakdown(request, pk, account_code):
         'current_year': current_year,
         'prior_year': prior_year,
         'entry_count': lines.count(),
+        'available_accounts': available_accounts,
     })
+
+
+@login_required
+def tb_line_reallocate(request, pk):
+    """Reallocate a single trial balance line to a different account code/mapping."""
+    if request.method != 'POST':
+        return HttpResponseNotAllowed(['POST'])
+
+    from .models import ChartOfAccount
+    line = get_object_or_404(TrialBalanceLine, pk=pk)
+    fy = line.financial_year
+
+    # Security: ensure user has access
+    get_financial_year_for_user(request, fy.pk)
+
+    new_account_code = request.POST.get('new_account_code', '').strip()
+    if not new_account_code:
+        messages.error(request, "Please select an account to reallocate to.")
+        return redirect('core:account_code_breakdown', pk=fy.pk, account_code=line.account_code)
+
+    old_code = line.account_code
+    old_name = line.account_name
+
+    # Look up the target account from ChartOfAccount
+    coa_entry = ChartOfAccount.objects.filter(
+        entity_type=fy.entity.entity_type,
+        account_code=new_account_code,
+        is_active=True,
+    ).select_related('maps_to').first()
+
+    if not coa_entry:
+        messages.error(request, f"Account code {new_account_code} not found in chart of accounts.")
+        return redirect('core:account_code_breakdown', pk=fy.pk, account_code=old_code)
+
+    # Update the TB line
+    line.account_code = coa_entry.account_code
+    line.account_name = coa_entry.account_name
+    line.mapped_line_item = coa_entry.maps_to
+    line.save(update_fields=['account_code', 'account_name', 'mapped_line_item'])
+
+    # Also update the client account mapping
+    ClientAccountMapping.objects.update_or_create(
+        entity=fy.entity,
+        client_account_code=coa_entry.account_code,
+        defaults={
+            'client_account_name': coa_entry.account_name,
+            'mapped_line_item': coa_entry.maps_to,
+        },
+    )
+
+    _log_action(
+        request, 'adjustment',
+        f"Reallocated TB line '{old_name}' from {old_code} to {coa_entry.account_code} ({coa_entry.account_name})",
+        fy,
+    )
+    messages.success(
+        request,
+        f"Reallocated '{old_name}' from {old_code} to {coa_entry.account_code} — {coa_entry.account_name}."
+    )
+
+    # Redirect back to the original account code breakdown (which may now have fewer lines)
+    remaining = fy.trial_balance_lines.filter(account_code=old_code).count()
+    if remaining > 0:
+        return redirect('core:account_code_breakdown', pk=fy.pk, account_code=old_code)
+    else:
+        return redirect('core:financial_year_detail', pk=fy.pk)
 
 
 # ---------------------------------------------------------------------------
@@ -1685,6 +1767,7 @@ def journal_post(request, pk):
             closing_balance=line.debit - line.credit,
             mapped_line_item=mapped_item,
             is_adjustment=True,
+            source='manual_journal',
         )
 
     # Update journal status
@@ -3866,6 +3949,7 @@ def stock_push_to_tb(request, pk):
             account_name="Opening Stock",
             debit=total_opening,
             credit=Decimal("0"),
+            source='manual_journal',
         )
 
     # Create Closing Stock (credit to P&L, debit to Balance Sheet)
@@ -3876,6 +3960,7 @@ def stock_push_to_tb(request, pk):
             account_name="Closing Stock",
             debit=Decimal("0"),
             credit=total_closing,
+            source='manual_journal',
         )
         # Balance sheet current asset
         TrialBalanceLine.objects.create(
@@ -3884,6 +3969,7 @@ def stock_push_to_tb(request, pk):
             account_name="Stock on Hand",
             debit=total_closing,
             credit=Decimal("0"),
+            source='manual_journal',
         )
 
     # Mark as pushed

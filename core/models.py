@@ -642,6 +642,18 @@ class TrialBalanceLine(models.Model):
         default=False,
         help_text="Locked when the current year is finalised",
     )
+
+    SOURCE_CHOICES = [
+        ('tb_import', 'Trial Balance Import'),
+        ('bank_statement', 'Bank Statement'),
+        ('manual_journal', 'Manual Journal'),
+        ('rollover', 'Rolled Forward'),
+    ]
+    source = models.CharField(
+        max_length=20, choices=SOURCE_CHOICES, default='tb_import', blank=True,
+        help_text="Where this line originated from",
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
