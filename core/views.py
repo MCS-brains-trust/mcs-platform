@@ -1089,6 +1089,7 @@ def _process_trial_balance_upload(fy, file):
     unmapped = 0
     errors = []
     uploaded_codes = set()  # Track which account codes came from the Excel
+    comp_applied = set()   # Track codes whose comparatives have already been applied
 
     rows = list(ws.iter_rows(min_row=2, values_only=True))  # Skip header
 
@@ -1135,8 +1136,17 @@ def _process_trial_balance_upload(fy, file):
             if coa_match and coa_match.maps_to:
                 mapped_item = coa_match.maps_to
 
-        # Restore comparative values from snapshot (if they existed)
-        comp = prior_data.get(account_code, {})
+        # Restore comparative values from snapshot — but only for the FIRST
+        # row per account_code.  The uploaded Excel may split a single prior-
+        # year account into multiple sub-accounts (e.g. 1826 "Office Expenses"
+        # becomes 1826 "office sundries", 1826 "office cleaning", etc.).
+        # Applying the prior-year totals to every sub-row would inflate the
+        # comparative column.
+        if account_code not in comp_applied:
+            comp = prior_data.get(account_code, {})
+            comp_applied.add(account_code)
+        else:
+            comp = {}  # Subsequent rows with same code get zero comparatives
 
         TrialBalanceLine.objects.create(
             financial_year=fy,
@@ -1148,7 +1158,7 @@ def _process_trial_balance_upload(fy, file):
             closing_balance=closing_balance,
             mapped_line_item=mapped_item,
             is_adjustment=False,
-            # Restore prior-year comparatives
+            # Restore prior-year comparatives (first occurrence only)
             prior_debit=comp.get("prior_debit", Decimal("0")),
             prior_credit=comp.get("prior_credit", Decimal("0")),
             prior_closing_balance=comp.get("prior_closing_balance", Decimal("0")),
