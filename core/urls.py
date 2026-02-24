@@ -123,6 +123,7 @@ urlpatterns = [
     path("depreciation/<uuid:pk>/edit/", views.depreciation_edit, name="depreciation_edit"),
     path("depreciation/<uuid:pk>/delete/", views.depreciation_delete, name="depreciation_delete"),
     path("years/<uuid:pk>/depreciation/roll-forward/", views.depreciation_roll_forward, name="depreciation_roll_forward"),
+    path("years/<uuid:pk>/depreciation/post-to-tb/", views.depreciation_post_to_tb, name="depreciation_post_to_tb"),
 
     # Stock
     path("years/<uuid:pk>/stock/add/", views.stock_add, name="stock_add"),

@@ -3866,6 +3866,225 @@ def _calc_depreciation(asset):
 
 
 # ---------------------------------------------------------------------------
+# Post Depreciation to Trial Balance
+# ---------------------------------------------------------------------------
+@login_required
+@require_POST
+def depreciation_post_to_tb(request, pk):
+    """
+    Post the depreciation schedule totals to the trial balance as a journal entry.
+    Creates:
+      - Dr  Depreciation Expense (per category, using entity or master COA codes)
+      - Cr  Accumulated Depreciation (per category)
+    The journal is auto-posted immediately.
+    """
+    fy = get_financial_year_for_user(request, pk)
+    if not request.user.can_do_accounting:
+        messages.error(request, "You do not have permission.")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    if fy.is_locked:
+        messages.error(request, "Cannot post to a finalised year.")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    assets = DepreciationAsset.objects.filter(financial_year=fy)
+    if not assets.exists():
+        messages.warning(request, "No depreciation assets to post.")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    # Calculate total business depreciation (total less private portion)
+    total_depreciation = Decimal("0")
+    for asset in assets:
+        business_dep = asset.depreciation_amount - asset.private_depreciation
+        total_depreciation += business_dep
+
+    if total_depreciation <= 0:
+        messages.warning(request, "Total business depreciation is zero. Nothing to post.")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    # Determine the account codes for depreciation expense and accumulated depreciation.
+    # Use the entity's COA first, fall back to request form fields, then defaults.
+    dep_expense_code = request.POST.get("dep_expense_code", "").strip()
+    dep_expense_name = request.POST.get("dep_expense_name", "").strip()
+    accum_dep_code = request.POST.get("accum_dep_code", "").strip()
+    accum_dep_name = request.POST.get("accum_dep_name", "").strip()
+
+    # Auto-detect from entity COA or client account mappings if not provided
+    if not dep_expense_code:
+        # Look for a depreciation expense account in entity COA
+        dep_coa = EntityChartOfAccount.objects.filter(
+            entity=fy.entity, is_active=True,
+            account_name__icontains="depreciation"
+        ).exclude(account_name__icontains="accumulated").exclude(
+            account_name__icontains="accum"
+        ).first()
+        if dep_coa:
+            dep_expense_code = dep_coa.account_code
+            dep_expense_name = dep_coa.account_name
+        else:
+            # Fall back to client account mapping
+            dep_mapping = ClientAccountMapping.objects.filter(
+                entity=fy.entity,
+                client_account_name__icontains="depreciation"
+            ).exclude(client_account_name__icontains="accumulated").exclude(
+                client_account_name__icontains="accum"
+            ).first()
+            if dep_mapping:
+                dep_expense_code = dep_mapping.client_account_code
+                dep_expense_name = dep_mapping.client_account_name
+            else:
+                # Look in TB lines
+                dep_tb = TrialBalanceLine.objects.filter(
+                    financial_year=fy,
+                    account_name__icontains="depreciation"
+                ).exclude(account_name__icontains="accumulated").exclude(
+                    account_name__icontains="accum"
+                ).first()
+                if dep_tb:
+                    dep_expense_code = dep_tb.account_code
+                    dep_expense_name = dep_tb.account_name
+
+    if not accum_dep_code:
+        # Look for accumulated depreciation account
+        accum_coa = EntityChartOfAccount.objects.filter(
+            entity=fy.entity, is_active=True,
+            account_name__icontains="accum"
+        ).filter(account_name__icontains="depreciation").first()
+        if accum_coa:
+            accum_dep_code = accum_coa.account_code
+            accum_dep_name = accum_coa.account_name
+        else:
+            accum_mapping = ClientAccountMapping.objects.filter(
+                entity=fy.entity,
+                client_account_name__icontains="accum"
+            ).filter(client_account_name__icontains="depreciation").first()
+            if accum_mapping:
+                accum_dep_code = accum_mapping.client_account_code
+                accum_dep_name = accum_mapping.client_account_name
+            else:
+                accum_tb = TrialBalanceLine.objects.filter(
+                    financial_year=fy,
+                    account_name__icontains="accum"
+                ).filter(account_name__icontains="depreciation").first()
+                if accum_tb:
+                    accum_dep_code = accum_tb.account_code
+                    accum_dep_name = accum_tb.account_name
+
+    # If we still don't have codes, show an error
+    if not dep_expense_code or not accum_dep_code:
+        missing = []
+        if not dep_expense_code:
+            missing.append("Depreciation Expense")
+        if not accum_dep_code:
+            missing.append("Accumulated Depreciation")
+        messages.error(
+            request,
+            f"Could not auto-detect account codes for: {', '.join(missing)}. "
+            f"Please ensure these accounts exist in the Chart of Accounts or Trial Balance."
+        )
+        return redirect("core:financial_year_detail", pk=pk)
+
+    # Default names if still blank
+    if not dep_expense_name:
+        dep_expense_name = "Depreciation"
+    if not accum_dep_name:
+        accum_dep_name = "Less: Accumulated depreciation"
+
+    # Check for existing depreciation journal to avoid double-posting
+    existing = AdjustingJournal.objects.filter(
+        financial_year=fy,
+        journal_type=AdjustingJournal.JournalType.DEPRECIATION,
+        status=AdjustingJournal.JournalStatus.POSTED,
+    ).first()
+    if existing:
+        messages.warning(
+            request,
+            f"A depreciation journal ({existing.reference_number}) has already been posted. "
+            f"Delete it first if you want to re-post."
+        )
+        return redirect("core:financial_year_detail", pk=pk)
+
+    # Create the journal
+    journal = AdjustingJournal(
+        financial_year=fy,
+        journal_type=AdjustingJournal.JournalType.DEPRECIATION,
+        status=AdjustingJournal.JournalStatus.DRAFT,
+        journal_date=fy.end_date,
+        description=f"Depreciation for year ended {fy.end_date.strftime('%d/%m/%Y')}",
+        narration=(
+            f"Auto-generated from depreciation schedule. "
+            f"Total depreciation: ${total_depreciation:,.2f} "
+            f"(business portion only, private use excluded)."
+        ),
+        total_debit=total_depreciation,
+        total_credit=total_depreciation,
+        created_by=request.user,
+    )
+    journal.save()  # Auto-generates reference_number
+
+    # Create journal lines
+    JournalLine.objects.create(
+        journal=journal,
+        line_number=1,
+        account_code=dep_expense_code,
+        account_name=dep_expense_name,
+        description="Depreciation charge for the year",
+        debit=total_depreciation,
+        credit=Decimal("0"),
+    )
+    JournalLine.objects.create(
+        journal=journal,
+        line_number=2,
+        account_code=accum_dep_code,
+        account_name=accum_dep_name,
+        description="Accumulated depreciation",
+        debit=Decimal("0"),
+        credit=total_depreciation,
+    )
+
+    # Auto-post: create TB adjustment lines
+    for line in journal.lines.all():
+        mapping = ClientAccountMapping.objects.filter(
+            entity=fy.entity, client_account_code=line.account_code
+        ).first()
+        mapped_item = mapping.mapped_line_item if mapping else None
+
+        TrialBalanceLine.objects.create(
+            financial_year=fy,
+            account_code=line.account_code,
+            account_name=line.account_name,
+            opening_balance=Decimal("0"),
+            debit=line.debit,
+            credit=line.credit,
+            closing_balance=line.debit - line.credit,
+            mapped_line_item=mapped_item,
+            is_adjustment=True,
+            source='manual_journal',
+        )
+
+    # Mark as posted
+    journal.status = AdjustingJournal.JournalStatus.POSTED
+    journal.posted_by = request.user
+    journal.posted_at = timezone.now()
+    journal.save(update_fields=["status", "posted_by", "posted_at"])
+
+    _log_action(
+        request, "adjustment",
+        f"Posted depreciation journal {journal.reference_number}: "
+        f"Dr {dep_expense_code} ${total_depreciation:,.2f} / "
+        f"Cr {accum_dep_code} ${total_depreciation:,.2f}",
+        journal,
+    )
+    messages.success(
+        request,
+        f"Depreciation journal {journal.reference_number} posted: "
+        f"Dr {dep_expense_name} ${total_depreciation:,.2f} / "
+        f"Cr {accum_dep_name} ${total_depreciation:,.2f}"
+    )
+    return redirect("core:financial_year_detail", pk=pk)
+
+
+# ---------------------------------------------------------------------------
 # Stock Item AJAX endpoints
 # ---------------------------------------------------------------------------
 @login_required

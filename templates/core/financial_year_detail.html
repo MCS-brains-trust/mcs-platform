@@ -646,6 +646,15 @@
                 <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addAssetModal">
                     <i class="bi bi-plus-lg"></i> Add Asset
                 </button>
+                {% if depreciation_assets %}
+                <form method="post" action="{% url 'core:depreciation_post_to_tb' pk=fy.pk %}" class="d-inline"
+                      onsubmit="return confirm('This will create a depreciation journal entry and post it to the trial balance.\n\nTotal business depreciation: ${{ dep_total_depreciation|floatformat:2 }}\n\nContinue?');">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-success btn-sm"{% if fy.is_locked %} disabled{% endif %}>
+                        <i class="bi bi-journal-arrow-up"></i> Post to Trial Balance
+                    </button>
+                </form>
+                {% endif %}
             </div>
         </div>
 

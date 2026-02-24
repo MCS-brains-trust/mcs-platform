@@ -420,18 +420,36 @@ def _parse_balance(reader, year, chart):
             else:
                 return (abs(raw), Decimal("0"))
 
+    # ---------------------------------------------------------------
+    # Determine which sub-accounts are "named" (have their own Chart.txt
+    # entry with a distinct formatted_code like "1798.01") vs "unnamed"
+    # (no own Chart.txt entry — they fall back to the parent and would
+    # produce a duplicate code like "1803").  Unnamed sub-accounts must
+    # be aggregated into their parent to avoid partial/duplicate TB lines.
+    # ---------------------------------------------------------------
+    def _is_named_sub(code, sub):
+        """Return True if (code, sub) has its own Chart.txt entry with a
+        formatted_code that differs from the parent (e.g. '1798.01')."""
+        if sub == 0:
+            return True  # Parent is always "named"
+        own_entry = chart.get((code, sub))
+        if not own_entry:
+            return False  # No chart entry at all — unnamed
+        parent_entry = chart.get((code, 0), {})
+        # If the sub has the same formatted_code as the parent, treat as unnamed
+        return own_entry.get("formatted_code") != parent_entry.get("formatted_code", f"{code:04d}")
+
     # Build trial balance lines
-    lines = []
+    # First pass: compute Dr/Cr for every (code, sub) key
+    raw_lines = {}  # key -> {debit, credit, prior_debit, prior_credit, opening, chart_entry, formatted_code, account_name}
     all_keys = sorted(set(list(current_data.keys()) + list(prior_data.keys())))
 
     for key in all_keys:
         code, sub = key
-        # Look up chart entry: try exact (code, sub), fall back to parent (code, 0)
         chart_entry = chart.get(key, chart.get((code, 0), {}))
         account_name = chart_entry.get("name", f"Account {code}")
         formatted_code = chart_entry.get("formatted_code", f"{code:04d}")
 
-        # Current year data
         cur_row = current_data.get(key)
         if cur_row:
             opening = _safe_decimal(cur_row[4])
@@ -441,7 +459,6 @@ def _parse_balance(reader, year, chart):
             debit = Decimal("0")
             credit = Decimal("0")
 
-        # Prior year data
         prior_row = prior_data.get(key)
         if prior_row:
             prior_debit, prior_credit = _extract_closing_balance(prior_row, code, chart_entry)
@@ -449,19 +466,89 @@ def _parse_balance(reader, year, chart):
             prior_debit = Decimal("0")
             prior_credit = Decimal("0")
 
-        # Skip lines with all zeros
-        if debit == 0 and credit == 0 and prior_debit == 0 and prior_credit == 0:
-            continue
-
-        lines.append({
-            "account_code": formatted_code,
+        raw_lines[key] = {
+            "debit": debit, "credit": credit,
+            "prior_debit": prior_debit, "prior_credit": prior_credit,
+            "opening": opening,
+            "chart_entry": chart_entry,
+            "formatted_code": formatted_code,
             "account_name": account_name,
-            "opening_balance": abs(opening),
-            "debit": debit,
-            "credit": credit,
-            "closing_balance": debit - credit,
-            "prior_debit": prior_debit,
-            "prior_credit": prior_credit,
+        }
+
+    # Second pass: aggregate unnamed sub-accounts into their parent
+    aggregated = {}  # formatted_code -> aggregated dict
+    code_order = []  # maintain insertion order
+
+    for key in all_keys:
+        code, sub = key
+        data = raw_lines[key]
+
+        if _is_named_sub(code, sub):
+            # Named sub-account or parent — keep as its own line
+            fc = data["formatted_code"]
+            if fc in aggregated:
+                # Aggregate into existing line with same formatted_code
+                agg = aggregated[fc]
+                agg["debit"] += data["debit"]
+                agg["credit"] += data["credit"]
+                agg["prior_debit"] += data["prior_debit"]
+                agg["prior_credit"] += data["prior_credit"]
+                agg["opening"] += data["opening"]
+            else:
+                aggregated[fc] = {
+                    "account_code": fc,
+                    "account_name": data["account_name"],
+                    "opening": data["opening"],
+                    "debit": data["debit"],
+                    "credit": data["credit"],
+                    "prior_debit": data["prior_debit"],
+                    "prior_credit": data["prior_credit"],
+                }
+                code_order.append(fc)
+        else:
+            # Unnamed sub-account — aggregate into parent (code, 0)
+            parent_entry = chart.get((code, 0), {})
+            parent_fc = parent_entry.get("formatted_code", f"{code:04d}")
+            parent_name = parent_entry.get("name", f"Account {code}")
+
+            if parent_fc in aggregated:
+                agg = aggregated[parent_fc]
+                agg["debit"] += data["debit"]
+                agg["credit"] += data["credit"]
+                agg["prior_debit"] += data["prior_debit"]
+                agg["prior_credit"] += data["prior_credit"]
+                agg["opening"] += data["opening"]
+            else:
+                aggregated[parent_fc] = {
+                    "account_code": parent_fc,
+                    "account_name": parent_name,
+                    "opening": data["opening"],
+                    "debit": data["debit"],
+                    "credit": data["credit"],
+                    "prior_debit": data["prior_debit"],
+                    "prior_credit": data["prior_credit"],
+                }
+                code_order.append(parent_fc)
+
+            logger.debug(
+                f"  Aggregated unnamed sub ({code}.{sub:02d}) into parent {parent_fc}"
+            )
+
+    # Build final lines list
+    lines = []
+    for fc in code_order:
+        agg = aggregated[fc]
+        if agg["debit"] == 0 and agg["credit"] == 0 and agg["prior_debit"] == 0 and agg["prior_credit"] == 0:
+            continue
+        lines.append({
+            "account_code": agg["account_code"],
+            "account_name": agg["account_name"],
+            "opening_balance": abs(agg["opening"]),
+            "debit": agg["debit"],
+            "credit": agg["credit"],
+            "closing_balance": agg["debit"] - agg["credit"],
+            "prior_debit": agg["prior_debit"],
+            "prior_credit": agg["prior_credit"],
         })
 
     return lines
