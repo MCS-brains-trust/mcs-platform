@@ -62,6 +62,11 @@ urlpatterns = [
         views.commit_import,
         name="commit_import",
     ),
+    path(
+        "api/quick-add-entity-account/",
+        views.quick_add_entity_account,
+        name="quick_add_entity_account",
+    ),
 
     # Global Xero Connection (Advisor-level)
     path("xero/", views.xero_global_dashboard, name="xero_global_dashboard"),

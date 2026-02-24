@@ -28,6 +28,7 @@ from core.models import (
     AccountMapping,
     ClientAccountMapping,
     Entity,
+    EntityChartOfAccount,
     FinancialYear,
     TrialBalanceLine,
 )
@@ -502,14 +503,26 @@ def review_import(request, fy_pk):
     for sa in standard_accounts:
         sa["id"] = str(sa["id"])
 
+    # Build entity accounts list for the JS search dropdown
+    entity = fy.entity
+    entity_accts = []
+    for ea in EntityChartOfAccount.objects.filter(entity=entity).select_related("maps_to").order_by("account_code"):
+        entity_accts.append({
+            "code": ea.account_code,
+            "name": ea.account_name,
+            "section": ea.get_section_display(),
+            "maps_to_id": str(ea.maps_to.pk) if ea.maps_to else "",
+        })
+
     total = len(lines)
-    auto_mapped = sum(1 for l in lines if l.get("mapped_id"))
+    auto_mapped = sum(1 for l in lines if l.get("mapped_id") or l.get("entity_acct_code"))
     unmapped = total - auto_mapped
 
     context = {
         "fy": fy,
         "lines": lines,
         "standard_accounts_json": json.dumps(standard_accounts),
+        "entity_accounts_json": json.dumps(entity_accts),
         "total": total,
         "auto_mapped": auto_mapped,
         "unmapped": unmapped,
@@ -544,12 +557,24 @@ def commit_import(request, fy_pk):
 
     for i, line in enumerate(staged_lines):
         mapping_id = request.POST.get(f"mapping_{i}", "").strip()
+        entity_acct_code = request.POST.get(f"entity_acct_{i}", "").strip()
         mapped_item = None
 
         if mapping_id:
             try:
                 mapped_item = AccountMapping.objects.get(pk=mapping_id)
             except AccountMapping.DoesNotExist:
+                pass
+
+        # If an entity account was assigned, look it up for its maps_to
+        if entity_acct_code and not mapped_item:
+            try:
+                ea = EntityChartOfAccount.objects.select_related("maps_to").get(
+                    entity=entity, account_code=entity_acct_code
+                )
+                if ea.maps_to:
+                    mapped_item = ea.maps_to
+            except EntityChartOfAccount.DoesNotExist:
                 pass
 
         try:
@@ -619,6 +644,72 @@ def commit_import(request, fy_pk):
 
 
 # ---------------------------------------------------------------------------
+# Quick-Add Entity Account (AJAX from Import Wizard)
+# ---------------------------------------------------------------------------
+
+@login_required
+@require_POST
+def quick_add_entity_account(request):
+    """
+    AJAX endpoint to create a new EntityChartOfAccount entry from the
+    import mapping wizard. Returns JSON with the created account details.
+    """
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({"success": False, "error": "Invalid JSON"}, status=400)
+
+    entity_pk = data.get("entity_pk")
+    section = data.get("section", "")
+    account_code = data.get("account_code", "").strip()
+    account_name = data.get("account_name", "").strip()
+    tax_code = data.get("tax_code", "")
+    classification = data.get("classification", "")
+    maps_to_id = data.get("maps_to_id", "")
+
+    if not entity_pk or not section or not account_code or not account_name:
+        return JsonResponse({"success": False, "error": "Entity, section, code, and name are required."}, status=400)
+
+    try:
+        entity = Entity.objects.get(pk=entity_pk)
+    except Entity.DoesNotExist:
+        return JsonResponse({"success": False, "error": "Entity not found."}, status=404)
+
+    # Check for duplicate code
+    if EntityChartOfAccount.objects.filter(entity=entity, account_code=account_code).exists():
+        return JsonResponse({"success": False, "error": f"Account code {account_code} already exists for this entity."}, status=400)
+
+    maps_to = None
+    if maps_to_id:
+        try:
+            maps_to = AccountMapping.objects.get(pk=maps_to_id)
+        except AccountMapping.DoesNotExist:
+            pass
+
+    acct = EntityChartOfAccount.objects.create(
+        entity=entity,
+        account_code=account_code,
+        account_name=account_name,
+        section=section,
+        tax_code=tax_code,
+        classification=classification,
+        maps_to=maps_to,
+        is_custom=True,
+    )
+
+    return JsonResponse({
+        "success": True,
+        "account": {
+            "pk": str(acct.pk),
+            "code": acct.account_code,
+            "name": acct.account_name,
+            "section": acct.get_section_display(),
+            "maps_to_id": str(maps_to.pk) if maps_to else "",
+        },
+    })
+
+
+# ---------------------------------------------------------------------------
 # Learning system helpers
 # ---------------------------------------------------------------------------
 
@@ -626,11 +717,19 @@ def _apply_learned_mappings(entity, raw_lines):
     """
     Look up existing ClientAccountMapping records for this entity and
     pre-populate the mapped_line_item for each raw line.
+    Also pre-match against EntityChartOfAccount by code.
     """
     existing_mappings = {
         cam.client_account_code: cam
         for cam in ClientAccountMapping.objects.filter(entity=entity)
         .select_related("mapped_line_item")
+    }
+
+    # Build entity COA lookup by code
+    entity_coa = {
+        ea.account_code.lower(): ea
+        for ea in EntityChartOfAccount.objects.filter(entity=entity)
+        .select_related("maps_to")
     }
 
     staged = []
@@ -647,6 +746,8 @@ def _apply_learned_mappings(entity, raw_lines):
             "mapped_id": "",
             "mapped_label": "",
             "confidence": "new",
+            "entity_acct_code": "",
+            "entity_acct_name": "",
         }
 
         if cam and cam.mapped_line_item:
@@ -656,6 +757,20 @@ def _apply_learned_mappings(entity, raw_lines):
                 f"{cam.mapped_line_item.line_item_label}"
             )
             staged_line["confidence"] = "learned"
+
+        # Try to match entity COA by code
+        ea = entity_coa.get(code.lower())
+        if ea:
+            staged_line["entity_acct_code"] = ea.account_code
+            staged_line["entity_acct_name"] = ea.account_name
+            if staged_line["confidence"] == "new":
+                staged_line["confidence"] = "matched"
+            # If entity account has a maps_to and we don't have one yet, use it
+            if ea.maps_to and not staged_line["mapped_id"]:
+                staged_line["mapped_id"] = str(ea.maps_to.pk)
+                staged_line["mapped_label"] = (
+                    f"{ea.maps_to.standard_code} - {ea.maps_to.line_item_label}"
+                )
 
         staged.append(staged_line)
 
