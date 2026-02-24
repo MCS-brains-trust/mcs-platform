@@ -5925,7 +5925,35 @@ def entity_coa_add(request, pk):
             is_custom=True,
         )
         _log_action(request, "create", f"Added entity account: {account_code} — {account_name}", fy)
-        messages.success(request, f"Account {account_code} — {account_name} added.")
+
+        # Handle sub-accounts if this is a control account
+        is_control = request.POST.get("is_control_account") == "on"
+        sub_count = int(request.POST.get("sub_account_count", 0) or 0)
+        sub_created = 0
+        if is_control and sub_count > 0:
+            for i in range(1, sub_count + 1):
+                sub_code = request.POST.get(f"sub_code_{i}", "").strip()
+                sub_name = request.POST.get(f"sub_name_{i}", "").strip()
+                if sub_code and sub_name:
+                    if not EntityChartOfAccount.objects.filter(entity=entity, account_code=sub_code).exists():
+                        EntityChartOfAccount.objects.create(
+                            entity=entity,
+                            account_code=sub_code,
+                            account_name=sub_name,
+                            section=section,
+                            classification=classification,
+                            tax_code=tax_code,
+                            maps_to=maps_to,
+                            is_active=True,
+                            is_custom=True,
+                        )
+                        sub_created += 1
+                        _log_action(request, "create", f"Added sub-account: {sub_code} — {sub_name} (parent: {account_code})", fy)
+
+        if sub_created > 0:
+            messages.success(request, f"Control account {account_code} — {account_name} added with {sub_created} sub-account(s).")
+        else:
+            messages.success(request, f"Account {account_code} — {account_name} added.")
         return redirect("core:financial_year_detail", pk=pk)
 
     # GET — show the form

@@ -258,7 +258,37 @@ def coa_add(request):
                 display_order=display_order,
                 is_active=True,
             )
-            messages.success(request, f'Account {account_code} — {account_name} added successfully.')
+
+            # Handle sub-accounts if this is a control account
+            is_control = request.POST.get('is_control_account') == 'on'
+            sub_count = int(request.POST.get('sub_account_count', 0) or 0)
+            sub_created = 0
+            if is_control and sub_count > 0:
+                for i in range(1, sub_count + 1):
+                    sub_code = request.POST.get(f'sub_code_{i}', '').strip()
+                    sub_name = request.POST.get(f'sub_name_{i}', '').strip()
+                    if sub_code and sub_name:
+                        if not ChartOfAccount.objects.filter(
+                            entity_type=entity_type, account_code=sub_code
+                        ).exists():
+                            display_order += 10
+                            ChartOfAccount.objects.create(
+                                entity_type=entity_type,
+                                account_code=sub_code,
+                                account_name=sub_name,
+                                section=section,
+                                classification=classification,
+                                tax_code=tax_code,
+                                maps_to=maps_to,
+                                display_order=display_order,
+                                is_active=True,
+                            )
+                            sub_created += 1
+
+            if sub_created > 0:
+                messages.success(request, f'Control account {account_code} — {account_name} added with {sub_created} sub-account(s).')
+            else:
+                messages.success(request, f'Account {account_code} — {account_name} added successfully.')
             if return_to_fy:
                 return redirect(f"/years/{return_to_fy}/trial-balance/")
             return redirect(f"/chart-of-accounts/?entity_type={entity_type}")

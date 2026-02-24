@@ -112,6 +112,58 @@
                         <div class="form-text">Which financial statement line item this account rolls up to.</div>
                     </div>
 
+                    <!-- Step 4: Control Account with Sub-Accounts -->
+                    {% if not is_edit %}
+                    <hr>
+                    <div class="mb-3">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="isControlAccount" name="is_control_account">
+                            <label class="form-check-label fw-bold" for="isControlAccount">
+                                <span class="badge bg-info me-1">4</span> Control Account with Sub-Accounts
+                            </label>
+                        </div>
+                        <div class="form-text">
+                            Enable this if the account needs sub-accounts (e.g. <code>3523.01</code>, <code>3523.02</code>, <code>3523.03</code>).
+                            The main code above becomes the control account, and sub-accounts are created below.
+                        </div>
+                    </div>
+
+                    <!-- Sub-Accounts Panel (hidden by default) -->
+                    <div id="subAccountsPanel" style="display:none;">
+                        <div class="card border-info mb-3">
+                            <div class="card-header bg-info bg-opacity-10 d-flex justify-content-between align-items-center">
+                                <h6 class="mb-0"><i class="bi bi-diagram-3"></i> Sub-Accounts</h6>
+                                <button type="button" class="btn btn-sm btn-outline-info" id="addSubAccountBtn">
+                                    <i class="bi bi-plus-circle"></i> Add Sub-Account
+                                </button>
+                            </div>
+                            <div class="card-body p-0">
+                                <table class="table table-sm mb-0" id="subAccountsTable">
+                                    <thead class="table-light">
+                                        <tr>
+                                            <th style="width:120px;">Code</th>
+                                            <th>Sub-Account Name</th>
+                                            <th style="width:50px;"></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="subAccountsBody">
+                                        <!-- Rows added dynamically -->
+                                    </tbody>
+                                </table>
+                                <div id="subAccountsEmpty" class="text-center text-muted py-3">
+                                    <small>Click "Add Sub-Account" to create sub-accounts like <code>.01</code>, <code>.02</code>, etc.</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="alert alert-info small mb-3">
+                            <i class="bi bi-info-circle"></i>
+                            <strong>How control accounts work:</strong> The main account (e.g. <code>3523</code>) acts as the control account header.
+                            Each sub-account (e.g. <code>3523.01</code>, <code>3523.02</code>) is created as a separate account in the chart of accounts
+                            with the same section, classification, tax code, and mapping as the parent. You can edit them individually afterwards.
+                        </div>
+                    </div>
+                    {% endif %}
+
                     <hr>
                     <div class="d-flex justify-content-between">
                         <div>
@@ -174,6 +226,21 @@
                     <li class="mb-1"><strong>Code is auto-populated</strong> — placed between the correct neighbours to maintain alphabetical order</li>
                     <li class="mb-0">You can always override the suggested code manually</li>
                 </ol>
+            </div>
+        </div>
+
+        <div class="card mt-3">
+            <div class="card-header bg-info bg-opacity-75 text-white">
+                <h6 class="mb-0"><i class="bi bi-diagram-3"></i> Control Accounts</h6>
+            </div>
+            <div class="card-body small">
+                <p class="mb-2">Control accounts group related sub-accounts under a single parent code:</p>
+                <table class="table table-sm table-borderless mb-0">
+                    <tr><td><code>3523</code></td><td class="text-muted">HP Loans (control)</td></tr>
+                    <tr><td><code>3523.01</code></td><td>HP Loan - Vehicle 1</td></tr>
+                    <tr><td><code>3523.02</code></td><td>HP Loan - Vehicle 2</td></tr>
+                    <tr><td><code>3523.03</code></td><td>HP Loan - Vehicle 3</td></tr>
+                </table>
             </div>
         </div>
         {% endif %}
@@ -279,6 +346,7 @@ document.addEventListener('DOMContentLoaded', function() {
                             codeFeedback.className = 'form-text text-success';
                         }
                         highlightRange(section);
+                        updateSubAccountCodes();
                     } else if (data.error) {
                         positionText.textContent = data.position_info || data.error;
                         positionInfo.style.display = 'block';
@@ -363,8 +431,12 @@ document.addEventListener('DOMContentLoaded', function() {
     codeInput.addEventListener('input', function() {
         userOverrodeCode = true;
         checkCode();
+        updateSubAccountCodes();
     });
-    codeInput.addEventListener('blur', checkCode);
+    codeInput.addEventListener('blur', function() {
+        checkCode();
+        updateSubAccountCodes();
+    });
 
     // Highlight the matching range row
     function highlightRange(section) {
@@ -387,6 +459,114 @@ document.addEventListener('DOMContentLoaded', function() {
                 rows[rowIdx].style.fontWeight = '600';
             }
         }
+    }
+
+    // ---------------------------------------------------------------
+    // Control Account / Sub-Accounts Logic
+    // ---------------------------------------------------------------
+    const controlCheckbox = document.getElementById('isControlAccount');
+    const subPanel = document.getElementById('subAccountsPanel');
+    const subBody = document.getElementById('subAccountsBody');
+    const subEmpty = document.getElementById('subAccountsEmpty');
+    const addSubBtn = document.getElementById('addSubAccountBtn');
+    let subAccountCounter = 0;
+
+    if (controlCheckbox) {
+        controlCheckbox.addEventListener('change', function() {
+            subPanel.style.display = this.checked ? 'block' : 'none';
+            if (this.checked && subAccountCounter === 0) {
+                addSubAccountRow();
+            }
+        });
+    }
+
+    if (addSubBtn) {
+        addSubBtn.addEventListener('click', function() {
+            addSubAccountRow();
+        });
+    }
+
+    function addSubAccountRow() {
+        subAccountCounter++;
+        const baseCode = codeInput.value.trim();
+        const suffix = String(subAccountCounter).padStart(2, '0');
+        const subCode = baseCode ? baseCode + '.' + suffix : '???.' + suffix;
+
+        const tr = document.createElement('tr');
+        tr.className = 'sub-account-row';
+        tr.dataset.index = subAccountCounter;
+        tr.innerHTML = `
+            <td>
+                <input type="text" class="form-control form-control-sm sub-code-input"
+                       name="sub_code_${subAccountCounter}" value="${subCode}" readonly
+                       style="background-color: #f8f9fa; font-family: monospace;">
+            </td>
+            <td>
+                <input type="text" class="form-control form-control-sm"
+                       name="sub_name_${subAccountCounter}"
+                       placeholder="e.g. HP Loan - Vehicle ${subAccountCounter}"
+                       required maxlength="255">
+            </td>
+            <td class="text-center">
+                <button type="button" class="btn btn-sm btn-outline-danger remove-sub-btn" title="Remove">
+                    <i class="bi bi-x"></i>
+                </button>
+            </td>
+        `;
+        subBody.appendChild(tr);
+        subEmpty.style.display = 'none';
+
+        // Focus the name input
+        tr.querySelector('input[name^="sub_name_"]').focus();
+
+        // Wire up remove button
+        tr.querySelector('.remove-sub-btn').addEventListener('click', function() {
+            tr.remove();
+            renumberSubAccounts();
+            if (subBody.children.length === 0) {
+                subEmpty.style.display = 'block';
+            }
+        });
+
+        // Add hidden input for sub_count
+        updateSubCount();
+    }
+
+    function renumberSubAccounts() {
+        const rows = subBody.querySelectorAll('.sub-account-row');
+        subAccountCounter = 0;
+        rows.forEach((row, idx) => {
+            subAccountCounter = idx + 1;
+            const suffix = String(subAccountCounter).padStart(2, '0');
+            const baseCode = codeInput.value.trim() || '???';
+            const codeInput2 = row.querySelector('.sub-code-input');
+            codeInput2.value = baseCode + '.' + suffix;
+            codeInput2.name = 'sub_code_' + subAccountCounter;
+            row.querySelector('input[name^="sub_name_"]').name = 'sub_name_' + subAccountCounter;
+            row.dataset.index = subAccountCounter;
+        });
+        updateSubCount();
+    }
+
+    function updateSubAccountCodes() {
+        const baseCode = codeInput.value.trim() || '???';
+        subBody.querySelectorAll('.sub-code-input').forEach(function(inp) {
+            const parts = inp.value.split('.');
+            const suffix = parts.length > 1 ? parts[parts.length - 1] : '01';
+            inp.value = baseCode + '.' + suffix;
+        });
+    }
+
+    function updateSubCount() {
+        let countInput = document.getElementById('subAccountCount');
+        if (!countInput) {
+            countInput = document.createElement('input');
+            countInput.type = 'hidden';
+            countInput.id = 'subAccountCount';
+            countInput.name = 'sub_account_count';
+            document.getElementById('entityCoaForm').appendChild(countInput);
+        }
+        countInput.value = subBody.querySelectorAll('.sub-account-row').length;
     }
 
     // Validate on form submit
@@ -414,6 +594,21 @@ document.addEventListener('DOMContentLoaded', function() {
                 codeFeedback.className = 'form-text text-danger';
                 codeStatus.innerHTML = '<i class="bi bi-x-circle-fill text-danger"></i>';
                 codeInput.focus();
+                return;
+            }
+        }
+
+        // Validate sub-account names if control account is checked
+        if (controlCheckbox && controlCheckbox.checked) {
+            const subRows = subBody.querySelectorAll('.sub-account-row');
+            for (const row of subRows) {
+                const nameInp = row.querySelector('input[name^="sub_name_"]');
+                if (!nameInp.value.trim()) {
+                    e.preventDefault();
+                    nameInp.classList.add('is-invalid');
+                    nameInp.focus();
+                    return;
+                }
             }
         }
     });
