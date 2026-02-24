@@ -281,14 +281,6 @@
                 </small>
             </div>
             <div class="d-flex gap-2">
-                {% if not fy.is_locked %}
-                <form method="post" action="{% url 'core:populate_comparatives' pk=fy.pk %}" class="d-inline">
-                    {% csrf_token %}
-                    <button type="submit" class="btn btn-sm btn-outline-info" title="Auto-populate prior year comparatives">
-                        <i class="bi bi-arrow-repeat"></i> Populate Comparatives
-                    </button>
-                </form>
-                {% endif %}
             </div>
         </div>
         <div class="table-responsive">

@@ -1047,17 +1047,42 @@ def trial_balance_import(request, pk):
 
 
 def _process_trial_balance_upload(fy, file):
-    """Process an Excel trial balance upload."""
+    """Process an Excel trial balance upload.
+
+    Preserves prior-year comparative values (prior_debit, prior_credit,
+    prior_closing_balance, prior_mapped_line_item) that were set during
+    rollover.  Only current-year balances are replaced by the upload.
+    """
     wb = openpyxl.load_workbook(file, read_only=True, data_only=True)
     ws = wb.active
 
-    # Clear existing non-adjustment lines
+    entity = fy.entity
+
+    # ------------------------------------------------------------------
+    # Snapshot existing comparative data BEFORE deleting lines.
+    # Key = account_code.  We keep the first occurrence per code.
+    # ------------------------------------------------------------------
+    prior_data = {}  # account_code -> dict of comparative fields
+    for line in fy.trial_balance_lines.filter(is_adjustment=False).order_by("account_code"):
+        if line.account_code not in prior_data:
+            prior_data[line.account_code] = {
+                "prior_debit": line.prior_debit,
+                "prior_credit": line.prior_credit,
+                "prior_closing_balance": line.prior_closing_balance,
+                "prior_balance_override": line.prior_balance_override,
+                "prior_mapped_line_item": line.prior_mapped_line_item,
+                "reclassified": line.reclassified,
+                "comparatives_locked": line.comparatives_locked,
+            }
+
+    # Clear existing non-adjustment lines (current-year data will be
+    # re-created from the Excel file; comparatives restored from snapshot)
     fy.trial_balance_lines.filter(is_adjustment=False).delete()
 
     imported = 0
     unmapped = 0
     errors = []
-    entity = fy.entity
+    uploaded_codes = set()  # Track which account codes came from the Excel
 
     rows = list(ws.iter_rows(min_row=2, values_only=True))  # Skip header
 
@@ -1104,6 +1129,9 @@ def _process_trial_balance_upload(fy, file):
             if coa_match and coa_match.maps_to:
                 mapped_item = coa_match.maps_to
 
+        # Restore comparative values from snapshot (if they existed)
+        comp = prior_data.get(account_code, {})
+
         TrialBalanceLine.objects.create(
             financial_year=fy,
             account_code=account_code,
@@ -1114,6 +1142,14 @@ def _process_trial_balance_upload(fy, file):
             closing_balance=closing_balance,
             mapped_line_item=mapped_item,
             is_adjustment=False,
+            # Restore prior-year comparatives
+            prior_debit=comp.get("prior_debit", Decimal("0")),
+            prior_credit=comp.get("prior_credit", Decimal("0")),
+            prior_closing_balance=comp.get("prior_closing_balance", Decimal("0")),
+            prior_balance_override=comp.get("prior_balance_override", False),
+            prior_mapped_line_item=comp.get("prior_mapped_line_item"),
+            reclassified=comp.get("reclassified", False),
+            comparatives_locked=comp.get("comparatives_locked", False),
         )
 
         # Create or update client account mapping record
@@ -1123,9 +1159,41 @@ def _process_trial_balance_upload(fy, file):
             defaults={"client_account_name": account_name, "mapped_line_item": mapped_item},
         )
 
+        uploaded_codes.add(account_code)
         imported += 1
         if not mapped_item:
             unmapped += 1
+
+    # ------------------------------------------------------------------
+    # Re-create comparative-only lines for accounts that existed in the
+    # prior snapshot but were NOT in the uploaded Excel.  These are
+    # typically P&L accounts from the prior year that have no current-year
+    # activity yet but must appear in the comparative column.
+    # ------------------------------------------------------------------
+    for code, comp in prior_data.items():
+        if code in uploaded_codes:
+            continue  # Already handled above
+        if comp["prior_debit"] == 0 and comp["prior_credit"] == 0:
+            continue  # No comparative data to preserve
+
+        TrialBalanceLine.objects.create(
+            financial_year=fy,
+            account_code=code,
+            account_name="",  # Name not available; will be filled on next import
+            opening_balance=Decimal("0"),
+            debit=Decimal("0"),
+            credit=Decimal("0"),
+            closing_balance=Decimal("0"),
+            mapped_line_item=comp.get("prior_mapped_line_item"),
+            is_adjustment=False,
+            prior_debit=comp["prior_debit"],
+            prior_credit=comp["prior_credit"],
+            prior_closing_balance=comp.get("prior_closing_balance", Decimal("0")),
+            prior_balance_override=comp.get("prior_balance_override", False),
+            prior_mapped_line_item=comp.get("prior_mapped_line_item"),
+            reclassified=comp.get("reclassified", False),
+            comparatives_locked=comp.get("comparatives_locked", False),
+        )
 
     wb.close()
     return {"imported": imported, "unmapped": unmapped, "errors": errors}
