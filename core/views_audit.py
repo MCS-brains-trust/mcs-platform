@@ -201,9 +201,11 @@ def coa_add(request):
     Add a new account to the Chart of Accounts.
     """
     entity_type = request.GET.get('entity_type', 'company')
+    return_to_fy = request.GET.get('fy', '')  # Financial year PK to return to
 
     if request.method == 'POST':
         entity_type = request.POST.get('entity_type', 'company')
+        return_to_fy = request.POST.get('return_to_fy', '')
         account_code = request.POST.get('account_code', '').strip()
         account_name = request.POST.get('account_name', '').strip()
         section = request.POST.get('section', '')
@@ -257,6 +259,8 @@ def coa_add(request):
                 is_active=True,
             )
             messages.success(request, f'Account {account_code} — {account_name} added successfully.')
+            if return_to_fy:
+                return redirect(f"/years/{return_to_fy}/trial-balance/")
             return redirect(f"/chart-of-accounts/?entity_type={entity_type}")
 
     # Get AccountMapping options for the maps_to dropdown
@@ -264,6 +268,7 @@ def coa_add(request):
 
     context = {
         'entity_type': entity_type,
+        'return_to_fy': return_to_fy,
         'section_choices': ChartOfAccount.StatementSection.choices,
         'tax_code_choices': ['GST', 'FRE', 'ITS', 'ADS', 'CAP', 'INP', 'N-T', 'GNR'],
         'mapping_options': mapping_options,
@@ -287,8 +292,10 @@ def coa_edit(request, pk):
     """
     account = get_object_or_404(ChartOfAccount, pk=pk)
     entity_type = account.entity_type
+    return_to_fy = request.GET.get('fy', '')
 
     if request.method == 'POST':
+        return_to_fy = request.POST.get('return_to_fy', '')
         account_code = request.POST.get('account_code', '').strip()
         account_name = request.POST.get('account_name', '').strip()
         section = request.POST.get('section', '')
@@ -332,6 +339,8 @@ def coa_edit(request, pk):
             account.maps_to = maps_to
             account.save()
             messages.success(request, f'Account {account_code} — {account_name} updated successfully.')
+            if return_to_fy:
+                return redirect(f"/years/{return_to_fy}/trial-balance/")
             return redirect(f"/chart-of-accounts/?entity_type={entity_type}")
 
     mapping_options = AccountMapping.objects.all().order_by('financial_statement', 'display_order')
@@ -352,6 +361,7 @@ def coa_edit(request, pk):
             {'section': 'Equity', 'range': '4000+'},
         ],
         'is_edit': True,
+        'return_to_fy': return_to_fy,
     }
     return render(request, 'core/coa_form.html', context)
 

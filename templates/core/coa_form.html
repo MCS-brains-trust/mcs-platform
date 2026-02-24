@@ -30,6 +30,9 @@
                 <form method="post" id="coaForm">
                     {% csrf_token %}
                     <input type="hidden" name="entity_type" value="{{ entity_type }}">
+                    {% if return_to_fy %}
+                    <input type="hidden" name="return_to_fy" value="{{ return_to_fy }}">
+                    {% endif %}
 
                     <!-- Step 1: Section (pick first) -->
                     <div class="mb-3">
@@ -114,9 +117,16 @@
 
                     <hr>
                     <div class="d-flex justify-content-between">
-                        <a href="/chart-of-accounts/?entity_type={{ entity_type }}" class="btn btn-outline-secondary">
-                            <i class="bi bi-arrow-left"></i> Cancel
-                        </a>
+                        <div>
+                            <a href="/chart-of-accounts/?entity_type={{ entity_type }}" class="btn btn-outline-secondary">
+                                <i class="bi bi-arrow-left"></i> Cancel
+                            </a>
+                            {% if return_to_fy %}
+                            <a href="/years/{{ return_to_fy }}/trial-balance/" class="btn btn-outline-primary ms-2">
+                                <i class="bi bi-journal-text"></i> Return to Financial Year
+                            </a>
+                            {% endif %}
+                        </div>
                         <div>
                             {% if is_edit %}
                             <button type="button" class="btn btn-outline-danger me-2" data-bs-toggle="modal" data-bs-target="#deleteModal">
