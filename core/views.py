@@ -7,6 +7,7 @@ from django.db.models import Q, Count, Sum
 from django.http import HttpResponse, HttpResponseNotAllowed, JsonResponse
 from django.views.decorators.http import require_POST
 from django.shortcuts import render, redirect, get_object_or_404
+from django.urls import reverse
 from django.utils import timezone
 
 from .models import (
@@ -6173,7 +6174,8 @@ def entity_coa_add(request, pk):
             messages.success(request, f"Control account {account_code} — {account_name} added with {sub_created} sub-account(s).")
         else:
             messages.success(request, f"Account {account_code} — {account_name} added.")
-        return redirect("core:financial_year_detail", pk=pk)
+        # Redirect to the COA tab with the new account highlighted
+        return redirect(f"{reverse('core:financial_year_detail', kwargs={'pk': pk})}?tab=coa&highlight={account_code}")
 
     # GET — show the form
     return render(request, "core/entity_coa_form.html", {
@@ -6273,7 +6275,8 @@ def entity_coa_delete(request, pk):
 def entity_coa_suggest_code(request, pk):
     """
     AJAX endpoint to suggest the next available account code for an entity.
-    Works against the entity's own chart of accounts (EntityChartOfAccount).
+    Looks at EntityChartOfAccount, ClientAccountMapping, AND TrialBalanceLine
+    to find the correct alphabetical neighbours and code range.
     """
     fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
@@ -6285,14 +6288,16 @@ def entity_coa_suggest_code(request, pk):
     if not section or not account_name:
         return JsonResponse({'suggested_code': '', 'position_info': 'Enter a section and account name.'})
 
-    # Get all active accounts in this section for the entity, ordered by name
-    existing = list(
-        EntityChartOfAccount.objects.filter(
-            entity=entity, section=section, is_active=True
-        ).order_by('account_name')
-    )
-    if exclude_pk:
-        existing = [a for a in existing if str(a.pk) != exclude_pk]
+    # Code ranges per section
+    sub_ranges = {
+        'revenue': (0, 999), 'cost_of_sales': (0, 999),
+        'expenses': (1000, 1999),
+        'assets': (2000, 2999),
+        'liabilities': (3000, 3999),
+        'equity': (4000, 4999), 'capital_accounts': (4000, 4999), 'pl_appropriation': (4000, 4999),
+        'suspense': (9000, 9999),
+    }
+    lo, hi = sub_ranges.get(section, (0, 9999))
 
     # Shared sections that use the same code range
     shared_sections = {
@@ -6304,73 +6309,87 @@ def entity_coa_suggest_code(request, pk):
     }
     related = shared_sections.get(section, [section])
 
-    # Get ALL accounts in the shared code range to avoid collisions
-    all_in_range_qs = EntityChartOfAccount.objects.filter(
+    # Build a COMBINED list of all known accounts in the code range.
+    # Sources: EntityChartOfAccount, ClientAccountMapping, TrialBalanceLine
+    # Each entry: (code_int, code_str, name)
+    combined = {}  # code_str -> (code_int, name)
+
+    # 1. Entity COA accounts in this section
+    ecoa_qs = EntityChartOfAccount.objects.filter(
         entity=entity, section__in=related, is_active=True
     )
     if exclude_pk:
-        all_in_range_qs = all_in_range_qs.exclude(pk=exclude_pk)
-    all_in_range = list(all_in_range_qs.order_by('account_code'))
+        ecoa_qs = ecoa_qs.exclude(pk=exclude_pk)
+    for a in ecoa_qs:
+        combined[a.account_code] = (a.account_code, a.account_name)
+
+    # 2. Client account mappings in the code range
+    for m in ClientAccountMapping.objects.filter(entity=entity):
+        code_part = m.client_account_code.split('.')[0]
+        if code_part.isdigit() and lo <= int(code_part) <= hi:
+            if m.client_account_code not in combined:
+                combined[m.client_account_code] = (m.client_account_code, m.client_account_name)
+
+    # 3. Trial balance lines in the code range (latest FY for this entity)
+    for tb in TrialBalanceLine.objects.filter(financial_year=fy, is_adjustment=False):
+        code_part = tb.account_code.split('.')[0]
+        if code_part.isdigit() and lo <= int(code_part) <= hi:
+            if tb.account_code not in combined:
+                combined[tb.account_code] = (tb.account_code, tb.account_name)
+
+    # Build sorted list by account name for alphabetical positioning
+    accts_by_name = sorted(combined.values(), key=lambda x: x[1].lower())
+
+    # Build set of ALL used integer codes (including sub-accounts base codes)
     used_codes = set()
-    for a in all_in_range:
-        code_part = a.account_code.split('.')[0]
+    for code_str, _ in combined.values():
+        code_part = code_str.split('.')[0]
         if code_part.isdigit():
             used_codes.add(int(code_part))
 
-    # Code ranges
-    sub_ranges = {
-        'revenue': (0, 999), 'cost_of_sales': (0, 999),
-        'expenses': (1000, 1999),
-        'assets': (2000, 2999),
-        'liabilities': (3000, 3999),
-        'equity': (4000, 4999), 'capital_accounts': (4000, 4999), 'pl_appropriation': (4000, 4999),
-        'suspense': (9000, 9999),
-    }
-    lo, hi = sub_ranges.get(section, (0, 9999))
-
-    # Find alphabetical position
+    # Find alphabetical neighbours
     name_lower = account_name.lower()
     before = None
     after = None
-    for acc in existing:
-        if acc.account_name.lower() < name_lower:
-            before = acc
-        elif acc.account_name.lower() > name_lower:
-            after = acc
+    for code_str, acc_name in accts_by_name:
+        if acc_name.lower() < name_lower:
+            before = (code_str, acc_name)
+        elif acc_name.lower() > name_lower:
+            after = (code_str, acc_name)
             break
 
-    # Determine target code range
+    # Determine target code range between neighbours
     if before and after:
         try:
-            code_before = int(before.account_code.split('.')[0])
-            code_after = int(after.account_code.split('.')[0])
+            code_before = int(before[0].split('.')[0])
+            code_after = int(after[0].split('.')[0])
         except ValueError:
             code_before, code_after = lo, hi
         target_lo = code_before + 1
         target_hi = code_after - 1
-        position_info = f'Between {before.account_code} ({before.account_name}) and {after.account_code} ({after.account_name})'
+        position_info = f'Between {before[0]} ({before[1]}) and {after[0]} ({after[1]})'
     elif before and not after:
         try:
-            code_before = int(before.account_code.split('.')[0])
+            code_before = int(before[0].split('.')[0])
         except ValueError:
             code_before = lo
         target_lo = code_before + 1
         target_hi = hi
-        position_info = f'After {before.account_code} ({before.account_name})'
+        position_info = f'After {before[0]} ({before[1]})'
     elif after and not before:
         try:
-            code_after = int(after.account_code.split('.')[0])
+            code_after = int(after[0].split('.')[0])
         except ValueError:
             code_after = hi
         target_lo = lo
         target_hi = code_after - 1
-        position_info = f'Before {after.account_code} ({after.account_name})'
+        position_info = f'Before {after[0]} ({after[1]})'
     else:
         target_lo = lo
         target_hi = hi
         position_info = 'First account in this section'
 
-    # Find available code
+    # Find available code — prefer midpoint between neighbours
     suggested_code = ''
     if target_lo <= target_hi:
         mid = (target_lo + target_hi) // 2

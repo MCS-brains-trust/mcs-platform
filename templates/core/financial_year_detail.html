@@ -3000,6 +3000,39 @@ document.getElementById('coaSearchInput')?.addEventListener('input', filterCOA);
 document.getElementById('coaSectionFilter')?.addEventListener('change', filterCOA);
 
 // Edit account now uses full-page form — modal removed
+
+// Handle tab= and highlight= query params (e.g. after adding a new account)
+(function() {
+    const params = new URLSearchParams(window.location.search);
+    const tab = params.get('tab');
+    const highlight = params.get('highlight');
+
+    if (tab) {
+        const tabBtn = document.querySelector(`[data-bs-target="#tab-${tab}"]`);
+        if (tabBtn) {
+            const bsTab = new bootstrap.Tab(tabBtn);
+            bsTab.show();
+        }
+    }
+
+    if (highlight) {
+        // Wait for tab to render
+        setTimeout(function() {
+            const row = document.querySelector(`.coa-row[data-code="${highlight}"]`);
+            if (row) {
+                row.style.transition = 'background-color 0.3s';
+                row.style.backgroundColor = '#d4edda';
+                row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                setTimeout(function() {
+                    row.style.backgroundColor = '#fff3cd';
+                    setTimeout(function() {
+                        row.style.backgroundColor = '';
+                    }, 3000);
+                }, 1500);
+            }
+        }, 300);
+    }
+})();
 </script>
 
 {% endblock %}
