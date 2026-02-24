@@ -590,8 +590,8 @@ def financial_year_detail(request, pk):
             entity=fy.entity, is_active=True
         ).count(),
         "account_mappings": AccountMapping.objects.filter(
-            entity_type=fy.entity.entity_type, is_active=True
-        ).order_by('statement_type', 'line_item_label'),
+            applicable_entities__contains=fy.entity.entity_type
+        ).order_by('financial_statement', 'line_item_label'),
     }
     return render(request, "core/financial_year_detail.html", context)
 
