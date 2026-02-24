@@ -243,11 +243,13 @@ def entity_detail(request, pk):
     pending_followups = entity.meeting_notes.filter(
         follow_up_completed=False, follow_up_date__isnull=False
     ).order_by("follow_up_date")
+    has_financial_years = financial_years.exists()
     context = {
         "entity": entity,
         "financial_years": financial_years,
         "officers": officers,
         "unfinalised_count": unfinalised_count,
+        "has_financial_years": has_financial_years,
         "family_associates": family_associates,
         "business_associates": business_associates,
         "entity_relationships": entity_relationships,
