@@ -1150,22 +1150,25 @@ def trial_balance_import(request, pk):
 
             file = uploaded_file
             try:
-                result = _process_trial_balance_upload(fy, file)
-                _log_action(request, "import", f"Imported trial balance: {result['imported']} lines", fy)
-                # Auto-trigger risk engine after TB import
-                from core.signals import trigger_risk_recalc
-                trigger_risk_recalc(fy, "tb_import")
-                messages.success(
-                    request,
-                    f"Imported {result['imported']} lines. "
-                    f"{result['unmapped']} unmapped accounts need attention."
-                )
-                if result["errors"]:
-                    for err in result["errors"][:5]:
-                        messages.warning(request, err)
-                return redirect("core:financial_year_detail", pk=pk)
+                # Parse the Excel and stage the data for review wizard
+                raw_lines = _parse_tb_excel(fy, file)
+                if not raw_lines:
+                    messages.error(request, "No data rows found in the uploaded file.")
+                    return redirect("core:trial_balance_import", pk=pk)
+
+                # Apply learned mappings and code matching
+                staged_lines = _apply_tb_learned_mappings(fy.entity, raw_lines)
+
+                # Store in session for the review wizard
+                request.session["staged_tb_import"] = {
+                    "fy_pk": str(fy.pk),
+                    "lines": staged_lines,
+                    "filename": uploaded_file.name,
+                }
+
+                return redirect("core:review_tb_import", pk=pk)
             except Exception as e:
-                messages.error(request, "Import failed. Please check the file format and try again.")
+                messages.error(request, f"Import failed: {e}. Please check the file format and try again.")
     else:
         form = TrialBalanceUploadForm()
 
@@ -1341,6 +1344,310 @@ def _process_trial_balance_upload(fy, file):
 
     wb.close()
     return {"imported": imported, "unmapped": unmapped, "errors": errors}
+
+
+def _parse_tb_excel(fy, file):
+    """Parse an Excel TB file into a list of raw line dicts (without committing)."""
+    wb = openpyxl.load_workbook(file, read_only=True, data_only=True)
+    ws = wb.active
+    rows = list(ws.iter_rows(min_row=2, values_only=True))
+    raw_lines = []
+    for i, row in enumerate(rows, start=2):
+        if not row or not row[0]:
+            continue
+        try:
+            account_code = str(row[0]).strip()
+            account_name = str(row[1]).strip() if row[1] else ""
+            if len(row) >= 5 and row[4] is not None:
+                opening_balance = str(row[2] or 0)
+                debit = str(row[3] or 0)
+                credit = str(row[4] or 0)
+            else:
+                opening_balance = "0"
+                debit = str(row[2] or 0)
+                credit = str(row[3] or 0)
+            raw_lines.append({
+                "account_code": account_code,
+                "account_name": account_name,
+                "opening_balance": opening_balance,
+                "debit": debit,
+                "credit": credit,
+            })
+        except (ValueError, IndexError):
+            continue
+    wb.close()
+    return raw_lines
+
+
+def _apply_tb_learned_mappings(entity, raw_lines):
+    """
+    Apply learned mappings and entity COA code matching to raw TB lines.
+    Returns a list of staged line dicts ready for the review wizard.
+    """
+    existing_mappings = {
+        cam.client_account_code: cam
+        for cam in ClientAccountMapping.objects.filter(entity=entity)
+        .select_related("mapped_line_item")
+    }
+    entity_coa = {
+        ea.account_code.lower(): ea
+        for ea in EntityChartOfAccount.objects.filter(entity=entity)
+        .select_related("maps_to")
+    }
+    staged = []
+    for line in raw_lines:
+        code = line["account_code"]
+        cam = existing_mappings.get(code)
+        staged_line = {
+            "account_code": code,
+            "account_name": line["account_name"],
+            "opening_balance": line["opening_balance"],
+            "debit": line["debit"],
+            "credit": line["credit"],
+            "mapped_id": "",
+            "mapped_label": "",
+            "confidence": "new",
+            "entity_acct_code": "",
+            "entity_acct_name": "",
+        }
+        # Check learned mappings from ClientAccountMapping
+        if cam and cam.mapped_line_item:
+            staged_line["mapped_id"] = str(cam.mapped_line_item.pk)
+            staged_line["mapped_label"] = (
+                f"{cam.mapped_line_item.standard_code} - "
+                f"{cam.mapped_line_item.line_item_label}"
+            )
+            staged_line["confidence"] = "learned"
+        # Try to match entity COA by code
+        ea = entity_coa.get(code.lower())
+        if ea:
+            staged_line["entity_acct_code"] = ea.account_code
+            staged_line["entity_acct_name"] = ea.account_name
+            if staged_line["confidence"] == "new":
+                staged_line["confidence"] = "matched"
+            if ea.maps_to and not staged_line["mapped_id"]:
+                staged_line["mapped_id"] = str(ea.maps_to.pk)
+                staged_line["mapped_label"] = (
+                    f"{ea.maps_to.standard_code} - {ea.maps_to.line_item_label}"
+                )
+        staged.append(staged_line)
+    return staged
+
+
+@login_required
+def review_tb_import(request, pk):
+    """Review wizard for TB Excel imports — same UX as cloud import wizard."""
+    import json as _json
+    fy = get_financial_year_for_user(request, pk)
+    staged = request.session.get("staged_tb_import")
+
+    if not staged or staged.get("fy_pk") != str(pk):
+        messages.error(request, "No staged TB import data found. Please upload again.")
+        return redirect("core:trial_balance_import", pk=pk)
+
+    lines = staged["lines"]
+    entity = fy.entity
+
+    # Standard accounts for statement line mapping dropdown
+    standard_accounts = list(
+        AccountMapping.objects.values("id", "standard_code", "line_item_label", "statement_section")
+        .order_by("financial_statement", "display_order")
+    )
+    for sa in standard_accounts:
+        sa["id"] = str(sa["id"])
+
+    # Entity accounts for the searchable COA dropdown
+    entity_accts = []
+    for ea in EntityChartOfAccount.objects.filter(entity=entity).select_related("maps_to").order_by("account_code"):
+        entity_accts.append({
+            "code": ea.account_code,
+            "name": ea.account_name,
+            "section": ea.get_section_display(),
+            "maps_to_id": str(ea.maps_to.pk) if ea.maps_to else "",
+        })
+
+    total = len(lines)
+    auto_mapped = sum(1 for l in lines if l.get("mapped_id") or l.get("entity_acct_code"))
+    unmapped = total - auto_mapped
+
+    context = {
+        "fy": fy,
+        "lines": lines,
+        "standard_accounts_json": _json.dumps(standard_accounts),
+        "entity_accounts_json": _json.dumps(entity_accts),
+        "total": total,
+        "auto_mapped": auto_mapped,
+        "unmapped": unmapped,
+        "source_name": staged.get("filename", "Excel TB"),
+    }
+    return render(request, "core/review_tb_import.html", context)
+
+
+@login_required
+@require_POST
+def commit_tb_import(request, pk):
+    """
+    Commit the reviewed TB import. Creates TrialBalanceLine records,
+    preserves comparatives, updates ClientAccountMapping (learning system),
+    and triggers risk engine.
+    """
+    fy = get_financial_year_for_user(request, pk)
+    staged = request.session.get("staged_tb_import")
+
+    if not staged or staged.get("fy_pk") != str(pk):
+        messages.error(request, "No staged TB import data found.")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    if fy.is_locked:
+        messages.error(request, "Cannot import into a finalised financial year.")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    entity = fy.entity
+    staged_lines = staged["lines"]
+    imported = 0
+    unmapped = 0
+    errors = []
+
+    # Snapshot existing comparative data BEFORE deleting lines
+    prior_data = {}
+    for line in fy.trial_balance_lines.filter(is_adjustment=False).order_by("account_code"):
+        if line.account_code not in prior_data:
+            prior_data[line.account_code] = {
+                "prior_debit": line.prior_debit,
+                "prior_credit": line.prior_credit,
+                "prior_closing_balance": line.prior_closing_balance,
+                "prior_balance_override": line.prior_balance_override,
+                "prior_mapped_line_item": line.prior_mapped_line_item,
+                "reclassified": line.reclassified,
+                "comparatives_locked": line.comparatives_locked,
+                "mapped_line_item": line.mapped_line_item,
+                "account_name": line.account_name,
+            }
+
+    # Clear existing non-adjustment lines
+    fy.trial_balance_lines.filter(is_adjustment=False).delete()
+
+    uploaded_codes = set()
+    comp_applied = set()
+
+    for i, line in enumerate(staged_lines):
+        mapping_id = request.POST.get(f"mapping_{i}", "").strip()
+        entity_acct_code = request.POST.get(f"entity_acct_{i}", "").strip()
+        mapped_item = None
+
+        if mapping_id:
+            try:
+                mapped_item = AccountMapping.objects.get(pk=mapping_id)
+            except AccountMapping.DoesNotExist:
+                pass
+
+        # If an entity account was assigned, look it up for its maps_to
+        if entity_acct_code and not mapped_item:
+            try:
+                ea = EntityChartOfAccount.objects.select_related("maps_to").get(
+                    entity=entity, account_code=entity_acct_code
+                )
+                if ea.maps_to:
+                    mapped_item = ea.maps_to
+            except EntityChartOfAccount.DoesNotExist:
+                pass
+
+        try:
+            opening = Decimal(str(line.get("opening_balance", "0")))
+            debit = Decimal(str(line.get("debit", "0")))
+            credit = Decimal(str(line.get("credit", "0")))
+            closing = opening + debit - credit
+            account_code = line["account_code"]
+
+            # Restore comparatives (first occurrence per code only)
+            if account_code not in comp_applied:
+                comp = prior_data.get(account_code, {})
+                comp_applied.add(account_code)
+            else:
+                comp = {}
+
+            TrialBalanceLine.objects.create(
+                financial_year=fy,
+                account_code=account_code,
+                account_name=line["account_name"],
+                opening_balance=opening,
+                debit=debit,
+                credit=credit,
+                closing_balance=closing,
+                mapped_line_item=mapped_item,
+                is_adjustment=False,
+                source='tb_import',
+                prior_debit=comp.get("prior_debit", Decimal("0")),
+                prior_credit=comp.get("prior_credit", Decimal("0")),
+                prior_closing_balance=comp.get("prior_closing_balance", Decimal("0")),
+                prior_balance_override=comp.get("prior_balance_override", False),
+                prior_mapped_line_item=comp.get("prior_mapped_line_item"),
+                reclassified=comp.get("reclassified", False),
+                comparatives_locked=comp.get("comparatives_locked", False),
+            )
+
+            # Update the learning system
+            ClientAccountMapping.objects.update_or_create(
+                entity=entity,
+                client_account_code=account_code,
+                defaults={
+                    "client_account_name": line["account_name"],
+                    "mapped_line_item": mapped_item,
+                },
+            )
+
+            uploaded_codes.add(account_code)
+            imported += 1
+            if not mapped_item:
+                unmapped += 1
+
+        except Exception as e:
+            errors.append(f"Line {i + 1} ({line.get('account_code', '?')}): {str(e)}")
+
+    # Re-create comparative-only lines for accounts not in the upload
+    for code, comp in prior_data.items():
+        if code in uploaded_codes:
+            continue
+        if comp["prior_debit"] == 0 and comp["prior_credit"] == 0:
+            continue
+        TrialBalanceLine.objects.create(
+            financial_year=fy,
+            account_code=code,
+            account_name=comp.get("account_name", ""),
+            opening_balance=Decimal("0"),
+            debit=Decimal("0"),
+            credit=Decimal("0"),
+            closing_balance=Decimal("0"),
+            mapped_line_item=comp.get("mapped_line_item") or comp.get("prior_mapped_line_item"),
+            is_adjustment=False,
+            source='rollover',
+            prior_debit=comp["prior_debit"],
+            prior_credit=comp["prior_credit"],
+            prior_closing_balance=comp.get("prior_closing_balance", Decimal("0")),
+            prior_balance_override=comp.get("prior_balance_override", False),
+            prior_mapped_line_item=comp.get("prior_mapped_line_item"),
+            reclassified=comp.get("reclassified", False),
+            comparatives_locked=comp.get("comparatives_locked", False),
+        )
+
+    # Clean up session
+    request.session.pop("staged_tb_import", None)
+
+    # Log and trigger risk engine
+    _log_action(request, "import", f"Imported trial balance via wizard: {imported} lines", fy)
+    from core.signals import trigger_risk_recalc
+    trigger_risk_recalc(fy, "tb_import")
+
+    messages.success(
+        request,
+        f"Imported {imported} lines. "
+        f"{unmapped} unmapped accounts need attention."
+    )
+    if errors:
+        for err in errors[:5]:
+            messages.warning(request, err)
+
+    return redirect("core:financial_year_detail", pk=pk)
 
 
 @login_required
