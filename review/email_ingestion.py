@@ -59,7 +59,7 @@ def extract_transactions_from_pdf(pdf_b64, filename="statement.pdf"):
 
     try:
         response = client.messages.create(
-            model="claude-opus-4-6",
+            model="claude-sonnet-4-6",
             max_tokens=16384,
             system=system_prompt,
             messages=[
@@ -387,7 +387,7 @@ def _ai_classify_batch(transactions, is_gst_registered=True, batch_size=15, enti
 
         try:
             response = client.messages.create(
-                model="claude-opus-4-6",
+                model="claude-sonnet-4-6",
                 max_tokens=8192,
                 system=(
                     "You are an Australian accounting AI assistant for MC&S Pty Ltd. "

@@ -2059,6 +2059,7 @@ document.querySelectorAll('.wp-note, .wp-status').forEach(el => {
 <script>
 // ===== AI Classification, Search, Filter, Group for Bank Statement Review =====
 const CLASSIFY_URL = '{% url "core:review_classify_ai" pk=fy.pk %}';
+const CLASSIFY_STATUS_URL = '{% url "core:review_classify_status" pk=fy.pk %}';
 const BULK_APPROVE_URL = '{% url "core:review_bulk_approve_group" pk=fy.pk %}';
 const CSRF_TOKEN = '{{ csrf_token }}';
 let isGroupView = false;
@@ -2173,7 +2174,9 @@ function applyReviewFilters() {
     }
 }
 
-// --- AI Classification ---
+// --- AI Classification (Background Processing) ---
+let _classifyPollTimer = null;
+
 function startAiClassification() {
     const btn = document.getElementById('classifyAiBtn');
     const progress = document.getElementById('classifyProgress');
@@ -2183,49 +2186,174 @@ function startAiClassification() {
     if (!btn || !progress) return;
 
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Classifying...';
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Starting...';
     progress.classList.remove('d-none');
+    progressText.textContent = 'Sending classification request...';
 
-    classifyBatch();
-
-    function classifyBatch() {
-        fetch(CLASSIFY_URL, {
-            method: 'POST',
-            headers: {
-                'X-CSRFToken': CSRF_TOKEN,
-                'Content-Type': 'application/x-www-form-urlencoded',
-            },
-            body: 'batch_size=20'
-        })
-        .then(r => r.json())
-        .then(data => {
-            if (data.status === 'error') {
-                progressText.textContent = 'Error: ' + data.message;
-                btn.disabled = false;
-                btn.innerHTML = '<i class="bi bi-robot"></i> Retry Classification';
-                return;
-            }
-
-            const pct = data.total_pending > 0 ? Math.round((data.total_classified / data.total_pending) * 100) : 100;
-            progressBar.style.width = pct + '%';
-            progressText.textContent = 'Classified ' + data.total_classified + ' of ' + data.total_pending + ' transactions...';
-
-            if (data.status === 'in_progress') {
-                setTimeout(classifyBatch, 500);
-            } else {
-                progressText.textContent = 'Classification complete! Refreshing...';
-                progressBar.style.width = '100%';
-                progressBar.classList.add('bg-success');
-                setTimeout(function() { location.reload(); }, 1000);
-            }
-        })
-        .catch(err => {
-            progressText.textContent = 'Network error. Please try again.';
+    // Fire the request to start background classification
+    fetch(CLASSIFY_URL, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': CSRF_TOKEN,
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: 'batch_size=20'
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'error') {
+            progressText.textContent = 'Error: ' + data.message;
             btn.disabled = false;
             btn.innerHTML = '<i class="bi bi-robot"></i> Retry Classification';
-        });
+            return;
+        }
+
+        if (data.status === 'complete') {
+            showClassifyComplete(data);
+            return;
+        }
+
+        // Classification is running in background
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Running in background...';
+        progressText.textContent = data.message || 'Classification running in background. You can continue working.';
+        updateClassifyProgress(data);
+
+        // Show a toast notification
+        showClassifyToast('AI classification has started and is running in the background. You\'ll be notified when it\'s done.', 'info');
+
+        // Start polling for status
+        startClassifyPolling();
+    })
+    .catch(err => {
+        progressText.textContent = 'Network error. Please try again.';
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-robot"></i> Retry Classification';
+    });
+}
+
+function startClassifyPolling() {
+    if (_classifyPollTimer) clearInterval(_classifyPollTimer);
+    _classifyPollTimer = setInterval(pollClassifyStatus, 3000);
+}
+
+function pollClassifyStatus() {
+    fetch(CLASSIFY_STATUS_URL)
+    .then(r => r.json())
+    .then(data => {
+        updateClassifyProgress(data);
+
+        if (data.status === 'complete') {
+            showClassifyComplete(data);
+            if (_classifyPollTimer) {
+                clearInterval(_classifyPollTimer);
+                _classifyPollTimer = null;
+            }
+        } else if (data.status === 'error') {
+            const progressText = document.getElementById('classifyProgressText');
+            const btn = document.getElementById('classifyAiBtn');
+            if (progressText) progressText.textContent = 'Error: ' + data.message;
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-robot"></i> Retry Classification';
+            }
+            showClassifyToast('AI classification encountered an error: ' + data.message, 'danger');
+            if (_classifyPollTimer) {
+                clearInterval(_classifyPollTimer);
+                _classifyPollTimer = null;
+            }
+        } else if (data.status === 'idle') {
+            // No task running — stop polling
+            if (_classifyPollTimer) {
+                clearInterval(_classifyPollTimer);
+                _classifyPollTimer = null;
+            }
+        }
+    })
+    .catch(err => {
+        // Network error during polling — don't stop, just log
+        console.warn('Classify status poll failed:', err);
+    });
+}
+
+function updateClassifyProgress(data) {
+    const progressText = document.getElementById('classifyProgressText');
+    const progressBar = document.getElementById('classifyProgressBar');
+    if (!progressText || !progressBar) return;
+
+    const pct = data.total_pending > 0 ? Math.round((data.total_classified / data.total_pending) * 100) : 0;
+    progressBar.style.width = pct + '%';
+    if (data.message) {
+        progressText.textContent = data.message;
     }
 }
+
+function showClassifyComplete(data) {
+    const btn = document.getElementById('classifyAiBtn');
+    const progressText = document.getElementById('classifyProgressText');
+    const progressBar = document.getElementById('classifyProgressBar');
+
+    if (progressBar) {
+        progressBar.style.width = '100%';
+        progressBar.classList.remove('bg-primary');
+        progressBar.classList.add('bg-success');
+    }
+    if (progressText) {
+        progressText.textContent = data.message || 'All transactions classified!';
+    }
+    if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-check-circle"></i> Classification Complete';
+        btn.classList.remove('btn-primary');
+        btn.classList.add('btn-success');
+    }
+
+    showClassifyToast('AI classification complete! ' + (data.total_classified || '') + ' transactions classified.', 'success');
+
+    // Reload after a short delay to show updated data
+    setTimeout(function() { location.reload(); }, 2500);
+}
+
+function showClassifyToast(message, type) {
+    // Create a floating toast notification
+    const toast = document.createElement('div');
+    toast.className = 'position-fixed bottom-0 end-0 p-3';
+    toast.style.zIndex = '11000';
+    toast.innerHTML = `
+        <div class="toast show align-items-center text-white bg-${type} border-0" role="alert">
+            <div class="d-flex">
+                <div class="toast-body">
+                    <i class="bi ${type === 'success' ? 'bi-check-circle-fill' : type === 'danger' ? 'bi-exclamation-triangle-fill' : 'bi-robot'}"></i>
+                    ${message}
+                </div>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto" onclick="this.closest('.position-fixed').remove()"></button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(toast);
+
+    // Auto-dismiss after 8 seconds
+    setTimeout(() => { if (toast.parentNode) toast.remove(); }, 8000);
+}
+
+// On page load, check if a classification is already running
+document.addEventListener('DOMContentLoaded', function() {
+    fetch(CLASSIFY_STATUS_URL)
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'running') {
+            const btn = document.getElementById('classifyAiBtn');
+            const progress = document.getElementById('classifyProgress');
+            if (btn) {
+                btn.disabled = true;
+                btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Running in background...';
+            }
+            if (progress) progress.classList.remove('d-none');
+            updateClassifyProgress(data);
+            startClassifyPolling();
+        }
+    })
+    .catch(() => {});
+});
 
 // --- Group by Code View ---
 function toggleGroupView() {

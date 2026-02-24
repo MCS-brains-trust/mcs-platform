@@ -5494,124 +5494,272 @@ def trial_balance_template_download(request):
 # AI Classification for Bank Statement Review (Financial Year Tab)
 # ============================================================
 
+# In-memory store for background AI classification task status
+# Key: str(financial_year.pk), Value: dict with status info
+_ai_classify_tasks = {}
+
+
+def _run_ai_classification_background(fy_pk, entity_pk, entity_type, user_pk):
+    """
+    Background worker that classifies ALL unclassified transactions for an entity.
+    Runs in a separate thread so the user can continue working.
+    Updates _ai_classify_tasks with progress and creates an ActivityLog on completion.
+    """
+    import django
+    from django.db import connection
+    task_key = str(fy_pk)
+
+    try:
+        from review.models import PendingTransaction, ReviewJob
+        from review.email_ingestion import classify_transactions
+        from .models import FinancialYear, Entity, ActivityLog
+        from django.contrib.auth import get_user_model
+        User = get_user_model()
+
+        entity = Entity.objects.get(pk=entity_pk)
+        fy = FinancialYear.objects.get(pk=fy_pk)
+        user = User.objects.get(pk=user_pk)
+
+        # Determine GST registration
+        job = ReviewJob.objects.filter(entity=entity).first()
+        is_gst = job.is_gst_registered if job else True
+
+        total_classified = 0
+        batch_size = 20
+
+        while True:
+            # Fetch next batch of unclassified transactions
+            unclassified = list(
+                PendingTransaction.objects.filter(
+                    job__entity=entity,
+                    is_confirmed=False,
+                ).filter(
+                    Q(ai_suggested_code__isnull=True) | Q(ai_suggested_code="")
+                ).order_by("date")[:batch_size]
+            )
+
+            if not unclassified:
+                break
+
+            # Build transaction dicts
+            txn_dicts = []
+            txn_map = {}
+            for txn in unclassified:
+                txn_dicts.append({
+                    "date": str(txn.date),
+                    "description": txn.description,
+                    "amount": float(txn.amount),
+                })
+                txn_map[len(txn_dicts) - 1] = txn
+
+            try:
+                classifications = classify_transactions(
+                    txn_dicts, entity=entity, is_gst_registered=is_gst
+                )
+            except Exception as exc:
+                logger.error(f"AI classification batch failed: {exc}")
+                _ai_classify_tasks[task_key]["status"] = "error"
+                _ai_classify_tasks[task_key]["message"] = f"Classification error: {str(exc)}"
+                return
+
+            # Apply classifications
+            batch_classified = 0
+            for i, result in enumerate(classifications):
+                txn = txn_map.get(i)
+                if not txn or result is None:
+                    continue
+                code = result.get("account_code", "") or result.get("code", "")
+                name = result.get("account_name", "") or result.get("name", "")
+                confidence = result.get("confidence", 0)
+                tax_type = result.get("tax_type", "")
+                from_learning = result.get("from_learning", False)
+
+                if code:
+                    txn.ai_suggested_code = code
+                    txn.ai_suggested_name = name
+                    txn.ai_confidence = 5 if from_learning else confidence
+                    txn.ai_suggested_tax_type = tax_type
+
+                    # Calculate GST amounts
+                    if tax_type in ("GST on Income", "GST on Expenses"):
+                        txn.gst_amount = (txn.amount / Decimal("11")).quantize(Decimal("0.01"))
+                        txn.net_amount = txn.amount - txn.gst_amount
+                    else:
+                        txn.gst_amount = Decimal("0.00")
+                        txn.net_amount = txn.amount
+
+                    txn.save()
+                    batch_classified += 1
+
+            total_classified += batch_classified
+
+            # Update progress
+            total_pending = PendingTransaction.objects.filter(
+                job__entity=entity, is_confirmed=False
+            ).count()
+            done = PendingTransaction.objects.filter(
+                job__entity=entity, is_confirmed=False
+            ).exclude(ai_suggested_code__isnull=True).exclude(ai_suggested_code="").count()
+            _ai_classify_tasks[task_key].update({
+                "total_classified": done,
+                "total_pending": total_pending,
+                "remaining": total_pending - done,
+                "message": f"Classified {done} of {total_pending} transactions...",
+            })
+
+        # Final counts
+        total_pending = PendingTransaction.objects.filter(
+            job__entity=entity, is_confirmed=False
+        ).count()
+        done = PendingTransaction.objects.filter(
+            job__entity=entity, is_confirmed=False
+        ).exclude(ai_suggested_code__isnull=True).exclude(ai_suggested_code="").count()
+
+        _ai_classify_tasks[task_key].update({
+            "status": "complete",
+            "total_classified": done,
+            "total_pending": total_pending,
+            "remaining": 0,
+            "message": f"All {done} transactions classified successfully.",
+        })
+
+        # Create notification via ActivityLog
+        ActivityLog.objects.create(
+            user=user,
+            event_type=ActivityLog.EventType.CLASSIFY_COMPLETE,
+            title=f"AI Classification Complete — {entity.entity_name}",
+            description=f"Classified {total_classified} transactions for {entity.entity_name} ({fy.year_label}).",
+            entity=entity,
+            financial_year=fy,
+            url=f"/entities/years/{fy.pk}/",
+        )
+
+    except Exception as exc:
+        logger.exception(f"Background AI classification failed: {exc}")
+        _ai_classify_tasks[task_key] = {
+            "status": "error",
+            "message": f"Background classification failed: {str(exc)}",
+            "total_classified": 0,
+            "total_pending": 0,
+            "remaining": 0,
+        }
+    finally:
+        connection.close()
+
+
 @login_required
 @require_POST
 def review_classify_ai(request, pk):
     """
-    AJAX endpoint to classify unclassified bank statement transactions
-    using AI for a financial year's entity. Processes in batches.
-    Called repeatedly from the Review tab to classify in small batches.
+    AJAX endpoint to kick off background AI classification of unclassified
+    bank statement transactions. Returns immediately so the user can
+    continue working. Progress is polled via review_classify_status.
     """
-    import json
+    import threading
     fy = get_financial_year_for_user(request, pk)
-    from review.models import PendingTransaction
-    from review.email_ingestion import classify_transactions
-
-    batch_size = int(request.POST.get("batch_size", 20))
     entity = fy.entity
+    task_key = str(fy.pk)
 
-    # Get unclassified transactions for this entity
-    unclassified = PendingTransaction.objects.filter(
+    # If already running, return current status
+    if task_key in _ai_classify_tasks and _ai_classify_tasks[task_key].get("status") == "running":
+        return JsonResponse({
+            "status": "running",
+            "message": "Classification is already in progress.",
+            **{k: _ai_classify_tasks[task_key].get(k, 0) for k in ("total_classified", "total_pending", "remaining")},
+        })
+
+    from review.models import PendingTransaction
+
+    # Check if there's anything to classify
+    unclassified_count = PendingTransaction.objects.filter(
         job__entity=entity,
         is_confirmed=False,
-        ai_suggested_code__isnull=True,
-    ).union(
-        PendingTransaction.objects.filter(
-            job__entity=entity,
-            is_confirmed=False,
-            ai_suggested_code="",
-        )
-    ).order_by("date")[:batch_size]
+    ).filter(
+        Q(ai_suggested_code__isnull=True) | Q(ai_suggested_code="")
+    ).count()
 
-    unclassified = list(unclassified)
-
-    if not unclassified:
-        # Check total counts
+    if unclassified_count == 0:
         total_pending = PendingTransaction.objects.filter(
             job__entity=entity, is_confirmed=False
         ).count()
-        total_classified = PendingTransaction.objects.filter(
-            job__entity=entity, is_confirmed=False
-        ).exclude(ai_suggested_code__isnull=True).exclude(ai_suggested_code="").count()
         return JsonResponse({
             "status": "complete",
-            "classified_count": 0,
-            "total_classified": total_classified,
+            "total_classified": total_pending,
             "total_pending": total_pending,
-            "message": "All transactions have been classified.",
+            "remaining": 0,
+            "message": "All transactions have already been classified.",
         })
 
-    # Build transaction dicts for the classify function
-    txn_dicts = []
-    txn_map = {}
-    for txn in unclassified:
-        txn_dicts.append({
-            "date": str(txn.date),
-            "description": txn.description,
-            "amount": float(txn.amount),
-        })
-        txn_map[len(txn_dicts) - 1] = txn
+    total_pending = PendingTransaction.objects.filter(
+        job__entity=entity, is_confirmed=False
+    ).count()
 
-    # Determine GST registration from the first review job
-    from review.models import ReviewJob
-    job = ReviewJob.objects.filter(entity=entity).first()
-    is_gst = job.is_gst_registered if job else True
+    # Initialise task status
+    _ai_classify_tasks[task_key] = {
+        "status": "running",
+        "total_classified": total_pending - unclassified_count,
+        "total_pending": total_pending,
+        "remaining": unclassified_count,
+        "message": f"Starting classification of {unclassified_count} transactions...",
+    }
 
-    try:
-        classifications = classify_transactions(
-            txn_dicts, entity=entity, is_gst_registered=is_gst
-        )
-    except Exception as exc:
-        return JsonResponse({
-            "status": "error",
-            "message": f"Classification error: {str(exc)}",
-        }, status=500)
+    # Log the start
+    ActivityLog.objects.create(
+        user=request.user,
+        event_type=ActivityLog.EventType.CLASSIFY_STARTED,
+        title=f"AI Classification Started — {entity.entity_name}",
+        description=f"Classifying {unclassified_count} transactions for {entity.entity_name} ({fy.year_label}).",
+        entity=entity,
+        financial_year=fy,
+        url=f"/entities/years/{fy.pk}/",
+    )
 
-    # Apply classifications
-    classified_count = 0
-    for i, result in enumerate(classifications):
-        txn = txn_map.get(i)
-        if not txn:
-            continue
-        code = result.get("code", "")
-        name = result.get("name", "")
-        confidence = result.get("confidence", 0)
-        tax_type = result.get("tax_type", "")
-        source = result.get("source", "ai")
+    # Launch background thread
+    thread = threading.Thread(
+        target=_run_ai_classification_background,
+        args=(fy.pk, entity.pk, entity.entity_type, request.user.pk),
+        daemon=True,
+    )
+    thread.start()
 
-        if code:
-            txn.ai_suggested_code = code
-            txn.ai_suggested_name = name
-            txn.ai_confidence = 5 if source == "learning_db" else confidence
-            txn.ai_suggested_tax_type = tax_type
+    return JsonResponse({
+        "status": "running",
+        "total_classified": total_pending - unclassified_count,
+        "total_pending": total_pending,
+        "remaining": unclassified_count,
+        "message": f"Classification started for {unclassified_count} transactions. You can continue working.",
+    })
 
-            # Calculate GST amounts
-            if tax_type in ("GST on Income", "GST on Expenses"):
-                txn.gst_amount = (txn.amount / Decimal("11")).quantize(Decimal("0.01"))
-                txn.net_amount = txn.amount - txn.gst_amount
-            else:
-                txn.gst_amount = Decimal("0.00")
-                txn.net_amount = txn.amount
 
-            txn.save()
-            classified_count += 1
+@login_required
+def review_classify_status(request, pk):
+    """
+    AJAX endpoint to check the status of a background AI classification task.
+    Polled by the frontend to update progress and detect completion.
+    """
+    fy = get_financial_year_for_user(request, pk)
+    task_key = str(fy.pk)
 
-    # Get updated counts
+    if task_key in _ai_classify_tasks:
+        task = _ai_classify_tasks[task_key]
+        return JsonResponse(task)
+
+    # No task found — check actual DB state
+    from review.models import PendingTransaction
+    entity = fy.entity
     total_pending = PendingTransaction.objects.filter(
         job__entity=entity, is_confirmed=False
     ).count()
     total_classified = PendingTransaction.objects.filter(
         job__entity=entity, is_confirmed=False
     ).exclude(ai_suggested_code__isnull=True).exclude(ai_suggested_code="").count()
-    remaining = total_pending - total_classified
 
     return JsonResponse({
-        "status": "in_progress" if remaining > 0 else "complete",
-        "classified_count": classified_count,
+        "status": "idle",
         "total_classified": total_classified,
         "total_pending": total_pending,
-        "remaining": remaining,
-        "message": f"Classified {classified_count} transactions. {remaining} remaining." if remaining > 0 else "All transactions classified.",
+        "remaining": total_pending - total_classified,
+        "message": "",
     })
 
 

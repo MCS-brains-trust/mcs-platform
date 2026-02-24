@@ -128,6 +128,7 @@ urlpatterns = [
     path("review-txn/<uuid:pk>/approve/", views.review_approve_transaction, name="review_approve_transaction"),
     path("years/<uuid:pk>/review/approve-all/", views.review_approve_all, name="review_approve_all"),
     path("years/<uuid:pk>/review/classify-ai/", views.review_classify_ai, name="review_classify_ai"),
+    path("years/<uuid:pk>/review/classify-status/", views.review_classify_status, name="review_classify_status"),
     path("years/<uuid:pk>/review/bulk-approve-group/", views.review_bulk_approve_group, name="review_bulk_approve_group"),
 
     # Notifications / Activity
