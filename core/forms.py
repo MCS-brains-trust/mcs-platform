@@ -144,10 +144,15 @@ class JournalLineForm(forms.ModelForm):
             field.widget.attrs["class"] = "form-control form-control-sm"
         self.fields["description"].required = False
         self.fields["description"].widget.attrs["placeholder"] = "Line description (optional)"
-        self.fields["debit"].widget.attrs["step"] = "0.01"
-        self.fields["debit"].widget.attrs["min"] = "0"
-        self.fields["credit"].widget.attrs["step"] = "0.01"
-        self.fields["credit"].widget.attrs["min"] = "0"
+        # Use text inputs for debit/credit so we can show comma formatting
+        self.fields["debit"].widget = forms.TextInput(attrs={
+            "class": "form-control form-control-sm dr-cr-field",
+            "inputmode": "decimal",
+        })
+        self.fields["credit"].widget = forms.TextInput(attrs={
+            "class": "form-control form-control-sm dr-cr-field",
+            "inputmode": "decimal",
+        })
 
 
 JournalLineFormSet = forms.inlineformset_factory(

@@ -281,8 +281,8 @@ document.addEventListener('DOMContentLoaded', function() {
         document.querySelectorAll('.journal-line-row').forEach(function(row) {
             const delCheck = row.querySelector('[name$="-DELETE"]');
             if (delCheck && delCheck.checked) return;
-            const dr = parseFloat(row.querySelector('[name$="-debit"]')?.value) || 0;
-            const cr = parseFloat(row.querySelector('[name$="-credit"]')?.value) || 0;
+            const dr = parseRaw(row.querySelector('[name$="-debit"]')?.value);
+            const cr = parseRaw(row.querySelector('[name$="-credit"]')?.value);
             totalDr += dr;
             totalCr += cr;
         });
@@ -307,15 +307,62 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    // Parse a possibly comma-formatted string to a raw number
+    function parseRaw(val) {
+        if (!val) return 0;
+        return parseFloat(val.replace(/,/g, '')) || 0;
+    }
+
+    // Format a field value with commas on blur
+    function formatField(el) {
+        var num = parseRaw(el.value);
+        if (num === 0) {
+            el.value = '0';
+        } else {
+            el.value = fmtNum(num);
+        }
+    }
+
+    // Strip commas on focus so user can type freely
+    function stripField(el) {
+        var num = parseRaw(el.value);
+        if (num === 0) {
+            el.value = '';
+        } else {
+            el.value = num.toFixed(2);
+        }
+        el.select();
+    }
+
+    document.addEventListener('focus', function(e) {
+        if (e.target.classList && e.target.classList.contains('dr-cr-field')) {
+            stripField(e.target);
+        }
+    }, true);
+
     document.addEventListener('blur', function(e) {
-        if (e.target.name && (e.target.name.endsWith('-debit') || e.target.name.endsWith('-credit'))) {
+        if (e.target.classList && e.target.classList.contains('dr-cr-field')) {
+            formatField(e.target);
             updateTotals();
         }
     }, true);
+
     document.addEventListener('change', function(e) {
         if (e.target.name && e.target.name.endsWith('-DELETE')) {
             updateTotals();
         }
+    });
+
+    // Before form submit, strip commas from all dr/cr fields so Django gets clean numbers
+    document.getElementById('journal-form').addEventListener('submit', function() {
+        document.querySelectorAll('.dr-cr-field').forEach(function(el) {
+            el.value = parseRaw(el.value).toFixed(2);
+        });
+    });
+
+    // Format existing fields on page load
+    document.querySelectorAll('.dr-cr-field').forEach(function(el) {
+        formatField(el);
     });
 
     // ===== Tab key: Debit <-> Credit navigation on same row =====
@@ -366,10 +413,10 @@ document.addEventListener('DOMContentLoaded', function() {
                 <input type="text" name="lines-${idx}-description" class="form-control form-control-sm" id="id_lines-${idx}-description" placeholder="Line description (optional)">
             </td>
             <td>
-                <input type="number" name="lines-${idx}-debit" step="0.01" min="0" class="form-control form-control-sm" id="id_lines-${idx}-debit">
+                <input type="text" inputmode="decimal" name="lines-${idx}-debit" class="form-control form-control-sm dr-cr-field" id="id_lines-${idx}-debit" value="0">
             </td>
             <td>
-                <input type="number" name="lines-${idx}-credit" step="0.01" min="0" class="form-control form-control-sm" id="id_lines-${idx}-credit">
+                <input type="text" inputmode="decimal" name="lines-${idx}-credit" class="form-control form-control-sm dr-cr-field" id="id_lines-${idx}-credit" value="0">
             </td>
             <td class="text-center">
                 <input type="checkbox" name="lines-${idx}-DELETE" id="id_lines-${idx}-DELETE">
