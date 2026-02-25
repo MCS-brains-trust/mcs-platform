@@ -368,7 +368,9 @@ document.addEventListener('DOMContentLoaded', function() {
     // ===== Tab key: Debit <-> Credit navigation on same row =====
     // Tab from Debit goes to Credit on same row.
     // Shift+Tab from Credit goes back to Debit on same row.
-    // Tab from Credit moves to next row's Debit (default browser behavior).
+    // Tab from Credit: if neither debit nor credit has a non-zero value,
+    //   trap focus back to Debit (user must enter a figure before moving on).
+    //   If a figure exists, allow default tab to next row.
     document.addEventListener('keydown', function(e) {
         if (e.key !== 'Tab') return;
         var el = e.target;
@@ -376,18 +378,29 @@ document.addEventListener('DOMContentLoaded', function() {
         var row = el.closest('.journal-line-row');
         if (!row) return;
 
+        var debitEl = row.querySelector('[name$="-debit"]');
+        var creditEl = row.querySelector('[name$="-credit"]');
+        var drVal = parseRaw(debitEl ? debitEl.value : '0');
+        var crVal = parseRaw(creditEl ? creditEl.value : '0');
+        var hasValue = (drVal !== 0 || crVal !== 0);
+
         if (el.name.endsWith('-debit') && !e.shiftKey) {
             // Tab from Debit -> go to Credit on same row
             e.preventDefault();
-            var credit = row.querySelector('[name$="-credit"]');
-            if (credit) { credit.focus(); credit.select(); }
+            if (creditEl) { creditEl.focus(); creditEl.select(); }
         } else if (el.name.endsWith('-credit') && e.shiftKey) {
             // Shift+Tab from Credit -> go back to Debit on same row
             e.preventDefault();
-            var debit = row.querySelector('[name$="-debit"]');
-            if (debit) { debit.focus(); debit.select(); }
+            if (debitEl) { debitEl.focus(); debitEl.select(); }
+        } else if (el.name.endsWith('-credit') && !e.shiftKey) {
+            // Tab from Credit -> only allow moving to next row if this row has a figure
+            if (!hasValue) {
+                // No figure entered — trap back to Debit
+                e.preventDefault();
+                if (debitEl) { debitEl.focus(); debitEl.select(); }
+            }
+            // else: allow default tab to next row
         }
-        // Tab from Credit (no shift) -> default browser tab to next row's account field
     });
 
     // Add line button
