@@ -159,10 +159,33 @@ document.addEventListener('DOMContentLoaded', function() {
     // ---- Searchable Account Picker ----
     function createAccountPicker(container) {
         const row = container.closest('tr');
-        const codeInput = row.querySelector('[name$="-account_code"]');
-        const nameInput = row.querySelector('[name$="-account_name"]');
 
-        // Create the search input
+        // Find the ORIGINAL inputs (may be in this td or the next td)
+        const origCodeInput = row.querySelector('[name$="-account_code"]');
+        const origNameInput = row.querySelector('[name$="-account_name"]');
+
+        // Capture existing values and names before we touch the DOM
+        const codeName = origCodeInput ? origCodeInput.name : '';
+        const nameFieldName = origNameInput ? origNameInput.name : '';
+        const codeValue = origCodeInput ? origCodeInput.value : '';
+        const nameValue = origNameInput ? origNameInput.value : '';
+
+        // Remove ALL original inputs from the DOM (they may be in different tds)
+        if (origCodeInput) origCodeInput.remove();
+        if (origNameInput) origNameInput.remove();
+
+        // Create fresh hidden inputs that will carry the form values
+        const hiddenCode = document.createElement('input');
+        hiddenCode.type = 'hidden';
+        hiddenCode.name = codeName;
+        hiddenCode.value = codeValue;
+
+        const hiddenName = document.createElement('input');
+        hiddenName.type = 'hidden';
+        hiddenName.name = nameFieldName;
+        hiddenName.value = nameValue;
+
+        // Create the visible search input
         const input = document.createElement('input');
         input.type = 'text';
         input.className = 'form-control form-control-sm account-picker-input';
@@ -170,36 +193,30 @@ document.addEventListener('DOMContentLoaded', function() {
         input.autocomplete = 'off';
 
         // Pre-fill if editing
-        if (codeInput && codeInput.value) {
-            const match = ACCOUNT_LIST.find(a => a.code === codeInput.value);
-            input.value = match ? codeInput.value + ' - ' + match.name : codeInput.value;
+        if (codeValue) {
+            const match = ACCOUNT_LIST.find(a => a.code === codeValue);
+            input.value = match ? codeValue + ' - ' + match.name : codeValue;
         }
 
         // Create dropdown
         const dropdown = document.createElement('div');
         dropdown.className = 'account-dropdown';
 
-        // Wrap — preserve the hidden form fields (account_code, account_name)
-        // so they remain in the DOM and submit with the form.
-        // codeInput is inside this container's <td>, nameInput is in the next <td>.
+        // Build the wrapper
         const wrapper = document.createElement('div');
         wrapper.className = 'account-picker-wrapper';
         wrapper.appendChild(input);
         wrapper.appendChild(dropdown);
 
-        // Detach the real inputs before clearing innerHTML so they aren't destroyed
-        if (codeInput && codeInput.parentNode) codeInput.parentNode.removeChild(codeInput);
-        if (nameInput && nameInput.parentNode) nameInput.parentNode.removeChild(nameInput);
-
-        // Make them hidden so they don't show but still submit
-        if (codeInput) { codeInput.type = 'hidden'; }
-        if (nameInput) { nameInput.type = 'hidden'; }
-
         // Clear the container and rebuild with wrapper + hidden fields
         container.innerHTML = '';
         container.appendChild(wrapper);
-        if (codeInput) container.appendChild(codeInput);
-        if (nameInput) container.appendChild(nameInput);
+        container.appendChild(hiddenCode);
+        container.appendChild(hiddenName);
+
+        // Use local references for selectAccount
+        const codeInput = hiddenCode;
+        const nameInput = hiddenName;
 
         let activeIndex = -1;
 
