@@ -154,6 +154,29 @@ class JournalLineForm(forms.ModelForm):
             "inputmode": "decimal",
         })
 
+    def _is_truly_empty(self):
+        """Check if this form row is truly empty (no account code and no amounts)."""
+        code = self.data.get(self.add_prefix('account_code'), '').strip()
+        debit_str = self.data.get(self.add_prefix('debit'), '').strip()
+        credit_str = self.data.get(self.add_prefix('credit'), '').strip()
+        # Parse debit/credit, treating empty or "0" as zero
+        from decimal import Decimal, InvalidOperation
+        try:
+            debit_val = Decimal(debit_str.replace(',', '') or '0')
+        except (InvalidOperation, ValueError):
+            debit_val = Decimal('0')
+        try:
+            credit_val = Decimal(credit_str.replace(',', '') or '0')
+        except (InvalidOperation, ValueError):
+            credit_val = Decimal('0')
+        return not code and debit_val == 0 and credit_val == 0
+
+    def has_changed(self):
+        """Override to treat rows with no account code and zero amounts as unchanged."""
+        if self._is_truly_empty():
+            return False
+        return super().has_changed()
+
     def clean_debit(self):
         """Strip commas from debit value before validation."""
         val = self.data.get(self.add_prefix('debit'), '0')

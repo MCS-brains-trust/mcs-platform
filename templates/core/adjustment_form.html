@@ -179,11 +179,13 @@ document.addEventListener('DOMContentLoaded', function() {
         hiddenCode.type = 'hidden';
         hiddenCode.name = codeName;
         hiddenCode.value = codeValue;
+        hiddenCode.className = 'account-code-hidden';
 
         const hiddenName = document.createElement('input');
         hiddenName.type = 'hidden';
         hiddenName.name = nameFieldName;
         hiddenName.value = nameValue;
+        hiddenName.className = 'account-name-hidden';
 
         // Create the visible search input
         const input = document.createElement('input');
@@ -392,10 +394,34 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Before form submit, strip commas from all dr/cr fields so Django gets clean numbers
-    document.getElementById('journal-form').addEventListener('submit', function() {
+    // Before form submit:
+    // 1. Strip commas from all dr/cr fields so Django gets clean numbers
+    // 2. Auto-mark empty rows for deletion so Django skips them
+    // 3. Clear debit/credit on empty rows so Django doesn't think they have data
+    document.getElementById('journal-form').addEventListener('submit', function(e) {
+        // Strip commas from all dr/cr fields
         document.querySelectorAll('.dr-cr-field').forEach(function(el) {
             el.value = parseRaw(el.value).toFixed(2);
+        });
+
+        // Auto-mark empty rows for deletion
+        document.querySelectorAll('.journal-line-row').forEach(function(row) {
+            var codeInput = row.querySelector('.account-code-hidden') ||
+                            row.querySelector('[name$="-account_code"]');
+            var code = codeInput ? codeInput.value.trim() : '';
+            var dr = parseRaw(row.querySelector('[name$="-debit"]')?.value);
+            var cr = parseRaw(row.querySelector('[name$="-credit"]')?.value);
+
+            // If no account code and no amounts, mark for deletion
+            if (!code && dr === 0 && cr === 0) {
+                var delCheck = row.querySelector('[name$="-DELETE"]');
+                if (delCheck) delCheck.checked = true;
+                // Also clear the debit/credit to ensure Django sees this as truly empty
+                var debitEl = row.querySelector('[name$="-debit"]');
+                var creditEl = row.querySelector('[name$="-credit"]');
+                if (debitEl) debitEl.value = '';
+                if (creditEl) creditEl.value = '';
+            }
         });
     });
 
