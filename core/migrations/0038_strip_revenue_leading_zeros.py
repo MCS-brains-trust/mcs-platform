@@ -26,8 +26,16 @@ def strip_revenue_leading_zeros(apps, schema_editor):
         old_code = acct.account_code
         new_code = old_code.lstrip('0') or '0'  # safety: don't make it empty
         if new_code != old_code:
-            acct.account_code = new_code
-            acct.save(update_fields=['account_code'])
+            # Check if the new code already exists in the same template
+            if ChartOfAccount.objects.filter(
+                entity_type=acct.entity_type,
+                account_code=new_code,
+            ).exists():
+                # The new code already exists — delete the old 0-prefixed one
+                acct.delete()
+            else:
+                acct.account_code = new_code
+                acct.save(update_fields=['account_code'])
             master_updated += 1
 
     # 2. Per-entity COAs — revenue accounts with leading '0'
@@ -36,20 +44,56 @@ def strip_revenue_leading_zeros(apps, schema_editor):
         old_code = acct.account_code
         new_code = old_code.lstrip('0') or '0'
         if new_code != old_code:
-            # Also update any TrialBalanceLines that reference this account code
-            TrialBalanceLine.objects.filter(
-                financial_year__entity=acct.entity,
-                account_code=old_code,
-            ).update(account_code=new_code)
-
-            # Also update any ClientAccountMappings where the client_account_code matches the old revenue code
-            ClientAccountMapping.objects.filter(
+            # Check if the entity already has an account with the stripped code
+            if EntityChartOfAccount.objects.filter(
                 entity=acct.entity,
-                client_account_code=old_code,
-            ).update(client_account_code=new_code)
+                account_code=new_code,
+            ).exists():
+                # Duplicate exists — migrate any TB lines and mappings to the existing account,
+                # then delete the old 0-prefixed account
+                TrialBalanceLine.objects.filter(
+                    financial_year__entity=acct.entity,
+                    account_code=old_code,
+                ).update(account_code=new_code)
 
-            acct.account_code = new_code
-            acct.save(update_fields=['account_code'])
+                # For ClientAccountMapping, delete old-code mappings if new-code mapping exists
+                for cam in ClientAccountMapping.objects.filter(
+                    entity=acct.entity,
+                    client_account_code=old_code,
+                ):
+                    if ClientAccountMapping.objects.filter(
+                        entity=acct.entity,
+                        client_account_code=new_code,
+                    ).exists():
+                        cam.delete()
+                    else:
+                        cam.client_account_code = new_code
+                        cam.save(update_fields=['client_account_code'])
+
+                acct.delete()
+            else:
+                # No duplicate — safe to rename
+                TrialBalanceLine.objects.filter(
+                    financial_year__entity=acct.entity,
+                    account_code=old_code,
+                ).update(account_code=new_code)
+
+                # For ClientAccountMapping, check for duplicates before updating
+                for cam in ClientAccountMapping.objects.filter(
+                    entity=acct.entity,
+                    client_account_code=old_code,
+                ):
+                    if ClientAccountMapping.objects.filter(
+                        entity=acct.entity,
+                        client_account_code=new_code,
+                    ).exists():
+                        cam.delete()
+                    else:
+                        cam.client_account_code = new_code
+                        cam.save(update_fields=['client_account_code'])
+
+                acct.account_code = new_code
+                acct.save(update_fields=['account_code'])
             entity_updated += 1
 
     print(f"  Stripped leading zeros: {master_updated} master COA, {entity_updated} entity COA revenue accounts")
