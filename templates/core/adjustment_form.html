@@ -105,10 +105,12 @@
                             <i class="bi bi-plus-lg"></i> Add Line
                         </button>
                         <div class="d-flex gap-2">
-                            <button type="submit" class="btn btn-primary">
-                                <i class="bi bi-check-circle"></i> Post to Trial Balance
+                            <button type="submit" class="btn btn-primary" id="postBtn">
+                                <i class="bi bi-check-circle" id="postIcon"></i>
+                                <span class="spinner-border spinner-border-sm d-none" id="postSpinner" role="status" aria-hidden="true"></span>
+                                <span id="postBtnText">Post to Trial Balance</span>
                             </button>
-                            <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary">Cancel</a>
+                            <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary" id="cancelBtn">Cancel</a>
                         </div>
                     </div>
                 </form>
@@ -403,6 +405,20 @@ document.addEventListener('DOMContentLoaded', function() {
         document.querySelectorAll('.dr-cr-field').forEach(function(el) {
             el.value = parseRaw(el.value).toFixed(2);
         });
+
+        // Show spinner and disable button
+        var postBtn = document.getElementById('postBtn');
+        var postIcon = document.getElementById('postIcon');
+        var postSpinner = document.getElementById('postSpinner');
+        var postBtnText = document.getElementById('postBtnText');
+        var cancelBtn = document.getElementById('cancelBtn');
+        if (postBtn) {
+            postBtn.disabled = true;
+            if (postIcon) postIcon.classList.add('d-none');
+            if (postSpinner) postSpinner.classList.remove('d-none');
+            if (postBtnText) postBtnText.textContent = 'Posting... Please wait';
+            if (cancelBtn) cancelBtn.classList.add('disabled');
+        }
 
         // Auto-mark empty rows for deletion
         document.querySelectorAll('.journal-line-row').forEach(function(row) {
