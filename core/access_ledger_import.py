@@ -720,10 +720,14 @@ def _parse_depreciation(reader, year):
 _AL_CODE_RANGES = [
     # Revenue / Income (0-999)
     (0, 999, "income_statement", "Revenue"),
-    # Cost of Sales (1000-1099)
-    (1000, 1099, "income_statement", "Cost of Sales"),
-    # Expenses (1100-1999)
-    (1100, 1999, "income_statement", "Expenses"),
+    # Cost of Sales (1000-1499)
+    # HandiLedger uses 1000-1499 for COS items including:
+    #   1000-1099: Direct purchases / materials
+    #   1100-1149: Opening stock, COGS, closing stock, WIP
+    #   1150-1499: Other direct costs (subcontractors, freight, etc.)
+    (1000, 1499, "income_statement", "Cost of Sales"),
+    # Expenses (1500-1999)
+    (1500, 1999, "income_statement", "Expenses"),
     # Current Assets (2000-2499)
     (2000, 2499, "balance_sheet", "Current Assets"),
     # Non-Current Assets (2500-2999)
@@ -750,8 +754,11 @@ _KEYWORD_MAP_RULES = [
     (["capital gain"], "IS-REV-009"),
     (["profit on sale", "gain on disposal", "gain on sale"], "IS-REV-006"),
     # --- Cost of Sales ---
-    (["opening stock", "opening raw", "opening finished", "opening work in progress"], "IS-COS-002"),
-    (["closing stock", "closing raw", "closing finished", "closing work in progress"], "IS-COS-004"),
+    (["opening stock", "opening raw", "opening finished", "opening work in progress", "opening wip", "opening inventory"], "IS-COS-002"),
+    (["cost of goods sold", "cost of goods", "cost of sales", "cogs", "direct cost", "direct material", "direct labour", "direct labor"], "IS-COS-003"),
+    (["closing stock", "closing raw", "closing finished", "closing work in progress", "closing wip", "closing inventory"], "IS-COS-004"),
+    (["purchases", "material", "freight inward", "cartage inward", "import duty", "customs"], "IS-COS-003"),
+    (["subcontract", "sub-contract", "contract labour", "contract labor"], "IS-COS-001"),
     # --- Expenses ---
     (["accountancy", "accounting fee", "audit fee", "auditor", "professional fee", "tax agent"], "IS-EXP-001"),
     (["advertising", "promotion", "marketing"], "IS-EXP-002"),
@@ -856,8 +863,8 @@ def _auto_map_account(account_code_int, account_name, chart_entry=None):
 
     Section boundaries (HandiLedger / Access Ledger convention):
         0-999      Revenue
-        1000-1099  Cost of Sales
-        1100-1999  Expenses
+        1000-1499  Cost of Sales
+        1500-1999  Expenses
         2000-2499  Current Assets
         2500-2999  Non-Current Assets
         3000-3499  Current Liabilities
