@@ -1844,23 +1844,28 @@
         }
 
         searchTimers[txnId] = setTimeout(function() {
-            fetch(`{% url 'core:coa_search_api' %}?entity_type=${entityType}&q=${encodeURIComponent(query)}`)
+            fetch(`{% url 'core:entity_coa_search_api' pk=fy.pk %}?q=${encodeURIComponent(query)}`)
             .then(resp => resp.json())
             .then(data => {
+                let html = '';
                 if (data.items.length === 0) {
-                    resultsDiv.innerHTML = '<div class="text-center text-muted py-2"><small>No matching accounts found.</small></div>';
-                    return;
+                    html = '<div class="text-center text-muted py-2"><small>No matching accounts found.</small></div>';
+                } else {
+                    html = data.items.map(item =>
+                        `<a href="#" class="dropdown-item small py-1 review-coa-option"
+                            data-txn-id="${txnId}"
+                            data-code="${item.code}"
+                            data-name="${item.name}"
+                            data-section="${item.section}">
+                            <code>${item.code}</code> ${item.name}
+                            <small class="text-muted d-block">${item.section}</small>
+                        </a>`
+                    ).join('');
                 }
-                resultsDiv.innerHTML = data.items.map(item =>
-                    `<a href="#" class="dropdown-item small py-1 review-coa-option"
-                        data-txn-id="${txnId}"
-                        data-code="${item.code}"
-                        data-name="${item.name}"
-                        data-section="${item.section}">
-                        <code>${item.code}</code> ${item.name}
-                        <small class="text-muted d-block">${item.section}</small>
-                    </a>`
-                ).join('');
+                html += '<div class="dropdown-divider"></div>' +
+                    '<a href="#" class="dropdown-item small py-1 text-primary fw-bold review-coa-create-new" data-txn-id="' + txnId + '" data-query="' + query.replace(/"/g, '&quot;') + '">' +
+                    '<i class="bi bi-plus-circle me-1"></i> Create New Account...</a>';
+                resultsDiv.innerHTML = html;
             });
         }, 250);
     });
@@ -2698,22 +2703,27 @@ function buildGroupedView() {
         }
 
         groupSearchTimers[groupId] = setTimeout(function() {
-            fetch('{% url "core:coa_search_api" %}?entity_type=' + entityType + '&q=' + encodeURIComponent(query))
+            fetch('{% url "core:entity_coa_search_api" pk=fy.pk %}?q=' + encodeURIComponent(query))
             .then(resp => resp.json())
             .then(data => {
+                let html = '';
                 if (data.items.length === 0) {
-                    resultsDiv.innerHTML = '<div class="text-center text-muted py-2"><small>No matching accounts found.</small></div>';
-                    return;
+                    html = '<div class="text-center text-muted py-2"><small>No matching accounts found.</small></div>';
+                } else {
+                    html = data.items.map(item =>
+                        '<a href="#" class="dropdown-item small py-1 group-coa-option" ' +
+                        'data-group-id="' + groupId + '" ' +
+                        'data-code="' + item.code + '" ' +
+                        'data-name="' + item.name + '">' +
+                        '<code>' + item.code + '</code> ' + item.name +
+                        '<small class="text-muted d-block">' + item.section + '</small>' +
+                        '</a>'
+                    ).join('');
                 }
-                resultsDiv.innerHTML = data.items.map(item =>
-                    '<a href="#" class="dropdown-item small py-1 group-coa-option" ' +
-                    'data-group-id="' + groupId + '" ' +
-                    'data-code="' + item.code + '" ' +
-                    'data-name="' + item.name + '">' +
-                    '<code>' + item.code + '</code> ' + item.name +
-                    '<small class="text-muted d-block">' + item.section + '</small>' +
-                    '</a>'
-                ).join('');
+                html += '<div class="dropdown-divider"></div>' +
+                    '<a href="#" class="dropdown-item small py-1 text-primary fw-bold review-coa-create-new" data-group-id="' + groupId + '" data-query="' + query.replace(/"/g, '&quot;') + '">' +
+                    '<i class="bi bi-plus-circle me-1"></i> Create New Account...</a>';
+                resultsDiv.innerHTML = html;
             });
         }, 250);
     });
@@ -2852,22 +2862,27 @@ function bulkApproveGroup(accountCode, groupId, btn) {
         }
 
         txnSearchTimers[txnId] = setTimeout(function() {
-            fetch('{% url "core:coa_search_api" %}?entity_type=' + entityType + '&q=' + encodeURIComponent(query))
+            fetch('{% url "core:entity_coa_search_api" pk=fy.pk %}?q=' + encodeURIComponent(query))
             .then(resp => resp.json())
             .then(data => {
+                let html = '';
                 if (data.items.length === 0) {
-                    resultsDiv.innerHTML = '<div class="text-center text-muted py-2"><small>No matching accounts.</small></div>';
-                    return;
+                    html = '<div class="text-center text-muted py-2"><small>No matching accounts.</small></div>';
+                } else {
+                    html = data.items.map(item =>
+                        '<a href="#" class="dropdown-item small py-1 txn-coa-option" ' +
+                        'data-txn-id="' + txnId + '" ' +
+                        'data-code="' + item.code + '" ' +
+                        'data-name="' + item.name + '">' +
+                        '<code>' + item.code + '</code> ' + item.name +
+                        '<small class="text-muted d-block">' + item.section + '</small>' +
+                        '</a>'
+                    ).join('');
                 }
-                resultsDiv.innerHTML = data.items.map(item =>
-                    '<a href="#" class="dropdown-item small py-1 txn-coa-option" ' +
-                    'data-txn-id="' + txnId + '" ' +
-                    'data-code="' + item.code + '" ' +
-                    'data-name="' + item.name + '">' +
-                    '<code>' + item.code + '</code> ' + item.name +
-                    '<small class="text-muted d-block">' + item.section + '</small>' +
-                    '</a>'
-                ).join('');
+                html += '<div class="dropdown-divider"></div>' +
+                    '<a href="#" class="dropdown-item small py-1 text-primary fw-bold review-coa-create-new" data-txn-id="' + txnId + '" data-query="' + query.replace(/\"/g, '&quot;') + '">' +
+                    '<i class="bi bi-plus-circle me-1"></i> Create New Account...</a>';
+                resultsDiv.innerHTML = html;
             });
         }, 250);
     });
@@ -3138,6 +3153,247 @@ document.getElementById('coaSectionFilter')?.addEventListener('change', filterCO
     document.addEventListener('visibilitychange', function() {
         polling = !document.hidden;
         if (polling) pollBadge();
+    });
+})();
+</script>
+
+<!-- Quick-Add Account Modal for Bank Statement Review -->
+<div class="modal fade" id="reviewQuickAddModal" tabindex="-1" aria-labelledby="reviewQuickAddLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h6 class="modal-title" id="reviewQuickAddLabel">
+                    <i class="bi bi-plus-circle me-1"></i> Create New Account
+                </h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="rqa-context-type" value="">
+                <input type="hidden" id="rqa-context-id" value="">
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Section</label>
+                    <select id="rqa-section" class="form-select form-select-sm">
+                        <option value="">-- Select section --</option>
+                        <option value="revenue" data-range-min="0" data-range-max="999">Revenue</option>
+                        <option value="cost_of_sales" data-range-min="0" data-range-max="999">Cost of Sales</option>
+                        <option value="expenses" data-range-min="1000" data-range-max="1999">Expenses</option>
+                        <option value="assets" data-range-min="2000" data-range-max="2999">Assets</option>
+                        <option value="liabilities" data-range-min="3000" data-range-max="3999">Liabilities</option>
+                        <option value="equity" data-range-min="4000" data-range-max="4999">Equity</option>
+                        <option value="capital_accounts" data-range-min="4000" data-range-max="4999">Capital Accounts</option>
+                        <option value="pl_appropriation" data-range-min="4000" data-range-max="4999">P&amp;L Appropriation</option>
+                        <option value="suspense" data-range-min="9000" data-range-max="9999">Suspense</option>
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Account Name</label>
+                    <input type="text" id="rqa-name" class="form-control form-control-sm" placeholder="e.g. Motor Vehicle Expenses">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Account Code</label>
+                    <input type="text" id="rqa-code" class="form-control form-control-sm" placeholder="Auto-suggested...">
+                    <small id="rqa-code-hint" class="text-muted"></small>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Tax Code</label>
+                    <select id="rqa-tax" class="form-select form-select-sm">
+                        <option value="">-- Optional --</option>
+                        <option value="GST">GST</option>
+                        <option value="FRE">FRE (GST Free)</option>
+                        <option value="INP">INP (Input Taxed)</option>
+                        <option value="CAP">CAP (Capital)</option>
+                        <option value="ADS">ADS (Adjustments)</option>
+                        <option value="ITS">ITS (Input Tax Sales)</option>
+                        <option value="N-T">N-T (Not Reportable)</option>
+                    </select>
+                </div>
+                <div id="rqa-error" class="alert alert-danger d-none" style="font-size: 0.85rem;"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary btn-sm" id="rqa-submit">
+                    <i class="bi bi-plus-lg"></i> Create &amp; Assign
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// --- Quick-Add Account from Bank Statement Review ---
+(function() {
+    const SUGGEST_URL = '{% url "core:entity_coa_suggest_code" pk=fy.pk %}';
+    const CREATE_URL = '{% url "integrations:quick_add_entity_account" %}';
+    const ENTITY_PK = '{{ entity.pk }}';
+    let suggestTimer = null;
+
+    function suggestCode() {
+        const section = document.getElementById('rqa-section').value;
+        const name = document.getElementById('rqa-name').value.trim();
+        if (!section || !name) {
+            document.getElementById('rqa-code-hint').textContent = '';
+            return;
+        }
+        if (suggestTimer) clearTimeout(suggestTimer);
+        suggestTimer = setTimeout(function() {
+            fetch(SUGGEST_URL + '?section=' + encodeURIComponent(section) + '&account_name=' + encodeURIComponent(name))
+            .then(r => r.json())
+            .then(data => {
+                if (data.suggested_code) {
+                    document.getElementById('rqa-code').value = data.suggested_code;
+                    document.getElementById('rqa-code-hint').textContent = data.position_info || '';
+                }
+            });
+        }, 300);
+    }
+
+    document.getElementById('rqa-section').addEventListener('change', suggestCode);
+    document.getElementById('rqa-name').addEventListener('input', suggestCode);
+
+    // Open the modal when "Create New Account..." is clicked
+    document.addEventListener('click', function(e) {
+        const link = e.target.closest('.review-coa-create-new');
+        if (!link) return;
+        e.preventDefault();
+        e.stopPropagation();
+
+        // Store context (which txn or group triggered this)
+        const txnId = link.dataset.txnId || '';
+        const groupId = link.dataset.groupId || '';
+        document.getElementById('rqa-context-type').value = txnId ? 'txn' : 'group';
+        document.getElementById('rqa-context-id').value = txnId || groupId;
+
+        // Pre-fill the name from the search query
+        const query = link.dataset.query || '';
+        document.getElementById('rqa-name').value = query;
+        document.getElementById('rqa-section').value = '';
+        document.getElementById('rqa-code').value = '';
+        document.getElementById('rqa-code-hint').textContent = '';
+        document.getElementById('rqa-tax').value = '';
+        document.getElementById('rqa-error').classList.add('d-none');
+
+        // Close any open Bootstrap dropdowns first
+        document.querySelectorAll('.dropdown-toggle').forEach(function(btn) {
+            const dd = bootstrap.Dropdown.getInstance(btn);
+            if (dd) dd.hide();
+        });
+
+        const modal = new bootstrap.Modal(document.getElementById('reviewQuickAddModal'));
+        modal.show();
+
+        // If name was pre-filled, trigger suggestion after a short delay
+        if (query) {
+            setTimeout(function() { document.getElementById('rqa-section').focus(); }, 300);
+        }
+    });
+
+    // Submit the Quick-Add
+    document.getElementById('rqa-submit').addEventListener('click', function() {
+        const section = document.getElementById('rqa-section').value;
+        const name = document.getElementById('rqa-name').value.trim();
+        const code = document.getElementById('rqa-code').value.trim();
+        const tax = document.getElementById('rqa-tax').value;
+        const errorDiv = document.getElementById('rqa-error');
+
+        if (!section || !name || !code) {
+            errorDiv.textContent = 'Section, name, and code are all required.';
+            errorDiv.classList.remove('d-none');
+            return;
+        }
+
+        this.disabled = true;
+        this.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Creating...';
+
+        fetch(CREATE_URL, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': CSRF_TOKEN,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                entity_pk: ENTITY_PK,
+                section: section,
+                account_code: code,
+                account_name: name,
+                tax_code: tax,
+            })
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (!data.success) {
+                errorDiv.textContent = data.error || 'Failed to create account.';
+                errorDiv.classList.remove('d-none');
+                document.getElementById('rqa-submit').disabled = false;
+                document.getElementById('rqa-submit').innerHTML = '<i class="bi bi-plus-lg"></i> Create & Assign';
+                return;
+            }
+
+            // Account created — now assign it
+            const createdCode = data.account.code;
+            const createdName = data.account.name;
+            const contextType = document.getElementById('rqa-context-type').value;
+            const contextId = document.getElementById('rqa-context-id').value;
+
+            if (contextType === 'group' && contextId) {
+                // Update the group override fields
+                const overrideCodeEl = document.getElementById(contextId + '-override-code');
+                const overrideNameEl = document.getElementById(contextId + '-override-name');
+                if (overrideCodeEl) overrideCodeEl.value = createdCode;
+                if (overrideNameEl) overrideNameEl.value = createdName;
+
+                const currentSpan = document.getElementById(contextId + '-current');
+                if (currentSpan) {
+                    currentSpan.innerHTML = 'Changed to: <code class="text-success">' + createdCode + '</code> <strong>' + createdName + '</strong> <span class="badge bg-success" style="font-size:0.65rem;">NEW</span>';
+                }
+
+                const card = document.getElementById(contextId);
+                if (card) {
+                    const headerStrong = card.querySelector('.card-header strong');
+                    if (headerStrong) {
+                        headerStrong.textContent = createdCode + ' \u2014 ' + createdName;
+                        headerStrong.classList.add('text-success');
+                    }
+                    // If unclassified, add approve button
+                    const actionBar = card.querySelector('.card-header .d-flex.gap-2');
+                    const warningSpan = actionBar ? actionBar.querySelector('.text-warning') : null;
+                    if (warningSpan) {
+                        warningSpan.outerHTML = '<button class="btn btn-success btn-sm ms-auto" onclick="event.stopPropagation(); bulkApproveGroup(\'\', \'' + contextId + '\', this)">' +
+                            '<i class="bi bi-check-all me-1"></i>Approve All</button>';
+                    }
+                }
+            } else if (contextType === 'txn' && contextId) {
+                // Update the pending row form fields
+                const pendingRow = document.getElementById('pending-row-' + contextId);
+                if (pendingRow) {
+                    const form = pendingRow.querySelector('.review-approve-form');
+                    if (form) {
+                        const codeInput = form.querySelector('.review-code-input');
+                        const nameInput = form.querySelector('.review-name-input');
+                        if (codeInput) codeInput.value = createdCode;
+                        if (nameInput) nameInput.value = createdName;
+                    }
+                    const coaBtn = pendingRow.querySelector('.review-coa-btn');
+                    if (coaBtn) coaBtn.textContent = createdCode + ' - ' + createdName;
+                    const codeEl = pendingRow.querySelector('.review-ai-code');
+                    if (codeEl) codeEl.textContent = createdCode;
+                }
+                // Rebuild grouped view
+                if (typeof buildGroupedView === 'function') buildGroupedView();
+            }
+
+            // Close the modal
+            const modal = bootstrap.Modal.getInstance(document.getElementById('reviewQuickAddModal'));
+            if (modal) modal.hide();
+
+            document.getElementById('rqa-submit').disabled = false;
+            document.getElementById('rqa-submit').innerHTML = '<i class="bi bi-plus-lg"></i> Create & Assign';
+        })
+        .catch(function(err) {
+            errorDiv.textContent = 'Network error: ' + err.message;
+            errorDiv.classList.remove('d-none');
+            document.getElementById('rqa-submit').disabled = false;
+            document.getElementById('rqa-submit').innerHTML = '<i class="bi bi-plus-lg"></i> Create & Assign';
+        });
     });
 })();
 </script>

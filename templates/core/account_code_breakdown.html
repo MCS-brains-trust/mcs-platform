@@ -21,6 +21,7 @@
         {{ fy.entity.entity_name }} &middot; {{ fy.year_label }} &middot;
         Mapped to: <strong>{{ mapped_label }}</strong> &middot;
         {{ entry_count }} entr{{ entry_count|pluralize:"y,ies" }}
+        {% if bank_txn_count %} &middot; {{ bank_txn_count }} bank transaction{{ bank_txn_count|pluralize }}{% endif %}
     </small>
 </div>
 
@@ -35,7 +36,11 @@
 </div>
 {% endif %}
 
-<div class="card">
+<!-- Trial Balance Lines -->
+<div class="card mb-4">
+    <div class="card-header py-2">
+        <h6 class="mb-0"><i class="bi bi-table me-1"></i> Trial Balance Lines</h6>
+    </div>
     <div class="card-body p-0">
         <div class="table-responsive">
             <table class="table table-sm table-hover mb-0" style="font-size: 0.9rem;">
@@ -101,6 +106,82 @@
     </div>
 </div>
 
+<!-- Bank Statement Transactions -->
+{% if bank_txns %}
+<div class="card mb-4">
+    <div class="card-header py-2 d-flex justify-content-between align-items-center">
+        <h6 class="mb-0"><i class="bi bi-bank me-1"></i> Bank Statement Transactions <span class="badge bg-warning text-dark ms-2">{{ bank_txn_count }}</span></h6>
+        <small class="text-muted">Individual transactions coded to this account</small>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0" style="font-size: 0.85rem;">
+                <thead class="table-light">
+                    <tr class="border-bottom border-2 border-dark">
+                        <th style="width: 40px;" class="text-center">#</th>
+                        <th style="width: 100px;">Date</th>
+                        <th>Description</th>
+                        <th class="text-center" style="width: 100px;">Tax Type</th>
+                        <th class="text-end" style="width: 110px;">GST</th>
+                        <th class="text-end" style="width: 110px;">Net</th>
+                        <th class="text-end" style="width: 120px;">Amount (Gross)</th>
+                        <th class="text-center" style="width: 100px;">Source</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for txn in bank_txns %}
+                    <tr>
+                        <td class="text-center text-muted">{{ forloop.counter }}</td>
+                        <td class="text-muted">{{ txn.date }}</td>
+                        <td>{{ txn.description }}</td>
+                        <td class="text-center">
+                            {% if txn.confirmed_tax_type %}
+                            <span class="badge bg-light text-dark" style="font-size: 0.7rem;">{{ txn.confirmed_tax_type }}</span>
+                            {% else %}
+                            <span class="text-muted">—</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            {% if txn.gst_amount and txn.gst_amount != 0 %}
+                            {{ txn.gst_amount|floatformat:2|intcomma }}
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            {% if txn.net_amount and txn.net_amount != 0 %}
+                            {{ txn.net_amount|floatformat:2|intcomma }}
+                            {% endif %}
+                        </td>
+                        <td class="text-end {% if txn.amount < 0 %}text-danger{% else %}text-success{% endif %}">
+                            {% if txn.amount < 0 %}-{% endif %}${{ txn.amount|floatformat:2|intcomma }}
+                        </td>
+                        <td class="text-center">
+                            <span class="badge bg-warning text-dark" style="font-size: 0.7rem;">
+                                <i class="bi bi-bank me-1"></i>{{ txn.job.file_name|truncatechars:20 }}
+                            </span>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot>
+                    <tr class="border-top border-2 border-dark fw-bold" style="background-color: #fff8e1;">
+                        <td></td>
+                        <td></td>
+                        <td>Total ({{ bank_txn_count }} transaction{{ bank_txn_count|pluralize }})</td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td class="text-end {% if bank_txn_total < 0 %}text-danger{% else %}text-success{% endif %}">
+                            {% if bank_txn_total < 0 %}-{% endif %}${{ bank_txn_total|floatformat:2|intcomma }}
+                        </td>
+                        <td></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 <div class="mt-3">
     <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-primary btn-sm">
         <i class="bi bi-arrow-left"></i> Back to Workspace
@@ -128,8 +209,9 @@
                         from account <code>{{ line.account_code }}</code>.
                     </p>
                     <div class="mb-3">
-                        <label for="newAccount-{{ forloop.counter }}" class="form-label fw-bold">Reallocate to:</label>
-                        <select name="new_account_code" id="newAccount-{{ forloop.counter }}" class="form-select form-select-sm" required>
+                        <label class="form-label fw-bold">Reallocate to:</label>
+                        <input type="text" class="form-control form-control-sm mb-2 reallocate-search" placeholder="Search by code or name..." data-modal="{{ forloop.counter }}">
+                        <select name="new_account_code" id="newAccount-{{ forloop.counter }}" class="form-select form-select-sm" required size="8">
                             <option value="">-- Select account --</option>
                             {% for acct in available_accounts %}
                             <option value="{{ acct.account_code }}">{{ acct.account_code }} &mdash; {{ acct.account_name }}{% if acct.maps_to %} ({{ acct.maps_to.line_item_label }}){% endif %}</option>
@@ -148,15 +230,30 @@
 {% endfor %}
 
 <script>
-// Make the account select searchable by filtering on typing
-document.querySelectorAll('[id^="newAccount-"]').forEach(function(select) {
-    // Add a search input above the select when modal opens
-    const modal = select.closest('.modal');
-    if (modal) {
-        modal.addEventListener('shown.bs.modal', function() {
-            select.focus();
+// Make the reallocation select searchable
+document.querySelectorAll('.reallocate-search').forEach(function(input) {
+    input.addEventListener('input', function() {
+        const query = this.value.toLowerCase();
+        const modalNum = this.dataset.modal;
+        const select = document.getElementById('newAccount-' + modalNum);
+        const options = select.querySelectorAll('option');
+        options.forEach(function(opt) {
+            if (opt.value === '') {
+                opt.style.display = '';
+                return;
+            }
+            const text = opt.textContent.toLowerCase();
+            opt.style.display = text.includes(query) ? '' : 'none';
         });
-    }
+    });
+});
+
+// Focus search input when modal opens
+document.querySelectorAll('[id^="reallocateModal-"]').forEach(function(modal) {
+    modal.addEventListener('shown.bs.modal', function() {
+        const searchInput = modal.querySelector('.reallocate-search');
+        if (searchInput) searchInput.focus();
+    });
 });
 </script>
 {% endblock %}

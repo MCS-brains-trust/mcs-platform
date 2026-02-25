@@ -1845,12 +1845,24 @@ def account_code_breakdown(request, pk, account_code):
     mapped_label = first_line.mapped_line_item.line_item_label if first_line.mapped_line_item else 'Unmapped'
 
     # Get available accounts for reallocation dropdown
-    # Use ChartOfAccount for the entity type to show meaningful account names
-    from .models import ChartOfAccount
-    available_accounts = ChartOfAccount.objects.filter(
-        entity_type=fy.entity.entity_type,
+    # Use EntityChartOfAccount for the entity's own COA
+    from .models import EntityChartOfAccount
+    available_accounts = EntityChartOfAccount.objects.filter(
+        entity=fy.entity,
         is_active=True,
     ).select_related('maps_to').order_by('account_code')
+
+    # Fetch individual bank statement transactions coded to this account
+    from review.models import PendingTransaction
+    bank_txns = PendingTransaction.objects.filter(
+        job__entity=fy.entity,
+        confirmed_code=account_code,
+        is_confirmed=True,
+    ).order_by('date', 'description')
+
+    bank_txn_total = Decimal('0')
+    for bt in bank_txns:
+        bank_txn_total += bt.amount or Decimal('0')
 
     return render(request, 'core/account_code_breakdown.html', {
         'fy': fy,
@@ -1866,6 +1878,9 @@ def account_code_breakdown(request, pk, account_code):
         'prior_year': prior_year,
         'entry_count': lines.count(),
         'available_accounts': available_accounts,
+        'bank_txns': bank_txns,
+        'bank_txn_count': bank_txns.count(),
+        'bank_txn_total': bank_txn_total,
     })
 
 
@@ -1875,7 +1890,7 @@ def tb_line_reallocate(request, pk):
     if request.method != 'POST':
         return HttpResponseNotAllowed(['POST'])
 
-    from .models import ChartOfAccount
+    from .models import EntityChartOfAccount
     line = get_object_or_404(TrialBalanceLine, pk=pk)
     fy = line.financial_year
 
@@ -1890,9 +1905,9 @@ def tb_line_reallocate(request, pk):
     old_code = line.account_code
     old_name = line.account_name
 
-    # Look up the target account from ChartOfAccount
-    coa_entry = ChartOfAccount.objects.filter(
-        entity_type=fy.entity.entity_type,
+    # Look up the target account from EntityChartOfAccount (entity-specific COA)
+    coa_entry = EntityChartOfAccount.objects.filter(
+        entity=fy.entity,
         account_code=new_account_code,
         is_active=True,
     ).select_related('maps_to').first()
@@ -5139,6 +5154,40 @@ def coa_search_api(request):
     for a in qs[:200]:
         items.append({
             "id": str(a.maps_to.pk) if a.maps_to else "",
+            "code": a.account_code,
+            "name": a.account_name,
+            "section": a.get_section_display(),
+            "section_value": a.section,
+            "classification": a.classification or "",
+            "tax_code": a.tax_code or "",
+            "maps_to_id": str(a.maps_to.pk) if a.maps_to else "",
+            "mapping_label": a.maps_to.line_item_label if a.maps_to else "Unmapped",
+        })
+    return JsonResponse({"items": items})
+
+
+@login_required
+def entity_coa_search_api(request, pk):
+    """JSON API for searching an entity's own chart of accounts.
+    Used by the bank statement review Change Account dropdown.
+    Searches EntityChartOfAccount by code or name.
+    """
+    fy = get_financial_year_for_user(request, pk)
+    q = request.GET.get("q", "")
+
+    qs = EntityChartOfAccount.objects.filter(
+        entity=fy.entity, is_active=True
+    ).select_related("maps_to").order_by("section", "account_code")
+
+    if q:
+        qs = qs.filter(
+            Q(account_code__icontains=q) | Q(account_name__icontains=q)
+        )
+
+    items = []
+    for a in qs[:200]:
+        items.append({
+            "id": str(a.pk),
             "code": a.account_code,
             "name": a.account_name,
             "section": a.get_section_display(),

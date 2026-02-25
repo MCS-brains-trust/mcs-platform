@@ -167,6 +167,7 @@ urlpatterns = [
 
     # COA Search API (for review tab dropdown)
     path("api/coa-search/", views.coa_search_api, name="coa_search_api"),
+    path("years/<uuid:pk>/api/entity-coa-search/", views.entity_coa_search_api, name="entity_coa_search_api"),
 
     # XRM Pull (Xero Practice Manager) — now entity-level
     path("entities/<uuid:pk>/xrm-search/", views.xrm_search, name="xrm_search"),
