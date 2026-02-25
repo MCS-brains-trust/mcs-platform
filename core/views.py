@@ -3827,8 +3827,18 @@ def gst_activity_statement(request, pk):
             else:
                 tax_code = base_tax
 
-        # Use closing balance; revenue is typically credit (negative in TB)
-        amount = abs(line.closing_balance)
+        # Use closing balance; fall back to debit/credit when closing_balance is 0
+        # (bank statement TB lines only set debit/credit, not closing_balance)
+        if line.closing_balance != 0:
+            amount = abs(line.closing_balance)
+        else:
+            amount = max(line.debit, line.credit)
+
+        # BAS requires GROSS amounts (including GST).
+        # Bank statement TB lines store NET amounts (ex-GST) with GST in 9110/9100.
+        # For GST-coded lines, gross up: net * 11/10
+        if tax_code in ('INP', 'GST') and line.source == 'bank_statement':
+            amount = (amount * Decimal('11') / Decimal('10')).quantize(Decimal('0.01'))
 
         # Section values are lowercase DB values from StatementSection TextChoices
         if section in ("revenue", "Revenue"):
@@ -4029,7 +4039,16 @@ def gst_activity_statement_download(request, pk):
             else:
                 tax_code = base_tax
 
-        amount = abs(line.closing_balance)
+        # Use closing balance; fall back to debit/credit when closing_balance is 0
+        if line.closing_balance != 0:
+            amount = abs(line.closing_balance)
+        else:
+            amount = max(line.debit, line.credit)
+
+        # BAS requires GROSS amounts (including GST).
+        # Bank statement TB lines store NET amounts (ex-GST) with GST in 9110/9100.
+        if tax_code in ('INP', 'GST') and line.source == 'bank_statement':
+            amount = (amount * Decimal('11') / Decimal('10')).quantize(Decimal('0.01'))
 
         bas_label = ""
         if section in ("revenue", "Revenue"):
@@ -4986,16 +5005,22 @@ def review_approve_transaction(request, pk):
                     "account_name": name,
                     "debit": net_for_tb if amount > 0 else Decimal("0"),
                     "credit": net_for_tb if amount < 0 else Decimal("0"),
+                    "closing_balance": net_for_tb if amount > 0 else -net_for_tb,
                     "tax_type": tax_type,
+                    "source": "bank_statement",
                 },
             )
             if not created:
                 if amount > 0:
                     tb_line.debit += net_for_tb
+                    tb_line.closing_balance += net_for_tb
                 else:
                     tb_line.credit += net_for_tb
+                    tb_line.closing_balance -= net_for_tb
                 if not tb_line.tax_type:
                     tb_line.tax_type = tax_type
+                if not tb_line.source:
+                    tb_line.source = 'bank_statement'
                 tb_line.save()
             tb_updated = True
 
@@ -5013,11 +5038,14 @@ def review_approve_transaction(request, pk):
                             "account_name": gst_name,
                             "debit": Decimal("0"),
                             "credit": gst_amt,
+                            "closing_balance": -gst_amt,
                             "tax_type": "GST on Income",
+                            "source": "bank_statement",
                         },
                     )
                     if not gst_created:
                         gst_line.credit += gst_amt
+                        gst_line.closing_balance -= gst_amt
                         gst_line.save()
                 else:
                     # Expense: GST Paid (asset) - code 9110
@@ -5030,11 +5058,14 @@ def review_approve_transaction(request, pk):
                             "account_name": gst_name,
                             "debit": gst_amt,
                             "credit": Decimal("0"),
+                            "closing_balance": gst_amt,
                             "tax_type": "GST on Expenses",
+                            "source": "bank_statement",
                         },
                     )
                     if not gst_created:
                         gst_line.debit += gst_amt
+                        gst_line.closing_balance += gst_amt
                         gst_line.save()
 
     if request.headers.get("X-Requested-With") == "XMLHttpRequest":
@@ -5205,6 +5236,13 @@ def review_approve_all(request, pk):
             txn.confirmed_name = txn.ai_suggested_name
             txn.confirmed_tax_type = txn.ai_suggested_tax_type
             txn.is_confirmed = True
+
+            # Preserve GST amounts
+            if txn.ai_suggested_tax_type in ('GST on Income', 'GST on Expenses'):
+                txn.confirmed_gst_amount = txn.gst_amount
+            else:
+                txn.confirmed_gst_amount = Decimal('0.00')
+
             txn.save()
             count += 1
 
@@ -5212,23 +5250,76 @@ def review_approve_all(request, pk):
             amount = txn.amount
             code = txn.confirmed_code
             name = txn.confirmed_name
+            tax_type = txn.confirmed_tax_type or ''
+            has_gst = txn.confirmed_gst_amount and txn.confirmed_gst_amount > 0
+
             if code and amount != 0:
+                # Push the net amount (ex-GST) to the expense/income account
+                net_for_tb = txn.net_amount if has_gst else abs(amount)
+
                 tb_line, created = TrialBalanceLine.objects.get_or_create(
                     financial_year=fy,
                     account_code=code,
                     defaults={
                         "account_name": name,
-                        "debit": max(Decimal("0"), amount),
-                        "credit": abs(min(Decimal("0"), amount)),
+                        "debit": net_for_tb if amount > 0 else Decimal("0"),
+                        "credit": net_for_tb if amount < 0 else Decimal("0"),
+                        "closing_balance": net_for_tb if amount > 0 else -net_for_tb,
+                        "tax_type": tax_type,
+                        "source": "bank_statement",
                     },
                 )
                 if not created:
                     if amount > 0:
-                        tb_line.debit += amount
+                        tb_line.debit += net_for_tb
+                        tb_line.closing_balance += net_for_tb
                     else:
-                        tb_line.credit += abs(amount)
+                        tb_line.credit += net_for_tb
+                        tb_line.closing_balance -= net_for_tb
+                    if not tb_line.tax_type:
+                        tb_line.tax_type = tax_type
+                    if not tb_line.source:
+                        tb_line.source = 'bank_statement'
                     tb_line.save()
                 tb_count += 1
+
+                # If GST applies, also post the GST component to the GST clearing account
+                if has_gst:
+                    gst_amt = txn.confirmed_gst_amount
+                    if amount > 0:
+                        gst_line, gst_created = TrialBalanceLine.objects.get_or_create(
+                            financial_year=fy,
+                            account_code='9100',
+                            defaults={
+                                "account_name": 'GST Collected',
+                                "debit": Decimal("0"),
+                                "credit": gst_amt,
+                                "closing_balance": -gst_amt,
+                                "tax_type": 'GST on Income',
+                                "source": "bank_statement",
+                            },
+                        )
+                        if not gst_created:
+                            gst_line.credit += gst_amt
+                            gst_line.closing_balance -= gst_amt
+                            gst_line.save()
+                    else:
+                        gst_line, gst_created = TrialBalanceLine.objects.get_or_create(
+                            financial_year=fy,
+                            account_code='9110',
+                            defaults={
+                                "account_name": 'GST Paid',
+                                "debit": gst_amt,
+                                "credit": Decimal("0"),
+                                "closing_balance": gst_amt,
+                                "tax_type": 'GST on Expenses',
+                                "source": "bank_statement",
+                            },
+                        )
+                        if not gst_created:
+                            gst_line.debit += gst_amt
+                            gst_line.closing_balance += gst_amt
+                            gst_line.save()
 
     # Auto-trigger risk engine after bulk approve
     from core.signals import trigger_risk_recalc
@@ -6874,16 +6965,22 @@ def review_bulk_approve_group(request, pk):
                     "account_name": name,
                     "debit": net_for_tb if amount > 0 else Decimal("0"),
                     "credit": net_for_tb if amount < 0 else Decimal("0"),
+                    "closing_balance": net_for_tb if amount > 0 else -net_for_tb,
                     "tax_type": tax_type,
+                    "source": "bank_statement",
                 },
             )
             if not created:
                 if amount > 0:
                     tb_line.debit += net_for_tb
+                    tb_line.closing_balance += net_for_tb
                 else:
                     tb_line.credit += net_for_tb
+                    tb_line.closing_balance -= net_for_tb
                 if not tb_line.tax_type:
                     tb_line.tax_type = tax_type
+                if not tb_line.source:
+                    tb_line.source = 'bank_statement'
                 tb_line.save()
             tb_count += 1
 
@@ -6899,11 +6996,14 @@ def review_bulk_approve_group(request, pk):
                             "account_name": 'GST Collected',
                             "debit": Decimal("0"),
                             "credit": gst_amt,
+                            "closing_balance": -gst_amt,
                             "tax_type": 'GST on Income',
+                            "source": "bank_statement",
                         },
                     )
                     if not gst_created:
                         gst_line.credit += gst_amt
+                        gst_line.closing_balance -= gst_amt
                         gst_line.save()
                 else:
                     # Expense: GST Paid (asset) - code 9110
@@ -6914,11 +7014,14 @@ def review_bulk_approve_group(request, pk):
                             "account_name": 'GST Paid',
                             "debit": gst_amt,
                             "credit": Decimal("0"),
+                            "closing_balance": gst_amt,
                             "tax_type": 'GST on Expenses',
+                            "source": "bank_statement",
                         },
                     )
                     if not gst_created:
                         gst_line.debit += gst_amt
+                        gst_line.closing_balance += gst_amt
                         gst_line.save()
 
     # Get remaining counts
