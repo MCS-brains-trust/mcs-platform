@@ -62,7 +62,6 @@
                         <td class="text-center text-muted">{{ forloop.counter }}</td>
                         <td>
                             {{ line.account_name }}
-                            {% if line.is_adjustment %}<span class="badge bg-info text-dark ms-1" style="font-size: 0.7rem;">Journal</span>{% endif %}
                         </td>
                         <td class="text-end">{% if line.display_dr and line.display_dr != 0 %}{{ line.display_dr|floatformat:2|intcomma }}{% endif %}</td>
                         <td class="text-end">{% if line.display_cr and line.display_cr != 0 %}{{ line.display_cr|floatformat:2|intcomma }}{% endif %}</td>
@@ -73,6 +72,8 @@
                             <span class="badge bg-success" style="font-size: 0.75rem;"><i class="bi bi-file-earmark-excel me-1"></i>TB Import</span>
                             {% elif line.source == 'manual_journal' %}
                             <span class="badge bg-info text-dark" style="font-size: 0.75rem;"><i class="bi bi-journal-text me-1"></i>Manual Journal</span>
+                            {% elif line.source == 'journal_upload' %}
+                            <span class="badge bg-info text-dark" style="font-size: 0.75rem;"><i class="bi bi-journal-arrow-up me-1"></i>Upload Journal</span>
                             {% elif line.source == 'bank_statement' %}
                             <span class="badge bg-warning text-dark" style="font-size: 0.75rem;"><i class="bi bi-bank me-1"></i>Bank Statement</span>
                             {% elif line.source == 'rollover' %}

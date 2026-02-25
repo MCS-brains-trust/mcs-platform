@@ -330,7 +330,7 @@
                         <td>
                             {% if line.risk_flags_list %}<i class="bi bi-exclamation-octagon-fill text-danger me-1" title="{% for rf in line.risk_flags_list %}{{ rf.title }}{% if not forloop.last %}; {% endif %}{% endfor %}"></i>{% endif %}
                             {{ line.account_name }}
-                            {% if line.is_adjustment %}<span class="badge bg-info text-dark ms-1" style="font-size: 0.7rem;">Adj</span>{% endif %}
+
                             {% if not line.mapped_line_item %}<small class="text-danger ms-1"><i class="bi bi-exclamation-triangle"></i></small>{% endif %}
                             {% if line.risk_flags_list %}
                             <div class="mt-1">
