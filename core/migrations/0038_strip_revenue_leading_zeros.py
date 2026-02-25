@@ -42,10 +42,10 @@ def strip_revenue_leading_zeros(apps, schema_editor):
                 account_code=old_code,
             ).update(account_code=new_code)
 
-            # Also update any ClientAccountMappings that map to this entity account
+            # Also update any ClientAccountMappings where the client_account_code matches the old revenue code
             ClientAccountMapping.objects.filter(
                 entity=acct.entity,
-                entity_account=acct,
+                client_account_code=old_code,
             ).update(client_account_code=new_code)
 
             acct.account_code = new_code
@@ -77,7 +77,7 @@ def restore_revenue_leading_zeros(apps, schema_editor):
             ).update(account_code=new_code)
             ClientAccountMapping.objects.filter(
                 entity=acct.entity,
-                entity_account=acct,
+                client_account_code=old_code,
             ).update(client_account_code=new_code)
             acct.account_code = new_code
             acct.save(update_fields=['account_code'])
