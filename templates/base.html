@@ -239,7 +239,7 @@
         </a>
 
         {% if user.can_do_accounting %}
-        <!-- ── ACCOUNTING (accountants, seniors, admins) ── -->
+        <!-- ── ACCOUNTING (accountants, seniors, admin only) ── -->
         <div class="sh-nav-section">Accounting</div>
         <a class="sh-nav-item {% if active_nav == 'audit_library' %}active{% endif %}"
            href="{% url 'core:audit_library' %}">
@@ -247,7 +247,8 @@
         </a>
         {% endif %}
 
-        <!-- ── CLIENT CORRESPONDENCE (all roles) ── -->
+        {% if user.is_office_admin %}
+        <!-- ── CLIENT CORRESPONDENCE (office admin only) ── -->
         <div class="sh-nav-section">Client Correspondence</div>
         <a class="sh-nav-item {% if active_nav == 'incoming' %}active{% endif %}"
            href="{% url 'office_admin:correspondence_incoming' %}">
@@ -269,7 +270,7 @@
             {% if sidebar_documents_in %}<span class="count-badge blue">{{ sidebar_documents_in }}</span>{% endif %}
         </a>
 
-        <!-- ── ASIC / ATO (all roles) ── -->
+        <!-- ── ASIC / ATO (office admin only) ── -->
         <div class="sh-nav-section">ASIC / ATO</div>
         <a class="sh-nav-item {% if active_nav == 'noa' %}active{% endif %}"
            href="{% url 'office_admin:noa_tracker' %}">
@@ -289,7 +290,7 @@
             <i class="bi bi-building-fill-gear"></i> Company Register
         </a>
 
-        <!-- ── DEBTORS (all roles) ── -->
+        <!-- ── DEBTORS (office admin only) ── -->
         <div class="sh-nav-section">Debtors</div>
         <a class="sh-nav-item {% if active_nav == 'aged_receivables' %}active{% endif %}"
            href="{% url 'office_admin:aged_receivables' %}">
@@ -308,6 +309,7 @@
            href="{% url 'office_admin:payment_plans' %}">
             <i class="bi bi-credit-card-2-front-fill"></i> Payment Plans
         </a>
+        {% endif %}
 
         {% if user.is_admin %}
         <!-- ── ADMIN (admin only) ── -->
@@ -339,14 +341,14 @@
         {% endif %}
     </div>
 
-    <!-- User profile at bottom -->
-    <div class="sh-sidebar-user">
+    <!-- User profile at bottom (clickable to profile page) -->
+    <a href="{% url 'accounts:profile' %}" class="sh-sidebar-user" style="text-decoration: none; color: inherit;">
         <div class="sh-user-avatar">{{ user.first_name|first|default:"?" }}{{ user.last_name|first|default:"" }}</div>
         <div class="sh-user-info">
             <div class="sh-user-name">{{ user.get_full_name|default:user.username }}</div>
             <div class="sh-user-email">{{ user.email }}</div>
         </div>
-    </div>
+    </a>
 </nav>
 
 <!-- Mobile overlay -->
