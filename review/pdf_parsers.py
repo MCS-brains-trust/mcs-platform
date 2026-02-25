@@ -259,10 +259,11 @@ ANZ_DATE_RE = re.compile(
 )
 
 # ANZ debit line: desc amount blank balance  (amount in debits col, "blank" in credits)
-ANZ_DEBIT_RE = re.compile(r"^(.*?)\s+([\d,]+\.\d{2})\s+blank\s+([\d,]+\.\d{2})$")
+# Balance may have DR/CR suffix for overdraft accounts, e.g. "20,078.79DR"
+ANZ_DEBIT_RE = re.compile(r"^(.*?)\s+([\d,]+\.\d{2})\s+blank\s+([\d,]+\.\d{2})(?:DR|CR)?$")
 
 # ANZ credit line: desc blank amount balance  ("blank" in debits, amount in credits)
-ANZ_CREDIT_RE = re.compile(r"^(.*?)\s+blank\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})$")
+ANZ_CREDIT_RE = re.compile(r"^(.*?)\s+blank\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})(?:DR|CR)?$")
 
 
 def _anz_date_to_iso(date_str, year):
@@ -280,53 +281,65 @@ def parse_anz_statement(pdf_content):
     all_lines = []
     year = str(date.today().year)
 
-    # Parse header from page 1
-    if pages:
-        for line in pages[0][1].split("\n"):
-            # Period: "02 APRIL 2024 TO 02 OCTOBER 2024"
-            pm = re.search(
-                r"(\d{1,2}\s+\w+\s+\d{4})\s+TO\s+(\d{1,2}\s+\w+\s+\d{4})", line
-            )
-            if pm:
-                result["period_start"] = pm.group(1)
-                result["period_end"] = pm.group(2)
-                ym = re.findall(r"(\d{4})", line)
-                if ym:
-                    year = ym[-1]
+    # Parse header info from ALL pages (cover page may split info across lines)
+    # We scan all pages for header metadata but stop at the first match for each field
+    for page_idx, page_text in pages:
+        for line in page_text.split("\n"):
+            # Period: "02 APRIL 2024 TO 02 OCTOBER 2024" or "30 SEPTEMBER 2025 TO 31 OCTOBER 2025"
+            if not result["period_start"]:
+                pm = re.search(
+                    r"(\d{1,2}\s+\w+\s+\d{4})\s+TO\s+(\d{1,2}\s+\w+\s+\d{4})", line
+                )
+                if pm:
+                    result["period_start"] = pm.group(1)
+                    result["period_end"] = pm.group(2)
+                    ym = re.findall(r"(\d{4})", line)
+                    if ym:
+                        year = ym[-1]
 
-            # BSB: "Branch number (BSB) 013-304"
-            bsb_m = re.search(r"(?:BSB\)?)\s*(\d{3}-\d{3})", line)
-            if bsb_m:
-                result["bsb"] = bsb_m.group(1)
+            # BSB: "Branch number (BSB) 013-304" or standalone "013-757" line
+            if not result["bsb"]:
+                bsb_m = re.search(r"(?:BSB\)?)\s*(\d{3}-\d{3})", line)
+                if bsb_m:
+                    result["bsb"] = bsb_m.group(1)
+                elif re.match(r"^\d{3}-\d{3}$", line.strip()):
+                    result["bsb"] = line.strip()
 
-            # Account: "Account number 4691-20106"
-            acct_m = re.search(r"Account\s+number\s+([\d-]+)", line)
-            if acct_m:
-                result["account_number"] = acct_m.group(1)
+            # Account number: "Account number 4691-20106" or "Account Number 2805-04405"
+            if not result["account_number"]:
+                acct_m = re.search(r"Account\s+[Nn]umber\s+([\d-]+)", line)
+                if acct_m:
+                    result["account_number"] = acct_m.group(1)
 
-            # Account name: "Account name(s) SCARTON ELIO G"
-            name_m = re.search(r"Account\s+name\(?s?\)?\s+(.+)", line)
-            if name_m:
-                result["account_name"] = name_m.group(1).strip()
+            # Account name: "Account name(s) SCARTON ELIO G" or standalone like "PRO-TEK CABINETS P/L"
+            if not result["account_name"]:
+                name_m = re.search(r"Account\s+name\(?s?\)?\s+(.+)", line)
+                if name_m:
+                    result["account_name"] = name_m.group(1).strip()
 
-            # Opening: "Opening balance +$130,858.83"
-            ob_m = re.search(r"Opening\s+balance\s+[+\-]?\$?([\d,]+\.\d{2})", line)
-            if ob_m:
-                result["opening_balance"] = _amt(ob_m.group(1))
+            # Opening balance: "Opening balance +$130,858.83" or standalone "$29,981.77" after "Opening Balance:"
+            if result["opening_balance"] == 0:
+                ob_m = re.search(r"Opening\s+[Bb]alance\s*:?\s*[+\-]?\$?([\d,]+\.\d{2})", line)
+                if ob_m:
+                    result["opening_balance"] = _amt(ob_m.group(1))
 
-            # Closing: "Closing balance +$346,207.10"
-            cb_m = re.search(r"Closing\s+balance\s+[+\-]?\$?([\d,]+\.\d{2})", line)
-            if cb_m:
-                result["closing_balance"] = _amt(cb_m.group(1))
+            # Closing balance: "Closing balance +$346,207.10" or standalone
+            if result["closing_balance"] == 0:
+                cb_m = re.search(r"Closing\s+[Bb]alance\s*:?\s*[+\-]?\$?([\d,]+\.\d{2})", line)
+                if cb_m:
+                    result["closing_balance"] = _amt(cb_m.group(1))
 
     # Collect transaction lines from all pages
     for page_idx, text in pages:
         lines = text.split("\n")
         in_transactions = False
         for line in lines:
-            # Column header marks start
+            # Column header marks start — support both ANZ One format and Business Extra format
+            # ANZ One: "Date Transaction description Debits ..."
+            # Business Extra: "Date Transaction Details Withdrawals ($) ..."
             if re.match(
-                r"Date\s+Transaction\s+description\s+Debits", line, re.IGNORECASE
+                r"Date\s+Transaction\s+(?:description|Details)\s+(?:Debits|Withdrawals)",
+                line, re.IGNORECASE
             ):
                 in_transactions = True
                 continue
@@ -339,19 +352,33 @@ def parse_anz_statement(pdf_content):
             # Page totals / end markers
             if "TOTALS AT END OF PAGE" in line:
                 continue
-            if "TOTALS AT END OF PERIOD" in line:
-                continue
             # Page number
             if re.match(r"Page\s+\d+\s+of\s+\d+", line):
                 in_transactions = False
                 continue
             # Footer lines
-            if "XPRCAP" in line or "ANZ ONE STATEMENT" in line:
+            if "XPRCAP" in line or "ANZ ONE STATEMENT" in line or "BUSINESS EXTRA STATEMENT" in line:
                 in_transactions = False
                 continue
             if "Account number" in line and page_idx > 0:
                 continue
-            if "Transaction details" in line or "Please retain" in line:
+            if re.match(r"Transaction\s+[Dd]etails", line) or "Please retain" in line:
+                continue
+            # Skip "OPENING BALANCE" line (it's metadata, not a transaction)
+            if "OPENING BALANCE" in line:
+                # But first extract opening balance from it if we haven't yet
+                if result["opening_balance"] == 0:
+                    ob_m = re.search(r"OPENING\s+BALANCE\s+([\d,]+\.\d{2})", line)
+                    if ob_m:
+                        result["opening_balance"] = _amt(ob_m.group(1))
+                continue
+            # Skip TOTALS AT END OF PERIOD but extract closing balance from it
+            if "TOTALS AT END OF PERIOD" in line:
+                if result["closing_balance"] == 0:
+                    # Format: "TOTALS AT END OF PERIOD $285,667.73 $178,520.03 $77,165.93DR"
+                    cb_m = re.search(r"([\d,]+\.\d{2})(?:DR|CR)?\s*$", line)
+                    if cb_m:
+                        result["closing_balance"] = _amt(cb_m.group(1))
                 continue
             if in_transactions:
                 all_lines.append(line.strip())
