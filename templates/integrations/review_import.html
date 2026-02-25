@@ -450,9 +450,14 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Close dropdown on outside click
     document.addEventListener('click', function(e) {
+        // Don't clear activeSearchIdx if clicking inside the Quick-Add modal
+        // (the modal needs activeSearchIdx to assign the new account to the row)
+        const inModal = e.target.closest('#quickAddModal');
         if (!dropdown.contains(e.target) && !e.target.classList.contains('entity-acct-display') && !e.target.closest('.entity-acct-display')) {
             dropdown.classList.remove('show');
-            activeSearchIdx = null;
+            if (!inModal) {
+                activeSearchIdx = null;
+            }
         }
     });
 
@@ -639,6 +644,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // Submit Quick-Add
     document.getElementById('qaSubmit').addEventListener('click', function() {
+        // Capture the target row index now, before any event bubbling can clear it
+        const targetIdx = activeSearchIdx;
         const section = document.getElementById('qaSection').value;
         const code = document.getElementById('qaCode').value.trim();
         const name = document.getElementById('qaName').value.trim();
@@ -686,8 +693,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     maps_to_id: data.account.maps_to_id || '',
                 });
 
-                // Assign to the active row
-                assignEntityAccount(activeSearchIdx, data.account.code, data.account.name, data.account.maps_to_id || '');
+                // Assign to the active row (use captured targetIdx)
+                assignEntityAccount(targetIdx, data.account.code, data.account.name, data.account.maps_to_id || '');
 
                 qaModal.hide();
             } else {
