@@ -12,7 +12,7 @@
         <div class="card">
             <div class="card-header">
                 <h5 class="mb-0"><i class="bi bi-journal-plus"></i> Create Journal Entry</h5>
-                <small class="text-muted">Journals are created as Draft. Post them to apply to the trial balance.</small>
+                <small class="text-muted">Journals are posted directly to the Trial Balance.</small>
             </div>
             <div class="card-body">
                 <form method="post" id="journal-form">
@@ -98,7 +98,7 @@
                         </button>
                         <div class="d-flex gap-2">
                             <button type="submit" class="btn btn-primary">
-                                <i class="bi bi-save"></i> Save as Draft
+                                <i class="bi bi-check-circle"></i> Post to Trial Balance
                             </button>
                             <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary">Cancel</a>
                         </div>

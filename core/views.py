@@ -2377,8 +2377,36 @@ def adjustment_create(request, pk):
             journal.total_credit = total_cr
             journal.save(update_fields=["total_debit", "total_credit"])
 
-            _log_action(request, "adjustment", f"Created journal {journal.reference_number}: {journal.description}", journal)
-            messages.success(request, f"Journal {journal.reference_number} created as Draft.")
+            # Auto-post to Trial Balance immediately
+            for line in lines:
+                mapping = ClientAccountMapping.objects.filter(
+                    entity=fy.entity, client_account_code=line.account_code
+                ).first()
+                mapped_item = mapping.mapped_line_item if mapping else None
+
+                TrialBalanceLine.objects.create(
+                    financial_year=fy,
+                    account_code=line.account_code,
+                    account_name=line.account_name,
+                    opening_balance=Decimal("0"),
+                    debit=line.debit,
+                    credit=line.credit,
+                    closing_balance=line.debit - line.credit,
+                    mapped_line_item=mapped_item,
+                    is_adjustment=True,
+                    source='manual_journal',
+                )
+
+            journal.status = AdjustingJournal.JournalStatus.POSTED
+            journal.posted_by = request.user
+            journal.posted_at = timezone.now()
+            journal.save(update_fields=["status", "posted_by", "posted_at"])
+
+            _log_action(request, "adjustment", f"Created and posted journal {journal.reference_number}: {journal.description}", journal)
+            # Auto-trigger risk engine after journal post
+            from core.signals import trigger_risk_recalc
+            trigger_risk_recalc(fy, "journal_posted")
+            messages.success(request, f"Journal {journal.reference_number} posted to Trial Balance.")
             return redirect("core:financial_year_detail", pk=pk)
     else:
         form = AdjustingJournalForm(initial={"journal_date": fy.end_date})
