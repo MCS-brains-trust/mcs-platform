@@ -851,8 +851,8 @@
         <div class="d-flex justify-content-between align-items-center mb-3">
             <h6 class="mb-0">
                 <i class="bi bi-clipboard-check"></i> Bank Statement Review
-                <span class="badge bg-warning text-dark" id="pendingBadge">{{ pending_review.count }} pending</span>
-                <span class="badge bg-success" id="confirmedBadge">{{ confirmed_review.count }} confirmed</span>
+                <span class="badge bg-warning text-dark" id="pendingBadge" style="cursor:pointer;" onclick="showReviewView('pending')" title="Click to view pending transactions">{{ pending_review.count }} pending</span>
+                <span class="badge bg-success" id="confirmedBadge" style="cursor:pointer;" onclick="showReviewView('confirmed')" title="Click to view confirmed transactions">{{ confirmed_review.count }} confirmed</span>
             </h6>
             <div class="d-flex gap-2">
                 {% if pending_review.count > 0 %}
@@ -1019,11 +1019,20 @@
 
         <div id="confirmedSection">
         {% if confirmed_review %}
-        <h6 class="text-muted mt-4 mb-2" style="font-size: 0.85rem;">CONFIRMED &amp; PUSHED TO TRIAL BALANCE</h6>
+        <div class="d-flex justify-content-between align-items-center mt-4 mb-2">
+            <h6 class="text-muted mb-0" style="font-size: 0.85rem;">CONFIRMED &amp; PUSHED TO TRIAL BALANCE</h6>
+            <div class="d-flex gap-2 align-items-center" id="confirmedBulkToolbar" style="display:none !important;">
+                <span class="text-muted" style="font-size:0.8rem;" id="confirmedSelectedCount">0 selected</span>
+                <button type="button" class="btn btn-outline-warning btn-sm" id="bulkUnconfirmBtn" onclick="bulkUnconfirmSelected()" disabled>
+                    <i class="bi bi-arrow-counterclockwise"></i> Unconfirm Selected
+                </button>
+            </div>
+        </div>
         <div class="table-responsive">
             <table class="table table-sm" style="font-size: 0.85rem;" id="confirmedTable">
                 <thead class="table-success">
                     <tr>
+                        <th style="width: 35px;"><input type="checkbox" id="confirmedSelectAll" onclick="toggleConfirmedSelectAll(this)" title="Select all"></th>
                         <th style="width: 90px;">Date</th>
                         <th>Description</th>
                         <th class="text-end" style="width: 110px;">Amount</th>
@@ -1038,7 +1047,8 @@
                 </thead>
                 <tbody id="confirmedTableBody">
                     {% for txn in confirmed_review %}
-                    <tr>
+                    <tr id="confirmed-row-{{ txn.pk }}">
+                        <td><input type="checkbox" class="confirmed-checkbox" value="{{ txn.pk }}" data-unconfirm-url="{% url 'core:review_unconfirm_transaction' pk=txn.pk %}" onclick="updateConfirmedSelection()"></td>
                         <td>{{ txn.date }}</td>
                         <td>{{ txn.description|truncatewords:8 }}</td>
                         <td class="text-end {% if txn.amount < 0 %}text-danger{% else %}text-success{% endif %}">
@@ -3601,6 +3611,151 @@ function refreshNetProfit() {
         }
         return promise;
     };
+})();
+</script>
+
+<script>
+// ===== Review Tab: Clickable Pending/Confirmed Badges & Bulk Unconfirm =====
+(function() {
+    'use strict';
+
+    // Track current view: 'all', 'pending', or 'confirmed'
+    var currentView = 'all';
+
+    window.showReviewView = function(view) {
+        var pendingSection = document.getElementById('pendingSection');
+        var confirmedSection = document.getElementById('confirmedSection');
+        var pendingBadge = document.getElementById('pendingBadge');
+        var confirmedBadge = document.getElementById('confirmedBadge');
+        var reviewToolbar = document.getElementById('reviewToolbar');
+        var classifyProgress = document.getElementById('classifyProgress');
+        var groupedView = document.getElementById('groupedViewContainer');
+        var reviewEmptyState = document.getElementById('reviewEmptyState');
+        var actionButtons = document.querySelector('#tab-review .d-flex.gap-2');
+
+        // If clicking the same badge again, show all
+        if (currentView === view) {
+            view = 'all';
+        }
+        currentView = view;
+
+        // Reset badge styles
+        if (pendingBadge) {
+            pendingBadge.className = view === 'pending'
+                ? 'badge bg-warning text-dark border border-dark border-2'
+                : 'badge bg-warning text-dark';
+            pendingBadge.style.cursor = 'pointer';
+        }
+        if (confirmedBadge) {
+            confirmedBadge.className = view === 'confirmed'
+                ? 'badge bg-success border border-dark border-2'
+                : 'badge bg-success';
+            confirmedBadge.style.cursor = 'pointer';
+        }
+
+        if (view === 'pending') {
+            if (pendingSection) pendingSection.style.display = '';
+            if (confirmedSection) confirmedSection.style.display = 'none';
+            if (reviewToolbar) reviewToolbar.style.display = '';
+            if (reviewEmptyState) reviewEmptyState.style.display = 'none';
+        } else if (view === 'confirmed') {
+            if (pendingSection) pendingSection.style.display = 'none';
+            if (confirmedSection) confirmedSection.style.display = '';
+            if (reviewToolbar) reviewToolbar.style.display = 'none';
+            if (classifyProgress) classifyProgress.classList.add('d-none');
+            if (groupedView) groupedView.classList.add('d-none');
+            if (reviewEmptyState) reviewEmptyState.style.display = 'none';
+        } else {
+            // Show all
+            if (pendingSection) pendingSection.style.display = '';
+            if (confirmedSection) confirmedSection.style.display = '';
+            if (reviewToolbar) reviewToolbar.style.display = '';
+        }
+    };
+
+    // ===== Confirmed table: Select All / Bulk Unconfirm =====
+    window.toggleConfirmedSelectAll = function(masterCheckbox) {
+        var checkboxes = document.querySelectorAll('.confirmed-checkbox');
+        checkboxes.forEach(function(cb) { cb.checked = masterCheckbox.checked; });
+        updateConfirmedSelection();
+    };
+
+    window.updateConfirmedSelection = function() {
+        var checkboxes = document.querySelectorAll('.confirmed-checkbox:checked');
+        var count = checkboxes.length;
+        var toolbar = document.getElementById('confirmedBulkToolbar');
+        var countLabel = document.getElementById('confirmedSelectedCount');
+        var bulkBtn = document.getElementById('bulkUnconfirmBtn');
+
+        if (toolbar) {
+            toolbar.style.cssText = count > 0 ? 'display:flex !important;' : 'display:none !important;';
+        }
+        if (countLabel) countLabel.textContent = count + ' selected';
+        if (bulkBtn) bulkBtn.disabled = (count === 0);
+    };
+
+    window.bulkUnconfirmSelected = function() {
+        var checkboxes = document.querySelectorAll('.confirmed-checkbox:checked');
+        if (checkboxes.length === 0) return;
+
+        if (!confirm('Unconfirm ' + checkboxes.length + ' transaction(s)? They will be reversed from the Trial Balance and moved back to pending review.')) return;
+
+        var bulkBtn = document.getElementById('bulkUnconfirmBtn');
+        if (bulkBtn) {
+            bulkBtn.disabled = true;
+            bulkBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Unconfirming...';
+        }
+
+        var urls = [];
+        checkboxes.forEach(function(cb) {
+            urls.push({ id: cb.value, url: cb.dataset.unconfirmUrl });
+        });
+
+        var completed = 0;
+        var errors = [];
+
+        function processNext() {
+            if (completed >= urls.length) {
+                // All done — reload page
+                if (errors.length > 0) {
+                    alert('Some transactions failed to unconfirm: ' + errors.join(', '));
+                }
+                location.reload();
+                return;
+            }
+
+            var item = urls[completed];
+            fetch(item.url, {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': '{{ csrf_token }}',
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.status === 'success') {
+                    var row = document.getElementById('confirmed-row-' + item.id);
+                    if (row) row.style.opacity = '0.3';
+                } else {
+                    errors.push(item.id);
+                }
+                completed++;
+                if (bulkBtn) {
+                    bulkBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> ' + completed + '/' + urls.length;
+                }
+                processNext();
+            })
+            .catch(function() {
+                errors.push(item.id);
+                completed++;
+                processNext();
+            });
+        }
+
+        processNext();
+    };
+
 })();
 </script>
 
