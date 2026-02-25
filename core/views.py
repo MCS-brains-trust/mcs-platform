@@ -323,7 +323,7 @@ def financial_year_detail(request, pk):
     # Audit log: data access
     _log_action(request, "view", f"Viewed financial year: {fy.year_label} for {fy.entity.entity_name}", fy)
     tb_lines = fy.trial_balance_lines.select_related("mapped_line_item").all()
-    adjustments = fy.adjusting_journals.all()
+    adjustments = fy.adjusting_journals.all().order_by('-posted_at', '-created_at')
     unmapped_count = tb_lines.filter(mapped_line_item__isnull=True).count()
     documents = fy.generated_documents.all().order_by('-version', '-generated_at')
 
@@ -2406,8 +2406,9 @@ def adjustment_create(request, pk):
             # Auto-trigger risk engine after journal post
             from core.signals import trigger_risk_recalc
             trigger_risk_recalc(fy, "journal_posted")
-            messages.success(request, f"Journal {journal.reference_number} posted to Trial Balance.")
-            return redirect("core:financial_year_detail", pk=pk)
+            messages.success(request, f"Journal {journal.reference_number} successfully posted and pushed to Trial Balance.")
+            from django.urls import reverse
+            return redirect(reverse("core:financial_year_detail", args=[pk]) + "?tab=journals")
     else:
         form = AdjustingJournalForm(initial={"journal_date": fy.end_date})
         formset = JournalLineFormSet()
