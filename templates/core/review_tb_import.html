@@ -594,99 +594,39 @@ document.addEventListener('DOMContentLoaded', function() {
      * 4. Pick a code midway between the surrounding accounts
      * 5. If no accounts exist yet, use the range midpoint
      */
+    let suggestTimer = null;
     function suggestCode(accountName) {
         const sel = document.getElementById('qaSection');
         const opt = sel.options[sel.selectedIndex];
         const codeInput = document.getElementById('qaCode');
         const hint = document.getElementById('qaCodeHint');
 
-        if (!opt || !opt.value || !accountName) {
+        if (!opt || !opt.value || !accountName || !accountName.trim()) {
             codeInput.value = '';
             hint.textContent = '';
             return;
         }
 
-        const rangeMin = parseInt(opt.dataset.rangeMin) || 0;
-        const rangeMax = parseInt(opt.dataset.rangeMax) || 9999;
-        const sectionKey = opt.value;
+        if (suggestTimer) clearTimeout(suggestTimer);
+        hint.textContent = 'Calculating...';
 
-        // Get existing accounts in this code range, sorted by code
-        const sectionAccounts = entityAccounts
-            .filter(function(a) {
-                const c = parseInt(a.code);
-                return !isNaN(c) && c >= rangeMin && c <= rangeMax;
+        suggestTimer = setTimeout(function() {
+            fetch('{% url "core:entity_coa_suggest_code" pk=fy.pk %}?section=' +
+                  encodeURIComponent(opt.value) + '&account_name=' +
+                  encodeURIComponent(accountName.trim()))
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.suggested_code) {
+                    codeInput.value = data.suggested_code;
+                    hint.textContent = data.position_info || '';
+                } else {
+                    hint.textContent = data.position_info || 'No available codes in this range.';
+                }
             })
-            .sort(function(a, b) { return parseInt(a.code) - parseInt(b.code); });
-
-        const nameLower = accountName.trim().toLowerCase();
-
-        if (sectionAccounts.length === 0) {
-            // No accounts yet — use range start + 10
-            const suggested = rangeMin + 10;
-            codeInput.value = String(suggested);
-            hint.textContent = 'First account in this section';
-            return;
-        }
-
-        // Find alphabetical insertion point
-        let insertIdx = sectionAccounts.length; // default: after all
-        for (let i = 0; i < sectionAccounts.length; i++) {
-            if (nameLower < sectionAccounts[i].name.toLowerCase()) {
-                insertIdx = i;
-                break;
-            }
-        }
-
-        let codeBefore, codeAfter;
-
-        if (insertIdx === 0) {
-            // Before the first account
-            codeAfter = parseInt(sectionAccounts[0].code);
-            codeBefore = rangeMin;
-        } else if (insertIdx >= sectionAccounts.length) {
-            // After the last account
-            codeBefore = parseInt(sectionAccounts[sectionAccounts.length - 1].code);
-            codeAfter = rangeMax;
-        } else {
-            codeBefore = parseInt(sectionAccounts[insertIdx - 1].code);
-            codeAfter = parseInt(sectionAccounts[insertIdx].code);
-        }
-
-        // Pick the midpoint, rounded to nearest 5 for clean codes
-        let suggested = Math.floor((codeBefore + codeAfter) / 2);
-
-        // Round to nearest 5 if there's room
-        const rounded = Math.round(suggested / 5) * 5;
-        if (rounded > codeBefore && rounded < codeAfter) {
-            suggested = rounded;
-        }
-
-        // Ensure it doesn't collide with an existing code
-        const existingCodes = new Set(sectionAccounts.map(function(a) { return parseInt(a.code); }));
-        if (existingCodes.has(suggested)) {
-            // Try incrementing by 1 until we find a gap
-            for (let delta = 1; delta < 50; delta++) {
-                if (!existingCodes.has(suggested + delta) && (suggested + delta) < codeAfter) {
-                    suggested = suggested + delta;
-                    break;
-                }
-                if (!existingCodes.has(suggested - delta) && (suggested - delta) > codeBefore) {
-                    suggested = suggested - delta;
-                    break;
-                }
-            }
-        }
-
-        codeInput.value = String(suggested);
-
-        // Build a helpful hint
-        if (insertIdx === 0) {
-            hint.textContent = 'Before "' + sectionAccounts[0].name + '" (' + sectionAccounts[0].code + ')';
-        } else if (insertIdx >= sectionAccounts.length) {
-            hint.textContent = 'After "' + sectionAccounts[sectionAccounts.length - 1].name + '" (' + sectionAccounts[sectionAccounts.length - 1].code + ')';
-        } else {
-            hint.textContent = 'Between "' + sectionAccounts[insertIdx - 1].name + '" (' + sectionAccounts[insertIdx - 1].code + ') and "' + sectionAccounts[insertIdx].name + '" (' + sectionAccounts[insertIdx].code + ')';
-        }
+            .catch(function() {
+                hint.textContent = 'Could not suggest code.';
+            });
+        }, 300);
     }
 
     // Re-suggest code when section or name changes

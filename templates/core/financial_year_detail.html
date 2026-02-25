@@ -1007,6 +1007,7 @@
                         <th style="width: 80px;">Code</th>
                         <th>Account</th>
                         <th>Tax Type</th>
+                        <th style="width: 60px;">Action</th>
                     </tr>
                 </thead>
                 <tbody id="confirmedTableBody">
@@ -1029,6 +1030,12 @@
                         <td><code>{{ txn.confirmed_code }}</code></td>
                         <td>{{ txn.confirmed_name }}</td>
                         <td><small>{{ txn.confirmed_tax_type|default:"-" }}</small></td>
+                        <td>
+                            <button class="btn btn-sm btn-outline-warning py-0 px-1 txn-unconfirm-btn" title="Unconfirm &amp; move back to pending"
+                                    data-txn-id="{{ txn.pk }}" data-unconfirm-url="{% url 'core:review_unconfirm_transaction' pk=txn.pk %}">
+                                <i class="bi bi-arrow-counterclockwise"></i>
+                            </button>
+                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -3396,6 +3403,76 @@ document.getElementById('coaSectionFilter')?.addEventListener('change', filterCO
         });
     });
 })();
+
+// ===== Unconfirm Transaction Handler =====
+document.addEventListener('click', function(e) {
+    const btn = e.target.closest('.txn-unconfirm-btn');
+    if (!btn) return;
+    e.preventDefault();
+
+    const txnId = btn.dataset.txnId;
+    const url = btn.dataset.unconfirmUrl;
+
+    if (!confirm('Unconfirm this transaction? It will be reversed from the Trial Balance and moved back to pending.')) return;
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+    fetch(url, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': '{{ csrf_token }}',
+            'X-Requested-With': 'XMLHttpRequest',
+        },
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.status === 'success') {
+            // Remove the row from the confirmed table
+            const row = btn.closest('tr');
+            if (row) row.remove();
+
+            // Update the badge counts
+            const pendingBadge = document.querySelector('.badge.bg-warning');
+            const confirmedBadge = document.querySelector('.badge.bg-success');
+            if (pendingBadge && data.pending_count !== undefined) {
+                pendingBadge.textContent = data.pending_count + ' pending';
+            }
+            if (confirmedBadge && data.confirmed_count !== undefined) {
+                confirmedBadge.textContent = data.confirmed_count + ' confirmed';
+            }
+
+            // Show a notification
+            const notif = document.getElementById('review-notification');
+            if (notif) {
+                const notifText = notif.querySelector('span') || notif;
+                notifText.textContent = data.message || 'Transaction unconfirmed and moved back to pending.';
+                notif.classList.remove('d-none', 'alert-success');
+                notif.classList.add('alert-warning');
+                setTimeout(function() { notif.classList.add('d-none'); }, 4000);
+            }
+
+            // If confirmed table is now empty, hide the section
+            const tbody = document.getElementById('confirmedTableBody');
+            if (tbody && tbody.children.length === 0) {
+                const section = document.getElementById('confirmedSection');
+                if (section) section.innerHTML = '';
+            }
+
+            // Reload the page to refresh the pending table with the unconfirmed transaction
+            setTimeout(function() { location.reload(); }, 500);
+        } else {
+            alert(data.error || data.message || 'Failed to unconfirm transaction.');
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-arrow-counterclockwise"></i>';
+        }
+    })
+    .catch(function(err) {
+        alert('Network error: ' + err.message);
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-arrow-counterclockwise"></i>';
+    });
+});
 </script>
 
 {% endblock %}

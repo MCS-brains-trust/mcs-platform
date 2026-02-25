@@ -3547,9 +3547,15 @@ def gst_activity_statement(request, pk):
     entity_type = entity.entity_type  # company, trust, partnership, sole_trader
 
     # Build a lookup: account_code -> ChartOfAccount for this entity type
+    # First load template COA, then overlay with entity-specific COA
     coa_lookup = {}
     for coa in ChartOfAccount.objects.filter(entity_type=entity_type, is_active=True):
         coa_lookup[coa.account_code] = coa
+
+    # Also load entity-specific chart of accounts (these take priority)
+    entity_coa_lookup = {}
+    for ecoa in EntityChartOfAccount.objects.filter(entity=entity):
+        entity_coa_lookup[ecoa.account_code] = ecoa
 
     # Get all trial balance lines for this financial year
     tb_lines = fy.trial_balance_lines.all()
@@ -3575,7 +3581,9 @@ def gst_activity_statement(request, pk):
 
     for line in tb_lines:
         coa = coa_lookup.get(line.account_code)
-        if not coa:
+        ecoa = entity_coa_lookup.get(line.account_code)
+
+        if not coa and not ecoa:
             # Check if the line has its own tax_type from bank statement review
             line_tax = (getattr(line, 'tax_type', '') or '').strip()
             if line_tax:
@@ -3598,12 +3606,20 @@ def gst_activity_statement(request, pk):
                 })
             continue
 
-        section = coa.section
-        # Use line-level tax_type if ChartOfAccount has no tax code
-        coa_tax = (coa.tax_code or "").upper().strip()
+        # Determine section: prefer entity COA, fall back to template COA
+        if ecoa:
+            section = ecoa.section
+        else:
+            section = coa.section
+
+        # Determine tax code: prefer entity COA tax_code, then template, then line-level
+        ecoa_tax = (ecoa.tax_code or "").upper().strip() if ecoa else ""
+        coa_tax = (coa.tax_code or "").upper().strip() if coa else ""
         line_tax = (getattr(line, 'tax_type', '') or '').strip()
-        # Map line-level tax types to COA tax codes
-        if not coa_tax and line_tax:
+
+        # Priority: entity COA tax > template COA tax > line-level tax
+        base_tax = ecoa_tax or coa_tax
+        if not base_tax and line_tax:
             tax_map = {
                 'GST on Income': 'GST',
                 'GST on Expenses': 'GST',
@@ -3612,9 +3628,9 @@ def gst_activity_statement(request, pk):
                 'BAS Excluded': 'N-T',
                 'N-T': 'N-T',
             }
-            tax_code = tax_map.get(line_tax, coa_tax)
+            tax_code = tax_map.get(line_tax, base_tax)
         else:
-            tax_code = coa_tax
+            tax_code = base_tax
         # Use closing balance; revenue is typically credit (negative in TB)
         amount = abs(line.closing_balance)
 
@@ -4813,6 +4829,118 @@ def review_approve_transaction(request, pk):
 
     messages.success(request, f"Transaction approved: {txn.description[:50]}")
     return redirect(request.META.get("HTTP_REFERER", "/"))
+
+
+@login_required
+@require_POST
+def review_unconfirm_transaction(request, pk):
+    """Unconfirm a previously approved transaction (AJAX).
+    Reverses the TB line amounts and resets the transaction to unclassified.
+    """
+    from review.models import PendingTransaction
+    txn = get_object_or_404(PendingTransaction, pk=pk)
+
+    # IDOR check
+    if txn.job and txn.job.entity:
+        get_entity_for_user(request, txn.job.entity.pk)
+
+    if not request.user.can_do_accounting:
+        return JsonResponse({"error": "Permission denied"}, status=403)
+
+    if not txn.is_confirmed:
+        return JsonResponse({"error": "Transaction is not confirmed"}, status=400)
+
+    # Reverse the TB line amounts
+    if txn.job and txn.job.entity and txn.confirmed_code:
+        from datetime import datetime as dt
+        entity = txn.job.entity
+        fys = FinancialYear.objects.filter(entity=entity, status__in=['draft', 'in_review', 'reviewed'])
+        target_fy = None
+        for fy_candidate in fys:
+            txn_date = None
+            for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d %b %Y"):
+                try:
+                    txn_date = dt.strptime(txn.date.strip(), fmt).date()
+                    break
+                except (ValueError, AttributeError):
+                    continue
+            if txn_date and fy_candidate.start_date <= txn_date <= fy_candidate.end_date:
+                target_fy = fy_candidate
+                break
+        if not target_fy and fys.exists():
+            target_fy = fys.order_by('-end_date').first()
+
+        if target_fy:
+            # Reverse the main account TB line
+            try:
+                tb_line = TrialBalanceLine.objects.get(
+                    financial_year=target_fy,
+                    account_code=txn.confirmed_code,
+                )
+                has_gst = txn.confirmed_gst_amount and txn.confirmed_gst_amount > 0
+                net_for_tb = txn.net_amount if has_gst else abs(txn.amount)
+
+                if txn.amount > 0:
+                    tb_line.debit = max(Decimal("0"), tb_line.debit - net_for_tb)
+                else:
+                    tb_line.credit = max(Decimal("0"), tb_line.credit - net_for_tb)
+
+                # If both debit and credit are zero, delete the line
+                if tb_line.debit == 0 and tb_line.credit == 0:
+                    tb_line.delete()
+                else:
+                    tb_line.save()
+            except TrialBalanceLine.DoesNotExist:
+                pass
+
+            # Reverse the GST clearing account line
+            if txn.confirmed_gst_amount and txn.confirmed_gst_amount > 0:
+                gst_amt = txn.confirmed_gst_amount
+                gst_code = '9100' if txn.amount > 0 else '9110'
+                try:
+                    gst_line = TrialBalanceLine.objects.get(
+                        financial_year=target_fy,
+                        account_code=gst_code,
+                    )
+                    if txn.amount > 0:
+                        gst_line.credit = max(Decimal("0"), gst_line.credit - gst_amt)
+                    else:
+                        gst_line.debit = max(Decimal("0"), gst_line.debit - gst_amt)
+
+                    if gst_line.debit == 0 and gst_line.credit == 0:
+                        gst_line.delete()
+                    else:
+                        gst_line.save()
+                except TrialBalanceLine.DoesNotExist:
+                    pass
+
+    # Reset the transaction
+    txn.is_confirmed = False
+    txn.confirmed_code = ''
+    txn.confirmed_name = ''
+    txn.confirmed_tax_type = ''
+    txn.confirmed_gst_amount = Decimal("0.00")
+    txn.save()
+
+    # Return remaining counts
+    remaining_pending = 0
+    remaining_confirmed = 0
+    if txn.job and txn.job.entity:
+        from review.models import PendingTransaction as PT
+        remaining_pending = PT.objects.filter(
+            job__entity=txn.job.entity, is_confirmed=False
+        ).count()
+        remaining_confirmed = PT.objects.filter(
+            job__entity=txn.job.entity, is_confirmed=True
+        ).count()
+
+    return JsonResponse({
+        "status": "success",
+        "id": str(txn.pk),
+        "pending_count": remaining_pending,
+        "confirmed_count": remaining_confirmed,
+        "message": f"Transaction unconfirmed: {txn.description[:50]}",
+    })
 
 
 @login_required
@@ -6493,23 +6621,66 @@ def review_bulk_approve_group(request, pk):
         amount = txn.amount
         code = final_code
         name = txn.confirmed_name
+        tax_type = txn.confirmed_tax_type or ''
+        has_gst = txn.confirmed_gst_amount and txn.confirmed_gst_amount > 0
+
         if code and amount != 0:
+            # Push the net amount (ex-GST) to the expense/income account
+            net_for_tb = txn.net_amount if has_gst else abs(amount)
+
             tb_line, created = TrialBalanceLine.objects.get_or_create(
                 financial_year=fy,
                 account_code=code,
                 defaults={
                     "account_name": name,
-                    "debit": max(Decimal("0"), amount),
-                    "credit": abs(min(Decimal("0"), amount)),
+                    "debit": net_for_tb if amount > 0 else Decimal("0"),
+                    "credit": net_for_tb if amount < 0 else Decimal("0"),
+                    "tax_type": tax_type,
                 },
             )
             if not created:
                 if amount > 0:
-                    tb_line.debit += amount
+                    tb_line.debit += net_for_tb
                 else:
-                    tb_line.credit += abs(amount)
+                    tb_line.credit += net_for_tb
+                if not tb_line.tax_type:
+                    tb_line.tax_type = tax_type
                 tb_line.save()
             tb_count += 1
+
+            # If GST applies, also post the GST component to the GST clearing account
+            if has_gst:
+                gst_amt = txn.confirmed_gst_amount
+                if amount > 0:
+                    # Income: GST Collected (liability) - code 9100
+                    gst_line, gst_created = TrialBalanceLine.objects.get_or_create(
+                        financial_year=fy,
+                        account_code='9100',
+                        defaults={
+                            "account_name": 'GST Collected',
+                            "debit": Decimal("0"),
+                            "credit": gst_amt,
+                            "tax_type": 'GST on Income',
+                        },
+                    )
+                    if not gst_created:
+                        gst_line.credit += gst_amt
+                        gst_line.save()
+                else:
+                    # Expense: GST Paid (asset) - code 9110
+                    gst_line, gst_created = TrialBalanceLine.objects.get_or_create(
+                        financial_year=fy,
+                        account_code='9110',
+                        defaults={
+                            "account_name": 'GST Paid',
+                            "debit": gst_amt,
+                            "credit": Decimal("0"),
+                            "tax_type": 'GST on Expenses',
+                        },
+                    )
+                    if not gst_created:
+                        gst_line.debit += gst_amt
+                        gst_line.save()
 
     # Get remaining counts
     remaining_pending = PendingTransaction.objects.filter(

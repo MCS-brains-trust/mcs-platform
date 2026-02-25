@@ -139,6 +139,7 @@ urlpatterns = [
     # Review → Trial Balance
     path("years/<uuid:pk>/review/push-to-tb/", views.review_push_to_tb, name="review_push_to_tb"),
     path("review-txn/<uuid:pk>/approve/", views.review_approve_transaction, name="review_approve_transaction"),
+    path("review-txn/<uuid:pk>/unconfirm/", views.review_unconfirm_transaction, name="review_unconfirm_transaction"),
     path("years/<uuid:pk>/review/approve-all/", views.review_approve_all, name="review_approve_all"),
     path("years/<uuid:pk>/review/classify-ai/", views.review_classify_ai, name="review_classify_ai"),
     path("years/<uuid:pk>/review/classify-status/", views.review_classify_status, name="review_classify_status"),
