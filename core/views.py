@@ -3760,58 +3760,78 @@ def gst_activity_statement(request, pk):
         coa = coa_lookup.get(line.account_code)
         ecoa = entity_coa_lookup.get(line.account_code)
 
-        if not coa and not ecoa:
-            # Check if the line has its own tax_type from bank statement review
-            line_tax = (getattr(line, 'tax_type', '') or '').strip()
-            if line_tax:
-                # GST accounts from bank statement review (9100 GST Collected, 9110 GST Paid)
-                if line.account_code in ('9100', '9110'):
-                    # These are GST clearing accounts - they contribute to 1A/1B directly
-                    pass  # Handled via the G9/G20 calculation from revenue/expense lines
-                excluded_lines.append({
-                    "code": line.account_code,
-                    "name": line.account_name,
-                    "amount": abs(line.closing_balance),
-                    "reason": f"Not in chart of accounts (tax: {line_tax})",
-                })
-            else:
-                excluded_lines.append({
-                    "code": line.account_code,
-                    "name": line.account_name,
-                    "amount": abs(line.closing_balance),
-                    "reason": "Not in chart of accounts",
-                })
-            continue
-
-        # Determine section: prefer entity COA, fall back to template COA
-        if ecoa:
-            section = ecoa.section
-        else:
-            section = coa.section
-
-        # Determine tax code: prefer entity COA tax_code, then template, then line-level
-        ecoa_tax = (ecoa.tax_code or "").upper().strip() if ecoa else ""
-        coa_tax = (coa.tax_code or "").upper().strip() if coa else ""
+        # --- Determine section and tax code ---
+        # For lines in COA, use COA section/tax. For unmapped lines with
+        # tax_type from bank statement review, infer section from tax_type.
         line_tax = (getattr(line, 'tax_type', '') or '').strip()
 
-        # Priority: entity COA tax > template COA tax > line-level tax
-        base_tax = ecoa_tax or coa_tax
-        if not base_tax and line_tax:
-            tax_map = {
-                'GST on Income': 'GST',
-                'GST on Expenses': 'GST',
-                'GST Free Income': 'FRE',
-                'GST Free Expenses': 'FRE',
-                'BAS Excluded': 'N-T',
-                'N-T': 'N-T',
+        if not coa and not ecoa:
+            # Not in any COA — check if we can infer from tax_type
+            # GST clearing accounts (9100/9110) are excluded from BAS
+            # (GST is calculated from the revenue/expense gross amounts)
+            if line.account_code in ('9100', '9110'):
+                excluded_lines.append({
+                    "code": line.account_code,
+                    "name": line.account_name,
+                    "amount": abs(line.closing_balance),
+                    "reason": "GST clearing account",
+                })
+                continue
+
+            # Infer section and tax_code from the line-level tax_type
+            tax_type_map = {
+                'GST on Income': ('revenue', 'GST'),
+                'GST on Expenses': ('expenses', 'INP'),
+                'GST Free Income': ('revenue', 'FRE'),
+                'GST Free Expenses': ('expenses', 'FRE'),
+                'BAS Excluded': (None, 'N-T'),
+                'N-T': (None, 'N-T'),
+                'Input Taxed': (None, 'ITS'),
             }
-            tax_code = tax_map.get(line_tax, base_tax)
+            mapped = tax_type_map.get(line_tax)
+            if mapped and mapped[0]:
+                section = mapped[0]
+                tax_code = mapped[1]
+            else:
+                # Truly unmapped — exclude
+                excluded_lines.append({
+                    "code": line.account_code,
+                    "name": line.account_name,
+                    "amount": abs(line.closing_balance),
+                    "reason": f"Not in chart of accounts" + (f" (tax: {line_tax})" if line_tax else ""),
+                })
+                continue
         else:
-            tax_code = base_tax
+            # Determine section: prefer entity COA, fall back to template COA
+            if ecoa:
+                section = ecoa.section
+            else:
+                section = coa.section
+
+            # Determine tax code: prefer entity COA tax_code, then template, then line-level
+            ecoa_tax = (ecoa.tax_code or "").upper().strip() if ecoa else ""
+            coa_tax = (coa.tax_code or "").upper().strip() if coa else ""
+
+            # Priority: entity COA tax > template COA tax > line-level tax
+            base_tax = ecoa_tax or coa_tax
+            if not base_tax and line_tax:
+                tax_map = {
+                    'GST on Income': 'GST',
+                    'GST on Expenses': 'INP',
+                    'GST Free Income': 'FRE',
+                    'GST Free Expenses': 'FRE',
+                    'BAS Excluded': 'N-T',
+                    'N-T': 'N-T',
+                }
+                tax_code = tax_map.get(line_tax, base_tax)
+            else:
+                tax_code = base_tax
+
         # Use closing balance; revenue is typically credit (negative in TB)
         amount = abs(line.closing_balance)
 
-        if section == "Revenue":
+        # Section values are lowercase DB values from StatementSection TextChoices
+        if section in ("revenue", "Revenue"):
             # All revenue goes to G1
             g1 += amount
             bas_label = "G1"
@@ -3836,7 +3856,7 @@ def gst_activity_statement(request, pk):
                 "bas_label": bas_label,
             })
 
-        elif section == "Expenses":
+        elif section in ("expenses", "Expenses", "cost_of_sales", "Cost of Sales"):
             # Non-capital purchases go to G11
             if tax_code in ("INP", "GST"):
                 g11 += amount
@@ -3867,7 +3887,7 @@ def gst_activity_statement(request, pk):
                 "bas_label": bas_label,
             })
 
-        elif section == "Assets":
+        elif section in ("assets", "Assets"):
             if tax_code == "CAP":
                 g10 += amount
                 bas_label = "G10 (Capital)"
@@ -3955,6 +3975,11 @@ def gst_activity_statement_download(request, pk):
     for coa in ChartOfAccount.objects.filter(entity_type=entity_type, is_active=True):
         coa_lookup[coa.account_code] = coa
 
+    # Also load entity-specific chart of accounts (these take priority)
+    entity_coa_lookup = {}
+    for ecoa in EntityChartOfAccount.objects.filter(entity=entity):
+        entity_coa_lookup[ecoa.account_code] = ecoa
+
     tb_lines = fy.trial_balance_lines.all()
 
     g1 = g2 = g3 = g4 = g7 = Decimal("0")
@@ -3963,14 +3988,51 @@ def gst_activity_statement_download(request, pk):
 
     for line in tb_lines:
         coa = coa_lookup.get(line.account_code)
-        if not coa:
-            continue
-        section = coa.section
-        tax_code = (coa.tax_code or "").upper().strip()
+        ecoa = entity_coa_lookup.get(line.account_code)
+        line_tax = (getattr(line, 'tax_type', '') or '').strip()
+
+        if not coa and not ecoa:
+            # Skip GST clearing accounts
+            if line.account_code in ('9100', '9110'):
+                continue
+            # Infer from tax_type
+            tax_type_map = {
+                'GST on Income': ('revenue', 'GST'),
+                'GST on Expenses': ('expenses', 'INP'),
+                'GST Free Income': ('revenue', 'FRE'),
+                'GST Free Expenses': ('expenses', 'FRE'),
+            }
+            mapped = tax_type_map.get(line_tax)
+            if mapped and mapped[0]:
+                section = mapped[0]
+                tax_code = mapped[1]
+            else:
+                continue
+        else:
+            if ecoa:
+                section = ecoa.section
+            else:
+                section = coa.section
+            ecoa_tax = (ecoa.tax_code or "").upper().strip() if ecoa else ""
+            coa_tax = (coa.tax_code or "").upper().strip() if coa else ""
+            base_tax = ecoa_tax or coa_tax
+            if not base_tax and line_tax:
+                tax_map = {
+                    'GST on Income': 'GST',
+                    'GST on Expenses': 'INP',
+                    'GST Free Income': 'FRE',
+                    'GST Free Expenses': 'FRE',
+                    'BAS Excluded': 'N-T',
+                    'N-T': 'N-T',
+                }
+                tax_code = tax_map.get(line_tax, base_tax)
+            else:
+                tax_code = base_tax
+
         amount = abs(line.closing_balance)
 
         bas_label = ""
-        if section == "Revenue":
+        if section in ("revenue", "Revenue"):
             g1 += amount
             if tax_code == "GST":
                 bas_label = "G1"
@@ -3983,7 +4045,7 @@ def gst_activity_statement_download(request, pk):
             else:
                 g3 += amount
                 bas_label = "G3"
-        elif section == "Expenses":
+        elif section in ("expenses", "Expenses", "cost_of_sales", "Cost of Sales"):
             if tax_code in ("INP", "GST"):
                 g11 += amount
                 bas_label = "G11"
@@ -4003,7 +4065,7 @@ def gst_activity_statement_download(request, pk):
                 g11 += amount
                 g14 += amount
                 bas_label = "G11/G14"
-        elif section == "Assets":
+        elif section in ("assets", "Assets"):
             if tax_code == "CAP":
                 g10 += amount
                 bas_label = "G10"
