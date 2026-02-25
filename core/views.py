@@ -1463,6 +1463,7 @@ def review_tb_import(request, pk):
             "code": ea.account_code,
             "name": ea.account_name,
             "section": ea.get_section_display(),
+            "section_key": ea.section,
             "maps_to_id": str(ea.maps_to.pk) if ea.maps_to else "",
         })
 
