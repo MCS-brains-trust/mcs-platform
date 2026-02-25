@@ -34,6 +34,9 @@
         <a href="{% url 'core:adjustment_create' pk=fy.pk %}" class="btn btn-outline-primary btn-sm">
             <i class="bi bi-journal-plus"></i> New Journal Entry
         </a>
+        <a href="{% url 'core:journal_upload' pk=fy.pk %}" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-journal-arrow-up"></i> Upload JNLs
+        </a>
         {% elif fy.is_locked %}
         <button class="btn btn-outline-success btn-sm" disabled title="Change status to Draft to import trial balance">
             <i class="bi bi-upload"></i> Import TB
@@ -41,6 +44,9 @@
         <button class="btn btn-outline-primary btn-sm" disabled title="Change status to Draft to create journal entries"
                 onclick="alert('This financial year is finalised. Change the status back to Draft to create journal entries.');">
             <i class="bi bi-lock"></i> New Journal Entry
+        </button>
+        <button class="btn btn-outline-secondary btn-sm" disabled title="Change status to Draft to upload journals">
+            <i class="bi bi-lock"></i> Upload JNLs
         </button>
         {% endif %}
         {% if unmapped_count > 0 %}
@@ -410,11 +416,17 @@
                 <a href="{% url 'core:adjustment_create' pk=fy.pk %}" class="btn btn-primary btn-sm">
                     <i class="bi bi-journal-plus"></i> New Journal Entry
                 </a>
+                <a href="{% url 'core:journal_upload' pk=fy.pk %}" class="btn btn-outline-secondary btn-sm">
+                    <i class="bi bi-journal-arrow-up"></i> Upload JNLs
+                </a>
                 {% else %}
                 <button class="btn btn-primary btn-sm" disabled
                         title="Change status to Draft to create journal entries"
                         onclick="alert('This financial year is finalised. Change the status back to Draft to create journal entries.');">
                     <i class="bi bi-lock"></i> New Journal Entry
+                </button>
+                <button class="btn btn-outline-secondary btn-sm" disabled title="Change status to Draft to upload journals">
+                    <i class="bi bi-lock"></i> Upload JNLs
                 </button>
                 {% endif %}
             </div>

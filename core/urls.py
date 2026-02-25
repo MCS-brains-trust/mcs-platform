@@ -49,6 +49,8 @@ urlpatterns = [
     path("journals/<uuid:pk>/delete/", views.journal_delete, name="journal_delete"),
     path("years/<uuid:pk>/accounts-api/", views.account_list_api, name="account_list_api"),
     path("years/<uuid:pk>/journals/pdf/", views.journals_pdf, name="journals_pdf"),
+    path("years/<uuid:pk>/journals/upload/", views.journal_upload, name="journal_upload"),
+    path("journals/template/", views.journal_template_download, name="journal_template_download"),
 
     # Financial Statements Preview
     path("years/<uuid:pk>/statements/", views.financial_statements_view, name="financial_statements_view"),

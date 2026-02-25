@@ -7523,3 +7523,220 @@ def entity_coa_check_code(request, pk):
 
     result['available'] = True
     return JsonResponse(result)
+
+
+# ============================================================
+# Journal Upload (Bulk DR/CR from Excel)
+# ============================================================
+
+@login_required
+def journal_upload(request, pk):
+    """Upload journals from an Excel file. Lines are grouped by date+description
+    into individual AdjustingJournal entries (created as Draft)."""
+    fy = get_financial_year_for_user(request, pk)
+
+    if fy.is_locked:
+        messages.error(request, "Cannot upload journals to a finalised financial year.")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    if not request.user.can_do_accounting:
+        messages.error(request, "You do not have permission.")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    if request.method == "POST":
+        uploaded_file = request.FILES.get("file")
+        if not uploaded_file:
+            messages.error(request, "Please select a file to upload.")
+            return redirect("core:journal_upload", pk=pk)
+
+        if uploaded_file.size > 20 * 1024 * 1024:
+            messages.error(request, "File too large. Maximum size is 20MB.")
+            return redirect("core:journal_upload", pk=pk)
+
+        import os as _os
+        file_ext = _os.path.splitext(uploaded_file.name)[1].lower()
+        if file_ext not in {".xlsx", ".xls"}:
+            messages.error(request, f"Unsupported file type: {file_ext}. Only Excel files (.xlsx) are supported.")
+            return redirect("core:journal_upload", pk=pk)
+
+        try:
+            journals_created = _parse_and_create_journals(fy, uploaded_file, request.user)
+            if journals_created == 0:
+                messages.warning(request, "No journal entries found in the uploaded file. Check the format and try again.")
+            else:
+                messages.success(
+                    request,
+                    f"Successfully created {journals_created} journal entr{'y' if journals_created == 1 else 'ies'} "
+                    f"as Draft. Review and post them from the Journals tab."
+                )
+                _log_action(request, "journal_upload", f"Uploaded {journals_created} journals from {uploaded_file.name}")
+        except Exception as e:
+            messages.error(request, f"Journal upload failed: {e}")
+
+        return redirect("core:financial_year_detail", pk=pk)
+
+    return render(request, "core/journal_upload.html", {"fy": fy})
+
+
+def _parse_and_create_journals(fy, file, user):
+    """Parse an Excel file and create AdjustingJournal + JournalLine records.
+
+    Expected columns: JOURNAL DATE | DESCRIPTION | ACCOUNT CODE | ACCOUNT NAME | DEBIT | CREDIT
+    Lines with the same date+description are grouped into one journal.
+    Returns the number of journals created.
+    """
+    from collections import OrderedDict
+    from datetime import datetime, date
+    import re
+
+    wb = openpyxl.load_workbook(file, data_only=True)
+    ws = wb.active
+
+    rows = list(ws.iter_rows(min_row=1, values_only=True))
+    if not rows:
+        return 0
+
+    # Find the header row (look for "account code" or "debit" in the first 5 rows)
+    header_row_idx = 0
+    for i, row in enumerate(rows[:5]):
+        row_lower = [str(c).lower().strip() if c else "" for c in row]
+        if any(kw in col for col in row_lower for kw in ["account code", "account", "debit", "journal date"]):
+            header_row_idx = i
+            break
+
+    data_rows = rows[header_row_idx + 1:]
+
+    # Group lines by (date, description) → journal
+    journal_groups = OrderedDict()
+
+    for row in data_rows:
+        if not row or len(row) < 5:
+            continue
+
+        # Parse date (column 0)
+        raw_date = row[0]
+        if raw_date is None:
+            continue
+        if isinstance(raw_date, datetime):
+            jnl_date = raw_date.date()
+        elif isinstance(raw_date, date):
+            jnl_date = raw_date
+        elif isinstance(raw_date, str):
+            raw_date = raw_date.strip()
+            if not raw_date:
+                continue
+            # Try common date formats
+            for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d/%m/%y", "%d-%m-%y"):
+                try:
+                    jnl_date = datetime.strptime(raw_date, fmt).date()
+                    break
+                except ValueError:
+                    continue
+            else:
+                continue  # Skip rows with unparseable dates
+        else:
+            continue
+
+        # Parse description (column 1)
+        description = str(row[1]).strip() if row[1] else "Journal Entry"
+
+        # Parse account code (column 2)
+        raw_code = row[2]
+        if raw_code is None:
+            continue
+        account_code = str(raw_code).strip()
+        # Remove .0 from numeric codes read as floats
+        if account_code.endswith(".0"):
+            account_code = account_code[:-2]
+        if not account_code:
+            continue
+
+        # Parse account name (column 3)
+        account_name = str(row[3]).strip() if row[3] else account_code
+
+        # Parse debit (column 4) and credit (column 5)
+        def _parse_amount(val):
+            if val is None:
+                return Decimal("0")
+            if isinstance(val, (int, float)):
+                return Decimal(str(round(val, 2)))
+            val_str = str(val).strip().replace(",", "").replace("$", "")
+            if not val_str or val_str == "-":
+                return Decimal("0")
+            try:
+                return Decimal(val_str).quantize(Decimal("0.01"))
+            except (InvalidOperation, ValueError):
+                return Decimal("0")
+
+        debit = _parse_amount(row[4] if len(row) > 4 else None)
+        credit = _parse_amount(row[5] if len(row) > 5 else None)
+
+        # Skip rows where both debit and credit are zero
+        if debit == 0 and credit == 0:
+            continue
+
+        key = (jnl_date, description)
+        if key not in journal_groups:
+            journal_groups[key] = []
+        journal_groups[key].append({
+            "account_code": account_code,
+            "account_name": account_name,
+            "debit": debit,
+            "credit": credit,
+        })
+
+    if not journal_groups:
+        return 0
+
+    # Create journals
+    journals_created = 0
+    errors = []
+
+    for (jnl_date, description), lines in journal_groups.items():
+        total_dr = sum(l["debit"] for l in lines)
+        total_cr = sum(l["credit"] for l in lines)
+
+        # Create the journal even if unbalanced (user can fix in the UI)
+        journal = AdjustingJournal.objects.create(
+            financial_year=fy,
+            journal_type=AdjustingJournal.JournalType.GENERAL,
+            status=AdjustingJournal.JournalStatus.DRAFT,
+            journal_date=jnl_date,
+            description=description,
+            narration=f"Uploaded via journal import",
+            total_debit=total_dr,
+            total_credit=total_cr,
+            created_by=user,
+        )
+
+        for i, line in enumerate(lines, 1):
+            JournalLine.objects.create(
+                journal=journal,
+                line_number=i,
+                account_code=line["account_code"],
+                account_name=line["account_name"],
+                debit=line["debit"],
+                credit=line["credit"],
+            )
+
+        journals_created += 1
+
+    return journals_created
+
+
+@login_required
+def journal_template_download(request):
+    """Serve the journal upload template .xlsx file."""
+    import os
+    from django.conf import settings as _settings
+    template_path = os.path.join(_settings.BASE_DIR, "static", "journal_upload_template.xlsx")
+    if not os.path.exists(template_path):
+        from django.http import Http404
+        raise Http404("Journal template file not found.")
+    with open(template_path, "rb") as f:
+        response = HttpResponse(
+            f.read(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response["Content-Disposition"] = 'attachment; filename="StatementHub_Journal_Upload_Template.xlsx"'
+        return response

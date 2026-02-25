@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% load static %}
+{% block title %}Upload Journals - StatementHub{% endblock %}
+{% block content %}
+<div class="row">
+    <div class="col-md-8 mx-auto">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=fy.entity.pk %}">{{ fy.entity.entity_name }}</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy.year_label }}</a></li>
+                <li class="breadcrumb-item active">Upload Journals</li>
+            </ol>
+        </nav>
+        <div class="card">
+            <div class="card-header"><h5 class="mb-0"><i class="bi bi-journal-arrow-up"></i> Upload Journals</h5></div>
+            <div class="card-body">
+                <div class="alert alert-info">
+                    <h6 class="alert-heading">Expected Excel Format</h6>
+                    <p class="mb-1">Upload a <strong>.xlsx</strong> file with the following columns (row 1 = header):</p>
+                    <table class="table table-sm table-bordered bg-white mt-2">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Journal Date</th>
+                                <th>Description</th>
+                                <th>Account Code</th>
+                                <th>Account Name</th>
+                                <th>Debit</th>
+                                <th>Credit</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td>30/06/2025</td>
+                                <td>Depreciation - Motor Vehicles</td>
+                                <td>1700</td>
+                                <td>Depreciation expense</td>
+                                <td>5,000.00</td>
+                                <td></td>
+                            </tr>
+                            <tr>
+                                <td>30/06/2025</td>
+                                <td>Depreciation - Motor Vehicles</td>
+                                <td>2510</td>
+                                <td>Motor vehicles - accum depn</td>
+                                <td></td>
+                                <td>5,000.00</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                    <div class="d-flex justify-content-between align-items-center mt-2">
+                        <div>
+                            <small class="text-muted">
+                                <strong>How it works:</strong>
+                            </small>
+                            <ul class="small text-muted mb-0 mt-1">
+                                <li>Lines with the same <strong>date + description</strong> are grouped into one journal entry.</li>
+                                <li>Each journal must balance (total debits = total credits).</li>
+                                <li>Journals are created as <strong>Draft</strong> — review and post them from the Journals tab.</li>
+                                <li>Journal entries represent <strong>movements</strong>, not replacements of the trial balance.</li>
+                            </ul>
+                        </div>
+                        <a href="{% url 'core:journal_template_download' %}" class="btn btn-sm btn-outline-primary ms-3 flex-shrink-0">
+                            <i class="bi bi-download"></i> Download Template
+                        </a>
+                    </div>
+                </div>
+                <form method="post" enctype="multipart/form-data">
+                    {% csrf_token %}
+                    <div class="mb-3">
+                        <label for="id_file" class="form-label">Select Excel File</label>
+                        <input type="file" name="file" id="id_file" class="form-control" accept=".xlsx,.xls" required>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-journal-arrow-up"></i> Upload Journals
+                        </button>
+                        <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary">Cancel</a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
