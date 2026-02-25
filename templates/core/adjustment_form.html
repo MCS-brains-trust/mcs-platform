@@ -302,11 +302,11 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
-    document.addEventListener('input', function(e) {
+    document.addEventListener('blur', function(e) {
         if (e.target.name && (e.target.name.endsWith('-debit') || e.target.name.endsWith('-credit'))) {
             updateTotals();
         }
-    });
+    }, true);
     document.addEventListener('change', function(e) {
         if (e.target.name && e.target.name.endsWith('-DELETE')) {
             updateTotals();
