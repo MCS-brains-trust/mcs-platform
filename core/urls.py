@@ -223,6 +223,9 @@ urlpatterns = [
     path("years/<uuid:pk>/tax-planning/reopen/", views_tax_planning.tax_planning_reopen, name="tax_planning_reopen"),
     path("years/<uuid:pk>/trust-election/", views_tax_planning.generate_trust_election_view, name="generate_trust_election"),
     path("years/<uuid:pk>/tax-planning-summary/", views_tax_planning.generate_tax_planning_summary_view, name="generate_tax_planning_summary"),
+    # ===== Live Net Profit API =====
+    path("years/<uuid:pk>/api/net-profit/", views.net_profit_api, name="net_profit_api"),
+
     # ===== DOCUMENT TEMPLATE MANAGER =====
     path("templates/", views_templates.template_list, name="template_list"),
     path("templates/create/", views_templates.template_create, name="template_create"),

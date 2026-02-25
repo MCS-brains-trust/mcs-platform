@@ -54,9 +54,15 @@
             <i class="bi bi-exclamation-triangle"></i> Map {{ unmapped_count }} Accounts
         </a>
         {% endif %}
+        {% if has_bank_statements %}
         <a href="{% url 'core:gst_activity_statement' pk=fy.pk %}" class="btn btn-outline-info btn-sm">
             <i class="bi bi-receipt"></i> GST / BAS
         </a>
+        {% else %}
+        <button class="btn btn-outline-secondary btn-sm" disabled title="GST/BAS is available for entities with bank statement uploads">
+            <i class="bi bi-receipt"></i> GST / BAS
+        </button>
+        {% endif %}
         <button class="btn btn-outline-warning btn-sm" data-bs-toggle="modal" data-bs-target="#uploadBankStatementModal">
             <i class="bi bi-bank"></i> Upload Bank Statement
         </button>
@@ -299,7 +305,15 @@
                     {% endif %}
                 </small>
             </div>
-            <div class="d-flex gap-2">
+            <div class="d-flex align-items-center gap-3">
+                <div class="px-3 py-2 rounded {% if net_profit >= 0 %}bg-success bg-opacity-10 border border-success{% else %}bg-danger bg-opacity-10 border border-danger{% endif %}" id="live-net-profit-banner">
+                    <span class="fw-bold" style="font-size: 0.95rem;">
+                        <i class="bi bi-graph-up-arrow me-1"></i>Net Profit:
+                        <span id="live-net-profit-value" class="{% if net_profit >= 0 %}text-success{% else %}text-danger{% endif %}">
+                            {% if net_profit >= 0 %}${{ net_profit|floatformat:2|intcomma }}{% else %}(${{ net_profit_abs|floatformat:2|intcomma }}){% endif %}
+                        </span>
+                    </span>
+                </div>
             </div>
         </div>
         <div class="table-responsive">
@@ -370,7 +384,7 @@
                     <tr class="fw-bold" style="border-top: 2px solid #198754;">
                         <td></td>
                         <td class="text-end"><span class="text-success"><i class="bi bi-graph-up-arrow"></i> Net Profit / (Loss)</span></td>
-                        <td class="text-end" colspan="2">
+                        <td class="text-end" colspan="2" id="tfoot-net-profit">
                             {% if net_profit >= 0 %}
                             <span class="text-success">${{ net_profit|floatformat:2|intcomma }}</span>
                             {% else %}
@@ -3485,6 +3499,66 @@ document.addEventListener('click', function(e) {
         btn.innerHTML = '<i class="bi bi-arrow-counterclockwise"></i>';
     });
 });
+</script>
+
+<script>
+// ===== Live Net Profit Refresh =====
+// Refreshes the net profit banner in the TB tab header.
+// Called after bank statement approvals and periodically.
+function refreshNetProfit() {
+    fetch('{% url "core:net_profit_api" pk=fy.pk %}', {
+        headers: {'X-Requested-With': 'XMLHttpRequest'},
+        credentials: 'same-origin'
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        var np = parseFloat(data.net_profit);
+        var banner = document.getElementById('live-net-profit-banner');
+        var valueEl = document.getElementById('live-net-profit-value');
+        if (!banner || !valueEl) return;
+
+        // Format number with commas
+        var abs = Math.abs(np).toLocaleString('en-AU', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+        if (np >= 0) {
+            valueEl.textContent = '$' + abs;
+            valueEl.className = 'text-success';
+            banner.className = 'px-3 py-2 rounded bg-success bg-opacity-10 border border-success';
+        } else {
+            valueEl.textContent = '($' + abs + ')';
+            valueEl.className = 'text-danger';
+            banner.className = 'px-3 py-2 rounded bg-danger bg-opacity-10 border border-danger';
+        }
+
+        // Also update the tfoot net profit row
+        var tfootNP = document.getElementById('tfoot-net-profit');
+        if (tfootNP) {
+            if (np >= 0) {
+                tfootNP.innerHTML = '<span class="text-success">$' + abs + '</span>';
+            } else {
+                tfootNP.innerHTML = '<span class="text-danger">($' + abs + ')</span>';
+            }
+        }
+    })
+    .catch(function() {});
+}
+
+// Hook into all location.reload() calls — before reload, the net profit
+// will already be correct on the server. But for AJAX-only flows that
+// don't reload, we patch fetch to detect approve responses.
+(function() {
+    var origFetch = window.fetch;
+    window.fetch = function() {
+        var promise = origFetch.apply(this, arguments);
+        var url = arguments[0];
+        if (typeof url === 'string' && (url.indexOf('/approve/') !== -1 || url.indexOf('/unconfirm/') !== -1 || url.indexOf('/bulk-approve') !== -1)) {
+            promise.then(function(resp) {
+                // Refresh net profit after a short delay to let DB commit
+                setTimeout(refreshNetProfit, 500);
+            });
+        }
+        return promise;
+    };
+})();
 </script>
 
 {% endblock %}

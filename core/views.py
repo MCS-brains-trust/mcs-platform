@@ -545,9 +545,16 @@ def financial_year_detail(request, pk):
     all_log_pks = set(activity_logs.values_list('pk', flat=True)) | set(journal_logs.values_list('pk', flat=True))
     activity_logs = AuditLog.objects.filter(pk__in=all_log_pks).select_related('user').order_by('-timestamp')
 
+    # Check if this entity has bank statement uploads
+    has_bank_statements = (
+        tb_lines.filter(source='bank_statement').exists()
+        or review_jobs.exists()
+    )
+
     context = {
         "fy": fy,
         "entity": fy.entity,
+        "has_bank_statements": has_bank_statements,
         "tb_lines": tb_lines,
         "tb_sections": aggregated_sections,
         "adjustments": adjustments,
@@ -7718,3 +7725,69 @@ def journal_template_download(request):
         )
         response["Content-Disposition"] = 'attachment; filename="StatementHub_Journal_Upload_Template.xlsx"'
         return response
+
+
+@login_required
+def net_profit_api(request, pk):
+    """Return the current net profit for a financial year (JSON).
+
+    Used by the live net profit banner in the Trial Balance tab to
+    refresh after bank statement approvals without a full page reload.
+    """
+    fy = get_financial_year_for_user(request, pk)
+    tb_lines = fy.trial_balance_lines.select_related("mapped_line_item").all()
+
+    SECTION_DISPLAY = {
+        'Revenue': 'Income', 'Income': 'Income',
+        'Cost of Sales': 'Cost of Sales', 'Expenses': 'Expenses',
+        'Current Assets': 'Current Assets', 'Non-Current Assets': 'Non Current Assets',
+        'Current Liabilities': 'Current Liabilities', 'Non-Current Liabilities': 'Non Current Liabilities',
+        'Equity': 'Equity', 'Income Tax': 'Equity',
+    }
+    pl_sections = {'Income', 'Cost of Sales', 'Expenses'}
+    pl_dr = Decimal('0')
+    pl_cr = Decimal('0')
+
+    for line in tb_lines:
+        if line.mapped_line_item:
+            raw_section = line.mapped_line_item.statement_section
+            display_section = SECTION_DISPLAY.get(raw_section, raw_section)
+        else:
+            display_section = 'Unmapped'
+
+        if display_section in pl_sections:
+            # Compute display_dr / display_cr the same way as the main view
+            if line.debit == 0 and line.credit == 0 and line.closing_balance != 0:
+                if line.closing_balance > 0:
+                    dr = line.closing_balance
+                    cr = Decimal('0')
+                else:
+                    dr = Decimal('0')
+                    cr = abs(line.closing_balance)
+            else:
+                dr = line.debit
+                cr = line.credit
+            pl_dr += dr or Decimal('0')
+            pl_cr += cr or Decimal('0')
+
+    net_profit = pl_cr - pl_dr
+
+    # Also compute totals for the balance check
+    total_dr = Decimal('0')
+    total_cr = Decimal('0')
+    for line in tb_lines:
+        if line.debit == 0 and line.credit == 0 and line.closing_balance != 0:
+            if line.closing_balance > 0:
+                total_dr += line.closing_balance
+            else:
+                total_cr += abs(line.closing_balance)
+        else:
+            total_dr += line.debit or Decimal('0')
+            total_cr += line.credit or Decimal('0')
+
+    return JsonResponse({
+        "net_profit": str(net_profit),
+        "total_debit": str(total_dr),
+        "total_credit": str(total_cr),
+        "balanced": total_dr == total_cr,
+    })
