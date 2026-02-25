@@ -1085,12 +1085,49 @@ def roll_forward(request, pk):
 
         # -----------------------------------------------------------------
         # Pass 3: Create P&L comparative lines (zero current, prior only)
+        #         AND convert closing stock → opening stock for new year
         # -----------------------------------------------------------------
         carried_pl = 0
+        stock_converted = 0
+
+        # Build lookup for opening stock mapping (IS-COS-002)
+        opening_stock_mapping = None
+        closing_stock_mapping = None
+        try:
+            opening_stock_mapping = AccountMapping.objects.get(standard_code="IS-COS-002")
+        except AccountMapping.DoesNotExist:
+            pass
+        try:
+            closing_stock_mapping = AccountMapping.objects.get(standard_code="IS-COS-004")
+        except AccountMapping.DoesNotExist:
+            pass
+
+        # Keywords to identify closing stock/WIP accounts
+        CLOSING_STOCK_KEYWORDS = [
+            "closing stock", "closing work in progress", "closing wip",
+            "closing raw material", "closing finished goods",
+            "closing inventory",
+        ]
+
         for line in pl_lines:
             if line.debit == 0 and line.credit == 0:
                 continue  # Skip if no prior year activity
 
+            # Check if this is a closing stock account
+            is_closing_stock = False
+            name_lower = (line.account_name or "").lower()
+
+            # Check by mapped standard code
+            if line.mapped_line_item and (line.mapped_line_item.standard_code or "") == "IS-COS-004":
+                is_closing_stock = True
+            # Check by account name keywords
+            if not is_closing_stock:
+                for kw in CLOSING_STOCK_KEYWORDS:
+                    if kw in name_lower:
+                        is_closing_stock = True
+                        break
+
+            # Create the comparative line (always)
             TrialBalanceLine.objects.create(
                 financial_year=new_fy,
                 account_code=line.account_code,
@@ -1107,11 +1144,82 @@ def roll_forward(request, pk):
             )
             carried_pl += 1
 
+            # If closing stock, also create an opening stock line for the new year
+            if is_closing_stock:
+                # Closing stock is typically a credit in P&L (reduces COGS)
+                # Opening stock is a debit in P&L (increases COGS)
+                # The closing stock amount becomes the opening stock amount
+                closing_amount = line.credit - line.debit  # Positive if credit
+                if closing_amount != 0:
+                    # Derive opening account name from closing
+                    opening_name = line.account_name
+                    for old, new in [("Closing", "Opening"), ("closing", "opening"), ("CLOSING", "OPENING")]:
+                        opening_name = opening_name.replace(old, new)
+                    if opening_name == line.account_name:
+                        # Keyword replacement didn't work, prepend "Opening"
+                        opening_name = "Opening " + line.account_name
+
+                    # Derive opening account code: try to find matching opening code
+                    # Convention: opening stock codes are typically nearby
+                    # e.g., 1135 closing -> 1105 opening, or same code range
+                    opening_code = line.account_code
+                    # Look for an existing opening stock line in the current FY
+                    for pl_line in pl_lines:
+                        pl_name_lower = (pl_line.account_name or "").lower()
+                        if ("opening" in pl_name_lower and
+                            ("stock" in pl_name_lower or "work in progress" in pl_name_lower
+                             or "wip" in pl_name_lower or "inventory" in pl_name_lower
+                             or "raw material" in pl_name_lower or "finished good" in pl_name_lower)):
+                            opening_code = pl_line.account_code
+                            opening_name = pl_line.account_name
+                            break
+                        if pl_line.mapped_line_item and (pl_line.mapped_line_item.standard_code or "") == "IS-COS-002":
+                            opening_code = pl_line.account_code
+                            opening_name = pl_line.account_name
+                            break
+
+                    TrialBalanceLine.objects.create(
+                        financial_year=new_fy,
+                        account_code=opening_code,
+                        account_name=opening_name,
+                        opening_balance=Decimal("0"),
+                        debit=closing_amount if closing_amount > 0 else Decimal("0"),
+                        credit=abs(closing_amount) if closing_amount < 0 else Decimal("0"),
+                        closing_balance=Decimal("0"),
+                        prior_debit=Decimal("0"),
+                        prior_credit=Decimal("0"),
+                        mapped_line_item=opening_stock_mapping,
+                        is_adjustment=False,
+                        source='rollover',
+                    )
+                    stock_converted += 1
+
+        # -----------------------------------------------------------------
+        # Pass 4: Roll forward stock items (closing → opening)
+        # -----------------------------------------------------------------
+        stock_rolled = 0
+        for stock_item in current_fy.stock_items.all():
+            if stock_item.closing_value == 0 and stock_item.closing_quantity == 0:
+                continue
+            StockItem.objects.create(
+                financial_year=new_fy,
+                item_name=stock_item.item_name,
+                opening_quantity=stock_item.closing_quantity,
+                opening_value=stock_item.closing_value,
+                closing_quantity=Decimal("0"),
+                closing_value=Decimal("0"),
+                notes=f"Rolled forward from FY{current_fy.year_label}",
+                display_order=stock_item.display_order,
+            )
+            stock_rolled += 1
+
         total_carried = carried_bs + carried_pl
         pl_direction = "profit" if net_pl_result < 0 else "loss"
         tax_msg = f" Income tax of ${abs(tax_amount):,.2f} absorbed." if tax_amount else ""
-        _log_action(request, "import", f"Rolled forward to {new_label} with {carried_bs} BS items, {carried_pl} P&L comparatives. Net {pl_direction} of ${abs(net_pl_result):,.2f} closed to retained earnings.{tax_msg}", new_fy)
-        messages.success(request, f"Rolled forward to {new_label}. {carried_bs} balance sheet items carried, {carried_pl} P&L comparatives. Net {pl_direction} of ${abs(net_pl_result):,.2f} less tax ${abs(tax_amount):,.2f} closed to retained earnings.")
+        stock_msg = f" {stock_converted} closing stock entries converted to opening stock." if stock_converted else ""
+        stock_items_msg = f" {stock_rolled} stock items rolled forward." if stock_rolled else ""
+        _log_action(request, "import", f"Rolled forward to {new_label} with {carried_bs} BS items, {carried_pl} P&L comparatives. Net {pl_direction} of ${abs(net_pl_result):,.2f} closed to retained earnings.{tax_msg}{stock_msg}{stock_items_msg}", new_fy)
+        messages.success(request, f"Rolled forward to {new_label}. {carried_bs} balance sheet items carried, {carried_pl} P&L comparatives. Net {pl_direction} of ${abs(net_pl_result):,.2f} less tax ${abs(tax_amount):,.2f} closed to retained earnings.{stock_msg}{stock_items_msg}")
         return redirect("core:financial_year_detail", pk=new_fy.pk)
 
     return render(request, "core/roll_forward_confirm.html", {"fy": current_fy})
