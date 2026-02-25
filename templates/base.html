@@ -9,229 +9,584 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
     <link href="{% static 'css/style.css' %}" rel="stylesheet">
     <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    <style>
+        /* ── CSS Variables ── */
+        :root {
+            --sidebar-width: 240px;
+            --sidebar-bg: #1a1a2e;
+            --sidebar-text: rgba(255,255,255,0.55);
+            --sidebar-text-hover: rgba(255,255,255,0.85);
+            --sidebar-active-bg: rgba(108,140,255,0.12);
+            --sidebar-active-text: #fff;
+            --accent: #6c8cff;
+            --accent-light: rgba(108,140,255,0.15);
+            --topbar-height: 56px;
+        }
+
+        body {
+            background: #f0f2f5;
+            margin: 0;
+        }
+
+        /* ── Sidebar ── */
+        .sh-sidebar {
+            position: fixed; left: 0; top: 0; bottom: 0;
+            width: var(--sidebar-width);
+            background: var(--sidebar-bg);
+            color: #fff;
+            display: flex; flex-direction: column;
+            z-index: 1040;
+            overflow-y: auto;
+            transition: transform 0.25s ease;
+        }
+        .sh-sidebar::-webkit-scrollbar { width: 4px; }
+        .sh-sidebar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 2px; }
+
+        .sh-sidebar-brand {
+            padding: 20px 20px 16px;
+            border-bottom: 1px solid rgba(255,255,255,0.08);
+        }
+        .sh-sidebar-brand h1 {
+            font-size: 18px; font-weight: 700; letter-spacing: -0.3px; margin: 0;
+            color: #fff;
+        }
+        .sh-sidebar-brand h1 .accent { color: var(--accent); }
+        .sh-sidebar-brand .role-badge {
+            display: inline-block; margin-top: 6px; padding: 3px 10px;
+            border-radius: 12px; font-size: 11px; font-weight: 600; letter-spacing: 0.3px;
+        }
+        .role-badge-admin { background: rgba(231,76,60,0.2); color: #ff8a80; }
+        .role-badge-senior { background: rgba(46,125,50,0.2); color: #81c784; }
+        .role-badge-accountant { background: rgba(108,140,255,0.15); color: #8fa8ff; }
+        .role-badge-office-admin { background: rgba(245,127,23,0.2); color: #ffb74d; }
+
+        .sh-nav { flex: 1; padding: 12px 0; }
+        .sh-nav-section {
+            padding: 8px 20px 4px; font-size: 10px; font-weight: 700;
+            text-transform: uppercase; letter-spacing: 1px;
+            color: rgba(255,255,255,0.35); margin-top: 12px;
+        }
+        .sh-nav-section:first-child { margin-top: 0; }
+
+        .sh-nav-item {
+            display: flex; align-items: center; gap: 12px;
+            padding: 10px 20px; font-size: 13.5px;
+            color: var(--sidebar-text);
+            text-decoration: none; position: relative;
+            transition: all 0.15s;
+        }
+        .sh-nav-item:hover {
+            background: rgba(255,255,255,0.05);
+            color: var(--sidebar-text-hover);
+        }
+        .sh-nav-item.active {
+            background: var(--sidebar-active-bg);
+            color: var(--sidebar-active-text);
+        }
+        .sh-nav-item.active::before {
+            content: ''; position: absolute; left: 0; top: 4px; bottom: 4px;
+            width: 3px; background: var(--accent); border-radius: 0 3px 3px 0;
+        }
+        .sh-nav-item i { width: 20px; text-align: center; font-size: 15px; flex-shrink: 0; }
+        .sh-nav-item .count-badge {
+            margin-left: auto; background: rgba(231,76,60,0.9); color: #fff;
+            font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 10px;
+            min-width: 20px; text-align: center;
+        }
+        .sh-nav-item .count-badge.blue { background: rgba(108,140,255,0.8); }
+        .sh-nav-item .count-badge.amber { background: rgba(245,127,23,0.8); }
+
+        .sh-sidebar-user {
+            padding: 16px 20px;
+            border-top: 1px solid rgba(255,255,255,0.08);
+            display: flex; align-items: center; gap: 10px;
+        }
+        .sh-user-avatar {
+            width: 34px; height: 34px; border-radius: 50%;
+            background: var(--accent);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 13px; font-weight: 700; color: #fff; flex-shrink: 0;
+        }
+        .sh-user-info { overflow: hidden; }
+        .sh-user-name { font-size: 13px; font-weight: 600; color: #fff; }
+        .sh-user-email { font-size: 11px; color: rgba(255,255,255,0.4); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+        /* ── Main Content ── */
+        .sh-main { margin-left: var(--sidebar-width); min-height: 100vh; }
+
+        /* ── Top bar ── */
+        .sh-topbar {
+            background: #fff; padding: 0 32px;
+            height: var(--topbar-height);
+            display: flex; align-items: center; justify-content: space-between;
+            border-bottom: 1px solid #e2e6ea;
+            position: sticky; top: 0; z-index: 1030;
+        }
+        .sh-search-bar {
+            display: flex; align-items: center; gap: 8px;
+            background: #f5f6f8; border: 1px solid #e2e6ea;
+            border-radius: 8px; padding: 8px 14px; width: 380px;
+            position: relative;
+        }
+        .sh-search-bar input {
+            border: none; background: none; outline: none;
+            font-size: 13px; color: #333; flex: 1;
+        }
+        .sh-search-bar input::placeholder { color: #aaa; }
+        #searchResults {
+            position: absolute; top: 100%; left: 0; right: 0;
+            background: #fff; border: 1px solid #e2e6ea; border-top: none;
+            border-radius: 0 0 8px 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            z-index: 1050; max-height: 400px; overflow-y: auto;
+        }
+
+        .sh-topbar-right {
+            display: flex; align-items: center; gap: 16px;
+        }
+        .sh-topbar-date { font-size: 12.5px; color: #888; font-weight: 500; }
+
+        .sh-notif-btn {
+            position: relative; width: 36px; height: 36px; border-radius: 8px;
+            border: 1px solid #e2e6ea; background: #fff; cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 16px; color: #666;
+        }
+        .sh-notif-btn .notif-dot {
+            position: absolute; top: -4px; right: -4px;
+            width: 18px; height: 18px; background: #e74c3c; color: #fff;
+            font-size: 9px; font-weight: 700; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .sh-notif-btn .notif-dot.d-none { display: none !important; }
+
+        .sh-user-dropdown {
+            display: flex; align-items: center; gap: 8px;
+            cursor: pointer; padding: 4px 8px; border-radius: 8px;
+            transition: background 0.15s;
+        }
+        .sh-user-dropdown:hover { background: #f5f6f8; }
+        .sh-user-dropdown .avatar-sm {
+            width: 32px; height: 32px; border-radius: 50%;
+            background: var(--accent); color: #fff;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 12px; font-weight: 700;
+        }
+
+        /* ── Page content ── */
+        .sh-page-content { padding: 28px 32px; }
+
+        /* ── Messages ── */
+        .sh-messages { padding: 16px 32px 0; }
+
+        /* ── Mobile sidebar toggle ── */
+        .sh-sidebar-toggle {
+            display: none; width: 36px; height: 36px; border-radius: 8px;
+            border: 1px solid #e2e6ea; background: #fff; cursor: pointer;
+            align-items: center; justify-content: center; font-size: 18px; color: #666;
+        }
+        .sh-sidebar-overlay {
+            display: none; position: fixed; inset: 0;
+            background: rgba(0,0,0,0.4); z-index: 1035;
+        }
+
+        /* ── Responsive ── */
+        @media (max-width: 991px) {
+            .sh-sidebar { transform: translateX(-100%); }
+            .sh-sidebar.open { transform: translateX(0); }
+            .sh-sidebar-overlay.open { display: block; }
+            .sh-main { margin-left: 0; }
+            .sh-sidebar-toggle { display: flex; }
+            .sh-search-bar { width: 240px; }
+        }
+        @media (max-width: 576px) {
+            .sh-topbar { padding: 0 16px; }
+            .sh-page-content { padding: 16px; }
+            .sh-search-bar { width: 160px; }
+        }
+
+        /* ── Print ── */
+        @media print {
+            .sh-sidebar, .sh-topbar, .sh-sidebar-overlay, footer { display: none !important; }
+            .sh-main { margin-left: 0 !important; }
+            .sh-page-content { padding: 0 !important; }
+        }
+    </style>
     {% block extra_head %}{% endblock %}
+    {% block extra_css %}{% endblock %}
 </head>
 <body hx-headers='{"X-CSRFToken": "{{ csrf_token }}"}'>
-    {% if user.is_authenticated %}
-    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
-        <div class="container-fluid">
-            <a class="navbar-brand fw-bold" href="{% url 'review:dashboard' %}">
-                <i class="bi bi-file-earmark-bar-graph"></i> StatementHub
-            </a>
-            <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
-                <span class="navbar-toggler-icon"></span>
-            </button>
-            <div class="collapse navbar-collapse" id="navbarNav">
-                <ul class="navbar-nav me-auto">
-                    <li class="nav-item">
-                        <a class="nav-link" href="{% url 'review:dashboard' %}">
-                            <i class="bi bi-speedometer2"></i> Dashboard
-                        </a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link" href="{% url 'core:entity_list' %}">
-                            <i class="bi bi-building"></i> Entities
-                        </a>
-                    </li>
 
-                    <li class="nav-item">
-                        <a class="nav-link" href="{% url 'core:audit_library' %}">
-                            <i class="bi bi-shield-check"></i> Audit Library
-                        </a>
-                    </li>
-                    {% if user.is_admin %}
-                    <li class="nav-item dropdown">
-                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
-                            <i class="bi bi-gear"></i> Admin
-                        </a>
-                        <ul class="dropdown-menu">
-                            <li><a class="dropdown-item" href="{% url 'accounts:user_list' %}">User Management</a></li>
-                            <li><a class="dropdown-item" href="{% url 'accounts:invitation_list' %}">Invitations</a></li>
-                            <li><hr class="dropdown-divider"></li>
-                            <li><a class="dropdown-item" href="{% url 'core:access_ledger_import' %}">Import Access Ledger</a></li>
-                            <li><a class="dropdown-item" href="{% url 'core:bulk_import_start' %}"><i class="bi bi-cloud-upload me-1"></i>Bulk Entity Import</a></li>
-                            <li><a class="dropdown-item" href="{% url 'core:entity_assignments' %}"><i class="bi bi-people me-1"></i>Entity Assignments</a></li>
-                            <li><a class="dropdown-item" href="{% url 'core:chart_of_accounts' %}"><i class="bi bi-diagram-3 me-1"></i>Chart of Accounts (Templates)</a></li>
-                            <li><a class="dropdown-item" href="{% url 'core:template_list' %}"><i class="bi bi-file-earmark-text me-1"></i>Document Templates</a></li>
-                            <li><hr class="dropdown-divider"></li>
-                            <li><a class="dropdown-item" href="{% url 'integrations:connections_hub' %}"><i class="bi bi-plug me-1"></i>Connections Hub</a></li>
-                            <li><a class="dropdown-item" href="{% url 'integrations:xero_global_dashboard' %}"><i class="bi bi-cloud me-1"></i>Xero Connection</a></li>
-                            <li><a class="dropdown-item" href="{% url 'integrations:qb_global_dashboard' %}"><i class="bi bi-cloud me-1"></i>QuickBooks Connection</a></li>
-                            <li><a class="dropdown-item" href="{% url 'integrations:xpm_dashboard' %}"><i class="bi bi-cloud-arrow-down me-1"></i>XPM Sync</a></li>
-                            <li><a class="dropdown-item" href="{% url 'admin:index' %}">Django Admin</a></li>
-                        </ul>
-                    </li>
-                    {% endif %}
-                </ul>
-                <ul class="navbar-nav align-items-center">
-                    <!-- Notification Bell -->
-                    <li class="nav-item dropdown me-2">
-                        <a class="nav-link position-relative" href="#" role="button" data-bs-toggle="dropdown" id="notificationBell">
-                            <i class="bi bi-bell fs-5"></i>
-                            <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger d-none" id="notifBadge" style="font-size: 0.6rem;">0</span>
-                        </a>
-                        <ul class="dropdown-menu dropdown-menu-end shadow" style="width: 360px; max-height: 400px; overflow-y: auto;" id="notifDropdown">
-                            <li class="dropdown-header d-flex justify-content-between align-items-center">
-                                <strong>Notifications</strong>
-                                <a href="#" class="text-decoration-none small" id="markAllRead">Mark all read</a>
-                            </li>
-                            <li><hr class="dropdown-divider"></li>
-                            <li class="text-center text-muted py-3" id="notifEmpty"><small>No new notifications</small></li>
-                        </ul>
-                    </li>
-                    <li class="nav-item dropdown">
-                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
-                            <i class="bi bi-person-circle"></i> {{ user.get_full_name|default:user.username }}
-                        </a>
-                        <ul class="dropdown-menu dropdown-menu-end">
-                            <li><span class="dropdown-item-text text-muted small">{{ user.get_role_display }}</span></li>
-                            <li><hr class="dropdown-divider"></li>
-                            <li><a class="dropdown-item" href="{% url 'accounts:profile' %}">Profile</a></li>
-                            <li>
-                                <form method="post" action="{% url 'accounts:logout' %}">
-                                    {% csrf_token %}
-                                    <button type="submit" class="dropdown-item">Logout</button>
-                                </form>
-                            </li>
-                        </ul>
-                    </li>
-                </ul>
-            </div>
-        </div>
-    </nav>
-    {% endif %}
+{% if user.is_authenticated %}
+<!-- ── SIDEBAR ── -->
+<nav class="sh-sidebar" id="shSidebar">
+    <div class="sh-sidebar-brand">
+        <h1>Statement<span class="accent">Hub</span></h1>
+        <span class="role-badge {% if user.is_admin %}role-badge-admin{% elif user.is_senior %}role-badge-senior{% elif user.is_office_admin %}role-badge-office-admin{% else %}role-badge-accountant{% endif %}">
+            {{ user.get_role_display|upper }}
+        </span>
+    </div>
 
-    <main class="container-fluid py-4">
-        {% if messages %}
-        <div class="row">
-            <div class="col-12">
-                {% for message in messages %}
-                <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
-                    {{ message }}
-                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-                </div>
-                {% endfor %}
-            </div>
-        </div>
+    <div class="sh-nav">
+        <!-- ── MAIN ── -->
+        <div class="sh-nav-section">Main</div>
+        <a class="sh-nav-item {% if active_nav == 'dashboard' %}active{% endif %}"
+           href="{% url 'review:dashboard' %}">
+            <i class="bi bi-grid-1x2-fill"></i> Dashboard
+        </a>
+        <a class="sh-nav-item {% if active_nav == 'entity_hub' or active_nav == 'entities' %}active{% endif %}"
+           href="{% url 'core:entity_list' %}">
+            <i class="bi bi-building"></i> Entity Hub
+        </a>
+
+        {% if user.can_do_accounting %}
+        <!-- ── ACCOUNTING (accountants, seniors, admins) ── -->
+        <div class="sh-nav-section">Accounting</div>
+        <a class="sh-nav-item {% if active_nav == 'audit_library' %}active{% endif %}"
+           href="{% url 'core:audit_library' %}">
+            <i class="bi bi-shield-check"></i> Audit Library
+        </a>
         {% endif %}
 
-        {% block content %}{% endblock %}
-    </main>
+        <!-- ── CLIENT CORRESPONDENCE (all roles) ── -->
+        <div class="sh-nav-section">Client Correspondence</div>
+        <a class="sh-nav-item {% if active_nav == 'incoming' %}active{% endif %}"
+           href="{% url 'office_admin:correspondence_incoming' %}">
+            <i class="bi bi-envelope-arrow-down-fill"></i> Incoming Mail
+            {% if sidebar_correspondence_new %}<span class="count-badge">{{ sidebar_correspondence_new }}</span>{% endif %}
+        </a>
+        <a class="sh-nav-item {% if active_nav == 'outgoing' %}active{% endif %}"
+           href="{% url 'office_admin:correspondence_outgoing' %}">
+            <i class="bi bi-envelope-arrow-up-fill"></i> Outgoing Mail
+        </a>
+        <a class="sh-nav-item {% if active_nav == 'awaiting' %}active{% endif %}"
+           href="{% url 'office_admin:correspondence_awaiting' %}">
+            <i class="bi bi-hourglass-split"></i> Awaiting Reply
+            {% if sidebar_correspondence_awaiting %}<span class="count-badge amber">{{ sidebar_correspondence_awaiting }}</span>{% endif %}
+        </a>
+        <a class="sh-nav-item {% if active_nav == 'documents_in' %}active{% endif %}"
+           href="{% url 'office_admin:correspondence_documents_in' %}">
+            <i class="bi bi-file-earmark-arrow-down-fill"></i> Documents In
+            {% if sidebar_documents_in %}<span class="count-badge blue">{{ sidebar_documents_in }}</span>{% endif %}
+        </a>
 
-    <footer class="bg-light border-top py-3 mt-4">
-        <div class="container-fluid">
-            <div class="d-flex justify-content-between align-items-center">
-                <p class="text-muted small mb-0">
-                    &copy; 2026 MC &amp; S Pty Ltd &mdash; StatementHub
-                </p>
-                <p class="text-muted small mb-0">
-                    <i class="bi bi-clock-history me-1"></i>Build: {{ BUILD_TIMESTAMP }}
-                </p>
+        <!-- ── ASIC / ATO (all roles) ── -->
+        <div class="sh-nav-section">ASIC / ATO</div>
+        <a class="sh-nav-item {% if active_nav == 'noa' %}active{% endif %}"
+           href="{% url 'office_admin:noa_tracker' %}">
+            <i class="bi bi-bank2"></i> NOA Tracker
+        </a>
+        <a class="sh-nav-item {% if active_nav == 'asic_returns' %}active{% endif %}"
+           href="{% url 'office_admin:asic_returns' %}">
+            <i class="bi bi-clipboard-check-fill"></i> ASIC Returns
+            {% if sidebar_asic_burning %}<span class="count-badge">{{ sidebar_asic_burning }}</span>{% endif %}
+        </a>
+        <a class="sh-nav-item {% if active_nav == 'burning' %}active{% endif %}"
+           href="{% url 'office_admin:burning_list' %}">
+            <i class="bi bi-fire"></i> Burning List
+        </a>
+        <a class="sh-nav-item {% if active_nav == 'company_register' %}active{% endif %}"
+           href="{% url 'office_admin:company_register' %}">
+            <i class="bi bi-building-fill-gear"></i> Company Register
+        </a>
+
+        <!-- ── DEBTORS (all roles) ── -->
+        <div class="sh-nav-section">Debtors</div>
+        <a class="sh-nav-item {% if active_nav == 'aged_receivables' %}active{% endif %}"
+           href="{% url 'office_admin:aged_receivables' %}">
+            <i class="bi bi-cash-coin"></i> Aged Receivables
+        </a>
+        <a class="sh-nav-item {% if active_nav == 'statements_sent' %}active{% endif %}"
+           href="{% url 'office_admin:statements_sent' %}">
+            <i class="bi bi-envelope-check-fill"></i> Statements Sent
+        </a>
+        <a class="sh-nav-item {% if active_nav == 'overdue' %}active{% endif %}"
+           href="{% url 'office_admin:debtors_overdue' %}">
+            <i class="bi bi-exclamation-triangle-fill"></i> Overdue
+            {% if sidebar_overdue_count %}<span class="count-badge">{{ sidebar_overdue_count }}</span>{% endif %}
+        </a>
+        <a class="sh-nav-item {% if active_nav == 'payment_plans' %}active{% endif %}"
+           href="{% url 'office_admin:payment_plans' %}">
+            <i class="bi bi-credit-card-2-front-fill"></i> Payment Plans
+        </a>
+
+        {% if user.is_admin %}
+        <!-- ── ADMIN (admin only) ── -->
+        <div class="sh-nav-section">Administration</div>
+        <a class="sh-nav-item {% if active_nav == 'user_management' %}active{% endif %}"
+           href="{% url 'accounts:user_list' %}">
+            <i class="bi bi-people-fill"></i> User Management
+        </a>
+        <a class="sh-nav-item {% if active_nav == 'entity_assignments' %}active{% endif %}"
+           href="{% url 'core:entity_assignments' %}">
+            <i class="bi bi-person-lines-fill"></i> Entity Assignments
+        </a>
+        <a class="sh-nav-item {% if active_nav == 'chart_of_accounts' %}active{% endif %}"
+           href="{% url 'core:chart_of_accounts' %}">
+            <i class="bi bi-diagram-3-fill"></i> Chart of Accounts
+        </a>
+        <a class="sh-nav-item {% if active_nav == 'document_templates' %}active{% endif %}"
+           href="{% url 'core:template_list' %}">
+            <i class="bi bi-file-earmark-text-fill"></i> Document Templates
+        </a>
+        <a class="sh-nav-item {% if active_nav == 'connections' %}active{% endif %}"
+           href="{% url 'integrations:connections_hub' %}">
+            <i class="bi bi-plug-fill"></i> Connections Hub
+        </a>
+        <a class="sh-nav-item {% if active_nav == 'import' %}active{% endif %}"
+           href="{% url 'core:bulk_import_start' %}">
+            <i class="bi bi-cloud-upload-fill"></i> Bulk Import
+        </a>
+        {% endif %}
+    </div>
+
+    <!-- User profile at bottom -->
+    <div class="sh-sidebar-user">
+        <div class="sh-user-avatar">{{ user.first_name|first|default:"?" }}{{ user.last_name|first|default:"" }}</div>
+        <div class="sh-user-info">
+            <div class="sh-user-name">{{ user.get_full_name|default:user.username }}</div>
+            <div class="sh-user-email">{{ user.email }}</div>
+        </div>
+    </div>
+</nav>
+
+<!-- Mobile overlay -->
+<div class="sh-sidebar-overlay" id="shOverlay"></div>
+
+<!-- ── MAIN CONTENT ── -->
+<div class="sh-main">
+    <!-- Top bar -->
+    <div class="sh-topbar">
+        <div class="d-flex align-items-center gap-3">
+            <button class="sh-sidebar-toggle" id="shToggle" type="button">
+                <i class="bi bi-list"></i>
+            </button>
+            <div class="sh-search-bar">
+                <i class="bi bi-search" style="color: #999;"></i>
+                <input type="text" placeholder="Search clients by name, ABN, or ACN..."
+                       id="globalSearch"
+                       hx-get="{% url 'core:htmx_client_search' %}"
+                       hx-trigger="keyup changed delay:300ms"
+                       hx-target="#searchResults"
+                       name="q">
+                <div id="searchResults"></div>
             </div>
         </div>
-    </footer>
+        <div class="sh-topbar-right">
+            <span class="sh-topbar-date">{% now "D j M Y" %}</span>
+            <!-- Notification bell -->
+            <div class="dropdown">
+                <button class="sh-notif-btn" type="button" data-bs-toggle="dropdown" id="notificationBell">
+                    <i class="bi bi-bell-fill"></i>
+                    <span class="notif-dot d-none" id="notifBadge">0</span>
+                </button>
+                <ul class="dropdown-menu dropdown-menu-end shadow" style="width: 360px; max-height: 400px; overflow-y: auto;" id="notifDropdown">
+                    <li class="dropdown-header d-flex justify-content-between align-items-center">
+                        <strong>Notifications</strong>
+                        <a href="#" class="text-decoration-none small" id="markAllRead">Mark all read</a>
+                    </li>
+                    <li><hr class="dropdown-divider"></li>
+                    <li class="text-center text-muted py-3" id="notifEmpty"><small>No new notifications</small></li>
+                </ul>
+            </div>
+            <!-- User dropdown -->
+            <div class="dropdown">
+                <div class="sh-user-dropdown" data-bs-toggle="dropdown">
+                    <div class="avatar-sm">{{ user.first_name|first|default:"?" }}{{ user.last_name|first|default:"" }}</div>
+                    <i class="bi bi-chevron-down" style="font-size: 10px; color: #999;"></i>
+                </div>
+                <ul class="dropdown-menu dropdown-menu-end shadow">
+                    <li><span class="dropdown-item-text text-muted small">{{ user.get_role_display }}</span></li>
+                    <li><hr class="dropdown-divider"></li>
+                    <li><a class="dropdown-item" href="{% url 'accounts:profile' %}"><i class="bi bi-person me-2"></i>Profile</a></li>
+                    {% if user.is_admin %}
+                    <li><a class="dropdown-item" href="{% url 'admin:index' %}"><i class="bi bi-gear me-2"></i>Django Admin</a></li>
+                    {% endif %}
+                    <li><hr class="dropdown-divider"></li>
+                    <li>
+                        <form method="post" action="{% url 'accounts:logout' %}">
+                            {% csrf_token %}
+                            <button type="submit" class="dropdown-item"><i class="bi bi-box-arrow-right me-2"></i>Logout</button>
+                        </form>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-
-    {% if user.is_authenticated %}
-    <script>
-    // Notification polling
-    (function() {
-        const badge = document.getElementById('notifBadge');
-        const dropdown = document.getElementById('notifDropdown');
-        const emptyMsg = document.getElementById('notifEmpty');
-        const markAllBtn = document.getElementById('markAllRead');
-        const csrfToken = '{{ csrf_token }}';
-
-        function getEventIcon(eventType) {
-            const icons = {
-                'bank_upload': 'bi-bank',
-                'classify_complete': 'bi-check-circle text-success',
-                'classify_started': 'bi-hourglass-split text-warning',
-                'tb_import': 'bi-file-earmark-spreadsheet',
-                'journal_posted': 'bi-journal-check',
-                'year_finalised': 'bi-trophy text-success',
-                'audit_run': 'bi-shield-exclamation text-danger',
-                'review_approved': 'bi-check2-all text-primary',
-                'doc_generated': 'bi-file-earmark-word',
-                'general': 'bi-info-circle',
-            };
-            return icons[eventType] || 'bi-info-circle';
-        }
-
-        function timeAgo(dateStr) {
-            const now = new Date();
-            const d = new Date(dateStr);
-            const secs = Math.floor((now - d) / 1000);
-            if (secs < 60) return 'just now';
-            if (secs < 3600) return Math.floor(secs / 60) + 'm ago';
-            if (secs < 86400) return Math.floor(secs / 3600) + 'h ago';
-            return Math.floor(secs / 86400) + 'd ago';
-        }
-
-        function pollNotifications() {
-            fetch('{% url "core:notifications_api" %}')
-            .then(r => r.json())
-            .then(data => {
-                if (data.unread_count > 0) {
-                    badge.textContent = data.unread_count;
-                    badge.classList.remove('d-none');
-                } else {
-                    badge.classList.add('d-none');
-                }
-                // Rebuild dropdown items
-                const dividers = dropdown.querySelectorAll('.dropdown-divider');
-                const header = dropdown.querySelector('.dropdown-header');
-                dropdown.innerHTML = '';
-                dropdown.appendChild(header.parentElement);
-                const hr = document.createElement('li');
-                hr.innerHTML = '<hr class="dropdown-divider">';
-                dropdown.appendChild(hr);
-
-                if (data.items.length === 0) {
-                    const empty = document.createElement('li');
-                    empty.className = 'text-center text-muted py-3';
-                    empty.innerHTML = '<small>No new notifications</small>';
-                    dropdown.appendChild(empty);
-                } else {
-                    data.items.forEach(item => {
-                        const li = document.createElement('li');
-                        li.innerHTML = `<a class="dropdown-item py-2" href="${item.url || '#'}" style="white-space: normal;">
-                            <div class="d-flex align-items-start">
-                                <i class="bi ${getEventIcon(item.event_type)} me-2 mt-1"></i>
-                                <div>
-                                    <div class="fw-semibold" style="font-size: 0.85rem;">${item.title}</div>
-                                    <small class="text-muted">${item.description}</small>
-                                    <div class="text-muted" style="font-size: 0.75rem;">${timeAgo(item.created_at)}</div>
-                                </div>
-                            </div>
-                        </a>`;
-                        dropdown.appendChild(li);
-                    });
-                }
-            })
-            .catch(() => {});
-        }
-
-        if (markAllBtn) {
-            markAllBtn.addEventListener('click', function(e) {
-                e.preventDefault();
-                e.stopPropagation();
-                fetch('{% url "core:mark_all_notifications_read" %}', {
-                    method: 'POST',
-                    headers: {'X-CSRFToken': csrfToken},
-                })
-                .then(() => pollNotifications());
-            });
-        }
-
-        // Poll every 15 seconds
-        pollNotifications();
-        setInterval(pollNotifications, 15000);
-    })();
-    </script>
+    <!-- Messages -->
+    {% if messages %}
+    <div class="sh-messages">
+        {% for message in messages %}
+        <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert" style="font-size: 13px;">
+            {{ message }}
+            <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="alert"></button>
+        </div>
+        {% endfor %}
+    </div>
     {% endif %}
 
-    {% block extra_js %}{% endblock %}
+    <!-- Page content -->
+    <div class="sh-page-content">
+        {% block content %}{% endblock %}
+    </div>
+
+    <!-- Footer -->
+    <footer class="border-top py-3" style="padding: 0 32px;">
+        <div class="d-flex justify-content-between align-items-center">
+            <p class="text-muted small mb-0">
+                &copy; 2026 MC &amp; S Pty Ltd &mdash; StatementHub
+            </p>
+            <p class="text-muted small mb-0">
+                <i class="bi bi-clock-history me-1"></i>Build: {{ BUILD_TIMESTAMP }}
+            </p>
+        </div>
+    </footer>
+</div>
+
+{% else %}
+<!-- Unauthenticated: no sidebar, just content -->
+<main class="container-fluid py-4">
+    {% if messages %}
+    <div class="row">
+        <div class="col-12">
+            {% for message in messages %}
+            <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+                {{ message }}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+    {% block content_unauth %}{% endblock %}
+</main>
+{% endif %}
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+
+{% if user.is_authenticated %}
+<script>
+// ── Sidebar toggle (mobile) ──
+(function() {
+    const sidebar = document.getElementById('shSidebar');
+    const overlay = document.getElementById('shOverlay');
+    const toggle = document.getElementById('shToggle');
+    if (toggle) {
+        toggle.addEventListener('click', () => {
+            sidebar.classList.toggle('open');
+            overlay.classList.toggle('open');
+        });
+    }
+    if (overlay) {
+        overlay.addEventListener('click', () => {
+            sidebar.classList.remove('open');
+            overlay.classList.remove('open');
+        });
+    }
+})();
+
+// ── Notification polling ──
+(function() {
+    const badge = document.getElementById('notifBadge');
+    const dropdown = document.getElementById('notifDropdown');
+    const markAllBtn = document.getElementById('markAllRead');
+    const csrfToken = '{{ csrf_token }}';
+
+    function getEventIcon(eventType) {
+        const icons = {
+            'bank_upload': 'bi-bank',
+            'classify_complete': 'bi-check-circle text-success',
+            'classify_started': 'bi-hourglass-split text-warning',
+            'tb_import': 'bi-file-earmark-spreadsheet',
+            'journal_posted': 'bi-journal-check',
+            'year_finalised': 'bi-trophy text-success',
+            'audit_run': 'bi-shield-exclamation text-danger',
+            'review_approved': 'bi-check2-all text-primary',
+            'doc_generated': 'bi-file-earmark-word',
+            'general': 'bi-info-circle',
+        };
+        return icons[eventType] || 'bi-info-circle';
+    }
+
+    function timeAgo(dateStr) {
+        const now = new Date();
+        const d = new Date(dateStr);
+        const secs = Math.floor((now - d) / 1000);
+        if (secs < 60) return 'just now';
+        if (secs < 3600) return Math.floor(secs / 60) + 'm ago';
+        if (secs < 86400) return Math.floor(secs / 3600) + 'h ago';
+        return Math.floor(secs / 86400) + 'd ago';
+    }
+
+    function pollNotifications() {
+        fetch('{% url "core:notifications_api" %}')
+        .then(r => r.json())
+        .then(data => {
+            if (data.unread_count > 0) {
+                badge.textContent = data.unread_count;
+                badge.classList.remove('d-none');
+            } else {
+                badge.classList.add('d-none');
+            }
+            const header = dropdown.querySelector('.dropdown-header');
+            dropdown.innerHTML = '';
+            if (header) dropdown.appendChild(header.parentElement);
+            const hr = document.createElement('li');
+            hr.innerHTML = '<hr class="dropdown-divider">';
+            dropdown.appendChild(hr);
+
+            if (data.items.length === 0) {
+                const empty = document.createElement('li');
+                empty.className = 'text-center text-muted py-3';
+                empty.innerHTML = '<small>No new notifications</small>';
+                dropdown.appendChild(empty);
+            } else {
+                data.items.forEach(item => {
+                    const li = document.createElement('li');
+                    li.innerHTML = `<a class="dropdown-item py-2" href="${item.url || '#'}" style="white-space: normal;">
+                        <div class="d-flex align-items-start">
+                            <i class="bi ${getEventIcon(item.event_type)} me-2 mt-1"></i>
+                            <div>
+                                <div class="fw-semibold" style="font-size: 0.85rem;">${item.title}</div>
+                                <small class="text-muted">${item.description}</small>
+                                <div class="text-muted" style="font-size: 0.75rem;">${timeAgo(item.created_at)}</div>
+                            </div>
+                        </div>
+                    </a>`;
+                    dropdown.appendChild(li);
+                });
+            }
+        })
+        .catch(() => {});
+    }
+
+    if (markAllBtn) {
+        markAllBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            fetch('{% url "core:mark_all_notifications_read" %}', {
+                method: 'POST',
+                headers: {'X-CSRFToken': csrfToken},
+            })
+            .then(() => pollNotifications());
+        });
+    }
+
+    pollNotifications();
+    setInterval(pollNotifications, 15000);
+})();
+
+// ── Close search results when clicking outside ──
+document.addEventListener('click', function(e) {
+    const searchBar = document.querySelector('.sh-search-bar');
+    const results = document.getElementById('searchResults');
+    if (searchBar && results && !searchBar.contains(e.target)) {
+        results.innerHTML = '';
+    }
+});
+</script>
+{% endif %}
+
+{% block extra_js %}{% endblock %}
 </body>
 </html>

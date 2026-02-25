@@ -1,453 +1,180 @@
-{% load static %}
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}StatementHub — Office Admin{% endblock %}</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css" rel="stylesheet">
-    <style>
-        :root {
-            --sidebar-width: 240px;
-            --sidebar-bg: #1a1a2e;
-            --sidebar-text: rgba(255,255,255,0.55);
-            --sidebar-text-hover: rgba(255,255,255,0.85);
-            --sidebar-active-bg: rgba(108,140,255,0.12);
-            --sidebar-active-text: #fff;
-            --accent: #6c8cff;
-            --accent-light: rgba(108,140,255,0.15);
-            --topbar-height: 56px;
-        }
+{% extends "base.html" %}
 
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-            background: #f0f2f5;
-            color: #1a1a2e;
-            margin: 0;
-        }
+{% block title %}StatementHub — Office Admin{% endblock %}
 
-        /* ── Sidebar ── */
-        .oa-sidebar {
-            position: fixed; left: 0; top: 0; bottom: 0;
-            width: var(--sidebar-width);
-            background: var(--sidebar-bg);
-            color: #fff;
-            display: flex; flex-direction: column;
-            z-index: 100;
-            overflow-y: auto;
-        }
+{% block extra_css %}
+<style>
+    /* ── Office Admin Component Styles ── */
 
-        .oa-sidebar-brand {
-            padding: 20px 20px 16px;
-            border-bottom: 1px solid rgba(255,255,255,0.08);
-        }
-        .oa-sidebar-brand h1 {
-            font-size: 18px; font-weight: 700; letter-spacing: -0.3px; margin: 0;
-        }
-        .oa-sidebar-brand h1 .accent { color: var(--accent); }
-        .oa-sidebar-brand .role-badge {
-            display: inline-block; margin-top: 6px; padding: 3px 10px;
-            background: var(--accent-light); color: #8fa8ff;
-            border-radius: 12px; font-size: 11px; font-weight: 600; letter-spacing: 0.3px;
-        }
+    /* ── Stat Cards ── */
+    .oa-stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 28px; }
+    .oa-stat-card {
+        background: #fff; border-radius: 12px; padding: 20px 22px;
+        border: 1px solid #e8eaed; transition: box-shadow 0.15s, border-color 0.15s;
+        cursor: pointer;
+    }
+    .oa-stat-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.06); border-color: #d0d4da; }
+    .oa-stat-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+    .oa-stat-icon {
+        width: 38px; height: 38px; border-radius: 10px;
+        display: flex; align-items: center; justify-content: center; font-size: 17px;
+    }
+    .oa-stat-trend { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px; }
+    .oa-stat-label { font-size: 11.5px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.5px; }
+    .oa-stat-value { font-size: 26px; font-weight: 700; color: #1a1a2e; margin-top: 2px; }
+    .oa-stat-sub { font-size: 11.5px; color: #aaa; margin-top: 3px; }
 
-        .oa-nav { flex: 1; padding: 12px 0; }
-        .oa-nav-section {
-            padding: 8px 20px 4px; font-size: 10px; font-weight: 700;
-            text-transform: uppercase; letter-spacing: 1px;
-            color: rgba(255,255,255,0.35); margin-top: 12px;
-        }
-        .oa-nav-section:first-child { margin-top: 0; }
+    .icon-blue { background: rgba(108,140,255,0.1); color: #6c8cff; }
+    .icon-green { background: rgba(46,125,50,0.1); color: #2e7d32; }
+    .icon-amber { background: rgba(245,127,23,0.1); color: #f57f17; }
+    .icon-red { background: rgba(198,40,40,0.1); color: #c62828; }
+    .icon-purple { background: rgba(123,31,162,0.1); color: #7b1fa2; }
+    .trend-green { background: #e8f5e9; color: #2e7d32; }
+    .trend-amber { background: #fff8e1; color: #f57f17; }
+    .trend-red { background: #fce4ec; color: #c62828; }
 
-        .oa-nav-item {
-            display: flex; align-items: center; gap: 12px;
-            padding: 10px 20px; font-size: 13.5px;
-            color: var(--sidebar-text);
-            text-decoration: none; position: relative;
-            transition: all 0.15s;
-        }
-        .oa-nav-item:hover {
-            background: rgba(255,255,255,0.05);
-            color: var(--sidebar-text-hover);
-        }
-        .oa-nav-item.active {
-            background: var(--sidebar-active-bg);
-            color: var(--sidebar-active-text);
-        }
-        .oa-nav-item.active::before {
-            content: ''; position: absolute; left: 0; top: 4px; bottom: 4px;
-            width: 3px; background: var(--accent); border-radius: 0 3px 3px 0;
-        }
-        .oa-nav-item i { width: 20px; text-align: center; font-size: 15px; flex-shrink: 0; }
-        .oa-nav-item .count-badge {
-            margin-left: auto; background: rgba(231,76,60,0.9); color: #fff;
-            font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 10px;
-            min-width: 20px; text-align: center;
-        }
-        .oa-nav-item .count-badge.blue { background: rgba(108,140,255,0.8); }
-        .oa-nav-item .count-badge.amber { background: rgba(245,127,23,0.8); }
+    /* ── Section Cards ── */
+    .oa-section-card {
+        background: #fff; border-radius: 12px;
+        border: 1px solid #e8eaed; overflow: hidden;
+    }
+    .oa-section-header {
+        padding: 16px 20px; border-bottom: 1px solid #f0f1f3;
+        display: flex; align-items: center; justify-content: space-between;
+    }
+    .oa-section-header h3 {
+        font-size: 14px; font-weight: 600; color: #1a1a2e;
+        display: flex; align-items: center; gap: 8px; margin: 0;
+    }
+    .oa-section-header .view-all {
+        font-size: 12px; color: var(--accent); text-decoration: none; font-weight: 600;
+    }
+    .oa-section-header .header-badge {
+        font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 10px;
+        background: #fce4ec; color: #c62828;
+    }
 
-        .oa-sidebar-user {
-            padding: 16px 20px;
-            border-top: 1px solid rgba(255,255,255,0.08);
-            display: flex; align-items: center; gap: 10px;
-        }
-        .oa-user-avatar {
-            width: 34px; height: 34px; border-radius: 50%;
-            background: var(--accent);
-            display: flex; align-items: center; justify-content: center;
-            font-size: 13px; font-weight: 700; color: #fff; flex-shrink: 0;
-        }
-        .oa-user-name { font-size: 13px; font-weight: 600; color: #fff; }
-        .oa-user-email { font-size: 11px; color: rgba(255,255,255,0.4); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* ── Table styles ── */
+    .oa-table-header {
+        display: grid; padding: 10px 20px; font-size: 10.5px; font-weight: 700;
+        text-transform: uppercase; letter-spacing: 0.5px; color: #999;
+        background: #fafbfc; border-bottom: 1px solid #f0f1f3;
+    }
+    .oa-table-row {
+        display: grid; padding: 12px 20px; border-bottom: 1px solid #f5f6f8;
+        font-size: 13px; align-items: center; transition: background 0.1s;
+    }
+    .oa-table-row:last-child { border-bottom: none; }
+    .oa-table-row:hover { background: #fafbfc; }
 
-        /* ── Main Content ── */
-        .oa-main { margin-left: var(--sidebar-width); min-height: 100vh; }
+    .oa-date { font-size: 12px; color: #888; }
+    .oa-client { font-weight: 600; color: #1a1a2e; }
+    .oa-type { font-size: 12px; color: #666; }
+    .oa-amount { font-weight: 700; font-variant-numeric: tabular-nums; }
+    .oa-amount-red { color: #c62828; }
 
-        /* Top bar */
-        .oa-topbar {
-            background: #fff; padding: 0 32px;
-            height: var(--topbar-height);
-            display: flex; align-items: center; justify-content: space-between;
-            border-bottom: 1px solid #e2e6ea;
-            position: sticky; top: 0; z-index: 50;
-        }
-        .oa-search-bar {
-            display: flex; align-items: center; gap: 8px;
-            background: #f5f6f8; border: 1px solid #e2e6ea;
-            border-radius: 8px; padding: 8px 14px; width: 380px;
-        }
-        .oa-search-bar input {
-            border: none; background: none; outline: none;
-            font-size: 13px; color: #333; flex: 1;
-        }
-        .oa-search-bar input::placeholder { color: #aaa; }
+    /* Correspondence grid */
+    .corr-grid { grid-template-columns: 90px 1fr 140px 90px 100px; }
 
-        .oa-topbar-date { font-size: 12.5px; color: #888; font-weight: 500; }
-        .oa-notif-btn {
-            position: relative; width: 36px; height: 36px; border-radius: 8px;
-            border: 1px solid #e2e6ea; background: #fff; cursor: pointer;
-            display: flex; align-items: center; justify-content: center;
-            font-size: 16px; color: #666;
-        }
-        .oa-notif-btn .badge-dot {
-            position: absolute; top: -4px; right: -4px;
-            width: 16px; height: 16px; background: #e74c3c; color: #fff;
-            font-size: 9px; font-weight: 700; border-radius: 50%;
-            display: flex; align-items: center; justify-content: center;
-        }
+    /* ASIC grid */
+    .asic-grid { grid-template-columns: 1fr 150px 110px 100px; }
 
-        /* Page content */
-        .oa-page-content { padding: 28px 32px; }
+    /* Debtors grid */
+    .debtor-grid { grid-template-columns: 1fr 100px 80px 120px 90px; }
 
-        /* ── Stat Cards ── */
-        .oa-stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 28px; }
-        .oa-stat-card {
-            background: #fff; border-radius: 12px; padding: 20px 22px;
-            border: 1px solid #e8eaed; transition: box-shadow 0.15s, border-color 0.15s;
-            cursor: pointer;
-        }
-        .oa-stat-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.06); border-color: #d0d4da; }
-        .oa-stat-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-        .oa-stat-icon {
-            width: 38px; height: 38px; border-radius: 10px;
-            display: flex; align-items: center; justify-content: center; font-size: 17px;
-        }
-        .oa-stat-trend { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 6px; }
-        .oa-stat-label { font-size: 11.5px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.5px; }
-        .oa-stat-value { font-size: 26px; font-weight: 700; color: #1a1a2e; margin-top: 2px; }
-        .oa-stat-sub { font-size: 11.5px; color: #aaa; margin-top: 3px; }
+    /* ── Status Badges ── */
+    .oa-badge {
+        display: inline-block; padding: 3px 10px; border-radius: 6px;
+        font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px;
+    }
+    .oa-badge-received { background: #e0f2f1; color: #00695c; }
+    .oa-badge-sent { background: #e8f5e9; color: #2e7d32; }
+    .oa-badge-pending { background: #e8eaf6; color: #283593; }
+    .oa-badge-awaiting { background: #fff3e0; color: #e65100; }
+    .oa-badge-actioned { background: #e8f5e9; color: #2e7d32; }
+    .oa-badge-filed { background: #f5f5f5; color: #616161; }
+    .oa-badge-burning { background: #fce4ec; color: #c62828; }
+    .oa-badge-lodged { background: #e8f5e9; color: #2e7d32; }
+    .oa-badge-overdue { background: #fce4ec; color: #c62828; }
+    .oa-badge-to_send { background: #e8eaf6; color: #283593; }
+    .oa-badge-forwarded { background: #e8f5e9; color: #2e7d32; }
+    .oa-badge-due { background: #fff8e1; color: #f57f17; }
+    .oa-badge-current { background: #e8f5e9; color: #2e7d32; }
+    .oa-badge-completed { background: #e8f5e9; color: #2e7d32; }
 
-        .icon-blue { background: rgba(108,140,255,0.1); color: #6c8cff; }
-        .icon-green { background: rgba(46,125,50,0.1); color: #2e7d32; }
-        .icon-amber { background: rgba(245,127,23,0.1); color: #f57f17; }
-        .icon-red { background: rgba(198,40,40,0.1); color: #c62828; }
-        .icon-purple { background: rgba(123,31,162,0.1); color: #7b1fa2; }
-        .trend-green { background: #e8f5e9; color: #2e7d32; }
-        .trend-amber { background: #fff8e1; color: #f57f17; }
-        .trend-red { background: #fce4ec; color: #c62828; }
+    /* ── Priority dots ── */
+    .priority-dot {
+        width: 8px; height: 8px; border-radius: 50%;
+        display: inline-block; margin-right: 6px;
+    }
+    .priority-high { background: #e74c3c; }
+    .priority-med { background: #f39c12; }
+    .priority-low { background: #27ae60; }
 
-        /* ── Section Cards ── */
-        .oa-section-card {
-            background: #fff; border-radius: 12px;
-            border: 1px solid #e8eaed; overflow: hidden;
-        }
-        .oa-section-header {
-            padding: 16px 20px; border-bottom: 1px solid #f0f1f3;
-            display: flex; align-items: center; justify-content: space-between;
-        }
-        .oa-section-header h3 {
-            font-size: 14px; font-weight: 600; color: #1a1a2e;
-            display: flex; align-items: center; gap: 8px; margin: 0;
-        }
-        .oa-section-header .view-all {
-            font-size: 12px; color: var(--accent); text-decoration: none; font-weight: 600;
-        }
-        .oa-section-header .header-badge {
-            font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 10px;
-            background: #fce4ec; color: #c62828;
-        }
+    /* ── Task checklist ── */
+    .oa-task-item {
+        display: flex; align-items: center; gap: 12px;
+        padding: 11px 20px; border-bottom: 1px solid #f5f6f8; font-size: 13px;
+    }
+    .oa-task-item:last-child { border-bottom: none; }
+    .oa-task-checkbox {
+        width: 18px; height: 18px; border: 2px solid #d0d4da;
+        border-radius: 4px; flex-shrink: 0; cursor: pointer;
+        display: flex; align-items: center; justify-content: center;
+        transition: all 0.15s;
+    }
+    .oa-task-checkbox.checked { background: #2e7d32; border-color: #2e7d32; }
+    .oa-task-checkbox.checked::after { content: '\2713'; color: #fff; font-size: 11px; font-weight: 700; }
+    .oa-task-text { flex: 1; color: #333; }
+    .oa-task-text.done { text-decoration: line-through; color: #bbb; }
+    .oa-task-time { font-size: 11px; color: #aaa; font-weight: 500; }
+    .oa-task-tag {
+        font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 4px;
+        text-transform: uppercase; letter-spacing: 0.3px;
+    }
+    .tag-daily { background: #e8f0fe; color: #1a73e8; }
+    .tag-weekly { background: #f3e5f5; color: #7b1fa2; }
+    .tag-monthly { background: #fff3e0; color: #e65100; }
+    .tag-one_off { background: #e0f2f1; color: #00695c; }
 
-        /* ── Table styles ── */
-        .oa-table-header {
-            display: grid; padding: 10px 20px; font-size: 10.5px; font-weight: 700;
-            text-transform: uppercase; letter-spacing: 0.5px; color: #999;
-            background: #fafbfc; border-bottom: 1px solid #f0f1f3;
-        }
-        .oa-table-row {
-            display: grid; padding: 12px 20px; border-bottom: 1px solid #f5f6f8;
-            font-size: 13px; align-items: center; transition: background 0.1s;
-        }
-        .oa-table-row:last-child { border-bottom: none; }
-        .oa-table-row:hover { background: #fafbfc; }
+    /* ── Entity rows ── */
+    .oa-entity-row {
+        display: flex; align-items: center; padding: 12px 20px;
+        border-bottom: 1px solid #f5f6f8; transition: background 0.1s;
+    }
+    .oa-entity-row:last-child { border-bottom: none; }
+    .oa-entity-row:hover { background: #fafbfc; }
+    .oa-entity-badge {
+        padding: 3px 10px; border-radius: 6px; font-size: 10px; font-weight: 700;
+        text-transform: uppercase; letter-spacing: 0.4px; margin-right: 14px;
+        min-width: 68px; text-align: center;
+    }
+    .badge-company { background: #e8f0fe; color: #1a73e8; }
+    .badge-trust { background: #fef3e0; color: #e65100; }
+    .badge-smsf { background: #e8f5e9; color: #2e7d32; }
+    .badge-individual, .badge-sole_trader { background: #f3e5f5; color: #7b1fa2; }
+    .badge-partnership { background: #e0f2f1; color: #00695c; }
+    .oa-entity-name { font-size: 13px; font-weight: 600; color: #1a1a2e; flex: 1; }
+    .oa-entity-abn { font-size: 11.5px; color: #999; width: 130px; }
+    .oa-entity-status {
+        padding: 3px 10px; border-radius: 6px; font-size: 10px; font-weight: 600;
+        background: #e8f5e9; color: #2e7d32;
+    }
 
-        .oa-date { font-size: 12px; color: #888; }
-        .oa-client { font-weight: 600; color: #1a1a2e; }
-        .oa-type { font-size: 12px; color: #666; }
-        .oa-amount { font-weight: 700; font-variant-numeric: tabular-nums; }
-        .oa-amount-red { color: #c62828; }
+    /* ── Layout helpers ── */
+    .oa-two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 24px; }
 
-        /* Correspondence grid */
-        .corr-grid { grid-template-columns: 90px 1fr 140px 90px 100px; }
+    /* ── Empty state ── */
+    .oa-empty {
+        padding: 40px 20px; text-align: center; color: #999;
+    }
+    .oa-empty i { font-size: 32px; margin-bottom: 12px; opacity: 0.3; }
+    .oa-empty p { font-size: 13px; }
 
-        /* ASIC grid */
-        .asic-grid { grid-template-columns: 1fr 150px 110px 100px; }
-
-        /* Debtors grid */
-        .debtor-grid { grid-template-columns: 1fr 100px 80px 120px 90px; }
-
-        /* ── Status Badges ── */
-        .oa-badge {
-            display: inline-block; padding: 3px 10px; border-radius: 6px;
-            font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px;
-        }
-        .oa-badge-received { background: #e0f2f1; color: #00695c; }
-        .oa-badge-sent { background: #e8f5e9; color: #2e7d32; }
-        .oa-badge-pending { background: #e8eaf6; color: #283593; }
-        .oa-badge-awaiting { background: #fff3e0; color: #e65100; }
-        .oa-badge-actioned { background: #e8f5e9; color: #2e7d32; }
-        .oa-badge-filed { background: #f5f5f5; color: #616161; }
-        .oa-badge-burning { background: #fce4ec; color: #c62828; }
-        .oa-badge-lodged { background: #e8f5e9; color: #2e7d32; }
-        .oa-badge-overdue { background: #fce4ec; color: #c62828; }
-        .oa-badge-to_send { background: #e8eaf6; color: #283593; }
-        .oa-badge-forwarded { background: #e8f5e9; color: #2e7d32; }
-        .oa-badge-due { background: #fff8e1; color: #f57f17; }
-        .oa-badge-current { background: #e8f5e9; color: #2e7d32; }
-        .oa-badge-completed { background: #e8f5e9; color: #2e7d32; }
-
-        /* ── Priority dots ── */
-        .priority-dot {
-            width: 8px; height: 8px; border-radius: 50%;
-            display: inline-block; margin-right: 6px;
-        }
-        .priority-high { background: #e74c3c; }
-        .priority-med { background: #f39c12; }
-        .priority-low { background: #27ae60; }
-
-        /* ── Task checklist ── */
-        .oa-task-item {
-            display: flex; align-items: center; gap: 12px;
-            padding: 11px 20px; border-bottom: 1px solid #f5f6f8; font-size: 13px;
-        }
-        .oa-task-item:last-child { border-bottom: none; }
-        .oa-task-checkbox {
-            width: 18px; height: 18px; border: 2px solid #d0d4da;
-            border-radius: 4px; flex-shrink: 0; cursor: pointer;
-            display: flex; align-items: center; justify-content: center;
-            transition: all 0.15s;
-        }
-        .oa-task-checkbox.checked { background: #2e7d32; border-color: #2e7d32; }
-        .oa-task-checkbox.checked::after { content: '\2713'; color: #fff; font-size: 11px; font-weight: 700; }
-        .oa-task-text { flex: 1; color: #333; }
-        .oa-task-text.done { text-decoration: line-through; color: #bbb; }
-        .oa-task-time { font-size: 11px; color: #aaa; font-weight: 500; }
-        .oa-task-tag {
-            font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 4px;
-            text-transform: uppercase; letter-spacing: 0.3px;
-        }
-        .tag-daily { background: #e8f0fe; color: #1a73e8; }
-        .tag-weekly { background: #f3e5f5; color: #7b1fa2; }
-        .tag-monthly { background: #fff3e0; color: #e65100; }
-        .tag-one_off { background: #e0f2f1; color: #00695c; }
-
-        /* ── Entity rows ── */
-        .oa-entity-row {
-            display: flex; align-items: center; padding: 12px 20px;
-            border-bottom: 1px solid #f5f6f8; transition: background 0.1s;
-        }
-        .oa-entity-row:last-child { border-bottom: none; }
-        .oa-entity-row:hover { background: #fafbfc; }
-        .oa-entity-badge {
-            padding: 3px 10px; border-radius: 6px; font-size: 10px; font-weight: 700;
-            text-transform: uppercase; letter-spacing: 0.4px; margin-right: 14px;
-            min-width: 68px; text-align: center;
-        }
-        .badge-company { background: #e8f0fe; color: #1a73e8; }
-        .badge-trust { background: #fef3e0; color: #e65100; }
-        .badge-smsf { background: #e8f5e9; color: #2e7d32; }
-        .badge-individual, .badge-sole_trader { background: #f3e5f5; color: #7b1fa2; }
-        .badge-partnership { background: #e0f2f1; color: #00695c; }
-        .oa-entity-name { font-size: 13px; font-weight: 600; color: #1a1a2e; flex: 1; }
-        .oa-entity-abn { font-size: 11.5px; color: #999; width: 130px; }
-        .oa-entity-status {
-            padding: 3px 10px; border-radius: 6px; font-size: 10px; font-weight: 600;
-            background: #e8f5e9; color: #2e7d32;
-        }
-
-        /* ── Layout helpers ── */
-        .oa-two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 24px; }
-
-        /* ── Messages ── */
-        .oa-messages { padding: 0 32px; padding-top: 16px; }
-
-        /* ── Empty state ── */
-        .oa-empty {
-            padding: 40px 20px; text-align: center; color: #999;
-        }
-        .oa-empty i { font-size: 32px; margin-bottom: 12px; opacity: 0.3; }
-        .oa-empty p { font-size: 13px; }
-
-        /* ── Responsive ── */
-        @media (max-width: 1200px) {
-            .oa-stat-grid { grid-template-columns: repeat(2, 1fr); }
-            .oa-two-col { grid-template-columns: 1fr; }
-        }
-    </style>
-    {% block extra_css %}{% endblock %}
-</head>
-<body>
-
-<!-- ── SIDEBAR ── -->
-<nav class="oa-sidebar">
-    <div class="oa-sidebar-brand">
-        <h1>Statement<span class="accent">Hub</span></h1>
-        <span class="role-badge">OFFICE ADMIN</span>
-    </div>
-
-    <div class="oa-nav">
-        <div class="oa-nav-section">Main</div>
-        <a class="oa-nav-item {% if active_nav == 'dashboard' %}active{% endif %}"
-           href="{% url 'office_admin:dashboard' %}">
-            <i class="bi bi-grid-1x2-fill"></i> Dashboard
-        </a>
-        <a class="oa-nav-item {% if active_nav == 'entity_hub' %}active{% endif %}"
-           href="{% url 'core:entity_list' %}">
-            <i class="bi bi-building"></i> Entity Hub
-        </a>
-
-        <div class="oa-nav-section">Client Correspondence</div>
-        <a class="oa-nav-item {% if active_nav == 'incoming' %}active{% endif %}"
-           href="{% url 'office_admin:correspondence_incoming' %}">
-            <i class="bi bi-envelope-arrow-down-fill"></i> Incoming Mail
-            {% if sidebar_correspondence_new %}<span class="count-badge">{{ sidebar_correspondence_new }}</span>{% endif %}
-        </a>
-        <a class="oa-nav-item {% if active_nav == 'outgoing' %}active{% endif %}"
-           href="{% url 'office_admin:correspondence_outgoing' %}">
-            <i class="bi bi-envelope-arrow-up-fill"></i> Outgoing Mail
-        </a>
-        <a class="oa-nav-item {% if active_nav == 'awaiting' %}active{% endif %}"
-           href="{% url 'office_admin:correspondence_awaiting' %}">
-            <i class="bi bi-hourglass-split"></i> Awaiting Reply
-            {% if sidebar_correspondence_awaiting %}<span class="count-badge amber">{{ sidebar_correspondence_awaiting }}</span>{% endif %}
-        </a>
-        <a class="oa-nav-item {% if active_nav == 'documents_in' %}active{% endif %}"
-           href="{% url 'office_admin:correspondence_documents_in' %}">
-            <i class="bi bi-file-earmark-arrow-down-fill"></i> Documents In
-        </a>
-
-        <div class="oa-nav-section">ASIC / ATO</div>
-        <a class="oa-nav-item {% if active_nav == 'noa' %}active{% endif %}"
-           href="{% url 'office_admin:noa_tracker' %}">
-            <i class="bi bi-bank2"></i> NOA Tracker
-        </a>
-        <a class="oa-nav-item {% if active_nav == 'asic_returns' %}active{% endif %}"
-           href="{% url 'office_admin:asic_returns' %}">
-            <i class="bi bi-clipboard-check-fill"></i> ASIC Returns
-            {% if sidebar_asic_burning %}<span class="count-badge">{{ sidebar_asic_burning }}</span>{% endif %}
-        </a>
-        <a class="oa-nav-item {% if active_nav == 'burning' %}active{% endif %}"
-           href="{% url 'office_admin:burning_list' %}">
-            <i class="bi bi-fire"></i> Burning List
-        </a>
-        <a class="oa-nav-item {% if active_nav == 'company_register' %}active{% endif %}"
-           href="{% url 'office_admin:company_register' %}">
-            <i class="bi bi-building-fill-gear"></i> Company Register
-        </a>
-
-        <div class="oa-nav-section">Debtors</div>
-        <a class="oa-nav-item {% if active_nav == 'aged_receivables' %}active{% endif %}"
-           href="{% url 'office_admin:aged_receivables' %}">
-            <i class="bi bi-cash-coin"></i> Aged Receivables
-        </a>
-        <a class="oa-nav-item {% if active_nav == 'statements_sent' %}active{% endif %}"
-           href="{% url 'office_admin:statements_sent' %}">
-            <i class="bi bi-envelope-check-fill"></i> Statements Sent
-        </a>
-        <a class="oa-nav-item {% if active_nav == 'overdue' %}active{% endif %}"
-           href="{% url 'office_admin:debtors_overdue' %}">
-            <i class="bi bi-exclamation-triangle-fill"></i> Overdue
-            {% if sidebar_overdue_count %}<span class="count-badge">{{ sidebar_overdue_count }}</span>{% endif %}
-        </a>
-        <a class="oa-nav-item {% if active_nav == 'payment_plans' %}active{% endif %}"
-           href="{% url 'office_admin:payment_plans' %}">
-            <i class="bi bi-credit-card-2-front-fill"></i> Payment Plans
-        </a>
-    </div>
-
-    <div class="oa-sidebar-user">
-        <div class="oa-user-avatar">{{ request.user.first_name|first|default:"?" }}{{ request.user.last_name|first|default:"" }}</div>
-        <div>
-            <div class="oa-user-name">{{ request.user.get_full_name|default:request.user.username }}</div>
-            <div class="oa-user-email">{{ request.user.email }}</div>
-        </div>
-    </div>
-</nav>
-
-<!-- ── MAIN CONTENT ── -->
-<div class="oa-main">
-
-    <!-- Top bar -->
-    <div class="oa-topbar">
-        <div class="oa-search-bar">
-            <i class="bi bi-search" style="color: #999;"></i>
-            <input type="text" placeholder="Search clients by name, ABN, or ACN..."
-                   id="globalSearch"
-                   hx-get="{% url 'core:htmx_client_search' %}"
-                   hx-trigger="keyup changed delay:300ms"
-                   hx-target="#searchResults"
-                   name="q">
-        </div>
-        <div class="d-flex align-items-center gap-3">
-            <span class="oa-topbar-date">{{ today|date:"D j M Y" }}</span>
-            <button class="oa-notif-btn">
-                <i class="bi bi-bell-fill"></i>
-                {% if unread_count %}<span class="badge-dot">{{ unread_count }}</span>{% endif %}
-            </button>
-        </div>
-    </div>
-
-    <!-- Messages -->
-    {% if messages %}
-    <div class="oa-messages">
-        {% for message in messages %}
-        <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert" style="font-size: 13px;">
-            {{ message }}
-            <button type="button" class="btn-close btn-close-sm" data-bs-dismiss="alert"></button>
-        </div>
-        {% endfor %}
-    </div>
-    {% endif %}
-
-    <!-- Page content -->
-    <div class="oa-page-content">
-        {% block content %}{% endblock %}
-    </div>
-</div>
-
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-<script src="https://unpkg.com/htmx.org@1.9.6"></script>
-{% block extra_js %}{% endblock %}
-</body>
-</html>
+    /* ── Responsive ── */
+    @media (max-width: 1200px) {
+        .oa-stat-grid { grid-template-columns: repeat(2, 1fr); }
+        .oa-two-col { grid-template-columns: 1fr; }
+    }
+</style>
+{% endblock %}
