@@ -364,7 +364,7 @@ def financial_year_detail(request, pk):
     _log_action(request, "view", f"Viewed financial year: {fy.year_label} for {fy.entity.entity_name}", fy)
     tb_lines = fy.trial_balance_lines.select_related("mapped_line_item").all()
     adjustments = fy.adjusting_journals.all().order_by('-posted_at', '-created_at')
-    unmapped_count = tb_lines.filter(mapped_line_item__isnull=True).count()
+    unmapped_count = tb_lines.filter(mapped_line_item__isnull=True).values('account_code').distinct().count()
     documents = fy.generated_documents.all().order_by('-version', '-generated_at')
 
     total_prior_debit = tb_lines.aggregate(total=Sum("prior_debit"))["total"] or Decimal("0")
@@ -2338,6 +2338,30 @@ def map_client_accounts(request, pk):
     """Map unmapped client accounts to standard line items for a financial year."""
     fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
+
+    # Ensure every unmapped TB line has a ClientAccountMapping entry
+    # (bulk journal uploads may create TB lines without a corresponding CAM)
+    unmapped_tb_codes = (
+        fy.trial_balance_lines
+        .filter(mapped_line_item__isnull=True)
+        .values_list('account_code', flat=True)
+        .distinct()
+    )
+    existing_cam_codes = set(
+        ClientAccountMapping.objects.filter(entity=entity)
+        .values_list('client_account_code', flat=True)
+    )
+    for code in unmapped_tb_codes:
+        if code not in existing_cam_codes:
+            # Get the account name from the TB line
+            tb_line = fy.trial_balance_lines.filter(
+                account_code=code, mapped_line_item__isnull=True
+            ).first()
+            ClientAccountMapping.objects.create(
+                entity=entity,
+                client_account_code=code,
+                client_account_name=tb_line.account_name if tb_line else code,
+            )
 
     unmapped = ClientAccountMapping.objects.filter(
         entity=entity, mapped_line_item__isnull=True
