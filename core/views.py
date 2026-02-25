@@ -7581,7 +7581,7 @@ def journal_upload(request, pk):
 def _parse_and_create_journals(fy, file, user):
     """Parse an Excel file and create AdjustingJournal + JournalLine records.
 
-    Expected columns: JOURNAL DATE | DESCRIPTION | ACCOUNT CODE | ACCOUNT NAME | DEBIT | CREDIT
+    Expected columns: JOURNAL DATE | DESCRIPTION | ACCOUNT CODE | DEBIT | CREDIT
     Lines with the same date+description are grouped into one journal.
     Returns the number of journals created.
     """
@@ -7651,10 +7651,7 @@ def _parse_and_create_journals(fy, file, user):
         if not account_code:
             continue
 
-        # Parse account name (column 3)
-        account_name = str(row[3]).strip() if row[3] else account_code
-
-        # Parse debit (column 4) and credit (column 5)
+        # Parse debit (column 3) and credit (column 4)
         def _parse_amount(val):
             if val is None:
                 return Decimal("0")
@@ -7668,8 +7665,8 @@ def _parse_and_create_journals(fy, file, user):
             except (InvalidOperation, ValueError):
                 return Decimal("0")
 
-        debit = _parse_amount(row[4] if len(row) > 4 else None)
-        credit = _parse_amount(row[5] if len(row) > 5 else None)
+        debit = _parse_amount(row[3] if len(row) > 3 else None)
+        credit = _parse_amount(row[4] if len(row) > 4 else None)
 
         # Skip rows where both debit and credit are zero
         if debit == 0 and credit == 0:
@@ -7680,7 +7677,7 @@ def _parse_and_create_journals(fy, file, user):
             journal_groups[key] = []
         journal_groups[key].append({
             "account_code": account_code,
-            "account_name": account_name,
+            "account_name": account_code,
             "debit": debit,
             "credit": credit,
         })
