@@ -414,6 +414,11 @@ def _do_cloud_import(request, fy, entity, provider, access_token, tenant_id, con
             "provider_name": provider.display_name,
             "lines": staged_lines,
         }
+        # Force session save to DB before redirect so the next
+        # request (possibly handled by a different Gunicorn worker)
+        # can read the staged data from the database backend.
+        request.session.modified = True
+        request.session.save()
 
         if connection_obj:
             connection_obj.last_sync_at = timezone.now()

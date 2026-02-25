@@ -1273,6 +1273,11 @@ def trial_balance_import(request, pk):
                     "lines": staged_lines,
                     "filename": uploaded_file.name,
                 }
+                # Force session save to DB before redirect so the next
+                # request (possibly handled by a different Gunicorn worker)
+                # can read the staged data from the database backend.
+                request.session.modified = True
+                request.session.save()
 
                 return redirect("core:review_tb_import", pk=pk)
             except Exception as e:
