@@ -3015,7 +3015,7 @@ document.getElementById('coaSectionFilter')?.addEventListener('change', filterCO
 // Edit account now uses full-page form — modal removed
 
 // Handle tab= and highlight= query params (e.g. after adding a new account)
-(function() {
+document.addEventListener('DOMContentLoaded', function() {
     const params = new URLSearchParams(window.location.search);
     const tab = params.get('tab');
     const highlight = params.get('highlight');
@@ -3059,7 +3059,7 @@ document.getElementById('coaSectionFilter')?.addEventListener('change', filterCO
         // No tab switch needed, just highlight
         setTimeout(highlightRow, 200);
     }
-})();
+});
 </script>
 
 <script>
