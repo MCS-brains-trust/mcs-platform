@@ -179,13 +179,27 @@ document.addEventListener('DOMContentLoaded', function() {
         const dropdown = document.createElement('div');
         dropdown.className = 'account-dropdown';
 
-        // Wrap
+        // Wrap — preserve the hidden form fields (account_code, account_name)
+        // so they remain in the DOM and submit with the form.
+        // codeInput is inside this container's <td>, nameInput is in the next <td>.
         const wrapper = document.createElement('div');
         wrapper.className = 'account-picker-wrapper';
         wrapper.appendChild(input);
         wrapper.appendChild(dropdown);
+
+        // Detach the real inputs before clearing innerHTML so they aren't destroyed
+        if (codeInput && codeInput.parentNode) codeInput.parentNode.removeChild(codeInput);
+        if (nameInput && nameInput.parentNode) nameInput.parentNode.removeChild(nameInput);
+
+        // Make them hidden so they don't show but still submit
+        if (codeInput) { codeInput.type = 'hidden'; }
+        if (nameInput) { nameInput.type = 'hidden'; }
+
+        // Clear the container and rebuild with wrapper + hidden fields
         container.innerHTML = '';
         container.appendChild(wrapper);
+        if (codeInput) container.appendChild(codeInput);
+        if (nameInput) container.appendChild(nameInput);
 
         let activeIndex = -1;
 
