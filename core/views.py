@@ -2335,20 +2335,52 @@ def adjustment_create(request, pk):
         messages.error(request, "You do not have permission.")
         return redirect("core:financial_year_detail", pk=pk)
 
-    # Get available accounts for the account picker
-    # Always use the master Chart of Accounts for the entity type
-    # so journals can be created even before a trial balance is imported
-    entity_type = fy.entity.entity_type
-    master_accounts = list(
-        ChartOfAccount.objects.filter(entity_type=entity_type, is_active=True)
-        .order_by("account_code")
-        .values("account_code", "account_name")
+    # Get available accounts for the account picker.
+    # Priority: entity-specific accounts from the trial balance or client
+    # account mappings.  Fall back to the master Chart of Accounts only
+    # when neither source has data (e.g. brand-new entity with no TB yet).
+    entity_accounts = list(
+        ClientAccountMapping.objects.filter(entity=fy.entity)
+        .order_by("client_account_code")
+        .values("client_account_code", "client_account_name")
     )
-    # Rename fields to match what the template JS expects
-    accounts = [
-        {"client_account_code": a["account_code"], "client_account_name": a["account_name"]}
-        for a in master_accounts
-    ]
+
+    if not entity_accounts:
+        # Try unique accounts from the trial balance for this financial year
+        from django.db.models import F
+        tb_accounts = (
+            TrialBalanceLine.objects.filter(financial_year=fy)
+            .exclude(account_code="")
+            .values("account_code", "account_name")
+            .distinct()
+            .order_by("account_code")
+        )
+        entity_accounts = [
+            {"client_account_code": a["account_code"], "client_account_name": a["account_name"]}
+            for a in tb_accounts
+        ]
+
+    if entity_accounts:
+        # Ensure keys are consistent for the template
+        accounts = [
+            {
+                "client_account_code": a.get("client_account_code", a.get("account_code", "")),
+                "client_account_name": a.get("client_account_name", a.get("account_name", "")),
+            }
+            for a in entity_accounts
+        ]
+    else:
+        # Fallback: master Chart of Accounts for the entity type
+        entity_type = fy.entity.entity_type
+        master_accounts = list(
+            ChartOfAccount.objects.filter(entity_type=entity_type, is_active=True)
+            .order_by("account_code")
+            .values("account_code", "account_name")
+        )
+        accounts = [
+            {"client_account_code": a["account_code"], "client_account_name": a["account_name"]}
+            for a in master_accounts
+        ]
 
     if request.method == "POST":
         form = AdjustingJournalForm(request.POST)
