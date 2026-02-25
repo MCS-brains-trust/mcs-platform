@@ -1255,6 +1255,7 @@ class DocumentTemplate(models.Model):
     def get_merge_field_names(self):
         """Extract all {{field_name}} references from the structure."""
         import re
+        import json
         fields = set()
         text = json.dumps(self.structure)
         for match in re.finditer(r"\{\{(\w+)\}\}", text):
