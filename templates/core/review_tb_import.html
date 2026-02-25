@@ -433,7 +433,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const searchResults = document.getElementById('entitySearchResults');
     const createNewBtn = document.getElementById('entityCreateNew');
 
-    function openEntitySearch(displayEl) {
+    window.openEntitySearch = function(displayEl) {
         const idx = displayEl.dataset.idx;
         activeSearchIdx = idx;
 
@@ -446,7 +446,7 @@ document.addEventListener('DOMContentLoaded', function() {
         searchInput.value = '';
         searchInput.focus();
         renderEntityResults('');
-    }
+    };
 
     // Close dropdown on outside click
     document.addEventListener('click', function(e) {
