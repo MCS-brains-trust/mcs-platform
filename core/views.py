@@ -1183,7 +1183,14 @@ def _process_trial_balance_upload(fy, file):
     Preserves prior-year comparative values (prior_debit, prior_credit,
     prior_closing_balance, prior_mapped_line_item) that were set during
     rollover.  Only current-year balances are replaced by the upload.
+
+    Supports two formats:
+    1. Simple TB: [code, name, (opening), debit, credit]
+    2. HandiLedger Comparative TB: header rows, then
+       [code, name, CY_dr, CY_cr, PY_dr, PY_cr]
     """
+    import re as _re
+
     wb = openpyxl.load_workbook(file, read_only=True, data_only=True)
     ws = wb.active
 
@@ -1220,30 +1227,83 @@ def _process_trial_balance_upload(fy, file):
     uploaded_codes = set()  # Track which account codes came from the Excel
     comp_applied = set()   # Track codes whose comparatives have already been applied
 
-    rows = list(ws.iter_rows(min_row=2, values_only=True))  # Skip header
+    all_rows = list(ws.iter_rows(values_only=True))
 
-    for i, row in enumerate(rows, start=2):
-        if not row or not row[0]:
+    # --- Detect HandiLedger comparative format ---
+    is_comparative = False
+    data_start_row = 1  # 0-indexed; default skip first row
+    section_names = {
+        'income', 'expenses', 'cost of sales', 'current assets',
+        'non-current assets', 'non current assets', 'fixed assets',
+        'current liabilities', 'non-current liabilities',
+        'non current liabilities', 'equity', 'capital',
+    }
+
+    for idx, row in enumerate(all_rows[:8]):
+        row_strs = [str(c).strip().lower() if c else '' for c in row]
+        year_pattern = sum(1 for s in row_strs if _re.match(r'^20\d{2}$', s))
+        if year_pattern >= 2:
+            is_comparative = True
+            continue
+        if '$ dr' in row_strs and '$ cr' in row_strs:
+            is_comparative = True
+            data_start_row = idx + 1
+            continue
+        if row_strs[0] and 'comparative' in row_strs[0]:
+            is_comparative = True
             continue
 
+    for i in range(data_start_row if is_comparative else 1, len(all_rows)):
+        row = all_rows[i]
+        if not row:
+            continue
+
+        col0 = str(row[0]).strip() if row[0] is not None else ''
+        col1 = str(row[1]).strip() if len(row) > 1 and row[1] is not None else ''
+
+        if is_comparative:
+            # Skip blank, section header, and totals rows
+            if not col0 and not col1:
+                continue
+            if not col0 and col1.lower() in section_names:
+                continue
+            if col1.lower().startswith('total') or col1.lower().startswith('net '):
+                continue
+            if not col0 or not _re.match(r'^[\d]', col0):
+                continue
+        else:
+            if not col0:
+                continue
+
         try:
-            account_code = str(row[0]).strip()
-            account_name = str(row[1]).strip() if row[1] else ""
-            # Support both 4-column (Code, Name, Dr, Cr) and
-            # legacy 5-column (Code, Name, Opening, Dr, Cr) formats
-            if len(row) >= 5 and row[4] is not None:
+            account_code = col0
+            account_name = col1
+
+            if is_comparative:
+                # Columns: [code, name, CY_dr, CY_cr, PY_dr, PY_cr]
+                opening_balance = Decimal("0")
+                debit = Decimal(str(row[2] or 0)) if len(row) > 2 and row[2] is not None else Decimal("0")
+                credit = Decimal(str(row[3] or 0)) if len(row) > 3 and row[3] is not None else Decimal("0")
+                file_py_dr = Decimal(str(row[4] or 0)) if len(row) > 4 and row[4] is not None else Decimal("0")
+                file_py_cr = Decimal(str(row[5] or 0)) if len(row) > 5 and row[5] is not None else Decimal("0")
+            elif len(row) >= 5 and row[4] is not None:
                 # Legacy 5-column format with Opening Balance
                 opening_balance = Decimal(str(row[2] or 0))
                 debit = Decimal(str(row[3] or 0))
                 credit = Decimal(str(row[4] or 0))
+                file_py_dr = Decimal("0")
+                file_py_cr = Decimal("0")
             else:
                 # New 4-column format (no Opening Balance)
                 opening_balance = Decimal("0")
                 debit = Decimal(str(row[2] or 0))
                 credit = Decimal(str(row[3] or 0))
+                file_py_dr = Decimal("0")
+                file_py_cr = Decimal("0")
+
             closing_balance = opening_balance + debit - credit
         except (InvalidOperation, ValueError, IndexError) as e:
-            errors.append(f"Row {i}: {str(e)}")
+            errors.append(f"Row {i + 1}: {str(e)}")
             continue
 
         # Try to find existing mapping for this entity (learning from prior imports)
@@ -1266,16 +1326,22 @@ def _process_trial_balance_upload(fy, file):
                 mapped_item = coa_match.maps_to
 
         # Restore comparative values from snapshot — but only for the FIRST
-        # row per account_code.  The uploaded Excel may split a single prior-
-        # year account into multiple sub-accounts (e.g. 1826 "Office Expenses"
-        # becomes 1826 "office sundries", 1826 "office cleaning", etc.).
-        # Applying the prior-year totals to every sub-row would inflate the
-        # comparative column.
+        # row per account_code.
         if account_code not in comp_applied:
             comp = prior_data.get(account_code, {})
             comp_applied.add(account_code)
         else:
-            comp = {}  # Subsequent rows with same code get zero comparatives
+            comp = {}
+
+        # Prior year: prefer file data (comparative TB), then DB snapshot
+        if file_py_dr or file_py_cr:
+            py_debit = file_py_dr
+            py_credit = file_py_cr
+            py_closing = file_py_dr - file_py_cr
+        else:
+            py_debit = comp.get("prior_debit", Decimal("0"))
+            py_credit = comp.get("prior_credit", Decimal("0"))
+            py_closing = comp.get("prior_closing_balance", Decimal("0"))
 
         TrialBalanceLine.objects.create(
             financial_year=fy,
@@ -1288,10 +1354,9 @@ def _process_trial_balance_upload(fy, file):
             mapped_line_item=mapped_item,
             is_adjustment=False,
             source='tb_import',
-            # Restore prior-year comparatives (first occurrence only)
-            prior_debit=comp.get("prior_debit", Decimal("0")),
-            prior_credit=comp.get("prior_credit", Decimal("0")),
-            prior_closing_balance=comp.get("prior_closing_balance", Decimal("0")),
+            prior_debit=py_debit,
+            prior_credit=py_credit,
+            prior_closing_balance=py_closing,
             prior_balance_override=comp.get("prior_balance_override", False),
             prior_mapped_line_item=comp.get("prior_mapped_line_item"),
             reclassified=comp.get("reclassified", False),
@@ -1347,34 +1412,129 @@ def _process_trial_balance_upload(fy, file):
 
 
 def _parse_tb_excel(fy, file):
-    """Parse an Excel TB file into a list of raw line dicts (without committing)."""
+    """Parse an Excel TB file into a list of raw line dicts (without committing).
+
+    Supports two formats:
+    1. Simple TB: [code, name, (opening), debit, credit]
+    2. HandiLedger Comparative TB: header rows, then
+       [code, name, CY_dr, CY_cr, PY_dr, PY_cr]
+       with section header rows (Income, Expenses, etc.) mixed in.
+    """
+    import re as _re
+
     wb = openpyxl.load_workbook(file, read_only=True, data_only=True)
     ws = wb.active
-    rows = list(ws.iter_rows(min_row=2, values_only=True))
+    all_rows = list(ws.iter_rows(values_only=True))
+
+    # --- Detect HandiLedger comparative format ---
+    # Look for a row in the first 6 rows that contains year headers like
+    # '2025', '2025', '2024', '2024' or '$ Dr', '$ Cr', '$ Dr', '$ Cr'
+    is_comparative = False
+    data_start_row = 1  # 0-indexed; default skip first row
+    section_names = {
+        'income', 'expenses', 'cost of sales', 'current assets',
+        'non-current assets', 'non current assets', 'fixed assets',
+        'current liabilities', 'non-current liabilities',
+        'non current liabilities', 'equity', 'capital',
+    }
+
+    for idx, row in enumerate(all_rows[:8]):
+        row_strs = [str(c).strip().lower() if c else '' for c in row]
+        # Check for year header row like ['', '', '2025', '2025', '2024', '2024']
+        year_pattern = sum(1 for s in row_strs if _re.match(r'^20\d{2}$', s))
+        if year_pattern >= 2:
+            is_comparative = True
+            continue
+        # Check for column header row like ['', '', '$ Dr', '$ Cr', '$ Dr', '$ Cr']
+        if '$ dr' in row_strs and '$ cr' in row_strs:
+            is_comparative = True
+            data_start_row = idx + 1
+            continue
+        # Check for 'Comparative Trial Balance' in first cell
+        if row_strs[0] and 'comparative' in row_strs[0]:
+            is_comparative = True
+            continue
+
     raw_lines = []
-    for i, row in enumerate(rows, start=2):
-        if not row or not row[0]:
-            continue
-        try:
-            account_code = str(row[0]).strip()
-            account_name = str(row[1]).strip() if row[1] else ""
-            if len(row) >= 5 and row[4] is not None:
-                opening_balance = str(row[2] or 0)
-                debit = str(row[3] or 0)
-                credit = str(row[4] or 0)
-            else:
-                opening_balance = "0"
-                debit = str(row[2] or 0)
-                credit = str(row[3] or 0)
-            raw_lines.append({
-                "account_code": account_code,
-                "account_name": account_name,
-                "opening_balance": opening_balance,
-                "debit": debit,
-                "credit": credit,
-            })
-        except (ValueError, IndexError):
-            continue
+
+    if is_comparative:
+        # --- HandiLedger Comparative format ---
+        # Columns: [code, name, CY_dr, CY_cr, PY_dr, PY_cr]
+        for idx in range(data_start_row, len(all_rows)):
+            row = all_rows[idx]
+            if not row:
+                continue
+
+            col0 = str(row[0]).strip() if row[0] is not None else ''
+            col1 = str(row[1]).strip() if len(row) > 1 and row[1] is not None else ''
+
+            # Skip blank rows
+            if not col0 and not col1:
+                continue
+
+            # Skip section header rows (code is empty, name is a section label)
+            if not col0 and col1.lower() in section_names:
+                continue
+
+            # Skip totals/summary rows
+            if col1.lower().startswith('total') or col1.lower().startswith('net '):
+                continue
+
+            # Skip non-account rows (e.g. ABN, title rows that slipped through)
+            if not col0:
+                continue
+
+            # Validate that col0 looks like an account code (digits, possibly with dots)
+            if not _re.match(r'^[\d]', col0):
+                continue
+
+            try:
+                account_code = col0
+                account_name = col1
+
+                cy_dr = float(row[2]) if len(row) > 2 and row[2] is not None else 0.0
+                cy_cr = float(row[3]) if len(row) > 3 and row[3] is not None else 0.0
+                py_dr = float(row[4]) if len(row) > 4 and row[4] is not None else 0.0
+                py_cr = float(row[5]) if len(row) > 5 and row[5] is not None else 0.0
+
+                raw_lines.append({
+                    "account_code": account_code,
+                    "account_name": account_name,
+                    "opening_balance": "0",
+                    "debit": str(cy_dr),
+                    "credit": str(cy_cr),
+                    "prior_debit": str(py_dr),
+                    "prior_credit": str(py_cr),
+                })
+            except (ValueError, IndexError, TypeError):
+                continue
+    else:
+        # --- Simple TB format (original logic) ---
+        for idx in range(1, len(all_rows)):  # skip header row
+            row = all_rows[idx]
+            if not row or not row[0]:
+                continue
+            try:
+                account_code = str(row[0]).strip()
+                account_name = str(row[1]).strip() if len(row) > 1 and row[1] else ""
+                if len(row) >= 5 and row[4] is not None:
+                    opening_balance = str(row[2] or 0)
+                    debit = str(row[3] or 0)
+                    credit = str(row[4] or 0)
+                else:
+                    opening_balance = "0"
+                    debit = str(row[2] or 0)
+                    credit = str(row[3] or 0)
+                raw_lines.append({
+                    "account_code": account_code,
+                    "account_name": account_name,
+                    "opening_balance": opening_balance,
+                    "debit": debit,
+                    "credit": credit,
+                })
+            except (ValueError, IndexError):
+                continue
+
     wb.close()
     return raw_lines
 
@@ -1404,6 +1564,8 @@ def _apply_tb_learned_mappings(entity, raw_lines):
             "opening_balance": line["opening_balance"],
             "debit": line["debit"],
             "credit": line["credit"],
+            "prior_debit": line.get("prior_debit", "0"),
+            "prior_credit": line.get("prior_credit", "0"),
             "mapped_id": "",
             "mapped_label": "",
             "confidence": "new",
@@ -1567,6 +1729,21 @@ def commit_tb_import(request, pk):
             else:
                 comp = {}
 
+            # Prior year data: prefer file-level data (from comparative TB),
+            # then fall back to DB snapshot, then zero.
+            file_py_dr = Decimal(str(line.get("prior_debit", "0") or "0"))
+            file_py_cr = Decimal(str(line.get("prior_credit", "0") or "0"))
+            if file_py_dr or file_py_cr:
+                # File has prior year data — use it
+                py_debit = file_py_dr
+                py_credit = file_py_cr
+                py_closing = file_py_dr - file_py_cr
+            else:
+                # Fall back to DB snapshot
+                py_debit = comp.get("prior_debit", Decimal("0"))
+                py_credit = comp.get("prior_credit", Decimal("0"))
+                py_closing = comp.get("prior_closing_balance", Decimal("0"))
+
             TrialBalanceLine.objects.create(
                 financial_year=fy,
                 account_code=account_code,
@@ -1578,9 +1755,9 @@ def commit_tb_import(request, pk):
                 mapped_line_item=mapped_item,
                 is_adjustment=False,
                 source='tb_import',
-                prior_debit=comp.get("prior_debit", Decimal("0")),
-                prior_credit=comp.get("prior_credit", Decimal("0")),
-                prior_closing_balance=comp.get("prior_closing_balance", Decimal("0")),
+                prior_debit=py_debit,
+                prior_credit=py_credit,
+                prior_closing_balance=py_closing,
                 prior_balance_override=comp.get("prior_balance_override", False),
                 prior_mapped_line_item=comp.get("prior_mapped_line_item"),
                 reclassified=comp.get("reclassified", False),

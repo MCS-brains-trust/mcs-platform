@@ -315,14 +315,13 @@ def _parse_chart(reader, year):
 # Balance (Trial Balance) Parser
 # =============================================================================
 
-def _parse_balance(reader, year, chart):
+def _parse_balance(reader, year, chart, prior_year_lines=None):
     """
     Parse Balance.txt to extract trial balance data.
-    Division 0 = current year, Division 2 = prior year comparative.
 
     Access Ledger Balance.txt format (20 columns, comma-separated):
         [0]  Year
-        [1]  Division (0=current, 2=prior year comparative)
+        [1]  Division (0=current, 1=divisional breakdown)
         [2]  Account code (integer)
         [3]  Sub-account code (integer, 0 = parent)
         [4]  Opening balance (for BS accounts; 0 for P&L)
@@ -351,13 +350,19 @@ def _parse_balance(reader, year, chart):
         - P&L accounts: closing = movement (ytd or sum of monthly cols)
         - Retained profits (4199): closing = opening (pre-close working TB)
 
+    Args:
+        prior_year_lines: Optional list of TB line dicts from the previous
+            year's parse.  Used to populate prior_debit / prior_credit
+            comparatives.  HandiLedger does NOT store prior year data in
+            division=2; instead the prior year's Balance.txt (division=0)
+            must be parsed separately and passed here.
+
     Returns list of dicts with trial balance line data.
     """
     rows = reader.read_csv(year, "Balance.txt")
 
-    # Group by (account_code, sub_code), separating current (div=0) and prior (div=2)
+    # Group by (account_code, sub_code) — only division 0 (current year)
     current_data = {}  # (code, sub) -> row
-    prior_data = {}    # (code, sub) -> row
 
     for row in rows:
         if len(row) < 20:
@@ -372,8 +377,16 @@ def _parse_balance(reader, year, chart):
         key = (account_code, sub_code)
         if division == 0:
             current_data[key] = row
-        elif division == 2:
-            prior_data[key] = row
+
+    # Build prior year lookup from the previous year's parsed TB lines
+    # (passed in from the caller, which processes years chronologically)
+    prior_lookup = {}  # account_code -> {debit, credit}
+    if prior_year_lines:
+        for pl in prior_year_lines:
+            prior_lookup[pl["account_code"]] = {
+                "debit": pl["debit"],
+                "credit": pl["credit"],
+            }
 
     def _sum_all_months(row):
         """Sum all 12 monthly columns [5]-[16]."""
@@ -441,9 +454,9 @@ def _parse_balance(reader, year, chart):
         return own_entry.get("formatted_code") != parent_entry.get("formatted_code", f"{code:04d}")
 
     # Build trial balance lines
-    # First pass: compute Dr/Cr for every (code, sub) key
-    raw_lines = {}  # key -> {debit, credit, prior_debit, prior_credit, opening, chart_entry, formatted_code, account_name}
-    all_keys = sorted(set(list(current_data.keys()) + list(prior_data.keys())))
+    # First pass: compute Dr/Cr for every (code, sub) key in current year
+    raw_lines = {}  # key -> {debit, credit, opening, chart_entry, formatted_code, account_name}
+    all_keys = sorted(current_data.keys())
 
     for key in all_keys:
         code, sub = key
@@ -451,30 +464,18 @@ def _parse_balance(reader, year, chart):
         account_name = chart_entry.get("name", f"Account {code}")
         formatted_code = chart_entry.get("formatted_code", f"{code:04d}")
 
-        cur_row = current_data.get(key)
-        if cur_row:
-            opening = _safe_decimal(cur_row[4])
-            debit, credit = _extract_closing_balance(cur_row, code, chart_entry)
-        else:
-            opening = Decimal("0")
-            debit = Decimal("0")
-            credit = Decimal("0")
-
-        prior_row = prior_data.get(key)
-        if prior_row:
-            prior_debit, prior_credit = _extract_closing_balance(prior_row, code, chart_entry)
-        else:
-            prior_debit = Decimal("0")
-            prior_credit = Decimal("0")
+        cur_row = current_data[key]
+        opening = _safe_decimal(cur_row[4])
+        debit, credit = _extract_closing_balance(cur_row, code, chart_entry)
 
         raw_lines[key] = {
             "debit": debit, "credit": credit,
-            "prior_debit": prior_debit, "prior_credit": prior_credit,
             "opening": opening,
             "chart_entry": chart_entry,
             "formatted_code": formatted_code,
             "account_name": account_name,
         }
+
 
     # Second pass: aggregate unnamed sub-accounts into their parent
     aggregated = {}  # formatted_code -> aggregated dict
@@ -488,12 +489,9 @@ def _parse_balance(reader, year, chart):
             # Named sub-account or parent — keep as its own line
             fc = data["formatted_code"]
             if fc in aggregated:
-                # Aggregate into existing line with same formatted_code
                 agg = aggregated[fc]
                 agg["debit"] += data["debit"]
                 agg["credit"] += data["credit"]
-                agg["prior_debit"] += data["prior_debit"]
-                agg["prior_credit"] += data["prior_credit"]
                 agg["opening"] += data["opening"]
             else:
                 aggregated[fc] = {
@@ -502,8 +500,6 @@ def _parse_balance(reader, year, chart):
                     "opening": data["opening"],
                     "debit": data["debit"],
                     "credit": data["credit"],
-                    "prior_debit": data["prior_debit"],
-                    "prior_credit": data["prior_credit"],
                 }
                 code_order.append(fc)
         else:
@@ -516,8 +512,6 @@ def _parse_balance(reader, year, chart):
                 agg = aggregated[parent_fc]
                 agg["debit"] += data["debit"]
                 agg["credit"] += data["credit"]
-                agg["prior_debit"] += data["prior_debit"]
-                agg["prior_credit"] += data["prior_credit"]
                 agg["opening"] += data["opening"]
             else:
                 aggregated[parent_fc] = {
@@ -526,8 +520,6 @@ def _parse_balance(reader, year, chart):
                     "opening": data["opening"],
                     "debit": data["debit"],
                     "credit": data["credit"],
-                    "prior_debit": data["prior_debit"],
-                    "prior_credit": data["prior_credit"],
                 }
                 code_order.append(parent_fc)
 
@@ -535,11 +527,38 @@ def _parse_balance(reader, year, chart):
                 f"  Aggregated unnamed sub ({code}.{sub:02d}) into parent {parent_fc}"
             )
 
+    # Third pass: attach prior year comparatives from the previous year's
+    # parsed TB lines.  Also include prior-year-only accounts (accounts
+    # that existed in the prior year but have $0 in the current year).
+    if prior_lookup:
+        for py_code, py_data in prior_lookup.items():
+            if py_code not in aggregated:
+                # Account exists only in prior year — add it with $0 current
+                chart_entry_for_py = None
+                for (c, s), ce in chart.items():
+                    if ce.get("formatted_code") == py_code:
+                        chart_entry_for_py = ce
+                        break
+                py_name = chart_entry_for_py.get("name", f"Account {py_code}") if chart_entry_for_py else f"Account {py_code}"
+                aggregated[py_code] = {
+                    "account_code": py_code,
+                    "account_name": py_name,
+                    "opening": Decimal("0"),
+                    "debit": Decimal("0"),
+                    "credit": Decimal("0"),
+                }
+                code_order.append(py_code)
+
     # Build final lines list
     lines = []
     for fc in code_order:
         agg = aggregated[fc]
-        if agg["debit"] == 0 and agg["credit"] == 0 and agg["prior_debit"] == 0 and agg["prior_credit"] == 0:
+        # Look up prior year from the prior_lookup
+        py = prior_lookup.get(fc, {"debit": Decimal("0"), "credit": Decimal("0")})
+        prior_debit = py["debit"]
+        prior_credit = py["credit"]
+
+        if agg["debit"] == 0 and agg["credit"] == 0 and prior_debit == 0 and prior_credit == 0:
             continue
         lines.append({
             "account_code": agg["account_code"],
@@ -548,8 +567,8 @@ def _parse_balance(reader, year, chart):
             "debit": agg["debit"],
             "credit": agg["credit"],
             "closing_balance": agg["debit"] - agg["credit"],
-            "prior_debit": agg["prior_debit"],
-            "prior_credit": agg["prior_credit"],
+            "prior_debit": prior_debit,
+            "prior_credit": prior_credit,
         })
 
     return lines
@@ -1092,6 +1111,7 @@ def import_access_ledger_zip(zip_file, client=None, entity=None, replace_existin
     prior_fy = None
     fy_map = {}  # year_int -> FinancialYear instance
     chart_by_year = {}  # year_int -> chart dict (for auto-mapping)
+    prior_year_tb_lines = None  # TB lines from previous year, used as comparatives
 
     # Pre-build ChartOfAccount mapping cache for this entity type
     # This maps account_code -> AccountMapping for instant lookup during import
@@ -1159,7 +1179,7 @@ def import_access_ledger_zip(zip_file, client=None, entity=None, replace_existin
         chart_by_year[year] = chart
 
         # --- Parse and import trial balance ---
-        tb_lines = _parse_balance(reader, year, chart)
+        tb_lines = _parse_balance(reader, year, chart, prior_year_lines=prior_year_tb_lines)
         tb_objects = []
         mapped_in_year = 0
         for line_data in tb_lines:
@@ -1229,6 +1249,9 @@ def import_access_ledger_zip(zip_file, client=None, entity=None, replace_existin
                 client_account_code=line_data["account_code"],
                 defaults=defaults,
             )
+
+        # Store this year's TB lines as prior year data for the next iteration
+        prior_year_tb_lines = tb_lines
 
         prior_fy = fy
 
