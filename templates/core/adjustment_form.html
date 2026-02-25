@@ -271,6 +271,11 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     // Debit/Credit calculation
+    // Format number with commas (e.g. 211557.68 -> 211,557.68)
+    function fmtNum(n) {
+        return n.toLocaleString('en-AU', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    }
+
     function updateTotals() {
         let totalDr = 0, totalCr = 0;
         document.querySelectorAll('.journal-line-row').forEach(function(row) {
@@ -281,8 +286,8 @@ document.addEventListener('DOMContentLoaded', function() {
             totalDr += dr;
             totalCr += cr;
         });
-        document.getElementById('total-debit').textContent = '$' + totalDr.toFixed(2);
-        document.getElementById('total-credit').textContent = '$' + totalCr.toFixed(2);
+        document.getElementById('total-debit').textContent = '$' + fmtNum(totalDr);
+        document.getElementById('total-credit').textContent = '$' + fmtNum(totalCr);
 
         const indicator = document.getElementById('balance-indicator');
         const saveBtn = document.querySelector('button[type="submit"]');
@@ -296,9 +301,9 @@ document.addEventListener('DOMContentLoaded', function() {
             saveBtn.disabled = false;
             saveBtn.title = '';
         } else {
-            indicator.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle"></i> Out of balance by $' + diff.toFixed(2) + '</span>';
+            indicator.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle"></i> Out of balance by $' + fmtNum(diff) + '</span>';
             saveBtn.disabled = true;
-            saveBtn.title = 'Journal must balance before saving — Dr $' + totalDr.toFixed(2) + ' ≠ Cr $' + totalCr.toFixed(2);
+            saveBtn.title = 'Journal must balance before saving — Dr $' + fmtNum(totalDr) + ' ≠ Cr $' + fmtNum(totalCr);
         }
     }
 
@@ -311,6 +316,31 @@ document.addEventListener('DOMContentLoaded', function() {
         if (e.target.name && e.target.name.endsWith('-DELETE')) {
             updateTotals();
         }
+    });
+
+    // ===== Tab key: Debit <-> Credit navigation on same row =====
+    // Tab from Debit goes to Credit on same row.
+    // Shift+Tab from Credit goes back to Debit on same row.
+    // Tab from Credit moves to next row's Debit (default browser behavior).
+    document.addEventListener('keydown', function(e) {
+        if (e.key !== 'Tab') return;
+        var el = e.target;
+        if (!el.name) return;
+        var row = el.closest('.journal-line-row');
+        if (!row) return;
+
+        if (el.name.endsWith('-debit') && !e.shiftKey) {
+            // Tab from Debit -> go to Credit on same row
+            e.preventDefault();
+            var credit = row.querySelector('[name$="-credit"]');
+            if (credit) { credit.focus(); credit.select(); }
+        } else if (el.name.endsWith('-credit') && e.shiftKey) {
+            // Shift+Tab from Credit -> go back to Debit on same row
+            e.preventDefault();
+            var debit = row.querySelector('[name$="-debit"]');
+            if (debit) { debit.focus(); debit.select(); }
+        }
+        // Tab from Credit (no shift) -> default browser tab to next row's account field
     });
 
     // Add line button
