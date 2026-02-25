@@ -120,14 +120,8 @@ def run_risk_engine(financial_year, tiers=None):
         "end_date": str(financial_year.end_date),
     }
 
-    # Auto-resolve flags from previous runs that no longer trigger
-    previous_open = RiskFlag.objects.filter(
-        financial_year=financial_year,
-        status__in=["open", "reviewed"],
-    )
-    previous_rule_ids = set(previous_open.values_list("rule_id", flat=True))
-
-    new_rule_ids = set()
+    # Track which rule_ids still trigger, per tier
+    new_rule_ids_by_tier = {1: set(), 2: set()}
 
     # --- TIER 1: Variance Analysis ---
     if 1 in tiers:
@@ -137,7 +131,7 @@ def run_risk_engine(financial_year, tiers=None):
         for flag_data in tier1_flags:
             _create_flag(financial_year, run_id, flag_data)
             results["flags_created"] += 1
-            new_rule_ids.add(flag_data["rule_id"])
+            new_rule_ids_by_tier[1].add(flag_data["rule_id"])
 
     # --- TIER 2: Rule-Based Compliance ---
     if 2 in tiers:
@@ -155,18 +149,29 @@ def run_risk_engine(financial_year, tiers=None):
                 if flag_data:
                     _create_flag(financial_year, run_id, flag_data)
                     results["flags_created"] += 1
-                    new_rule_ids.add(flag_data["rule_id"])
+                    new_rule_ids_by_tier[2].add(flag_data["rule_id"])
             except Exception as e:
                 results["errors"].append(f"Rule {rule.rule_id}: {str(e)}")
                 logger.exception(f"Error evaluating rule {rule.rule_id}")
 
-    # Auto-resolve flags that no longer trigger
-    stale_flags = previous_open.exclude(rule_id__in=new_rule_ids)
-    auto_resolved = stale_flags.update(
-        status="auto_resolved",
-        resolution_notes="Auto-resolved: condition no longer detected by risk engine.",
-        resolved_at=timezone.now(),
-    )
+    # Auto-resolve: ONLY resolve flags from tiers that were actually
+    # evaluated in this run.  This prevents Tier 2 flags from being
+    # wiped when only Tier 1 runs (and vice versa).
+    auto_resolved = 0
+    for tier_num in tiers:
+        previous_open_for_tier = RiskFlag.objects.filter(
+            financial_year=financial_year,
+            status__in=["open", "reviewed"],
+            tier=tier_num,
+        )
+        stale = previous_open_for_tier.exclude(
+            rule_id__in=new_rule_ids_by_tier.get(tier_num, set())
+        )
+        auto_resolved += stale.update(
+            status="auto_resolved",
+            resolution_notes="Auto-resolved: condition no longer detected by risk engine.",
+            resolved_at=timezone.now(),
+        )
     results["flags_auto_resolved"] = auto_resolved
 
     return results
