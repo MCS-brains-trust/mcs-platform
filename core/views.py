@@ -27,6 +27,91 @@ from .forms import (
 from config.authorization import get_entity_for_user, get_financial_year_for_user
 
 
+def _apply_journal_line_to_tb(fy, account_code, account_name, jnl_debit, jnl_credit, source='manual_journal'):
+    """
+    Apply a journal line to the trial balance by netting against the existing
+    TB line for the account.  If no existing line exists, create a new one.
+
+    Instead of creating a separate is_adjustment=True row (which shows as a
+    separate debit/credit column), this modifies the existing row so the
+    balance is properly netted.
+    """
+    # Find the existing TB line for this account (prefer the non-adjustment import line)
+    existing = (
+        TrialBalanceLine.objects.filter(financial_year=fy, account_code=account_code)
+        .order_by('is_adjustment')  # non-adjustment first
+        .first()
+    )
+
+    if existing:
+        # Net the journal amounts into the existing line
+        new_debit = existing.debit + jnl_debit
+        new_credit = existing.credit + jnl_credit
+        net = new_debit - new_credit
+        if net >= 0:
+            existing.debit = net
+            existing.credit = Decimal('0')
+        else:
+            existing.debit = Decimal('0')
+            existing.credit = abs(net)
+        existing.closing_balance = existing.debit - existing.credit
+        existing.save(update_fields=['debit', 'credit', 'closing_balance'])
+    else:
+        # No existing line — create a new one
+        mapping = ClientAccountMapping.objects.filter(
+            entity=fy.entity, client_account_code=account_code
+        ).first()
+        mapped_item = mapping.mapped_line_item if mapping else None
+        net = jnl_debit - jnl_credit
+        TrialBalanceLine.objects.create(
+            financial_year=fy,
+            account_code=account_code,
+            account_name=account_name,
+            opening_balance=Decimal('0'),
+            debit=jnl_debit if net >= 0 else Decimal('0'),
+            credit=jnl_credit if net < 0 else Decimal('0'),
+            closing_balance=net,
+            mapped_line_item=mapped_item,
+            is_adjustment=True,
+            source=source,
+        )
+
+
+def _reverse_journal_line_from_tb(fy, account_code, jnl_debit, jnl_credit):
+    """
+    Reverse a previously applied journal line from the trial balance.
+    This is the inverse of _apply_journal_line_to_tb.
+    """
+    existing = (
+        TrialBalanceLine.objects.filter(financial_year=fy, account_code=account_code)
+        .order_by('is_adjustment')  # non-adjustment first
+        .first()
+    )
+    if existing:
+        # Reverse: subtract the journal amounts
+        new_debit = existing.debit - jnl_debit + jnl_credit
+        new_credit = existing.credit - jnl_credit + jnl_debit
+        # Wait — we need to reverse the netting.
+        # When we applied, we did: total_dr = old_dr + jnl_dr, total_cr = old_cr + jnl_cr, then netted.
+        # To reverse, we need to add back what was subtracted.
+        # Since we netted, we can't simply subtract. Instead, add the opposite.
+        raw_debit = existing.debit + jnl_credit
+        raw_credit = existing.credit + jnl_debit
+        net = raw_debit - raw_credit
+        if net >= 0:
+            existing.debit = net
+            existing.credit = Decimal('0')
+        else:
+            existing.debit = Decimal('0')
+            existing.credit = abs(net)
+        existing.closing_balance = existing.debit - existing.credit
+        existing.save(update_fields=['debit', 'credit', 'closing_balance'])
+
+        # If the line was created by a journal (is_adjustment=True) and is now zero, remove it
+        if existing.is_adjustment and existing.debit == 0 and existing.credit == 0:
+            existing.delete()
+
+
 def _log_action(request, action, description, obj=None):
     """Create an audit log entry."""
     AuditLog.objects.create(
@@ -600,6 +685,7 @@ def financial_year_detail(request, pk):
         "account_mappings": AccountMapping.objects.filter(
             applicable_entities__contains=fy.entity.entity_type
         ).order_by('financial_statement', 'line_item_label'),
+        "active_tab": request.GET.get("tab", ""),
     }
     return render(request, "core/financial_year_detail.html", context)
 
@@ -2411,22 +2497,9 @@ def adjustment_create(request, pk):
 
             # Auto-post to Trial Balance immediately
             for line in lines:
-                mapping = ClientAccountMapping.objects.filter(
-                    entity=fy.entity, client_account_code=line.account_code
-                ).first()
-                mapped_item = mapping.mapped_line_item if mapping else None
-
-                TrialBalanceLine.objects.create(
-                    financial_year=fy,
-                    account_code=line.account_code,
-                    account_name=line.account_name,
-                    opening_balance=Decimal("0"),
-                    debit=line.debit,
-                    credit=line.credit,
-                    closing_balance=line.debit - line.credit,
-                    mapped_line_item=mapped_item,
-                    is_adjustment=True,
-                    source='manual_journal',
+                _apply_journal_line_to_tb(
+                    fy, line.account_code, line.account_name,
+                    line.debit, line.credit, source='manual_journal',
                 )
 
             journal.status = AdjustingJournal.JournalStatus.POSTED
@@ -2487,24 +2560,11 @@ def journal_post(request, pk):
         messages.error(request, "Cannot post to a finalised year.")
         return redirect("core:journal_detail", pk=pk)
 
-    # Create adjustment trial balance lines
+    # Apply journal lines to Trial Balance (nets against existing balances)
     for line in journal.lines.all():
-        mapping = ClientAccountMapping.objects.filter(
-            entity=fy.entity, client_account_code=line.account_code
-        ).first()
-        mapped_item = mapping.mapped_line_item if mapping else None
-
-        TrialBalanceLine.objects.create(
-            financial_year=fy,
-            account_code=line.account_code,
-            account_name=line.account_name,
-            opening_balance=Decimal("0"),
-            debit=line.debit,
-            credit=line.credit,
-            closing_balance=line.debit - line.credit,
-            mapped_line_item=mapped_item,
-            is_adjustment=True,
-            source='manual_journal',
+        _apply_journal_line_to_tb(
+            fy, line.account_code, line.account_name,
+            line.debit, line.credit, source='manual_journal',
         )
 
     # Update journal status
@@ -2539,22 +2599,12 @@ def journal_delete(request, pk):
     ref = journal.reference_number
     status = journal.status
 
-    # If the journal was posted, remove its adjustment TB lines
+    # If the journal was posted, reverse its effect on the Trial Balance
     if status == AdjustingJournal.JournalStatus.POSTED:
         for line in journal.lines.all():
-            TrialBalanceLine.objects.filter(
-                financial_year=fy,
-                account_code=line.account_code,
-                debit=line.debit,
-                credit=line.credit,
-                is_adjustment=True,
-            ).first().delete() if TrialBalanceLine.objects.filter(
-                financial_year=fy,
-                account_code=line.account_code,
-                debit=line.debit,
-                credit=line.credit,
-                is_adjustment=True,
-            ).exists() else None
+            _reverse_journal_line_from_tb(
+                fy, line.account_code, line.debit, line.credit,
+            )
 
     journal.delete()
     _log_action(request, "adjustment", f"Deleted {status} journal {ref}")
@@ -4862,24 +4912,11 @@ def depreciation_post_to_tb(request, pk):
         credit=total_depreciation,
     )
 
-    # Auto-post: create TB adjustment lines
+    # Auto-post: apply journal lines to Trial Balance (nets against existing balances)
     for line in journal.lines.all():
-        mapping = ClientAccountMapping.objects.filter(
-            entity=fy.entity, client_account_code=line.account_code
-        ).first()
-        mapped_item = mapping.mapped_line_item if mapping else None
-
-        TrialBalanceLine.objects.create(
-            financial_year=fy,
-            account_code=line.account_code,
-            account_name=line.account_name,
-            opening_balance=Decimal("0"),
-            debit=line.debit,
-            credit=line.credit,
-            closing_balance=line.debit - line.credit,
-            mapped_line_item=mapped_item,
-            is_adjustment=True,
-            source='manual_journal',
+        _apply_journal_line_to_tb(
+            fy, line.account_code, line.account_name,
+            line.debit, line.credit, source='manual_journal',
         )
 
     # Mark as posted
@@ -7753,18 +7790,10 @@ def _parse_and_post_journal_to_tb(fy, file, user):
         ).first()
         mapped_item = mapping.mapped_line_item if mapping else None
 
-        # Create an adjustment TB line directly
-        TrialBalanceLine.objects.create(
-            financial_year=fy,
-            account_code=account_code,
-            account_name=account_name,
-            opening_balance=Decimal("0"),
-            debit=debit,
-            credit=credit,
-            closing_balance=debit - credit,
-            mapped_line_item=mapped_item,
-            is_adjustment=True,
-            source='journal_upload',
+        # Apply to Trial Balance (nets against existing balances)
+        _apply_journal_line_to_tb(
+            fy, account_code, account_name,
+            debit, credit, source='journal_upload',
         )
         lines_created += 1
 
