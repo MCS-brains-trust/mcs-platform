@@ -1,0 +1,18 @@
+Key findings from review_tb_import.html:
+
+1. The "Click to assign" display div has onclick="openEntitySearch(this)" - this should work
+2. The openEntitySearch function positions a dropdown (#entitySearchDropdown) below the clicked element
+3. The dropdown is positioned absolutely using getBoundingClientRect()
+4. The dropdown uses entityAccounts (a JS array from template context) for search results
+5. The dropdown has a "Create New Account" button that opens the Quick-Add modal
+6. The Quick-Add modal POSTs to {% url 'integrations:quick_add_entity_account' %}
+7. Smart code suggestion calls {% url "core:entity_coa_suggest_code" pk=fy.pk %}
+
+POTENTIAL ISSUES:
+- The dropdown is positioned using absolute positioning with window.scrollY - if the page uses a scrollable container instead of window scroll, positioning could be wrong
+- The dropdown is OUTSIDE the form/table, so it needs to be positioned relative to the viewport
+- The onclick handler is inline: onclick="openEntitySearch(this)" - this function is defined inside DOMContentLoaded, so it's NOT in global scope!
+
+THAT'S THE BUG: openEntitySearch is defined inside the DOMContentLoaded callback, making it a local function. But the onclick="openEntitySearch(this)" in the HTML expects it to be a global function. This would cause "openEntitySearch is not defined" error.
+
+Need to check: is the function exposed globally?

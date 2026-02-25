@@ -7560,16 +7560,19 @@ def journal_upload(request, pk):
             return redirect("core:journal_upload", pk=pk)
 
         try:
-            journals_created = _parse_and_create_journals(fy, uploaded_file, request.user)
-            if journals_created == 0:
-                messages.warning(request, "No journal entries found in the uploaded file. Check the format and try again.")
+            lines_created = _parse_and_post_journal_to_tb(fy, uploaded_file, request.user)
+            if lines_created == 0:
+                messages.warning(request, "No journal lines found in the uploaded file. Check the format and try again.")
             else:
                 messages.success(
                     request,
-                    f"Successfully created {journals_created} journal entr{'y' if journals_created == 1 else 'ies'} "
-                    f"as Draft. Review and post them from the Journals tab."
+                    f"Successfully posted {lines_created} journal line{'s' if lines_created != 1 else ''} "
+                    f"directly to the Trial Balance."
                 )
-                _log_action(request, "journal_upload", f"Uploaded {journals_created} journals from {uploaded_file.name}")
+                _log_action(request, "journal_upload", f"Uploaded {lines_created} journal lines from {uploaded_file.name} directly to TB")
+                # Auto-trigger risk engine after journal upload
+                from core.signals import trigger_risk_recalc
+                trigger_risk_recalc(fy, "journal_uploaded")
         except Exception as e:
             messages.error(request, f"Journal upload failed: {e}")
 
@@ -7578,16 +7581,14 @@ def journal_upload(request, pk):
     return render(request, "core/journal_upload.html", {"fy": fy})
 
 
-def _parse_and_create_journals(fy, file, user):
-    """Parse an Excel file and create AdjustingJournal + JournalLine records.
+def _parse_and_post_journal_to_tb(fy, file, user):
+    """Parse an Excel file and post movements directly to Trial Balance lines.
 
     Expected columns: JOURNAL DATE | DESCRIPTION | ACCOUNT CODE | DEBIT | CREDIT
-    Lines with the same date+description are grouped into one journal.
-    Returns the number of journals created.
+    Each row creates an adjustment TrialBalanceLine.
+    Returns the number of TB lines created.
     """
-    from collections import OrderedDict
     from datetime import datetime, date
-    import re
 
     wb = openpyxl.load_workbook(file, data_only=True)
     ws = wb.active
@@ -7606,34 +7607,47 @@ def _parse_and_create_journals(fy, file, user):
 
     data_rows = rows[header_row_idx + 1:]
 
-    # Group lines by (date, description) → journal
-    journal_groups = OrderedDict()
+    def _parse_amount(val):
+        if val is None:
+            return Decimal("0")
+        if isinstance(val, (int, float)):
+            return Decimal(str(round(val, 2)))
+        val_str = str(val).strip().replace(",", "").replace("$", "")
+        if not val_str or val_str == "-":
+            return Decimal("0")
+        try:
+            return Decimal(val_str).quantize(Decimal("0.01"))
+        except (InvalidOperation, ValueError):
+            return Decimal("0")
+
+    lines_created = 0
 
     for row in data_rows:
         if not row or len(row) < 5:
             continue
 
-        # Parse date (column 0)
+        # Parse date (column 0) — optional, skip row if unparseable
         raw_date = row[0]
         if raw_date is None:
             continue
         if isinstance(raw_date, datetime):
-            jnl_date = raw_date.date()
+            pass
         elif isinstance(raw_date, date):
-            jnl_date = raw_date
+            pass
         elif isinstance(raw_date, str):
             raw_date = raw_date.strip()
             if not raw_date:
                 continue
-            # Try common date formats
+            parsed = False
             for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d/%m/%y", "%d-%m-%y"):
                 try:
-                    jnl_date = datetime.strptime(raw_date, fmt).date()
+                    datetime.strptime(raw_date, fmt)
+                    parsed = True
                     break
                 except ValueError:
                     continue
-            else:
-                continue  # Skip rows with unparseable dates
+            if not parsed:
+                continue
         else:
             continue
 
@@ -7645,26 +7659,12 @@ def _parse_and_create_journals(fy, file, user):
         if raw_code is None:
             continue
         account_code = str(raw_code).strip()
-        # Remove .0 from numeric codes read as floats
         if account_code.endswith(".0"):
             account_code = account_code[:-2]
         if not account_code:
             continue
 
         # Parse debit (column 3) and credit (column 4)
-        def _parse_amount(val):
-            if val is None:
-                return Decimal("0")
-            if isinstance(val, (int, float)):
-                return Decimal(str(round(val, 2)))
-            val_str = str(val).strip().replace(",", "").replace("$", "")
-            if not val_str or val_str == "-":
-                return Decimal("0")
-            try:
-                return Decimal(val_str).quantize(Decimal("0.01"))
-            except (InvalidOperation, ValueError):
-                return Decimal("0")
-
         debit = _parse_amount(row[3] if len(row) > 3 else None)
         credit = _parse_amount(row[4] if len(row) > 4 else None)
 
@@ -7672,53 +7672,34 @@ def _parse_and_create_journals(fy, file, user):
         if debit == 0 and credit == 0:
             continue
 
-        key = (jnl_date, description)
-        if key not in journal_groups:
-            journal_groups[key] = []
-        journal_groups[key].append({
-            "account_code": account_code,
-            "account_name": account_code,
-            "debit": debit,
-            "credit": credit,
-        })
+        # Look up the account name from the entity's chart of accounts
+        ecoa = EntityChartOfAccount.objects.filter(
+            entity=fy.entity, account_code=account_code
+        ).first()
+        account_name = ecoa.account_name if ecoa else account_code
 
-    if not journal_groups:
-        return 0
+        # Look up the mapped line item for this account
+        mapping = ClientAccountMapping.objects.filter(
+            entity=fy.entity, client_account_code=account_code
+        ).first()
+        mapped_item = mapping.mapped_line_item if mapping else None
 
-    # Create journals
-    journals_created = 0
-    errors = []
-
-    for (jnl_date, description), lines in journal_groups.items():
-        total_dr = sum(l["debit"] for l in lines)
-        total_cr = sum(l["credit"] for l in lines)
-
-        # Create the journal even if unbalanced (user can fix in the UI)
-        journal = AdjustingJournal.objects.create(
+        # Create an adjustment TB line directly
+        TrialBalanceLine.objects.create(
             financial_year=fy,
-            journal_type=AdjustingJournal.JournalType.GENERAL,
-            status=AdjustingJournal.JournalStatus.DRAFT,
-            journal_date=jnl_date,
-            description=description,
-            narration=f"Uploaded via journal import",
-            total_debit=total_dr,
-            total_credit=total_cr,
-            created_by=user,
+            account_code=account_code,
+            account_name=account_name,
+            opening_balance=Decimal("0"),
+            debit=debit,
+            credit=credit,
+            closing_balance=debit - credit,
+            mapped_line_item=mapped_item,
+            is_adjustment=True,
+            source='journal_upload',
         )
+        lines_created += 1
 
-        for i, line in enumerate(lines, 1):
-            JournalLine.objects.create(
-                journal=journal,
-                line_number=i,
-                account_code=line["account_code"],
-                account_name=line["account_name"],
-                debit=line["debit"],
-                credit=line["credit"],
-            )
-
-        journals_created += 1
-
-    return journals_created
+    return lines_created
 
 
 @login_required
