@@ -2563,7 +2563,8 @@ def journal_delete(request, pk):
         from core.signals import trigger_risk_recalc
         trigger_risk_recalc(fy, "journal_deleted")
     messages.success(request, f"Journal {ref} has been deleted.")
-    return redirect("core:financial_year_detail", pk=fy.pk)
+    from django.urls import reverse
+    return redirect(reverse("core:financial_year_detail", args=[fy.pk]) + "?tab=journals")
 
 
 @login_required

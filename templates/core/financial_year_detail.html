@@ -457,73 +457,21 @@
         {% endif %}
 
         {% for adj in adjustments %}
-        <div class="card mb-2 {% if adj.status == 'posted' %}border-success{% else %}border-warning{% endif %}">
-            <div class="card-body py-2">
-                <div class="d-flex justify-content-between align-items-start">
-                    <div>
-                        <a href="{% url 'core:journal_detail' pk=adj.pk %}" class="text-decoration-none">
-                            <strong class="me-2">{{ adj.reference_number|default:"DRAFT" }}</strong>
-                        </a>
-                        <span class="badge bg-{% if adj.status == 'draft' %}warning text-dark{% elif adj.status == 'posted' %}success{% else %}secondary{% endif %} me-1">
-                            {{ adj.get_status_display }}
-                        </span>
-                        <span class="badge bg-light text-dark border me-1">{{ adj.get_journal_type_display }}</span>
-                        <span class="text-muted ms-2">{{ adj.journal_date|date:"d M Y" }}</span>
-                    </div>
-                    <div class="d-flex align-items-center gap-2">
-                        <small class="text-muted">
-                            {{ adj.created_by.get_full_name|default:"System" }} &middot; {{ adj.created_at|date:"d/m/Y H:i" }}
-                        </small>
-                        {% if adj.status == 'draft' and not fy.is_locked %}
-                        <form method="post" action="{% url 'core:journal_post' pk=adj.pk %}" class="d-inline">
-                            {% csrf_token %}
-                            <button type="submit" class="btn btn-sm btn-outline-success" title="Post journal">
-                                <i class="bi bi-check-circle"></i> Post
-                            </button>
-                        </form>
-                        {% endif %}
-                        {% if not fy.is_locked %}
-                        <form method="post" action="{% url 'core:journal_delete' pk=adj.pk %}" class="d-inline"
-                              onsubmit="return confirm('Are you sure you want to delete journal {{ adj.reference_number }}? This action will be logged for audit purposes.');">
-                            {% csrf_token %}
-                            <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete journal">
-                                <i class="bi bi-trash"></i> Delete
-                            </button>
-                        </form>
-                        {% endif %}
-                    </div>
-                </div>
-                <p class="mb-1 mt-1">{{ adj.description }}</p>
-
-                <table class="table table-sm mt-2 mb-0">
-                    <thead class="table-light">
-                        <tr>
-                            <th style="width: 120px;">Account</th>
-                            <th>Name</th>
-                            <th>Description</th>
-                            <th class="text-end" style="width: 120px;">Debit</th>
-                            <th class="text-end" style="width: 120px;">Credit</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for line in adj.lines.all %}
-                        <tr>
-                            <td><code>{{ line.account_code }}</code></td>
-                            <td>{{ line.account_name }}</td>
-                            <td class="text-muted">{{ line.description }}</td>
-                            <td class="text-end">{% if line.debit %}{{ line.debit|floatformat:2 }}{% endif %}</td>
-                            <td class="text-end">{% if line.credit %}{{ line.credit|floatformat:2 }}{% endif %}</td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                    <tfoot class="table-light">
-                        <tr>
-                            <td colspan="3" class="text-end fw-bold">Totals:</td>
-                            <td class="text-end fw-bold">${{ adj.total_debit|floatformat:2 }}</td>
-                            <td class="text-end fw-bold">${{ adj.total_credit|floatformat:2 }}</td>
-                        </tr>
-                    </tfoot>
-                </table>
+        <div class="d-flex justify-content-between align-items-center py-2 {% if not forloop.last %}border-bottom{% endif %}">
+            <div>
+                <a href="{% url 'core:journal_detail' pk=adj.pk %}" class="text-decoration-none fw-bold me-2">{{ adj.reference_number|default:"DRAFT" }}</a>
+                <span class="text-muted">{{ adj.description }}</span>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+                {% if not fy.is_locked %}
+                <form method="post" action="{% url 'core:journal_delete' pk=adj.pk %}" class="d-inline"
+                      onsubmit="return confirm('Are you sure you want to delete journal {{ adj.reference_number }}? This action will be logged for audit purposes.');">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete journal">
+                        <i class="bi bi-trash"></i> Delete
+                    </button>
+                </form>
+                {% endif %}
             </div>
         </div>
         {% empty %}
