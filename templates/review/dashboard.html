@@ -29,6 +29,14 @@
         box-shadow: 0 4px 12px rgba(0,0,0,0.12);
         transform: translateY(-1px);
     }
+    a.metric-card-link {
+        text-decoration: none;
+        color: inherit;
+        display: block;
+    }
+    a.metric-card-link:hover {
+        color: inherit;
+    }
     .metric-card .metric-value {
         font-size: 2rem;
         font-weight: 700;
@@ -164,31 +172,39 @@
 <!-- MY WORKLOAD SUMMARY CARDS -->
 <div class="row g-3 mt-2 mb-4">
     <div class="col-md-3">
-        <div class="metric-card border-start border-4 border-primary">
-            <div class="metric-value text-primary">{{ my_entity_count }}</div>
-            <div class="metric-label">My Entities</div>
-            <div style="font-size: 0.72rem; color: #adb5bd; margin-top: 2px;">
-                {{ my_primary_count }} primary &middot; {{ my_review_count }} reviewer
+        <a href="{% url 'core:entity_list' %}" class="metric-card-link">
+            <div class="metric-card border-start border-4 border-primary">
+                <div class="metric-value text-primary">{{ my_entity_count }}</div>
+                <div class="metric-label">My Entities</div>
+                <div style="font-size: 0.72rem; color: #adb5bd; margin-top: 2px;">
+                    {{ my_primary_count }} primary &middot; {{ my_review_count }} reviewer
+                </div>
             </div>
-        </div>
+        </a>
     </div>
     <div class="col-md-3">
-        <div class="metric-card border-start border-4 border-warning">
-            <div class="metric-value text-warning">{{ my_unfinalised_years|length }}</div>
-            <div class="metric-label">My Open Files</div>
-        </div>
+        <a href="#unfinalised-files" class="metric-card-link">
+            <div class="metric-card border-start border-4 border-warning">
+                <div class="metric-value text-warning">{{ my_unfinalised_years|length }}</div>
+                <div class="metric-label">My Open Files</div>
+            </div>
+        </a>
     </div>
     <div class="col-md-3">
-        <div class="metric-card border-start border-4 border-danger">
-            <div class="metric-value text-danger">{{ my_open_flags_count }}</div>
-            <div class="metric-label">My Open Risk Flags</div>
-        </div>
+        <a href="#risk-alerts" class="metric-card-link">
+            <div class="metric-card border-start border-4 border-danger">
+                <div class="metric-value text-danger">{{ my_open_flags_count }}</div>
+                <div class="metric-label">My Open Risk Flags</div>
+            </div>
+        </a>
     </div>
     <div class="col-md-3">
-        <div class="metric-card border-start border-4 border-info">
-            <div class="metric-value text-info">{{ pending_jobs|length }}</div>
-            <div class="metric-label">Pending Bank Reviews</div>
-        </div>
+        <a href="#pending-reviews" class="metric-card-link">
+            <div class="metric-card border-start border-4 border-info">
+                <div class="metric-value text-info">{{ pending_jobs|length }}</div>
+                <div class="metric-label">Pending Bank Reviews</div>
+            </div>
+        </a>
     </div>
 </div>
 
@@ -267,7 +283,7 @@
     <div class="col-lg-8">
 
         <!-- MY RISK ALERTS -->
-        <div class="d-flex justify-content-between align-items-center mb-3">
+        <div id="risk-alerts" class="d-flex justify-content-between align-items-center mb-3">
             <div class="section-header mb-0">
                 <i class="bi bi-shield-exclamation text-danger"></i> My Risk Alerts
             </div>
@@ -317,7 +333,7 @@
         {% endfor %}
 
         <!-- MY UNFINALISED FILES -->
-        <div class="section-header mt-4">
+        <div id="unfinalised-files" class="section-header mt-4">
             <i class="bi bi-folder2-open text-primary"></i> My Unfinalised Files
             {% if my_unfinalised_years %}
             <span class="badge bg-primary rounded-pill ms-1">{{ my_unfinalised_years|length }}</span>
@@ -390,7 +406,7 @@
 
         {% if pending_jobs %}
         <!-- PENDING BANK STATEMENT REVIEWS -->
-        <div class="section-header mt-4">
+        <div id="pending-reviews" class="section-header mt-4">
             <i class="bi bi-bank text-info"></i> Pending Bank Statement Reviews
             <span class="badge bg-info rounded-pill ms-1">{{ pending_jobs|length }}</span>
         </div>
