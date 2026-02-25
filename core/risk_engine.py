@@ -309,6 +309,15 @@ def _run_tier1_variance(financial_year, tb_data, ref_data, entity_context, run_i
     revenue_pct_threshold = ref_data.get("revenue_variance_pct", Decimal("15"))
     expense_pct_threshold = ref_data.get("expense_variance_pct", Decimal("20"))
 
+    # Accounts to exclude from variance analysis — these always have
+    # large variances by nature and should never be flagged.
+    _EXCLUDED_CODES = {"4199", "9999"}  # Retained profits, suspense
+    _EXCLUDED_KEYWORDS = {
+        "retained profit", "retained earning", "accumulated profit",
+        "accumulated earning", "profit & loss appropriation",
+        "current year earnings", "current earnings",
+    }
+
     for line in tb_data["lines"]:
         current_net = line.effective_dr - line.effective_cr
         prior_net = line.prior_debit - line.prior_credit
@@ -316,6 +325,19 @@ def _run_tier1_variance(financial_year, tb_data, ref_data, entity_context, run_i
         # Skip if both are zero
         if current_net == ZERO and prior_net == ZERO:
             continue
+
+        # Skip retained profits and similar equity accounts that always
+        # have large variances (they change by the net profit each year).
+        if line.account_code in _EXCLUDED_CODES:
+            continue
+        acct_lower = (line.account_name or "").lower()
+        if any(kw in acct_lower for kw in _EXCLUDED_KEYWORDS):
+            continue
+        # Also skip if mapped to an equity retained-profits standard code
+        if line.mapped_line_item:
+            std_code = getattr(line.mapped_line_item, 'code', '') or ''
+            if std_code in ('EQ-RE-001', 'EQ-RE-002'):
+                continue
 
         variance_dollar = current_net - prior_net
         abs_variance = abs(variance_dollar)
