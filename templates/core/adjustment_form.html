@@ -50,6 +50,11 @@
                     </div>
 
                     {{ formset.management_form }}
+                    {% if formset.non_form_errors %}
+                    <div class="alert alert-danger small py-2">
+                        {% for error in formset.non_form_errors %}<div>{{ error }}</div>{% endfor %}
+                    </div>
+                    {% endif %}
                     <div class="table-responsive">
                         <table class="table table-sm" id="journal-lines">
                             <thead class="table-light">
@@ -79,6 +84,9 @@
                                         {% for hidden in line_form.hidden_fields %}{{ hidden }}{% endfor %}
                                     </td>
                                 </tr>
+                                {% if line_form.errors %}
+                                <tr><td colspan="6" class="text-danger small py-0 border-0">{% for field, errors in line_form.errors.items %}{{ field }}: {{ errors.0 }} {% endfor %}</td></tr>
+                                {% endif %}
                                 {% endfor %}
                             </tbody>
                             <tfoot>

@@ -154,6 +154,28 @@ class JournalLineForm(forms.ModelForm):
             "inputmode": "decimal",
         })
 
+    def clean_debit(self):
+        """Strip commas from debit value before validation."""
+        val = self.data.get(self.add_prefix('debit'), '0')
+        if isinstance(val, str):
+            val = val.replace(',', '')
+        from decimal import Decimal, InvalidOperation
+        try:
+            return Decimal(val or '0')
+        except InvalidOperation:
+            raise forms.ValidationError('Enter a valid number.')
+
+    def clean_credit(self):
+        """Strip commas from credit value before validation."""
+        val = self.data.get(self.add_prefix('credit'), '0')
+        if isinstance(val, str):
+            val = val.replace(',', '')
+        from decimal import Decimal, InvalidOperation
+        try:
+            return Decimal(val or '0')
+        except InvalidOperation:
+            raise forms.ValidationError('Enter a valid number.')
+
 
 JournalLineFormSet = forms.inlineformset_factory(
     AdjustingJournal,
