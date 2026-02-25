@@ -89,6 +89,10 @@
                 <small class="text-muted d-block">Balance Status</small>
                 <span id="summaryBalanceStatus" class="badge bg-secondary">—</span>
             </div>
+            <div class="col">
+                <small class="text-muted d-block">Order</small>
+                <strong><i class="bi bi-sort-numeric-down"></i> <span id="summaryOrder">Chronological</span></strong>
+            </div>
         </div>
     </div>
 </div>
@@ -164,10 +168,45 @@
             return;
         }
 
+        // Sort statements in chronological order by period_start date
+        sortStatementsChronologically();
+
         document.getElementById('globalSummary').style.display = 'block';
         document.getElementById('confirmImportBtn').disabled = false;
         renderStatements();
         updateGlobalSummary();
+    }
+
+    // =====================================================================
+    // Chronological sorting helpers
+    // =====================================================================
+    function parseStmtDate(dateStr) {
+        if (!dateStr) return null;
+        dateStr = dateStr.trim();
+        // ISO: YYYY-MM-DD
+        let m = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (m) return new Date(parseInt(m[1]), parseInt(m[2]) - 1, parseInt(m[3]));
+        // AU: DD/MM/YYYY
+        m = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+        if (m) return new Date(parseInt(m[3]), parseInt(m[2]) - 1, parseInt(m[1]));
+        // DD-MM-YYYY
+        m = dateStr.match(/^(\d{1,2})-(\d{1,2})-(\d{4})/);
+        if (m) return new Date(parseInt(m[3]), parseInt(m[2]) - 1, parseInt(m[1]));
+        // Fallback: JS Date.parse
+        const parsed = Date.parse(dateStr);
+        if (!isNaN(parsed)) return new Date(parsed);
+        return null;
+    }
+
+    function sortStatementsChronologically() {
+        statements.sort(function(a, b) {
+            const dateA = parseStmtDate(a.period_start) || (a.transactions && a.transactions.length ? parseStmtDate(a.transactions[0].date) : null);
+            const dateB = parseStmtDate(b.period_start) || (b.transactions && b.transactions.length ? parseStmtDate(b.transactions[0].date) : null);
+            if (!dateA && !dateB) return 0;
+            if (!dateA) return 1;
+            if (!dateB) return -1;
+            return dateA - dateB;
+        });
     }
 
     // =====================================================================
@@ -211,18 +250,24 @@
         const accNumLabel = stmt.account_number ? `Acc ${stmt.account_number}` : '';
         const accountInfo = [bsbLabel, accNumLabel].filter(Boolean).join(' / ');
 
+        const orderNum = stmtIdx + 1;
+        const totalStmts = statements.length;
+
         div.innerHTML = `
             <div class="card-header d-flex justify-content-between align-items-center">
-                <div>
-                    <h6 class="mb-0">
-                        <i class="bi bi-file-earmark-pdf text-danger me-1"></i>
-                        ${escHtml(stmt.filename || 'Unknown file')}
-                        <span class="badge bg-info account-badge ms-2">${escHtml(bankLabel)}</span>
-                    </h6>
-                    <small class="text-muted">
-                        ${accountLabel ? escHtml(accountLabel) + ' — ' : ''}${accountInfo ? escHtml(accountInfo) : ''}
-                        ${stmt.period_start || stmt.period_end ? ' — Period: ' + escHtml(stmt.period_start || '?') + ' to ' + escHtml(stmt.period_end || '?') : ''}
-                    </small>
+                <div class="d-flex align-items-center">
+                    <span class="badge bg-dark rounded-circle me-2" style="width:28px;height:28px;display:flex;align-items:center;justify-content:center;font-size:0.85rem;" title="Chronological order: ${orderNum} of ${totalStmts}">${orderNum}</span>
+                    <div>
+                        <h6 class="mb-0">
+                            <i class="bi bi-file-earmark-pdf text-danger me-1"></i>
+                            ${escHtml(stmt.filename || 'Unknown file')}
+                            <span class="badge bg-info account-badge ms-2">${escHtml(bankLabel)}</span>
+                        </h6>
+                        <small class="text-muted">
+                            ${accountLabel ? escHtml(accountLabel) + ' — ' : ''}${accountInfo ? escHtml(accountInfo) : ''}
+                            ${stmt.period_start || stmt.period_end ? ' — Period: ' + escHtml(stmt.period_start || '?') + ' to ' + escHtml(stmt.period_end || '?') : ''}
+                        </small>
+                    </div>
                 </div>
                 <div class="d-flex gap-2 align-items-center">
                     <span class="badge bg-primary">${txns.length} transactions</span>

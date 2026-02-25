@@ -1599,6 +1599,22 @@ def upload_preview(request):
     parsed_data = request.session.get('mcs_parsed_statements', [])
     # Don't clear yet — allow page refresh. Cleared on confirm_import.
 
+    # Sort statements in chronological order by period_start date
+    from datetime import datetime as _dt
+    def _stmt_sort_key(stmt):
+        """Return a date for sorting. Uses period_start, falling back to first transaction date."""
+        for date_str in [stmt.get('period_start', ''), (stmt.get('transactions') or [{}])[0].get('date', '') if stmt.get('transactions') else '']:
+            if not date_str:
+                continue
+            for fmt in ('%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y', '%d %b %Y', '%d %B %Y'):
+                try:
+                    return _dt.strptime(date_str.strip(), fmt).date()
+                except (ValueError, AttributeError):
+                    continue
+        return _dt.max.date()  # Unknown dates go last
+
+    parsed_data.sort(key=_stmt_sort_key)
+
     return render(request, 'review/upload_preview.html', {
         'fy': fy,
         'entity': entity,

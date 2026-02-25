@@ -1701,6 +1701,32 @@
         }
     });
 
+    // ===== Date parsing helpers for chronological sorting =====
+    function parseStatementDate(dateStr) {
+        if (!dateStr) return null;
+        dateStr = dateStr.trim();
+        // Try ISO format: YYYY-MM-DD
+        let m = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (m) return new Date(parseInt(m[1]), parseInt(m[2]) - 1, parseInt(m[3]));
+        // Try AU format: DD/MM/YYYY
+        m = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+        if (m) return new Date(parseInt(m[3]), parseInt(m[2]) - 1, parseInt(m[1]));
+        // Try DD-MM-YYYY
+        m = dateStr.match(/^(\d{1,2})-(\d{1,2})-(\d{4})/);
+        if (m) return new Date(parseInt(m[3]), parseInt(m[2]) - 1, parseInt(m[1]));
+        // Try DD Mon YYYY (e.g. "01 Jul 2024")
+        const parsed = Date.parse(dateStr);
+        if (!isNaN(parsed)) return new Date(parsed);
+        return null;
+    }
+
+    function parseFirstTxnDate(stmt) {
+        // Fallback: use the date of the first transaction
+        const txns = stmt.transactions || [];
+        if (txns.length === 0) return null;
+        return parseStatementDate(txns[0].date);
+    }
+
     // ===== NEW: Parse-only flow with per-file progress =====
     form.addEventListener('submit', async function(e) {
         e.preventDefault();
@@ -1808,9 +1834,26 @@
             return;
         }
 
-        // Store parsed data in sessionStorage and redirect to preview page
+        // Sort statements in chronological order by period_start (earliest first)
+        parsedStatements.sort(function(a, b) {
+            const dateA = parseStatementDate(a.period_start) || parseFirstTxnDate(a);
+            const dateB = parseStatementDate(b.period_start) || parseFirstTxnDate(b);
+            if (!dateA && !dateB) return 0;
+            if (!dateA) return 1;
+            if (!dateB) return -1;
+            return dateA - dateB;
+        });
+
+        // Show chronological order in progress section
         const totalTxns = parsedStatements.reduce((s, d) => s + (d.transactions || []).length, 0);
-        overallStatus.innerHTML = `<span class="text-success"><i class="bi bi-check-circle"></i> ${parsedStatements.length} statement(s) parsed — ${totalTxns} transactions. Redirecting to preview...</span>`;
+        let orderHtml = '<div class="mt-2"><small class="fw-semibold text-muted"><i class="bi bi-sort-numeric-down me-1"></i>Chronological Order:</small><ol class="mb-0 ps-3" style="font-size:0.82rem;">';
+        parsedStatements.forEach(function(stmt, idx) {
+            const period = (stmt.period_start || '?') + ' — ' + (stmt.period_end || '?');
+            orderHtml += '<li>' + stmt.filename + ' <span class="text-muted">(' + period + ')</span></li>';
+        });
+        orderHtml += '</ol></div>';
+
+        overallStatus.innerHTML = `<span class="text-success"><i class="bi bi-check-circle"></i> ${parsedStatements.length} statement(s) parsed — ${totalTxns} transactions. Sorted chronologically. Redirecting to preview...</span>` + orderHtml;
 
         try {
             sessionStorage.setItem('mcs_preview_statements', JSON.stringify(parsedStatements));
