@@ -485,7 +485,7 @@ class ChartOfAccount(models.Model):
     )
     account_code = models.CharField(
         max_length=20,
-        help_text='Account code, e.g. "0500", "1510", "2000.01"',
+        help_text='Account code, e.g. "500", "1510", "2000.01"',
     )
     account_name = models.CharField(
         max_length=255,
@@ -573,7 +573,7 @@ class EntityChartOfAccount(models.Model):
     )
     account_code = models.CharField(
         max_length=20,
-        help_text='Account code, e.g. "0500", "1510", "2000.01"',
+        help_text='Account code, e.g. "500", "1510", "2000.01"',
     )
     account_name = models.CharField(
         max_length=255,
