@@ -2820,8 +2820,6 @@ def trial_balance_pdf(request, pk):
     buffer = BytesIO()
 
     # Custom page template with header and footer on every page
-    logo_path = os.path.join(settings.BASE_DIR, 'static', 'img', 'mcs_logo.png')
-
     class TBDocTemplate(BaseDocTemplate):
         def __init__(self, *args, **kwargs):
             self.entity_name = kwargs.pop('entity_name', '')
@@ -2894,13 +2892,6 @@ def trial_balance_pdf(request, pk):
     s_cell_bold = ParagraphStyle('CellBold', fontName='Helvetica-Bold', fontSize=9)
     s_num = ParagraphStyle('Num', fontName='Helvetica', fontSize=9, alignment=TA_RIGHT)
     s_num_bold = ParagraphStyle('NumBold', fontName='Helvetica-Bold', fontSize=9, alignment=TA_RIGHT)
-
-    # Logo
-    if os.path.exists(logo_path):
-        logo = Image(logo_path, width=25*mm, height=25*mm)
-        logo.hAlign = 'CENTER'
-        elements.append(logo)
-        elements.append(Spacer(1, 2*mm))
 
     # Header
     elements.append(Paragraph(entity.entity_name.upper(), s_entity))
@@ -5684,13 +5675,6 @@ def _tb_download_word(fy, entity, sections, current_year, prior_year,
     section.bottom_margin = Cm(2.0)
     section.left_margin = Cm(1.5)
     section.right_margin = Cm(1.5)
-
-    # Logo
-    logo_path = os.path.join(settings.BASE_DIR, 'static', 'img', 'mcs_logo.png')
-    if os.path.exists(logo_path):
-        p = doc.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p.add_run().add_picture(logo_path, width=Cm(2.5))
 
     # Entity name
     p = doc.add_paragraph()
