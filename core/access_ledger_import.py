@@ -711,13 +711,19 @@ def _parse_depreciation(reader, year):
 
 # Account code ranges from Access Ledger Alias.txt structure
 # Maps (code_range_start, code_range_end) -> financial_statement section
+# =============================================================================
+# HARD SECTION RULES — Account code range ALWAYS determines the section.
+# These are the definitive boundaries used by HandiLedger / Access Ledger.
+# Keyword matching may only refine the mapping WITHIN a section, never
+# override the section itself.  This is a hard rule.
+# =============================================================================
 _AL_CODE_RANGES = [
     # Revenue / Income (0-999)
     (0, 999, "income_statement", "Revenue"),
-    # Cost of Sales (1000-1499)
-    (1000, 1499, "income_statement", "Cost of Sales"),
-    # Expenses (1500-1999)
-    (1500, 1999, "income_statement", "Expenses"),
+    # Cost of Sales (1000-1099)
+    (1000, 1099, "income_statement", "Cost of Sales"),
+    # Expenses (1100-1999)
+    (1100, 1999, "income_statement", "Expenses"),
     # Current Assets (2000-2499)
     (2000, 2499, "balance_sheet", "Current Assets"),
     # Non-Current Assets (2500-2999)
@@ -728,8 +734,8 @@ _AL_CODE_RANGES = [
     (3500, 3999, "balance_sheet", "Non-Current Liabilities"),
     # P&L Appropriation (4100-4198)
     (4100, 4198, "appropriation", "Appropriation"),
-    # Equity (4199-4499)
-    (4199, 4499, "balance_sheet", "Equity"),
+    # Equity (4199-4999)
+    (4199, 4999, "balance_sheet", "Equity"),
 ]
 
 # Keyword-based mapping rules: (keywords_in_name, standard_code)
@@ -765,6 +771,7 @@ _KEYWORD_MAP_RULES = [
     (["superannuation"], "IS-EXP-017"),
     (["rent expense", "rent on land", "rent paid", "lease payment"], "IS-EXP-018"),
     (["loss on disposal", "loss on sale"], "IS-EXP-019"),
+    (["computer expense", "software expense", "computer and software", "it expense", "it cost"], "IS-EXP-016"),
     # --- Current Assets ---
     (["cash at bank", "cash on hand", "petty cash", "bank account", "cheque account", "savings account", "term deposit", "cba", "anz", "nab", "westpac", "commonwealth"], "BS-CA-001"),
     (["trade debtor", "accounts receivable", "sundry debtor"], "BS-CA-002"),
@@ -781,7 +788,7 @@ _KEYWORD_MAP_RULES = [
     (["trade creditor", "accounts payable", "sundry creditor", "accrual"], "BS-CL-001"),
     (["bank overdraft", "bank loan", "credit card"], "BS-CL-002"),
     (["provision for tax", "income tax payable", "tax payable", "provision for income"], "BS-CL-003"),
-    (["employee entitlement", "provision for leave", "annual leave", "long service", "provision for holiday"], "BS-CL-004"),
+    (["employee entitlement", "provision for leave", "annual leave", "long service", "provision for holiday", "wages payable", "salary payable", "salaries payable", "wage payable"], "BS-CL-004"),
     (["gst payable", "gst liability", "gst control", "gst collected", "gst adjustment", "amounts withheld", "payg withholding", "other ato"], "BS-CL-006"),
     (["provision for super", "superannuation payable"], "BS-CL-005"),
     (["lease liab"], "BS-CL-007"),
@@ -825,74 +832,94 @@ _APPROPRIATION_MAP = [
 ]
 
 
+# Map from section_info -> the ONLY standard_code prefix allowed for that section
+_SECTION_PREFIX_MAP = {
+    ("income_statement", "Revenue"): "IS-REV",
+    ("income_statement", "Cost of Sales"): "IS-COS",
+    ("income_statement", "Expenses"): "IS-EXP",
+    ("balance_sheet", "Current Assets"): "BS-CA",
+    ("balance_sheet", "Non-Current Assets"): "BS-NCA",
+    ("balance_sheet", "Current Liabilities"): "BS-CL",
+    ("balance_sheet", "Non-Current Liabilities"): "BS-NCL",
+    ("balance_sheet", "Equity"): "BS-EQ",
+}
+
+
 def _auto_map_account(account_code_int, account_name, chart_entry=None):
     """
-    Determine the best AccountMapping standard_code for a given Access Ledger account.
-    
+    Determine the best AccountMapping standard_code for a given Access Ledger
+    account.
+
+    HARD RULE: The numeric account code range ALWAYS determines the section.
+    Keyword matching may only select a more specific standard_code WITHIN
+    that section — it can NEVER move an account to a different section.
+
+    Section boundaries (HandiLedger / Access Ledger convention):
+        0-999      Revenue
+        1000-1099  Cost of Sales
+        1100-1999  Expenses
+        2000-2499  Current Assets
+        2500-2999  Non-Current Assets
+        3000-3499  Current Liabilities
+        3500-3999  Non-Current Liabilities
+        4000+      Equity (with 4100-4198 as Appropriation sub-range)
+
     Args:
         account_code_int: The integer account code from Access Ledger
         account_name: The account name string
         chart_entry: Optional chart dict with 'type' and 'name' fields
-    
+
     Returns:
         standard_code string (e.g., 'IS-REV-001') or None if no match
     """
     name_lower = account_name.lower().strip()
-    
-    # Step 1: Determine the section from code range
+
+    # ------------------------------------------------------------------
+    # Step 1: Determine the section from code range (HARD RULE)
+    # ------------------------------------------------------------------
     section_info = None
     for range_start, range_end, fin_stmt, section in _AL_CODE_RANGES:
         if range_start <= account_code_int <= range_end:
             section_info = (fin_stmt, section)
             break
-    
+
     if not section_info:
         return None
-    
-    # Step 2: For appropriation accounts, use specific sub-mapping
+
+    # ------------------------------------------------------------------
+    # Step 2: Appropriation accounts — specific sub-mapping
+    # ------------------------------------------------------------------
     if section_info[0] == "appropriation":
         for app_start, app_end, std_code in _APPROPRIATION_MAP:
             if app_start <= account_code_int <= app_end:
                 return std_code
         return _FALLBACK_MAP.get(section_info)
-    
-    # Step 3: Try keyword matching (section-aware)
-    # First pass: only match keywords whose standard_code section matches
-    # the account's code range section
-    section_prefix_map = {
-        ("income_statement", "Revenue"): "IS-REV",
-        ("income_statement", "Cost of Sales"): "IS-COS",
-        ("income_statement", "Expenses"): "IS-EXP",
-        ("balance_sheet", "Current Assets"): "BS-CA",
-        ("balance_sheet", "Non-Current Assets"): "BS-NCA",
-        ("balance_sheet", "Current Liabilities"): "BS-CL",
-        ("balance_sheet", "Non-Current Liabilities"): "BS-NCL",
-        ("balance_sheet", "Equity"): "BS-EQ",
-    }
-    expected_prefix = section_prefix_map.get(section_info, "")
-    
-    # First pass: prefer keywords that match the expected section
+
+    # ------------------------------------------------------------------
+    # Step 3: Keyword matching — ONLY within the section determined above
+    # ------------------------------------------------------------------
+    expected_prefix = _SECTION_PREFIX_MAP.get(section_info, "")
+
     for keywords, std_code in _KEYWORD_MAP_RULES:
+        # HARD RULE: only consider keywords whose standard_code belongs
+        # to the SAME section as determined by the code range.
         if expected_prefix and not std_code.startswith(expected_prefix):
-            continue  # Skip keywords for a different section
+            continue
         for kw in keywords:
             if kw in name_lower:
                 return std_code
-    
-    # Second pass: try all keywords regardless of section (for edge cases)
-    for keywords, std_code in _KEYWORD_MAP_RULES:
-        for kw in keywords:
-            if kw in name_lower:
-                return std_code
-    
+
+    # ------------------------------------------------------------------
     # Step 4: Special handling for revenue accounts (code 0-999)
+    # ------------------------------------------------------------------
     if section_info == ("income_statement", "Revenue"):
-        # Sales / main revenue accounts (codes 100-199, 500-699)
         if account_code_int < 200 or (500 <= account_code_int < 700):
-            return "IS-REV-001"  # Revenue
+            return "IS-REV-001"  # Revenue / Sales
         return "IS-REV-002"  # Other income
-    
-    # Step 5: Fallback to section default
+
+    # ------------------------------------------------------------------
+    # Step 5: Fallback to section default (still within the same section)
+    # ------------------------------------------------------------------
     return _FALLBACK_MAP.get(section_info)
 
 
