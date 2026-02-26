@@ -1,0 +1,818 @@
+"""
+Eva Finalisation Gate — Structured Compliance Review Engine
+
+This module handles:
+1. Pre-flight checks before Eva review can be triggered
+2. The 8 compliance checks with entity-type filtering
+3. LLM-powered analysis for each check
+4. Finding creation and resolution workflow
+5. Status transitions (PREPARED → PENDING_EVA → EVA_CLEARED / FINDINGS_RAISED)
+"""
+import json
+import logging
+import time
+import threading
+from decimal import Decimal
+
+from django.conf import settings
+from django.contrib.auth.decorators import login_required
+from django.http import JsonResponse
+from django.utils import timezone
+from django.views.decorators.http import require_GET, require_POST
+
+logger = logging.getLogger(__name__)
+
+ZERO = Decimal("0")
+
+# ---------------------------------------------------------------------------
+# Compliance Check Definitions
+# ---------------------------------------------------------------------------
+# Each check has: id, name, description, entity_types (which types it applies to),
+# and the function that performs the analysis.
+
+COMPLIANCE_CHECKS = [
+    {
+        "id": "div7a",
+        "name": "Division 7A Loan Compliance",
+        "description": "Check for potential Division 7A exposure from loans to shareholders/associates",
+        "entity_types": ["company", "trust_discretionary", "trust_unit", "trust_hybrid"],
+        "severity_default": "CRITICAL",
+    },
+    {
+        "id": "gst_reconciliation",
+        "name": "GST Reconciliation",
+        "description": "Verify GST collected/paid reconciles with BAS lodgement figures",
+        "entity_types": ["company", "trust_discretionary", "trust_unit", "trust_hybrid",
+                         "sole_trader", "partnership", "smsf"],
+        "severity_default": "ADVISORY",
+    },
+    {
+        "id": "related_party",
+        "name": "Related Party Transactions",
+        "description": "Identify and review related party transactions for arm's length pricing",
+        "entity_types": ["company", "trust_discretionary", "trust_unit", "trust_hybrid", "partnership"],
+        "severity_default": "ADVISORY",
+    },
+    {
+        "id": "smsf_compliance",
+        "name": "SMSF Compliance (SIS Act)",
+        "description": "Check SMSF compliance with Superannuation Industry (Supervision) Act requirements",
+        "entity_types": ["smsf"],
+        "severity_default": "CRITICAL",
+    },
+    {
+        "id": "trust_distribution",
+        "name": "Trust Distribution Resolution",
+        "description": "Verify trust distribution resolutions are in place before year end",
+        "entity_types": ["trust_discretionary", "trust_unit", "trust_hybrid"],
+        "severity_default": "CRITICAL",
+    },
+    {
+        "id": "depreciation_review",
+        "name": "Depreciation Schedule Review",
+        "description": "Review depreciation calculations and asset register for accuracy",
+        "entity_types": ["company", "trust_discretionary", "trust_unit", "trust_hybrid",
+                         "sole_trader", "partnership", "smsf"],
+        "severity_default": "ADVISORY",
+    },
+    {
+        "id": "tb_integrity",
+        "name": "Trial Balance Integrity",
+        "description": "Verify TB is balanced, no orphan accounts, all accounts mapped",
+        "entity_types": ["company", "trust_discretionary", "trust_unit", "trust_hybrid",
+                         "sole_trader", "partnership", "smsf", "individual"],
+        "severity_default": "CRITICAL",
+    },
+    {
+        "id": "comparative_consistency",
+        "name": "Comparative Period Consistency",
+        "description": "Check that prior year comparatives match the finalised prior year figures",
+        "entity_types": ["company", "trust_discretionary", "trust_unit", "trust_hybrid",
+                         "sole_trader", "partnership", "smsf"],
+        "severity_default": "ADVISORY",
+    },
+]
+
+
+# ---------------------------------------------------------------------------
+# Pre-flight Checks
+# ---------------------------------------------------------------------------
+def run_preflight_checks(financial_year):
+    """
+    Run pre-flight checks before Eva review can be triggered.
+
+    Returns:
+        dict: {"passed": bool, "checks": [{"name": str, "passed": bool, "message": str}]}
+    """
+    fy = financial_year
+    checks = []
+
+    # Check 1: TB must have at least one balance
+    tb_count = fy.trial_balance_lines.count()
+    checks.append({
+        "name": "Trial balance has data",
+        "passed": tb_count > 0,
+        "message": f"{tb_count} trial balance lines found." if tb_count > 0
+                   else "No trial balance data. Import a trial balance first.",
+    })
+
+    # Check 2: TB must be balanced (DR == CR)
+    from django.db.models import Sum
+    totals = fy.trial_balance_lines.aggregate(
+        total_dr=Sum("effective_dr"),
+        total_cr=Sum("effective_cr"),
+    )
+    total_dr = totals["total_dr"] or ZERO
+    total_cr = totals["total_cr"] or ZERO
+    is_balanced = abs(total_dr - total_cr) < Decimal("0.02")
+    checks.append({
+        "name": "Trial balance is balanced",
+        "passed": is_balanced,
+        "message": f"DR: ${total_dr:,.2f} | CR: ${total_cr:,.2f}" if is_balanced
+                   else f"TB is out of balance by ${abs(total_dr - total_cr):,.2f}. "
+                        f"DR: ${total_dr:,.2f} | CR: ${total_cr:,.2f}",
+    })
+
+    # Check 3: No unmapped accounts
+    unmapped = fy.trial_balance_lines.filter(
+        mapped_line_item__isnull=True,
+        is_adjustment=False,
+    ).count()
+    checks.append({
+        "name": "All accounts mapped",
+        "passed": unmapped == 0,
+        "message": "All accounts are mapped." if unmapped == 0
+                   else f"{unmapped} account(s) are unmapped. Map them before review.",
+    })
+
+    all_passed = all(c["passed"] for c in checks)
+    return {"passed": all_passed, "checks": checks}
+
+
+# ---------------------------------------------------------------------------
+# Build Check Context for LLM
+# ---------------------------------------------------------------------------
+def _build_check_context(financial_year, check_id):
+    """Build the specific context needed for a compliance check."""
+    from core.eva_chat import build_context_payload
+
+    fy = financial_year
+    entity = fy.entity
+
+    # Base context (TB, journals, associates)
+    base_context = build_context_payload(fy)
+
+    # Add check-specific context
+    extra = []
+
+    if check_id == "div7a":
+        # Look for loan accounts in TB
+        loan_lines = fy.trial_balance_lines.filter(
+            account_name__icontains="loan"
+        ).values_list("account_code", "account_name", "effective_dr", "effective_cr")
+        if loan_lines:
+            extra.append("=== LOAN ACCOUNTS ===")
+            for code, name, dr, cr in loan_lines:
+                extra.append(f"{code} {name}: DR {dr} / CR {cr}")
+
+    elif check_id == "trust_distribution":
+        # Check for distribution-related journals
+        from core.models import AdjustingJournal
+        dist_journals = AdjustingJournal.objects.filter(
+            financial_year=fy,
+            description__icontains="distribution",
+        ).values_list("reference_number", "description", "status")
+        if dist_journals:
+            extra.append("=== DISTRIBUTION JOURNALS ===")
+            for ref, desc, status in dist_journals:
+                extra.append(f"{ref}: {desc} ({status})")
+
+    elif check_id == "depreciation_review":
+        # Include depreciation asset data
+        from core.models import DepreciationAsset
+        assets = DepreciationAsset.objects.filter(financial_year=fy)
+        if assets.exists():
+            extra.append("=== DEPRECIATION ASSETS ===")
+            for a in assets:
+                extra.append(
+                    f"{a.asset_name}: Opening ${a.opening_wdv}, "
+                    f"Dep ${a.depreciation_amount}, Closing ${a.closing_wdv}"
+                )
+
+    extra_text = "\n".join(extra) if extra else ""
+    return f"{base_context}\n\n{extra_text}"
+
+
+# ---------------------------------------------------------------------------
+# Eva Review System Prompts
+# ---------------------------------------------------------------------------
+EVA_REVIEW_SYSTEM_PROMPT = """You are Eva, the AI Compliance Reviewer for MC & S Accountants.
+You are performing a structured compliance review of a financial year before finalisation.
+
+Your task is to analyse the provided financial data and check for the specific compliance issue described.
+You must respond with a JSON object (no markdown, no code fences) with exactly this structure:
+
+{
+  "has_finding": true/false,
+  "title": "Brief finding title (e.g. 'Potential Division 7A Exposure')",
+  "severity": "CRITICAL" or "ADVISORY",
+  "explanation": "Plain English explanation of the issue found (2-3 sentences)",
+  "recommendation": "What the accountant should do to address this (1-2 sentences)",
+  "legislation_reference": "Relevant legislation section (e.g. 's.109D ITAA 1936')",
+  "confidence": "HIGH", "MEDIUM", or "LOW"
+}
+
+Rules:
+1. Only raise a finding if there is genuine evidence of an issue in the data
+2. Do NOT raise findings for missing data — only for data that suggests a problem
+3. Be specific — reference actual account codes and amounts from the trial balance
+4. Use Australian tax law and accounting standards
+5. For CRITICAL findings, there must be clear evidence of a breach or material risk
+6. For ADVISORY findings, flag items that warrant further review
+7. If no issue is found, set has_finding to false and leave other fields empty
+"""
+
+
+# ---------------------------------------------------------------------------
+# Run a Single Compliance Check
+# ---------------------------------------------------------------------------
+def _run_single_check(financial_year, check_def):
+    """
+    Run a single compliance check using the LLM.
+
+    Returns:
+        dict with finding data, or None if no finding
+    """
+    from core.ai_service import _call_llm
+
+    context = _build_check_context(financial_year, check_def["id"])
+
+    user_prompt = f"""COMPLIANCE CHECK: {check_def["name"]}
+Description: {check_def["description"]}
+Entity Type: {financial_year.entity.get_entity_type_display()}
+Default Severity: {check_def["severity_default"]}
+
+{context}
+
+Analyse the above data for this specific compliance check and respond with the JSON structure.
+"""
+
+    # Determine tier based on override
+    tier = "sonnet"
+    if financial_year.eva_model_override == "opus":
+        tier = "opus"
+
+    try:
+        response_text = _call_llm(
+            system_prompt=EVA_REVIEW_SYSTEM_PROMPT,
+            user_prompt=user_prompt,
+            tier=tier,
+            temperature=0.1,
+            max_tokens=1000,
+        )
+
+        # Parse JSON response
+        # Strip markdown code fences if present
+        cleaned = response_text.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+        cleaned = cleaned.strip()
+
+        result = json.loads(cleaned)
+        result["check_id"] = check_def["id"]
+        result["check_name"] = check_def["name"]
+        result["model_used"] = tier
+        return result
+
+    except json.JSONDecodeError as e:
+        logger.error(f"Eva check {check_def['id']} JSON parse error: {e}")
+        logger.error(f"Raw response: {response_text[:500]}")
+        return {
+            "check_id": check_def["id"],
+            "check_name": check_def["name"],
+            "has_finding": False,
+            "error": f"Failed to parse AI response: {e}",
+        }
+    except Exception as e:
+        logger.error(f"Eva check {check_def['id']} error: {e}")
+        return {
+            "check_id": check_def["id"],
+            "check_name": check_def["name"],
+            "has_finding": False,
+            "error": str(e),
+        }
+
+
+# ---------------------------------------------------------------------------
+# Run Full Eva Review (Background Thread)
+# ---------------------------------------------------------------------------
+# In-memory task status tracking (same pattern as AI classification)
+_eva_review_tasks = {}
+
+
+def _run_eva_review_background(fy_pk, user_pk):
+    """Background thread function to run the full Eva review."""
+    import django
+    django.setup()
+
+    from core.models import (
+        FinancialYear, EvaReview, EvaFinding, ActivityLog,
+    )
+    from django.contrib.auth import get_user_model
+
+    User = get_user_model()
+    task_key = str(fy_pk)
+    start_time = time.time()
+
+    try:
+        fy = FinancialYear.objects.select_related("entity").get(pk=fy_pk)
+        user = User.objects.get(pk=user_pk)
+        entity_type = fy.entity.entity_type
+
+        # Create the EvaReview record
+        review = EvaReview.objects.create(
+            financial_year=fy,
+            status="pending",
+            triggered_by=user,
+            opus_override=(fy.eva_model_override == "opus"),
+        )
+
+        # Update FY status to pending_eva
+        fy.status = fy.Status.PENDING_EVA
+        fy.save(update_fields=["status"])
+
+        # Filter checks by entity type
+        applicable_checks = [
+            c for c in COMPLIANCE_CHECKS
+            if entity_type in c["entity_types"]
+        ]
+
+        _eva_review_tasks[task_key] = {
+            "status": "running",
+            "review_id": str(review.pk),
+            "total_checks": len(applicable_checks),
+            "completed_checks": 0,
+            "current_check": "",
+            "findings_count": 0,
+        }
+
+        findings_created = 0
+
+        for i, check_def in enumerate(applicable_checks):
+            _eva_review_tasks[task_key]["current_check"] = check_def["name"]
+            _eva_review_tasks[task_key]["completed_checks"] = i
+
+            result = _run_single_check(fy, check_def)
+
+            if result and result.get("has_finding"):
+                # Retrieve Knowledge Brain citation if available
+                kb_citation = ""
+                try:
+                    from core.eva_knowledge import retrieve_relevant_chunks
+                    chunks = retrieve_relevant_chunks(
+                        f"{check_def['name']} {result.get('legislation_reference', '')}",
+                        top_k=1,
+                    )
+                    if chunks:
+                        kb_citation = f"{chunks[0]['document_title']} ({chunks[0]['category']})"
+                except Exception:
+                    pass
+
+                EvaFinding.objects.create(
+                    eva_review=review,
+                    check_name=check_def["id"],
+                    severity=result.get("severity", check_def["severity_default"]),
+                    title=result.get("title", check_def["name"]),
+                    plain_english_explanation=result.get("explanation", ""),
+                    recommendation=result.get("recommendation", ""),
+                    legislation_reference=result.get("legislation_reference", ""),
+                    knowledge_brain_citation=kb_citation,
+                    confidence=result.get("confidence", "MEDIUM"),
+                    status="open",
+                )
+                findings_created += 1
+                _eva_review_tasks[task_key]["findings_count"] = findings_created
+
+        # Update review status
+        duration = time.time() - start_time
+        if findings_created > 0:
+            review.status = "findings_raised"
+        else:
+            review.status = "cleared"
+            fy.status = fy.Status.EVA_CLEARED
+            fy.save(update_fields=["status"])
+
+        review.completed_at = timezone.now()
+        review.duration_seconds = duration
+        review.save(update_fields=["status", "completed_at", "duration_seconds"])
+
+        # Log activity
+        ActivityLog.objects.create(
+            user=user,
+            event_type="eva_review_complete",
+            title=f"Eva Review {'Cleared' if findings_created == 0 else f'Raised {findings_created} Finding(s)'}",
+            description=(
+                f"Eva compliance review for {fy.entity.entity_name} ({fy.year_label}) "
+                f"completed in {duration:.1f}s. "
+                f"{'No findings — cleared for finalisation.' if findings_created == 0 else f'{findings_created} finding(s) require attention.'}"
+            ),
+            entity=fy.entity,
+            financial_year=fy,
+            url=f"/entities/years/{fy.pk}/",
+        )
+
+        _eva_review_tasks[task_key] = {
+            "status": "complete",
+            "review_id": str(review.pk),
+            "total_checks": len(applicable_checks),
+            "completed_checks": len(applicable_checks),
+            "findings_count": findings_created,
+            "review_status": review.status,
+            "duration": round(duration, 1),
+        }
+
+    except Exception as e:
+        logger.error(f"Eva review background error: {e}")
+        duration = time.time() - start_time
+
+        # Try to update the review record
+        try:
+            review.status = "error"
+            review.error_message = str(e)[:1000]
+            review.completed_at = timezone.now()
+            review.duration_seconds = duration
+            review.save(update_fields=["status", "error_message", "completed_at", "duration_seconds"])
+
+            fy.status = fy.Status.EVA_ERROR
+            fy.save(update_fields=["status"])
+        except Exception:
+            pass
+
+        _eva_review_tasks[task_key] = {
+            "status": "error",
+            "error": str(e),
+        }
+
+
+# ---------------------------------------------------------------------------
+# API Endpoints
+# ---------------------------------------------------------------------------
+@login_required
+@require_POST
+def ask_eva_review(request, pk):
+    """
+    Trigger Eva's compliance review for a financial year.
+
+    POST /api/financial-years/<pk>/ask-eva-review/
+    """
+    from core.models import FinancialYear, EvaReview, ActivityLog
+
+    try:
+        fy = FinancialYear.objects.select_related("entity").get(pk=pk)
+    except FinancialYear.DoesNotExist:
+        return JsonResponse({"error": "Financial year not found"}, status=404)
+
+    # Check if review is already running
+    task_key = str(fy.pk)
+    if task_key in _eva_review_tasks and _eva_review_tasks[task_key].get("status") == "running":
+        return JsonResponse({
+            "status": "running",
+            "message": "Eva review is already in progress.",
+            **_eva_review_tasks[task_key],
+        })
+
+    # Pre-flight checks
+    preflight = run_preflight_checks(fy)
+    if not preflight["passed"]:
+        return JsonResponse({
+            "status": "blocked",
+            "message": "Pre-flight checks failed. Fix the issues before requesting Eva review.",
+            "checks": preflight["checks"],
+        }, status=400)
+
+    # Check model override from request
+    body = {}
+    try:
+        body = json.loads(request.body) if request.body else {}
+    except json.JSONDecodeError:
+        pass
+
+    if body.get("opus_override"):
+        fy.eva_model_override = "opus"
+        fy.save(update_fields=["eva_model_override"])
+
+    # Log the trigger
+    ActivityLog.objects.create(
+        user=request.user,
+        event_type="eva_review_triggered",
+        title=f"Eva Review Triggered — {fy.entity.entity_name}",
+        description=(
+            f"Eva compliance review triggered for {fy.entity.entity_name} ({fy.year_label}). "
+            f"Model: {'Opus (override)' if fy.eva_model_override == 'opus' else 'Sonnet'}."
+        ),
+        entity=fy.entity,
+        financial_year=fy,
+        url=f"/entities/years/{fy.pk}/",
+    )
+
+    # Launch background thread
+    thread = threading.Thread(
+        target=_run_eva_review_background,
+        args=(fy.pk, request.user.pk),
+        daemon=True,
+    )
+    thread.start()
+
+    return JsonResponse({
+        "status": "running",
+        "message": "Eva review started. This may take 30-60 seconds.",
+    })
+
+
+@login_required
+@require_GET
+def eva_review_status(request, pk):
+    """
+    Get the status of the current Eva review.
+
+    GET /api/financial-years/<pk>/eva-review-status/
+    """
+    task_key = str(pk)
+    if task_key in _eva_review_tasks:
+        return JsonResponse(_eva_review_tasks[task_key])
+
+    # Check database for latest review
+    from core.models import EvaReview, FinancialYear
+
+    try:
+        fy = FinancialYear.objects.get(pk=pk)
+    except FinancialYear.DoesNotExist:
+        return JsonResponse({"error": "Financial year not found"}, status=404)
+
+    review = EvaReview.objects.filter(
+        financial_year=fy
+    ).order_by("-triggered_at").first()
+
+    if not review:
+        return JsonResponse({"status": "not_started"})
+
+    findings = list(review.findings.values(
+        "id", "check_name", "severity", "title",
+        "plain_english_explanation", "recommendation",
+        "legislation_reference", "knowledge_brain_citation",
+        "confidence", "status", "resolution_note",
+    ))
+
+    return JsonResponse({
+        "status": review.status,
+        "review_id": str(review.pk),
+        "triggered_at": review.triggered_at.isoformat(),
+        "completed_at": review.completed_at.isoformat() if review.completed_at else None,
+        "duration": review.duration_seconds,
+        "findings_count": len(findings),
+        "findings": [
+            {
+                **f,
+                "id": str(f["id"]),
+            }
+            for f in findings
+        ],
+        "error_message": review.error_message if review.status == "error" else None,
+    })
+
+
+@login_required
+@require_GET
+def eva_review_detail(request, pk):
+    """
+    Get the full Eva review with findings.
+
+    GET /api/financial-years/<pk>/eva-review/
+    """
+    from core.models import EvaReview, FinancialYear
+
+    try:
+        fy = FinancialYear.objects.get(pk=pk)
+    except FinancialYear.DoesNotExist:
+        return JsonResponse({"error": "Financial year not found"}, status=404)
+
+    review = EvaReview.objects.filter(
+        financial_year=fy
+    ).order_by("-triggered_at").first()
+
+    if not review:
+        return JsonResponse({"status": "not_started", "findings": []})
+
+    findings = []
+    for f in review.findings.select_related("resolved_by").all():
+        findings.append({
+            "id": str(f.pk),
+            "check_name": f.check_name,
+            "severity": f.severity,
+            "title": f.title,
+            "explanation": f.plain_english_explanation,
+            "recommendation": f.recommendation,
+            "legislation_reference": f.legislation_reference,
+            "knowledge_brain_citation": f.knowledge_brain_citation,
+            "confidence": f.confidence,
+            "status": f.status,
+            "resolution_note": f.resolution_note,
+            "resolved_by": f.resolved_by.get_full_name() if f.resolved_by else None,
+            "resolved_at": f.resolved_at.isoformat() if f.resolved_at else None,
+        })
+
+    return JsonResponse({
+        "review_id": str(review.pk),
+        "status": review.status,
+        "triggered_at": review.triggered_at.isoformat(),
+        "triggered_by": review.triggered_by.get_full_name() if review.triggered_by else None,
+        "completed_at": review.completed_at.isoformat() if review.completed_at else None,
+        "duration": review.duration_seconds,
+        "opus_override": review.opus_override,
+        "findings": findings,
+        "fy_status": fy.status,
+    })
+
+
+@login_required
+@require_POST
+def eva_finding_resolve(request, pk):
+    """
+    Mark an Eva finding as addressed.
+
+    POST /api/eva-findings/<pk>/resolve/
+    Body: {"resolution_note": "..."}
+    """
+    from core.models import EvaFinding, EvaReview, FinancialYear, ActivityLog
+
+    try:
+        finding = EvaFinding.objects.select_related(
+            "eva_review__financial_year__entity"
+        ).get(pk=pk)
+    except EvaFinding.DoesNotExist:
+        return JsonResponse({"error": "Finding not found"}, status=404)
+
+    try:
+        body = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+    resolution_note = body.get("resolution_note", "").strip()
+    if not resolution_note:
+        return JsonResponse(
+            {"error": "Resolution note is required"},
+            status=400,
+        )
+
+    finding.status = "addressed"
+    finding.resolution_note = resolution_note
+    finding.resolved_by = request.user
+    finding.resolved_at = timezone.now()
+    finding.save(update_fields=[
+        "status", "resolution_note", "resolved_by", "resolved_at"
+    ])
+
+    # Check if all findings are now addressed
+    review = finding.eva_review
+    open_findings = review.findings.filter(status="open").count()
+
+    fy = review.financial_year
+
+    if open_findings == 0:
+        # All findings addressed — clear the review
+        review.status = "cleared"
+        review.save(update_fields=["status"])
+
+        fy.status = fy.Status.EVA_CLEARED
+        fy.save(update_fields=["status"])
+
+        # Log
+        ActivityLog.objects.create(
+            user=request.user,
+            event_type="eva_cleared",
+            title=f"Eva Cleared — {fy.entity.entity_name}",
+            description=(
+                f"All Eva findings addressed for {fy.entity.entity_name} ({fy.year_label}). "
+                f"Financial year is now cleared for finalisation."
+            ),
+            entity=fy.entity,
+            financial_year=fy,
+            url=f"/entities/years/{fy.pk}/",
+        )
+
+    # Log the resolution
+    ActivityLog.objects.create(
+        user=request.user,
+        event_type="eva_finding_resolved",
+        title=f"Eva Finding Addressed — {finding.title or finding.check_name}",
+        description=(
+            f"Finding '{finding.title or finding.check_name}' addressed for "
+            f"{fy.entity.entity_name} ({fy.year_label}). "
+            f"Note: {resolution_note[:200]}"
+        ),
+        entity=fy.entity,
+        financial_year=fy,
+        url=f"/entities/years/{fy.pk}/",
+    )
+
+    return JsonResponse({
+        "status": "success",
+        "finding_status": "addressed",
+        "open_findings_remaining": open_findings,
+        "review_status": review.status,
+        "fy_status": fy.status,
+    })
+
+
+@login_required
+@require_GET
+def eva_preflight(request, pk):
+    """
+    Run pre-flight checks and return results.
+
+    GET /api/financial-years/<pk>/eva-preflight/
+    """
+    from core.models import FinancialYear
+
+    try:
+        fy = FinancialYear.objects.get(pk=pk)
+    except FinancialYear.DoesNotExist:
+        return JsonResponse({"error": "Financial year not found"}, status=404)
+
+    result = run_preflight_checks(fy)
+    return JsonResponse(result)
+
+
+# ---------------------------------------------------------------------------
+# Knowledge Brain API Endpoints
+# ---------------------------------------------------------------------------
+@login_required
+@require_POST
+def knowledge_sync(request):
+    """
+    Trigger a manual SharePoint sync.
+
+    POST /api/knowledge/sync/
+    """
+    from core.eva_knowledge import sync_sharepoint_library
+    from core.models import ActivityLog
+
+    try:
+        counts = sync_sharepoint_library()
+
+        ActivityLog.objects.create(
+            user=request.user,
+            event_type="kb_sync",
+            title="Knowledge Brain Sync",
+            description=(
+                f"SharePoint sync completed: {counts['synced']} synced, "
+                f"{counts['skipped']} skipped, {counts['errors']} errors."
+            ),
+        )
+
+        return JsonResponse({
+            "status": "success",
+            **counts,
+        })
+    except Exception as e:
+        logger.error(f"Knowledge sync error: {e}")
+        return JsonResponse({
+            "status": "error",
+            "error": str(e),
+        }, status=500)
+
+
+@login_required
+@require_GET
+def knowledge_documents(request):
+    """
+    List Knowledge Brain documents.
+
+    GET /api/knowledge/documents/?category=firm_procedures
+    """
+    from core.models import KnowledgeDocument
+
+    qs = KnowledgeDocument.objects.filter(is_archived=False)
+
+    category = request.GET.get("category")
+    if category:
+        qs = qs.filter(category=category)
+
+    docs = qs.values(
+        "id", "title", "category", "sync_status", "synced_at",
+        "chunk_count", "file_type", "file_size_bytes",
+    )
+
+    return JsonResponse({
+        "documents": [
+            {
+                **d,
+                "id": str(d["id"]),
+                "synced_at": d["synced_at"].isoformat() if d["synced_at"] else None,
+            }
+            for d in docs
+        ],
+        "total": qs.count(),
+    })

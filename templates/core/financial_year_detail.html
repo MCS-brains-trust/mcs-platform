@@ -106,6 +106,13 @@
 
                     <div class="vr d-none d-md-block"></div>
 
+                    <!-- Ask Eva to Review Button -->
+                    {% if fy.status != 'finalised' %}
+                    <button type="button" class="btn btn-sm btn-outline-info" id="askEvaBtn" onclick="evaAskReview()">
+                        <i class="bi bi-robot"></i> Ask Eva to Review
+                    </button>
+                    {% endif %}
+
                     <!-- Finalise Button -->
                     {% if fy.status != 'finalised' %}
                     <form method="post" action="{% url 'core:financial_year_status' pk=fy.pk %}" id="finaliseForm">
@@ -439,7 +446,7 @@
                         <td>
                             {% if line.risk_flags_list %}<i class="bi bi-exclamation-octagon-fill text-danger me-1" title="{% for rf in line.risk_flags_list %}{{ rf.title }}{% if not forloop.last %}; {% endif %}{% endfor %}"></i>{% endif %}
                             {{ line.account_name }}
-
+                            {% if line.amber_indicators %}<span class="amber-indicator" data-bs-toggle="tooltip" data-bs-html="true" title="{% for ai in line.amber_indicators %}{{ ai.message }}{% if not forloop.last %}&lt;br&gt;&lt;br&gt;{% endif %}{% endfor %}">&#9888;</span>{% endif %}
                             {% if not line.mapped_line_item %}<small class="text-danger ms-1"><i class="bi bi-exclamation-triangle"></i></small>{% endif %}
                             {% if line.risk_flags_list %}
                             <div class="mt-1">
@@ -815,6 +822,9 @@
             </div>
         </div>
     </div>
+
+    <!-- Eva Review Panel (inside Audit Risk tab) -->
+    {% include 'core/includes/eva_panel.html' %}
 
     <!-- ===== DEPRECIATION TAB ===== -->
     <div class="tab-pane fade p-3" id="tab-depreciation">

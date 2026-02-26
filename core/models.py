@@ -347,6 +347,10 @@ class FinancialYear(models.Model):
         DRAFT = "draft", "Draft"
         IN_REVIEW = "in_review", "In Review"
         REVIEWED = "reviewed", "Reviewed"
+        PREPARED = "prepared", "Prepared"
+        PENDING_EVA = "pending_eva", "Pending Eva Review"
+        EVA_CLEARED = "eva_cleared", "Eva Cleared"
+        EVA_ERROR = "eva_error", "Eva Error"
         FINALISED = "finalised", "Finalised"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -397,6 +401,10 @@ class FinancialYear(models.Model):
         blank=True, default="",
         help_text="Reason provided for reopening this financial year",
     )
+    eva_model_override = models.CharField(
+        max_length=10, blank=True, default="",
+        help_text="Set to 'opus' if manually escalated for deep review",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -430,6 +438,16 @@ class FinancialYear(models.Model):
     @property
     def is_locked(self):
         return self.status == self.Status.FINALISED
+
+    @property
+    def can_ask_eva(self):
+        """Eva can be triggered from Draft status when TB is ready."""
+        return self.status in (self.Status.DRAFT, self.Status.IN_REVIEW, self.Status.REVIEWED, self.Status.PREPARED)
+
+    @property
+    def can_finalise(self):
+        """Finalisation requires Eva clearance."""
+        return self.status == self.Status.EVA_CLEARED
 
 
 # ---------------------------------------------------------------------------
@@ -3005,6 +3023,298 @@ class BASPeriod(models.Model):
             import calendar
             cal_month = (self.period_number + 6) % 12 or 12
             return calendar.month_abbr[cal_month]
+
+
+# ---------------------------------------------------------------------------
+# Eva AI Compliance Reviewer Models
+# ---------------------------------------------------------------------------
+class EvaReview(models.Model):
+    """A single Eva compliance review run against a financial year."""
+
+    class ReviewStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        CLEARED = "cleared", "Cleared"
+        FINDINGS_RAISED = "findings_raised", "Findings Raised"
+        ERROR = "error", "Error"
+
+    class ModelTier(models.TextChoices):
+        HAIKU = "haiku", "Haiku (Pre-flight)"
+        SONNET = "sonnet", "Sonnet (Standard)"
+        OPUS = "opus", "Opus (Deep Review)"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    financial_year = models.ForeignKey(
+        FinancialYear, on_delete=models.CASCADE, related_name="eva_reviews"
+    )
+    triggered_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    model_used = models.CharField(
+        max_length=10, choices=ModelTier.choices, default=ModelTier.SONNET
+    )
+    status = models.CharField(
+        max_length=20, choices=ReviewStatus.choices, default=ReviewStatus.PENDING
+    )
+    raw_response = models.JSONField(default=dict, blank=True)
+    applicable_checks = models.JSONField(
+        default=list, blank=True,
+        help_text="List of check names applicable to this entity type",
+    )
+    triggered_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="triggered_eva_reviews",
+    )
+    error_message = models.TextField(blank=True, default="")
+    error_acknowledged_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="acknowledged_eva_errors",
+    )
+    error_acknowledged_at = models.DateTimeField(null=True, blank=True)
+    is_rerun = models.BooleanField(default=False)
+    duration_seconds = models.FloatField(null=True, blank=True)
+    opus_override = models.BooleanField(
+        default=False,
+        help_text="True if manually escalated to Opus model",
+    )
+
+    class Meta:
+        ordering = ["-triggered_at"]
+        indexes = [
+            models.Index(fields=["financial_year", "status"]),
+        ]
+
+    def __str__(self):
+        return f"Eva Review for {self.financial_year} — {self.get_status_display()}"
+
+
+class EvaFinding(models.Model):
+    """An individual compliance finding raised by Eva during a review."""
+
+    class Severity(models.TextChoices):
+        CRITICAL = "critical", "Critical"
+        ADVISORY = "advisory", "Advisory"
+
+    class Confidence(models.TextChoices):
+        HIGH = "high", "High"
+        MEDIUM = "medium", "Medium"
+        LOW = "low", "Low"
+
+    class FindingStatus(models.TextChoices):
+        OPEN = "open", "Open"
+        ADDRESSED = "addressed", "Addressed"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    eva_review = models.ForeignKey(
+        EvaReview, on_delete=models.CASCADE, related_name="findings"
+    )
+    check_name = models.CharField(
+        max_length=50,
+        help_text="e.g. division_7a, sgc, ato_benchmarks, trust_distributions",
+    )
+    severity = models.CharField(
+        max_length=10, choices=Severity.choices, default=Severity.ADVISORY
+    )
+    title = models.CharField(
+        max_length=255, blank=True, default="",
+        help_text="Brief finding title e.g. 'Potential Division 7A Exposure'",
+    )
+    plain_english_explanation = models.TextField()
+    recommendation = models.TextField()
+    legislation_reference = models.CharField(max_length=255, blank=True, default="")
+    knowledge_brain_citation = models.CharField(
+        max_length=500, blank=True, default="",
+        help_text="Knowledge Brain document cited, if applicable",
+    )
+    confidence = models.CharField(
+        max_length=10, choices=Confidence.choices, default=Confidence.MEDIUM
+    )
+    status = models.CharField(
+        max_length=15, choices=FindingStatus.choices, default=FindingStatus.OPEN
+    )
+    resolution_note = models.TextField(blank=True, default="")
+    resolved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="resolved_eva_findings",
+    )
+    resolved_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["severity", "check_name"]
+        indexes = [
+            models.Index(fields=["eva_review", "status"]),
+        ]
+
+    def __str__(self):
+        return f"{self.get_severity_display()}: {self.check_name} — {self.get_status_display()}"
+
+
+# ---------------------------------------------------------------------------
+# Knowledge Brain Models
+# ---------------------------------------------------------------------------
+class KnowledgeDocument(models.Model):
+    """A document in Eva's Knowledge Brain, synced from SharePoint."""
+
+    class Category(models.TextChoices):
+        FIRM_PROCEDURES = "firm_procedures", "Firm Procedures"
+        FIRM_TECHNICAL = "firm_technical", "Firm Technical Positions"
+        FIRM_TRAINING = "firm_training", "Firm Training"
+        FIRM_PRECEDENTS = "firm_precedents", "Firm Precedents"
+        ATO_RULINGS = "ato_rulings", "ATO Rulings"
+        ATO_STATEMENTS = "ato_statements", "ATO Practice Statements"
+        ATO_ALERTS = "ato_alerts", "ATO Alerts"
+        ATO_BENCHMARKS = "ato_benchmarks", "ATO Benchmarks"
+        LEGISLATION = "legislation", "Legislation"
+        AASB_STANDARDS = "aasb_standards", "AASB Standards"
+        CPA_MATERIALS = "cpa_materials", "CPA Materials"
+        CA_ANZ_MATERIALS = "ca_anz_materials", "CA ANZ Materials"
+        TREASURY = "treasury", "Treasury"
+
+    class SyncStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        SYNCED = "synced", "Synced"
+        ERROR = "error", "Error"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    title = models.CharField(max_length=500)
+    category = models.CharField(
+        max_length=30, choices=Category.choices, default=Category.FIRM_PROCEDURES
+    )
+    sharepoint_path = models.CharField(
+        max_length=1000, blank=True, default="",
+        help_text="Full SharePoint path to the source document",
+    )
+    sharepoint_item_id = models.CharField(
+        max_length=255, blank=True, default="",
+        help_text="SharePoint item ID for API operations",
+    )
+    sharepoint_modified_at = models.DateTimeField(null=True, blank=True)
+    sync_status = models.CharField(
+        max_length=10, choices=SyncStatus.choices, default=SyncStatus.PENDING
+    )
+    synced_at = models.DateTimeField(null=True, blank=True)
+    chunk_count = models.IntegerField(default=0)
+    file_type = models.CharField(
+        max_length=10, blank=True, default="",
+        help_text="File extension: docx, pdf, txt, xlsx, pptx",
+    )
+    file_size_bytes = models.IntegerField(default=0)
+    is_archived = models.BooleanField(
+        default=False,
+        help_text="Archived documents are excluded from Eva's active retrieval",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-updated_at"]
+        indexes = [
+            models.Index(fields=["category", "sync_status"]),
+            models.Index(fields=["sharepoint_item_id"]),
+        ]
+
+    def __str__(self):
+        return f"{self.title} ({self.get_category_display()})"
+
+
+class KnowledgeChunk(models.Model):
+    """A text chunk from a Knowledge Brain document with vector embedding."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    document = models.ForeignKey(
+        KnowledgeDocument, on_delete=models.CASCADE, related_name="chunks"
+    )
+    chunk_index = models.IntegerField(
+        help_text="Position of this chunk within the document"
+    )
+    text = models.TextField(help_text="Raw text of this chunk (~512 tokens)")
+    # Embedding stored as JSON array of floats (1536 dimensions).
+    # When pgvector is installed, migrate to VectorField for similarity search.
+    # For now, use JSONField for compatibility without pgvector extension.
+    embedding = models.JSONField(
+        default=list, blank=True,
+        help_text="Vector embedding (1536 dimensions) as JSON array",
+    )
+    token_count = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["document", "chunk_index"]
+        indexes = [
+            models.Index(fields=["document", "chunk_index"]),
+        ]
+        unique_together = [("document", "chunk_index")]
+
+    def __str__(self):
+        return f"Chunk {self.chunk_index} of {self.document.title}"
+
+
+# ---------------------------------------------------------------------------
+# Eva Chat Models
+# ---------------------------------------------------------------------------
+class EvaConversation(models.Model):
+    """A chat conversation between an accountant and Eva within a financial year."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    financial_year = models.ForeignKey(
+        FinancialYear, on_delete=models.CASCADE, related_name="eva_conversations"
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="eva_conversations",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_active_at = models.DateTimeField(auto_now=True)
+    message_count = models.IntegerField(default=0)
+
+    class Meta:
+        ordering = ["-last_active_at"]
+        indexes = [
+            models.Index(fields=["financial_year", "user"]),
+        ]
+
+    def __str__(self):
+        return f"Eva Chat — {self.financial_year} ({self.user})"
+
+
+class EvaMessage(models.Model):
+    """A single message in an Eva chat conversation."""
+
+    class Role(models.TextChoices):
+        USER = "user", "User"
+        ASSISTANT = "assistant", "Assistant"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    conversation = models.ForeignKey(
+        EvaConversation, on_delete=models.CASCADE, related_name="messages"
+    )
+    role = models.CharField(max_length=10, choices=Role.choices)
+    content = models.TextField()
+    model_used = models.CharField(
+        max_length=10, blank=True, default="",
+        help_text="AI model used: haiku/sonnet/opus (blank for user messages)",
+    )
+    retrieved_chunk_ids = models.JSONField(
+        default=list, blank=True,
+        help_text="List of KnowledgeChunk IDs used in this response",
+    )
+    tokens_used = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at"]
+        indexes = [
+            models.Index(fields=["conversation", "created_at"]),
+        ]
+
+    def __str__(self):
+        return f"{self.get_role_display()} message in {self.conversation}"
 
 
 from .models_office_admin import *  # noqa: F401, F403

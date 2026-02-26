@@ -625,10 +625,19 @@ def financial_year_detail(request, pk):
         for code, group in code_groups.items():
             if len(group) == 1:
                 # Single entry — no aggregation needed
-                group[0].account_name = _resolve_account_name(fy.entity, group[0].account_code, group[0].account_name)
-                group[0].sub_entries = []
-                group[0].is_aggregated = False
-                agg_lines.append(group[0])
+                line = group[0]
+                line.account_name = _resolve_account_name(fy.entity, line.account_code, line.account_name)
+                line.sub_entries = []
+                line.is_aggregated = False
+                # Compute variance for single lines
+                current_net = (line.display_dr or Decimal('0')) - (line.display_cr or Decimal('0'))
+                prior_net = (line.prior_debit or Decimal('0')) - (line.prior_credit or Decimal('0'))
+                line.variance_amount = current_net - prior_net
+                if prior_net != 0:
+                    line.variance_percentage = ((current_net - prior_net) / abs(prior_net) * Decimal('100')).quantize(Decimal('0.1'))
+                else:
+                    line.variance_percentage = None
+                agg_lines.append(line)
             else:
                 # Multiple entries — build an aggregated summary row
                 # Use the first line as the base (for mapping, risk flags, etc.)
@@ -773,6 +782,11 @@ def financial_year_detail(request, pk):
     # Annotate TB lines with risk flag info
     for line in tb_lines:
         line.risk_flags_list = flagged_accounts.get(line.account_code, [])
+
+    # Annotate TB lines with Eva amber indicators
+    from core.eva_amber import annotate_tb_lines_with_amber
+    for section_name, section_lines in aggregated_sections.items():
+        annotate_tb_lines_with_amber(section_lines)
 
     # Depreciation assets
     depreciation_assets = DepreciationAsset.objects.filter(financial_year=fy)

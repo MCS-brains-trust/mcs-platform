@@ -1,0 +1,741 @@
+{% comment %}
+Eva AI Practice Intelligence — Chat Bubble + Review Panel
+Include this in the FY detail template. Requires: fy, entity context variables.
+{% endcomment %}
+
+<!-- ===== EVA CHAT BUBBLE ===== -->
+<style>
+/* Eva Chat Bubble */
+#eva-chat-toggle {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: #0F6B74;
+    border: none;
+    color: white;
+    font-size: 24px;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+    z-index: 1050;
+    transition: transform 0.2s, box-shadow 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+#eva-chat-toggle:hover {
+    transform: scale(1.08);
+    box-shadow: 0 6px 16px rgba(0,0,0,0.3);
+}
+#eva-chat-toggle .eva-badge {
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    background: #dc3545;
+    font-size: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 2px solid white;
+}
+
+#eva-chat-panel {
+    position: fixed;
+    bottom: 90px;
+    right: 24px;
+    width: 380px;
+    height: 520px;
+    background: white;
+    border-radius: 16px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+    z-index: 1049;
+    display: none;
+    flex-direction: column;
+    overflow: hidden;
+}
+#eva-chat-panel.open { display: flex; }
+
+#eva-chat-header {
+    background: #0F6B74;
+    color: white;
+    padding: 14px 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+}
+#eva-chat-header .eva-avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    flex-shrink: 0;
+}
+#eva-chat-header .eva-info {
+    flex: 1;
+}
+#eva-chat-header .eva-info .eva-name {
+    font-weight: 700;
+    font-size: 14px;
+    line-height: 1.2;
+}
+#eva-chat-header .eva-info .eva-subtitle {
+    font-size: 11px;
+    opacity: 0.8;
+}
+#eva-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #22c55e;
+    flex-shrink: 0;
+}
+#eva-status-dot.thinking { background: #D97706; animation: evaPulse 1s infinite; }
+@keyframes evaPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+#eva-chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+.eva-msg {
+    max-width: 85%;
+    padding: 10px 14px;
+    border-radius: 12px;
+    font-size: 13px;
+    line-height: 1.5;
+    word-wrap: break-word;
+}
+.eva-msg.assistant {
+    align-self: flex-start;
+    background: #f0f4f8;
+    color: #1a1a1a;
+    border-bottom-left-radius: 4px;
+}
+.eva-msg.user {
+    align-self: flex-end;
+    background: #0F6B74;
+    color: white;
+    border-bottom-right-radius: 4px;
+}
+.eva-msg .eva-sources {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid rgba(0,0,0,0.1);
+    font-size: 11px;
+    color: #6b7280;
+}
+.eva-typing {
+    align-self: flex-start;
+    padding: 10px 14px;
+    background: #f0f4f8;
+    border-radius: 12px;
+    border-bottom-left-radius: 4px;
+    font-size: 13px;
+    color: #6b7280;
+}
+.eva-typing span {
+    animation: evaTypingDot 1.4s infinite;
+    display: inline-block;
+}
+.eva-typing span:nth-child(2) { animation-delay: 0.2s; }
+.eva-typing span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes evaTypingDot { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
+
+#eva-chat-input-area {
+    padding: 12px 16px;
+    border-top: 1px solid #e5e7eb;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-shrink: 0;
+}
+#eva-chat-input {
+    flex: 1;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 13px;
+    outline: none;
+    transition: border-color 0.2s;
+}
+#eva-chat-input:focus { border-color: #0F6B74; }
+#eva-chat-send {
+    background: #0F6B74;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+#eva-chat-send:disabled { opacity: 0.5; cursor: not-allowed; }
+#eva-model-toggle {
+    font-size: 10px;
+    color: #6b7280;
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 1px solid #e5e7eb;
+    background: transparent;
+    flex-shrink: 0;
+}
+#eva-model-toggle.opus { background: #fef3c7; border-color: #D97706; color: #92400e; }
+
+/* Eva Review Panel (inside the page, not the chat bubble) */
+.eva-review-panel {
+    background: #f8fffe;
+    border: 1px solid #0F6B74;
+    border-radius: 12px;
+    overflow: hidden;
+}
+.eva-review-header {
+    background: #0F6B74;
+    color: white;
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.eva-finding-card {
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 12px;
+    background: white;
+    transition: border-color 0.2s;
+}
+.eva-finding-card.critical { border-left: 4px solid #dc3545; }
+.eva-finding-card.advisory { border-left: 4px solid #D97706; }
+.eva-finding-card.addressed {
+    opacity: 0.7;
+    border-left-color: #22c55e;
+}
+.eva-finding-card .finding-title {
+    font-weight: 600;
+    font-size: 14px;
+    margin-bottom: 4px;
+}
+.eva-finding-card .finding-severity {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 4px;
+    display: inline-block;
+    margin-bottom: 8px;
+}
+.eva-finding-card .finding-severity.critical { background: #fef2f2; color: #dc3545; }
+.eva-finding-card .finding-severity.advisory { background: #fffbeb; color: #92400e; }
+.eva-finding-card .finding-text {
+    font-size: 13px;
+    color: #374151;
+    line-height: 1.6;
+    margin-bottom: 8px;
+}
+.eva-finding-card .finding-meta {
+    font-size: 11px;
+    color: #6b7280;
+}
+.eva-finding-card .finding-resolution {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid #e5e7eb;
+}
+
+/* Amber Indicator */
+.amber-indicator {
+    color: #D97706;
+    font-size: 14px;
+    margin-left: 8px;
+    cursor: help;
+}
+</style>
+
+<!-- Chat Toggle Button -->
+<button id="eva-chat-toggle" onclick="evaToggleChat()" title="Eva — Practice Intelligence">
+    <i class="bi bi-chat-dots-fill"></i>
+</button>
+
+<!-- Chat Panel -->
+<div id="eva-chat-panel">
+    <div id="eva-chat-header">
+        <div class="eva-avatar"><i class="bi bi-robot"></i></div>
+        <div class="eva-info">
+            <div class="eva-name">Eva</div>
+            <div class="eva-subtitle">Practice Intelligence</div>
+        </div>
+        <div id="eva-status-dot" title="Ready"></div>
+        <button onclick="evaToggleChat()" style="background:none;border:none;color:white;font-size:18px;cursor:pointer;padding:0;margin-left:4px;">
+            <i class="bi bi-x-lg"></i>
+        </button>
+    </div>
+    <div id="eva-chat-messages">
+        <div class="eva-msg assistant">
+            Hello! I'm Eva, your practice intelligence assistant. I have access to the trial balance, journals, and Knowledge Brain for <strong>{{ entity.entity_name }}</strong> ({{ fy.year_label }}).
+            <br><br>Ask me anything about this entity's financials, compliance, or Australian tax law.
+        </div>
+    </div>
+    <div id="eva-chat-input-area">
+        <button id="eva-model-toggle" onclick="evaToggleModel()" title="Click to switch model">Sonnet</button>
+        <input type="text" id="eva-chat-input" placeholder="Ask Eva anything..." autocomplete="off"
+               onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();evaSendMessage();}"
+               {% if fy.status == 'finalised' %}disabled placeholder="Chat is read-only for finalised years"{% endif %}>
+        <button id="eva-chat-send" onclick="evaSendMessage()" {% if fy.status == 'finalised' %}disabled{% endif %}>
+            <i class="bi bi-send-fill" style="font-size:14px;"></i>
+        </button>
+    </div>
+</div>
+
+<!-- ===== EVA REVIEW PANEL (shown inside the Audit Risk tab or as a section) ===== -->
+<div id="eva-review-section" class="mt-3" style="display:none;">
+    <div class="eva-review-panel">
+        <div class="eva-review-header">
+            <div>
+                <strong><i class="bi bi-robot me-1"></i> Eva Compliance Review</strong>
+                <span id="eva-review-status-badge" class="badge bg-light text-dark ms-2" style="font-size:11px;"></span>
+            </div>
+            <div id="eva-review-timer" style="font-size:12px;opacity:0.8;"></div>
+        </div>
+        <div class="p-3">
+            <!-- Progress Bar (shown during review) -->
+            <div id="eva-review-progress" style="display:none;">
+                <div class="progress mb-2" style="height:6px;">
+                    <div class="progress-bar bg-info progress-bar-striped progress-bar-animated" id="eva-progress-bar" style="width:0%"></div>
+                </div>
+                <p class="text-muted mb-0" style="font-size:12px;">
+                    <span id="eva-progress-text">Starting compliance checks...</span>
+                </p>
+            </div>
+
+            <!-- Findings List -->
+            <div id="eva-findings-list"></div>
+
+            <!-- Cleared Message -->
+            <div id="eva-cleared-message" style="display:none;">
+                <div class="text-center py-4">
+                    <i class="bi bi-check-circle-fill text-success" style="font-size:48px;"></i>
+                    <h5 class="mt-3 text-success">Eva Review Cleared</h5>
+                    <p class="text-muted">No compliance issues found. This financial year is cleared for finalisation.</p>
+                </div>
+            </div>
+
+            <!-- Error Message -->
+            <div id="eva-error-message" style="display:none;">
+                <div class="text-center py-4">
+                    <i class="bi bi-exclamation-triangle-fill text-danger" style="font-size:48px;"></i>
+                    <h5 class="mt-3 text-danger">Eva Review Error</h5>
+                    <p class="text-muted" id="eva-error-text"></p>
+                    <button class="btn btn-sm btn-outline-primary" onclick="evaAskReview()">
+                        <i class="bi bi-arrow-clockwise"></i> Retry
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// ===== Eva Chat Interface =====
+const EVA_FY_ID = '{{ fy.pk }}';
+const EVA_CSRF = '{{ csrf_token }}';
+let evaModelOverride = '';
+let evaChatOpen = false;
+let evaHistoryLoaded = false;
+
+function evaToggleChat() {
+    evaChatOpen = !evaChatOpen;
+    document.getElementById('eva-chat-panel').classList.toggle('open', evaChatOpen);
+    if (evaChatOpen && !evaHistoryLoaded) {
+        evaLoadHistory();
+        evaHistoryLoaded = true;
+    }
+}
+
+function evaToggleModel() {
+    const btn = document.getElementById('eva-model-toggle');
+    if (evaModelOverride === 'opus') {
+        evaModelOverride = '';
+        btn.textContent = 'Sonnet';
+        btn.classList.remove('opus');
+    } else {
+        evaModelOverride = 'opus';
+        btn.textContent = 'Opus';
+        btn.classList.add('opus');
+    }
+}
+
+function evaLoadHistory() {
+    fetch(`/api/financial-years/${EVA_FY_ID}/eva-chat/`, {
+        headers: { 'X-CSRFToken': EVA_CSRF }
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.messages && data.messages.length > 0) {
+            const container = document.getElementById('eva-chat-messages');
+            // Keep the welcome message, add history after
+            data.messages.forEach(msg => {
+                evaAppendMessage(msg.role, msg.content);
+            });
+        }
+    })
+    .catch(err => console.error('Eva history load error:', err));
+}
+
+function evaAppendMessage(role, content, sources) {
+    const container = document.getElementById('eva-chat-messages');
+    const div = document.createElement('div');
+    div.className = `eva-msg ${role}`;
+
+    // Simple markdown-like formatting for assistant messages
+    let html = content;
+    if (role === 'assistant') {
+        html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+        html = html.replace(/\n/g, '<br>');
+        html = html.replace(/\[Source (\d+)\]/g, '<em style="color:#0F6B74">[Source $1]</em>');
+    }
+    div.innerHTML = html;
+
+    if (sources && sources.length > 0) {
+        const srcDiv = document.createElement('div');
+        srcDiv.className = 'eva-sources';
+        srcDiv.innerHTML = '<i class="bi bi-book me-1"></i>' +
+            sources.map(s => `${s.title} (${s.category})`).join(', ');
+        div.appendChild(srcDiv);
+    }
+
+    container.appendChild(div);
+    container.scrollTop = container.scrollHeight;
+}
+
+function evaShowTyping() {
+    const container = document.getElementById('eva-chat-messages');
+    const div = document.createElement('div');
+    div.className = 'eva-typing';
+    div.id = 'eva-typing-indicator';
+    div.innerHTML = '<span>.</span><span>.</span><span>.</span>';
+    container.appendChild(div);
+    container.scrollTop = container.scrollHeight;
+    document.getElementById('eva-status-dot').classList.add('thinking');
+}
+
+function evaHideTyping() {
+    const el = document.getElementById('eva-typing-indicator');
+    if (el) el.remove();
+    document.getElementById('eva-status-dot').classList.remove('thinking');
+}
+
+function evaSendMessage() {
+    const input = document.getElementById('eva-chat-input');
+    const message = input.value.trim();
+    if (!message) return;
+
+    input.value = '';
+    evaAppendMessage('user', message);
+    evaShowTyping();
+
+    const sendBtn = document.getElementById('eva-chat-send');
+    sendBtn.disabled = true;
+
+    fetch(`/api/financial-years/${EVA_FY_ID}/eva-chat/`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': EVA_CSRF,
+        },
+        body: JSON.stringify({
+            message: message,
+            model_override: evaModelOverride,
+        }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        evaHideTyping();
+        sendBtn.disabled = false;
+        if (data.error) {
+            evaAppendMessage('assistant', `Error: ${data.error}`);
+        } else {
+            evaAppendMessage('assistant', data.content, data.sources);
+        }
+    })
+    .catch(err => {
+        evaHideTyping();
+        sendBtn.disabled = false;
+        evaAppendMessage('assistant', 'Sorry, I encountered a connection error. Please try again.');
+        console.error('Eva send error:', err);
+    });
+}
+
+
+// ===== Eva Finalisation Gate =====
+let evaReviewPolling = null;
+
+function evaAskReview(opusOverride) {
+    const section = document.getElementById('eva-review-section');
+    section.style.display = 'block';
+
+    const progress = document.getElementById('eva-review-progress');
+    const findingsList = document.getElementById('eva-findings-list');
+    const clearedMsg = document.getElementById('eva-cleared-message');
+    const errorMsg = document.getElementById('eva-error-message');
+
+    progress.style.display = 'block';
+    findingsList.innerHTML = '';
+    clearedMsg.style.display = 'none';
+    errorMsg.style.display = 'none';
+
+    document.getElementById('eva-review-status-badge').textContent = 'In Progress';
+    document.getElementById('eva-review-status-badge').className = 'badge bg-info ms-2';
+
+    fetch(`/api/financial-years/${EVA_FY_ID}/ask-eva-review/`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': EVA_CSRF,
+        },
+        body: JSON.stringify({ opus_override: !!opusOverride }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'blocked') {
+            progress.style.display = 'none';
+            errorMsg.style.display = 'block';
+            document.getElementById('eva-error-text').innerHTML =
+                '<strong>Pre-flight checks failed:</strong><br>' +
+                data.checks.filter(c => !c.passed).map(c => `• ${c.message}`).join('<br>');
+            document.getElementById('eva-review-status-badge').textContent = 'Blocked';
+            document.getElementById('eva-review-status-badge').className = 'badge bg-danger ms-2';
+            return;
+        }
+        // Start polling for status
+        evaReviewPolling = setInterval(evaPollReviewStatus, 3000);
+    })
+    .catch(err => {
+        progress.style.display = 'none';
+        errorMsg.style.display = 'block';
+        document.getElementById('eva-error-text').textContent = 'Failed to start Eva review. Please try again.';
+        console.error('Eva review error:', err);
+    });
+}
+
+function evaPollReviewStatus() {
+    fetch(`/api/financial-years/${EVA_FY_ID}/eva-review-status/`, {
+        headers: { 'X-CSRFToken': EVA_CSRF }
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'running') {
+            const pct = data.total_checks > 0
+                ? Math.round((data.completed_checks / data.total_checks) * 100)
+                : 0;
+            document.getElementById('eva-progress-bar').style.width = pct + '%';
+            document.getElementById('eva-progress-text').textContent =
+                `Checking: ${data.current_check || '...'} (${data.completed_checks}/${data.total_checks})`;
+        } else if (data.status === 'complete' || data.status === 'cleared' || data.status === 'findings_raised') {
+            clearInterval(evaReviewPolling);
+            evaReviewPolling = null;
+            document.getElementById('eva-review-progress').style.display = 'none';
+            evaLoadReviewDetail();
+        } else if (data.status === 'error') {
+            clearInterval(evaReviewPolling);
+            evaReviewPolling = null;
+            document.getElementById('eva-review-progress').style.display = 'none';
+            document.getElementById('eva-error-message').style.display = 'block';
+            document.getElementById('eva-error-text').textContent = data.error || 'An error occurred during the review.';
+            document.getElementById('eva-review-status-badge').textContent = 'Error';
+            document.getElementById('eva-review-status-badge').className = 'badge bg-danger ms-2';
+        }
+    })
+    .catch(err => console.error('Eva poll error:', err));
+}
+
+function evaLoadReviewDetail() {
+    fetch(`/api/financial-years/${EVA_FY_ID}/eva-review/`, {
+        headers: { 'X-CSRFToken': EVA_CSRF }
+    })
+    .then(r => r.json())
+    .then(data => {
+        const section = document.getElementById('eva-review-section');
+        section.style.display = 'block';
+
+        const statusBadge = document.getElementById('eva-review-status-badge');
+        const findingsList = document.getElementById('eva-findings-list');
+        const clearedMsg = document.getElementById('eva-cleared-message');
+        const progress = document.getElementById('eva-review-progress');
+
+        progress.style.display = 'none';
+
+        if (data.status === 'cleared') {
+            statusBadge.textContent = 'Cleared';
+            statusBadge.className = 'badge bg-success ms-2';
+            clearedMsg.style.display = 'block';
+            findingsList.innerHTML = '';
+            // Update the Finalise button state
+            evaUpdateFinaliseButton(true);
+        } else if (data.status === 'findings_raised') {
+            statusBadge.textContent = `${data.findings.length} Finding(s)`;
+            statusBadge.className = 'badge bg-warning text-dark ms-2';
+            clearedMsg.style.display = 'none';
+            evaRenderFindings(data.findings);
+            evaUpdateFinaliseButton(false);
+        } else if (data.status === 'pending') {
+            statusBadge.textContent = 'In Progress';
+            statusBadge.className = 'badge bg-info ms-2';
+            progress.style.display = 'block';
+        } else if (data.status === 'not_started') {
+            section.style.display = 'none';
+        }
+
+        if (data.duration) {
+            document.getElementById('eva-review-timer').textContent = `Completed in ${data.duration}s`;
+        }
+    })
+    .catch(err => console.error('Eva review detail error:', err));
+}
+
+function evaRenderFindings(findings) {
+    const container = document.getElementById('eva-findings-list');
+    container.innerHTML = '';
+
+    findings.forEach(f => {
+        const isAddressed = f.status === 'addressed';
+        const severityClass = f.severity === 'CRITICAL' ? 'critical' : 'advisory';
+
+        const card = document.createElement('div');
+        card.className = `eva-finding-card ${severityClass} ${isAddressed ? 'addressed' : ''}`;
+        card.id = `finding-${f.id}`;
+
+        let html = `
+            <div class="d-flex justify-content-between align-items-start">
+                <div class="finding-title">${f.title || f.check_name}</div>
+                <span class="finding-severity ${severityClass}">${f.severity}</span>
+            </div>
+            <div class="finding-text">${f.explanation || ''}</div>
+        `;
+
+        if (f.recommendation) {
+            html += `<div class="finding-text"><strong>Recommendation:</strong> ${f.recommendation}</div>`;
+        }
+
+        html += '<div class="finding-meta">';
+        if (f.legislation_reference) {
+            html += `<span class="me-3"><i class="bi bi-bookmark me-1"></i>${f.legislation_reference}</span>`;
+        }
+        if (f.knowledge_brain_citation) {
+            html += `<span class="me-3"><i class="bi bi-book me-1"></i>${f.knowledge_brain_citation}</span>`;
+        }
+        if (f.confidence) {
+            html += `<span><i class="bi bi-speedometer me-1"></i>Confidence: ${f.confidence}</span>`;
+        }
+        html += '</div>';
+
+        if (isAddressed) {
+            html += `
+                <div class="finding-resolution">
+                    <span class="badge bg-success"><i class="bi bi-check-circle"></i> Addressed</span>
+                    <span class="text-muted ms-2" style="font-size:12px;">by ${f.resolved_by || 'Unknown'}</span>
+                    <p class="mt-1 mb-0" style="font-size:12px;color:#374151;">${f.resolution_note || ''}</p>
+                </div>
+            `;
+        } else {
+            html += `
+                <div class="finding-resolution">
+                    <div class="input-group input-group-sm mt-2">
+                        <input type="text" class="form-control" id="resolve-note-${f.id}"
+                               placeholder="Describe how this was addressed (required)..." style="font-size:12px;">
+                        <button class="btn btn-success" onclick="evaResolveFinding('${f.id}')" style="font-size:12px;">
+                            <i class="bi bi-check-circle"></i> Mark as Addressed
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+
+        card.innerHTML = html;
+        container.appendChild(card);
+    });
+}
+
+function evaResolveFinding(findingId) {
+    const noteInput = document.getElementById(`resolve-note-${findingId}`);
+    const note = noteInput ? noteInput.value.trim() : '';
+
+    if (!note) {
+        noteInput.classList.add('is-invalid');
+        noteInput.focus();
+        return;
+    }
+
+    fetch(`/api/eva-findings/${findingId}/resolve/`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': EVA_CSRF,
+        },
+        body: JSON.stringify({ resolution_note: note }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'success') {
+            // Reload the review detail to refresh all findings
+            evaLoadReviewDetail();
+
+            if (data.review_status === 'cleared') {
+                evaUpdateFinaliseButton(true);
+            }
+        } else {
+            alert(data.error || 'Failed to resolve finding.');
+        }
+    })
+    .catch(err => {
+        console.error('Eva resolve error:', err);
+        alert('Failed to resolve finding. Please try again.');
+    });
+}
+
+function evaUpdateFinaliseButton(enabled) {
+    const btn = document.getElementById('finaliseBtn');
+    if (!btn) return;
+
+    if (enabled) {
+        btn.disabled = false;
+        btn.classList.remove('btn-secondary');
+        btn.classList.add('btn-success');
+        btn.title = 'Eva review cleared — ready to finalise';
+    } else {
+        btn.disabled = true;
+        btn.classList.remove('btn-success');
+        btn.classList.add('btn-secondary');
+        btn.title = 'Resolve all Eva findings before finalising';
+    }
+}
+
+// Load existing review on page load
+document.addEventListener('DOMContentLoaded', function() {
+    fetch(`/api/financial-years/${EVA_FY_ID}/eva-review/`, {
+        headers: { 'X-CSRFToken': EVA_CSRF }
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status && data.status !== 'not_started') {
+            evaLoadReviewDetail();
+        }
+    })
+    .catch(() => {});
+});
+</script>
