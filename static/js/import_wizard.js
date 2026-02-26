@@ -221,6 +221,12 @@ var ImportWizard = (function() {
         display.className = 'entity-acct-display assigned';
         display.innerHTML = '<span class="badge bg-primary">' + code + '</span><span class="small">' + name + '</span>';
 
+        // Update the Account Name column to reflect the selected entity account
+        var nameCell = row.querySelector('.account-name-cell');
+        if (nameCell && name) {
+            nameCell.textContent = name;
+        }
+
         if (mapsToId) {
             var select = row.querySelector('.mapping-select');
             if (select) select.value = mapsToId;

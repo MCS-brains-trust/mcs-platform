@@ -8632,6 +8632,16 @@ def commit_journal_upload(request, pk):
             account_name = line["account_name"]
             account_name = _resolve_account_name(entity, account_code, account_name)
 
+            # If the user assigned an entity account, resolve the name from it
+            if entity_acct_code:
+                try:
+                    ea = EntityChartOfAccount.objects.get(
+                        entity=entity, account_code=entity_acct_code
+                    )
+                    account_name = ea.account_name or account_name
+                except EntityChartOfAccount.DoesNotExist:
+                    pass
+
             # Apply to Trial Balance as adjustment line, linked to bulk upload
             _apply_journal_line_to_tb(
                 fy, account_code, account_name,

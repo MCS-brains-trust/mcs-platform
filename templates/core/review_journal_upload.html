@@ -138,7 +138,7 @@
                                     <td class="small">{{ line.journal_date }}</td>
                                     <td class="small">{{ line.description|truncatechars:30 }}</td>
                                     <td><code>{{ line.account_code }}</code></td>
-                                    <td>{{ line.account_name }}</td>
+                                    <td class="account-name-cell">{{ line.account_name }}</td>
                                     <td class="amount-cell debit-cell">{{ line.debit }}</td>
                                     <td class="amount-cell credit-cell">{{ line.credit }}</td>
                                     <td>
