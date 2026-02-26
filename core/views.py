@@ -629,14 +629,8 @@ def financial_year_detail(request, pk):
                 line.account_name = _resolve_account_name(fy.entity, line.account_code, line.account_name)
                 line.sub_entries = []
                 line.is_aggregated = False
-                # Compute variance for single lines
-                current_net = (line.display_dr or Decimal('0')) - (line.display_cr or Decimal('0'))
-                prior_net = (line.prior_debit or Decimal('0')) - (line.prior_credit or Decimal('0'))
-                line.variance_amount = current_net - prior_net
-                if prior_net != 0:
-                    line.variance_percentage = ((current_net - prior_net) / abs(prior_net) * Decimal('100')).quantize(Decimal('0.1'))
-                else:
-                    line.variance_percentage = None
+                # variance_amount and variance_percentage are computed
+                # by the TrialBalanceLine model @property — no need to set.
                 agg_lines.append(line)
             else:
                 # Multiple entries — build an aggregated summary row
