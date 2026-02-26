@@ -2056,7 +2056,7 @@ def commit_tb_import(request, pk):
             TrialBalanceLine.objects.create(
                 financial_year=fy,
                 account_code=account_code,
-                account_name=line["account_name"],
+                account_name=_resolve_account_name(entity, line["account_code"], line["account_name"]),
                 opening_balance=opening,
                 debit=debit,
                 credit=credit,
@@ -2078,7 +2078,7 @@ def commit_tb_import(request, pk):
                 entity=entity,
                 client_account_code=account_code,
                 defaults={
-                    "client_account_name": line["account_name"],
+                    "client_account_name": _resolve_account_name(entity, line["account_code"], line["account_name"]),
                     "mapped_line_item": mapped_item,
                 },
             )
@@ -8177,6 +8177,7 @@ def commit_journal_upload(request, pk):
             credit = Decimal(str(line.get("credit", "0")))
             account_code = line["account_code"]
             account_name = line["account_name"]
+            account_name = _resolve_account_name(entity, account_code, account_name)
 
             # Apply to Trial Balance as adjustment line
             _apply_journal_line_to_tb(
