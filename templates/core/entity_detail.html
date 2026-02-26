@@ -138,6 +138,9 @@
                                 <span class="badge bg-{% if fy.status == 'draft' %}warning text-dark{% elif fy.status == 'in_review' %}info{% elif fy.status == 'reviewed' %}primary{% else %}success{% endif %}">
                                     {{ fy.get_status_display }}
                                 </span>
+                                {% if fy.reopened_at %}
+                                <span class="badge bg-info" title="Reopened {{ fy.reopened_at|date:'d M Y' }}"><i class="bi bi-unlock"></i></span>
+                                {% endif %}
                             </td>
                             <td>{{ fy.trial_balance_lines.count }}</td>
                             <td>{{ fy.reviewed_by.get_full_name|default:"—" }}</td>

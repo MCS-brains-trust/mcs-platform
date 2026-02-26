@@ -367,6 +367,22 @@ class FinancialYear(models.Model):
         related_name="reviewed_years",
     )
     finalised_at = models.DateTimeField(null=True, blank=True)
+    reopened_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Timestamp of the last reopen action",
+    )
+    reopened_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="reopened_years",
+        help_text="User who last reopened this financial year",
+    )
+    reopen_reason = models.TextField(
+        blank=True, default="",
+        help_text="Reason provided for reopening this financial year",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -1379,6 +1395,7 @@ class AuditLog(models.Model):
         USER_CHANGE = "user_change", "User Modified"
         TEMPLATE_CHANGE = "template_change", "Template Modified"
         AI_FEEDBACK = "ai_feedback", "AI Feedback"
+        REOPEN = "reopen", "Year Reopened"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(

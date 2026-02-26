@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Re-Roll Forward - {{ fy.year_label }} - StatementHub{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=fy.entity.pk %}">{{ fy.entity.entity_name }}</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy.year_label }}</a></li>
+        <li class="breadcrumb-item active">Re-Roll Forward</li>
+    </ol>
+</nav>
+
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header bg-info text-white">
+                <h5 class="mb-0"><i class="bi bi-arrow-repeat"></i> Re-Roll Forward to {{ next_fy.year_label }}</h5>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-warning">
+                    <i class="bi bi-exclamation-triangle-fill"></i>
+                    <strong>Important:</strong> This will update the opening balances and comparatives in
+                    <strong>{{ next_fy.year_label }}</strong> based on the current closing balances of
+                    <strong>{{ fy.year_label }}</strong>.
+                </div>
+
+                <p>This operation will:</p>
+                <ol>
+                    <li><strong>Remove</strong> {{ rollover_count }} previously rolled-forward trial balance lines from {{ next_fy.year_label }}.</li>
+                    <li><strong>Recreate</strong> the opening balances, retained earnings, and P&L comparatives using the updated closing balances from {{ fy.year_label }}.</li>
+                    <li><strong>Re-roll</strong> stock items from {{ fy.year_label }} into {{ next_fy.year_label }}.</li>
+                </ol>
+
+                <div class="alert alert-info">
+                    <i class="bi bi-info-circle"></i>
+                    <strong>Note:</strong> Any journals, imported trial balance data, or other user-entered data
+                    in {{ next_fy.year_label }} will be <strong>preserved</strong>. Only the rolled-forward
+                    (system-generated) data will be replaced.
+                </div>
+
+                <div class="d-flex gap-2 mt-4">
+                    <form method="post" action="{% url 'core:reroll_forward' pk=fy.pk %}">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-info"
+                                onclick="this.disabled=true; this.innerHTML='<span class=\'spinner-border spinner-border-sm\'></span> Re-rolling...'; this.form.submit();">
+                            <i class="bi bi-arrow-repeat"></i> Confirm Re-Roll Forward
+                        </button>
+                    </form>
+                    <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-secondary">
+                        Cancel
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

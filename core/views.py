@@ -28,6 +28,20 @@ from config.authorization import get_entity_for_user, get_financial_year_for_use
 import re as _re_mod
 
 
+def _get_subsequent_finalised_years(fy):
+    """Walk the next_year chain and return a list of subsequent finalised FYs."""
+    result = []
+    current = fy
+    while True:
+        nxt = current.next_year.first()
+        if nxt and nxt.status == "finalised":
+            result.append(nxt)
+            current = nxt
+        else:
+            break
+    return result
+
+
 def _resolve_account_name(entity, account_code, raw_name):
     """Resolve a human-readable account name, falling back through multiple sources.
 
@@ -790,6 +804,8 @@ def financial_year_detail(request, pk):
             applicable_entities__contains=fy.entity.entity_type
         ).order_by('financial_statement', 'line_item_label'),
         "active_tab": request.GET.get("tab", ""),
+        # Reopen feature: list of subsequent finalised years for cascade info
+        "subsequent_finalised_years": _get_subsequent_finalised_years(fy),
     }
     return render(request, "core/financial_year_detail.html", context)
 
@@ -1053,6 +1069,425 @@ def financial_year_status(request, pk):
     )
     messages.success(request, f"Status changed to {fy.get_status_display()}.")
     return redirect("core:financial_year_detail", pk=pk)
+
+
+# ============================================================
+# Reopen Finalised Financial Year
+# ============================================================
+
+@login_required
+def reopen_financial_year(request, pk):
+    """Reopen a finalised financial year so amendments can be made.
+
+    Optionally cascades the reopen to all subsequent financial years in
+    the chain (linked via the ``prior_year`` / ``next_year`` relation).
+    After reopening, the user can amend the year, re-finalise it, and
+    then re-roll-forward to propagate changes to later years.
+    """
+    fy = get_financial_year_for_user(request, pk)
+
+    if request.method != "POST":
+        return redirect("core:financial_year_detail", pk=pk)
+
+    # ── Permission check ─────────────────────────────────────────────
+    if not request.user.can_finalise:
+        messages.error(request, "Only senior accountants or admins can reopen a finalised year.")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    # ── Status check ─────────────────────────────────────────────────
+    if fy.status != "finalised":
+        messages.error(request, "This financial year is not finalised.")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    # ── Collect inputs ───────────────────────────────────────────────
+    reason = request.POST.get("reopen_reason", "").strip()
+    if not reason:
+        messages.error(request, "You must provide a reason for reopening.")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    cascade = request.POST.get("cascade") == "1"
+
+    # ── Build the list of years to reopen ────────────────────────────
+    years_to_reopen = [fy]
+    if cascade:
+        current = fy
+        while True:
+            # next_year is the related_name on prior_year FK (reverse)
+            nxt = current.next_year.first()
+            if nxt and nxt.status == "finalised":
+                years_to_reopen.append(nxt)
+                current = nxt
+            else:
+                break
+
+    # ── Perform the reopen (in reverse chronological order for safety) ──
+    reopened_labels = []
+    for year in reversed(years_to_reopen):
+        old_status = year.status
+        year.status = FinancialYear.Status.DRAFT
+        year.reopened_at = timezone.now()
+        year.reopened_by = request.user
+        year.reopen_reason = reason
+        year.finalised_at = None
+        year.save()
+
+        # Unlock trial balance comparatives
+        year.trial_balance_lines.update(comparatives_locked=False)
+
+        # Unlock generated documents (set back to draft)
+        year.generated_documents.update(is_locked=False, status="draft")
+
+        # Audit log
+        _log_action(
+            request, "reopen",
+            f"Reopened {year.year_label} (was {old_status}). "
+            f"Reason: {reason}. Cascade: {cascade}.",
+            year,
+        )
+        reopened_labels.append(year.year_label)
+
+    label_str = ", ".join(reopened_labels)
+    messages.success(
+        request,
+        f"Successfully reopened {len(reopened_labels)} financial year(s): {label_str}. "
+        f"You can now make amendments and re-finalise."
+    )
+    return redirect("core:financial_year_detail", pk=pk)
+
+
+# ============================================================
+# Re-Roll Forward (update subsequent year after amendment)
+# ============================================================
+
+@login_required
+def reroll_forward(request, pk):
+    """Re-roll forward from a finalised year into an existing subsequent year.
+
+    Unlike the initial ``roll_forward`` which creates a brand-new FY, this
+    view updates an *existing* next year by:
+      1. Deleting all ``source='rollover'`` TrialBalanceLine rows in the
+         next year (preserving any user-entered journals / imports).
+      2. Deleting rolled-forward StockItems (notes contain 'Rolled forward').
+      3. Re-running the same roll-forward logic to recreate those rows
+         with the updated closing balances from the amended prior year.
+
+    The user's own journals and imported data in the next year are preserved.
+    """
+    current_fy = get_financial_year_for_user(request, pk)
+    entity = current_fy.entity
+
+    if not request.user.can_do_accounting:
+        messages.error(request, "You do not have permission.")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    if current_fy.status != "finalised":
+        messages.error(request, "This financial year must be finalised before re-rolling forward.")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    # Find the existing next year
+    next_fy = current_fy.next_year.first()
+    if not next_fy:
+        messages.error(request, "No subsequent financial year found. Use Roll Forward instead.")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    if request.method == "POST":
+        from decimal import Decimal
+
+        # ── Step 1: Delete old rollover data in the next year ────────
+        deleted_tb = next_fy.trial_balance_lines.filter(source="rollover").delete()[0]
+        deleted_stock = next_fy.stock_items.filter(
+            notes__icontains="Rolled forward"
+        ).delete()[0]
+        deleted_dep = 0  # Depreciation roll-forward is separate
+
+        # ── Step 2: Re-run the roll-forward logic ────────────────────
+        # (Replicates the core logic from roll_forward but targets the
+        #  existing next_fy instead of creating a new one.)
+
+        BS_SECTIONS = {"assets", "liabilities", "equity", "capital_accounts"}
+        BS_STATEMENTS = {"balance_sheet", "equity"}
+
+        coa_sections = dict(
+            ChartOfAccount.objects.filter(
+                entity_type=entity.entity_type, is_active=True
+            ).values_list("account_code", "section")
+        )
+
+        # Pass 1: Classify lines and calculate net P&L
+        net_pl_result = Decimal("0")
+        retained_profits_line = None
+        income_tax_line = None
+        bs_lines = []
+        pl_lines = []
+
+        for line in current_fy.trial_balance_lines.filter(is_adjustment=False):
+            is_bs = False
+            if line.mapped_line_item:
+                is_bs = line.mapped_line_item.financial_statement in BS_STATEMENTS
+            elif line.account_code in coa_sections:
+                is_bs = coa_sections[line.account_code] in BS_SECTIONS
+            else:
+                code_prefix = line.account_code.split(".")[0] if line.account_code else ""
+                if code_prefix.isdigit():
+                    is_bs = int(code_prefix) >= 2000
+
+            if is_bs:
+                name_lower = line.account_name.lower()
+                is_retained = (
+                    "retained" in name_lower
+                    or "undistributed" in name_lower
+                    or "accumulated" in name_lower
+                    or "unappropriated" in name_lower
+                )
+                if not is_retained and line.mapped_line_item:
+                    mapped_code = line.mapped_line_item.standard_code or ""
+                    is_retained = mapped_code in ("BS-EQ-002", "BS-EQ-005", "BS-EQ-006", "BS-EQ-008")
+                if is_retained:
+                    retained_profits_line = line
+
+                is_income_tax = False
+                if line.account_name and "income tax" in line.account_name.lower():
+                    is_income_tax = True
+                if line.mapped_line_item and (line.mapped_line_item.standard_code or "") == "BS-EQ-011":
+                    is_income_tax = True
+                if is_income_tax:
+                    income_tax_line = line
+
+                bs_lines.append(line)
+            else:
+                pl_lines.append(line)
+                net_pl_result += line.debit - line.credit
+
+        # Pass 2: Create BS lines
+        carried_bs = 0
+        for line in bs_lines:
+            if line.closing_balance == 0 and line != retained_profits_line:
+                continue
+
+            opening = line.closing_balance
+
+            if line == retained_profits_line:
+                tax_amount = income_tax_line.closing_balance if income_tax_line else Decimal("0")
+                opening = line.closing_balance + net_pl_result + tax_amount
+                if opening == 0:
+                    continue
+
+            if line == income_tax_line:
+                TrialBalanceLine.objects.create(
+                    financial_year=next_fy,
+                    account_code=line.account_code,
+                    account_name=line.account_name,
+                    opening_balance=Decimal("0"),
+                    debit=Decimal("0"),
+                    credit=Decimal("0"),
+                    closing_balance=Decimal("0"),
+                    prior_debit=line.debit,
+                    prior_credit=line.credit,
+                    mapped_line_item=line.mapped_line_item,
+                    is_adjustment=False,
+                    source='rollover',
+                )
+                carried_bs += 1
+                continue
+
+            TrialBalanceLine.objects.create(
+                financial_year=next_fy,
+                account_code=line.account_code,
+                account_name=line.account_name,
+                opening_balance=opening,
+                debit=Decimal("0"),
+                credit=Decimal("0"),
+                closing_balance=opening,
+                prior_debit=line.debit,
+                prior_credit=line.credit,
+                mapped_line_item=line.mapped_line_item,
+                is_adjustment=False,
+                source='rollover',
+            )
+            carried_bs += 1
+
+        tax_amount = income_tax_line.closing_balance if income_tax_line else Decimal("0")
+        if retained_profits_line is None and (net_pl_result != 0 or tax_amount != 0):
+            etype = entity.entity_type
+            if etype == "trust":
+                rp_name, rp_code = "Undistributed income", "4199"
+            elif etype == "partnership":
+                rp_name, rp_code = "Partners' current accounts", "4199"
+            elif etype == "sole_trader":
+                rp_name, rp_code = "Proprietor's funds", "4199"
+            else:
+                rp_name, rp_code = "Retained profits", "4199"
+
+            rp_opening = net_pl_result + tax_amount
+            TrialBalanceLine.objects.create(
+                financial_year=next_fy,
+                account_code=rp_code,
+                account_name=rp_name,
+                opening_balance=rp_opening,
+                debit=Decimal("0"),
+                credit=Decimal("0"),
+                closing_balance=rp_opening,
+                prior_debit=Decimal("0"),
+                prior_credit=Decimal("0"),
+                mapped_line_item=None,
+                is_adjustment=False,
+                source='rollover',
+            )
+            carried_bs += 1
+
+            if income_tax_line:
+                TrialBalanceLine.objects.create(
+                    financial_year=next_fy,
+                    account_code=income_tax_line.account_code,
+                    account_name=income_tax_line.account_name,
+                    opening_balance=Decimal("0"),
+                    debit=Decimal("0"),
+                    credit=Decimal("0"),
+                    closing_balance=Decimal("0"),
+                    prior_debit=income_tax_line.debit,
+                    prior_credit=income_tax_line.credit,
+                    mapped_line_item=income_tax_line.mapped_line_item,
+                    is_adjustment=False,
+                    source='rollover',
+                )
+                carried_bs += 1
+
+        # Pass 3: P&L comparatives and stock conversion
+        carried_pl = 0
+        stock_converted = 0
+
+        opening_stock_mapping = None
+        try:
+            opening_stock_mapping = AccountMapping.objects.get(standard_code="IS-COS-002")
+        except AccountMapping.DoesNotExist:
+            pass
+
+        CLOSING_STOCK_KEYWORDS = [
+            "closing stock", "closing work in progress", "closing wip",
+            "closing raw material", "closing finished goods",
+            "closing inventory",
+        ]
+
+        for line in pl_lines:
+            if line.debit == 0 and line.credit == 0:
+                continue
+
+            is_closing_stock = False
+            name_lower = (line.account_name or "").lower()
+            if line.mapped_line_item and (line.mapped_line_item.standard_code or "") == "IS-COS-004":
+                is_closing_stock = True
+            if not is_closing_stock:
+                for kw in CLOSING_STOCK_KEYWORDS:
+                    if kw in name_lower:
+                        is_closing_stock = True
+                        break
+
+            TrialBalanceLine.objects.create(
+                financial_year=next_fy,
+                account_code=line.account_code,
+                account_name=line.account_name,
+                opening_balance=Decimal("0"),
+                debit=Decimal("0"),
+                credit=Decimal("0"),
+                closing_balance=Decimal("0"),
+                prior_debit=line.debit,
+                prior_credit=line.credit,
+                mapped_line_item=line.mapped_line_item,
+                is_adjustment=False,
+                source='rollover',
+            )
+            carried_pl += 1
+
+            if is_closing_stock:
+                closing_amount = line.credit - line.debit
+                if closing_amount != 0:
+                    opening_name = line.account_name
+                    for old, new in [("Closing", "Opening"), ("closing", "opening"), ("CLOSING", "OPENING")]:
+                        opening_name = opening_name.replace(old, new)
+                    if opening_name == line.account_name:
+                        opening_name = "Opening " + line.account_name
+
+                    opening_code = line.account_code
+                    for pl_line in pl_lines:
+                        pl_name_lower = (pl_line.account_name or "").lower()
+                        if ("opening" in pl_name_lower and
+                            ("stock" in pl_name_lower or "work in progress" in pl_name_lower
+                             or "wip" in pl_name_lower or "inventory" in pl_name_lower
+                             or "raw material" in pl_name_lower or "finished good" in pl_name_lower)):
+                            opening_code = pl_line.account_code
+                            opening_name = pl_line.account_name
+                            break
+                        if pl_line.mapped_line_item and (pl_line.mapped_line_item.standard_code or "") == "IS-COS-002":
+                            opening_code = pl_line.account_code
+                            opening_name = pl_line.account_name
+                            break
+
+                    TrialBalanceLine.objects.create(
+                        financial_year=next_fy,
+                        account_code=opening_code,
+                        account_name=opening_name,
+                        opening_balance=Decimal("0"),
+                        debit=closing_amount if closing_amount > 0 else Decimal("0"),
+                        credit=abs(closing_amount) if closing_amount < 0 else Decimal("0"),
+                        closing_balance=Decimal("0"),
+                        prior_debit=Decimal("0"),
+                        prior_credit=Decimal("0"),
+                        mapped_line_item=opening_stock_mapping,
+                        is_adjustment=False,
+                        source='rollover',
+                    )
+                    stock_converted += 1
+
+        # Pass 4: Roll forward stock items
+        stock_rolled = 0
+        # Delete previously rolled stock items first
+        next_fy.stock_items.filter(notes__icontains="Rolled forward").delete()
+        for stock_item in current_fy.stock_items.all():
+            if stock_item.closing_value == 0 and stock_item.closing_quantity == 0:
+                continue
+            StockItem.objects.create(
+                financial_year=next_fy,
+                item_name=stock_item.item_name,
+                opening_quantity=stock_item.closing_quantity,
+                opening_value=stock_item.closing_value,
+                closing_quantity=Decimal("0"),
+                closing_value=Decimal("0"),
+                notes=f"Rolled forward from FY{current_fy.year_label}",
+                display_order=stock_item.display_order,
+            )
+            stock_rolled += 1
+
+        pl_direction = "profit" if net_pl_result < 0 else "loss"
+        tax_msg = f" Income tax of ${abs(tax_amount):,.2f} absorbed." if tax_amount else ""
+        stock_msg = f" {stock_converted} closing stock entries converted to opening stock." if stock_converted else ""
+        stock_items_msg = f" {stock_rolled} stock items rolled forward." if stock_rolled else ""
+
+        _log_action(
+            request, "import",
+            f"Re-rolled forward to {next_fy.year_label}: removed {deleted_tb} old rollover TB lines, "
+            f"recreated {carried_bs} BS items + {carried_pl} P&L comparatives. "
+            f"Net {pl_direction} of ${abs(net_pl_result):,.2f} closed to retained earnings."
+            f"{tax_msg}{stock_msg}{stock_items_msg}",
+            next_fy,
+        )
+        messages.success(
+            request,
+            f"Re-rolled forward to {next_fy.year_label}. "
+            f"Removed {deleted_tb} old rollover lines, recreated {carried_bs} BS items + "
+            f"{carried_pl} P&L comparatives. Net {pl_direction} of ${abs(net_pl_result):,.2f} "
+            f"less tax ${abs(tax_amount):,.2f} closed to retained earnings."
+            f"{stock_msg}{stock_items_msg}"
+        )
+        return redirect("core:financial_year_detail", pk=next_fy.pk)
+
+    # GET: show confirmation page
+    next_fy = current_fy.next_year.first()
+    rollover_count = next_fy.trial_balance_lines.filter(source="rollover").count() if next_fy else 0
+    return render(request, "core/reroll_forward_confirm.html", {
+        "fy": current_fy,
+        "next_fy": next_fy,
+        "rollover_count": rollover_count,
+    })
 
 
 @login_required

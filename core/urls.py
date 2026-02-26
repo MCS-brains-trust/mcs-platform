@@ -24,6 +24,8 @@ urlpatterns = [
     path("years/<uuid:pk>/", views.financial_year_detail, name="financial_year_detail"),
     path("years/<uuid:pk>/status/", views.financial_year_status, name="financial_year_status"),
     path("years/<uuid:pk>/roll-forward/", views.roll_forward, name="roll_forward"),
+    path("years/<uuid:pk>/reopen/", views.reopen_financial_year, name="reopen_financial_year"),
+    path("years/<uuid:pk>/reroll-forward/", views.reroll_forward, name="reroll_forward"),
 
     # Trial Balance
     path("years/<uuid:pk>/import/", views.trial_balance_import, name="trial_balance_import"),

@@ -21,6 +21,12 @@
             <span class="badge bg-{% if fy.status == 'draft' %}warning text-dark{% elif fy.status == 'in_review' %}info{% elif fy.status == 'reviewed' %}primary{% else %}success{% endif %} fs-6">
                 {{ fy.get_status_display }}
             </span>
+            {% if fy.reopened_at %}
+            &middot;
+            <span class="badge bg-info fs-6" title="Last reopened on {{ fy.reopened_at|date:'d M Y H:i' }} by {{ fy.reopened_by.get_full_name|default:'Unknown' }}">
+                <i class="bi bi-unlock"></i> Reopened {{ fy.reopened_at|date:"d M Y" }}
+            </span>
+            {% endif %}
         </p>
     </div>
     <div class="d-flex gap-2 flex-wrap">
@@ -115,6 +121,11 @@
                         <i class="bi bi-check-circle-fill"></i> Finalised
                         {% if fy.finalised_at %} &mdash; {{ fy.finalised_at|date:"d M Y" }}{% endif %}
                     </span>
+                    {% if user.can_finalise %}
+                    <button type="button" class="btn btn-sm btn-warning" data-bs-toggle="modal" data-bs-target="#reopenModal">
+                        <i class="bi bi-unlock"></i> Reopen
+                    </button>
+                    {% endif %}
                     {% endif %}
 
                     <div class="vr d-none d-md-block"></div>
@@ -160,6 +171,11 @@
                     <a href="{% url 'core:roll_forward' pk=fy.pk %}" class="btn btn-sm btn-outline-primary">
                         <i class="bi bi-arrow-right-circle"></i> Roll Forward
                     </a>
+                    {% if subsequent_finalised_years or fy.next_year.first %}
+                    <a href="{% url 'core:reroll_forward' pk=fy.pk %}" class="btn btn-sm btn-outline-info">
+                        <i class="bi bi-arrow-repeat"></i> Re-Roll Forward
+                    </a>
+                    {% endif %}
                     {% else %}
                     <button type="button" class="btn btn-sm btn-outline-primary" disabled title="Finalise this financial year before rolling forward">
                         <i class="bi bi-arrow-right-circle"></i> Roll Forward
@@ -190,6 +206,78 @@
         </div>
     </div>
 </div>
+
+<!-- Reopen Financial Year Modal -->
+{% if fy.status == 'finalised' and user.can_finalise %}
+<div class="modal fade" id="reopenModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-warning">
+                <h5 class="modal-title"><i class="bi bi-unlock"></i> Reopen Finalised Year</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="post" action="{% url 'core:reopen_financial_year' pk=fy.pk %}" id="reopenForm">
+                {% csrf_token %}
+                <div class="modal-body">
+                    <div class="alert alert-warning py-2">
+                        <i class="bi bi-exclamation-triangle-fill"></i>
+                        <strong>Warning:</strong> Reopening a finalised year will unlock it for editing.
+                        All locked documents will be set back to draft status.
+                    </div>
+
+                    <p>You are about to reopen <strong>{{ fy.entity.entity_name }} &mdash; {{ fy.year_label }}</strong>
+                    ({{ fy.start_date|date:"d M Y" }} to {{ fy.end_date|date:"d M Y" }}).</p>
+
+                    {% if subsequent_finalised_years %}
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" name="cascade" value="1" id="cascadeCheck" checked>
+                            <label class="form-check-label" for="cascadeCheck">
+                                <strong>Cascade:</strong> Also reopen all subsequent finalised years
+                            </label>
+                        </div>
+                        <div class="mt-2 ms-4">
+                            <small class="text-muted">The following years will also be reopened:</small>
+                            <ul class="mb-0 small">
+                                {% for sfy in subsequent_finalised_years %}
+                                <li>{{ sfy.year_label }} ({{ sfy.start_date|date:"d M Y" }} &mdash; {{ sfy.end_date|date:"d M Y" }})</li>
+                                {% endfor %}
+                            </ul>
+                        </div>
+                    </div>
+                    {% endif %}
+
+                    <div class="mb-3">
+                        <label for="reopenReason" class="form-label"><strong>Reason for reopening</strong> <span class="text-danger">*</span></label>
+                        <textarea class="form-control" id="reopenReason" name="reopen_reason" rows="3"
+                                  placeholder="e.g. Amendment required for 2022 tax return — need to adjust depreciation schedule and retained earnings."
+                                  required></textarea>
+                        <div class="form-text">This will be recorded in the audit trail.</div>
+                    </div>
+
+                    {% if fy.reopened_at %}
+                    <div class="alert alert-info py-2 mb-0">
+                        <small>
+                            <i class="bi bi-info-circle"></i>
+                            This year was previously reopened on {{ fy.reopened_at|date:"d M Y H:i" }}
+                            by {{ fy.reopened_by.get_full_name|default:"Unknown" }}.
+                            Reason: {{ fy.reopen_reason|default:"Not recorded" }}
+                        </small>
+                    </div>
+                    {% endif %}
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-warning" id="reopenSubmitBtn"
+                            onclick="this.disabled=true; this.innerHTML='<span class=\'spinner-border spinner-border-sm\'></span> Reopening...'; this.form.submit();">
+                        <i class="bi bi-unlock"></i> Reopen{% if subsequent_finalised_years %} {{ subsequent_finalised_years|length|add:1 }} Year{{ subsequent_finalised_years|length|add:1|pluralize }}{% endif %}
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endif %}
 
 <!-- Period Selection Modal -->
 <div class="modal fade" id="periodModal" tabindex="-1">
@@ -1336,6 +1424,8 @@
                             <span class="badge bg-warning text-dark"><i class="bi bi-arrow-repeat"></i> Status Change</span>
                             {% elif log.action == 'delete' %}
                             <span class="badge bg-danger"><i class="bi bi-trash"></i> Deleted</span>
+                            {% elif log.action == 'reopen' %}
+                            <span class="badge bg-warning text-dark"><i class="bi bi-unlock"></i> Reopened</span>
                             {% else %}
                             <span class="badge bg-secondary">{{ log.get_action_display }}</span>
                             {% endif %}
