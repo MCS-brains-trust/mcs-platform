@@ -6013,11 +6013,17 @@ def review_unconfirm_transaction(request, pk):
 
         if target_fy:
             # Reverse the main account TB line
-            try:
-                tb_line = TrialBalanceLine.objects.get(
+            tb_line = TrialBalanceLine.objects.filter(
+                financial_year=target_fy,
+                account_code=txn.confirmed_code,
+                is_adjustment=False,
+            ).first()
+            if not tb_line:
+                tb_line = TrialBalanceLine.objects.filter(
                     financial_year=target_fy,
                     account_code=txn.confirmed_code,
-                )
+                ).first()
+            if tb_line:
                 has_gst = txn.confirmed_gst_amount and txn.confirmed_gst_amount > 0
                 net_for_tb = txn.net_amount if has_gst else abs(txn.amount)
 
@@ -6031,18 +6037,22 @@ def review_unconfirm_transaction(request, pk):
                     tb_line.delete()
                 else:
                     tb_line.save()
-            except TrialBalanceLine.DoesNotExist:
-                pass
 
             # Reverse the GST clearing account line
             if txn.confirmed_gst_amount and txn.confirmed_gst_amount > 0:
                 gst_amt = txn.confirmed_gst_amount
                 gst_code = '9100' if txn.amount > 0 else '9110'
-                try:
-                    gst_line = TrialBalanceLine.objects.get(
+                gst_line = TrialBalanceLine.objects.filter(
+                    financial_year=target_fy,
+                    account_code=gst_code,
+                    is_adjustment=False,
+                ).first()
+                if not gst_line:
+                    gst_line = TrialBalanceLine.objects.filter(
                         financial_year=target_fy,
                         account_code=gst_code,
-                    )
+                    ).first()
+                if gst_line:
                     if txn.amount > 0:
                         gst_line.credit = max(Decimal("0"), gst_line.credit - gst_amt)
                     else:
@@ -6052,8 +6062,6 @@ def review_unconfirm_transaction(request, pk):
                         gst_line.delete()
                     else:
                         gst_line.save()
-                except TrialBalanceLine.DoesNotExist:
-                    pass
 
     # Reset the transaction
     txn.is_confirmed = False
@@ -6081,9 +6089,16 @@ def review_unconfirm_transaction(request, pk):
         "pending_count": remaining_pending,
         "confirmed_count": remaining_confirmed,
         "message": f"Transaction unconfirmed: {txn.description[:50]}",
+        "date": txn.date,
+        "description": txn.description,
+        "amount": str(txn.amount),
+        "ai_suggested_code": txn.ai_suggested_code or '',
+        "ai_suggested_name": txn.ai_suggested_name or '',
+        "ai_suggested_tax_type": txn.ai_suggested_tax_type or '',
+        "gst_amount": str(txn.gst_amount or Decimal('0.00')),
+        "net_amount": str(txn.net_amount or abs(txn.amount)),
+        "ai_confidence": txn.ai_confidence or 0,
     })
-
-
 @login_required
 def review_approve_all(request, pk):
     """Approve all pending transactions for a financial year's entity.
@@ -6195,6 +6210,23 @@ def review_approve_all(request, pk):
     # Auto-trigger risk engine after bulk approve
     from core.signals import trigger_risk_recalc
     trigger_risk_recalc(fy, "review_approve_all")
+
+    if request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        from review.models import PendingTransaction as PT
+        remaining_pending = PT.objects.filter(
+            job__entity=fy.entity, is_confirmed=False
+        ).count()
+        remaining_confirmed = PT.objects.filter(
+            job__entity=fy.entity, is_confirmed=True
+        ).count()
+        return JsonResponse({
+            "status": "ok",
+            "approved_count": count,
+            "tb_count": tb_count,
+            "remaining_pending": remaining_pending,
+            "remaining_confirmed": remaining_confirmed,
+            "message": f"Approved {count} transactions. {tb_count} lines pushed to trial balance.",
+        })
     messages.success(request, f"Approved {count} transactions with AI suggestions. {tb_count} lines pushed to trial balance.")
     return redirect("core:financial_year_detail", pk=pk)
 

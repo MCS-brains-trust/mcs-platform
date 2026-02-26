@@ -1015,13 +1015,10 @@
                 <button type="button" class="btn btn-outline-info btn-sm" id="groupByCodeBtn" onclick="toggleGroupView()">
                     <i class="bi bi-collection"></i> Group by Code
                 </button>
-                <form method="post" action="{% url 'core:review_approve_all' pk=fy.pk %}" class="d-inline"
-                      onsubmit="return confirm('Approve all pending transactions with their AI-suggested codes? This will also push them to the trial balance.');">
-                    {% csrf_token %}
-                    <button type="submit" class="btn btn-outline-success btn-sm">
-                        <i class="bi bi-check-all"></i> Approve All &amp; Push to TB
-                    </button>
-                </form>
+                <button type="button" class="btn btn-outline-success btn-sm" id="approveAllPushBtn" onclick="approveAllAndPush()"
+                        data-url="{% url 'core:review_approve_all' pk=fy.pk %}">
+                    <i class="bi bi-check-all"></i> Approve All &amp; Push to TB
+                </button>
                 {% endif %}
             </div>
         </div>
@@ -1170,15 +1167,17 @@
         {% endif %}
         </div>
 
-        <div id="confirmedSection">
-        {% if confirmed_review %}
-        <div class="d-flex justify-content-between align-items-center mt-4 mb-2">
-            <h6 class="text-muted mb-0" style="font-size: 0.85rem;">CONFIRMED &amp; PUSHED TO TRIAL BALANCE</h6>
-            <div class="d-flex gap-2 align-items-center" id="confirmedBulkToolbar" style="display:none !important;">
-                <span class="text-muted" style="font-size:0.8rem;" id="confirmedSelectedCount">0 selected</span>
-                <button type="button" class="btn btn-outline-warning btn-sm" id="bulkUnconfirmBtn" onclick="bulkUnconfirmSelected()" disabled>
-                    <i class="bi bi-arrow-counterclockwise"></i> Unconfirm Selected
-                </button>
+        <!-- Confirmed Panel (shown when green badge is clicked) -->
+        <div id="confirmedSection" style="display:none;">
+        <div class="d-flex justify-content-between align-items-center mt-3 mb-2">
+            <h6 class="text-muted mb-0" style="font-size: 0.85rem;"><i class="bi bi-check-circle-fill text-success me-1"></i>CONFIRMED TRANSACTIONS</h6>
+            <div class="d-flex gap-2 align-items-center">
+                <div id="confirmedBulkToolbar" style="display:none !important;">
+                    <span class="text-muted" style="font-size:0.8rem;" id="confirmedSelectedCount">0 selected</span>
+                    <button type="button" class="btn btn-outline-warning btn-sm ms-2" id="bulkUnconfirmBtn" onclick="bulkUnconfirmSelected()" disabled>
+                        <i class="bi bi-arrow-counterclockwise"></i> Unconfirm Selected
+                    </button>
+                </div>
             </div>
         </div>
         <div class="table-responsive">
@@ -1230,7 +1229,9 @@
                 </tbody>
             </table>
         </div>
-        {% endif %}
+        <div id="confirmedEmptyMsg" class="text-center text-muted py-3" style="display:{% if confirmed_review %}none{% else %}block{% endif %};">
+            <small>No confirmed transactions yet.</small>
+        </div>
         </div>
 
         {% if not pending_review and not confirmed_review %}
@@ -2223,69 +2224,24 @@
                     }, 400);
                 }
 
-                // Add row to confirmed table
-                let confirmedBody = document.getElementById('confirmedTableBody');
-                if (!confirmedBody) {
-                    const confirmedSection = document.getElementById('confirmedSection');
-                    confirmedSection.innerHTML = `
-                        <h6 class="text-muted mt-4 mb-2" style="font-size: 0.85rem;">CONFIRMED &amp; PUSHED TO TRIAL BALANCE</h6>
-                        <div class="table-responsive">
-                            <table class="table table-sm" style="font-size: 0.85rem;" id="confirmedTable">
-                                <thead class="table-success">
-                                    <tr>
-                                        <th style="width: 90px;">Date</th>
-                                        <th>Description</th>
-                                        <th class="text-end" style="width: 110px;">Amount</th>
-                                        <th class="text-center" style="width: 55px;">GST</th>
-                                        <th class="text-end" style="width: 90px;">GST Amt</th>
-                                        <th class="text-end" style="width: 90px;">Net Amt</th>
-                                        <th style="width: 80px;">Code</th>
-                                        <th>Account</th>
-                                        <th>Tax Type</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="confirmedTableBody"></tbody>
-                            </table>
-                        </div>`;
-                    confirmedBody = document.getElementById('confirmedTableBody');
-                }
-                const amt = parseFloat(data.amount);
-                const absAmt = Math.abs(amt);
-                const amtClass = amt < 0 ? 'text-danger' : 'text-success';
-                const amtFormatted = '$' + absAmt.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-                const hasGst = data.has_gst;
-                const gstAmt = hasGst ? (absAmt / 11).toFixed(2) : '0.00';
-                const netAmt = hasGst ? (absAmt - parseFloat(gstAmt)).toFixed(2) : absAmt.toFixed(2);
-                const gstBadge = hasGst
-                    ? '<span class="badge bg-success"><i class="bi bi-check-lg"></i></span>'
-                    : '<span class="badge bg-secondary"><i class="bi bi-x-lg"></i></span>';
-                const newRow = document.createElement('tr');
-                newRow.style.backgroundColor = '#d4edda';
-                newRow.innerHTML = `
-                    <td>${data.date}</td>
-                    <td>${data.description ? data.description.split(' ').slice(0, 8).join(' ') : ''}</td>
-                    <td class="text-end ${amtClass}">${amt < 0 ? '-' : ''}${amtFormatted}</td>
-                    <td class="text-center">${gstBadge}</td>
-                    <td class="text-end">$${parseFloat(gstAmt).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}</td>
-                    <td class="text-end">$${parseFloat(netAmt).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}</td>
-                    <td><code>${data.confirmed_code}</code></td>
-                    <td>${data.confirmed_name}</td>
-                    <td><small>${data.confirmed_tax_type || '-'}</small></td>`;
-                confirmedBody.appendChild(newRow);
-                setTimeout(() => { newRow.style.backgroundColor = ''; }, 1500);
 
+                // Add row to confirmed table (hidden panel)
+                _addRowToConfirmedTable(data);
                 // Update badges
                 const pendingBadge = document.getElementById('pendingBadge');
                 const confirmedBadge = document.getElementById('confirmedBadge');
                 if (pendingBadge) pendingBadge.textContent = data.pending_count + ' pending';
                 if (confirmedBadge) confirmedBadge.textContent = data.confirmed_count + ' confirmed';
-
                 // Show notification
                 if (data.tb_updated) {
                     const notif = document.getElementById('reviewNotification');
                     const notifText = document.getElementById('reviewNotificationText');
-                    const gstNote = hasGst ? ` (GST: $${parseFloat(gstAmt).toFixed(2)})` : ' (No GST)';
-                    notifText.textContent = `Approved: ${data.confirmed_code} - ${data.confirmed_name} ($${absAmt.toFixed(2)})${gstNote} → pushed to Trial Balance & GST/BAS`;
+                    const amt = parseFloat(data.amount);
+                    const absAmt = Math.abs(amt);
+                    const hasGst = data.has_gst;
+                    const gstAmt = hasGst ? (absAmt / 11).toFixed(2) : '0.00';
+                    const gstNote = hasGst ? ' (GST: $' + parseFloat(gstAmt).toFixed(2) + ')' : ' (No GST)';
+                    notifText.textContent = 'Approved: ' + data.confirmed_code + ' - ' + data.confirmed_name + ' ($' + absAmt.toFixed(2) + ')' + gstNote + ' → pushed to Trial Balance & GST/BAS';
                     notif.classList.remove('d-none');
                     setTimeout(() => { notif.classList.add('d-none'); }, 5000);
                 }
@@ -2376,6 +2332,146 @@ const CLASSIFY_STATUS_URL = '{% url "core:review_classify_status" pk=fy.pk %}';
 const BULK_APPROVE_URL = '{% url "core:review_bulk_approve_group" pk=fy.pk %}';
 const CSRF_TOKEN = '{{ csrf_token }}';
 let isGroupView = false;
+
+// --- Helper: Add a row to the confirmed table (hidden panel) ---
+function _addRowToConfirmedTable(data) {
+    const confirmedBody = document.getElementById('confirmedTableBody');
+    if (!confirmedBody) return;
+    const emptyMsg = document.getElementById('confirmedEmptyMsg');
+    if (emptyMsg) emptyMsg.style.display = 'none';
+    const amt = parseFloat(data.amount);
+    const absAmt = Math.abs(amt);
+    const amtClass = amt < 0 ? 'text-danger' : 'text-success';
+    const amtFormatted = '$' + absAmt.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    const hasGst = data.has_gst;
+    const gstAmt = hasGst ? (absAmt / 11).toFixed(2) : '0.00';
+    const netAmt = hasGst ? (absAmt - parseFloat(gstAmt)).toFixed(2) : absAmt.toFixed(2);
+    const gstBadge = hasGst
+        ? '<span class="badge bg-success"><i class="bi bi-check-lg"></i></span>'
+        : '<span class="badge bg-secondary"><i class="bi bi-x-lg"></i></span>';
+    const txnId = data.id;
+    const unconfirmUrl = '/review-txn/' + txnId + '/unconfirm/';
+    const newRow = document.createElement('tr');
+    newRow.id = 'confirmed-row-' + txnId;
+    newRow.innerHTML = `
+        <td><input type="checkbox" class="confirmed-checkbox" value="${txnId}" data-unconfirm-url="${unconfirmUrl}" onclick="updateConfirmedSelection()"></td>
+        <td>${data.date}</td>
+        <td>${data.description ? data.description.split(' ').slice(0, 8).join(' ') : ''}</td>
+        <td class="text-end ${amtClass}">${amt < 0 ? '-' : ''}${amtFormatted}</td>
+        <td class="text-center">${gstBadge}</td>
+        <td class="text-end">$${parseFloat(gstAmt).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}</td>
+        <td class="text-end">$${parseFloat(netAmt).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',')}</td>
+        <td><code>${data.confirmed_code}</code></td>
+        <td>${data.confirmed_name}</td>
+        <td><small>${data.confirmed_tax_type || '-'}</small></td>
+        <td><button class="btn btn-sm btn-outline-warning py-0 px-1 txn-unconfirm-btn" title="Unconfirm &amp; move back to pending"
+                data-txn-id="${txnId}" data-unconfirm-url="${unconfirmUrl}">
+            <i class="bi bi-arrow-counterclockwise"></i></button></td>`;
+    confirmedBody.appendChild(newRow);
+}
+
+// --- Helper: Add a row back to the pending table (after unconfirm) ---
+function _addRowToPendingTable(data) {
+    const pendingBody = document.getElementById('pendingTableBody');
+    if (!pendingBody) return;
+    const txnId = data.id;
+    const amt = parseFloat(data.amount);
+    const absAmt = Math.abs(amt);
+    const amtClass = amt < 0 ? 'text-danger' : 'text-success';
+    const amtFormatted = '$' + absAmt.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    const aiCode = data.ai_suggested_code || '-';
+    const aiName = data.ai_suggested_name || 'Unclassified';
+    const aiTax = data.ai_suggested_tax_type || '';
+    const hasGst = aiTax === 'GST on Income' || aiTax === 'GST on Expenses';
+    const gstAmt = hasGst ? (absAmt / 11).toFixed(2) : '0.00';
+    const netAmt = hasGst ? (absAmt - parseFloat(gstAmt)).toFixed(2) : absAmt.toFixed(2);
+    const conf = parseInt(data.ai_confidence) || 0;
+    let confBadge = '<span class="badge bg-secondary">-</span>';
+    if (conf > 0) {
+        const cls = conf >= 4 ? 'success' : (conf >= 3 ? 'info' : 'warning text-dark');
+        confBadge = '<span class="badge bg-' + cls + '">' + conf + '/5</span>';
+    }
+    const approveUrl = '/review-txn/' + txnId + '/approve/';
+    const newRow = document.createElement('tr');
+    newRow.id = 'pending-row-' + txnId;
+    newRow.style.backgroundColor = '#fff3cd';
+    newRow.innerHTML = `
+        <td>${data.date}</td>
+        <td>${data.description ? data.description.split(' ').slice(0, 8).join(' ') : ''}</td>
+        <td class="text-end ${amtClass}">${amt < 0 ? '-' : ''}${amtFormatted}</td>
+        <td class="text-center"><div class="form-check form-switch d-flex justify-content-center mb-0">
+            <input class="form-check-input gst-toggle" type="checkbox" role="switch" data-txn-id="${txnId}" data-amount="${data.amount}" ${hasGst ? 'checked' : ''}></div></td>
+        <td class="text-end gst-amount-cell" id="gst-amt-${txnId}">$${parseFloat(gstAmt).toFixed(2)}</td>
+        <td class="text-end net-amount-cell" id="net-amt-${txnId}">$${parseFloat(netAmt).toFixed(2)}</td>
+        <td><code class="review-ai-code">${aiCode}</code></td>
+        <td><span class="text-muted">${aiName}</span></td>
+        <td>${confBadge}</td>
+        <td><form method="post" action="${approveUrl}" class="d-inline review-approve-form" data-txn-id="${txnId}">
+            <input type="hidden" name="csrfmiddlewaretoken" value="${CSRF_TOKEN}">
+            <input type="hidden" name="confirmed_code" value="${aiCode}" class="review-code-input">
+            <input type="hidden" name="confirmed_name" value="${aiName}" class="review-name-input">
+            <input type="hidden" name="confirmed_tax_type" value="${aiTax}" class="review-tax-input">
+            <input type="hidden" name="has_gst" value="${hasGst ? '1' : '0'}" class="review-gst-flag">
+            <input type="hidden" name="gst_amount" value="${gstAmt}" class="review-gst-amount">
+            <button type="submit" class="btn btn-sm btn-outline-success py-0 px-1" title="Approve &amp; push to TB">
+                <i class="bi bi-check-lg"></i></button></form></td>`;
+    pendingBody.appendChild(newRow);
+    setTimeout(() => { newRow.style.backgroundColor = ''; }, 1500);
+    // Show the pending section if it was hidden
+    const pendingSection = document.getElementById('pendingSection');
+    if (pendingSection) pendingSection.style.display = '';
+}
+
+// --- Approve All & Push to TB (AJAX, no redirect) ---
+function approveAllAndPush() {
+    if (!confirm('Approve all pending transactions with their AI-suggested codes? This will also push them to the trial balance.')) return;
+    const btn = document.getElementById('approveAllPushBtn');
+    const url = btn.dataset.url;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Approving...';
+    fetch(url, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': CSRF_TOKEN,
+            'X-Requested-With': 'XMLHttpRequest',
+        },
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            // Update badges
+            const pendingBadge = document.getElementById('pendingBadge');
+            const confirmedBadge = document.getElementById('confirmedBadge');
+            if (pendingBadge) pendingBadge.textContent = data.remaining_pending + ' pending';
+            if (confirmedBadge) confirmedBadge.textContent = data.remaining_confirmed + ' confirmed';
+            // Clear the pending table
+            const pendingBody = document.getElementById('pendingTableBody');
+            if (pendingBody) pendingBody.innerHTML = '';
+            const groupedView = document.getElementById('groupedViewContainer');
+            if (groupedView && !groupedView.classList.contains('d-none')) {
+                groupedView.innerHTML = '<div class="text-center text-muted py-4"><i class="bi bi-check-circle-fill text-success" style="font-size:2rem;"></i><p class="mt-2">All transactions have been approved.</p></div>';
+            }
+            // Show notification
+            const notif = document.getElementById('reviewNotification');
+            if (notif) {
+                const notifText = document.getElementById('reviewNotificationText');
+                if (notifText) notifText.textContent = data.message;
+                notif.classList.remove('d-none');
+            }
+            btn.innerHTML = '<i class="bi bi-check-all"></i> Approve All & Push to TB';
+            btn.disabled = false;
+        } else {
+            alert('Error: ' + (data.message || 'Unknown error'));
+            btn.innerHTML = '<i class="bi bi-check-all"></i> Approve All & Push to TB';
+            btn.disabled = false;
+        }
+    })
+    .catch(err => {
+        alert('Network error. Please try again.');
+        btn.innerHTML = '<i class="bi bi-check-all"></i> Approve All & Push to TB';
+        btn.disabled = false;
+    });
+}
 
 // --- Populate filter dropdowns on load ---
 document.addEventListener('DOMContentLoaded', function() {
@@ -3005,9 +3101,10 @@ function bulkApproveGroup(accountCode, groupId, btn) {
                 notif.classList.remove('d-none');
             }
 
-            // If no more groups, reload
+            // If no more groups, show empty state
             if (data.remaining_pending === 0) {
-                setTimeout(function() { location.reload(); }, 1000);
+                const groupedContainer = document.getElementById('groupedViewContainer');
+                if (groupedContainer) groupedContainer.innerHTML = '<div class="text-center text-muted py-4"><i class="bi bi-check-circle-fill text-success" style="font-size:2rem;"></i><p class="mt-2">All transactions have been approved.</p></div>';
             }
         } else {
             alert('Error: ' + (data.message || 'Unknown error'));
@@ -3167,9 +3264,6 @@ document.addEventListener('click', function(e) {
                 notif.classList.remove('d-none');
             }
 
-            if (data.remaining_pending === 0) {
-                setTimeout(function() { location.reload(); }, 1000);
-            }
         } else {
             alert('Error: ' + (data.message || 'Unknown error'));
             btn.disabled = false;
@@ -3636,15 +3730,14 @@ document.addEventListener('click', function(e) {
                 setTimeout(function() { notif.classList.add('d-none'); }, 4000);
             }
 
-            // If confirmed table is now empty, hide the section
+            // If confirmed table is now empty, show empty message
             const tbody = document.getElementById('confirmedTableBody');
             if (tbody && tbody.children.length === 0) {
-                const section = document.getElementById('confirmedSection');
-                if (section) section.innerHTML = '';
+                const emptyMsg = document.getElementById('confirmedEmptyMsg');
+                if (emptyMsg) emptyMsg.style.display = 'block';
             }
-
-            // Reload the page to refresh the pending table with the unconfirmed transaction
-            setTimeout(function() { location.reload(); }, 500);
+            // Add the transaction back to the pending table dynamically
+            _addRowToPendingTable(data);
         } else {
             alert(data.error || data.message || 'Failed to unconfirm transaction.');
             btn.disabled = false;
@@ -3771,9 +3864,9 @@ function refreshNetProfit() {
             if (groupedView) groupedView.classList.add('d-none');
             if (reviewEmptyState) reviewEmptyState.style.display = 'none';
         } else {
-            // Show all
+            // Show all — but confirmed section stays hidden unless explicitly toggled
             if (pendingSection) pendingSection.style.display = '';
-            if (confirmedSection) confirmedSection.style.display = '';
+            if (confirmedSection) confirmedSection.style.display = 'none';
             if (reviewToolbar) reviewToolbar.style.display = '';
         }
     };
@@ -3821,11 +3914,26 @@ function refreshNetProfit() {
 
         function processNext() {
             if (completed >= urls.length) {
-                // All done — reload page
+                // All done — update UI
                 if (errors.length > 0) {
                     alert('Some transactions failed to unconfirm: ' + errors.join(', '));
                 }
-                location.reload();
+                // Reset the bulk toolbar
+                var bulkBtnReset = document.getElementById('bulkUnconfirmBtn');
+                if (bulkBtnReset) {
+                    bulkBtnReset.disabled = true;
+                    bulkBtnReset.innerHTML = '<i class="bi bi-arrow-counterclockwise"></i> Unconfirm Selected';
+                }
+                var toolbar = document.getElementById('confirmedBulkToolbar');
+                if (toolbar) toolbar.style.cssText = 'display:none !important;';
+                var selectAll = document.getElementById('confirmedSelectAll');
+                if (selectAll) selectAll.checked = false;
+                // If confirmed table is now empty, show empty message
+                var tbody = document.getElementById('confirmedTableBody');
+                if (tbody && tbody.children.length === 0) {
+                    var emptyMsg = document.getElementById('confirmedEmptyMsg');
+                    if (emptyMsg) emptyMsg.style.display = 'block';
+                }
                 return;
             }
 
@@ -3841,7 +3949,14 @@ function refreshNetProfit() {
             .then(function(data) {
                 if (data.status === 'success') {
                     var row = document.getElementById('confirmed-row-' + item.id);
-                    if (row) row.style.opacity = '0.3';
+                    if (row) row.remove();
+                    // Update badges
+                    var pb = document.getElementById('pendingBadge');
+                    var cb = document.getElementById('confirmedBadge');
+                    if (pb && data.pending_count !== undefined) pb.textContent = data.pending_count + ' pending';
+                    if (cb && data.confirmed_count !== undefined) cb.textContent = data.confirmed_count + ' confirmed';
+                    // Add back to pending table
+                    if (typeof _addRowToPendingTable === 'function') _addRowToPendingTable(data);
                 } else {
                     errors.push(item.id);
                 }
