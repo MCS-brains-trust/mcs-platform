@@ -477,6 +477,15 @@ def review_detail(request, pk):
     and GST breakdown columns for GST-registered entities.
     """
     job = get_review_job_for_user(request, pk)
+
+    # Apply classification rules before rendering (rules run BEFORE AI)
+    from .views_enhanced import apply_classification_rules
+    try:
+        apply_classification_rules(job)
+    except Exception as e:
+        logger.warning(f"Error applying classification rules: {e}")
+
+    # Get transactions — parents first, then split children grouped under parents
     transactions = job.transactions.all().order_by("date", "description")
 
     # Get entity-type-specific chart of accounts for the picker
@@ -495,10 +504,19 @@ def review_detail(request, pk):
         for a in coa_qs
     ]
 
+    # Count classification rules for this entity
+    from .models import ClassificationRule
+    rules_count = 0
+    if job.entity:
+        rules_count = ClassificationRule.objects.filter(
+            entity=job.entity, is_active=True
+        ).count()
+
     context = {
         "job": job,
         "transactions": transactions,
         "accounts_json": json.dumps(accounts),
+        "rules_count": rules_count,
     }
     return render(request, "review/review_detail.html", context)
 

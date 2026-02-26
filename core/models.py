@@ -163,6 +163,10 @@ class Entity(models.Model):
         default=True,
         help_text="Whether this entity is registered for GST. Affects bank statement coding.",
     )
+    gst_registration_date = models.DateField(
+        null=True, blank=True,
+        help_text="Date GST registration commenced. Transactions before this date are auto-set to Out of Scope.",
+    )
     bas_frequency = models.CharField(
         max_length=10,
         choices=BASFrequency.choices,
