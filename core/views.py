@@ -2754,8 +2754,6 @@ def account_code_breakdown(request, pk, account_code):
     # Compute display Dr/Cr for each line
     total_dr = Decimal('0')
     total_cr = Decimal('0')
-    total_prior_dr = Decimal('0')
-    total_prior_cr = Decimal('0')
     for line in lines:
         if line.debit == 0 and line.credit == 0 and line.closing_balance != 0:
             if line.closing_balance > 0:
@@ -2769,18 +2767,9 @@ def account_code_breakdown(request, pk, account_code):
             line.display_cr = line.credit
         total_dr += line.display_dr or Decimal('0')
         total_cr += line.display_cr or Decimal('0')
-        total_prior_dr += line.prior_debit or Decimal('0')
-        total_prior_cr += line.prior_credit or Decimal('0')
 
-    # Year labels
+    # Year label
     current_year = str(fy.year_label)
-    year_digits = ''.join(c for c in fy.year_label if c.isdigit())
-    if year_digits:
-        prior_year = f"FY{int(year_digits) - 1}" if fy.year_label.startswith('FY') else str(int(year_digits) - 1)
-    elif fy.prior_year:
-        prior_year = str(fy.prior_year.year_label)
-    else:
-        prior_year = 'Prior'
 
     # Use the first line's mapped_line_item label as the account heading
     first_line = lines[0]
@@ -2814,10 +2803,7 @@ def account_code_breakdown(request, pk, account_code):
         'lines': lines,
         'total_dr': total_dr,
         'total_cr': total_cr,
-        'total_prior_dr': total_prior_dr,
-        'total_prior_cr': total_prior_cr,
         'current_year': current_year,
-        'prior_year': prior_year,
         'entry_count': lines.count(),
         'available_accounts': available_accounts,
         'bank_txns': bank_txns,

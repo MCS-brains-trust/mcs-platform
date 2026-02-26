@@ -50,8 +50,6 @@
                         <th>Description</th>
                         <th class="text-end" style="width: 120px;">{{ current_year }} Dr</th>
                         <th class="text-end" style="width: 120px;">{{ current_year }} Cr</th>
-                        <th class="text-end" style="width: 120px;">{{ prior_year }} Dr</th>
-                        <th class="text-end" style="width: 120px;">{{ prior_year }} Cr</th>
                         <th class="text-center" style="width: 130px;">Source</th>
                         <th class="text-center" style="width: 100px;">Action</th>
                     </tr>
@@ -65,8 +63,6 @@
                         </td>
                         <td class="text-end">{% if line.display_dr and line.display_dr != 0 %}{{ line.display_dr|floatformat:2|intcomma }}{% endif %}</td>
                         <td class="text-end">{% if line.display_cr and line.display_cr != 0 %}{{ line.display_cr|floatformat:2|intcomma }}{% endif %}</td>
-                        <td class="text-end text-muted">{% if line.prior_debit and line.prior_debit != 0 %}{{ line.prior_debit|floatformat:2|intcomma }}{% endif %}</td>
-                        <td class="text-end text-muted">{% if line.prior_credit and line.prior_credit != 0 %}{{ line.prior_credit|floatformat:2|intcomma }}{% endif %}</td>
                         <td class="text-center">
                             {% if line.source == 'tb_import' %}
                             <span class="badge bg-success" style="font-size: 0.75rem;"><i class="bi bi-file-earmark-excel me-1"></i>TB Import</span>
@@ -96,8 +92,6 @@
                         <td>Total</td>
                         <td class="text-end">{% if total_dr and total_dr != 0 %}{{ total_dr|floatformat:2|intcomma }}{% endif %}</td>
                         <td class="text-end">{% if total_cr and total_cr != 0 %}{{ total_cr|floatformat:2|intcomma }}{% endif %}</td>
-                        <td class="text-end text-muted">{% if total_prior_dr and total_prior_dr != 0 %}{{ total_prior_dr|floatformat:2|intcomma }}{% endif %}</td>
-                        <td class="text-end text-muted">{% if total_prior_cr and total_prior_cr != 0 %}{{ total_prior_cr|floatformat:2|intcomma }}{% endif %}</td>
                         <td></td>
                         <td></td>
                     </tr>
