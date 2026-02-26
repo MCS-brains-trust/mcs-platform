@@ -709,12 +709,39 @@ def financial_year_detail(request, pk):
     # Compute flagged account count (distinct account codes with open/reviewed flags)
     flagged_account_count = len(flagged_accounts)
 
-    # Count entity-level flags (flags with no affected_accounts)
-    open_flags_qs = risk_flags.filter(status__in=['open', 'reviewed'])
-    entity_level_flag_count = sum(
-        1 for f in open_flags_qs
-        if not f.affected_accounts or len(f.affected_accounts) == 0
+    # Build grouped flags for the Audit Risk tab: account_code -> {name, flags[]}
+    # Each flag includes the full flag object for rendering
+    grouped_risk_flags = {}  # {account_code: {"name": ..., "code": ..., "flags": [...], "open_count": int, "max_severity": str}}
+    entity_level_flags = []  # flags with no affected_accounts
+    severity_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
+    for flag in risk_flags:
+        accounts = flag.affected_accounts or []
+        if not accounts:
+            entity_level_flags.append(flag)
+        else:
+            for acc in accounts:
+                code = acc.get('account_code', '') if isinstance(acc, dict) else str(acc)
+                name = acc.get('account_name', '') if isinstance(acc, dict) else ''
+                if code:
+                    if code not in grouped_risk_flags:
+                        grouped_risk_flags[code] = {
+                            "code": code,
+                            "name": name,
+                            "flags": [],
+                            "open_count": 0,
+                            "max_severity": "LOW",
+                        }
+                    grouped_risk_flags[code]["flags"].append(flag)
+                    if flag.status in ('open', 'reviewed'):
+                        grouped_risk_flags[code]["open_count"] += 1
+                    if severity_order.get(flag.severity, 3) < severity_order.get(grouped_risk_flags[code]["max_severity"], 3):
+                        grouped_risk_flags[code]["max_severity"] = flag.severity
+    # Sort grouped flags by severity (most severe first), then by account code
+    sorted_grouped_flags = sorted(
+        grouped_risk_flags.values(),
+        key=lambda g: (severity_order.get(g["max_severity"], 3), g["code"])
     )
+    entity_level_flag_count = len([f for f in entity_level_flags if f.status in ('open', 'reviewed')])
 
     # Annotate TB lines with risk flag info
     for line in tb_lines:
@@ -796,6 +823,8 @@ def financial_year_detail(request, pk):
         "open_risk_count": open_risk_count,
         "flagged_account_count": flagged_account_count,
         "entity_level_flag_count": entity_level_flag_count,
+        "entity_level_flags": entity_level_flags,
+        "sorted_grouped_flags": sorted_grouped_flags,
         "flagged_accounts": flagged_accounts,
         # Depreciation
         "depreciation_assets": depreciation_assets,
@@ -6179,6 +6208,15 @@ def risk_badge_api(request, pk):
     medium = flags.filter(severity='MEDIUM').count()
     low = flags.filter(severity='LOW').count()
 
+    # Count distinct flagged accounts (accounts with open flags)
+    flagged_codes = set()
+    for f in fy.risk_flags.filter(status__in=['open', 'reviewed']):
+        for acc in (f.affected_accounts or []):
+            code = acc.get('account_code', '') if isinstance(acc, dict) else str(acc)
+            if code:
+                flagged_codes.add(code)
+    flagged_account_count = len(flagged_codes)
+
     # Check if the engine is currently in debounce (pending run)
     engine_pending = cache.get(f'risk_engine_pending_{fy.pk}', False)
     # Check last run timestamp
@@ -6186,6 +6224,7 @@ def risk_badge_api(request, pk):
 
     return JsonResponse({
         'open_count': total,
+        'flagged_account_count': flagged_account_count,
         'critical': critical,
         'high': high,
         'medium': medium,

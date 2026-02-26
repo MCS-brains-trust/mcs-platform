@@ -326,8 +326,8 @@
     <li class="nav-item">
         <button class="nav-link" id="audit-risk-tab" data-bs-toggle="tab" data-bs-target="#tab-audit" type="button">
             <i class="bi bi-shield-exclamation"></i> Audit Risk
-            {% if open_risk_count > 0 %}
-            <span class="badge bg-danger" data-risk-badge>{{ open_risk_count }}</span>
+            {% if flagged_account_count > 0 %}
+            <span class="badge bg-danger" data-risk-badge>{{ flagged_account_count }}</span>
             {% else %}
             <span class="badge bg-secondary" data-risk-badge>0</span>
             {% endif %}
@@ -614,8 +614,8 @@
             <div>
                 <h6 class="mb-0">
                     <i class="bi bi-shield-exclamation"></i> Audit Risk Flags
-                    {% if open_risk_count > 0 %}
-                    <span class="badge bg-danger ms-1">{{ open_risk_count }} Open</span>
+                    {% if flagged_account_count > 0 or entity_level_flag_count > 0 %}
+                    <span class="badge bg-danger ms-1">{{ flagged_account_count }} Account{{ flagged_account_count|pluralize }} Flagged</span>
                     {% else %}
                     <span class="badge bg-success ms-1">No Issues</span>
                     {% endif %}
@@ -624,7 +624,7 @@
                 <small class="text-muted">
                     {{ open_risk_count }} open flag{{ open_risk_count|pluralize }} across {{ flagged_account_count }} account{{ flagged_account_count|pluralize }}
                     {% if entity_level_flag_count > 0 %}
-                    and {{ entity_level_flag_count }} entity-level check{{ entity_level_flag_count|pluralize }}
+                    + {{ entity_level_flag_count }} entity-level check{{ entity_level_flag_count|pluralize }}
                     {% endif %}
                 </small>
                 {% endif %}
@@ -644,55 +644,127 @@
             </div>
         </div>
 
-        {% if risk_flags %}
-        <div class="table-responsive">
-            <table class="table table-sm" style="font-size: 0.88rem;">
-                <thead class="table-light">
-                    <tr>
-                        <th style="width: 90px;">Severity</th>
-                        <th style="width: 90px;">Status</th>
-                        <th>Issue</th>
-                        <th>Description</th>
-                        <th>Affected Accounts</th>
-                        <th style="width: 100px;">Action</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for flag in risk_flags %}
-                    <tr class="{% if flag.status == 'open' %}{% if flag.severity == 'CRITICAL' %}table-danger{% elif flag.severity == 'HIGH' %}table-danger{% elif flag.severity == 'MEDIUM' %}table-warning{% endif %}{% endif %}">
-                        <td>
-                            <span class="badge bg-{% if flag.severity == 'CRITICAL' %}danger{% elif flag.severity == 'HIGH' %}danger{% elif flag.severity == 'MEDIUM' %}warning text-dark{% else %}info{% endif %}">
-                                {{ flag.severity }}
-                            </span>
-                        </td>
-                        <td>
-                            <span class="badge bg-{% if flag.status == 'open' %}danger{% elif flag.status == 'reviewed' %}info{% else %}success{% endif %}">
-                                {{ flag.get_status_display }}
-                            </span>
-                        </td>
-                        <td class="{% if flag.status == 'open' %}fw-bold text-danger{% endif %}">{{ flag.title }}</td>
-                        <td class="{% if flag.status == 'open' %}text-danger{% endif %}" style="font-size: 0.82rem;">{{ flag.description|truncatewords:30 }}</td>
-                        <td>
-                            {% for acc in flag.affected_accounts %}
-                            <code class="me-1">{{ acc }}</code>
-                            {% endfor %}
-                        </td>
-                        <td>
-                            {% if flag.status == 'open' %}
-                            <button class="btn btn-sm btn-outline-success resolve-risk-btn" title="Resolve this risk"
-                                    data-flag-id="{{ flag.pk }}" data-flag-title="{{ flag.title }}">
-                                <i class="bi bi-check-lg"></i>
-                            </button>
-                            {% elif flag.resolution_notes %}
-                            <small class="text-muted" title="{{ flag.resolution_notes }}">{{ flag.resolved_at|date:"d/m/Y" }}</small>
-                            {% else %}
-                            <small class="text-muted">{{ flag.resolved_at|date:"d/m/Y"|default:"-" }}</small>
-                            {% endif %}
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+        {% if sorted_grouped_flags or entity_level_flags %}
+        <div class="accordion" id="auditRiskAccordion">
+            {% for group in sorted_grouped_flags %}
+            <div class="accordion-item">
+                <h2 class="accordion-header">
+                    <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse" data-bs-target="#risk-acc-{{ group.code|slugify }}">
+                        <span class="d-flex align-items-center gap-2 w-100">
+                            <span class="badge bg-{% if group.max_severity == 'CRITICAL' %}danger{% elif group.max_severity == 'HIGH' %}danger{% elif group.max_severity == 'MEDIUM' %}warning text-dark{% else %}info{% endif %}" style="min-width: 70px;">{{ group.max_severity }}</span>
+                            <code class="me-1">{{ group.code }}</code>
+                            <strong>{{ group.name }}</strong>
+                            <span class="badge bg-danger ms-auto me-3">{{ group.open_count }} open</span>
+                        </span>
+                    </button>
+                </h2>
+                <div id="risk-acc-{{ group.code|slugify }}" class="accordion-collapse collapse" data-bs-parent="#auditRiskAccordion">
+                    <div class="accordion-body p-0">
+                        <table class="table table-sm mb-0" style="font-size: 0.85rem;">
+                            <thead class="table-light">
+                                <tr>
+                                    <th style="width: 80px;">Severity</th>
+                                    <th style="width: 80px;">Status</th>
+                                    <th>Issue</th>
+                                    <th>Description</th>
+                                    <th style="width: 100px;">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for flag in group.flags %}
+                                <tr class="{% if flag.status == 'open' %}{% if flag.severity == 'CRITICAL' or flag.severity == 'HIGH' %}table-danger{% elif flag.severity == 'MEDIUM' %}table-warning{% endif %}{% endif %}">
+                                    <td>
+                                        <span class="badge bg-{% if flag.severity == 'CRITICAL' %}danger{% elif flag.severity == 'HIGH' %}danger{% elif flag.severity == 'MEDIUM' %}warning text-dark{% else %}info{% endif %}">
+                                            {{ flag.severity }}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <span class="badge bg-{% if flag.status == 'open' %}danger{% elif flag.status == 'reviewed' %}info{% else %}success{% endif %}">
+                                            {{ flag.get_status_display }}
+                                        </span>
+                                    </td>
+                                    <td class="{% if flag.status == 'open' %}fw-bold text-danger{% endif %}">{{ flag.title }}</td>
+                                    <td class="{% if flag.status == 'open' %}text-danger{% endif %}" style="font-size: 0.82rem;">{{ flag.description|truncatewords:30 }}</td>
+                                    <td>
+                                        {% if flag.status == 'open' %}
+                                        <button class="btn btn-sm btn-outline-success resolve-risk-btn" title="Resolve this risk"
+                                                data-flag-id="{{ flag.pk }}" data-flag-title="{{ flag.title }}">
+                                            <i class="bi bi-check-lg"></i>
+                                        </button>
+                                        {% elif flag.resolution_notes %}
+                                        <small class="text-muted" title="{{ flag.resolution_notes }}">{{ flag.resolved_at|date:"d/m/Y" }}</small>
+                                        {% else %}
+                                        <small class="text-muted">{{ flag.resolved_at|date:"d/m/Y"|default:"-" }}</small>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+
+            {% if entity_level_flags %}
+            <div class="accordion-item">
+                <h2 class="accordion-header">
+                    <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse" data-bs-target="#risk-entity-level">
+                        <span class="d-flex align-items-center gap-2 w-100">
+                            <span class="badge bg-secondary" style="min-width: 70px;">ENTITY</span>
+                            <i class="bi bi-building"></i>
+                            <strong>Entity-Level Checks</strong>
+                            <span class="badge bg-danger ms-auto me-3">{{ entity_level_flag_count }} open</span>
+                        </span>
+                    </button>
+                </h2>
+                <div id="risk-entity-level" class="accordion-collapse collapse" data-bs-parent="#auditRiskAccordion">
+                    <div class="accordion-body p-0">
+                        <table class="table table-sm mb-0" style="font-size: 0.85rem;">
+                            <thead class="table-light">
+                                <tr>
+                                    <th style="width: 80px;">Severity</th>
+                                    <th style="width: 80px;">Status</th>
+                                    <th>Issue</th>
+                                    <th>Description</th>
+                                    <th style="width: 100px;">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for flag in entity_level_flags %}
+                                <tr class="{% if flag.status == 'open' %}{% if flag.severity == 'CRITICAL' or flag.severity == 'HIGH' %}table-danger{% elif flag.severity == 'MEDIUM' %}table-warning{% endif %}{% endif %}">
+                                    <td>
+                                        <span class="badge bg-{% if flag.severity == 'CRITICAL' %}danger{% elif flag.severity == 'HIGH' %}danger{% elif flag.severity == 'MEDIUM' %}warning text-dark{% else %}info{% endif %}">
+                                            {{ flag.severity }}
+                                        </span>
+                                    </td>
+                                    <td>
+                                        <span class="badge bg-{% if flag.status == 'open' %}danger{% elif flag.status == 'reviewed' %}info{% else %}success{% endif %}">
+                                            {{ flag.get_status_display }}
+                                        </span>
+                                    </td>
+                                    <td class="{% if flag.status == 'open' %}fw-bold text-danger{% endif %}">{{ flag.title }}</td>
+                                    <td class="{% if flag.status == 'open' %}text-danger{% endif %}" style="font-size: 0.82rem;">{{ flag.description|truncatewords:30 }}</td>
+                                    <td>
+                                        {% if flag.status == 'open' %}
+                                        <button class="btn btn-sm btn-outline-success resolve-risk-btn" title="Resolve this risk"
+                                                data-flag-id="{{ flag.pk }}" data-flag-title="{{ flag.title }}">
+                                            <i class="bi bi-check-lg"></i>
+                                        </button>
+                                        {% elif flag.resolution_notes %}
+                                        <small class="text-muted" title="{{ flag.resolution_notes }}">{{ flag.resolved_at|date:"d/m/Y" }}</small>
+                                        {% else %}
+                                        <small class="text-muted">{{ flag.resolved_at|date:"d/m/Y"|default:"-" }}</small>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
         </div>
         {% else %}
         <div class="text-center py-5 text-muted">
@@ -3201,11 +3273,13 @@ document.addEventListener('DOMContentLoaded', function() {
     let polling = true;
 
     function updateBadges(data) {
-        // Update all badge elements that show risk count
+        // Use flagged_account_count for both tab badges (TB and Audit Risk)
+        const acctCount = data.flagged_account_count || 0;
+
+        // Update all badge elements that show risk count (both tabs use account count)
         document.querySelectorAll('[data-risk-badge]').forEach(function(el) {
-            const count = data.open_count;
-            el.textContent = count;
-            if (count > 0) {
+            el.textContent = acctCount;
+            if (acctCount > 0) {
                 el.className = 'badge bg-danger';
             } else {
                 el.className = 'badge bg-secondary';
@@ -3213,11 +3287,23 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
 
+        // Update the TB tab risk badge
+        const tbBadge = document.querySelector('[data-tb-risk-badge]');
+        if (tbBadge) {
+            if (acctCount > 0) {
+                tbBadge.innerHTML = acctCount + ' <i class="bi bi-flag-fill"></i>';
+                tbBadge.className = 'badge bg-danger';
+                tbBadge.style.display = '';
+            } else {
+                tbBadge.style.display = 'none';
+            }
+        }
+
         // Update the Audit Risk tab badge specifically
         const tabBadge = document.querySelector('#audit-risk-tab .badge');
         if (tabBadge) {
-            tabBadge.textContent = data.open_count > 0 ? data.open_count : '0';
-            tabBadge.className = data.open_count > 0 ? 'badge bg-danger' : 'badge bg-secondary';
+            tabBadge.textContent = acctCount > 0 ? acctCount : '0';
+            tabBadge.className = acctCount > 0 ? 'badge bg-danger' : 'badge bg-secondary';
         }
 
         // Update the header AUDIT RISK banner
