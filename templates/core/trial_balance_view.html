@@ -14,6 +14,7 @@
 
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h5 class="mb-0">Comparative Trial Balance &mdash; {{ fy.entity.entity_name }} &mdash; {{ fy.year_label }}</h5>
+    <span class="d-none d-print-block text-muted small" id="print-timestamp"></span>
     <div class="d-flex gap-2">
         <a href="/chart-of-accounts/add/?entity_type={{ fy.entity.entity_type }}&fy={{ fy.pk }}" class="btn btn-primary btn-sm">
             <i class="bi bi-plus-circle"></i> Add Account
@@ -100,4 +101,36 @@
         <i class="bi bi-arrow-left"></i> Back to Workspace
     </a>
 </div>
+
+<style>
+@media print {
+    #print-timestamp {
+        display: block !important;
+        position: absolute;
+        top: 0;
+        right: 0;
+        font-size: 0.75rem;
+        color: #6c757d;
+    }
+}
+</style>
+<script>
+(function() {
+    var el = document.getElementById('print-timestamp');
+    if (!el) return;
+    function setTimestamp() {
+        var now = new Date();
+        var dd = String(now.getDate()).padStart(2, '0');
+        var mm = String(now.getMonth() + 1).padStart(2, '0');
+        var yyyy = now.getFullYear();
+        var hh = String(now.getHours()).padStart(2, '0');
+        var min = String(now.getMinutes()).padStart(2, '0');
+        el.textContent = 'Printed: ' + dd + '/' + mm + '/' + yyyy + ' ' + hh + ':' + min;
+    }
+    // Set timestamp when print is triggered
+    window.addEventListener('beforeprint', setTimestamp);
+    // Also set it on load so it's ready if the user uses Ctrl+P immediately
+    setTimestamp();
+})();
+</script>
 {% endblock %}
