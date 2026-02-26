@@ -7592,9 +7592,20 @@ def entity_coa_delete(request, pk):
 def entity_coa_suggest_code(request, pk):
     """
     AJAX endpoint to suggest the next available account code for an entity.
-    Looks at EntityChartOfAccount, ClientAccountMapping, AND TrialBalanceLine
-    to find the correct alphabetical neighbours and code range.
+
+    Logic:
+      1. DUPLICATE CHECK: If an account with a matching name already exists
+         in the entity's COA, return its code with an 'existing_match' flag
+         so the UI can offer to reuse it instead of creating a duplicate.
+      2. ALPHABETICAL PLACEMENT: Sort ALL known accounts in the section by
+         account code numerically, then find where the new name would sit
+         alphabetically among the neighbours at each code position. Pick a
+         code that keeps the list as close to alphabetical order as possible.
+      3. FALLBACK: If no ideal slot exists, find the nearest available code
+         to the alphabetical neighbours.
     """
+    from difflib import SequenceMatcher
+
     fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
@@ -7626,10 +7637,8 @@ def entity_coa_suggest_code(request, pk):
     }
     related = shared_sections.get(section, [section])
 
-    # Build a COMBINED list of all known accounts in the code range.
-    # Sources: EntityChartOfAccount, ClientAccountMapping, TrialBalanceLine
-    # Each entry: (code_int, code_str, name)
-    combined = {}  # code_str -> (code_int, name)
+    # ── Build combined list of all known accounts in the code range ──
+    combined = {}  # code_str -> (code_str, account_name)
 
     # 1. Entity COA accounts in this section
     ecoa_qs = EntityChartOfAccount.objects.filter(
@@ -7654,75 +7663,144 @@ def entity_coa_suggest_code(request, pk):
             if tb.account_code not in combined:
                 combined[tb.account_code] = (tb.account_code, tb.account_name)
 
-    # Build sorted list by account name for alphabetical positioning
-    accts_by_name = sorted(combined.values(), key=lambda x: x[1].lower())
+    # ── STEP 1: Duplicate / near-duplicate detection ──
+    name_lower = account_name.lower().strip()
+    best_match = None
+    best_ratio = 0.0
+    for code_str, acc_name in combined.values():
+        # Exact match (case-insensitive)
+        if acc_name.lower().strip() == name_lower:
+            fmt_code = code_str
+            if code_str.split('.')[0].isdigit() and int(code_str.split('.')[0]) >= 1000:
+                fmt_code = code_str.split('.')[0].zfill(4)
+                if '.' in code_str:
+                    fmt_code += '.' + code_str.split('.', 1)[1]
+            return JsonResponse({
+                'suggested_code': fmt_code,
+                'position_info': f'Existing account found: {code_str} ({acc_name})',
+                'existing_match': True,
+                'existing_code': fmt_code,
+                'existing_name': acc_name,
+            })
+        # Fuzzy match
+        ratio = SequenceMatcher(None, name_lower, acc_name.lower().strip()).ratio()
+        if ratio > best_ratio:
+            best_ratio = ratio
+            best_match = (code_str, acc_name)
 
-    # Build set of ALL used integer codes (including sub-accounts base codes)
-    used_codes = set()
-    for code_str, _ in combined.values():
+    # ── STEP 2: Build sorted-by-code list for alphabetical placement ──
+    # Sort accounts by their integer code
+    accts_by_code = []
+    for code_str, acc_name in combined.values():
         code_part = code_str.split('.')[0]
         if code_part.isdigit():
-            used_codes.add(int(code_part))
+            accts_by_code.append((int(code_part), code_str, acc_name))
+    accts_by_code.sort(key=lambda x: x[0])
 
-    # Find alphabetical neighbours
-    name_lower = account_name.lower()
-    before = None
-    after = None
-    for code_str, acc_name in accts_by_name:
+    # Build set of ALL used integer codes
+    used_codes = set()
+    for code_int, _, _ in accts_by_code:
+        used_codes.add(code_int)
+
+    # Find the alphabetical insertion point among existing accounts
+    # We want to find the two neighbours whose names bracket the new name
+    # alphabetically, then find a code near them.
+    before = None  # (code_int, code_str, name) — closest alphabetically before
+    after = None   # (code_int, code_str, name) — closest alphabetically after
+
+    # Sort by name for alphabetical neighbour finding
+    accts_by_name = sorted(accts_by_code, key=lambda x: x[2].lower())
+    for code_int, code_str, acc_name in accts_by_name:
         if acc_name.lower() < name_lower:
-            before = (code_str, acc_name)
+            before = (code_int, code_str, acc_name)
         elif acc_name.lower() > name_lower:
-            after = (code_str, acc_name)
+            after = (code_int, code_str, acc_name)
             break
 
-    # Determine target code range between neighbours
-    if before and after:
-        try:
-            code_before = int(before[0].split('.')[0])
-            code_after = int(after[0].split('.')[0])
-        except ValueError:
-            code_before, code_after = lo, hi
-        target_lo = code_before + 1
-        target_hi = code_after - 1
-        position_info = f'Between {before[0]} ({before[1]}) and {after[0]} ({after[1]})'
-    elif before and not after:
-        try:
-            code_before = int(before[0].split('.')[0])
-        except ValueError:
-            code_before = lo
-        target_lo = code_before + 1
-        target_hi = hi
-        position_info = f'After {before[0]} ({before[1]})'
-    elif after and not before:
-        try:
-            code_after = int(after[0].split('.')[0])
-        except ValueError:
-            code_after = hi
-        target_lo = lo
-        target_hi = code_after - 1
-        position_info = f'Before {after[0]} ({after[1]})'
-    else:
-        target_lo = lo
-        target_hi = hi
-        position_info = 'First account in this section'
-
-    # Find available code — prefer midpoint between neighbours
+    # ── STEP 3: Find the best available code ──
     suggested_code = ''
-    if target_lo <= target_hi:
-        mid = (target_lo + target_hi) // 2
-        if mid not in used_codes and lo <= mid <= hi:
+    position_info = ''
+
+    if before and after:
+        code_before = before[0]
+        code_after = after[0]
+        position_info = f'Between {before[1]} ({before[2]}) and {after[1]} ({after[2]})'
+
+        # Ensure lo_target <= hi_target regardless of code order
+        target_lo = min(code_before, code_after) + 1
+        target_hi = max(code_before, code_after) - 1
+
+        # Try midpoint first
+        if target_lo <= target_hi:
+            mid = (target_lo + target_hi) // 2
+            if mid not in used_codes and lo <= mid <= hi:
+                suggested_code = str(mid)
+            else:
+                for c in range(target_lo, target_hi + 1):
+                    if c not in used_codes and lo <= c <= hi:
+                        suggested_code = str(c)
+                        break
+
+        # If no space between neighbours, search outward from the nearest
+        if not suggested_code:
+            anchor = (code_before + code_after) // 2
+            for offset in range(1, hi - lo + 2):
+                for candidate in [anchor + offset, anchor - offset]:
+                    if lo <= candidate <= hi and candidate not in used_codes:
+                        suggested_code = str(candidate)
+                        position_info += ' (nearest available)'
+                        break
+                if suggested_code:
+                    break
+
+    elif before and not after:
+        code_before = before[0]
+        position_info = f'After {before[1]} ({before[2]})'
+        # Try code_before + 1, then expand
+        for c in range(code_before + 1, hi + 1):
+            if c not in used_codes:
+                suggested_code = str(c)
+                break
+        if not suggested_code:
+            for c in range(code_before - 1, lo - 1, -1):
+                if c not in used_codes:
+                    suggested_code = str(c)
+                    position_info += ' (nearest available)'
+                    break
+
+    elif after and not before:
+        code_after = after[0]
+        position_info = f'Before {after[1]} ({after[2]})'
+        # Try code_after - 1, then expand
+        for c in range(code_after - 1, lo - 1, -1):
+            if c not in used_codes:
+                suggested_code = str(c)
+                break
+        if not suggested_code:
+            for c in range(code_after + 1, hi + 1):
+                if c not in used_codes:
+                    suggested_code = str(c)
+                    position_info += ' (nearest available)'
+                    break
+
+    else:
+        # No existing accounts — pick midpoint of range
+        position_info = 'First account in this section'
+        mid = (lo + hi) // 2
+        if mid not in used_codes:
             suggested_code = str(mid)
         else:
-            for c in range(target_lo, target_hi + 1):
-                if c not in used_codes and lo <= c <= hi:
+            for c in range(lo, hi + 1):
+                if c not in used_codes:
                     suggested_code = str(c)
                     break
 
+    # Final fallback
     if not suggested_code:
         for c in range(lo, hi + 1):
             if c not in used_codes:
                 suggested_code = str(c)
-                position_info += ' (no space in ideal range, using next available)'
+                position_info = 'Next available code in section'
                 break
 
     if not suggested_code:
@@ -7732,13 +7810,22 @@ def entity_coa_suggest_code(request, pk):
             'error': True,
         })
 
+    # Zero-pad 4-digit codes
     if int(suggested_code) >= 1000:
         suggested_code = suggested_code.zfill(4)
 
-    return JsonResponse({
+    # Include near-match warning if similarity > 80%
+    result = {
         'suggested_code': suggested_code,
         'position_info': position_info,
-    })
+    }
+    if best_match and best_ratio >= 0.80:
+        result['similar_match'] = True
+        result['similar_code'] = best_match[0]
+        result['similar_name'] = best_match[1]
+        result['similar_ratio'] = round(best_ratio * 100)
+
+    return JsonResponse(result)
 
 
 @login_required

@@ -1,0 +1,32 @@
+{# ─── Shared Import Wizard CSS ─── #}
+{# Include this in {% block extra_head %} of any import wizard template. #}
+<style>
+    .mapping-row.learned { background-color: #f0fff0; }
+    .mapping-row.new { background-color: #fff8f0; }
+    .mapping-row.matched { background-color: #f0f8ff; }
+    .confidence-badge.learned { background-color: #198754; }
+    .confidence-badge.new { background-color: #fd7e14; }
+    .confidence-badge.matched { background-color: #0d6efd; }
+    .mapping-select { min-width: 280px; }
+    .amount-cell { text-align: right; font-family: monospace; white-space: nowrap; }
+    .sticky-header th { position: sticky; top: 0; z-index: 10; }
+    .balance-bar { position: sticky; bottom: 0; z-index: 20; }
+    .entity-acct-cell { min-width: 260px; }
+    .entity-acct-display { cursor: pointer; padding: 4px 8px; border-radius: 4px; border: 1px solid #dee2e6; min-height: 32px; display: flex; align-items: center; gap: 6px; }
+    .entity-acct-display:hover { background-color: #f8f9fa; border-color: #adb5bd; }
+    .entity-acct-display.assigned { border-color: #198754; background-color: #f0fff0; }
+    .entity-acct-display.unassigned { border-color: #ffc107; background-color: #fff8f0; }
+    .search-dropdown { position: absolute; z-index: 1000; background: white; border: 1px solid #dee2e6; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); width: 400px; max-height: 350px; display: none; }
+    .search-dropdown.show { display: block; }
+    .search-dropdown .search-input { border: none; border-bottom: 1px solid #dee2e6; border-radius: 6px 6px 0 0; }
+    .search-dropdown .results-list { max-height: 250px; overflow-y: auto; }
+    .search-dropdown .result-item { padding: 6px 12px; cursor: pointer; border-bottom: 1px solid #f0f0f0; }
+    .search-dropdown .result-item:hover { background-color: #e9ecef; }
+    .search-dropdown .result-item .code { font-weight: bold; color: #0d6efd; margin-right: 8px; }
+    .search-dropdown .create-new-btn { border-top: 2px solid #dee2e6; padding: 8px 12px; cursor: pointer; background: #f8f9fa; }
+    .search-dropdown .create-new-btn:hover { background: #e9ecef; }
+    .balance-ok { background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%); }
+    .balance-error { background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%); }
+    .iw-similar-warning { background-color: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; padding: 6px 10px; margin-top: 4px; font-size: 0.85em; }
+    .iw-existing-match { background-color: #d1e7dd; border: 1px solid #198754; border-radius: 4px; padding: 6px 10px; margin-top: 4px; font-size: 0.85em; }
+</style>

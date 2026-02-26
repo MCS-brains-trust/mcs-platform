@@ -1,0 +1,86 @@
+{# ─── Shared Import Wizard: Quick-Add Modal + Entity Search Dropdown ─── #}
+{# Include this at the bottom of {% block content %} in any import wizard template. #}
+{# Required context: fy (FinancialYear object) #}
+
+<!-- Quick-Add Account Modal -->
+<div class="modal fade" id="quickAddModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title"><i class="bi bi-plus-circle"></i> Create New Entity Account</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info small mb-3">
+                    <i class="bi bi-info-circle"></i> This account will be added to <strong>{{ fy.entity.entity_name }}</strong>'s Chart of Accounts and assigned to the selected import line.
+                </div>
+                <div id="qaDuplicateWarning" class="d-none"></div>
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold">Section <span class="text-danger">*</span></label>
+                        <select class="form-select" id="qaSection" required>
+                            <option value="">— Select —</option>
+                            <option value="revenue" data-range-min="0" data-range-max="999">Revenue / Cost of Sales (0-999)</option>
+                            <option value="expenses" data-range-min="1000" data-range-max="1999">Expenses (1000-1999)</option>
+                            <option value="assets" data-range-min="2000" data-range-max="2499">Current Assets (2000-2499)</option>
+                            <option value="assets" data-range-min="2500" data-range-max="2999">Non-Current Assets (2500-2999)</option>
+                            <option value="liabilities" data-range-min="3000" data-range-max="3499">Current Liabilities (3000-3499)</option>
+                            <option value="liabilities" data-range-min="3500" data-range-max="3999">Non-Current Liabilities (3500-3999)</option>
+                            <option value="equity" data-range-min="4000" data-range-max="4999">Equity (4000+)</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold">Account Code <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="qaCode" placeholder="e.g. 1510">
+                        <small class="form-text text-muted" id="qaCodeHint"></small>
+                    </div>
+                    <div class="col-md-12">
+                        <label class="form-label fw-bold">Account Name <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="qaName" placeholder="e.g. Accountancy">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold">Tax Code</label>
+                        <select class="form-select" id="qaTaxCode">
+                            <option value="">— None —</option>
+                            <option value="GST">GST - Goods & Services Tax</option>
+                            <option value="ADS">ADS - Adjustments</option>
+                            <option value="ITS">ITS - Input Taxed Sales</option>
+                            <option value="FRE">FRE - GST Free</option>
+                            <option value="CAP">CAP - Capital Acquisitions</option>
+                            <option value="INP">INP - Input Taxed Purchases</option>
+                            <option value="GNR">GNR - GST Not Registered</option>
+                            <option value="N-T">N-T - Not Reportable</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold">Maps To (Statement Line)</label>
+                        <select class="form-select" id="qaMapsTo">
+                            <option value="">— Not mapped —</option>
+                        </select>
+                    </div>
+                    <div class="col-md-12">
+                        <label class="form-label fw-bold">Classification</label>
+                        <input type="text" class="form-control" id="qaClassification" placeholder="e.g. Other sales revenue (optional)">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="qaSubmit">
+                    <i class="bi bi-plus-circle"></i> Create &amp; Assign
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Entity Account Search Dropdown (reusable, positioned dynamically) -->
+<div class="search-dropdown" id="entitySearchDropdown">
+    <input type="text" class="form-control form-control-sm search-input" id="entitySearchInput" placeholder="Search by code or name...">
+    <div class="results-list" id="entitySearchResults">
+        <div class="text-center text-muted py-3"><small>Type to search entity accounts...</small></div>
+    </div>
+    <div class="create-new-btn text-primary fw-bold" id="entityCreateNew">
+        <i class="bi bi-plus-circle"></i> Create New Account
+    </div>
+</div>
