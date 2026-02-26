@@ -184,7 +184,13 @@ def run_risk_engine(financial_year, tiers=None):
 def _load_trial_balance(financial_year):
     """Load and structure trial balance data for analysis.
 
-    IMPORTANT: For rolled-forward balance-sheet items and some Xero imports,
+    IMPORTANT: This function AGGREGATES multiple TrialBalanceLine records
+    per account code into a single virtual line.  This mirrors the view's
+    display logic and prevents false positives in the risk engine (e.g.
+    "new account, no comparatives" when the comparative data lives on a
+    separate rollover line for the same account code).
+
+    For rolled-forward balance-sheet items and some Xero imports,
     debit/credit may both be zero while closing_balance holds the real value.
     We compute effective_dr / effective_cr (mirroring the view's display_dr /
     display_cr logic) so that variance analysis and Tier 2 rules see the
@@ -192,10 +198,62 @@ def _load_trial_balance(financial_year):
     """
     from core.models import TrialBalanceLine
 
-    lines = TrialBalanceLine.objects.filter(
+    raw_lines = TrialBalanceLine.objects.filter(
         financial_year=financial_year
     ).select_related("mapped_line_item")
 
+    # ---- Step 1: Aggregate raw lines by account_code ----
+    # Group all lines by account_code, summing current and prior balances.
+    code_groups = {}  # account_code -> list of lines
+    for line in raw_lines:
+        code_groups.setdefault(line.account_code, []).append(line)
+
+    aggregated_lines = []
+    for code, group in code_groups.items():
+        # Sum raw current-year values
+        total_debit = sum(l.debit or ZERO for l in group)
+        total_credit = sum(l.credit or ZERO for l in group)
+        total_closing = sum(l.closing_balance or ZERO for l in group)
+        total_prior_dr = sum(l.prior_debit or ZERO for l in group)
+        total_prior_cr = sum(l.prior_credit or ZERO for l in group)
+
+        # Use the first line with a mapped_line_item as the representative
+        representative = group[0]
+        for l in group:
+            if l.mapped_line_item:
+                representative = l
+                break
+
+        # Build a virtual aggregated line (reuse the representative object)
+        agg = representative
+        agg.account_code = code
+        agg.account_name = representative.account_name
+
+        # Compute effective debit/credit from aggregated values
+        if total_debit == 0 and total_credit == 0 and total_closing != 0:
+            if total_closing > 0:
+                agg.effective_dr = total_closing
+                agg.effective_cr = ZERO
+            else:
+                agg.effective_dr = ZERO
+                agg.effective_cr = abs(total_closing)
+        else:
+            # Net the debits and credits (adjustments reduce originals)
+            net = total_debit - total_credit
+            if net >= 0:
+                agg.effective_dr = net
+                agg.effective_cr = ZERO
+            else:
+                agg.effective_dr = ZERO
+                agg.effective_cr = abs(net)
+
+        # Set aggregated prior values on the line object
+        agg.prior_debit = total_prior_dr
+        agg.prior_credit = total_prior_cr
+
+        aggregated_lines.append(agg)
+
+    # ---- Step 2: Build the data structure from aggregated lines ----
     data = {
         "lines": [],
         "by_code": {},
@@ -218,22 +276,7 @@ def _load_trial_balance(financial_year):
         },
     }
 
-    for line in lines:
-        # Compute effective debit/credit — same logic as the view's
-        # display_dr / display_cr calculation.  When debit and credit are
-        # both zero but closing_balance is non-zero (rolled-forward BS
-        # items, Xero imports), use closing_balance instead.
-        if line.debit == 0 and line.credit == 0 and line.closing_balance != 0:
-            if line.closing_balance > 0:
-                line.effective_dr = line.closing_balance
-                line.effective_cr = ZERO
-            else:
-                line.effective_dr = ZERO
-                line.effective_cr = abs(line.closing_balance)
-        else:
-            line.effective_dr = line.debit
-            line.effective_cr = line.credit
-
+    for line in aggregated_lines:
         data["lines"].append(line)
         data["by_code"][line.account_code] = line
 
