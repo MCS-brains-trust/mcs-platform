@@ -19,6 +19,16 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
+        # Add gst_registration_date to Entity
+        migrations.AddField(
+            model_name="entity",
+            name="gst_registration_date",
+            field=models.DateField(
+                blank=True,
+                null=True,
+                help_text="Date GST registration commenced. Transactions before this date are auto-set to Out of Scope.",
+            ),
+        ),
         # Update FinancialYear.status choices (just altering the field)
         migrations.AlterField(
             model_name="financialyear",

@@ -114,10 +114,5 @@ class Migration(migrations.Migration):
             name="split_line_number",
             field=models.PositiveIntegerField(blank=True, help_text="Line number within a split (1, 2, 3...)", null=True),
         ),
-        # --- Entity.gst_registration_date ---
-        migrations.AddField(
-            model_name="entity",
-            name="gst_registration_date",
-            field=models.DateField(blank=True, help_text="Date GST registration commenced. Transactions before this date are auto-set to Out of Scope.", null=True),
-        ),
+
     ]
