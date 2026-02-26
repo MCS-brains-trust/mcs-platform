@@ -6308,6 +6308,9 @@ def entity_import_handiledger(request, pk):
                         f"{result['total_tb_lines']} TB lines, "
                         f"{result['total_dep_assets']} depreciation assets."
                     )
+                if result.get("warnings"):
+                    for w in result["warnings"]:
+                        messages.info(request, w)
                 _log_action(
                     request, "import",
                     f"Imported HandiLedger ZIP for {entity.entity_name}: "

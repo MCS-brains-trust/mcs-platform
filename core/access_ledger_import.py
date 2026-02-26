@@ -1172,16 +1172,20 @@ def import_access_ledger_zip(zip_file, client=None, entity=None, replace_existin
             result["warnings"].append(f"Invalid dates for year {year}, skipping.")
             continue
 
-        # Check if this year's data is finalised (columns 4,5,6 = "Y")
-        # Skip unfinalised years (like 2026 which has empty flags)
+        # Check if this year's data is finalised in HandiLedger
+        # (columns 4,5,6 = "Y" indicate finalised).
+        # Unfinalised years are imported as "draft" so that partially-
+        # completed clients being transferred from HandiLedger can be
+        # continued in StatementHub.
         is_finalised = (
             len(year_row) > 4 and _safe_str(year_row[4]) == "Y"
         )
+        fy_status = "finalised" if is_finalised else "draft"
         if not is_finalised:
             result["warnings"].append(
-                f"Year {year} appears unfinalised, skipping."
+                f"Year {year} is unfinalised in HandiLedger — "
+                f"importing as Draft."
             )
-            continue
 
         # Create FinancialYear
         fy, fy_created = FinancialYear.objects.get_or_create(
@@ -1191,7 +1195,7 @@ def import_access_ledger_zip(zip_file, client=None, entity=None, replace_existin
                 "start_date": start_date,
                 "end_date": end_date,
                 "prior_year": prior_fy,
-                "status": "finalised",
+                "status": fy_status,
             },
         )
 
