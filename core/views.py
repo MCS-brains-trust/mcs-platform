@@ -25,6 +25,40 @@ from .forms import (
     MeetingNoteForm,
 )
 from config.authorization import get_entity_for_user, get_financial_year_for_user
+import re as _re_mod
+
+
+def _resolve_account_name(entity, account_code, raw_name):
+    """Resolve a human-readable account name, falling back through multiple sources.
+
+    When a trial balance is imported from certain accounting packages, the
+    account-name column is sometimes blank or contains a copy of the account
+    code.  This helper detects that situation and attempts to find the real
+    name from:
+      1. EntityChartOfAccount (entity-specific)
+      2. ChartOfAccount (master template for the entity type)
+    If no match is found the original raw_name is returned unchanged.
+    """
+    # If the raw name is non-empty and clearly different from the code, keep it
+    if raw_name and raw_name.strip() != account_code.strip():
+        return raw_name
+
+    # Attempt 1: entity-level chart of accounts
+    ecoa = EntityChartOfAccount.objects.filter(
+        entity=entity, account_code=account_code, is_active=True
+    ).first()
+    if ecoa and ecoa.account_name:
+        return ecoa.account_name
+
+    # Attempt 2: master chart of accounts template
+    coa = ChartOfAccount.objects.filter(
+        entity_type=entity.entity_type, account_code=account_code, is_active=True
+    ).first()
+    if coa and coa.account_name:
+        return coa.account_name
+
+    # No match found — return whatever we have (code as last resort)
+    return raw_name or account_code
 
 
 def _apply_journal_line_to_tb(fy, account_code, account_name, jnl_debit, jnl_credit, source='manual_journal'):
@@ -98,13 +132,18 @@ def _log_action(request, action, description, obj=None):
     )
 
 
-def _aggregate_tb_lines(ordered_sections):
+def _aggregate_tb_lines(ordered_sections, entity=None):
     """
     Aggregate multiple TrialBalanceLine records per account_code within each
     section.  When journal entries create adjustment rows (is_adjustment=True),
     the raw queryset contains multiple rows for the same account.  This helper
     nets them into a single row per account_code, matching the behaviour of
     the on-screen Trial Balance tab.
+
+    When *entity* is provided, account names that look like bare codes
+    (e.g. "1706" stored as the name for account 1706) are resolved via
+    _resolve_account_name() which checks EntityChartOfAccount and the
+    master ChartOfAccount template.
 
     Returns a new OrderedDict of {section_name: [aggregated lines]}.
     Each aggregated line has: account_code, account_name, display_dr,
@@ -138,6 +177,9 @@ def _aggregate_tb_lines(ordered_sections):
                 agg_prior_cr += l.prior_credit if l.prior_credit else Decimal('0')
 
             if len(group) == 1:
+                # Resolve name for single-line accounts too
+                if entity:
+                    first.account_name = _resolve_account_name(entity, first.account_code, first.account_name)
                 first._agg_dr = raw_dr
                 first._agg_cr = raw_cr
                 first._agg_prior_dr = agg_prior_dr
@@ -159,7 +201,10 @@ def _aggregate_tb_lines(ordered_sections):
                 unique_names = list(dict.fromkeys(
                     l.account_name for l in group if l.account_name
                 ))
-                agg.account_name = unique_names[0] if unique_names else code
+                resolved_name = unique_names[0] if unique_names else code
+                if entity:
+                    resolved_name = _resolve_account_name(entity, code, resolved_name)
+                agg.account_name = resolved_name
                 agg._agg_dr = agg_dr
                 agg._agg_cr = agg_cr
                 agg._agg_prior_dr = agg_prior_dr
@@ -532,6 +577,7 @@ def financial_year_detail(request, pk):
         for code, group in code_groups.items():
             if len(group) == 1:
                 # Single entry — no aggregation needed
+                group[0].account_name = _resolve_account_name(fy.entity, group[0].account_code, group[0].account_name)
                 group[0].sub_entries = []
                 group[0].is_aggregated = False
                 agg_lines.append(group[0])
@@ -564,9 +610,10 @@ def financial_year_detail(request, pk):
                 # a generic label showing the count
                 unique_names = list(dict.fromkeys(l.account_name for l in group if l.account_name))
                 if len(unique_names) == 1:
-                    agg.account_name = unique_names[0]
+                    agg.account_name = _resolve_account_name(fy.entity, code, unique_names[0])
                 else:
-                    agg.account_name = unique_names[0] if unique_names else code
+                    resolved_name = unique_names[0] if unique_names else code
+                    agg.account_name = _resolve_account_name(fy.entity, code, resolved_name)
                 agg.display_dr = agg_dr
                 agg.display_cr = agg_cr
                 agg.prior_debit = agg_prior_dr
@@ -1540,8 +1587,7 @@ def _process_trial_balance_upload(fy, file):
 
         try:
             account_code = col0
-            account_name = col1
-
+            account_name = _resolve_account_name(entity, col0, col1)
             if is_comparative:
                 # Columns: [code, name, CY_dr, CY_cr, PY_dr, PY_cr]
                 opening_balance = Decimal("0")
@@ -1753,8 +1799,7 @@ def _parse_tb_excel(fy, file):
 
             try:
                 account_code = col0
-                account_name = col1
-
+                account_name = _resolve_account_name(fy.entity, col0, col1)
                 cy_dr = float(row[2]) if len(row) > 2 and row[2] is not None else 0.0
                 cy_cr = float(row[3]) if len(row) > 3 and row[3] is not None else 0.0
                 py_dr = float(row[4]) if len(row) > 4 and row[4] is not None else 0.0
@@ -1779,7 +1824,8 @@ def _parse_tb_excel(fy, file):
                 continue
             try:
                 account_code = str(row[0]).strip()
-                account_name = str(row[1]).strip() if len(row) > 1 and row[1] else ""
+                raw_name = str(row[1]).strip() if len(row) > 1 and row[1] else ""
+                account_name = _resolve_account_name(fy.entity, account_code, raw_name)
                 if len(row) >= 5 and row[4] is not None:
                     opening_balance = str(row[2] or 0)
                     debit = str(row[3] or 0)
@@ -2175,6 +2221,7 @@ def trial_balance_view(request, pk):
         agg_lines = []
         for code, group in code_groups.items():
             if len(group) == 1:
+                group[0].account_name = _resolve_account_name(fy.entity, group[0].account_code, group[0].account_name)
                 group[0].sub_entries = []
                 group[0].is_aggregated = False
                 agg_lines.append(group[0])
@@ -2198,7 +2245,8 @@ def trial_balance_view(request, pk):
                 agg = AggregatedLine()
                 agg.account_code = code
                 unique_names = list(dict.fromkeys(l.account_name for l in group if l.account_name))
-                agg.account_name = unique_names[0] if unique_names else code
+                resolved_name = unique_names[0] if unique_names else code
+                agg.account_name = _resolve_account_name(fy.entity, code, resolved_name)
                 agg.display_dr = agg_dr
                 agg.display_cr = agg_cr
                 agg.prior_debit = agg_prior_dr
@@ -3459,8 +3507,7 @@ def trial_balance_pdf(request, pk):
     pl_prior_cr = Decimal('0')
 
     # Aggregate lines by account_code to net adjustments (journal entries)
-    aggregated_sections = _aggregate_tb_lines(ordered_sections)
-
+    aggregated_sections = _aggregate_tb_lines(ordered_sections, entity=entity)
     # Build section tables
     for section_name, lines in aggregated_sections.items():
         is_pl_section = section_name in PL_SECTIONS
@@ -6428,8 +6475,7 @@ def trial_balance_download(request, pk):
             ordered[key] = sections[key]
 
     # Aggregate lines by account_code to net adjustments (journal entries)
-    aggregated = _aggregate_tb_lines(ordered)
-
+    aggregated = _aggregate_tb_lines(ordered, entity=entity)
     # Recompute grand totals from aggregated lines
     grand_dr = Decimal('0')
     grand_cr = Decimal('0')
@@ -7858,10 +7904,7 @@ def _parse_and_post_journal_to_tb(fy, file, user):
             continue
 
         # Look up the account name from the entity's chart of accounts
-        ecoa = EntityChartOfAccount.objects.filter(
-            entity=fy.entity, account_code=account_code
-        ).first()
-        account_name = ecoa.account_name if ecoa else account_code
+        account_name = _resolve_account_name(fy.entity, account_code, account_code)
 
         # Look up the mapped line item for this account
         mapping = ClientAccountMapping.objects.filter(
