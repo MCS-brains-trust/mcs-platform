@@ -8456,8 +8456,9 @@ def _parse_journal_excel(fy, file):
         if debit == 0 and credit == 0:
             continue
 
-        # Resolve account name
-        account_name = _resolve_account_name(fy.entity, account_code, account_code)
+        # Resolve account name — use the description column as a fallback
+        # since it often contains the account name from the source system
+        account_name = _resolve_account_name(fy.entity, account_code, description)
 
         raw_lines.append({
             "account_code": account_code,
