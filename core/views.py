@@ -79,6 +79,79 @@ def _log_action(request, action, description, obj=None):
     )
 
 
+def _aggregate_tb_lines(ordered_sections):
+    """
+    Aggregate multiple TrialBalanceLine records per account_code within each
+    section.  When journal entries create adjustment rows (is_adjustment=True),
+    the raw queryset contains multiple rows for the same account.  This helper
+    nets them into a single row per account_code, matching the behaviour of
+    the on-screen Trial Balance tab.
+
+    Returns a new OrderedDict of {section_name: [aggregated lines]}.
+    Each aggregated line has: account_code, account_name, display_dr,
+    display_cr, prior_debit, prior_credit.
+    """
+    from collections import OrderedDict
+
+    aggregated = OrderedDict()
+    for section_name, lines_list in ordered_sections.items():
+        code_groups = OrderedDict()
+        for line in lines_list:
+            code_groups.setdefault(line.account_code, []).append(line)
+
+        agg_lines = []
+        for code, group in code_groups.items():
+            raw_dr = Decimal('0')
+            raw_cr = Decimal('0')
+            agg_prior_dr = Decimal('0')
+            agg_prior_cr = Decimal('0')
+            first = group[0]
+            for l in group:
+                cb = l.closing_balance if l.closing_balance else Decimal('0')
+                if cb > 0:
+                    raw_dr += cb
+                elif cb < 0:
+                    raw_cr += abs(cb)
+                else:
+                    raw_dr += l.debit if l.debit else Decimal('0')
+                    raw_cr += l.credit if l.credit else Decimal('0')
+                agg_prior_dr += l.prior_debit if l.prior_debit else Decimal('0')
+                agg_prior_cr += l.prior_credit if l.prior_credit else Decimal('0')
+
+            if len(group) == 1:
+                first._agg_dr = raw_dr
+                first._agg_cr = raw_cr
+                first._agg_prior_dr = agg_prior_dr
+                first._agg_prior_cr = agg_prior_cr
+                agg_lines.append(first)
+            else:
+                net = raw_dr - raw_cr
+                if net >= 0:
+                    agg_dr = net
+                    agg_cr = Decimal('0')
+                else:
+                    agg_dr = Decimal('0')
+                    agg_cr = abs(net)
+
+                class _AggLine:
+                    pass
+                agg = _AggLine()
+                agg.account_code = code
+                unique_names = list(dict.fromkeys(
+                    l.account_name for l in group if l.account_name
+                ))
+                agg.account_name = unique_names[0] if unique_names else code
+                agg._agg_dr = agg_dr
+                agg._agg_cr = agg_cr
+                agg._agg_prior_dr = agg_prior_dr
+                agg._agg_prior_cr = agg_prior_cr
+                agg.mapped_line_item = first.mapped_line_item
+                agg_lines.append(agg)
+
+        aggregated[section_name] = agg_lines
+    return aggregated
+
+
 # ---------------------------------------------------------------------------
 # Dashboard
 # ---------------------------------------------------------------------------
@@ -3361,29 +3434,20 @@ def trial_balance_pdf(request, pk):
     pl_prior_dr = Decimal('0')
     pl_prior_cr = Decimal('0')
 
+    # Aggregate lines by account_code to net adjustments (journal entries)
+    aggregated_sections = _aggregate_tb_lines(ordered_sections)
+
     # Build section tables
-    for section_name, lines in ordered_sections.items():
+    for section_name, lines in aggregated_sections.items():
         is_pl_section = section_name in PL_SECTIONS
         elements.append(Paragraph(f"<b>{section_name}</b>", s_section))
 
         data = []
         for line in lines:
-            # Current year: use closing_balance split into Dr/Cr
-            # This correctly shows opening balances for rolled-forward years
-            # and full balances (opening + movements) for active years
-            cb = line.closing_balance if line.closing_balance else Decimal('0')
-            if cb > 0:
-                dr = cb
-                cr = Decimal('0')
-            elif cb < 0:
-                dr = Decimal('0')
-                cr = abs(cb)
-            else:
-                dr = line.debit if line.debit else Decimal('0')
-                cr = line.credit if line.credit else Decimal('0')
-
-            prior_dr = line.prior_debit if line.prior_debit else Decimal('0')
-            prior_cr = line.prior_credit if line.prior_credit else Decimal('0')
+            dr = line._agg_dr
+            cr = line._agg_cr
+            prior_dr = line._agg_prior_dr
+            prior_cr = line._agg_prior_cr
 
             grand_total_dr += dr
             grand_total_cr += cr
@@ -6339,6 +6403,21 @@ def trial_balance_download(request, pk):
         if key not in ordered:
             ordered[key] = sections[key]
 
+    # Aggregate lines by account_code to net adjustments (journal entries)
+    aggregated = _aggregate_tb_lines(ordered)
+
+    # Recompute grand totals from aggregated lines
+    grand_dr = Decimal('0')
+    grand_cr = Decimal('0')
+    grand_prior_dr = Decimal('0')
+    grand_prior_cr = Decimal('0')
+    for _sec_name, _sec_lines in aggregated.items():
+        for _line in _sec_lines:
+            grand_dr += _line._agg_dr
+            grand_cr += _line._agg_cr
+            grand_prior_dr += _line._agg_prior_dr
+            grand_prior_cr += _line._agg_prior_cr
+
     # Year labels
     current_year = str(fy.year_label)
     year_digits = ''.join(c for c in fy.year_label if c.isdigit())
@@ -6363,12 +6442,12 @@ def trial_balance_download(request, pk):
 
     if fmt == "docx":
         return _tb_download_word(
-            fy, entity, ordered, current_year, prior_year,
+            fy, entity, aggregated, current_year, prior_year,
             abn_display, grand_dr, grand_cr, grand_prior_dr, grand_prior_cr, safe_name
         )
     elif fmt == "xlsx":
         return _tb_download_excel(
-            fy, entity, ordered, current_year, prior_year,
+            fy, entity, aggregated, current_year, prior_year,
             abn_display, grand_dr, grand_cr, grand_prior_dr, grand_prior_cr, safe_name
         )
     else:
@@ -6482,19 +6561,11 @@ def _tb_download_word(fy, entity, sections, current_year, prior_year,
         table.autofit = True
 
         for i, line in enumerate(lines):
-            # Current year: use closing_balance split into Dr/Cr
-            cb = line.closing_balance or Decimal('0')
-            if cb > 0:
-                dr = cb
-                cr = Decimal('0')
-            elif cb < 0:
-                dr = Decimal('0')
-                cr = abs(cb)
-            else:
-                dr = line.debit or Decimal('0')
-                cr = line.credit or Decimal('0')
-            prior_dr = line.prior_debit or Decimal('0')
-            prior_cr = line.prior_credit or Decimal('0')
+            # Use pre-aggregated values from _aggregate_tb_lines
+            dr = line._agg_dr
+            cr = line._agg_cr
+            prior_dr = line._agg_prior_dr
+            prior_cr = line._agg_prior_cr
 
             cells = table.rows[i].cells
             cells[0].text = line.account_code
@@ -6661,27 +6732,19 @@ def _tb_download_excel(fy, entity, sections, current_year, prior_year,
         row += 1
 
         for line in lines:
-            # Current year: use closing_balance split into Dr/Cr
-            cb = line.closing_balance or Decimal('0')
-            if cb > 0:
-                dr = float(cb)
-                cr = None
-            elif cb < 0:
-                dr = None
-                cr = float(abs(cb))
-            else:
-                dr_val = line.debit or Decimal('0')
-                cr_val = line.credit or Decimal('0')
-                dr = float(dr_val) if dr_val != 0 else None
-                cr = float(cr_val) if cr_val != 0 else None
+            # Use pre-aggregated values from _aggregate_tb_lines
+            dr_val = line._agg_dr
+            cr_val = line._agg_cr
+            dr = float(dr_val) if dr_val != 0 else None
+            cr = float(cr_val) if cr_val != 0 else None
 
-            prior_dr_val = line.prior_debit or Decimal('0')
-            prior_cr_val = line.prior_credit or Decimal('0')
+            prior_dr_val = line._agg_prior_dr
+            prior_cr_val = line._agg_prior_cr
             prior_dr = float(prior_dr_val) if prior_dr_val != 0 else None
             prior_cr = float(prior_cr_val) if prior_cr_val != 0 else None
 
             # Variance calculation
-            current_net = float(cb) if cb else 0
+            current_net = float(dr_val - cr_val)
             prior_net = float(prior_dr_val - prior_cr_val)
             variance = current_net - prior_net
             if prior_net != 0:
@@ -6752,16 +6815,10 @@ def _tb_download_excel(fy, entity, sections, current_year, prior_year,
     for section_name, lines in sections.items():
         if section_name in pl_section_names:
             for line in lines:
-                cb = line.closing_balance or Decimal('0')
-                if cb > 0:
-                    pl_dr_total += cb
-                elif cb < 0:
-                    pl_cr_total += abs(cb)
-                else:
-                    pl_dr_total += line.debit or Decimal('0')
-                    pl_cr_total += line.credit or Decimal('0')
-                pl_prior_dr_total += line.prior_debit or Decimal('0')
-                pl_prior_cr_total += line.prior_credit or Decimal('0')
+                pl_dr_total += line._agg_dr
+                pl_cr_total += line._agg_cr
+                pl_prior_dr_total += line._agg_prior_dr
+                pl_prior_cr_total += line._agg_prior_cr
     net_current = float(pl_cr_total - pl_dr_total)
     net_prior = float(pl_prior_cr_total - pl_prior_dr_total)
     profit_font = Font(name='Calibri', size=10, bold=True, color='198754')
