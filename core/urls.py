@@ -230,6 +230,12 @@ urlpatterns = [
     # ===== Live Net Profit API =====
     path("years/<uuid:pk>/api/net-profit/", views.net_profit_api, name="net_profit_api"),
 
+    # ===== Bulk Journal Uploads =====
+    path("bulk-journals/<uuid:pk>/", views.bulk_journal_detail, name="bulk_journal_detail"),
+    path("bulk-journals/<uuid:pk>/delete/", views.bulk_journal_delete, name="bulk_journal_delete"),
+    path("bulk-journals/<uuid:pk>/reallocate/", views.bulk_journal_reallocate, name="bulk_journal_reallocate"),
+    path("bulk-journals/line/<uuid:pk>/delete/", views.bulk_journal_line_delete, name="bulk_journal_line_delete"),
+
     # ===== DOCUMENT TEMPLATE MANAGER =====
     path("templates/", views_templates.template_list, name="template_list"),
     path("templates/create/", views_templates.template_create, name="template_create"),

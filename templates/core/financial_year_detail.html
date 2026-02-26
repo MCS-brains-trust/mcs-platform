@@ -317,7 +317,7 @@
     </li>
     <li class="nav-item">
         <button class="nav-link{% if active_tab == 'journals' %} active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-journals" type="button">
-            <i class="bi bi-journal-text"></i> Journals ({{ adjustments.count }})
+            <i class="bi bi-journal-text"></i> Journals ({{ adjustments.count|add:bulk_journal_uploads.count }})
         </button>
     </li>
     <li class="nav-item">
@@ -544,6 +544,32 @@
         </div>
         {% endif %}
 
+        <!-- Bulk Journal Uploads -->
+        {% for bulk in bulk_journal_uploads %}
+        <div class="d-flex justify-content-between align-items-center py-2 border-bottom">
+            <div>
+                <a href="{% url 'core:bulk_journal_detail' pk=bulk.pk %}" class="text-decoration-none fw-bold me-2">
+                    <i class="bi bi-journal-arrow-up text-info"></i> {{ bulk.reference_number }}
+                </a>
+                <span class="text-muted">{{ bulk.filename }}</span>
+                <span class="badge bg-info text-dark ms-2">{{ bulk.lines_count }} lines</span>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+                <span class="text-muted small">{{ bulk.created_at|date:"d M Y H:i" }}</span>
+                {% if not fy.is_locked %}
+                <form method="post" action="{% url 'core:bulk_journal_delete' pk=bulk.pk %}" class="d-inline"
+                      onsubmit="return confirm('Are you sure you want to delete {{ bulk.reference_number }}? This will remove all {{ bulk.lines_count }} journal lines from the trial balance. This action will be logged for audit purposes.');">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-sm btn-outline-danger" title="Delete bulk upload">
+                        <i class="bi bi-trash"></i> Delete
+                    </button>
+                </form>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+
+        <!-- Manual Journal Entries -->
         {% for adj in adjustments %}
         <div class="d-flex justify-content-between align-items-center py-2 {% if not forloop.last %}border-bottom{% endif %}">
             <div>
@@ -562,7 +588,9 @@
                 {% endif %}
             </div>
         </div>
-        {% empty %}
+        {% endfor %}
+
+        {% if not adjustments and not bulk_journal_uploads %}
         <div class="text-center py-4 text-muted">
             <i class="bi bi-journal-text" style="font-size: 2.5rem;"></i>
             <p class="mt-2">No journal entries yet.</p>
@@ -574,7 +602,7 @@
             <p class="small text-muted">Change the status to <strong>Draft</strong> to create journal entries.</p>
             {% endif %}
         </div>
-        {% endfor %}
+        {% endif %}
     </div>
 
     <!-- ===== AUDIT RISK TAB ===== -->

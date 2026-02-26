@@ -1,0 +1,195 @@
+{% extends "base.html" %}
+{% block title %}{{ bulk.reference_number }} - StatementHub{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy.year_label }}</a></li>
+        <li class="breadcrumb-item active">{{ bulk.reference_number }}</li>
+    </ol>
+</nav>
+
+<div class="row">
+    <div class="col-lg-9">
+        <!-- Bulk Journal Header -->
+        <div class="card mb-3">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <div>
+                    <h5 class="mb-0">
+                        <i class="bi bi-journal-arrow-up text-info"></i>
+                        {{ bulk.reference_number }}
+                        <span class="badge bg-info text-dark ms-2">Bulk Upload</span>
+                    </h5>
+                </div>
+                <div class="d-flex gap-2">
+                    {% if not fy.is_locked %}
+                    <form method="post" action="{% url 'core:bulk_journal_delete' pk=bulk.pk %}" class="d-inline"
+                          onsubmit="return confirm('Are you sure you want to delete {{ bulk.reference_number }}? This will remove all {{ bulk.lines_count }} journal lines from the trial balance. This action will be logged for audit purposes.');">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-outline-danger btn-sm">
+                            <i class="bi bi-trash"></i> Delete All
+                        </button>
+                    </form>
+                    {% endif %}
+                    <a href="{% url 'core:financial_year_detail' pk=fy.pk %}?tab=journals" class="btn btn-outline-secondary btn-sm">
+                        <i class="bi bi-arrow-left"></i> Back to Journals
+                    </a>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="row mb-3">
+                    <div class="col-md-4">
+                        <label class="form-label text-muted small mb-0">Source File</label>
+                        <div class="fw-semibold">{{ bulk.filename }}</div>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label text-muted small mb-0">Description</label>
+                        <div>{{ bulk.description }}</div>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label text-muted small mb-0">Lines</label>
+                        <div class="fw-semibold">{{ bulk.lines_count }}</div>
+                    </div>
+                </div>
+
+                <!-- Summary Row -->
+                <div class="row mb-3">
+                    <div class="col-md-4">
+                        <div class="card bg-light">
+                            <div class="card-body py-2 text-center">
+                                <div class="text-muted small">Total Debit</div>
+                                <div class="fw-bold text-success">${{ bulk.total_debit|floatformat:2 }}</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card bg-light">
+                            <div class="card-body py-2 text-center">
+                                <div class="text-muted small">Total Credit</div>
+                                <div class="fw-bold text-danger">${{ bulk.total_credit|floatformat:2 }}</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card bg-light">
+                            <div class="card-body py-2 text-center">
+                                <div class="text-muted small">Balance</div>
+                                <div class="fw-bold {% if bulk.is_balanced %}text-success{% else %}text-danger{% endif %}">
+                                    {% if bulk.is_balanced %}
+                                    <i class="bi bi-check-circle"></i> Balanced
+                                    {% else %}
+                                    <i class="bi bi-x-circle"></i> Out of Balance
+                                    {% endif %}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Journal Lines Table -->
+                <h6 class="mt-3 mb-2">Journal Lines</h6>
+                {% if not fy.is_locked %}
+                <form method="post" action="{% url 'core:bulk_journal_reallocate' pk=bulk.pk %}" id="reallocate-form">
+                    {% csrf_token %}
+                {% endif %}
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover" id="bulk-lines-table">
+                        <thead class="table-light">
+                            <tr>
+                                <th style="width: 40px;">#</th>
+                                <th style="width: 100px;">Account Code</th>
+                                <th>Account Name</th>
+                                <th class="text-end" style="width: 130px;">Debit</th>
+                                <th class="text-end" style="width: 130px;">Credit</th>
+                                <th style="width: 200px;">Mapped To</th>
+                                {% if not fy.is_locked %}
+                                <th style="width: 60px;" class="text-center">Action</th>
+                                {% endif %}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for line in lines %}
+                            <tr>
+                                <td class="text-muted">{{ forloop.counter }}</td>
+                                <td><code>{{ line.account_code }}</code></td>
+                                <td>{{ line.account_name }}</td>
+                                <td class="text-end">{% if line.debit %}<strong>{{ line.debit|floatformat:2 }}</strong>{% else %}&mdash;{% endif %}</td>
+                                <td class="text-end">{% if line.credit %}<strong>{{ line.credit|floatformat:2 }}</strong>{% else %}&mdash;{% endif %}</td>
+                                <td>
+                                    {% if line.mapped_line_item %}
+                                    <span class="badge bg-success">{{ line.mapped_line_item.standard_code }}</span>
+                                    <small>{{ line.mapped_line_item.line_item_label }}</small>
+                                    {% else %}
+                                    <span class="badge bg-warning text-dark">Unmapped</span>
+                                    {% endif %}
+                                </td>
+                                {% if not fy.is_locked %}
+                                <td class="text-center">
+                                    <form method="post" action="{% url 'core:bulk_journal_line_delete' pk=line.pk %}" class="d-inline"
+                                          onsubmit="return confirm('Delete this line? Account {{ line.account_code }} — Dr ${{ line.debit|floatformat:2 }} / Cr ${{ line.credit|floatformat:2 }}');">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-sm btn-outline-danger py-0 px-1" title="Delete this line">
+                                            <i class="bi bi-x-lg"></i>
+                                        </button>
+                                    </form>
+                                </td>
+                                {% endif %}
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="{% if not fy.is_locked %}7{% else %}6{% endif %}" class="text-center text-muted py-3">
+                                    No journal lines found. This bulk upload may have been partially deleted.
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                        <tfoot class="table-light fw-bold">
+                            <tr>
+                                <td colspan="3" class="text-end">Totals:</td>
+                                <td class="text-end">${{ bulk.total_debit|floatformat:2 }}</td>
+                                <td class="text-end">${{ bulk.total_credit|floatformat:2 }}</td>
+                                <td colspan="{% if not fy.is_locked %}2{% else %}1{% endif %}"></td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+                {% if not fy.is_locked %}
+                </form>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Audit Sidebar -->
+    <div class="col-lg-3">
+        <div class="card">
+            <div class="card-header">
+                <h6 class="mb-0"><i class="bi bi-clock-history"></i> Audit Trail</h6>
+            </div>
+            <div class="card-body p-0">
+                <ul class="list-group list-group-flush small">
+                    <li class="list-group-item">
+                        <div class="text-muted">Uploaded</div>
+                        <div>{{ bulk.uploaded_by.get_full_name|default:"System" }}</div>
+                        <div class="text-muted">{{ bulk.created_at|date:"d/m/Y H:i:s" }}</div>
+                    </li>
+                    <li class="list-group-item">
+                        <div class="text-muted">Source File</div>
+                        <div class="small">{{ bulk.filename }}</div>
+                    </li>
+                    <li class="list-group-item">
+                        <div class="text-muted">Lines Uploaded</div>
+                        <div>{{ bulk.lines_count }}</div>
+                    </li>
+                    <li class="list-group-item">
+                        <div class="text-muted">Lines Remaining</div>
+                        <div>{{ lines.count }}</div>
+                    </li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

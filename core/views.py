@@ -16,6 +16,7 @@ from .models import (
     JournalLine, GeneratedDocument, AuditLog, EntityOfficer,
     ClientAssociate, AccountingSoftware, MeetingNote,
     DepreciationAsset, RiskFlag, StockItem, ActivityLog, EntityChartOfAccount,
+    BulkJournalUpload,
 )
 from .forms import (
     ClientForm, EntityForm, FinancialYearForm,
@@ -75,7 +76,7 @@ def _resolve_account_name(entity, account_code, raw_name):
     return raw_name or account_code
 
 
-def _apply_journal_line_to_tb(fy, account_code, account_name, jnl_debit, jnl_credit, source='manual_journal'):
+def _apply_journal_line_to_tb(fy, account_code, account_name, jnl_debit, jnl_credit, source='manual_journal', bulk_upload=None):
     """
     Apply a journal line to the trial balance by creating a separate
     adjustment row.  The display aggregation logic nets these rows
@@ -120,6 +121,7 @@ def _apply_journal_line_to_tb(fy, account_code, account_name, jnl_debit, jnl_cre
         mapped_line_item=mapped_item,
         is_adjustment=True,
         source=source,
+        bulk_journal_upload=bulk_upload,
     )
 
 
@@ -765,6 +767,7 @@ def financial_year_detail(request, pk):
         "tb_lines": tb_lines,
         "tb_sections": aggregated_sections,
         "adjustments": adjustments,
+        "bulk_journal_uploads": fy.bulk_journal_uploads.all().order_by('-created_at'),
         "unmapped_count": unmapped_count,
         "documents": documents,
         "total_debit": total_debit,
@@ -8570,9 +8573,9 @@ def review_journal_upload(request, pk):
 @login_required
 @require_POST
 def commit_journal_upload(request, pk):
-    """Commit the reviewed journal upload. Creates adjustment TrialBalanceLine
-    records, updates ClientAccountMapping (learning system), and triggers
-    risk engine."""
+    """Commit the reviewed journal upload. Creates a BulkJournalUpload record,
+    creates adjustment TrialBalanceLine records linked to it, updates
+    ClientAccountMapping (learning system), and triggers risk engine."""
     fy = get_financial_year_for_user(request, pk)
     staged = request.session.get("staged_journal_upload")
 
@@ -8587,7 +8590,18 @@ def commit_journal_upload(request, pk):
     entity = fy.entity
     staged_lines = staged["lines"]
     lines_created = 0
+    total_debit = Decimal('0')
+    total_credit = Decimal('0')
     errors = []
+
+    # Create the BulkJournalUpload tracking record
+    bulk_upload = BulkJournalUpload(
+        financial_year=fy,
+        filename=staged.get('filename', 'Journal Upload'),
+        description=f"Bulk Journal Upload — {staged.get('filename', 'Excel')}",
+        uploaded_by=request.user,
+    )
+    bulk_upload.save()  # Triggers auto-reference generation (Bulk JNLS-001, etc.)
 
     for i, line in enumerate(staged_lines):
         mapping_id = request.POST.get(f"mapping_{i}", "").strip()
@@ -8618,10 +8632,11 @@ def commit_journal_upload(request, pk):
             account_name = line["account_name"]
             account_name = _resolve_account_name(entity, account_code, account_name)
 
-            # Apply to Trial Balance as adjustment line
+            # Apply to Trial Balance as adjustment line, linked to bulk upload
             _apply_journal_line_to_tb(
                 fy, account_code, account_name,
                 debit, credit, source='journal_upload',
+                bulk_upload=bulk_upload,
             )
 
             # Update the learning system
@@ -8635,22 +8650,30 @@ def commit_journal_upload(request, pk):
                     },
                 )
 
+            total_debit += debit
+            total_credit += credit
             lines_created += 1
         except Exception as e:
             errors.append(f"Line {i + 1} ({line.get('account_code', '?')}): {str(e)}")
+
+    # Update the bulk upload record with totals
+    bulk_upload.lines_count = lines_created
+    bulk_upload.total_debit = total_debit
+    bulk_upload.total_credit = total_credit
+    bulk_upload.save(update_fields=['lines_count', 'total_debit', 'total_credit'])
 
     # Clean up session
     request.session.pop("staged_journal_upload", None)
 
     # Log and trigger risk engine
-    _log_action(request, "journal_upload", f"Uploaded {lines_created} journal lines via wizard from {staged.get('filename', 'Excel')}", fy)
+    _log_action(request, "journal_upload", f"Uploaded {lines_created} journal lines via wizard from {staged.get('filename', 'Excel')} as {bulk_upload.reference_number}", fy)
     from core.signals import trigger_risk_recalc
     trigger_risk_recalc(fy, "journal_uploaded")
 
     messages.success(
         request,
         f"Successfully posted {lines_created} journal line{'s' if lines_created != 1 else ''} "
-        f"to the Trial Balance."
+        f"to the Trial Balance as {bulk_upload.reference_number}."
     )
     if errors:
         for err in errors[:5]:
@@ -8741,3 +8764,174 @@ def net_profit_api(request, pk):
         "total_credit": str(total_cr),
         "balanced": total_dr == total_cr,
     })
+
+
+# ---------------------------------------------------------------------------
+# Bulk Journal Upload Views
+# ---------------------------------------------------------------------------
+
+@login_required
+def bulk_journal_detail(request, pk):
+    """View a bulk journal upload with all its linked trial balance lines."""
+    bulk = get_object_or_404(
+        BulkJournalUpload.objects.select_related(
+            "financial_year", "financial_year__entity", "uploaded_by"
+        ),
+        pk=pk,
+    )
+    fy = bulk.financial_year
+    get_financial_year_for_user(request, fy.pk)  # IDOR check
+    entity = fy.entity
+
+    lines = TrialBalanceLine.objects.filter(
+        bulk_journal_upload=bulk
+    ).select_related('mapped_line_item').order_by('account_code')
+
+    return render(request, "core/bulk_journal_detail.html", {
+        "bulk": bulk, "fy": fy, "entity": entity, "lines": lines,
+    })
+
+
+@login_required
+@require_POST
+def bulk_journal_delete(request, pk):
+    """Delete an entire bulk journal upload and all its linked TB adjustment lines."""
+    bulk = get_object_or_404(
+        BulkJournalUpload.objects.select_related("financial_year"),
+        pk=pk,
+    )
+    fy = bulk.financial_year
+    get_financial_year_for_user(request, fy.pk)  # IDOR check
+
+    if fy.is_locked:
+        messages.error(request, "Cannot delete journals in a finalised year.")
+        return redirect("core:bulk_journal_detail", pk=pk)
+
+    if not request.user.can_do_accounting:
+        messages.error(request, "You do not have permission to delete journals.")
+        return redirect("core:bulk_journal_detail", pk=pk)
+
+    ref = bulk.reference_number
+    lines_count = bulk.trial_balance_lines.count()
+
+    # Delete all linked TB adjustment lines
+    bulk.trial_balance_lines.all().delete()
+
+    # Delete the bulk upload record
+    bulk.delete()
+
+    _log_action(request, "journal_upload", f"Deleted bulk journal upload {ref} ({lines_count} lines removed)")
+
+    # Trigger risk engine recalculation
+    from core.signals import trigger_risk_recalc
+    trigger_risk_recalc(fy, "bulk_journal_deleted")
+
+    messages.success(request, f"Bulk journal upload {ref} and all {lines_count} lines have been deleted.")
+    return redirect(reverse("core:financial_year_detail", args=[fy.pk]) + "?tab=journals")
+
+
+@login_required
+@require_POST
+def bulk_journal_line_delete(request, pk):
+    """Delete a single line from a bulk journal upload."""
+    line = get_object_or_404(
+        TrialBalanceLine.objects.select_related(
+            "financial_year", "bulk_journal_upload"
+        ),
+        pk=pk,
+    )
+    fy = line.financial_year
+    get_financial_year_for_user(request, fy.pk)  # IDOR check
+
+    if fy.is_locked:
+        messages.error(request, "Cannot delete journal lines in a finalised year.")
+        if line.bulk_journal_upload:
+            return redirect("core:bulk_journal_detail", pk=line.bulk_journal_upload.pk)
+        return redirect("core:financial_year_detail", pk=fy.pk)
+
+    if not request.user.can_do_accounting:
+        messages.error(request, "You do not have permission to delete journal lines.")
+        if line.bulk_journal_upload:
+            return redirect("core:bulk_journal_detail", pk=line.bulk_journal_upload.pk)
+        return redirect("core:financial_year_detail", pk=fy.pk)
+
+    bulk = line.bulk_journal_upload
+    account_code = line.account_code
+    debit = line.debit
+    credit = line.credit
+
+    line.delete()
+
+    # Update the bulk upload totals
+    if bulk:
+        remaining = TrialBalanceLine.objects.filter(bulk_journal_upload=bulk)
+        bulk.lines_count = remaining.count()
+        bulk.total_debit = sum(l.debit for l in remaining) or Decimal('0')
+        bulk.total_credit = sum(l.credit for l in remaining) or Decimal('0')
+        bulk.save(update_fields=['lines_count', 'total_debit', 'total_credit'])
+
+        _log_action(
+            request, "journal_upload",
+            f"Deleted line {account_code} (Dr ${debit}, Cr ${credit}) from {bulk.reference_number}"
+        )
+
+        # If no lines remain, delete the bulk upload record too
+        if bulk.lines_count == 0:
+            ref = bulk.reference_number
+            bulk.delete()
+            messages.success(request, f"Last line removed. {ref} has been automatically deleted.")
+            return redirect(reverse("core:financial_year_detail", args=[fy.pk]) + "?tab=journals")
+
+        # Trigger risk engine recalculation
+        from core.signals import trigger_risk_recalc
+        trigger_risk_recalc(fy, "bulk_journal_line_deleted")
+
+        messages.success(request, f"Line {account_code} deleted from {bulk.reference_number}.")
+        return redirect("core:bulk_journal_detail", pk=bulk.pk)
+
+    messages.success(request, f"Journal line {account_code} deleted.")
+    return redirect(reverse("core:financial_year_detail", args=[fy.pk]) + "?tab=journals")
+
+
+@login_required
+@require_POST
+def bulk_journal_reallocate(request, pk):
+    """Re-allocate (re-map) lines within a bulk journal upload to different account mappings."""
+    bulk = get_object_or_404(
+        BulkJournalUpload.objects.select_related("financial_year"),
+        pk=pk,
+    )
+    fy = bulk.financial_year
+    get_financial_year_for_user(request, fy.pk)  # IDOR check
+
+    if fy.is_locked:
+        messages.error(request, "Cannot modify journals in a finalised year.")
+        return redirect("core:bulk_journal_detail", pk=pk)
+
+    lines = TrialBalanceLine.objects.filter(bulk_journal_upload=bulk)
+    updated = 0
+
+    for line in lines:
+        mapping_id = request.POST.get(f"mapping_{line.pk}", "").strip()
+        if mapping_id:
+            try:
+                new_mapping = AccountMapping.objects.get(pk=mapping_id)
+                if line.mapped_line_item != new_mapping:
+                    line.mapped_line_item = new_mapping
+                    line.save(update_fields=["mapped_line_item"])
+                    updated += 1
+            except AccountMapping.DoesNotExist:
+                pass
+
+    if updated:
+        _log_action(
+            request, "journal_upload",
+            f"Re-allocated {updated} lines in {bulk.reference_number}"
+        )
+        from core.signals import trigger_risk_recalc
+        trigger_risk_recalc(fy, "bulk_journal_reallocated")
+        messages.success(request, f"Re-allocated {updated} line{'s' if updated != 1 else ''} in {bulk.reference_number}.")
+    else:
+        messages.info(request, "No changes were made.")
+
+    return redirect("core:bulk_journal_detail", pk=pk)
