@@ -277,6 +277,8 @@ def _anz_date_to_iso(date_str, year):
 
 def parse_anz_statement(pdf_content):
     result = _empty_result()
+    result["opening_balance_dr"] = False
+    result["closing_balance_dr"] = False
     pages = _extract_all_text(pdf_content)
     all_lines = []
     year = str(date.today().year)
@@ -318,22 +320,24 @@ def parse_anz_statement(pdf_content):
                     result["account_name"] = name_m.group(1).strip()
 
             # Opening balance: "Opening balance +$130,858.83" or standalone "$29,981.77" after "Opening Balance:"
-            # DR suffix indicates overdraft (negative balance), e.g. "$77,165.93DR"
+            # DR suffix indicates overdraft — negate for validation math, flag for display
             if result["opening_balance"] == 0:
                 ob_m = re.search(r"Opening\s+[Bb]alance\s*:?\s*[+\-]?\$?([\d,]+\.\d{2})\s*(DR|CR)?", line)
                 if ob_m:
                     val = _amt(ob_m.group(1))
                     if ob_m.group(2) == "DR":
+                        result["opening_balance_dr"] = True
                         val = -val
                     result["opening_balance"] = val
 
             # Closing balance: "Closing balance +$346,207.10" or standalone
-            # DR suffix indicates overdraft (negative balance)
+            # DR suffix indicates overdraft — negate for validation math, flag for display
             if result["closing_balance"] == 0:
                 cb_m = re.search(r"Closing\s+[Bb]alance\s*:?\s*[+\-]?\$?([\d,]+\.\d{2})\s*(DR|CR)?", line)
                 if cb_m:
                     val = _amt(cb_m.group(1))
                     if cb_m.group(2) == "DR":
+                        result["closing_balance_dr"] = True
                         val = -val
                     result["closing_balance"] = val
 
@@ -375,12 +379,13 @@ def parse_anz_statement(pdf_content):
             # Skip "OPENING BALANCE" line (it's metadata, not a transaction)
             if "OPENING BALANCE" in line:
                 # But first extract opening balance from it if we haven't yet
-                # DR suffix indicates overdraft (negative balance)
+                # DR suffix indicates overdraft — negate for validation math, flag for display
                 if result["opening_balance"] == 0:
                     ob_m = re.search(r"OPENING\s+BALANCE\s+([\d,]+\.\d{2})\s*(DR|CR)?", line)
                     if ob_m:
                         val = _amt(ob_m.group(1))
                         if ob_m.group(2) == "DR":
+                            result["opening_balance_dr"] = True
                             val = -val
                         result["opening_balance"] = val
                 continue
@@ -388,11 +393,12 @@ def parse_anz_statement(pdf_content):
             if "TOTALS AT END OF PERIOD" in line:
                 if result["closing_balance"] == 0:
                     # Format: "TOTALS AT END OF PERIOD $285,667.73 $178,520.03 $77,165.93DR"
-                    # DR suffix indicates overdraft (negative balance)
+                    # DR suffix indicates overdraft — negate for validation math, flag for display
                     cb_m = re.search(r"([\d,]+\.\d{2})(DR|CR)?\s*$", line)
                     if cb_m:
                         val = _amt(cb_m.group(1))
                         if cb_m.group(2) == "DR":
+                            result["closing_balance_dr"] = True
                             val = -val
                         result["closing_balance"] = val
                 continue

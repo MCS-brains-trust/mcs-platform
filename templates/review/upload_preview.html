@@ -236,6 +236,12 @@
         const txns = stmt.transactions || [];
         const openBal = parseFloat(stmt.opening_balance) || 0;
         const closeBal = parseFloat(stmt.closing_balance) || 0;
+        const openDR = stmt.opening_balance_dr || false;
+        const closeDR = stmt.closing_balance_dr || false;
+
+        // Display values: absolute amounts with DR suffix for overdraft accounts
+        const openDisplay = Math.abs(openBal).toFixed(2) + (openDR ? ' DR' : '');
+        const closeDisplay = Math.abs(closeBal).toFixed(2) + (closeDR ? ' DR' : '');
 
         // Calculate running totals
         let totalDebits = 0, totalCredits = 0;
@@ -249,6 +255,8 @@
         const expectedClose = openBal + totalCredits - totalDebits;
         const balanceDiff = Math.abs(expectedClose - closeBal);
         const balanceOk = balanceDiff < 0.02;
+        const expectedDR = expectedClose < -0.005;
+        const expectedDisplay = '$' + Math.abs(expectedClose).toFixed(2) + (expectedDR ? ' DR' : '');
 
         const bankLabel = stmt.bank || 'Unknown Bank';
         const accountLabel = stmt.account_name || '';
@@ -289,22 +297,24 @@
                         <dt class="d-inline">Opening Balance:</dt>
                         <dd class="d-inline ms-1">
                             <input type="number" step="0.01" class="form-control form-control-sm d-inline-block"
-                                   style="width: 140px;" value="${openBal.toFixed(2)}"
+                                   style="width: 140px;" value="${Math.abs(openBal).toFixed(2)}"
                                    onchange="updateOpeningBalance(${stmtIdx}, this.value)">
+                            ${openDR ? '<span class="badge bg-warning text-dark ms-1">DR</span>' : ''}
                         </dd>
                     </div>
                     <div class="col-auto">
                         <dt class="d-inline">Closing Balance (Statement):</dt>
                         <dd class="d-inline ms-1">
                             <input type="number" step="0.01" class="form-control form-control-sm d-inline-block"
-                                   style="width: 140px;" value="${closeBal.toFixed(2)}"
+                                   style="width: 140px;" value="${Math.abs(closeBal).toFixed(2)}"
                                    onchange="updateClosingBalance(${stmtIdx}, this.value)">
+                            ${closeDR ? '<span class="badge bg-warning text-dark ms-1">DR</span>' : ''}
                         </dd>
                     </div>
                     <div class="col-auto">
                         <dt class="d-inline">Calculated Closing:</dt>
                         <dd class="d-inline ms-1 ${balanceOk ? 'balance-ok' : 'balance-mismatch'}" id="calcClose-${stmtIdx}">
-                            $${expectedClose.toFixed(2)}
+                            ${expectedDisplay}
                             ${balanceOk
                                 ? '<i class="bi bi-check-circle-fill text-success ms-1"></i>'
                                 : '<i class="bi bi-exclamation-triangle-fill text-danger ms-1"></i> Diff: $' + balanceDiff.toFixed(2)
@@ -457,10 +467,12 @@
         const closeBal = parseFloat(stmt.closing_balance) || 0;
         const diff = Math.abs(running - closeBal);
         const ok = diff < 0.02;
+        const isDR = running < -0.005;
+        const displayVal = '$' + Math.abs(running).toFixed(2) + (isDR ? ' DR' : '');
         const calcEl = document.getElementById(`calcClose-${stmtIdx}`);
         if (calcEl) {
             calcEl.className = ok ? 'balance-ok d-inline' : 'balance-mismatch d-inline';
-            calcEl.innerHTML = `$${running.toFixed(2)} ${ok
+            calcEl.innerHTML = `${displayVal} ${ok
                 ? '<i class="bi bi-check-circle-fill text-success ms-1"></i>'
                 : '<i class="bi bi-exclamation-triangle-fill text-danger ms-1"></i> Diff: $' + diff.toFixed(2)
             }`;
@@ -555,8 +567,8 @@
                 account_name: stmt.account_name,
                 bsb: stmt.bsb,
                 account_number: stmt.account_number,
-                opening_balance: parseFloat(stmt.opening_balance) || 0,
-                closing_balance: parseFloat(stmt.closing_balance) || 0,
+                opening_balance: Math.abs(parseFloat(stmt.opening_balance) || 0),
+                closing_balance: Math.abs(parseFloat(stmt.closing_balance) || 0),
                 period_start: stmt.period_start || '',
                 period_end: stmt.period_end || '',
                 account_nickname: stmt.account_nickname || '',
