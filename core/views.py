@@ -76,7 +76,7 @@ def _resolve_account_name(entity, account_code, raw_name):
     return raw_name or account_code
 
 
-def _apply_journal_line_to_tb(fy, account_code, account_name, jnl_debit, jnl_credit, source='manual_journal', bulk_upload=None):
+def _apply_journal_line_to_tb(fy, account_code, account_name, jnl_debit, jnl_credit, source='manual_journal', bulk_upload=None, description=''):
     """
     Apply a journal line to the trial balance by creating a separate
     adjustment row.  The display aggregation logic nets these rows
@@ -121,6 +121,7 @@ def _apply_journal_line_to_tb(fy, account_code, account_name, jnl_debit, jnl_cre
         mapped_line_item=mapped_item,
         is_adjustment=True,
         source=source,
+        description=description,
         bulk_journal_upload=bulk_upload,
     )
 
@@ -3090,6 +3091,7 @@ def adjustment_create(request, pk):
                 _apply_journal_line_to_tb(
                     fy, line.account_code, line.account_name,
                     line.debit, line.credit, source='manual_journal',
+                    description=journal.description,
                 )
 
             journal.status = AdjustingJournal.JournalStatus.POSTED
@@ -3155,6 +3157,7 @@ def journal_post(request, pk):
         _apply_journal_line_to_tb(
             fy, line.account_code, line.account_name,
             line.debit, line.credit, source='manual_journal',
+            description=journal.description,
         )
 
     # Update journal status
@@ -5497,6 +5500,7 @@ def depreciation_post_to_tb(request, pk):
         _apply_journal_line_to_tb(
             fy, line.account_code, line.account_name,
             line.debit, line.credit, source='manual_journal',
+            description=journal.description,
         )
 
     # Mark as posted
@@ -8641,10 +8645,12 @@ def commit_journal_upload(request, pk):
                     pass
 
             # Apply to Trial Balance as adjustment line, linked to bulk upload
+            line_description = line.get('description', '')
             _apply_journal_line_to_tb(
                 fy, account_code, account_name,
                 debit, credit, source='journal_upload',
                 bulk_upload=bulk_upload,
+                description=line_description,
             )
 
             # Update the learning system

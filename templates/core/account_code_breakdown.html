@@ -59,7 +59,7 @@
                     <tr data-line-pk="{{ line.pk }}">
                         <td class="text-center text-muted">{{ forloop.counter }}</td>
                         <td>
-                            {{ line.account_name }}
+                            {% if line.description %}{{ line.description }}{% else %}{{ line.account_name }}{% endif %}
                         </td>
                         <td class="text-end">{% if line.display_dr and line.display_dr != 0 %}{{ line.display_dr|floatformat:2|intcomma }}{% endif %}</td>
                         <td class="text-end">{% if line.display_cr and line.display_cr != 0 %}{{ line.display_cr|floatformat:2|intcomma }}{% endif %}</td>

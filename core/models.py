@@ -800,6 +800,10 @@ class TrialBalanceLine(models.Model):
         max_length=20, choices=SOURCE_CHOICES, default='tb_import', blank=True,
         help_text="Where this line originated from",
     )
+    description = models.CharField(
+        max_length=500, blank=True, default='',
+        help_text="Journal description or narration (from bulk upload column B or manual journal)",
+    )
     bulk_journal_upload = models.ForeignKey(
         'BulkJournalUpload',
         on_delete=models.SET_NULL,
