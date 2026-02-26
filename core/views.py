@@ -2396,6 +2396,8 @@ def tb_line_reallocate(request, pk):
 
     new_account_code = request.POST.get('new_account_code', '').strip()
     if not new_account_code:
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return JsonResponse({'success': False, 'message': 'Please select an account to reallocate to.'}, status=400)
         messages.error(request, "Please select an account to reallocate to.")
         return redirect('core:account_code_breakdown', pk=fy.pk, account_code=line.account_code)
 
@@ -2410,6 +2412,8 @@ def tb_line_reallocate(request, pk):
     ).select_related('maps_to').first()
 
     if not coa_entry:
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return JsonResponse({'success': False, 'message': f'Account code {new_account_code} not found in chart of accounts.'}, status=400)
         messages.error(request, f"Account code {new_account_code} not found in chart of accounts.")
         return redirect('core:account_code_breakdown', pk=fy.pk, account_code=old_code)
 
@@ -2438,6 +2442,16 @@ def tb_line_reallocate(request, pk):
         request,
         f"Reallocated '{old_name}' from {old_code} to {coa_entry.account_code} — {coa_entry.account_name}."
     )
+
+    # Handle AJAX requests (live reallocation from account breakdown page)
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        remaining = fy.trial_balance_lines.filter(account_code=old_code).count()
+        return JsonResponse({
+            'success': True,
+            'message': f"Reallocated '{old_name}' from {old_code} to {coa_entry.account_code} — {coa_entry.account_name}.",
+            'remaining_count': remaining,
+            'redirect_url': reverse('core:financial_year_detail', kwargs={'pk': fy.pk}) if remaining == 0 else None,
+        })
 
     # Redirect back to the original account code breakdown (which may now have fewer lines)
     remaining = fy.trial_balance_lines.filter(account_code=old_code).count()
