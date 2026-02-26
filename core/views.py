@@ -141,6 +141,33 @@ def _reverse_journal_line_from_tb(fy, account_code, jnl_debit, jnl_credit):
         adj.delete()
 
 
+def _get_or_create_tb_line(financial_year=None, account_code=None, defaults=None, fy=None):
+    """
+    Safely get or create a TrialBalanceLine for bank-statement pushes.
+
+    Unlike Django's get_or_create, this handles the case where multiple
+    rows already exist for the same (financial_year, account_code) — which
+    is normal because journal adjustments create separate rows.  We pick
+    the *first non-adjustment* row, or the first row overall, to accumulate
+    bank-statement amounts into.
+    """
+    fy_resolved = financial_year or fy
+    qs = TrialBalanceLine.objects.filter(
+        financial_year=fy_resolved, account_code=account_code,
+    )
+    # Prefer the non-adjustment (original / bank_statement) row
+    tb_line = qs.filter(is_adjustment=False).first() or qs.first()
+    if tb_line:
+        return tb_line, False
+    # No row exists — create one
+    tb_line = TrialBalanceLine.objects.create(
+        financial_year=fy_resolved,
+        account_code=account_code,
+        **(defaults or {}),
+    )
+    return tb_line, True
+
+
 def _log_action(request, action, description, obj=None):
     """Create an audit log entry."""
     AuditLog.objects.create(
@@ -5741,7 +5768,7 @@ def review_push_to_tb(request, pk):
             continue
 
         # Check if TB line already exists for this code
-        tb_line, created = TrialBalanceLine.objects.get_or_create(
+        tb_line, created = _get_or_create_tb_line(
             financial_year=fy,
             account_code=code,
             defaults={
@@ -5842,7 +5869,7 @@ def review_approve_transaction(request, pk):
 
             # Push the net amount (ex-GST) to the expense/income account
             net_for_tb = txn.net_amount if has_gst else abs(amount)
-            tb_line, created = TrialBalanceLine.objects.get_or_create(
+            tb_line, created = _get_or_create_tb_line(
                 financial_year=target_fy,
                 account_code=code,
                 defaults={
@@ -5875,7 +5902,7 @@ def review_approve_transaction(request, pk):
                     # Income: GST Collected (liability) - code 9100
                     gst_code = '9100'
                     gst_name = 'GST Collected'
-                    gst_line, gst_created = TrialBalanceLine.objects.get_or_create(
+                    gst_line, gst_created = _get_or_create_tb_line(
                         financial_year=target_fy,
                         account_code=gst_code,
                         defaults={
@@ -5895,7 +5922,7 @@ def review_approve_transaction(request, pk):
                     # Expense: GST Paid (asset) - code 9110
                     gst_code = '9110'
                     gst_name = 'GST Paid'
-                    gst_line, gst_created = TrialBalanceLine.objects.get_or_create(
+                    gst_line, gst_created = _get_or_create_tb_line(
                         financial_year=target_fy,
                         account_code=gst_code,
                         defaults={
@@ -6101,7 +6128,7 @@ def review_approve_all(request, pk):
                 # Push the net amount (ex-GST) to the expense/income account
                 net_for_tb = txn.net_amount if has_gst else abs(amount)
 
-                tb_line, created = TrialBalanceLine.objects.get_or_create(
+                tb_line, created = _get_or_create_tb_line(
                     financial_year=fy,
                     account_code=code,
                     defaults={
@@ -6131,7 +6158,7 @@ def review_approve_all(request, pk):
                 if has_gst:
                     gst_amt = txn.confirmed_gst_amount
                     if amount > 0:
-                        gst_line, gst_created = TrialBalanceLine.objects.get_or_create(
+                        gst_line, gst_created = _get_or_create_tb_line(
                             financial_year=fy,
                             account_code='9100',
                             defaults={
@@ -6148,7 +6175,7 @@ def review_approve_all(request, pk):
                             gst_line.closing_balance -= gst_amt
                             gst_line.save()
                     else:
-                        gst_line, gst_created = TrialBalanceLine.objects.get_or_create(
+                        gst_line, gst_created = _get_or_create_tb_line(
                             financial_year=fy,
                             account_code='9110',
                             defaults={
@@ -7807,7 +7834,7 @@ def review_bulk_approve_group(request, pk):
             # Push the net amount (ex-GST) to the expense/income account
             net_for_tb = txn.net_amount if has_gst else abs(amount)
 
-            tb_line, created = TrialBalanceLine.objects.get_or_create(
+            tb_line, created = _get_or_create_tb_line(
                 financial_year=fy,
                 account_code=code,
                 defaults={
@@ -7838,7 +7865,7 @@ def review_bulk_approve_group(request, pk):
                 gst_amt = txn.confirmed_gst_amount
                 if amount > 0:
                     # Income: GST Collected (liability) - code 9100
-                    gst_line, gst_created = TrialBalanceLine.objects.get_or_create(
+                    gst_line, gst_created = _get_or_create_tb_line(
                         financial_year=fy,
                         account_code='9100',
                         defaults={
@@ -7856,7 +7883,7 @@ def review_bulk_approve_group(request, pk):
                         gst_line.save()
                 else:
                     # Expense: GST Paid (asset) - code 9110
-                    gst_line, gst_created = TrialBalanceLine.objects.get_or_create(
+                    gst_line, gst_created = _get_or_create_tb_line(
                         financial_year=fy,
                         account_code='9110',
                         defaults={
