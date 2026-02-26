@@ -32,11 +32,30 @@ def _apply_journal_line_to_tb(fy, account_code, account_name, jnl_debit, jnl_cre
     Apply a journal line to the trial balance by creating a separate
     adjustment row.  The display aggregation logic nets these rows
     against the original import row when rendering.
+
+    The mapped_line_item is resolved using a three-tier lookup:
+      1. Existing TrialBalanceLine for the same account_code in this FY
+         (ensures the adjustment lands in the same section as the original)
+      2. ClientAccountMapping (entity-level learned mapping)
+      3. None (unmapped fallback)
     """
-    mapping = ClientAccountMapping.objects.filter(
-        entity=fy.entity, client_account_code=account_code
-    ).first()
-    mapped_item = mapping.mapped_line_item if mapping else None
+    mapped_item = None
+
+    # Priority 1: inherit from existing TB line for this account_code
+    existing_tb = TrialBalanceLine.objects.filter(
+        financial_year=fy,
+        account_code=account_code,
+        mapped_line_item__isnull=False,
+    ).select_related('mapped_line_item').first()
+    if existing_tb:
+        mapped_item = existing_tb.mapped_line_item
+
+    # Priority 2: fall back to ClientAccountMapping
+    if not mapped_item:
+        mapping = ClientAccountMapping.objects.filter(
+            entity=fy.entity, client_account_code=account_code
+        ).first()
+        mapped_item = mapping.mapped_line_item if mapping else None
 
     TrialBalanceLine.objects.create(
         financial_year=fy,
