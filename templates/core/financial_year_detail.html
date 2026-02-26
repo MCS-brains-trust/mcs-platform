@@ -313,6 +313,9 @@
     <li class="nav-item">
         <button class="nav-link{% if active_tab != 'journals' %} active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-tb" type="button">
             <i class="bi bi-table"></i> Trial Balance ({{ tb_lines.count }})
+            {% if flagged_account_count > 0 %}
+            <span class="badge bg-danger" data-tb-risk-badge title="{{ flagged_account_count }} account{{ flagged_account_count|pluralize }} flagged">{{ flagged_account_count }} <i class="bi bi-flag-fill"></i></span>
+            {% endif %}
         </button>
     </li>
     <li class="nav-item">
@@ -608,14 +611,24 @@
     <!-- ===== AUDIT RISK TAB ===== -->
     <div class="tab-pane fade p-3" id="tab-audit">
         <div class="d-flex justify-content-between align-items-center mb-3">
-            <h6 class="mb-0">
-                <i class="bi bi-shield-exclamation"></i> Audit Risk Flags
+            <div>
+                <h6 class="mb-0">
+                    <i class="bi bi-shield-exclamation"></i> Audit Risk Flags
+                    {% if open_risk_count > 0 %}
+                    <span class="badge bg-danger ms-1">{{ open_risk_count }} Open</span>
+                    {% else %}
+                    <span class="badge bg-success ms-1">No Issues</span>
+                    {% endif %}
+                </h6>
                 {% if open_risk_count > 0 %}
-                <span class="badge bg-danger ms-1">{{ open_risk_count }} Open</span>
-                {% else %}
-                <span class="badge bg-success ms-1">No Issues</span>
+                <small class="text-muted">
+                    {{ open_risk_count }} open flag{{ open_risk_count|pluralize }} across {{ flagged_account_count }} account{{ flagged_account_count|pluralize }}
+                    {% if entity_level_flag_count > 0 %}
+                    and {{ entity_level_flag_count }} entity-level check{{ entity_level_flag_count|pluralize }}
+                    {% endif %}
+                </small>
                 {% endif %}
-            </h6>
+            </div>
             <div class="d-flex gap-2">
                 {% if not fy.is_locked %}
                 <form method="post" action="{% url 'core:run_risk_engine' pk=fy.pk %}">

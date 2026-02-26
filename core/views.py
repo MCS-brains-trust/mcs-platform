@@ -706,6 +706,16 @@ def financial_year_detail(request, pk):
                     'description': flag.description[:120],
                 })
 
+    # Compute flagged account count (distinct account codes with open/reviewed flags)
+    flagged_account_count = len(flagged_accounts)
+
+    # Count entity-level flags (flags with no affected_accounts)
+    open_flags_qs = risk_flags.filter(status__in=['open', 'reviewed'])
+    entity_level_flag_count = sum(
+        1 for f in open_flags_qs
+        if not f.affected_accounts or len(f.affected_accounts) == 0
+    )
+
     # Annotate TB lines with risk flag info
     for line in tb_lines:
         line.risk_flags_list = flagged_accounts.get(line.account_code, [])
@@ -784,6 +794,8 @@ def financial_year_detail(request, pk):
         # Audit Risk
         "risk_flags": risk_flags,
         "open_risk_count": open_risk_count,
+        "flagged_account_count": flagged_account_count,
+        "entity_level_flag_count": entity_level_flag_count,
         "flagged_accounts": flagged_accounts,
         # Depreciation
         "depreciation_assets": depreciation_assets,
