@@ -474,13 +474,26 @@ document.addEventListener('DOMContentLoaded', function() {
             e.preventDefault();
             if (debitEl) { debitEl.focus(); debitEl.select(); }
         } else if (el.name.endsWith('-credit') && !e.shiftKey) {
-            // Tab from Credit -> only allow moving to next row if this row has a figure
+            // Tab from Credit
             if (!hasValue) {
                 // No figure entered — trap back to Debit
                 e.preventDefault();
                 if (debitEl) { debitEl.focus(); debitEl.select(); }
+            } else {
+                // Check if this is the last visible (non-deleted) row
+                var allRows = Array.from(document.querySelectorAll('.journal-line-row'));
+                var visibleRows = allRows.filter(function(r) {
+                    var del = r.querySelector('[name$="-DELETE"]');
+                    return !del || !del.checked;
+                });
+                var isLastRow = visibleRows.length > 0 && visibleRows[visibleRows.length - 1] === row;
+                if (isLastRow) {
+                    // Auto-add a new line and focus its account picker
+                    e.preventDefault();
+                    document.getElementById('add-line-btn').click();
+                }
+                // else: allow default tab to next row
             }
-            // else: allow default tab to next row
         }
     });
 
