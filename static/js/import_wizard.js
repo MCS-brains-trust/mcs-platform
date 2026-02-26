@@ -577,7 +577,20 @@ var ImportWizard = (function() {
             if (unmappedCount > 0) {
                 if (!confirm(unmappedCount + ' line(s) have no entity account assigned. They will be imported with the source code/name only. Continue?')) {
                     e.preventDefault();
+                    return;
                 }
+            }
+
+            // Show loading overlay
+            var overlay = document.getElementById('loadingOverlay');
+            if (overlay) {
+                overlay.style.display = 'flex';
+            }
+            // Disable the submit button to prevent double-clicks
+            var commitBtn = document.getElementById('commitBtn');
+            if (commitBtn) {
+                commitBtn.disabled = true;
+                commitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status"></span> Posting...';
             }
         });
     }
