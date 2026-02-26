@@ -615,9 +615,9 @@
                 <h6 class="mb-0">
                     <i class="bi bi-shield-exclamation"></i> Audit Risk Flags
                     {% if flagged_account_count > 0 or entity_level_flag_count > 0 %}
-                    <span class="badge bg-danger ms-1">{{ flagged_account_count }} Account{{ flagged_account_count|pluralize }} Flagged</span>
+                    <span class="badge bg-danger ms-1" data-flagged-accounts-badge>{{ flagged_account_count }} Account{{ flagged_account_count|pluralize }} Flagged</span>
                     {% else %}
-                    <span class="badge bg-success ms-1">No Issues</span>
+                    <span class="badge bg-success ms-1" data-flagged-accounts-badge>No Issues</span>
                     {% endif %}
                 </h6>
                 {% if open_risk_count > 0 %}
@@ -775,7 +775,7 @@
         {% endif %}
 
         {% if open_risk_count > 0 %}
-        <div class="alert alert-danger mt-3">
+        <div class="alert alert-danger mt-3" data-finalisation-blocked>
             <i class="bi bi-exclamation-triangle-fill"></i>
             <strong>Finalisation Blocked:</strong> {{ open_risk_count }} open audit risk flag{{ open_risk_count|pluralize }} must be resolved before this financial year can be finalised.
             Each resolution requires a minimum 5-word description. All generated documents will carry an <strong>AUDIT RISK</strong> watermark until all flags are resolved.
@@ -2170,6 +2170,28 @@
                             summaryEl.innerHTML = '<i class="bi bi-check-circle-fill text-success"></i> All audit risk flags have been resolved.';
                         } else {
                             summaryEl.querySelector('.open-count').textContent = data.open_count;
+                        }
+                    }
+
+                    // Update the "X Accounts Flagged" badge in the Audit Risk tab header
+                    const flaggedBadge = document.querySelector('[data-flagged-accounts-badge]');
+                    if (flaggedBadge) {
+                        if (data.flagged_account_count > 0) {
+                            flaggedBadge.textContent = data.flagged_account_count + ' Account' + (data.flagged_account_count === 1 ? '' : 's') + ' Flagged';
+                            flaggedBadge.className = 'badge bg-danger ms-1';
+                        } else {
+                            flaggedBadge.textContent = 'No Issues';
+                            flaggedBadge.className = 'badge bg-success ms-1';
+                        }
+                    }
+
+                    // Hide the Finalisation Blocked alert when all flags resolved
+                    if (data.open_count === 0) {
+                        const blockedAlert = document.querySelector('[data-finalisation-blocked]');
+                        if (blockedAlert) {
+                            blockedAlert.style.transition = 'opacity 0.4s';
+                            blockedAlert.style.opacity = '0';
+                            setTimeout(() => blockedAlert.remove(), 400);
                         }
                     }
 
