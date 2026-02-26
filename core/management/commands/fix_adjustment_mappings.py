@@ -84,7 +84,7 @@ class Command(BaseCommand):
                 continue
 
             # Mismatch found - fix it
-            entity_name = fy.entity.name if fy.entity else "Unknown"
+            entity_name = fy.entity.entity_name if fy.entity else "Unknown"
             old_mapping = adj.mapped_line_item.description if adj.mapped_line_item else "None"
             new_mapping = original.mapped_line_item.description if original.mapped_line_item else "None"
 
