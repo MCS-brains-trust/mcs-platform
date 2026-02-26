@@ -22,6 +22,12 @@ urlpatterns = [
     path("users/create/", views.user_create, name="user_create"),
     path("users/<uuid:pk>/edit/", views.user_edit, name="user_edit"),
     path("users/<uuid:pk>/reset-2fa/", views.user_reset_2fa, name="user_reset_2fa"),
+    path("users/<uuid:pk>/send-password-reset/", views.send_password_reset, name="send_password_reset"),
+    path("users/send-all-password-resets/", views.send_all_password_resets, name="send_all_password_resets"),
+
+    # Password reset (public — token-based, no login required)
+    path("reset/<uidb64>/<token>/", views.password_reset_confirm_view, name="password_reset_confirm"),
+    path("reset/complete/", views.password_reset_complete_view, name="password_reset_complete"),
 
     # Invitation management (admin only)
     path("invitations/", views.invitation_list, name="invitation_list"),

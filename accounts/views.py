@@ -484,3 +484,144 @@ def setup_2fa_view(request):
         "qr_base64": qr_base64,
         "totp_secret": totp_secret,
     })
+
+
+# ---------------------------------------------------------------------------
+# Password Reset — Admin-triggered (single user and bulk)
+# ---------------------------------------------------------------------------
+
+
+def _send_password_reset_email(request, user):
+    """Send a password reset email to a single user in a background thread.
+
+    Uses Django's built-in PasswordResetTokenGenerator for secure, time-limited
+    tokens. The email is rendered synchronously (needs request context for
+    build_absolute_uri), then dispatched to a daemon thread.
+    """
+    from django.contrib.auth.tokens import default_token_generator
+    from django.utils.http import urlsafe_base64_encode
+    from django.utils.encoding import force_bytes
+
+    uid = urlsafe_base64_encode(force_bytes(user.pk))
+    token = default_token_generator.make_token(user)
+    reset_url = request.build_absolute_uri(
+        f"/accounts/reset/{uid}/{token}/"
+    )
+
+    subject = "Password Reset \u2014 StatementHub"
+    html_message = render_to_string("accounts/email_password_reset.html", {
+        "user": user,
+        "reset_url": reset_url,
+    })
+    plain_message = strip_tags(html_message)
+    from_email = getattr(settings, "DEFAULT_FROM_EMAIL", "noreply@statementhub.com.au")
+    user_pk = user.pk
+    user_email = user.email
+
+    def _send():
+        try:
+            send_mail(
+                subject=subject,
+                message=plain_message,
+                from_email=from_email,
+                recipient_list=[user_email],
+                html_message=html_message,
+                fail_silently=False,
+            )
+            logger.info("Password reset email sent to %s (user_id=%s)", user_email, user_pk)
+        except Exception as e:
+            logger.error("Failed to send password reset email to %s (user_id=%s): %s", user_email, user_pk, e)
+
+    thread = threading.Thread(target=_send, daemon=True)
+    thread.start()
+
+
+@login_required
+@require_POST
+def send_password_reset(request, pk):
+    """Send a password reset email to a single user. Admin only."""
+    if not request.user.is_admin:
+        messages.error(request, "You do not have permission.")
+        return redirect("review:dashboard")
+
+    user = get_object_or_404(User, pk=pk)
+    if not user.email:
+        messages.warning(request, f"Cannot send reset email \u2014 {user.get_full_name() or user.username} has no email address.")
+        return redirect("accounts:user_list")
+
+    if not user.is_active:
+        messages.warning(request, f"Cannot send reset email \u2014 {user.get_full_name() or user.username} is inactive.")
+        return redirect("accounts:user_list")
+
+    _send_password_reset_email(request, user)
+    messages.success(request, f"Password reset email sent to {user.email}.")
+    return redirect("accounts:user_list")
+
+
+@login_required
+@require_POST
+def send_all_password_resets(request):
+    """Send password reset emails to all active users with email addresses. Admin only."""
+    if not request.user.is_admin:
+        messages.error(request, "You do not have permission.")
+        return redirect("review:dashboard")
+
+    users = User.objects.filter(is_active=True).exclude(email="").exclude(email__isnull=True)
+    count = 0
+    for user in users:
+        _send_password_reset_email(request, user)
+        count += 1
+
+    messages.success(request, f"Password reset emails are being sent to {count} user{'s' if count != 1 else ''}.")
+    return redirect("accounts:user_list")
+
+
+def password_reset_confirm_view(request, uidb64, token):
+    """Handle the password reset confirmation \u2014 user sets a new password."""
+    from django.contrib.auth.tokens import default_token_generator
+    from django.utils.http import urlsafe_base64_decode
+    from django.utils.encoding import force_str
+
+    try:
+        uid = force_str(urlsafe_base64_decode(uidb64))
+        user = User.objects.get(pk=uid)
+    except (TypeError, ValueError, OverflowError, User.DoesNotExist):
+        user = None
+
+    validlink = user is not None and default_token_generator.check_token(user, token)
+
+    if request.method == "POST" and validlink:
+        new_password1 = request.POST.get("new_password1", "")
+        new_password2 = request.POST.get("new_password2", "")
+
+        errors = []
+        if new_password1 != new_password2:
+            errors.append("The two passwords do not match.")
+        if not new_password1:
+            errors.append("Password cannot be empty.")
+
+        if not errors:
+            try:
+                validate_password(new_password1, user=user)
+            except DjangoValidationError as e:
+                errors.extend(e.messages)
+
+        if errors:
+            return render(request, "accounts/password_reset_confirm.html", {
+                "validlink": True,
+                "password_errors": errors,
+            })
+        else:
+            user.set_password(new_password1)
+            user.save()
+            logger.info("Password reset completed for user %s (user_id=%s)", user.username, user.pk)
+            return redirect("accounts:password_reset_complete")
+
+    return render(request, "accounts/password_reset_confirm.html", {
+        "validlink": validlink,
+    })
+
+
+def password_reset_complete_view(request):
+    """Simple confirmation page after a successful password reset."""
+    return render(request, "accounts/password_reset_complete.html")
