@@ -777,11 +777,20 @@ class TrialBalanceLine(models.Model):
         ('tb_import', 'Trial Balance Import'),
         ('bank_statement', 'Bank Statement'),
         ('manual_journal', 'Manual Journal'),
+        ('journal_upload', 'Journal Upload'),
         ('rollover', 'Rolled Forward'),
     ]
     source = models.CharField(
         max_length=20, choices=SOURCE_CHOICES, default='tb_import', blank=True,
         help_text="Where this line originated from",
+    )
+    bulk_journal_upload = models.ForeignKey(
+        'BulkJournalUpload',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='trial_balance_lines',
+        help_text="Links this adjustment line to its parent bulk journal upload",
     )
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -2779,6 +2788,85 @@ class TaxPlanningScenario(models.Model):
 
     def __str__(self):
         return f"{self.scenario_name} — {self.financial_year}"
+
+
+# ---------------------------------------------------------------------------
+# Bulk Journal Upload
+# ---------------------------------------------------------------------------
+class BulkJournalUpload(models.Model):
+    """
+    Tracks a bulk journal upload session. Each upload via 'Upload JNLs'
+    creates one record here with a sequential reference (Bulk JNLS-001, etc.).
+    The individual TrialBalanceLine adjustment rows link back via FK.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    financial_year = models.ForeignKey(
+        FinancialYear, on_delete=models.CASCADE, related_name="bulk_journal_uploads"
+    )
+    reference_number = models.CharField(
+        max_length=30, blank=True,
+        help_text="Auto-generated sequential reference, e.g. Bulk JNLS-001",
+    )
+    filename = models.CharField(
+        max_length=255, blank=True,
+        help_text="Original uploaded filename",
+    )
+    description = models.CharField(
+        max_length=500, blank=True, default="Bulk Journal Upload",
+    )
+    lines_count = models.IntegerField(
+        default=0,
+        help_text="Number of journal lines in this upload",
+    )
+    total_debit = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Total debit amount across all lines",
+    )
+    total_credit = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Total credit amount across all lines",
+    )
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name="bulk_journal_uploads",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "Bulk Journal Upload"
+        verbose_name_plural = "Bulk Journal Uploads"
+
+    def __str__(self):
+        ref = self.reference_number or "DRAFT"
+        return f"{ref} — {self.filename} ({self.lines_count} lines)"
+
+    def save(self, *args, **kwargs):
+        """Auto-generate reference number on first save."""
+        if not self.reference_number and self.financial_year_id:
+            last = (
+                BulkJournalUpload.objects
+                .filter(financial_year=self.financial_year)
+                .exclude(reference_number="")
+                .order_by("-reference_number")
+                .first()
+            )
+            if last and last.reference_number:
+                try:
+                    num = int(last.reference_number.split("-")[-1]) + 1
+                except (IndexError, ValueError):
+                    num = 1
+            else:
+                num = 1
+            self.reference_number = f"Bulk JNLS-{num:03d}"
+        super().save(*args, **kwargs)
+
+    @property
+    def is_balanced(self):
+        return self.total_debit == self.total_credit
 
 
 from .models_office_admin import *  # noqa: F401, F403
