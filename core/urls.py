@@ -2,6 +2,7 @@
 from django.urls import path
 from . import views
 from . import views_audit
+from . import views_bas
 from . import views_upgrades
 from . import views_tax_planning
 from . import views_templates
@@ -125,9 +126,12 @@ urlpatterns = [
     path("notes/<uuid:pk>/delete/", views.meeting_note_delete, name="meeting_note_delete"),
     path("notes/<uuid:pk>/toggle-followup/", views.meeting_note_toggle_followup, name="meeting_note_toggle_followup"),
 
-    # GST Activity Statement
-    path("years/<uuid:pk>/gst/", views.gst_activity_statement, name="gst_activity_statement"),
-    path("years/<uuid:pk>/gst/download/", views.gst_activity_statement_download, name="gst_activity_statement_download"),
+    # GST Activity Statement (Period-Aware Redesign)
+    path("years/<uuid:pk>/gst/", views_bas.bas_dashboard, name="gst_activity_statement"),
+    path("years/<uuid:pk>/gst/download/", views_bas.bas_download, name="gst_activity_statement_download"),
+    path("years/<uuid:pk>/gst/lodge/<int:period_number>/", views_bas.bas_lodge_period, name="bas_lodge_period"),
+    path("years/<uuid:pk>/gst/unlodge/<int:period_number>/", views_bas.bas_unlodge_period, name="bas_unlodge_period"),
+    path("years/<uuid:pk>/gst/coverage/<int:period_number>/", views_bas.bas_coverage_check, name="bas_coverage_check"),
 
     # Depreciation
     path("years/<uuid:pk>/depreciation/add/", views.depreciation_add, name="depreciation_add"),

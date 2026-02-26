@@ -155,9 +155,19 @@ class Entity(models.Model):
         max_length=255, blank=True,
         help_text="Trading name, e.g. 'Southy's Structures'",
     )
+    class BASFrequency(models.TextChoices):
+        QUARTERLY = "quarterly", "Quarterly"
+        MONTHLY = "monthly", "Monthly"
+
     is_gst_registered = models.BooleanField(
         default=True,
         help_text="Whether this entity is registered for GST. Affects bank statement coding.",
+    )
+    bas_frequency = models.CharField(
+        max_length=10,
+        choices=BASFrequency.choices,
+        default=BASFrequency.QUARTERLY,
+        help_text="Determines whether BAS periods are quarterly (4 periods) or monthly (12 periods).",
     )
     is_base_rate_entity = models.BooleanField(
         default=True,
@@ -2888,6 +2898,109 @@ class BulkJournalUpload(models.Model):
     @property
     def is_balanced(self):
         return self.total_debit == self.total_credit
+
+
+# ---------------------------------------------------------------------------
+# BAS Period (per-period status tracking for GST/BAS lodgement)
+# ---------------------------------------------------------------------------
+class BASPeriod(models.Model):
+    """
+    Tracks the status and audit snapshot for each BAS period within a
+    financial year. One record per period, created lazily when the
+    accountant first interacts with it.
+    """
+
+    class PeriodType(models.TextChoices):
+        QUARTERLY = "quarterly", "Quarterly"
+        MONTHLY = "monthly", "Monthly"
+
+    class Status(models.TextChoices):
+        EMPTY = "empty", "Empty"
+        PARTIAL = "partial", "Partial"
+        READY = "ready", "Ready"
+        LODGED = "lodged", "Lodged"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    financial_year = models.ForeignKey(
+        FinancialYear, on_delete=models.CASCADE, related_name="bas_periods"
+    )
+    period_type = models.CharField(
+        max_length=10, choices=PeriodType.choices,
+    )
+    period_number = models.PositiveSmallIntegerField(
+        help_text="1-4 for quarterly, 1-12 for monthly",
+    )
+    period_start = models.DateField()
+    period_end = models.DateField()
+    status = models.CharField(
+        max_length=15, choices=Status.choices, default=Status.EMPTY,
+    )
+    # Lodgement audit fields
+    lodged_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="lodged_bas_periods",
+    )
+    lodged_at = models.DateTimeField(null=True, blank=True)
+    unlodged_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="unlodged_bas_periods",
+    )
+    unlodged_at = models.DateTimeField(null=True, blank=True)
+    # Snapshot of GST figures at time of lodgement
+    snapshot_1a = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True,
+        help_text="Snapshot of GST on Sales (label 1A) at time of lodgement",
+    )
+    snapshot_1b = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True,
+        help_text="Snapshot of GST on Purchases (label 1B) at time of lodgement",
+    )
+    snapshot_net = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True,
+        help_text="Snapshot of Net GST position at time of lodgement",
+    )
+    override_reason = models.TextField(
+        blank=True, default="",
+        help_text="Reason provided if lodging with incomplete coverage or warnings",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["period_number"]
+        unique_together = ["financial_year", "period_type", "period_number"]
+        verbose_name = "BAS Period"
+        verbose_name_plural = "BAS Periods"
+
+    def __str__(self):
+        return f"{self.financial_year} — {self.get_period_type_display()} P{self.period_number}"
+
+    @property
+    def label(self):
+        """Human-readable period label, e.g. 'Q1 (Jul-Sep)' or 'Aug'."""
+        if self.period_type == self.PeriodType.QUARTERLY:
+            quarter_labels = {
+                1: "Q1 (Jul\u2013Sep)",
+                2: "Q2 (Oct\u2013Dec)",
+                3: "Q3 (Jan\u2013Mar)",
+                4: "Q4 (Apr\u2013Jun)",
+            }
+            return quarter_labels.get(self.period_number, f"Q{self.period_number}")
+        else:
+            import calendar
+            # Month number in FY order: 1=Jul(7), 2=Aug(8), ... 6=Dec(12), 7=Jan(1), ...
+            cal_month = (self.period_number + 6) % 12 or 12
+            return calendar.month_abbr[cal_month]
+
+    @property
+    def short_label(self):
+        """Short label for tabs, e.g. 'Q1' or 'Jul'."""
+        if self.period_type == self.PeriodType.QUARTERLY:
+            return f"Q{self.period_number}"
+        else:
+            import calendar
+            cal_month = (self.period_number + 6) % 12 or 12
+            return calendar.month_abbr[cal_month]
 
 
 from .models_office_admin import *  # noqa: F401, F403
