@@ -2570,6 +2570,11 @@ def adjustment_create(request, pk):
             formset.instance = journal
             lines = formset.save()
 
+            # Set line_number to preserve the order lines were entered
+            for i, line in enumerate(lines, start=1):
+                line.line_number = i
+                line.save(update_fields=["line_number"])
+
             # Validate debits = credits
             total_dr = sum(l.debit for l in lines)
             total_cr = sum(l.credit for l in lines)
