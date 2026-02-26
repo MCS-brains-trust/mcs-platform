@@ -16,7 +16,7 @@ from .models import (
     JournalLine, GeneratedDocument, AuditLog, EntityOfficer,
     ClientAssociate, AccountingSoftware, MeetingNote,
     DepreciationAsset, RiskFlag, StockItem, ActivityLog, EntityChartOfAccount,
-    BulkJournalUpload,
+    BulkJournalUpload, BASPeriod,
 )
 from .forms import (
     ClientForm, EntityForm, FinancialYearForm,

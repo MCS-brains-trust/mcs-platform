@@ -42,9 +42,7 @@
     }
     .gst-registered { background: #e8f5e9; color: #2e7d32; border: 1px solid #c8e6c9; }
     .gst-not-registered { background: #fff3e0; color: #e65100; border: 1px solid #ffe0b2; }
-    .txn-table {
-        font-size: 0.83rem;
-    }
+    .txn-table { font-size: 0.83rem; }
     .txn-table th {
         font-weight: 600;
         font-size: 0.76rem;
@@ -54,301 +52,243 @@
         border-bottom: 2px solid #dee2e6;
         white-space: nowrap;
     }
-    .txn-table td {
-        vertical-align: middle;
-        padding: 8px 6px;
-    }
-    .txn-row-pending {
-        background: #fffde7;
-    }
-    .txn-row-confirmed {
-        background: #f1f8e9;
-    }
-    .txn-row-learning {
-        background: #e8f5e9;
-    }
-    .amount-debit {
-        color: #c62828;
-        font-weight: 600;
-    }
-    .amount-credit {
-        color: #2e7d32;
-        font-weight: 600;
-    }
-    .gst-amount {
-        color: #6c757d;
-        font-size: 0.78rem;
-    }
-    .net-amount {
-        font-weight: 600;
-        font-size: 0.78rem;
-    }
+    .txn-table td { vertical-align: middle; padding: 8px 6px; }
+    .txn-row-pending { background: #fffde7; }
+    .txn-row-confirmed { background: #f1f8e9; }
+    .txn-row-learning { background: #e8f5e9; }
+    .txn-row-rule { background: #e3f2fd; }
+    .txn-row-split-child { background: #f3e5f5; border-left: 3px solid #9c27b0; }
+    .txn-row-split-parent { background: #ede7f6; }
+    .amount-debit { color: #c62828; font-weight: 600; }
+    .amount-credit { color: #2e7d32; font-weight: 600; }
+    .gst-amount { color: #6c757d; font-size: 0.78rem; }
+    .net-amount { font-weight: 600; font-size: 0.78rem; }
     .confidence-badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 3px;
-        font-size: 0.73rem;
-        padding: 2px 8px;
-        border-radius: 12px;
-        font-weight: 600;
+        display: inline-flex; align-items: center; gap: 3px;
+        font-size: 0.73rem; padding: 2px 8px; border-radius: 12px; font-weight: 600;
     }
     .conf-1 { background: #ffcdd2; color: #b71c1c; }
     .conf-2 { background: #ffe0b2; color: #e65100; }
     .conf-3 { background: #fff9c4; color: #f57f17; }
     .conf-4 { background: #c8e6c9; color: #2e7d32; }
     .conf-5 { background: #a5d6a7; color: #1b5e20; }
-    .learning-badge {
-        display: inline-flex;
-        align-items: center;
-        gap: 2px;
-        font-size: 0.7rem;
-        padding: 1px 6px;
-        border-radius: 10px;
-        background: #e0f2f1;
-        color: #00695c;
-        font-weight: 600;
+    .learning-badge, .rule-badge {
+        display: inline-flex; align-items: center; gap: 2px;
+        font-size: 0.7rem; padding: 1px 6px; border-radius: 10px; font-weight: 600;
+    }
+    .learning-badge { background: #e0f2f1; color: #00695c; }
+    .rule-badge { background: #e3f2fd; color: #1565c0; }
+    .override-badge {
+        display: inline-flex; align-items: center; gap: 2px;
+        font-size: 0.68rem; padding: 1px 5px; border-radius: 8px;
+        background: #fff3e0; color: #e65100; font-weight: 600;
+    }
+    .manual-gst-indicator {
+        display: inline-block; width: 6px; height: 6px; border-radius: 50%;
+        background: #ff9800; margin-left: 4px; vertical-align: middle;
     }
 
-    /* Searchable account picker */
-    .account-picker-container {
-        position: relative;
-    }
+    /* Account Picker */
+    .account-picker-container { position: relative; }
     .account-picker-input {
-        width: 100%;
-        padding: 4px 8px;
-        border: 1px solid #ced4da;
-        border-radius: 6px;
-        font-size: 0.82rem;
-        background: white;
+        width: 100%; padding: 4px 8px; border: 1px solid #ced4da;
+        border-radius: 6px; font-size: 0.82rem; background: white;
     }
     .account-picker-input:focus {
-        border-color: #4a90d9;
-        outline: none;
+        border-color: #4a90d9; outline: none;
         box-shadow: 0 0 0 2px rgba(74,144,217,0.15);
     }
-    .account-picker-input.confirmed {
-        border-color: #4caf50;
-        background: #f1f8e9;
-    }
+    .account-picker-input.confirmed { border-color: #4caf50; background: #f1f8e9; }
     .account-dropdown {
-        position: absolute;
-        top: 100%;
-        left: 0;
-        right: 0;
-        background: white;
-        border: 1px solid #ced4da;
-        border-radius: 6px;
-        max-height: 200px;
-        overflow-y: auto;
-        z-index: 1000;
-        display: none;
+        position: absolute; top: 100%; left: 0; right: 0;
+        background: white; border: 1px solid #ced4da; border-radius: 6px;
+        max-height: 200px; overflow-y: auto; z-index: 1000; display: none;
         box-shadow: 0 4px 12px rgba(0,0,0,0.15);
     }
-    .account-dropdown.show {
-        display: block;
-    }
+    .account-dropdown.show { display: block; }
     .account-option {
-        padding: 6px 10px;
-        cursor: pointer;
-        font-size: 0.82rem;
+        padding: 6px 10px; cursor: pointer; font-size: 0.82rem;
         border-bottom: 1px solid #f5f5f5;
     }
-    .account-option:hover, .account-option.active {
-        background: #e3f2fd;
+    .account-option:hover, .account-option.active { background: #e3f2fd; }
+    .account-option .code { font-weight: 600; color: #1a1a2e; margin-right: 6px; }
+    .account-option .name { color: #6c757d; }
+
+    /* GST Treatment Controls */
+    .gst-treatment-select {
+        padding: 3px 6px; border: 1px solid #ced4da; border-radius: 6px;
+        font-size: 0.78rem; background: white; min-width: 120px;
     }
-    .account-option .code {
-        font-weight: 600;
-        color: #1a1a2e;
-        margin-right: 6px;
+    .gst-treatment-select.manual { border-color: #ff9800; background: #fff8e1; }
+    .creditable-pct-container { font-size: 0.75rem; margin-top: 2px; }
+    .creditable-pct-input {
+        width: 50px; padding: 1px 4px; border: 1px solid #ced4da;
+        border-radius: 4px; font-size: 0.75rem; text-align: right;
     }
-    .account-option .name {
-        color: #6c757d;
+    .gst-override-link {
+        font-size: 0.7rem; color: #6c757d; cursor: pointer;
+        text-decoration: underline; margin-top: 1px; display: block;
     }
+    .gst-override-link:hover { color: #1565c0; }
 
     .tax-select {
-        padding: 4px 6px;
-        border: 1px solid #ced4da;
-        border-radius: 6px;
-        font-size: 0.82rem;
-        background: white;
-        min-width: 140px;
+        padding: 4px 6px; border: 1px solid #ced4da; border-radius: 6px;
+        font-size: 0.82rem; background: white; min-width: 140px;
     }
-    .tax-select.confirmed {
-        border-color: #4caf50;
-        background: #f1f8e9;
+    .tax-select.confirmed { border-color: #4caf50; background: #f1f8e9; }
+
+    /* Split Editor */
+    .split-editor {
+        background: #f3e5f5; border: 1px solid #ce93d8; border-radius: 8px;
+        padding: 12px; margin: 4px 0;
     }
-    .status-icon {
-        font-size: 1.1rem;
+    .split-editor .split-line {
+        display: flex; gap: 8px; align-items: center; margin-bottom: 6px;
+        padding: 6px 8px; background: white; border-radius: 6px;
     }
+    .split-editor input, .split-editor select {
+        font-size: 0.8rem; padding: 3px 6px; border: 1px solid #ced4da; border-radius: 4px;
+    }
+    .split-residual { color: #e65100; font-weight: 600; font-size: 0.8rem; }
+    .split-balanced { color: #2e7d32; font-weight: 600; font-size: 0.8rem; }
+
+    /* Split button on row hover */
+    .btn-split-row {
+        opacity: 0; transition: opacity 0.15s;
+        font-size: 0.7rem; padding: 1px 6px; border-radius: 4px;
+        background: #f3e5f5; border: 1px solid #ce93d8; color: #7b1fa2;
+        cursor: pointer; white-space: nowrap;
+    }
+    tr:hover .btn-split-row, tr:focus-within .btn-split-row { opacity: 1; }
+
+    /* Natural Language Search */
+    .nl-search-container { position: relative; }
+    .nl-search-input {
+        width: 100%; padding: 8px 36px 8px 36px; border: 1px solid #ced4da;
+        border-radius: 8px; font-size: 0.88rem; background: white;
+        transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .nl-search-input:focus {
+        border-color: #1565c0; outline: none;
+        box-shadow: 0 0 0 3px rgba(21,101,192,0.12);
+    }
+    .nl-search-input.has-query { border-color: #1565c0; background: #f5f9ff; }
+    .nl-search-icon {
+        position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+        color: #6c757d; font-size: 0.9rem;
+    }
+    .nl-search-clear {
+        position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+        background: none; border: none; color: #6c757d; cursor: pointer;
+        font-size: 1rem; display: none; padding: 0 4px;
+    }
+    .nl-search-clear:hover { color: #c62828; }
+    .nl-search-count {
+        position: absolute; right: 32px; top: 50%; transform: translateY(-50%);
+        font-size: 0.72rem; color: #1565c0; font-weight: 600;
+        background: #e3f2fd; padding: 1px 8px; border-radius: 10px;
+    }
+
+    /* Bulk action toolbar */
+    .bulk-toolbar {
+        background: #1565c0; color: white; border-radius: 8px;
+        padding: 8px 16px; display: none; align-items: center; gap: 12px;
+        margin-bottom: 12px; font-size: 0.85rem;
+    }
+    .bulk-toolbar.show { display: flex; }
+    .bulk-toolbar button {
+        background: rgba(255,255,255,0.2); border: 1px solid rgba(255,255,255,0.3);
+        color: white; padding: 4px 12px; border-radius: 6px; font-size: 0.8rem;
+        cursor: pointer; font-weight: 600;
+    }
+    .bulk-toolbar button:hover { background: rgba(255,255,255,0.35); }
+
+    /* Undo toast */
+    .undo-toast {
+        position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+        background: #323232; color: white; padding: 12px 24px; border-radius: 8px;
+        display: none; align-items: center; gap: 16px; z-index: 9999;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3); font-size: 0.88rem;
+    }
+    .undo-toast.show { display: flex; }
+    .undo-toast button {
+        background: none; border: 1px solid rgba(255,255,255,0.5);
+        color: #90caf9; padding: 4px 12px; border-radius: 4px; cursor: pointer;
+        font-weight: 600; font-size: 0.85rem;
+    }
+    .undo-toast button:hover { color: white; border-color: white; }
+
+    /* Rule prompt */
+    .rule-prompt {
+        background: #e3f2fd; border: 1px solid #90caf9; border-radius: 8px;
+        padding: 10px 16px; margin-top: 8px; display: none;
+        font-size: 0.82rem; align-items: center; gap: 10px;
+    }
+    .rule-prompt.show { display: flex; }
+    .rule-prompt button { font-size: 0.78rem; padding: 3px 10px; border-radius: 4px; }
+
+    .status-icon { font-size: 1.1rem; }
     .btn-accept-all {
-        background: #e3f2fd;
-        border: 1px solid #90caf9;
-        color: #1565c0;
-        font-weight: 600;
-        font-size: 0.85rem;
+        background: #e3f2fd; border: 1px solid #90caf9;
+        color: #1565c0; font-weight: 600; font-size: 0.85rem;
     }
-    .btn-accept-all:hover {
-        background: #bbdefb;
-        color: #0d47a1;
-    }
-    .btn-submit-review {
-        font-weight: 600;
-        font-size: 0.9rem;
-        padding: 10px 32px;
-    }
+    .btn-accept-all:hover { background: #bbdefb; color: #0d47a1; }
+    .btn-submit-review { font-weight: 600; font-size: 0.9rem; padding: 10px 32px; }
+
     /* Classification progress */
     .classify-bar {
-        background: #e3f2fd;
-        border: 1px solid #90caf9;
-        border-radius: 8px;
-        padding: 12px 20px;
-        margin-bottom: 16px;
-        display: flex;
-        align-items: center;
-        gap: 16px;
+        background: #e3f2fd; border: 1px solid #90caf9; border-radius: 8px;
+        padding: 12px 20px; margin-bottom: 16px; display: flex;
+        align-items: center; gap: 16px;
     }
-    .classify-bar .progress {
-        flex: 1;
-        height: 10px;
-    }
+    .classify-bar .progress { flex: 1; height: 10px; }
     .classify-bar .classify-text {
-        font-size: 0.85rem;
-        color: #1565c0;
-        font-weight: 600;
-        white-space: nowrap;
+        font-size: 0.85rem; color: #1565c0; font-weight: 600; white-space: nowrap;
     }
     .classify-bar .classify-spinner {
-        width: 20px;
-        height: 20px;
-        border: 3px solid #90caf9;
-        border-top-color: #1565c0;
-        border-radius: 50%;
+        width: 20px; height: 20px; border: 3px solid #90caf9;
+        border-top-color: #1565c0; border-radius: 50%;
         animation: spin 0.8s linear infinite;
     }
     @keyframes spin { to { transform: rotate(360deg); } }
-    .txn-row-unclassified {
-        background: #f5f5f5;
-    }
-    .txn-row-unclassified td {
-        color: #9e9e9e;
-    }
+    .txn-row-unclassified { background: #f5f5f5; }
+    .txn-row-unclassified td { color: #9e9e9e; }
     .btn-classify {
-        background: #1565c0;
-        border: none;
-        color: white;
-        font-weight: 600;
-        font-size: 0.85rem;
-        padding: 6px 16px;
-        border-radius: 6px;
+        background: #1565c0; border: none; color: white;
+        font-weight: 600; font-size: 0.85rem; padding: 6px 16px; border-radius: 6px;
     }
-    .btn-classify:hover {
-        background: #0d47a1;
-        color: white;
-    }
-    .btn-classify:disabled {
-        background: #90caf9;
-        color: white;
-    }
+    .btn-classify:hover { background: #0d47a1; color: white; }
+    .btn-classify:disabled { background: #90caf9; color: white; }
 
-    /* Search/Filter/Group styles */
+    /* Group view styles */
     .group-card {
-        background: white;
-        border-radius: 10px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-        margin-bottom: 12px;
-        overflow: hidden;
+        background: white; border-radius: 10px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.08); margin-bottom: 12px; overflow: hidden;
     }
     .group-card-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 12px 16px;
-        background: #f8f9fa;
-        border-bottom: 1px solid #e9ecef;
-        cursor: pointer;
+        display: flex; justify-content: space-between; align-items: center;
+        padding: 12px 16px; background: #f8f9fa; border-bottom: 1px solid #e9ecef; cursor: pointer;
     }
-    .group-card-header:hover {
-        background: #e9ecef;
-    }
-    .group-card-header .group-title {
-        font-weight: 700;
-        font-size: 0.9rem;
-        color: #1a1a2e;
-    }
-    .group-card-header .group-code {
-        font-weight: 700;
-        color: #1565c0;
-        margin-right: 8px;
-    }
+    .group-card-header:hover { background: #e9ecef; }
+    .group-card-header .group-title { font-weight: 700; font-size: 0.9rem; color: #1a1a2e; }
+    .group-card-header .group-code { font-weight: 700; color: #1565c0; margin-right: 8px; }
     .group-card-header .group-count {
-        font-size: 0.78rem;
-        color: #6c757d;
-        background: #e3f2fd;
-        padding: 2px 10px;
-        border-radius: 12px;
-        font-weight: 600;
+        font-size: 0.78rem; color: #6c757d; background: #e3f2fd;
+        padding: 2px 10px; border-radius: 12px; font-weight: 600;
     }
-    .group-card-header .group-total {
-        font-size: 0.85rem;
-        font-weight: 600;
-        margin-left: 12px;
-    }
-    .group-card-body {
-        padding: 0;
-        display: none;
-    }
-    .group-card-body.show {
-        display: block;
-    }
-    .group-card-body table {
-        font-size: 0.82rem;
-        margin: 0;
-    }
-    .group-card-body table td {
-        padding: 6px 10px;
-        vertical-align: middle;
-    }
+    .group-card-body { padding: 0; display: none; }
+    .group-card-body.show { display: block; }
     .btn-approve-group {
-        background: #e8f5e9;
-        border: 1px solid #a5d6a7;
-        color: #2e7d32;
-        font-weight: 600;
-        font-size: 0.78rem;
-        padding: 4px 12px;
-        border-radius: 6px;
-        white-space: nowrap;
+        background: #e8f5e9; border: 1px solid #a5d6a7; color: #2e7d32;
+        font-weight: 600; font-size: 0.78rem; padding: 4px 12px;
+        border-radius: 6px; white-space: nowrap;
     }
-    .btn-approve-group:hover {
-        background: #c8e6c9;
-        color: #1b5e20;
-    }
-    .btn-approve-group:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-    }
-    .group-status-badge {
-        font-size: 0.72rem;
-        padding: 2px 8px;
-        border-radius: 10px;
-        font-weight: 600;
-    }
-    .group-status-pending {
-        background: #fff3e0;
-        color: #e65100;
-    }
-    .group-status-confirmed {
-        background: #e8f5e9;
-        color: #2e7d32;
-    }
-    .group-checkbox {
-        width: 16px;
-        height: 16px;
-        cursor: pointer;
-    }
-    .filter-active {
-        border-color: #1565c0;
-        box-shadow: 0 0 0 2px rgba(21,101,192,0.15);
-    }
+    .btn-approve-group:hover { background: #c8e6c9; color: #1b5e20; }
+    .group-status-badge { font-size: 0.72rem; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
+    .group-status-pending { background: #fff3e0; color: #e65100; }
+    .group-status-confirmed { background: #e8f5e9; color: #2e7d32; }
+    .group-checkbox { width: 16px; height: 16px; cursor: pointer; }
+    .filter-active { border-color: #1565c0; box-shadow: 0 0 0 2px rgba(21,101,192,0.15); }
 </style>
 {% endblock %}
 
@@ -370,7 +310,6 @@
                 <i class="bi bi-person"></i> {{ job.submitted_by }}
                 {% endif %}
             </div>
-            <!-- Bank statement metadata and GST status -->
             <div class="d-flex flex-wrap gap-2 mt-1">
                 {% if job.is_gst_registered %}
                 <span class="gst-badge gst-registered"><i class="bi bi-check-circle-fill"></i> GST Registered</span>
@@ -391,6 +330,9 @@
                 {% endif %}
                 {% if job.source == "upload" %}
                 <span class="meta-badge"><i class="bi bi-upload"></i> Manual Upload</span>
+                {% endif %}
+                {% if rules_count %}
+                <span class="meta-badge"><i class="bi bi-bookmark-fill"></i> {{ rules_count }} rule{{ rules_count|pluralize }}</span>
                 {% endif %}
             </div>
         </div>
@@ -439,35 +381,93 @@
     </div>
 </div>
 
-<!-- Search / Filter / Group Toolbar -->
+<!-- Natural Language Search + Filter Toolbar -->
 <div class="bg-white rounded-3 mb-3 p-3" style="box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
-    <div class="d-flex flex-wrap gap-2 align-items-center">
-        <!-- Search -->
-        <div class="flex-grow-1" style="min-width: 200px; max-width: 350px;">
-            <div class="input-group input-group-sm">
-                <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
-                <input type="text" id="txn-search" class="form-control" placeholder="Search description..." oninput="applyFilters()">
+    <div class="row g-2 align-items-center">
+        <!-- Natural Language Search Bar -->
+        <div class="col-12 col-md-5">
+            <div class="nl-search-container">
+                <i class="bi bi-search nl-search-icon"></i>
+                <input type="text" id="nl-search" class="nl-search-input"
+                       placeholder="Search: description, amount (over $500), date, status, GST treatment..."
+                       oninput="onSearchInput()" autocomplete="off">
+                <span id="nl-search-count" class="nl-search-count" style="display:none;"></span>
+                <button id="nl-search-clear" class="nl-search-clear" onclick="clearSearch()" style="display:none;">
+                    <i class="bi bi-x-lg"></i>
+                </button>
             </div>
         </div>
-        <!-- Filter by status -->
-        <select id="filter-status" class="form-select form-select-sm" style="width: auto; min-width: 150px;" onchange="applyFilters()">
-            <option value="all">All Transactions</option>
-            <option value="unclassified">Unclassified</option>
-            <option value="pending">AI Classified (Pending)</option>
-            <option value="confirmed">Confirmed</option>
-            <option value="learning">From Learning DB</option>
-        </select>
-        <!-- Filter by account code -->
-        <select id="filter-account" class="form-select form-select-sm" style="width: auto; min-width: 180px;" onchange="applyFilters()">
-            <option value="all">All Account Codes</option>
-        </select>
-        <!-- Group toggle -->
-        <button id="btn-group-view" class="btn btn-sm btn-outline-primary" onclick="toggleGroupView()">
-            <i class="bi bi-collection"></i> Group by Code
-        </button>
-        <!-- Filter count -->
-        <span id="filter-count" class="text-muted" style="font-size: 0.8rem;"></span>
+        <!-- AI Classification Filter -->
+        <div class="col-6 col-md-2">
+            <select id="filter-status" class="form-select form-select-sm" onchange="applyFilters()">
+                <option value="all">All Transactions</option>
+                <option value="unclassified">Unclassified</option>
+                <option value="pending">AI Classified</option>
+                <option value="confirmed">Confirmed</option>
+                <option value="learning">From Learning DB</option>
+                <option value="rule">Rule Applied</option>
+                <option value="split">Split Transactions</option>
+            </select>
+        </div>
+        <!-- Account Code Filter -->
+        <div class="col-6 col-md-2">
+            <select id="filter-account" class="form-select form-select-sm" onchange="applyFilters()">
+                <option value="all">All Account Codes</option>
+            </select>
+        </div>
+        <!-- GST Treatment Filter -->
+        <div class="col-6 col-md-2">
+            <select id="filter-gst" class="form-select form-select-sm" onchange="applyFilters()">
+                <option value="all">All GST Treatments</option>
+                <option value="taxable">Taxable (GST)</option>
+                <option value="gst_free">GST-Free</option>
+                <option value="input_taxed">Input Taxed</option>
+                <option value="out_of_scope">Out of Scope</option>
+                <option value="not_registered">Not Registered</option>
+            </select>
+        </div>
+        <!-- Group toggle + filter count -->
+        <div class="col-6 col-md-1 text-end">
+            <button id="btn-group-view" class="btn btn-sm btn-outline-primary" onclick="toggleGroupView()" title="Group by Code">
+                <i class="bi bi-collection"></i>
+            </button>
+            <div id="filter-count" class="text-muted mt-1" style="font-size: 0.72rem;"></div>
+        </div>
     </div>
+</div>
+
+<!-- Bulk Action Toolbar -->
+<div id="bulk-toolbar" class="bulk-toolbar">
+    <input type="checkbox" id="select-all-filtered" class="form-check-input" onchange="toggleSelectAllFiltered()" style="width:18px;height:18px;">
+    <span id="bulk-selected-count">0 selected</span>
+    {% if job.is_gst_registered %}
+    <div class="d-flex gap-1">
+        <button onclick="bulkSetGST('taxable')">Taxable</button>
+        <button onclick="bulkSetGST('gst_free')">GST-Free</button>
+        <button onclick="bulkSetGST('input_taxed')">Input Taxed</button>
+        <button onclick="bulkSetGST('out_of_scope')">Out of Scope</button>
+    </div>
+    {% endif %}
+    <button onclick="bulkAcceptSelected()" class="ms-auto"><i class="bi bi-check2-all"></i> Approve Selected</button>
+</div>
+
+<!-- Undo Toast -->
+<div id="undo-toast" class="undo-toast">
+    <span id="undo-toast-text">GST treatment updated for 5 transactions</span>
+    <button onclick="undoBulkGST()"><i class="bi bi-arrow-counterclockwise"></i> Undo</button>
+    <span id="undo-timer" style="font-size:0.75rem;color:#90caf9;">5s</span>
+</div>
+
+<!-- Rule Prompt (shown after override + approve) -->
+<div id="rule-prompt" class="rule-prompt">
+    <i class="bi bi-bookmark-plus" style="font-size:1.1rem; color:#1565c0;"></i>
+    <span id="rule-prompt-text">Always classify "<strong id="rule-prompt-keyword"></strong>" as <strong id="rule-prompt-account"></strong>?</span>
+    <button class="btn btn-sm btn-primary" onclick="saveRuleFromPrompt()">Save Rule</button>
+    <button class="btn btn-sm btn-outline-secondary" onclick="dismissRulePrompt()">Dismiss</button>
+    <select id="rule-prompt-match" class="form-select form-select-sm" style="width:auto;font-size:0.78rem;">
+        <option value="contains">Contains</option>
+        <option value="exact">Exact Match</option>
+    </select>
 </div>
 
 <!-- Grouped View (hidden by default) -->
@@ -481,6 +481,7 @@
         <table class="table txn-table mb-0">
             <thead>
                 <tr>
+                    <th style="width: 30px;"><input type="checkbox" class="form-check-input" id="select-all-header" onchange="toggleSelectAll()" style="width:14px;height:14px;"></th>
                     <th style="width: 30px;"></th>
                     <th>Date</th>
                     <th>Description</th>
@@ -492,20 +493,38 @@
                     <th>AI Suggestion</th>
                     <th style="min-width: 220px;">Confirmed Code</th>
                     <th style="min-width: 150px;">Tax Type</th>
+                    {% if job.is_gst_registered %}
+                    <th style="min-width: 100px;">GST Treatment</th>
+                    {% endif %}
+                    <th style="width: 40px;"></th>
                 </tr>
             </thead>
             <tbody id="txn-body">
                 {% for txn in transactions %}
                 <tr id="row-{{ txn.pk }}"
-                    class="{% if txn.is_confirmed %}txn-row-confirmed{% elif txn.ai_confidence == 0 %}txn-row-unclassified{% elif txn.from_learning %}txn-row-learning{% else %}txn-row-pending{% endif %}"
+                    class="{% if txn.split_parent %}txn-row-split-child{% elif txn.is_split %}txn-row-split-parent{% elif txn.is_confirmed %}txn-row-confirmed{% elif txn.matched_rule %}txn-row-rule{% elif txn.ai_confidence == 0 %}txn-row-unclassified{% elif txn.from_learning %}txn-row-learning{% else %}txn-row-pending{% endif %}"
                     data-txn-id="{{ txn.pk }}"
                     data-ai-code="{{ txn.ai_suggested_code }}"
                     data-ai-name="{{ txn.ai_suggested_name }}"
-                    data-confirmed="{{ txn.is_confirmed|yesno:'true,false' }}">
+                    data-confirmed="{{ txn.is_confirmed|yesno:'true,false' }}"
+                    data-gst-treatment="{{ txn.gst_treatment }}"
+                    data-is-split="{{ txn.is_split|yesno:'true,false' }}"
+                    data-split-parent="{{ txn.split_parent_id|default:'' }}"
+                    data-amount="{{ txn.amount }}"
+                    data-creditable-pct="{{ txn.creditable_percentage }}"
+                    data-has-override="{{ txn.gst_amount_override|yesno:'true,false' }}"
+                    data-is-gst-manual="{{ txn.is_gst_manual|yesno:'true,false' }}">
+                    <td>
+                        {% if not txn.is_split %}
+                        <input type="checkbox" class="form-check-input txn-checkbox" data-txn-id="{{ txn.pk }}" onchange="onCheckboxChange()" style="width:14px;height:14px;">
+                        {% endif %}
+                    </td>
                     <td>
                         <span class="status-icon">
                             {% if txn.is_confirmed %}
                             <i class="bi bi-check-circle-fill text-success"></i>
+                            {% elif txn.is_split %}
+                            <i class="bi bi-diagram-3 text-purple"></i>
                             {% else %}
                             <i class="bi bi-circle text-warning"></i>
                             {% endif %}
@@ -513,9 +532,18 @@
                     </td>
                     <td style="white-space: nowrap;">{{ txn.date }}</td>
                     <td>
+                        {% if txn.split_parent %}
+                        <span style="color:#9c27b0;font-size:0.7rem;margin-right:4px;"><i class="bi bi-arrow-return-right"></i> Split {{ txn.split_line_number }}</span>
+                        {% endif %}
                         {{ txn.description }}
-                        {% if txn.from_learning %}
+                        {% if txn.from_learning and not txn.matched_rule %}
                         <span class="learning-badge"><i class="bi bi-lightbulb-fill"></i> Learned</span>
+                        {% endif %}
+                        {% if txn.matched_rule %}
+                        <span class="rule-badge"><i class="bi bi-bookmark-fill"></i> Rule applied</span>
+                        {% endif %}
+                        {% if txn.gst_amount_override %}
+                        <span class="override-badge"><i class="bi bi-pencil-fill"></i> GST Override</span>
                         {% endif %}
                     </td>
                     <td class="text-end {% if txn.amount < 0 %}amount-debit{% else %}amount-credit{% endif %}" style="white-space: nowrap;">
@@ -524,12 +552,14 @@
                     {% if job.is_gst_registered %}
                     <td class="text-end gst-amount" style="white-space: nowrap;">
                         {% if txn.gst_amount %}${{ txn.gst_amount|floatformat:2 }}{% else %}—{% endif %}
+                        {% if txn.is_gst_manual %}<span class="manual-gst-indicator" title="Manually set"></span>{% endif %}
                     </td>
                     <td class="text-end net-amount" style="white-space: nowrap;">
                         ${{ txn.net_amount|floatformat:2 }}
                     </td>
                     {% endif %}
                     <td>
+                        {% if not txn.split_parent %}
                         <div>
                             <span style="font-weight: 600;">{{ txn.ai_suggested_code }}</span>
                             <span class="text-muted">{{ txn.ai_suggested_name }}</span>
@@ -541,6 +571,7 @@
                         <span class="text-muted d-block" style="font-size: 0.7rem; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="{{ txn.ai_reasoning }}">
                             {{ txn.ai_reasoning }}
                         </span>
+                        {% endif %}
                         {% endif %}
                     </td>
                     <td>
@@ -570,7 +601,67 @@
                             <option value="N-T" {% if txn.confirmed_tax_type == "N-T" %}selected{% endif %}>Not Reportable</option>
                         </select>
                     </td>
+                    {% if job.is_gst_registered %}
+                    <td>
+                        {% if not txn.split_parent %}
+                        <select class="gst-treatment-select {% if txn.is_gst_manual %}manual{% endif %}"
+                                id="gst-treat-{{ txn.pk }}"
+                                onchange="onGSTTreatmentChange('{{ txn.pk }}')"
+                                {% if not job.is_gst_registered %}disabled{% endif %}>
+                            <option value="">—</option>
+                            <option value="taxable" {% if txn.gst_treatment == "taxable" %}selected{% endif %}>Taxable</option>
+                            <option value="gst_free" {% if txn.gst_treatment == "gst_free" %}selected{% endif %}>GST-Free</option>
+                            <option value="input_taxed" {% if txn.gst_treatment == "input_taxed" %}selected{% endif %}>Input Taxed</option>
+                            <option value="out_of_scope" {% if txn.gst_treatment == "out_of_scope" %}selected{% endif %}>Out of Scope</option>
+                        </select>
+                        <!-- Creditable % (visible only for taxable) -->
+                        <div class="creditable-pct-container" id="cred-pct-wrap-{{ txn.pk }}" style="{% if txn.gst_treatment != 'taxable' %}display:none;{% endif %}">
+                            <label style="font-size:0.7rem;color:#6c757d;">Credit:</label>
+                            <input type="number" class="creditable-pct-input" id="cred-pct-{{ txn.pk }}"
+                                   value="{{ txn.creditable_percentage }}" min="0" max="100" step="0.01"
+                                   onchange="onCreditablePctChange('{{ txn.pk }}')">%
+                            <a class="gst-override-link" onclick="showGSTOverride('{{ txn.pk }}')">Override GST amount</a>
+                        </div>
+                        {% endif %}
+                    </td>
+                    {% endif %}
+                    <td>
+                        {% if not txn.is_split and not txn.split_parent %}
+                        <button class="btn-split-row" onclick="openSplitEditor('{{ txn.pk }}')" title="Split transaction">
+                            <i class="bi bi-scissors"></i>
+                        </button>
+                        {% elif txn.is_split %}
+                        <button class="btn btn-sm btn-outline-danger" style="font-size:0.7rem;padding:1px 6px;" onclick="unsplitTransaction('{{ txn.pk }}')" title="Remove split">
+                            <i class="bi bi-x-lg"></i>
+                        </button>
+                        {% endif %}
+                    </td>
                 </tr>
+                <!-- Inline Split Editor (hidden by default) -->
+                {% if not txn.is_split and not txn.split_parent %}
+                <tr id="split-editor-row-{{ txn.pk }}" style="display:none;">
+                    <td colspan="{% if job.is_gst_registered %}13{% else %}10{% endif %}">
+                        <div class="split-editor" id="split-editor-{{ txn.pk }}">
+                            <div class="d-flex justify-content-between align-items-center mb-2">
+                                <strong style="font-size:0.85rem;"><i class="bi bi-scissors"></i> Split Transaction — ${{ txn.amount|floatformat:2 }}</strong>
+                                <span id="split-residual-{{ txn.pk }}" class="split-balanced">Balanced</span>
+                            </div>
+                            <div id="split-lines-{{ txn.pk }}">
+                                <!-- Lines added by JS -->
+                            </div>
+                            <div class="d-flex gap-2 mt-2">
+                                <button class="btn btn-sm btn-outline-secondary" onclick="addSplitLine('{{ txn.pk }}')">
+                                    <i class="bi bi-plus"></i> Add Line
+                                </button>
+                                <button class="btn btn-sm btn-primary" onclick="confirmSplit('{{ txn.pk }}')">
+                                    <i class="bi bi-check"></i> Confirm Split
+                                </button>
+                                <button class="btn btn-sm btn-outline-danger" onclick="cancelSplit('{{ txn.pk }}')">Cancel</button>
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+                {% endif %}
                 {% endfor %}
             </tbody>
         </table>
@@ -597,9 +688,41 @@
             <small class="text-muted d-block">Total Net</small>
             <strong id="total-net">—</strong>
         </div>
+        <div class="col">
+            <small class="text-muted d-block">Total ITC (Creditable)</small>
+            <strong id="total-itc">—</strong>
+        </div>
     </div>
 </div>
 {% endif %}
+
+<!-- GST Override Modal -->
+<div class="modal fade" id="gstOverrideModal" tabindex="-1">
+    <div class="modal-dialog modal-sm">
+        <div class="modal-content">
+            <div class="modal-header py-2">
+                <h6 class="modal-title"><i class="bi bi-pencil"></i> Override GST Amount</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="override-txn-id">
+                <div class="mb-2">
+                    <label class="form-label" style="font-size:0.82rem;">GST Amount ($)</label>
+                    <input type="number" class="form-control form-control-sm" id="override-gst-amount" step="0.01" min="0">
+                </div>
+                <div class="mb-2">
+                    <label class="form-label" style="font-size:0.82rem;">Reason (mandatory)</label>
+                    <textarea class="form-control form-control-sm" id="override-reason" rows="2" placeholder="Why is the GST amount being overridden?"></textarea>
+                </div>
+                <div id="override-implied-pct" class="text-muted" style="font-size:0.75rem;"></div>
+            </div>
+            <div class="modal-footer py-1">
+                <button type="button" class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-sm btn-primary" onclick="submitGSTOverride()">Apply Override</button>
+            </div>
+        </div>
+    </div>
+</div>
 
 <!-- Submit bar (sticky bottom) -->
 <div class="d-flex justify-content-end mt-4 mb-4">
@@ -613,124 +736,73 @@
 <script>
 const ACCOUNTS = {{ accounts_json|safe }};
 const JOB_ID = "{{ job.pk }}";
+const ENTITY_ID = "{{ job.entity.pk|default:'' }}";
 const FLAGGED_COUNT = {{ job.flagged_count }};
 const IS_GST_REGISTERED = {{ job.is_gst_registered|yesno:"true,false" }};
 const CSRF_TOKEN = "{{ csrf_token }}";
 let activeDropdown = null;
 let activeIndex = -1;
+let isGroupView = false;
+let searchDebounceTimer = null;
+let undoTimer = null;
+let undoData = null;
+let lastRulePromptTxnId = null;
 
-// ---- Account Picker ----
+// ========================================================================
+// Account Picker
+// ========================================================================
 document.querySelectorAll('.account-picker-input').forEach(input => {
     const txnId = input.id.replace('acct-', '');
     const dropdown = document.getElementById('dropdown-' + txnId);
-
-    input.addEventListener('focus', () => {
-        showDropdown(txnId, input.value);
-    });
-
-    input.addEventListener('input', () => {
-        showDropdown(txnId, input.value);
-    });
-
+    input.addEventListener('focus', () => showDropdown(txnId, input.value));
+    input.addEventListener('input', () => showDropdown(txnId, input.value));
     input.addEventListener('keydown', (e) => {
         const options = dropdown.querySelectorAll('.account-option');
-        if (e.key === 'ArrowDown') {
-            e.preventDefault();
-            activeIndex = Math.min(activeIndex + 1, options.length - 1);
-            highlightOption(dropdown, activeIndex);
-        } else if (e.key === 'ArrowUp') {
-            e.preventDefault();
-            activeIndex = Math.max(activeIndex - 1, 0);
-            highlightOption(dropdown, activeIndex);
-        } else if (e.key === 'Enter') {
-            e.preventDefault();
-            if (activeIndex >= 0 && options[activeIndex]) {
-                selectAccount(txnId, options[activeIndex].dataset.code, options[activeIndex].dataset.name);
-            }
-        } else if (e.key === 'Tab') {
-            if (activeIndex >= 0 && options[activeIndex]) {
-                selectAccount(txnId, options[activeIndex].dataset.code, options[activeIndex].dataset.name);
-            } else if (options.length > 0) {
-                selectAccount(txnId, options[0].dataset.code, options[0].dataset.name);
-            }
-            hideAllDropdowns();
-        } else if (e.key === 'Escape') {
-            hideAllDropdowns();
-        }
+        if (e.key === 'ArrowDown') { e.preventDefault(); activeIndex = Math.min(activeIndex + 1, options.length - 1); highlightOption(dropdown, activeIndex); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); activeIndex = Math.max(activeIndex - 1, 0); highlightOption(dropdown, activeIndex); }
+        else if (e.key === 'Enter') { e.preventDefault(); if (activeIndex >= 0 && options[activeIndex]) selectAccount(txnId, options[activeIndex].dataset.code, options[activeIndex].dataset.name); }
+        else if (e.key === 'Tab') { if (activeIndex >= 0 && options[activeIndex]) selectAccount(txnId, options[activeIndex].dataset.code, options[activeIndex].dataset.name); else if (options.length > 0) selectAccount(txnId, options[0].dataset.code, options[0].dataset.name); hideAllDropdowns(); }
+        else if (e.key === 'Escape') hideAllDropdowns();
     });
 });
-
-document.addEventListener('click', (e) => {
-    if (!e.target.closest('.account-picker-container')) {
-        hideAllDropdowns();
-    }
-});
+document.addEventListener('click', (e) => { if (!e.target.closest('.account-picker-container')) hideAllDropdowns(); });
 
 function showDropdown(txnId, query) {
     const dropdown = document.getElementById('dropdown-' + txnId);
     const q = (query || '').toLowerCase().replace(/\s*—\s*.*/, '').trim();
     activeIndex = -1;
-
     let filtered = ACCOUNTS;
-    if (q) {
-        filtered = ACCOUNTS.filter(a =>
-            a.code.toLowerCase().includes(q) ||
-            a.name.toLowerCase().includes(q)
-        );
-    }
-
+    if (q) filtered = ACCOUNTS.filter(a => a.code.toLowerCase().includes(q) || a.name.toLowerCase().includes(q));
     if (filtered.length === 0) {
         dropdown.innerHTML = '<div class="p-2 text-muted" style="font-size:0.82rem;">No matching accounts</div>';
     } else {
-        let lastSection = '';
-        let html = '';
+        let lastSection = '', html = '';
         filtered.slice(0, 40).forEach(a => {
-            if (a.section && a.section !== lastSection) {
-                html += `<div class="px-2 py-1 bg-light border-bottom" style="font-size:0.7rem; font-weight:600; color:#666;">${a.section}</div>`;
-                lastSection = a.section;
-            }
-            const taxBadge = a.tax ? `<span class="badge bg-secondary bg-opacity-25 text-dark" style="font-size:0.65rem; margin-left:4px;">${a.tax}</span>` : '';
-            html += `<div class="account-option" data-code="${a.code}" data-name="${a.name}" onclick="selectAccount('${txnId}', '${a.code}', '${a.name.replace(/'/g, "\\'")}')"> 
-                <span class="code">${a.code}</span>
-                <span class="name">${a.name}${taxBadge}</span>
-            </div>`;
+            if (a.section && a.section !== lastSection) { html += `<div class="px-2 py-1 bg-light border-bottom" style="font-size:0.7rem;font-weight:600;color:#666;">${a.section}</div>`; lastSection = a.section; }
+            const taxBadge = a.tax ? `<span class="badge bg-secondary bg-opacity-25 text-dark" style="font-size:0.65rem;margin-left:4px;">${a.tax}</span>` : '';
+            html += `<div class="account-option" data-code="${a.code}" data-name="${a.name}" onclick="selectAccount('${txnId}', '${a.code}', '${a.name.replace(/'/g, "\\'")}')"><span class="code">${a.code}</span><span class="name">${a.name}${taxBadge}</span></div>`;
         });
         dropdown.innerHTML = html;
     }
     dropdown.classList.add('show');
     activeDropdown = dropdown;
 }
-
-function highlightOption(dropdown, index) {
-    dropdown.querySelectorAll('.account-option').forEach((opt, i) => {
-        opt.classList.toggle('active', i === index);
-        if (i === index) opt.scrollIntoView({ block: 'nearest' });
-    });
-}
-
-function hideAllDropdowns() {
-    document.querySelectorAll('.account-dropdown').forEach(d => d.classList.remove('show'));
-    activeDropdown = null;
-    activeIndex = -1;
-}
+function highlightOption(dropdown, index) { dropdown.querySelectorAll('.account-option').forEach((opt, i) => { opt.classList.toggle('active', i === index); if (i === index) opt.scrollIntoView({ block: 'nearest' }); }); }
+function hideAllDropdowns() { document.querySelectorAll('.account-dropdown').forEach(d => d.classList.remove('show')); activeDropdown = null; activeIndex = -1; }
 
 function selectAccount(txnId, code, name) {
     const input = document.getElementById('acct-' + txnId);
-    input.value = code + ' — ' + name;
+    input.value = code + ' \u2014 ' + name;
     input.dataset.code = code;
     input.dataset.name = name;
     input.classList.add('confirmed');
     hideAllDropdowns();
-
-    // Auto-confirm if tax type is also set
     tryAutoConfirm(txnId);
 }
 
 function onTaxChange(txnId) {
     const select = document.getElementById('tax-' + txnId);
-    if (select.value) {
-        select.classList.add('confirmed');
-    }
+    if (select.value) select.classList.add('confirmed');
     tryAutoConfirm(txnId);
 }
 
@@ -740,96 +812,656 @@ function tryAutoConfirm(txnId) {
     const code = input.dataset.code;
     const name = input.dataset.name;
     const tax = select.value;
-
-    if (code && tax) {
-        confirmTransaction(txnId, code, name, tax);
-    }
+    if (code && tax) confirmTransaction(txnId, code, name, tax);
 }
 
 function confirmTransaction(txnId, code, name, taxType) {
     fetch(`/api/review/transaction/${txnId}/confirm/`, {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': CSRF_TOKEN,
-        },
-        body: JSON.stringify({
-            confirmed_code: code,
-            confirmed_name: name,
-            confirmed_tax_type: taxType,
-        }),
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
+        body: JSON.stringify({ confirmed_code: code, confirmed_name: name, confirmed_tax_type: taxType }),
     })
     .then(r => r.json())
     .then(data => {
         if (data.status === 'ok') {
             const row = document.getElementById('row-' + txnId);
-            row.classList.remove('txn-row-pending');
+            row.classList.remove('txn-row-pending', 'txn-row-unclassified', 'txn-row-rule');
             row.classList.add('txn-row-confirmed');
             row.dataset.confirmed = 'true';
             row.querySelector('.status-icon').innerHTML = '<i class="bi bi-check-circle-fill text-success"></i>';
-
-            // Update GST/Net if returned
             if (IS_GST_REGISTERED && data.gst_amount !== undefined) {
                 const gstCell = row.querySelector('.gst-amount');
                 const netCell = row.querySelector('.net-amount');
                 if (gstCell) gstCell.textContent = '$' + parseFloat(data.gst_amount).toFixed(2);
                 if (netCell) netCell.textContent = '$' + parseFloat(data.net_amount).toFixed(2);
             }
-
-            // Update progress
             document.getElementById('confirmed-count').textContent = data.confirmed_count;
             document.getElementById('progress-bar').style.width = data.progress_percent + '%';
-
-            // Enable submit if all confirmed
             const allConfirmed = data.confirmed_count >= FLAGGED_COUNT;
             document.getElementById('btn-submit').disabled = !allConfirmed;
             document.getElementById('btn-submit-bottom').disabled = !allConfirmed;
+
+            // Show rule prompt if this was an override (code differs from AI suggestion)
+            const aiCode = row.dataset.aiCode;
+            if (ENTITY_ID && code !== aiCode && aiCode) {
+                showRulePrompt(txnId, row.cells[3].textContent.trim(), code, name);
+            }
         }
     });
 }
 
-// ---- Accept All AI Suggestions ----
-function acceptAllSuggestions() {
-    if (!confirm('Accept all AI suggestions for unconfirmed transactions? You can still change individual items afterwards.')) return;
+// ========================================================================
+// Natural Language Search
+// ========================================================================
+function onSearchInput() {
+    const input = document.getElementById('nl-search');
+    const query = input.value.trim();
+    const clearBtn = document.getElementById('nl-search-clear');
+    clearBtn.style.display = query ? 'block' : 'none';
+    input.classList.toggle('has-query', !!query);
 
+    clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = setTimeout(() => applyFilters(), 150);
+}
+
+function clearSearch() {
+    const input = document.getElementById('nl-search');
+    input.value = '';
+    input.classList.remove('has-query');
+    document.getElementById('nl-search-clear').style.display = 'none';
+    document.getElementById('nl-search-count').style.display = 'none';
+    applyFilters();
+}
+
+function parseSearchQuery(query) {
+    /* Client-side lightweight parser for simple queries */
+    const filters = {};
+    let remainder = query;
+
+    // Amount: "over $X" / "under $X"
+    const overMatch = remainder.match(/(?:over|above|more than|greater than)\s*\$?([\d,.]+)/i);
+    if (overMatch) { filters.amountMin = parseFloat(overMatch[1].replace(/,/g, '')); remainder = remainder.replace(overMatch[0], ''); }
+    const underMatch = remainder.match(/(?:under|below|less than)\s*\$?([\d,.]+)/i);
+    if (underMatch) { filters.amountMax = parseFloat(underMatch[1].replace(/,/g, '')); remainder = remainder.replace(underMatch[0], ''); }
+
+    // Status
+    if (/\b(approved|confirmed)\b/i.test(remainder)) { filters.status = 'confirmed'; remainder = remainder.replace(/\b(approved|confirmed)\b/i, ''); }
+    else if (/\b(pending|unconfirmed)\b/i.test(remainder)) { filters.status = 'pending'; remainder = remainder.replace(/\b(pending|unconfirmed)\b/i, ''); }
+
+    // GST treatment
+    const gstMap = { 'taxable': 'taxable', 'gst-free': 'gst_free', 'gst free': 'gst_free', 'input taxed': 'input_taxed', 'out of scope': 'out_of_scope' };
+    for (const [text, val] of Object.entries(gstMap)) {
+        if (remainder.toLowerCase().includes(text)) { filters.gstTreatment = val; remainder = remainder.replace(new RegExp(text, 'i'), ''); break; }
+    }
+
+    // Date month
+    const months = { january:'01', february:'02', march:'03', april:'04', may:'05', june:'06', july:'07', august:'08', september:'09', october:'10', november:'11', december:'12', jan:'01', feb:'02', mar:'03', apr:'04', jun:'06', jul:'07', aug:'08', sep:'09', oct:'10', nov:'11', dec:'12' };
+    for (const [name, num] of Object.entries(months)) {
+        const re = new RegExp('\\b' + name + '\\b', 'i');
+        if (re.test(remainder)) { filters.month = num; remainder = remainder.replace(re, ''); break; }
+    }
+
+    filters.description = remainder.trim().replace(/\s+/g, ' ');
+    return filters;
+}
+
+// ========================================================================
+// Filters
+// ========================================================================
+function applyFilters() {
+    const searchVal = (document.getElementById('nl-search').value || '').trim();
+    const statusVal = document.getElementById('filter-status').value;
+    const accountVal = document.getElementById('filter-account').value;
+    const gstVal = document.getElementById('filter-gst') ? document.getElementById('filter-gst').value : 'all';
+    const rows = document.querySelectorAll('#txn-body tr:not([id^="split-editor-row"])');
+    let visible = 0;
+
+    const parsed = searchVal ? parseSearchQuery(searchVal) : {};
+
+    rows.forEach(row => {
+        if (!row.dataset.txnId) return; // skip non-data rows
+        let show = true;
+
+        // NL Search filters
+        if (parsed.description) {
+            const desc = (row.cells[3] ? row.cells[3].textContent : '').toLowerCase();
+            if (!desc.includes(parsed.description.toLowerCase())) show = false;
+        }
+        if (parsed.amountMin !== undefined) {
+            const amt = Math.abs(parseFloat(row.dataset.amount || 0));
+            if (amt < parsed.amountMin) show = false;
+        }
+        if (parsed.amountMax !== undefined) {
+            const amt = Math.abs(parseFloat(row.dataset.amount || 0));
+            if (amt > parsed.amountMax) show = false;
+        }
+        if (parsed.status === 'confirmed' && row.dataset.confirmed !== 'true') show = false;
+        if (parsed.status === 'pending' && row.dataset.confirmed === 'true') show = false;
+        if (parsed.gstTreatment && row.dataset.gstTreatment !== parsed.gstTreatment) show = false;
+        if (parsed.month) {
+            const date = row.cells[2] ? row.cells[2].textContent.trim() : '';
+            if (!date.includes('/' + parsed.month + '/')) show = false;
+        }
+
+        // Dropdown filters
+        if (statusVal !== 'all') {
+            const isConfirmed = row.dataset.confirmed === 'true';
+            const isRule = row.classList.contains('txn-row-rule');
+            const isLearning = row.classList.contains('txn-row-learning');
+            const isUnclassified = row.classList.contains('txn-row-unclassified');
+            const isPending = row.classList.contains('txn-row-pending');
+            const isSplit = row.dataset.isSplit === 'true' || row.dataset.splitParent;
+            if (statusVal === 'confirmed' && !isConfirmed) show = false;
+            if (statusVal === 'pending' && !isPending) show = false;
+            if (statusVal === 'unclassified' && !isUnclassified) show = false;
+            if (statusVal === 'learning' && !isLearning) show = false;
+            if (statusVal === 'rule' && !isRule) show = false;
+            if (statusVal === 'split' && !isSplit) show = false;
+        }
+        if (accountVal !== 'all') {
+            const aiCode = row.dataset.aiCode || '';
+            if (aiCode !== accountVal) show = false;
+        }
+        if (gstVal !== 'all') {
+            if ((row.dataset.gstTreatment || '') !== gstVal) show = false;
+        }
+
+        row.style.display = show ? '' : 'none';
+        // Also show/hide the split editor row
+        const editorRow = document.getElementById('split-editor-row-' + row.dataset.txnId);
+        if (editorRow && !show) editorRow.style.display = 'none';
+
+        if (show) visible++;
+    });
+
+    const totalRows = document.querySelectorAll('#txn-body tr[data-txn-id]').length;
+    document.getElementById('filter-count').textContent = visible + ' of ' + totalRows;
+
+    // Update search count badge
+    const countBadge = document.getElementById('nl-search-count');
+    if (searchVal) { countBadge.textContent = visible + ' results'; countBadge.style.display = 'inline'; }
+    else { countBadge.style.display = 'none'; }
+
+    // Highlight active filters
+    ['filter-status', 'filter-account', 'filter-gst'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle('filter-active', el.value !== 'all');
+    });
+
+    if (isGroupView) buildGroupView();
+}
+
+// ========================================================================
+// Checkbox / Bulk Selection
+// ========================================================================
+function onCheckboxChange() {
+    const checked = document.querySelectorAll('.txn-checkbox:checked');
+    const toolbar = document.getElementById('bulk-toolbar');
+    if (checked.length > 0) {
+        toolbar.classList.add('show');
+        document.getElementById('bulk-selected-count').textContent = checked.length + ' selected';
+    } else {
+        toolbar.classList.remove('show');
+    }
+}
+
+function toggleSelectAll() {
+    const headerCb = document.getElementById('select-all-header');
+    document.querySelectorAll('.txn-checkbox').forEach(cb => {
+        const row = cb.closest('tr');
+        if (row.style.display !== 'none') cb.checked = headerCb.checked;
+    });
+    onCheckboxChange();
+}
+
+function toggleSelectAllFiltered() {
+    const cb = document.getElementById('select-all-filtered');
+    document.querySelectorAll('.txn-checkbox').forEach(tcb => {
+        const row = tcb.closest('tr');
+        if (row.style.display !== 'none') tcb.checked = cb.checked;
+    });
+    onCheckboxChange();
+}
+
+function getSelectedIds() {
+    return Array.from(document.querySelectorAll('.txn-checkbox:checked')).map(cb => cb.dataset.txnId);
+}
+
+// ========================================================================
+// Bulk GST Treatment
+// ========================================================================
+function bulkSetGST(treatment) {
+    const ids = getSelectedIds();
+    if (ids.length === 0) return;
+
+    // Save undo data before changing
+    const prevData = ids.map(id => {
+        const row = document.getElementById('row-' + id);
+        return {
+            id: id,
+            gst_treatment: row.dataset.gstTreatment || '',
+            creditable_percentage: row.dataset.creditablePct || '100',
+            is_gst_manual: row.dataset.isGstManual === 'true',
+        };
+    });
+
+    fetch(`/api/review/${JOB_ID}/bulk-gst/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
+        body: JSON.stringify({ transaction_ids: ids, gst_treatment: treatment }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            // Update UI
+            (data.updated_ids || []).forEach(id => {
+                const row = document.getElementById('row-' + id);
+                if (row) {
+                    row.dataset.gstTreatment = treatment;
+                    row.dataset.isGstManual = 'true';
+                    const gstSelect = document.getElementById('gst-treat-' + id);
+                    if (gstSelect) { gstSelect.value = treatment; gstSelect.classList.add('manual'); }
+                }
+            });
+
+            // Show undo toast
+            undoData = prevData;
+            showUndoToast(`GST treatment updated to "${treatment}" for ${data.updated_count} transactions`);
+
+            // Uncheck all
+            document.querySelectorAll('.txn-checkbox:checked').forEach(cb => cb.checked = false);
+            onCheckboxChange();
+        }
+    });
+}
+
+function showUndoToast(message) {
+    const toast = document.getElementById('undo-toast');
+    document.getElementById('undo-toast-text').textContent = message;
+    toast.classList.add('show');
+    let seconds = 5;
+    document.getElementById('undo-timer').textContent = seconds + 's';
+    clearInterval(undoTimer);
+    undoTimer = setInterval(() => {
+        seconds--;
+        document.getElementById('undo-timer').textContent = seconds + 's';
+        if (seconds <= 0) { clearInterval(undoTimer); toast.classList.remove('show'); undoData = null; }
+    }, 1000);
+}
+
+function undoBulkGST() {
+    if (!undoData) return;
+    clearInterval(undoTimer);
+    document.getElementById('undo-toast').classList.remove('show');
+
+    fetch(`/api/review/${JOB_ID}/undo-bulk-gst/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
+        body: JSON.stringify({ undo_data: undoData }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            undoData.forEach(item => {
+                const row = document.getElementById('row-' + item.id);
+                if (row) {
+                    row.dataset.gstTreatment = item.gst_treatment;
+                    row.dataset.isGstManual = String(item.is_gst_manual);
+                    const gstSelect = document.getElementById('gst-treat-' + item.id);
+                    if (gstSelect) { gstSelect.value = item.gst_treatment; gstSelect.classList.toggle('manual', item.is_gst_manual); }
+                }
+            });
+            undoData = null;
+        }
+    });
+}
+
+function bulkAcceptSelected() {
+    const ids = getSelectedIds();
+    if (ids.length === 0) return;
+    if (!confirm(`Approve ${ids.length} selected transactions with their current AI suggestions?`)) return;
+
+    fetch(`/api/review/${JOB_ID}/bulk-approve-group/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
+        body: JSON.stringify({ transaction_ids: ids }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            (data.approved_ids || []).forEach(txnId => {
+                const row = document.getElementById('row-' + txnId);
+                if (row) {
+                    row.classList.remove('txn-row-pending', 'txn-row-learning', 'txn-row-rule');
+                    row.classList.add('txn-row-confirmed');
+                    row.dataset.confirmed = 'true';
+                    row.querySelector('.status-icon').innerHTML = '<i class="bi bi-check-circle-fill text-success"></i>';
+                }
+            });
+            if (data.confirmed_count !== undefined) {
+                document.getElementById('confirmed-count').textContent = data.confirmed_count;
+                const pct = FLAGGED_COUNT > 0 ? Math.round((data.confirmed_count / FLAGGED_COUNT) * 100) : 0;
+                document.getElementById('progress-bar').style.width = pct + '%';
+                document.getElementById('btn-submit').disabled = data.confirmed_count < FLAGGED_COUNT;
+                document.getElementById('btn-submit-bottom').disabled = data.confirmed_count < FLAGGED_COUNT;
+            }
+            document.querySelectorAll('.txn-checkbox:checked').forEach(cb => cb.checked = false);
+            onCheckboxChange();
+        }
+    });
+}
+
+// ========================================================================
+// GST Treatment Controls (per-row)
+// ========================================================================
+function onGSTTreatmentChange(txnId) {
+    const select = document.getElementById('gst-treat-' + txnId);
+    const treatment = select.value;
+
+    // Show/hide creditable percentage field (AC-APT-01)
+    const credWrap = document.getElementById('cred-pct-wrap-' + txnId);
+    if (credWrap) credWrap.style.display = (treatment === 'taxable') ? '' : 'none';
+
+    fetch(`/api/review/transaction/${txnId}/gst-treatment/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
+        body: JSON.stringify({ gst_treatment: treatment, is_manual: true }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            const row = document.getElementById('row-' + txnId);
+            row.dataset.gstTreatment = treatment;
+            row.dataset.isGstManual = 'true';
+            select.classList.add('manual');
+            if (IS_GST_REGISTERED) {
+                const gstCell = row.querySelector('.gst-amount');
+                const netCell = row.querySelector('.net-amount');
+                if (gstCell) gstCell.innerHTML = '$' + parseFloat(data.gst_amount).toFixed(2) + '<span class="manual-gst-indicator" title="Manually set"></span>';
+                if (netCell) netCell.textContent = '$' + parseFloat(data.net_amount).toFixed(2);
+            }
+        }
+    });
+}
+
+function onCreditablePctChange(txnId) {
+    const input = document.getElementById('cred-pct-' + txnId);
+    const pct = input.value;
+
+    fetch(`/api/review/transaction/${txnId}/creditable-pct/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
+        body: JSON.stringify({ creditable_percentage: pct }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            const row = document.getElementById('row-' + txnId);
+            row.dataset.creditablePct = data.creditable_percentage;
+            if (IS_GST_REGISTERED) {
+                const gstCell = row.querySelector('.gst-amount');
+                if (gstCell) gstCell.textContent = '$' + parseFloat(data.gst_amount).toFixed(2);
+            }
+        }
+    });
+}
+
+function showGSTOverride(txnId) {
+    document.getElementById('override-txn-id').value = txnId;
+    document.getElementById('override-gst-amount').value = '';
+    document.getElementById('override-reason').value = '';
+    document.getElementById('override-implied-pct').textContent = '';
+    new bootstrap.Modal(document.getElementById('gstOverrideModal')).show();
+}
+
+document.getElementById('override-gst-amount')?.addEventListener('input', function() {
+    const txnId = document.getElementById('override-txn-id').value;
+    const row = document.getElementById('row-' + txnId);
+    const grossAmt = Math.abs(parseFloat(row.dataset.amount || 0));
+    const overrideAmt = parseFloat(this.value || 0);
+    const standardGST = grossAmt / 11;
+    if (standardGST > 0) {
+        const impliedPct = (overrideAmt / standardGST * 100).toFixed(1);
+        document.getElementById('override-implied-pct').textContent = `Implied creditable: ${impliedPct}% (standard GST: $${standardGST.toFixed(2)})`;
+    }
+});
+
+function submitGSTOverride() {
+    const txnId = document.getElementById('override-txn-id').value;
+    const amount = document.getElementById('override-gst-amount').value;
+    const reason = document.getElementById('override-reason').value;
+    if (!reason.trim()) { alert('A reason is mandatory for GST overrides.'); return; }
+
+    fetch(`/api/review/transaction/${txnId}/gst-override/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
+        body: JSON.stringify({ gst_amount: amount, reason: reason }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            const row = document.getElementById('row-' + txnId);
+            row.dataset.hasOverride = 'true';
+            if (IS_GST_REGISTERED) {
+                const gstCell = row.querySelector('.gst-amount');
+                if (gstCell) gstCell.innerHTML = '$' + parseFloat(data.gst_amount).toFixed(2) + ' <span class="override-badge"><i class="bi bi-pencil-fill"></i></span>';
+            }
+            bootstrap.Modal.getInstance(document.getElementById('gstOverrideModal')).hide();
+        } else {
+            alert(data.message || 'Error applying override.');
+        }
+    });
+}
+
+// ========================================================================
+// Transaction Splitting
+// ========================================================================
+function openSplitEditor(txnId) {
+    const row = document.getElementById('row-' + txnId);
+    const editorRow = document.getElementById('split-editor-row-' + txnId);
+    if (!editorRow) return;
+    editorRow.style.display = '';
+
+    const amount = parseFloat(row.dataset.amount || 0);
+    const linesContainer = document.getElementById('split-lines-' + txnId);
+    linesContainer.innerHTML = '';
+    linesContainer.dataset.originalAmount = amount;
+
+    // Line 1: AI suggested account + full amount
+    addSplitLineHTML(txnId, row.dataset.aiCode || '', row.dataset.aiName || '', amount.toFixed(2));
+    // Line 2: blank
+    addSplitLineHTML(txnId, '', '', '0.00');
+    updateSplitResidual(txnId);
+}
+
+function addSplitLine(txnId) {
+    addSplitLineHTML(txnId, '', '', '0.00');
+    updateSplitResidual(txnId);
+}
+
+function addSplitLineHTML(txnId, code, name, amount) {
+    const container = document.getElementById('split-lines-' + txnId);
+    const lineNum = container.children.length + 1;
+    const div = document.createElement('div');
+    div.className = 'split-line';
+    div.dataset.lineNum = lineNum;
+    div.innerHTML = `
+        <span style="font-size:0.75rem;font-weight:600;color:#9c27b0;width:20px;">${lineNum}</span>
+        <input type="text" class="split-acct" placeholder="Account code" value="${code}" style="width:80px;" list="split-acct-list-${txnId}">
+        <input type="text" class="split-name" placeholder="Account name" value="${name}" style="flex:1;">
+        <input type="number" class="split-amount" step="0.01" value="${amount}" style="width:100px;text-align:right;" oninput="updateSplitResidual('${txnId}')">
+        <select class="split-gst-treatment" style="width:100px;">
+            <option value="taxable">Taxable</option>
+            <option value="gst_free">GST-Free</option>
+            <option value="input_taxed">Input Taxed</option>
+            <option value="out_of_scope">Out of Scope</option>
+        </select>
+        <button class="btn btn-sm btn-outline-danger" style="font-size:0.7rem;padding:0 4px;" onclick="removeSplitLine(this, '${txnId}')"><i class="bi bi-x"></i></button>
+    `;
+    container.appendChild(div);
+}
+
+function removeSplitLine(btn, txnId) {
+    const container = document.getElementById('split-lines-' + txnId);
+    if (container.children.length <= 2) { alert('A split requires at least 2 lines.'); return; }
+    btn.closest('.split-line').remove();
+    // Renumber
+    Array.from(container.children).forEach((line, i) => {
+        line.dataset.lineNum = i + 1;
+        line.querySelector('span').textContent = i + 1;
+    });
+    updateSplitResidual(txnId);
+}
+
+function updateSplitResidual(txnId) {
+    const container = document.getElementById('split-lines-' + txnId);
+    const original = parseFloat(container.dataset.originalAmount || 0);
+    let total = 0;
+    container.querySelectorAll('.split-amount').forEach(inp => { total += parseFloat(inp.value || 0); });
+    const residual = (original - total).toFixed(2);
+    const el = document.getElementById('split-residual-' + txnId);
+    if (Math.abs(parseFloat(residual)) < 0.005) {
+        el.textContent = 'Balanced';
+        el.className = 'split-balanced';
+    } else {
+        el.textContent = 'Residual: $' + residual;
+        el.className = 'split-residual';
+    }
+}
+
+function confirmSplit(txnId) {
+    const container = document.getElementById('split-lines-' + txnId);
+    const lines = [];
+    container.querySelectorAll('.split-line').forEach(line => {
+        lines.push({
+            account_code: line.querySelector('.split-acct').value,
+            account_name: line.querySelector('.split-name').value,
+            amount: line.querySelector('.split-amount').value,
+            gst_treatment: line.querySelector('.split-gst-treatment').value,
+            creditable_percentage: '100',
+        });
+    });
+
+    fetch(`/api/review/transaction/${txnId}/split/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
+        body: JSON.stringify({ lines: lines }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            window.location.reload(); // Reload to show split children
+        } else {
+            alert(data.message || 'Error splitting transaction.');
+        }
+    });
+}
+
+function cancelSplit(txnId) {
+    document.getElementById('split-editor-row-' + txnId).style.display = 'none';
+}
+
+function unsplitTransaction(txnId) {
+    if (!confirm('Remove this split and restore the original transaction?')) return;
+    fetch(`/api/review/transaction/${txnId}/unsplit/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') window.location.reload();
+        else alert(data.message || 'Error removing split.');
+    });
+}
+
+// ========================================================================
+// Classification Rule Prompt
+// ========================================================================
+function showRulePrompt(txnId, description, accountCode, accountName) {
+    if (!ENTITY_ID) return;
+    lastRulePromptTxnId = txnId;
+    // Extract keyword from description (first meaningful word)
+    const keyword = description.replace(/\[Split.*?\]/g, '').trim().split(/\s+/).slice(0, 3).join(' ');
+    document.getElementById('rule-prompt-keyword').textContent = keyword;
+    document.getElementById('rule-prompt-account').textContent = accountCode + ' — ' + accountName;
+    document.getElementById('rule-prompt').classList.add('show');
+    document.getElementById('rule-prompt').dataset.keyword = keyword;
+    document.getElementById('rule-prompt').dataset.code = accountCode;
+    document.getElementById('rule-prompt').dataset.name = accountName;
+}
+
+function dismissRulePrompt() {
+    document.getElementById('rule-prompt').classList.remove('show');
+    lastRulePromptTxnId = null;
+}
+
+function saveRuleFromPrompt() {
+    const prompt = document.getElementById('rule-prompt');
+    const keyword = prompt.dataset.keyword;
+    const code = prompt.dataset.code;
+    const name = prompt.dataset.name;
+    const matchType = document.getElementById('rule-prompt-match').value;
+
+    // Get GST treatment from the transaction row
+    let gstTreatment = '';
+    if (lastRulePromptTxnId) {
+        const gstSelect = document.getElementById('gst-treat-' + lastRulePromptTxnId);
+        if (gstSelect) gstTreatment = gstSelect.value;
+    }
+
+    fetch('/api/review/rules/create/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
+        body: JSON.stringify({
+            entity_id: ENTITY_ID,
+            description_pattern: keyword,
+            match_type: matchType,
+            account_code: code,
+            account_name: name,
+            gst_treatment: gstTreatment,
+            creditable_percentage: '100',
+        }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            prompt.innerHTML = '<i class="bi bi-check-circle-fill text-success"></i> <span>Rule saved! Future matching transactions will be auto-classified.</span>';
+            setTimeout(() => { prompt.classList.remove('show'); prompt.innerHTML = ''; }, 3000);
+        } else {
+            alert(data.message || 'Error saving rule.');
+        }
+    });
+}
+
+// ========================================================================
+// Accept All / Submit / Classify (preserved from original)
+// ========================================================================
+function acceptAllSuggestions() {
+    if (!confirm('Accept all AI suggestions for unconfirmed transactions?')) return;
     fetch(`/api/review/${JOB_ID}/accept-all/`, {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': CSRF_TOKEN,
-        },
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
     })
     .then(r => r.json())
-    .then(data => {
-        if (data.status === 'ok') {
-            // Reload the page to show updated state
-            window.location.reload();
-        }
-    });
+    .then(data => { if (data.status === 'ok') window.location.reload(); });
 }
 
-// ---- Submit Review ----
 function submitReview() {
     if (!confirm('Submit this review? All confirmed patterns will be saved to the learning database.')) return;
-
     fetch(`/api/review/${JOB_ID}/submit/`, {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': CSRF_TOKEN,
-        },
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
     })
     .then(r => r.json())
     .then(data => {
-        if (data.status === 'ok') {
-            window.location.href = data.redirect || '/';
-        } else {
-            alert(data.message || 'Error submitting review.');
-        }
+        if (data.status === 'ok') window.location.href = data.redirect || '/';
+        else alert(data.message || 'Error submitting review.');
     });
 }
 
-// ---- Async Classification ----
+// ========================================================================
+// Async Classification
+// ========================================================================
 let classifyRunning = false;
 const TOTAL_TXNS = {{ job.total_transactions }};
 const INITIAL_AUTO_CODED = {{ job.auto_coded_count }};
@@ -837,92 +1469,61 @@ const INITIAL_AUTO_CODED = {{ job.auto_coded_count }};
 function startClassification() {
     if (classifyRunning) return;
     classifyRunning = true;
-
     const bar = document.getElementById('classify-bar');
     const btn = document.getElementById('btn-classify');
     bar.style.display = 'flex';
     btn.disabled = true;
     btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Classifying...';
-
     classifyNextBatch();
 }
 
 function classifyNextBatch() {
     fetch(`/api/review/${JOB_ID}/classify-batch/`, {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': CSRF_TOKEN,
-        },
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
         body: JSON.stringify({batch_size: 15}),
     })
     .then(r => r.json())
     .then(data => {
         if (data.status === 'ok') {
-            // Update each classified transaction in the table
-            (data.classified || []).forEach(c => {
-                updateTransactionRow(c);
-            });
-
-            // Update progress
+            (data.classified || []).forEach(c => updateTransactionRow(c));
             const coded = data.auto_coded_count || 0;
             const pct = TOTAL_TXNS > 0 ? Math.round((coded / TOTAL_TXNS) * 100) : 0;
             document.getElementById('classify-progress').style.width = pct + '%';
             document.getElementById('classify-count').textContent = coded + ' / ' + TOTAL_TXNS;
             document.getElementById('classify-text').textContent = 'Classifying transactions... ' + pct + '%';
             document.getElementById('auto-coded-count').textContent = coded;
-
-            // Update confirmed count
             if (data.confirmed_count !== undefined) {
                 document.getElementById('confirmed-count').textContent = data.confirmed_count;
                 const progressPct = FLAGGED_COUNT > 0 ? Math.round((data.confirmed_count / FLAGGED_COUNT) * 100) : 0;
                 document.getElementById('progress-bar').style.width = progressPct + '%';
             }
-
-            // Continue if more to classify
-            if (data.remaining > 0) {
-                classifyNextBatch();
-            } else {
-                classifyComplete();
-            }
-        } else {
-            classifyError(data.message || 'Unknown error');
-        }
+            if (data.remaining > 0) classifyNextBatch();
+            else classifyComplete();
+        } else { classifyError(data.message || 'Unknown error'); }
     })
-    .catch(err => {
-        classifyError(err.message || 'Network error');
-    });
+    .catch(err => classifyError(err.message || 'Network error'));
 }
 
 function classifyComplete() {
     classifyRunning = false;
     const bar = document.getElementById('classify-bar');
     const btn = document.getElementById('btn-classify');
-
     document.getElementById('classify-spinner').style.display = 'none';
     document.getElementById('classify-text').textContent = 'Classification complete!';
     document.getElementById('classify-progress').style.width = '100%';
-    document.getElementById('classify-progress').classList.remove('bg-primary');
-    document.getElementById('classify-progress').classList.add('bg-success');
-
+    document.getElementById('classify-progress').classList.replace('bg-primary', 'bg-success');
     btn.innerHTML = '<i class="bi bi-check-circle"></i> Classification Complete';
-    btn.classList.remove('btn-classify');
-    btn.classList.add('btn-success');
+    btn.classList.replace('btn-classify', 'btn-success');
     btn.disabled = true;
-
-    // Fade out the bar after 3 seconds
-    setTimeout(() => {
-        bar.style.transition = 'opacity 0.5s';
-        bar.style.opacity = '0';
-        setTimeout(() => { bar.style.display = 'none'; }, 500);
-    }, 3000);
+    setTimeout(() => { bar.style.transition = 'opacity 0.5s'; bar.style.opacity = '0'; setTimeout(() => { bar.style.display = 'none'; }, 500); }, 3000);
 }
 
 function classifyError(msg) {
     classifyRunning = false;
-    const btn = document.getElementById('btn-classify');
     document.getElementById('classify-text').textContent = 'Error: ' + msg;
     document.getElementById('classify-spinner').style.display = 'none';
+    const btn = document.getElementById('btn-classify');
     btn.disabled = false;
     btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Retry Classification';
 }
@@ -930,369 +1531,140 @@ function classifyError(msg) {
 function updateTransactionRow(c) {
     const row = document.getElementById('row-' + c.txn_id);
     if (!row) return;
-
-    // Update row class
     row.classList.remove('txn-row-unclassified', 'txn-row-pending');
-    if (c.is_confirmed) {
-        row.classList.add('txn-row-confirmed');
-        row.querySelector('.status-icon').innerHTML = '<i class="bi bi-check-circle-fill text-success"></i>';
-    } else if (c.from_learning) {
-        row.classList.add('txn-row-learning');
-    } else {
-        row.classList.add('txn-row-pending');
-    }
+    if (c.is_confirmed) { row.classList.add('txn-row-confirmed'); row.querySelector('.status-icon').innerHTML = '<i class="bi bi-check-circle-fill text-success"></i>'; }
+    else if (c.from_learning) row.classList.add('txn-row-learning');
+    else row.classList.add('txn-row-pending');
 
-    // Update AI suggestion column
-    const aiCellIdx = IS_GST_REGISTERED ? 6 : 4;
+    const aiCellIdx = IS_GST_REGISTERED ? 7 : 5;
     const aiCell = row.cells[aiCellIdx];
     if (aiCell) {
         let stars = '';
-        for (let i = 1; i <= 5; i++) {
-            stars += i <= c.confidence ? '<i class="bi bi-star-fill"></i>' : '<i class="bi bi-star"></i>';
-        }
-        aiCell.innerHTML =
-            '<div><span style="font-weight:600;">' + c.code + '</span> ' +
-            '<span class="text-muted">' + c.name + '</span></div>' +
-            '<span class="confidence-badge conf-' + c.confidence + '">' + stars + '</span>' +
-            (c.reasoning ? '<span class="text-muted d-block" style="font-size:0.7rem;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + c.reasoning + '">' + c.reasoning + '</span>' : '');
+        for (let i = 1; i <= 5; i++) stars += i <= c.confidence ? '<i class="bi bi-star-fill"></i>' : '<i class="bi bi-star"></i>';
+        aiCell.innerHTML = '<div><span style="font-weight:600;">' + c.code + '</span> <span class="text-muted">' + c.name + '</span></div><span class="confidence-badge conf-' + c.confidence + '">' + stars + '</span>' + (c.reasoning ? '<span class="text-muted d-block" style="font-size:0.7rem;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + c.reasoning + '">' + c.reasoning + '</span>' : '');
     }
-
-    // Update GST/Net columns if GST registered
     if (IS_GST_REGISTERED) {
         const gstCell = row.querySelector('.gst-amount');
         const netCell = row.querySelector('.net-amount');
         if (gstCell && c.gst_amount) gstCell.textContent = '$' + parseFloat(c.gst_amount).toFixed(2);
         if (netCell && c.net_amount) netCell.textContent = '$' + parseFloat(c.net_amount).toFixed(2);
     }
-
-    // Update the account picker and tax select with AI suggestions
     const acctInput = document.getElementById('acct-' + c.txn_id);
     const taxSelect = document.getElementById('tax-' + c.txn_id);
-
-    if (acctInput && !acctInput.dataset.code) {
-        acctInput.value = c.code + ' \u2014 ' + c.name;
-        acctInput.dataset.code = c.code;
-        acctInput.dataset.name = c.name;
-    }
-
-    if (taxSelect && !taxSelect.value && c.tax_type) {
-        taxSelect.value = c.tax_type;
-    }
-
-    // Update row data attributes
+    if (acctInput && !acctInput.dataset.code) { acctInput.value = c.code + ' \u2014 ' + c.name; acctInput.dataset.code = c.code; acctInput.dataset.name = c.name; }
+    if (taxSelect && !taxSelect.value && c.tax_type) taxSelect.value = c.tax_type;
     row.dataset.aiCode = c.code;
     row.dataset.aiName = c.name;
     row.dataset.confirmed = c.is_confirmed ? 'true' : 'false';
-
-    // Re-enable text color for the row
     row.querySelectorAll('td').forEach(td => td.style.color = '');
 }
 
-// ---- Auto-start classification if there are unclassified transactions ----
-(function() {
-    const autoCoded = INITIAL_AUTO_CODED;
-    if (autoCoded < TOTAL_TXNS) {
-        // There are unclassified transactions - auto-start
-        setTimeout(() => startClassification(), 500);
-    } else {
-        // All classified - hide the classify button
-        const btn = document.getElementById('btn-classify');
-        if (btn) {
-            btn.innerHTML = '<i class="bi bi-check-circle"></i> All Classified';
-            btn.classList.remove('btn-classify');
-            btn.classList.add('btn-success');
-            btn.disabled = true;
-        }
-    }
-})();
-
-// ---- Initial state: enable submit if all already confirmed ----
-(function() {
-    const confirmed = {{ job.confirmed_count }};
-    if (confirmed >= FLAGGED_COUNT && FLAGGED_COUNT > 0) {
-        document.getElementById('btn-submit').disabled = false;
-        document.getElementById('btn-submit-bottom').disabled = false;
-    }
-})();
-
-// ---- Search / Filter / Group ----
-let isGroupView = false;
-
-// Populate the account code filter dropdown from existing rows
+// ========================================================================
+// Group View (preserved from original)
+// ========================================================================
 (function populateAccountFilter() {
-    const rows = document.querySelectorAll('#txn-body tr');
-    const codes = new Map(); // code -> name
-    rows.forEach(row => {
-        const code = row.dataset.aiCode;
-        const name = row.dataset.aiName;
-        if (code && code.trim()) {
-            if (!codes.has(code)) codes.set(code, name || '');
-        }
-    });
+    const rows = document.querySelectorAll('#txn-body tr[data-txn-id]');
+    const codes = new Map();
+    rows.forEach(row => { const code = row.dataset.aiCode; const name = row.dataset.aiName; if (code && code.trim()) { if (!codes.has(code)) codes.set(code, name || ''); } });
     const select = document.getElementById('filter-account');
-    // Sort by code
-    const sorted = [...codes.entries()].sort((a, b) => a[0].localeCompare(b[0], undefined, {numeric: true}));
-    sorted.forEach(([code, name]) => {
-        const opt = document.createElement('option');
-        opt.value = code;
-        opt.textContent = code + ' — ' + name;
-        select.appendChild(opt);
+    [...codes.entries()].sort((a, b) => a[0].localeCompare(b[0], undefined, {numeric: true})).forEach(([code, name]) => {
+        const opt = document.createElement('option'); opt.value = code; opt.textContent = code + ' \u2014 ' + name; select.appendChild(opt);
     });
 })();
-
-function applyFilters() {
-    const searchVal = (document.getElementById('txn-search').value || '').toLowerCase().trim();
-    const statusVal = document.getElementById('filter-status').value;
-    const accountVal = document.getElementById('filter-account').value;
-    const rows = document.querySelectorAll('#txn-body tr');
-    let visible = 0;
-
-    rows.forEach(row => {
-        let show = true;
-
-        // Search filter — match description
-        if (searchVal) {
-            const desc = (row.cells[2] ? row.cells[2].textContent : '').toLowerCase();
-            if (!desc.includes(searchVal)) show = false;
-        }
-
-        // Status filter
-        if (statusVal !== 'all') {
-            const isConfirmed = row.dataset.confirmed === 'true';
-            const isLearning = row.classList.contains('txn-row-learning');
-            const isUnclassified = row.classList.contains('txn-row-unclassified');
-            const isPending = row.classList.contains('txn-row-pending');
-
-            if (statusVal === 'confirmed' && !isConfirmed) show = false;
-            if (statusVal === 'pending' && !isPending) show = false;
-            if (statusVal === 'unclassified' && !isUnclassified) show = false;
-            if (statusVal === 'learning' && !isLearning) show = false;
-        }
-
-        // Account code filter
-        if (accountVal !== 'all') {
-            const aiCode = row.dataset.aiCode || '';
-            if (aiCode !== accountVal) show = false;
-        }
-
-        row.style.display = show ? '' : 'none';
-        if (show) visible++;
-    });
-
-    document.getElementById('filter-count').textContent =
-        visible + ' of ' + rows.length + ' transactions shown';
-
-    // Highlight active filters
-    ['txn-search', 'filter-status', 'filter-account'].forEach(id => {
-        const el = document.getElementById(id);
-        const isActive = (id === 'txn-search' && searchVal) ||
-                         (id === 'filter-status' && statusVal !== 'all') ||
-                         (id === 'filter-account' && accountVal !== 'all');
-        el.classList.toggle('filter-active', isActive);
-    });
-
-    // If in group view, rebuild groups
-    if (isGroupView) buildGroupView();
-}
 
 function toggleGroupView() {
     isGroupView = !isGroupView;
     const btn = document.getElementById('btn-group-view');
-    const tableView = document.getElementById('table-view');
-    const groupedView = document.getElementById('grouped-view');
-
-    if (isGroupView) {
-        btn.classList.remove('btn-outline-primary');
-        btn.classList.add('btn-primary');
-        btn.innerHTML = '<i class="bi bi-table"></i> Table View';
-        tableView.style.display = 'none';
-        groupedView.style.display = 'block';
-        buildGroupView();
-    } else {
-        btn.classList.remove('btn-primary');
-        btn.classList.add('btn-outline-primary');
-        btn.innerHTML = '<i class="bi bi-collection"></i> Group by Code';
-        tableView.style.display = '';
-        groupedView.style.display = 'none';
-    }
+    if (isGroupView) { btn.classList.replace('btn-outline-primary', 'btn-primary'); document.getElementById('table-view').style.display = 'none'; document.getElementById('grouped-view').style.display = 'block'; buildGroupView(); }
+    else { btn.classList.replace('btn-primary', 'btn-outline-primary'); document.getElementById('table-view').style.display = ''; document.getElementById('grouped-view').style.display = 'none'; }
 }
 
 function buildGroupView() {
-    const rows = document.querySelectorAll('#txn-body tr');
-    const groups = new Map(); // code -> {name, txns: [{id, date, desc, amount, confirmed, aiCode}]}
-
+    const rows = document.querySelectorAll('#txn-body tr[data-txn-id]');
+    const groups = new Map();
     rows.forEach(row => {
-        if (row.style.display === 'none') return; // respect current filters
+        if (row.style.display === 'none') return;
         const aiCode = row.dataset.aiCode || 'Unclassified';
         const aiName = row.dataset.aiName || '';
         const txnId = row.dataset.txnId;
         const isConfirmed = row.dataset.confirmed === 'true';
-        const date = row.cells[1] ? row.cells[1].textContent.trim() : '';
-        const desc = row.cells[2] ? row.cells[2].textContent.trim() : '';
-        const amount = row.cells[3] ? row.cells[3].textContent.trim() : '';
-
-        if (!groups.has(aiCode)) {
-            groups.set(aiCode, {name: aiName, txns: []});
-        }
+        const date = row.cells[2] ? row.cells[2].textContent.trim() : '';
+        const desc = row.cells[3] ? row.cells[3].textContent.trim() : '';
+        const amount = row.cells[4] ? row.cells[4].textContent.trim() : '';
+        if (!groups.has(aiCode)) groups.set(aiCode, {name: aiName, txns: []});
         groups.get(aiCode).txns.push({id: txnId, date, desc, amount, confirmed: isConfirmed});
     });
-
-    // Sort groups by code
-    const sorted = [...groups.entries()].sort((a, b) =>
-        a[0].localeCompare(b[0], undefined, {numeric: true})
-    );
-
+    const sorted = [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0], undefined, {numeric: true}));
     let html = '';
     sorted.forEach(([code, group]) => {
         const pendingCount = group.txns.filter(t => !t.confirmed).length;
         const confirmedCount = group.txns.filter(t => t.confirmed).length;
-        const totalCount = group.txns.length;
         const allConfirmed = pendingCount === 0;
-
-        // Calculate total amount
         let totalAmt = 0;
+        group.txns.forEach(t => { const num = parseFloat(t.amount.replace(/[^\d.-]/g, '')); if (!isNaN(num)) totalAmt += num; });
+        const safeCode = code.replace(/[^a-zA-Z0-9]/g, '_');
+        html += `<div class="group-card"><div class="group-card-header" onclick="toggleGroupBody('${safeCode}')"><div class="d-flex align-items-center gap-2"><span class="group-code">${code}</span><span class="group-title">${group.name}</span><span class="group-count">${group.txns.length} txns</span>`;
+        if (pendingCount > 0) html += `<span class="group-status-badge group-status-pending">${pendingCount} pending</span>`;
+        if (confirmedCount > 0) html += `<span class="group-status-badge group-status-confirmed">${confirmedCount} confirmed</span>`;
+        html += `</div><div class="d-flex align-items-center gap-2"><span class="${totalAmt < 0 ? 'text-danger' : 'text-success'}" style="font-weight:600;">$${totalAmt.toFixed(2)}</span>`;
+        if (!allConfirmed && code !== 'Unclassified') html += `<button class="btn-approve-group" onclick="event.stopPropagation(); approveGroup('${code}')" id="btn-grp-${safeCode}"><i class="bi bi-check2-all"></i> Approve (${pendingCount})</button>`;
+        html += `<i class="bi bi-chevron-down" id="chevron-${safeCode}"></i></div></div>`;
+        html += `<div class="group-card-body" id="body-${safeCode}"><table class="table table-sm table-hover mb-0"><thead><tr><th style="width:30px;"></th><th>Date</th><th>Description</th><th class="text-end">Amount</th></tr></thead><tbody>`;
         group.txns.forEach(t => {
-            const num = parseFloat(t.amount.replace(/[^\d.-]/g, ''));
-            if (!isNaN(num)) totalAmt += num;
-        });
-        const totalStr = '$' + totalAmt.toFixed(2);
-        const totalClass = totalAmt < 0 ? 'text-danger' : 'text-success';
-
-        html += `<div class="group-card" data-group-code="${code}">`;
-        html += `<div class="group-card-header" onclick="toggleGroupBody('${code}')">`;
-        html += `<div class="d-flex align-items-center gap-2">`;
-        html += `<span class="group-code">${code}</span>`;
-        html += `<span class="group-title">${group.name}</span>`;
-        html += `<span class="group-count">${totalCount} txn${totalCount !== 1 ? 's' : ''}</span>`;
-        if (pendingCount > 0) {
-            html += `<span class="group-status-badge group-status-pending">${pendingCount} pending</span>`;
-        }
-        if (confirmedCount > 0) {
-            html += `<span class="group-status-badge group-status-confirmed">${confirmedCount} confirmed</span>`;
-        }
-        html += `<span class="group-total ${totalClass}">${totalStr}</span>`;
-        html += `</div>`;
-        html += `<div class="d-flex align-items-center gap-2">`;
-        if (!allConfirmed && code !== 'Unclassified') {
-            html += `<button class="btn-approve-group" onclick="event.stopPropagation(); approveGroup('${code}')" id="btn-grp-${code.replace(/[^a-zA-Z0-9]/g, '_')}">`;
-            html += `<i class="bi bi-check2-all"></i> Approve All (${pendingCount})`;
-            html += `</button>`;
-        } else if (allConfirmed) {
-            html += `<span class="group-status-badge group-status-confirmed"><i class="bi bi-check-circle-fill"></i> All Approved</span>`;
-        }
-        html += `<i class="bi bi-chevron-down" id="chevron-${code.replace(/[^a-zA-Z0-9]/g, '_')}"></i>`;
-        html += `</div>`;
-        html += `</div>`;
-
-        // Group body — transaction list
-        html += `<div class="group-card-body" id="body-${code.replace(/[^a-zA-Z0-9]/g, '_')}">`;
-        html += `<table class="table table-sm table-hover mb-0">`;
-        html += `<thead><tr><th style="width:30px;"></th><th>Date</th><th>Description</th><th class="text-end">Amount</th><th>Status</th></tr></thead>`;
-        html += `<tbody>`;
-        group.txns.forEach(t => {
-            const statusIcon = t.confirmed
-                ? '<i class="bi bi-check-circle-fill text-success"></i>'
-                : '<i class="bi bi-circle text-warning"></i>';
-            const amtClass = t.amount.includes('-') ? 'text-danger' : 'text-success';
-            html += `<tr>`;
-            html += `<td>${statusIcon}</td>`;
-            html += `<td style="white-space:nowrap;">${t.date}</td>`;
-            html += `<td>${t.desc}</td>`;
-            html += `<td class="text-end ${amtClass}" style="white-space:nowrap;">${t.amount}</td>`;
-            html += `<td>${t.confirmed ? '<span class="group-status-badge group-status-confirmed">Confirmed</span>' : '<span class="group-status-badge group-status-pending">Pending</span>'}</td>`;
-            html += `</tr>`;
+            const icon = t.confirmed ? '<i class="bi bi-check-circle-fill text-success"></i>' : '<i class="bi bi-circle text-warning"></i>';
+            html += `<tr><td>${icon}</td><td style="white-space:nowrap;">${t.date}</td><td>${t.desc}</td><td class="text-end ${t.amount.includes('-') ? 'text-danger' : 'text-success'}" style="white-space:nowrap;">${t.amount}</td></tr>`;
         });
         html += `</tbody></table></div></div>`;
     });
-
     document.getElementById('grouped-cards').innerHTML = html;
 }
 
-function toggleGroupBody(code) {
-    const safeCode = code.replace(/[^a-zA-Z0-9]/g, '_');
+function toggleGroupBody(safeCode) {
     const body = document.getElementById('body-' + safeCode);
     const chevron = document.getElementById('chevron-' + safeCode);
-    if (body) {
-        body.classList.toggle('show');
-        if (chevron) {
-            chevron.classList.toggle('bi-chevron-down', !body.classList.contains('show'));
-            chevron.classList.toggle('bi-chevron-up', body.classList.contains('show'));
-        }
-    }
+    if (body) { body.classList.toggle('show'); if (chevron) { chevron.classList.toggle('bi-chevron-down', !body.classList.contains('show')); chevron.classList.toggle('bi-chevron-up', body.classList.contains('show')); } }
 }
 
 function approveGroup(accountCode) {
     const safeCode = accountCode.replace(/[^a-zA-Z0-9]/g, '_');
     const btn = document.getElementById('btn-grp-' + safeCode);
-    if (btn) {
-        btn.disabled = true;
-        btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Approving...';
-    }
-
+    if (btn) { btn.disabled = true; btn.innerHTML = '<i class="bi bi-hourglass-split"></i> Approving...'; }
     fetch(`/api/review/${JOB_ID}/bulk-approve-group/`, {
         method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'X-CSRFToken': CSRF_TOKEN,
-        },
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
         body: JSON.stringify({account_code: accountCode}),
     })
     .then(r => r.json())
     .then(data => {
         if (data.status === 'ok') {
-            // Update the main table rows
             (data.approved_ids || []).forEach(txnId => {
                 const row = document.getElementById('row-' + txnId);
-                if (row) {
-                    row.classList.remove('txn-row-pending', 'txn-row-learning');
-                    row.classList.add('txn-row-confirmed');
-                    row.dataset.confirmed = 'true';
-                    row.querySelector('.status-icon').innerHTML = '<i class="bi bi-check-circle-fill text-success"></i>';
-
-                    // Update the account picker and tax select to show confirmed values
-                    const acctInput = document.getElementById('acct-' + txnId);
-                    const taxSelect = document.getElementById('tax-' + txnId);
-                    if (acctInput) {
-                        acctInput.classList.add('confirmed');
-                        if (!acctInput.dataset.code) {
-                            acctInput.value = row.dataset.aiCode + ' \u2014 ' + row.dataset.aiName;
-                            acctInput.dataset.code = row.dataset.aiCode;
-                            acctInput.dataset.name = row.dataset.aiName;
-                        }
-                    }
-                    if (taxSelect) taxSelect.classList.add('confirmed');
-                }
+                if (row) { row.classList.remove('txn-row-pending', 'txn-row-learning', 'txn-row-rule'); row.classList.add('txn-row-confirmed'); row.dataset.confirmed = 'true'; row.querySelector('.status-icon').innerHTML = '<i class="bi bi-check-circle-fill text-success"></i>'; }
             });
-
-            // Update progress
             if (data.confirmed_count !== undefined) {
                 document.getElementById('confirmed-count').textContent = data.confirmed_count;
-                const progressPct = FLAGGED_COUNT > 0 ? Math.round((data.confirmed_count / FLAGGED_COUNT) * 100) : 0;
-                document.getElementById('progress-bar').style.width = progressPct + '%';
-
-                const allConfirmed = data.confirmed_count >= FLAGGED_COUNT;
-                document.getElementById('btn-submit').disabled = !allConfirmed;
-                document.getElementById('btn-submit-bottom').disabled = !allConfirmed;
+                const pct = FLAGGED_COUNT > 0 ? Math.round((data.confirmed_count / FLAGGED_COUNT) * 100) : 0;
+                document.getElementById('progress-bar').style.width = pct + '%';
+                document.getElementById('btn-submit').disabled = data.confirmed_count < FLAGGED_COUNT;
+                document.getElementById('btn-submit-bottom').disabled = data.confirmed_count < FLAGGED_COUNT;
             }
-
-            // Rebuild group view
             buildGroupView();
-        } else {
-            alert('Error: ' + (data.message || 'Unknown error'));
-            if (btn) {
-                btn.disabled = false;
-                btn.innerHTML = '<i class="bi bi-check2-all"></i> Retry';
-            }
-        }
+        } else { alert('Error: ' + (data.message || 'Unknown error')); if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-check2-all"></i> Retry'; } }
     })
-    .catch(err => {
-        alert('Network error: ' + err.message);
-        if (btn) {
-            btn.disabled = false;
-            btn.innerHTML = '<i class="bi bi-check2-all"></i> Retry';
-        }
-    });
+    .catch(err => { alert('Network error: ' + err.message); if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-check2-all"></i> Retry'; } });
 }
+
+// ========================================================================
+// Auto-start & Initial State
+// ========================================================================
+(function() {
+    if (INITIAL_AUTO_CODED < TOTAL_TXNS) { setTimeout(() => startClassification(), 500); }
+    else { const btn = document.getElementById('btn-classify'); if (btn) { btn.innerHTML = '<i class="bi bi-check-circle"></i> All Classified'; btn.classList.replace('btn-classify', 'btn-success'); btn.disabled = true; } }
+})();
+
+(function() {
+    const confirmed = {{ job.confirmed_count }};
+    if (confirmed >= FLAGGED_COUNT && FLAGGED_COUNT > 0) { document.getElementById('btn-submit').disabled = false; document.getElementById('btn-submit-bottom').disabled = false; }
+})();
 </script>
-{% endblock %}
 {% endblock %}
