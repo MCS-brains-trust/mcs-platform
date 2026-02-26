@@ -1,0 +1,806 @@
+{% extends "base.html" %}
+{% block title %}Review Journal Upload - {{ fy.entity.entity_name }} - StatementHub{% endblock %}
+
+{% block extra_head %}
+<style>
+    .mapping-row.learned { background-color: #f0fff0; }
+    .mapping-row.new { background-color: #fff8f0; }
+    .mapping-row.matched { background-color: #f0f8ff; }
+    .confidence-badge.learned { background-color: #198754; }
+    .confidence-badge.new { background-color: #fd7e14; }
+    .confidence-badge.matched { background-color: #0d6efd; }
+    .mapping-select { min-width: 280px; }
+    .amount-cell { text-align: right; font-family: monospace; white-space: nowrap; }
+    .sticky-header th { position: sticky; top: 0; z-index: 10; }
+    .balance-bar { position: sticky; bottom: 0; z-index: 20; }
+    .entity-acct-cell { min-width: 260px; }
+    .entity-acct-display { cursor: pointer; padding: 4px 8px; border-radius: 4px; border: 1px solid #dee2e6; min-height: 32px; display: flex; align-items: center; gap: 6px; }
+    .entity-acct-display:hover { background-color: #f8f9fa; border-color: #adb5bd; }
+    .entity-acct-display.assigned { border-color: #198754; background-color: #f0fff0; }
+    .entity-acct-display.unassigned { border-color: #ffc107; background-color: #fff8f0; }
+    .search-dropdown { position: absolute; z-index: 1000; background: white; border: 1px solid #dee2e6; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); width: 400px; max-height: 350px; display: none; }
+    .search-dropdown.show { display: block; }
+    .search-dropdown .search-input { border: none; border-bottom: 1px solid #dee2e6; border-radius: 6px 6px 0 0; }
+    .search-dropdown .results-list { max-height: 250px; overflow-y: auto; }
+    .search-dropdown .result-item { padding: 6px 12px; cursor: pointer; border-bottom: 1px solid #f0f0f0; }
+    .search-dropdown .result-item:hover { background-color: #e9ecef; }
+    .search-dropdown .result-item .code { font-weight: bold; color: #0d6efd; margin-right: 8px; }
+    .search-dropdown .create-new-btn { border-top: 2px solid #dee2e6; padding: 8px 12px; cursor: pointer; background: #f8f9fa; }
+    .search-dropdown .create-new-btn:hover { background: #e9ecef; }
+    .balance-ok { background: linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%); }
+    .balance-error { background: linear-gradient(135deg, #f8d7da 0%, #f5c6cb 100%); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=fy.entity.pk %}">{{ fy.entity.entity_name }}</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">FY{{ fy.end_date|date:"Y" }}</a></li>
+                <li class="breadcrumb-item active">Review Journal Upload</li>
+            </ol>
+        </nav>
+
+        <h4 class="mb-3">
+            <i class="bi bi-journal-arrow-up"></i> Journal Upload Wizard
+            <small class="text-muted fs-6">— {{ source_name }}</small>
+        </h4>
+
+        <!-- Summary Cards -->
+        <div class="row g-3 mb-4">
+            <div class="col-md-2">
+                <div class="card text-center">
+                    <div class="card-body py-2">
+                        <div class="text-muted small">Source</div>
+                        <strong>Excel Journal</strong>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="card text-center">
+                    <div class="card-body py-2">
+                        <div class="text-muted small">File</div>
+                        <strong class="small">{{ source_name|truncatechars:20 }}</strong>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="card text-center">
+                    <div class="card-body py-2">
+                        <div class="text-muted small">Total Lines</div>
+                        <strong class="fs-5">{{ total }}</strong>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="card text-center border-success">
+                    <div class="card-body py-2">
+                        <div class="text-muted small">Auto-Mapped</div>
+                        <strong class="fs-5 text-success" id="mappedCount">{{ auto_mapped }}</strong>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="card text-center border-warning">
+                    <div class="card-body py-2">
+                        <div class="text-muted small">Needs Mapping</div>
+                        <strong class="fs-5 text-warning" id="unmappedCount">{{ unmapped }}</strong>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <div class="card text-center" id="balanceCard">
+                    <div class="card-body py-2">
+                        <div class="text-muted small">Balance Check</div>
+                        <strong class="fs-6" id="balanceStatus">Checking...</strong>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Filter Bar -->
+        <div class="card mb-3">
+            <div class="card-body py-2">
+                <div class="row align-items-center">
+                    <div class="col-md-3">
+                        <div class="input-group input-group-sm">
+                            <span class="input-group-text"><i class="bi bi-search"></i></span>
+                            <input type="text" id="searchFilter" class="form-control" placeholder="Search accounts...">
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="btn-group btn-group-sm" role="group">
+                            <button type="button" class="btn btn-outline-secondary active filter-btn" data-filter="all">All</button>
+                            <button type="button" class="btn btn-outline-success filter-btn" data-filter="learned">Learned</button>
+                            <button type="button" class="btn btn-outline-primary filter-btn" data-filter="matched">Code Matched</button>
+                            <button type="button" class="btn btn-outline-warning filter-btn" data-filter="new">Unmapped</button>
+                        </div>
+                    </div>
+                    <div class="col-md-5 text-end">
+                        <button type="button" class="btn btn-sm btn-outline-primary" id="approveAllLearned">
+                            <i class="bi bi-check-all"></i> Approve All Learned
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline-info" id="autoMatchAll">
+                            <i class="bi bi-lightning-charge"></i> Auto-Match by Code
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Import Form -->
+        <form method="post" action="{% url 'core:commit_journal_upload' pk=fy.pk %}" id="importForm">
+            {% csrf_token %}
+
+            <div class="card">
+                <div class="card-body p-0">
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover mb-0" id="importTable">
+                            <thead class="table-dark sticky-header">
+                                <tr>
+                                    <th style="width: 35px;">#</th>
+                                    <th style="width: 80px;">Date</th>
+                                    <th style="width: 150px;">Description</th>
+                                    <th style="width: 80px;">Account Code</th>
+                                    <th style="width: 180px;">Account Name</th>
+                                    <th class="amount-cell" style="width: 100px;">Debit</th>
+                                    <th class="amount-cell" style="width: 100px;">Credit</th>
+                                    <th style="width: 70px;">Status</th>
+                                    <th>Entity Account (COA)</th>
+                                    <th>Maps To (Statement Line)</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for line in lines %}
+                                <tr class="mapping-row {{ line.confidence }}"
+                                    data-confidence="{{ line.confidence }}"
+                                    data-idx="{{ forloop.counter0 }}"
+                                    data-source-code="{{ line.account_code }}"
+                                    data-source-name="{{ line.account_name }}">
+                                    <td class="text-muted small">{{ forloop.counter }}</td>
+                                    <td class="small">{{ line.journal_date }}</td>
+                                    <td class="small">{{ line.description|truncatechars:30 }}</td>
+                                    <td><code>{{ line.account_code }}</code></td>
+                                    <td>{{ line.account_name }}</td>
+                                    <td class="amount-cell debit-cell">{{ line.debit }}</td>
+                                    <td class="amount-cell credit-cell">{{ line.credit }}</td>
+                                    <td>
+                                        {% if line.confidence == "learned" %}
+                                        <span class="badge confidence-badge learned" title="Previously mapped for this client">
+                                            <i class="bi bi-lightbulb"></i> Learned
+                                        </span>
+                                        {% elif line.confidence == "matched" %}
+                                        <span class="badge confidence-badge matched" title="Code matched to entity COA">
+                                            <i class="bi bi-link-45deg"></i> Matched
+                                        </span>
+                                        {% else %}
+                                        <span class="badge confidence-badge new" title="New account - needs mapping">
+                                            <i class="bi bi-question-circle"></i> New
+                                        </span>
+                                        {% endif %}
+                                    </td>
+                                    <!-- Entity Account (COA) Column -->
+                                    <td class="entity-acct-cell position-relative">
+                                        <input type="hidden" name="entity_acct_{{ forloop.counter0 }}"
+                                               class="entity-acct-input"
+                                               value="{{ line.entity_acct_code|default:'' }}">
+                                        <div class="entity-acct-display {% if line.entity_acct_code %}assigned{% else %}unassigned{% endif %}"
+                                             data-idx="{{ forloop.counter0 }}"
+                                             onclick="openEntitySearch(this)">
+                                            {% if line.entity_acct_code %}
+                                            <span class="badge bg-primary">{{ line.entity_acct_code }}</span>
+                                            <span class="small">{{ line.entity_acct_name }}</span>
+                                            {% else %}
+                                            <span class="text-muted small"><i class="bi bi-search"></i> Click to assign...</span>
+                                            {% endif %}
+                                        </div>
+                                    </td>
+                                    <!-- Statement Line Mapping -->
+                                    <td>
+                                        <select name="mapping_{{ forloop.counter0 }}"
+                                                class="form-select form-select-sm mapping-select"
+                                                data-learned-value="{{ line.mapped_id }}">
+                                            <option value="">— Not mapped —</option>
+                                        </select>
+                                        {% if line.mapped_label %}
+                                        <small class="text-success d-block mt-1">
+                                            <i class="bi bi-arrow-right"></i> {{ line.mapped_label }}
+                                        </small>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                            <tfoot class="table-light fw-bold">
+                                <tr>
+                                    <td colspan="5" class="text-end">Totals:</td>
+                                    <td class="amount-cell" id="totalDebit">0.00</td>
+                                    <td class="amount-cell" id="totalCredit">0.00</td>
+                                    <td colspan="3"></td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Balance Check Bar (sticky bottom) -->
+            <div class="balance-bar mt-0">
+                <div class="card border-0 rounded-0" id="balanceBar">
+                    <div class="card-body py-2 d-flex justify-content-between align-items-center" id="balanceBarInner">
+                        <div>
+                            <span class="fw-bold" id="balanceMessage">Checking balance...</span>
+                            <span class="ms-3 text-muted small" id="balanceDetail"></span>
+                        </div>
+                        <div class="d-flex gap-2">
+                            <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary">
+                                <i class="bi bi-x-lg"></i> Cancel
+                            </a>
+                            <button type="submit" class="btn btn-success btn-lg" id="commitBtn">
+                                <i class="bi bi-check-circle"></i> Confirm &amp; Post {{ total }} Lines
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Quick-Add Account Modal -->
+<div class="modal fade" id="quickAddModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-primary text-white">
+                <h5 class="modal-title"><i class="bi bi-plus-circle"></i> Create New Entity Account</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-info small mb-3">
+                    <i class="bi bi-info-circle"></i> This account will be added to <strong>{{ fy.entity.entity_name }}</strong>'s Chart of Accounts and assigned to the selected import line.
+                </div>
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold">Section <span class="text-danger">*</span></label>
+                        <select class="form-select" id="qaSection" required>
+                            <option value="">— Select —</option>
+                            <option value="revenue" data-range-min="0" data-range-max="999">Revenue / Cost of Sales (0-999)</option>
+                            <option value="expenses" data-range-min="1000" data-range-max="1999">Expenses (1000-1999)</option>
+                            <option value="assets" data-range-min="2000" data-range-max="2499">Current Assets (2000-2499)</option>
+                            <option value="assets" data-range-min="2500" data-range-max="2999">Non-Current Assets (2500-2999)</option>
+                            <option value="liabilities" data-range-min="3000" data-range-max="3499">Current Liabilities (3000-3499)</option>
+                            <option value="liabilities" data-range-min="3500" data-range-max="3999">Non-Current Liabilities (3500-3999)</option>
+                            <option value="equity" data-range-min="4000" data-range-max="4999">Equity (4000+)</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold">Account Code <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="qaCode" placeholder="e.g. 1510">
+                        <small class="form-text text-muted" id="qaCodeHint"></small>
+                    </div>
+                    <div class="col-md-12">
+                        <label class="form-label fw-bold">Account Name <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="qaName" placeholder="e.g. Accountancy">
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold">Tax Code</label>
+                        <select class="form-select" id="qaTaxCode">
+                            <option value="">— None —</option>
+                            <option value="GST">GST - Goods & Services Tax</option>
+                            <option value="ADS">ADS - Adjustments</option>
+                            <option value="ITS">ITS - Input Taxed Sales</option>
+                            <option value="FRE">FRE - GST Free</option>
+                            <option value="CAP">CAP - Capital Acquisitions</option>
+                            <option value="INP">INP - Input Taxed Purchases</option>
+                            <option value="GNR">GNR - GST Not Registered</option>
+                            <option value="N-T">N-T - Not Reportable</option>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-bold">Maps To (Statement Line)</label>
+                        <select class="form-select" id="qaMapsTo">
+                            <option value="">— Not mapped —</option>
+                        </select>
+                    </div>
+                    <div class="col-md-12">
+                        <label class="form-label fw-bold">Classification</label>
+                        <input type="text" class="form-control" id="qaClassification" placeholder="e.g. Other sales revenue (optional)">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="qaSubmit">
+                    <i class="bi bi-plus-circle"></i> Create &amp; Assign
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Entity Account Search Dropdown (reusable, positioned dynamically) -->
+<div class="search-dropdown" id="entitySearchDropdown">
+    <input type="text" class="form-control form-control-sm search-input" id="entitySearchInput" placeholder="Search by code or name...">
+    <div class="results-list" id="entitySearchResults">
+        <div class="text-center text-muted py-3"><small>Type to search entity accounts...</small></div>
+    </div>
+    <div class="create-new-btn text-primary fw-bold" id="entityCreateNew">
+        <i class="bi bi-plus-circle"></i> Create New Account
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    // ============================================================
+    // DATA
+    // ============================================================
+    const standardAccounts = {{ standard_accounts_json|safe }};
+    const entityAccounts = {{ entity_accounts_json|safe }};
+    const entityPk = "{{ fy.entity.pk }}";
+    const fyPk = "{{ fy.pk }}";
+    let activeSearchIdx = null;
+
+    // ============================================================
+    // POPULATE STATEMENT LINE DROPDOWNS
+    // ============================================================
+    const selects = document.querySelectorAll('.mapping-select');
+    selects.forEach(function(select) {
+        const groups = {};
+        standardAccounts.forEach(function(acct) {
+            const section = acct.statement_section || 'Other';
+            if (!groups[section]) groups[section] = [];
+            groups[section].push(acct);
+        });
+        Object.keys(groups).sort().forEach(function(section) {
+            const optgroup = document.createElement('optgroup');
+            optgroup.label = section;
+            groups[section].forEach(function(acct) {
+                const option = document.createElement('option');
+                option.value = acct.id;
+                option.textContent = acct.standard_code + ' - ' + acct.line_item_label;
+                optgroup.appendChild(option);
+            });
+            select.appendChild(optgroup);
+        });
+        const learnedValue = select.dataset.learnedValue;
+        if (learnedValue) select.value = learnedValue;
+    });
+
+    // Populate Quick-Add modal Maps To dropdown
+    const qaMapsTo = document.getElementById('qaMapsTo');
+    standardAccounts.forEach(function(acct) {
+        const opt = document.createElement('option');
+        opt.value = acct.id;
+        opt.textContent = acct.standard_code + ' - ' + acct.line_item_label;
+        qaMapsTo.appendChild(opt);
+    });
+
+    // ============================================================
+    // BALANCE CHECK
+    // ============================================================
+    function checkBalance() {
+        let totalDr = 0, totalCr = 0;
+        document.querySelectorAll('.mapping-row').forEach(function(row) {
+            const dr = parseFloat(row.querySelector('.debit-cell').textContent.replace(/,/g, '')) || 0;
+            const cr = parseFloat(row.querySelector('.credit-cell').textContent.replace(/,/g, '')) || 0;
+            totalDr += dr;
+            totalCr += cr;
+        });
+
+        document.getElementById('totalDebit').textContent = totalDr.toLocaleString('en-AU', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+        document.getElementById('totalCredit').textContent = totalCr.toLocaleString('en-AU', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+
+        const diff = Math.abs(totalDr - totalCr);
+        const balanced = diff < 0.02; // Allow 1 cent rounding
+
+        const balanceCard = document.getElementById('balanceCard');
+        const balanceStatus = document.getElementById('balanceStatus');
+        const balanceBar = document.getElementById('balanceBarInner');
+        const balanceMsg = document.getElementById('balanceMessage');
+        const balanceDetail = document.getElementById('balanceDetail');
+        const commitBtn = document.getElementById('commitBtn');
+
+        if (balanced) {
+            balanceCard.className = 'card text-center border-success';
+            balanceStatus.innerHTML = '<i class="bi bi-check-circle text-success"></i> Balanced';
+            balanceBar.className = 'card-body py-2 d-flex justify-content-between align-items-center balance-ok';
+            balanceMsg.innerHTML = '<i class="bi bi-check-circle-fill text-success"></i> Journals are in balance';
+            balanceDetail.textContent = 'Dr $' + totalDr.toLocaleString('en-AU', {minimumFractionDigits: 2}) + ' = Cr $' + totalCr.toLocaleString('en-AU', {minimumFractionDigits: 2});
+            commitBtn.disabled = false;
+            commitBtn.classList.remove('btn-secondary');
+            commitBtn.classList.add('btn-success');
+        } else {
+            balanceCard.className = 'card text-center border-danger';
+            balanceStatus.innerHTML = '<i class="bi bi-exclamation-triangle text-danger"></i> Out';
+            balanceBar.className = 'card-body py-2 d-flex justify-content-between align-items-center balance-error';
+            balanceMsg.innerHTML = '<i class="bi bi-exclamation-triangle-fill text-danger"></i> Journals are OUT OF BALANCE';
+            balanceDetail.textContent = 'Dr $' + totalDr.toLocaleString('en-AU', {minimumFractionDigits: 2}) + ' vs Cr $' + totalCr.toLocaleString('en-AU', {minimumFractionDigits: 2}) + ' — Difference: $' + diff.toLocaleString('en-AU', {minimumFractionDigits: 2});
+            commitBtn.disabled = true;
+            commitBtn.classList.remove('btn-success');
+            commitBtn.classList.add('btn-secondary');
+        }
+    }
+
+    checkBalance();
+
+    // ============================================================
+    // ENTITY ACCOUNT SEARCH DROPDOWN
+    // ============================================================
+    const dropdown = document.getElementById('entitySearchDropdown');
+    const searchInput = document.getElementById('entitySearchInput');
+    const searchResults = document.getElementById('entitySearchResults');
+    const createNewBtn = document.getElementById('entityCreateNew');
+
+    window.openEntitySearch = function(displayEl) {
+        const idx = displayEl.dataset.idx;
+        activeSearchIdx = idx;
+
+        // Position dropdown below the display element
+        const rect = displayEl.getBoundingClientRect();
+        dropdown.style.top = (rect.bottom + window.scrollY + 2) + 'px';
+        dropdown.style.left = (rect.left + window.scrollX) + 'px';
+        dropdown.classList.add('show');
+
+        searchInput.value = '';
+        searchInput.focus();
+        renderEntityResults('');
+    };
+
+    // Close dropdown on outside click
+    document.addEventListener('click', function(e) {
+        const inModal = e.target.closest('#quickAddModal');
+        if (!dropdown.contains(e.target) && !e.target.classList.contains('entity-acct-display') && !e.target.closest('.entity-acct-display')) {
+            dropdown.classList.remove('show');
+            if (!inModal) {
+                activeSearchIdx = null;
+            }
+        }
+    });
+
+    searchInput.addEventListener('input', function() {
+        renderEntityResults(this.value.trim().toLowerCase());
+    });
+
+    function renderEntityResults(query) {
+        let filtered = entityAccounts;
+        if (query) {
+            filtered = entityAccounts.filter(function(a) {
+                return a.code.toLowerCase().includes(query) || a.name.toLowerCase().includes(query);
+            });
+        }
+
+        if (filtered.length === 0) {
+            searchResults.innerHTML = '<div class="text-center text-muted py-3"><small>No matching accounts. Click below to create one.</small></div>';
+            return;
+        }
+
+        let html = '';
+        filtered.slice(0, 50).forEach(function(a) {
+            html += '<div class="result-item" data-code="' + a.code + '" data-name="' + a.name.replace(/"/g, '&quot;') + '" data-maps-to="' + (a.maps_to_id || '') + '">';
+            html += '<span class="code">' + a.code + '</span>';
+            html += '<span>' + a.name + '</span>';
+            if (a.section) html += ' <small class="text-muted">(' + a.section + ')</small>';
+            html += '</div>';
+        });
+        searchResults.innerHTML = html;
+
+        // Attach click handlers
+        searchResults.querySelectorAll('.result-item').forEach(function(item) {
+            item.addEventListener('click', function() {
+                assignEntityAccount(activeSearchIdx, this.dataset.code, this.dataset.name, this.dataset.mapsTo);
+                dropdown.classList.remove('show');
+            });
+        });
+    }
+
+    function assignEntityAccount(idx, code, name, mapsToId) {
+        const row = document.querySelector('.mapping-row[data-idx="' + idx + '"]');
+        if (!row) return;
+
+        // Update hidden input
+        row.querySelector('.entity-acct-input').value = code;
+
+        // Update display
+        const display = row.querySelector('.entity-acct-display');
+        display.className = 'entity-acct-display assigned';
+        display.innerHTML = '<span class="badge bg-primary">' + code + '</span><span class="small">' + name + '</span>';
+
+        // Auto-set the statement line mapping if the entity account has one
+        if (mapsToId) {
+            const select = row.querySelector('.mapping-select');
+            if (select) {
+                select.value = mapsToId;
+            }
+        }
+
+        updateCounts();
+    }
+
+    // Create New Account button in dropdown
+    createNewBtn.addEventListener('click', function() {
+        dropdown.classList.remove('show');
+        openQuickAdd();
+    });
+
+    // ============================================================
+    // QUICK-ADD MODAL
+    // ============================================================
+    const qaModal = new bootstrap.Modal(document.getElementById('quickAddModal'));
+
+    function openQuickAdd() {
+        if (activeSearchIdx === null) return;
+        const row = document.querySelector('.mapping-row[data-idx="' + activeSearchIdx + '"]');
+        if (!row) return;
+
+        // Pre-populate from source data
+        const sourceCode = row.dataset.sourceCode;
+        const sourceName = row.dataset.sourceName;
+
+        document.getElementById('qaName').value = sourceName;
+        document.getElementById('qaTaxCode').value = '';
+        document.getElementById('qaClassification').value = '';
+        document.getElementById('qaMapsTo').value = '';
+
+        // Guess section from source code and select the right <option>
+        const guessedSection = guessSection(sourceCode);
+        selectSectionOption(guessedSection.sectionKey, guessedSection.rangeMin);
+
+        // Now suggest a smart code based on alphabetical position
+        suggestCode(sourceName);
+
+        qaModal.show();
+    }
+
+    function guessSection(code) {
+        const num = parseInt(code);
+        if (isNaN(num)) return {sectionKey: '', rangeMin: 0, rangeMax: 0};
+        if (num < 1000) return {sectionKey: 'revenue', rangeMin: 0, rangeMax: 999};
+        if (num < 2000) return {sectionKey: 'expenses', rangeMin: 1000, rangeMax: 1999};
+        if (num < 2500) return {sectionKey: 'assets', rangeMin: 2000, rangeMax: 2499};
+        if (num < 3000) return {sectionKey: 'assets', rangeMin: 2500, rangeMax: 2999};
+        if (num < 3500) return {sectionKey: 'liabilities', rangeMin: 3000, rangeMax: 3499};
+        if (num < 4000) return {sectionKey: 'liabilities', rangeMin: 3500, rangeMax: 3999};
+        return {sectionKey: 'equity', rangeMin: 4000, rangeMax: 4999};
+    }
+
+    function selectSectionOption(sectionKey, rangeMin) {
+        const sel = document.getElementById('qaSection');
+        if (!sectionKey) { sel.selectedIndex = 0; return; }
+        for (let i = 0; i < sel.options.length; i++) {
+            const opt = sel.options[i];
+            if (opt.value === sectionKey && parseInt(opt.dataset.rangeMin) === rangeMin) {
+                sel.selectedIndex = i;
+                return;
+            }
+        }
+        sel.value = sectionKey;
+    }
+
+    let suggestTimer = null;
+    function suggestCode(accountName) {
+        const sel = document.getElementById('qaSection');
+        const opt = sel.options[sel.selectedIndex];
+        const codeInput = document.getElementById('qaCode');
+        const hint = document.getElementById('qaCodeHint');
+
+        if (!opt || !opt.value || !accountName || !accountName.trim()) {
+            codeInput.value = '';
+            hint.textContent = '';
+            return;
+        }
+
+        if (suggestTimer) clearTimeout(suggestTimer);
+        hint.textContent = 'Calculating...';
+
+        suggestTimer = setTimeout(function() {
+            fetch('{% url "core:entity_coa_suggest_code" pk=fy.pk %}?section=' +
+                  encodeURIComponent(opt.value) + '&account_name=' +
+                  encodeURIComponent(accountName.trim()))
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.suggested_code) {
+                    codeInput.value = data.suggested_code;
+                    hint.textContent = data.position_info || '';
+                } else {
+                    hint.textContent = data.position_info || 'No available codes in this range.';
+                }
+            })
+            .catch(function() {
+                hint.textContent = 'Could not suggest code.';
+            });
+        }, 300);
+    }
+
+    // Re-suggest code when section or name changes
+    document.getElementById('qaSection').addEventListener('change', function() {
+        suggestCode(document.getElementById('qaName').value);
+    });
+    document.getElementById('qaName').addEventListener('input', function() {
+        suggestCode(this.value);
+    });
+
+    // Submit Quick-Add
+    document.getElementById('qaSubmit').addEventListener('click', function() {
+        const targetIdx = activeSearchIdx;
+        const section = document.getElementById('qaSection').value;
+        const code = document.getElementById('qaCode').value.trim();
+        const name = document.getElementById('qaName').value.trim();
+        const taxCode = document.getElementById('qaTaxCode').value;
+        const classification = document.getElementById('qaClassification').value.trim();
+        const mapsTo = document.getElementById('qaMapsTo').value;
+
+        if (!section || !code || !name) {
+            alert('Section, Code, and Name are required.');
+            return;
+        }
+
+        const btn = this;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Creating...';
+
+        fetch("{% url 'integrations:quick_add_entity_account' %}", {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]').value,
+            },
+            body: JSON.stringify({
+                entity_pk: entityPk,
+                section: section,
+                account_code: code,
+                account_name: name,
+                tax_code: taxCode,
+                classification: classification,
+                maps_to_id: mapsTo,
+            }),
+        })
+        .then(resp => resp.json())
+        .then(data => {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-plus-circle"></i> Create & Assign';
+            if (data.success) {
+                entityAccounts.push({
+                    code: data.account.code,
+                    name: data.account.name,
+                    section: data.account.section,
+                    maps_to_id: data.account.maps_to_id || '',
+                });
+
+                assignEntityAccount(targetIdx, data.account.code, data.account.name, data.account.maps_to_id || '');
+
+                qaModal.hide();
+            } else {
+                alert('Error: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(err => {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-plus-circle"></i> Create & Assign';
+            alert('Network error: ' + err.message);
+        });
+    });
+
+    // ============================================================
+    // FILTERS
+    // ============================================================
+    document.getElementById('searchFilter').addEventListener('input', function() {
+        const query = this.value.toLowerCase();
+        document.querySelectorAll('.mapping-row').forEach(function(row) {
+            const text = row.textContent.toLowerCase();
+            row.style.display = text.includes(query) ? '' : 'none';
+        });
+    });
+
+    document.querySelectorAll('.filter-btn').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+            const filter = this.dataset.filter;
+            document.querySelectorAll('.mapping-row').forEach(function(row) {
+                if (filter === 'all') {
+                    row.style.display = '';
+                } else {
+                    row.style.display = row.dataset.confidence === filter ? '' : 'none';
+                }
+            });
+        });
+    });
+
+    // Approve All Learned
+    document.getElementById('approveAllLearned').addEventListener('click', function() {
+        let count = 0;
+        selects.forEach(function(select) {
+            const learnedValue = select.dataset.learnedValue;
+            if (learnedValue && select.value !== learnedValue) {
+                select.value = learnedValue;
+                count++;
+            }
+        });
+        alert(count > 0 ? 'Restored ' + count + ' learned mapping(s).' : 'All learned mappings are already set.');
+    });
+
+    // Auto-Match by Code
+    document.getElementById('autoMatchAll').addEventListener('click', function() {
+        let matched = 0;
+        const entityMap = {};
+        entityAccounts.forEach(function(a) {
+            entityMap[a.code.toLowerCase()] = a;
+        });
+
+        document.querySelectorAll('.mapping-row').forEach(function(row) {
+            const code = row.dataset.sourceCode.toLowerCase();
+            const input = row.querySelector('.entity-acct-input');
+            if (input.value) return;
+
+            if (entityMap[code]) {
+                const a = entityMap[code];
+                assignEntityAccount(row.dataset.idx, a.code, a.name, a.maps_to_id || '');
+                matched++;
+            }
+        });
+        alert(matched > 0 ? 'Auto-matched ' + matched + ' account(s) by code.' : 'No additional matches found.');
+    });
+
+    // ============================================================
+    // COUNT UPDATES
+    // ============================================================
+    function updateCounts() {
+        let mapped = 0, unmapped = 0;
+        document.querySelectorAll('.mapping-row').forEach(function(row) {
+            const entityVal = row.querySelector('.entity-acct-input').value;
+            const mappingVal = row.querySelector('.mapping-select').value;
+            if (entityVal || mappingVal) {
+                mapped++;
+            } else {
+                unmapped++;
+            }
+        });
+        document.getElementById('mappedCount').textContent = mapped;
+        document.getElementById('unmappedCount').textContent = unmapped;
+    }
+
+    // Listen for mapping select changes
+    document.querySelectorAll('.mapping-select').forEach(function(select) {
+        select.addEventListener('change', updateCounts);
+    });
+
+    // ============================================================
+    // FORM SUBMIT VALIDATION
+    // ============================================================
+    document.getElementById('importForm').addEventListener('submit', function(e) {
+        // Check balance first
+        let totalDr = 0, totalCr = 0;
+        document.querySelectorAll('.mapping-row').forEach(function(row) {
+            const dr = parseFloat(row.querySelector('.debit-cell').textContent.replace(/,/g, '')) || 0;
+            const cr = parseFloat(row.querySelector('.credit-cell').textContent.replace(/,/g, '')) || 0;
+            totalDr += dr;
+            totalCr += cr;
+        });
+        const diff = Math.abs(totalDr - totalCr);
+        if (diff >= 0.02) {
+            e.preventDefault();
+            alert('Cannot post: Journals are out of balance by $' + diff.toFixed(2) + '. Debits must equal credits.');
+            return;
+        }
+
+        // Warn about unmapped lines
+        let unmappedCount = 0;
+        document.querySelectorAll('.mapping-row').forEach(function(row) {
+            const entityVal = row.querySelector('.entity-acct-input').value;
+            if (!entityVal) unmappedCount++;
+        });
+        if (unmappedCount > 0) {
+            if (!confirm(unmappedCount + ' line(s) have no entity account assigned. They will be posted with the source code/name only. Continue?')) {
+                e.preventDefault();
+            }
+        }
+    });
+});
+</script>
+{% endblock %}

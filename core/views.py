@@ -7776,8 +7776,8 @@ def entity_coa_check_code(request, pk):
 
 @login_required
 def journal_upload(request, pk):
-    """Upload journals from an Excel file. Lines are grouped by date+description
-    into individual AdjustingJournal entries (created as Draft)."""
+    """Upload journals from an Excel file. Parses the file and stages
+    the data in the session, then redirects to the review wizard."""
     fy = get_financial_year_for_user(request, pk)
 
     if fy.is_locked:
@@ -7805,33 +7805,35 @@ def journal_upload(request, pk):
             return redirect("core:journal_upload", pk=pk)
 
         try:
-            lines_created = _parse_and_post_journal_to_tb(fy, uploaded_file, request.user)
-            if lines_created == 0:
+            raw_lines = _parse_journal_excel(fy, uploaded_file)
+            if not raw_lines:
                 messages.warning(request, "No journal lines found in the uploaded file. Check the format and try again.")
-            else:
-                messages.success(
-                    request,
-                    f"Successfully posted {lines_created} journal line{'s' if lines_created != 1 else ''} "
-                    f"directly to the Trial Balance."
-                )
-                _log_action(request, "journal_upload", f"Uploaded {lines_created} journal lines from {uploaded_file.name} directly to TB")
-                # Auto-trigger risk engine after journal upload
-                from core.signals import trigger_risk_recalc
-                trigger_risk_recalc(fy, "journal_uploaded")
+                return redirect("core:journal_upload", pk=pk)
+
+            # Apply learned mappings (same pattern as TB import)
+            staged_lines = _apply_journal_learned_mappings(fy.entity, raw_lines)
+
+            # Store in session for the review wizard
+            request.session["staged_journal_upload"] = {
+                "fy_pk": str(pk),
+                "filename": uploaded_file.name,
+                "lines": staged_lines,
+            }
+
+            return redirect("core:review_journal_upload", pk=pk)
         except Exception as e:
             messages.error(request, f"Journal upload failed: {e}")
-
-        return redirect("core:financial_year_detail", pk=pk)
+            return redirect("core:journal_upload", pk=pk)
 
     return render(request, "core/journal_upload.html", {"fy": fy})
 
 
-def _parse_and_post_journal_to_tb(fy, file, user):
-    """Parse an Excel file and post movements directly to Trial Balance lines.
+def _parse_journal_excel(fy, file):
+    """Parse a journal upload Excel file into a list of raw line dicts.
 
     Expected columns: JOURNAL DATE | DESCRIPTION | ACCOUNT CODE | DEBIT | CREDIT
-    Each row creates an adjustment TrialBalanceLine.
-    Returns the number of TB lines created.
+    Returns a list of dicts with keys: account_code, account_name, description,
+    journal_date, debit, credit.
     """
     from datetime import datetime, date
 
@@ -7840,7 +7842,7 @@ def _parse_and_post_journal_to_tb(fy, file, user):
 
     rows = list(ws.iter_rows(min_row=1, values_only=True))
     if not rows:
-        return 0
+        return []
 
     # Find the header row (look for "account code" or "debit" in the first 5 rows)
     header_row_idx = 0
@@ -7865,7 +7867,7 @@ def _parse_and_post_journal_to_tb(fy, file, user):
         except (InvalidOperation, ValueError):
             return Decimal("0")
 
-    lines_created = 0
+    raw_lines = []
 
     for row in data_rows:
         if not row or len(row) < 5:
@@ -7875,10 +7877,11 @@ def _parse_and_post_journal_to_tb(fy, file, user):
         raw_date = row[0]
         if raw_date is None:
             continue
+        journal_date_str = ""
         if isinstance(raw_date, datetime):
-            pass
+            journal_date_str = raw_date.strftime("%d/%m/%Y")
         elif isinstance(raw_date, date):
-            pass
+            journal_date_str = raw_date.strftime("%d/%m/%Y")
         elif isinstance(raw_date, str):
             raw_date = raw_date.strip()
             if not raw_date:
@@ -7887,6 +7890,7 @@ def _parse_and_post_journal_to_tb(fy, file, user):
             for fmt in ("%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d", "%d/%m/%y", "%d-%m-%y"):
                 try:
                     datetime.strptime(raw_date, fmt)
+                    journal_date_str = raw_date
                     parsed = True
                     break
                 except ValueError:
@@ -7917,23 +7921,215 @@ def _parse_and_post_journal_to_tb(fy, file, user):
         if debit == 0 and credit == 0:
             continue
 
-        # Look up the account name from the entity's chart of accounts
+        # Resolve account name
         account_name = _resolve_account_name(fy.entity, account_code, account_code)
 
-        # Look up the mapped line item for this account
-        mapping = ClientAccountMapping.objects.filter(
-            entity=fy.entity, client_account_code=account_code
-        ).first()
-        mapped_item = mapping.mapped_line_item if mapping else None
+        raw_lines.append({
+            "account_code": account_code,
+            "account_name": account_name,
+            "description": description,
+            "journal_date": journal_date_str,
+            "debit": str(debit),
+            "credit": str(credit),
+        })
 
-        # Apply to Trial Balance (nets against existing balances)
-        _apply_journal_line_to_tb(
-            fy, account_code, account_name,
-            debit, credit, source='journal_upload',
-        )
-        lines_created += 1
+    return raw_lines
 
-    return lines_created
+
+def _apply_journal_learned_mappings(entity, raw_lines):
+    """Apply learned mappings and entity COA matching to parsed journal lines.
+    Returns a list of staged line dicts ready for the review wizard.
+    Same pattern as _apply_tb_learned_mappings."""
+    existing_mappings = {
+        cam.client_account_code: cam
+        for cam in ClientAccountMapping.objects.filter(entity=entity)
+        .select_related("mapped_line_item")
+    }
+    entity_coa = {
+        ea.account_code.lower(): ea
+        for ea in EntityChartOfAccount.objects.filter(entity=entity)
+        .select_related("maps_to")
+    }
+    staged = []
+    for line in raw_lines:
+        code = line["account_code"]
+        cam = existing_mappings.get(code)
+        staged_line = {
+            "account_code": code,
+            "account_name": line["account_name"],
+            "description": line.get("description", ""),
+            "journal_date": line.get("journal_date", ""),
+            "debit": line["debit"],
+            "credit": line["credit"],
+            "mapped_id": "",
+            "mapped_label": "",
+            "confidence": "new",
+            "entity_acct_code": "",
+            "entity_acct_name": "",
+        }
+        # Check learned mappings from ClientAccountMapping
+        if cam and cam.mapped_line_item:
+            staged_line["mapped_id"] = str(cam.mapped_line_item.pk)
+            staged_line["mapped_label"] = (
+                f"{cam.mapped_line_item.standard_code} - "
+                f"{cam.mapped_line_item.line_item_label}"
+            )
+            staged_line["confidence"] = "learned"
+        # Try to match entity COA by code
+        ea = entity_coa.get(code.lower())
+        if ea:
+            staged_line["entity_acct_code"] = ea.account_code
+            staged_line["entity_acct_name"] = ea.account_name
+            if staged_line["confidence"] == "new":
+                staged_line["confidence"] = "matched"
+            if ea.maps_to and not staged_line["mapped_id"]:
+                staged_line["mapped_id"] = str(ea.maps_to.pk)
+                staged_line["mapped_label"] = (
+                    f"{ea.maps_to.standard_code} - {ea.maps_to.line_item_label}"
+                )
+        staged.append(staged_line)
+    return staged
+
+
+@login_required
+def review_journal_upload(request, pk):
+    """Review wizard for journal uploads — same UX as TB import wizard."""
+    import json as _json
+    fy = get_financial_year_for_user(request, pk)
+    staged = request.session.get("staged_journal_upload")
+
+    if not staged or staged.get("fy_pk") != str(pk):
+        messages.error(request, "No staged journal upload data found. Please upload again.")
+        return redirect("core:journal_upload", pk=pk)
+
+    lines = staged["lines"]
+    entity = fy.entity
+
+    # Standard accounts for statement line mapping dropdown
+    standard_accounts = list(
+        AccountMapping.objects.values("id", "standard_code", "line_item_label", "statement_section")
+        .order_by("financial_statement", "display_order")
+    )
+    for sa in standard_accounts:
+        sa["id"] = str(sa["id"])
+
+    # Entity accounts for the searchable COA dropdown
+    entity_accts = []
+    for ea in EntityChartOfAccount.objects.filter(entity=entity).select_related("maps_to").order_by("account_code"):
+        entity_accts.append({
+            "code": ea.account_code,
+            "name": ea.account_name,
+            "section": ea.get_section_display(),
+            "section_key": ea.section,
+            "maps_to_id": str(ea.maps_to.pk) if ea.maps_to else "",
+        })
+
+    total = len(lines)
+    auto_mapped = sum(1 for l in lines if l.get("mapped_id") or l.get("entity_acct_code"))
+    unmapped = total - auto_mapped
+
+    context = {
+        "fy": fy,
+        "lines": lines,
+        "standard_accounts_json": _json.dumps(standard_accounts),
+        "entity_accounts_json": _json.dumps(entity_accts),
+        "total": total,
+        "auto_mapped": auto_mapped,
+        "unmapped": unmapped,
+        "source_name": staged.get("filename", "Journal Upload"),
+    }
+    return render(request, "core/review_journal_upload.html", context)
+
+
+@login_required
+@require_POST
+def commit_journal_upload(request, pk):
+    """Commit the reviewed journal upload. Creates adjustment TrialBalanceLine
+    records, updates ClientAccountMapping (learning system), and triggers
+    risk engine."""
+    fy = get_financial_year_for_user(request, pk)
+    staged = request.session.get("staged_journal_upload")
+
+    if not staged or staged.get("fy_pk") != str(pk):
+        messages.error(request, "No staged journal upload data found.")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    if fy.is_locked:
+        messages.error(request, "Cannot upload journals to a finalised financial year.")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    entity = fy.entity
+    staged_lines = staged["lines"]
+    lines_created = 0
+    errors = []
+
+    for i, line in enumerate(staged_lines):
+        mapping_id = request.POST.get(f"mapping_{i}", "").strip()
+        entity_acct_code = request.POST.get(f"entity_acct_{i}", "").strip()
+        mapped_item = None
+
+        if mapping_id:
+            try:
+                mapped_item = AccountMapping.objects.get(pk=mapping_id)
+            except AccountMapping.DoesNotExist:
+                pass
+
+        # If an entity account was assigned, look it up for its maps_to
+        if entity_acct_code and not mapped_item:
+            try:
+                ea = EntityChartOfAccount.objects.select_related("maps_to").get(
+                    entity=entity, account_code=entity_acct_code
+                )
+                if ea.maps_to:
+                    mapped_item = ea.maps_to
+            except EntityChartOfAccount.DoesNotExist:
+                pass
+
+        try:
+            debit = Decimal(str(line.get("debit", "0")))
+            credit = Decimal(str(line.get("credit", "0")))
+            account_code = line["account_code"]
+            account_name = line["account_name"]
+
+            # Apply to Trial Balance as adjustment line
+            _apply_journal_line_to_tb(
+                fy, account_code, account_name,
+                debit, credit, source='journal_upload',
+            )
+
+            # Update the learning system
+            if mapped_item:
+                ClientAccountMapping.objects.update_or_create(
+                    entity=entity,
+                    client_account_code=account_code,
+                    defaults={
+                        "client_account_name": account_name,
+                        "mapped_line_item": mapped_item,
+                    },
+                )
+
+            lines_created += 1
+        except Exception as e:
+            errors.append(f"Line {i + 1} ({line.get('account_code', '?')}): {str(e)}")
+
+    # Clean up session
+    request.session.pop("staged_journal_upload", None)
+
+    # Log and trigger risk engine
+    _log_action(request, "journal_upload", f"Uploaded {lines_created} journal lines via wizard from {staged.get('filename', 'Excel')}", fy)
+    from core.signals import trigger_risk_recalc
+    trigger_risk_recalc(fy, "journal_uploaded")
+
+    messages.success(
+        request,
+        f"Successfully posted {lines_created} journal line{'s' if lines_created != 1 else ''} "
+        f"to the Trial Balance."
+    )
+    if errors:
+        for err in errors[:5]:
+            messages.warning(request, err)
+
+    return redirect("core:financial_year_detail", pk=pk)
 
 
 @login_required

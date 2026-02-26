@@ -51,7 +51,7 @@
                                 <strong>How it works:</strong>
                             </small>
                             <ul class="small text-muted mb-0 mt-1">
-                                <li>Each row posts <strong>directly to the Trial Balance</strong> as an adjustment line.</li>
+                                <li>Each row will be <strong>staged for review</strong> before posting to the Trial Balance.</li>
                                 <li>Movements are <strong>additive</strong> — they do not replace existing balances.</li>
                                 <li>Account names and mappings are looked up automatically from the entity's chart of accounts.</li>
                                 <li>Ensure debits and credits balance across the upload for accurate financial statements.</li>
@@ -72,7 +72,7 @@
                         <button type="submit" class="btn btn-primary" id="uploadBtn">
                             <i class="bi bi-journal-arrow-up" id="uploadIcon"></i>
                             <span class="spinner-border spinner-border-sm d-none" id="uploadSpinner" role="status" aria-hidden="true"></span>
-                            <span id="uploadBtnText">Upload & Post to Trial Balance</span>
+                            <span id="uploadBtnText">Upload & Review</span>
                         </button>
                         <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary" id="cancelBtn">Cancel</a>
                     </div>
