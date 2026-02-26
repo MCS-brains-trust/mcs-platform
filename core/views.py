@@ -737,11 +737,11 @@ def financial_year_detail(request, pk):
     flagged_account_count = len(flagged_accounts)
 
     # Build grouped flags for the Audit Risk tab: account_code -> {name, flags[]}
-    # Each flag includes the full flag object for rendering
+    # Only include OPEN flags — resolved flags are removed from the list
     grouped_risk_flags = {}  # {account_code: {"name": ..., "code": ..., "flags": [...], "open_count": int, "max_severity": str}}
-    entity_level_flags = []  # flags with no affected_accounts
+    entity_level_flags = []  # open flags with no affected_accounts
     severity_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
-    for flag in risk_flags:
+    for flag in risk_flags.filter(status__in=['open', 'reviewed']):
         accounts = flag.affected_accounts or []
         if not accounts:
             entity_level_flags.append(flag)
@@ -759,8 +759,7 @@ def financial_year_detail(request, pk):
                             "max_severity": "LOW",
                         }
                     grouped_risk_flags[code]["flags"].append(flag)
-                    if flag.status in ('open', 'reviewed'):
-                        grouped_risk_flags[code]["open_count"] += 1
+                    grouped_risk_flags[code]["open_count"] += 1
                     if severity_order.get(flag.severity, 3) < severity_order.get(grouped_risk_flags[code]["max_severity"], 3):
                         grouped_risk_flags[code]["max_severity"] = flag.severity
     # Sort grouped flags by severity (most severe first), then by account code
@@ -768,7 +767,7 @@ def financial_year_detail(request, pk):
         grouped_risk_flags.values(),
         key=lambda g: (severity_order.get(g["max_severity"], 3), g["code"])
     )
-    entity_level_flag_count = len([f for f in entity_level_flags if f.status in ('open', 'reviewed')])
+    entity_level_flag_count = len(entity_level_flags)
 
     # Annotate TB lines with risk flag info
     for line in tb_lines:

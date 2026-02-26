@@ -327,9 +327,9 @@
         <button class="nav-link" id="audit-risk-tab" data-bs-toggle="tab" data-bs-target="#tab-audit" type="button">
             <i class="bi bi-shield-exclamation"></i> Audit Risk
             {% if flagged_account_count > 0 %}
-            <span class="badge bg-danger" data-risk-badge>{{ flagged_account_count }}</span>
+            <span class="badge bg-danger" data-risk-badge data-audit-risk-badge>{{ flagged_account_count }}</span>
             {% else %}
-            <span class="badge bg-secondary" data-risk-badge>0</span>
+            <span class="badge bg-secondary" data-risk-badge data-audit-risk-badge>0</span>
             {% endif %}
         </button>
     </li>
@@ -621,8 +621,8 @@
                     {% endif %}
                 </h6>
                 {% if open_risk_count > 0 %}
-                <small class="text-muted">
-                    {{ open_risk_count }} open flag{{ open_risk_count|pluralize }} across {{ flagged_account_count }} account{{ flagged_account_count|pluralize }}
+                <small class="text-muted" data-risk-summary>
+                    <span class="open-count">{{ open_risk_count }}</span> open flag{{ open_risk_count|pluralize }} across {{ flagged_account_count }} account{{ flagged_account_count|pluralize }}
                     {% if entity_level_flag_count > 0 %}
                     + {{ entity_level_flag_count }} entity-level check{{ entity_level_flag_count|pluralize }}
                     {% endif %}
@@ -672,20 +672,20 @@
                             </thead>
                             <tbody>
                                 {% for flag in group.flags %}
-                                <tr class="{% if flag.status == 'open' %}{% if flag.severity == 'CRITICAL' or flag.severity == 'HIGH' %}table-danger{% elif flag.severity == 'MEDIUM' %}table-warning{% endif %}{% endif %}">
+                                <tr data-flag-id="{{ flag.pk }}" class="{% if flag.status == 'open' %}{% if flag.severity == 'CRITICAL' or flag.severity == 'HIGH' %}table-danger{% elif flag.severity == 'MEDIUM' %}table-warning{% endif %}{% endif %}">
                                     <td>
                                         <span class="badge bg-{% if flag.severity == 'CRITICAL' %}danger{% elif flag.severity == 'HIGH' %}danger{% elif flag.severity == 'MEDIUM' %}warning text-dark{% else %}info{% endif %}">
                                             {{ flag.severity }}
                                         </span>
                                     </td>
-                                    <td>
+                                    <td class="flag-status-cell">
                                         <span class="badge bg-{% if flag.status == 'open' %}danger{% elif flag.status == 'reviewed' %}info{% else %}success{% endif %}">
                                             {{ flag.get_status_display }}
                                         </span>
                                     </td>
                                     <td class="{% if flag.status == 'open' %}fw-bold text-danger{% endif %}">{{ flag.title }}</td>
                                     <td class="{% if flag.status == 'open' %}text-danger{% endif %}" style="font-size: 0.82rem;">{{ flag.description|truncatewords:30 }}</td>
-                                    <td>
+                                    <td class="flag-action-cell">
                                         {% if flag.status == 'open' %}
                                         <button class="btn btn-sm btn-outline-success resolve-risk-btn" title="Resolve this risk"
                                                 data-flag-id="{{ flag.pk }}" data-flag-title="{{ flag.title }}">
@@ -732,20 +732,20 @@
                             </thead>
                             <tbody>
                                 {% for flag in entity_level_flags %}
-                                <tr class="{% if flag.status == 'open' %}{% if flag.severity == 'CRITICAL' or flag.severity == 'HIGH' %}table-danger{% elif flag.severity == 'MEDIUM' %}table-warning{% endif %}{% endif %}">
+                                <tr data-flag-id="{{ flag.pk }}" class="{% if flag.status == 'open' %}{% if flag.severity == 'CRITICAL' or flag.severity == 'HIGH' %}table-danger{% elif flag.severity == 'MEDIUM' %}table-warning{% endif %}{% endif %}">
                                     <td>
                                         <span class="badge bg-{% if flag.severity == 'CRITICAL' %}danger{% elif flag.severity == 'HIGH' %}danger{% elif flag.severity == 'MEDIUM' %}warning text-dark{% else %}info{% endif %}">
                                             {{ flag.severity }}
                                         </span>
                                     </td>
-                                    <td>
+                                    <td class="flag-status-cell">
                                         <span class="badge bg-{% if flag.status == 'open' %}danger{% elif flag.status == 'reviewed' %}info{% else %}success{% endif %}">
                                             {{ flag.get_status_display }}
                                         </span>
                                     </td>
                                     <td class="{% if flag.status == 'open' %}fw-bold text-danger{% endif %}">{{ flag.title }}</td>
                                     <td class="{% if flag.status == 'open' %}text-danger{% endif %}" style="font-size: 0.82rem;">{{ flag.description|truncatewords:30 }}</td>
-                                    <td>
+                                    <td class="flag-action-cell">
                                         {% if flag.status == 'open' %}
                                         <button class="btn btn-sm btn-outline-success resolve-risk-btn" title="Resolve this risk"
                                                 data-flag-id="{{ flag.pk }}" data-flag-title="{{ flag.title }}">
@@ -793,7 +793,9 @@
                 </div>
                 <form method="post" id="resolveRiskForm">
                     {% csrf_token %}
+                    <input type="hidden" name="new_status" value="resolved">
                     <div class="modal-body">
+                        <div class="alert alert-danger" id="resolveRiskError" style="display:none;"></div>
                         <p class="fw-bold" id="resolveRiskTitle"></p>
                         <div class="mb-3">
                             <label class="form-label fw-semibold">Resolution Notes <span class="text-danger">*</span></label>
@@ -2040,18 +2042,20 @@
     });
 })();
 
-// ===== Audit Risk: Resolve Modal =====
+// ===== Audit Risk: Resolve Modal (AJAX) =====
 (function() {
+    let currentFlagId = null;
+
     document.addEventListener('click', function(e) {
         const btn = e.target.closest('.resolve-risk-btn');
         if (!btn) return;
-        const flagId = btn.dataset.flagId;
+        currentFlagId = btn.dataset.flagId;
         const flagTitle = btn.dataset.flagTitle;
         document.getElementById('resolveRiskTitle').textContent = flagTitle;
-        document.getElementById('resolveRiskForm').action = '/risk-flags/' + flagId + '/resolve/';
         document.getElementById('resolveRiskNotes').value = '';
         document.getElementById('resolveWordCount').textContent = '0';
         document.getElementById('resolveRiskSubmit').disabled = true;
+        document.getElementById('resolveRiskError').style.display = 'none';
         const modal = new bootstrap.Modal(document.getElementById('resolveRiskModal'));
         modal.show();
     });
@@ -2066,6 +2070,141 @@
             submitBtn.disabled = words < 5;
             wordCount.style.color = words >= 5 ? '#198754' : '#dc3545';
         });
+    }
+
+    // AJAX form submission — stay on the Audit Risk tab
+    const form = document.getElementById('resolveRiskForm');
+    if (form) {
+        form.addEventListener('submit', function(e) {
+            e.preventDefault();
+            if (!currentFlagId) return;
+
+            const url = '/risk-flags/' + currentFlagId + '/resolve/';
+            const formData = new FormData(form);
+            const errorDiv = document.getElementById('resolveRiskError');
+            errorDiv.style.display = 'none';
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Resolving...';
+
+            fetch(url, {
+                method: 'POST',
+                headers: { 'X-Requested-With': 'XMLHttpRequest' },
+                body: formData
+            })
+            .then(resp => resp.json().then(data => ({status: resp.status, data})))
+            .then(({status, data}) => {
+                if (data.ok) {
+                    // Close the modal
+                    bootstrap.Modal.getInstance(document.getElementById('resolveRiskModal')).hide();
+
+                    // Remove the resolved flag's row with animation
+                    const flagRow = document.querySelector(`tr[data-flag-id="${currentFlagId}"]`);
+                    let accordion = null;
+                    if (flagRow) {
+                        accordion = flagRow.closest('.accordion-collapse');
+                        flagRow.style.transition = 'opacity 0.4s, transform 0.4s';
+                        flagRow.style.opacity = '0';
+                        flagRow.style.transform = 'translateX(30px)';
+                        setTimeout(() => {
+                            flagRow.remove();
+                            // If no more open rows in this accordion section, remove the whole section
+                            if (accordion) {
+                                const remainingRows = accordion.querySelectorAll('tr[data-flag-id]');
+                                if (remainingRows.length === 0) {
+                                    const accordionItem = accordion.closest('.accordion-item');
+                                    if (accordionItem) {
+                                        accordionItem.style.transition = 'opacity 0.3s';
+                                        accordionItem.style.opacity = '0';
+                                        setTimeout(() => accordionItem.remove(), 300);
+                                    }
+                                }
+                            }
+                        }, 400);
+                    }
+
+                    // Update the accordion header badge (decrement open count)
+                    if (accordion) {
+                        const accId = accordion.id;
+                        const header = document.querySelector(`[data-bs-target="#${accId}"] .badge`);
+                        if (header) {
+                            const current = parseInt(header.textContent) || 0;
+                            const newCount = Math.max(0, current - 1);
+                            header.textContent = newCount + ' open';
+                            if (newCount === 0) {
+                                header.classList.remove('bg-danger', 'bg-warning');
+                                header.classList.add('bg-success');
+                                header.textContent = 'All resolved';
+                            }
+                        }
+                    }
+
+                    // Update tab badges
+                    if (typeof data.flagged_account_count !== 'undefined') {
+                        // TB tab badge
+                        const tbBadge = document.querySelector('[data-tb-risk-badge]');
+                        if (tbBadge) {
+                            if (data.flagged_account_count > 0) {
+                                tbBadge.textContent = data.flagged_account_count;
+                                tbBadge.style.display = '';
+                            } else {
+                                tbBadge.style.display = 'none';
+                            }
+                        }
+                        // Audit Risk tab badge
+                        const auditBadge = document.querySelector('[data-audit-risk-badge]');
+                        if (auditBadge) {
+                            if (data.flagged_account_count > 0) {
+                                auditBadge.textContent = data.flagged_account_count;
+                            } else {
+                                auditBadge.textContent = '0';
+                                auditBadge.classList.remove('bg-danger');
+                                auditBadge.classList.add('bg-success');
+                            }
+                        }
+                    }
+
+                    // Update the summary line
+                    const summaryEl = document.querySelector('[data-risk-summary]');
+                    if (summaryEl && typeof data.open_count !== 'undefined') {
+                        if (data.open_count === 0) {
+                            summaryEl.innerHTML = '<i class="bi bi-check-circle-fill text-success"></i> All audit risk flags have been resolved.';
+                        } else {
+                            summaryEl.querySelector('.open-count').textContent = data.open_count;
+                        }
+                    }
+
+                    // Update AUDIT RISK banner
+                    if (data.open_count === 0) {
+                        const banner = document.querySelector('[data-risk-banner]');
+                        if (banner) banner.style.display = 'none';
+                    }
+
+                    // Show a brief success toast
+                    showResolveToast('Flag resolved successfully', 'success');
+                } else {
+                    errorDiv.textContent = data.error || 'An error occurred.';
+                    errorDiv.style.display = 'block';
+                    submitBtn.disabled = false;
+                    submitBtn.innerHTML = '<i class="bi bi-check-circle"></i> Resolve';
+                }
+            })
+            .catch(err => {
+                errorDiv.textContent = 'Network error. Please try again.';
+                errorDiv.style.display = 'block';
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = '<i class="bi bi-check-circle"></i> Resolve';
+            });
+        });
+    }
+
+    function showResolveToast(message, type) {
+        const toast = document.createElement('div');
+        toast.className = `alert alert-${type === 'success' ? 'success' : 'danger'} position-fixed shadow`;
+        toast.style.cssText = 'top:20px;right:20px;z-index:9999;min-width:300px;opacity:0;transition:opacity 0.3s';
+        toast.innerHTML = `<i class="bi bi-${type === 'success' ? 'check-circle-fill' : 'exclamation-circle-fill'}"></i> ${message}`;
+        document.body.appendChild(toast);
+        requestAnimationFrame(() => toast.style.opacity = '1');
+        setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300); }, 2500);
     }
 })();
 

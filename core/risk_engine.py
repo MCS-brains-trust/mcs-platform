@@ -422,15 +422,10 @@ def _run_tier1_variance(financial_year, tb_data, ref_data, entity_context, run_i
             else:
                 severity = "LOW"
 
-            # New account appearing (no prior year)
+            # New accounts (prior == 0, current != 0) are NOT flagged —
+            # they are normal business activity.  Only flag disappeared accounts.
             if prior_net == ZERO and current_net != ZERO:
-                title = f"New account: {line.account_name}"
-                description = (
-                    f"Account {line.account_code} ({line.account_name}) has a "
-                    f"balance of ${current_net:,.2f} with no prior year comparative. "
-                    f"This is a new account that did not exist in the prior year."
-                )
-                severity = "MEDIUM"
+                continue  # skip new accounts entirely
             # Account disappeared (had prior year, now zero)
             elif current_net == ZERO and prior_net != ZERO:
                 title = f"Account closed: {line.account_name}"
@@ -473,6 +468,89 @@ def _run_tier1_variance(financial_year, tb_data, ref_data, entity_context, run_i
 
     # Aggregate-level variance flags
     flags.extend(_check_aggregate_variances(tb_data, ref_data))
+
+    # Division 7A detection: flag loan accounts with DEBIT closing balances
+    # (i.e. money owed BY a shareholder/director TO the company).
+    # This applies to companies and trusts.
+    if entity_context.get("entity_type") in ("company", "trust", ""):
+        flags.extend(_check_div7a_loans(tb_data, entity_context))
+
+    return flags
+
+
+def _check_div7a_loans(tb_data, entity_context):
+    """
+    Division 7A detection: flag loan accounts that carry a DEBIT closing balance.
+
+    A debit balance on a loan account (liabilities section) means the company
+    has lent money to a shareholder/associate, which triggers Division 7A of
+    the Income Tax Assessment Act 1936.  These must be documented as compliant
+    loan agreements or treated as deemed dividends.
+
+    Detection heuristics:
+      1. Account code starts with "3" (common AU liability prefix) AND
+         account name contains "loan" or "director" or "shareholder".
+      2. Account is mapped to a liabilities section AND name contains loan-
+         related keywords.
+    """
+    flags = []
+    _LOAN_KEYWORDS = {
+        "loan", "director", "shareholder", "related party",
+        "beneficiary", "associate", "advance",
+    }
+
+    for line in tb_data["lines"]:
+        net = line.effective_dr - line.effective_cr
+        if net <= ZERO:
+            continue  # credit or zero — normal for a liability
+
+        name_lower = (line.account_name or "").lower()
+        code = line.account_code or ""
+
+        # Determine if this looks like a loan account
+        is_loan = False
+
+        # Heuristic 1: code starts with "3" (liabilities) + loan keyword
+        if code.startswith("3") and any(kw in name_lower for kw in _LOAN_KEYWORDS):
+            is_loan = True
+
+        # Heuristic 2: mapped to liabilities section + loan keyword
+        if not is_loan and line.mapped_line_item:
+            section = _derive_section(line.mapped_line_item)
+            mapped_code = getattr(line.mapped_line_item, 'code', '') or ''
+            if (section == "liabilities" or mapped_code.startswith("BS-LIA")):
+                if any(kw in name_lower for kw in _LOAN_KEYWORDS):
+                    is_loan = True
+
+        if is_loan:
+            flags.append({
+                "rule_id": f"T1-DIV7A-{code}",
+                "tier": 1,
+                "severity": "CRITICAL",
+                "title": f"Div 7A: {line.account_name} has debit balance",
+                "description": (
+                    f"Account {code} ({line.account_name}) has a debit balance "
+                    f"of ${net:,.2f}. A debit balance on a loan account indicates "
+                    f"the company has lent money to a shareholder or associate. "
+                    f"This triggers Division 7A of the ITAA 1936 and must be "
+                    f"documented under a compliant loan agreement or treated as "
+                    f"a deemed unfranked dividend."
+                ),
+                "affected_accounts": [code],
+                "calculated_values": {
+                    "account_code": code,
+                    "account_name": line.account_name,
+                    "debit_balance": str(net),
+                },
+                "recommended_action": (
+                    "1. Confirm whether a Division 7A compliant loan agreement is in place. "
+                    "2. Verify the loan meets minimum repayment and benchmark interest rate requirements. "
+                    "3. If no compliant agreement exists, treat the amount as a deemed unfranked dividend "
+                    "in the shareholder's tax return. "
+                    "4. Document the analysis in the workpapers."
+                ),
+                "legislation_ref": "Division 7A, ITAA 1936 (ss 109C-109Q)",
+            })
 
     return flags
 

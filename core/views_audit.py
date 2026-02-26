@@ -825,10 +825,16 @@ def resolve_risk_flag(request, pk):
     flag = get_object_or_404(RiskFlag, pk=pk)
     resolution_notes = request.POST.get("resolution_notes", "").strip()
     new_status = request.POST.get("new_status", "resolved")
+    is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
 
     if new_status == "resolved":
         word_count = len(resolution_notes.split())
         if word_count < 5:
+            if is_ajax:
+                return JsonResponse({
+                    "ok": False,
+                    "error": f"Resolution notes must contain at least 5 words (you wrote {word_count})."
+                }, status=400)
             messages.error(
                 request,
                 f"Resolution notes must contain at least 5 words (you wrote {word_count}). "
@@ -841,6 +847,30 @@ def resolve_risk_flag(request, pk):
         flag.resolved_by = request.user
         flag.resolved_at = timezone.now()
         flag.save()
+
+        if is_ajax:
+            # Count remaining open flags and distinct flagged accounts for badge updates
+            fy = flag.financial_year
+            open_flags = RiskFlag.objects.filter(
+                financial_year=fy, status__in=["open", "reviewed"]
+            )
+            open_count = open_flags.count()
+            # Count distinct account codes across all open flags' affected_accounts JSON
+            flagged_codes = set()
+            for f in open_flags:
+                for acc in (f.affected_accounts or []):
+                    code = acc.get('account_code', '') if isinstance(acc, dict) else str(acc)
+                    if code:
+                        flagged_codes.add(code)
+            flagged_account_count = len(flagged_codes)
+            return JsonResponse({
+                "ok": True,
+                "flag_id": str(flag.pk),
+                "resolved_at": flag.resolved_at.strftime("%d/%m/%Y"),
+                "open_count": open_count,
+                "flagged_account_count": flagged_account_count,
+            })
+
         messages.success(request, f"Risk flag resolved: {flag.title}")
 
     elif new_status == "reviewed":
@@ -848,6 +878,10 @@ def resolve_risk_flag(request, pk):
         if resolution_notes:
             flag.resolution_notes = resolution_notes
         flag.save()
+
+        if is_ajax:
+            return JsonResponse({"ok": True, "flag_id": str(flag.pk)})
+
         messages.info(request, f"Risk flag marked as reviewed: {flag.title}")
 
     return redirect("core:risk_flags", pk=flag.financial_year.pk)
