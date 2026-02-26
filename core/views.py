@@ -105,6 +105,10 @@ def _apply_journal_line_to_tb(fy, account_code, account_name, jnl_debit, jnl_cre
         ).first()
         mapped_item = mapping.mapped_line_item if mapping else None
 
+    # Resolve the account name at the source - if the caller passed a raw
+    # code or blank name, look it up from EntityChartOfAccount / ChartOfAccount
+    account_name = _resolve_account_name(fy.entity, account_code, account_name)
+
     TrialBalanceLine.objects.create(
         financial_year=fy,
         account_code=account_code,
