@@ -58,7 +58,7 @@
                 </thead>
                 <tbody>
                     {% for line in lines %}
-                    <tr>
+                    <tr data-line-pk="{{ line.pk }}">
                         <td class="text-center text-muted">{{ forloop.counter }}</td>
                         <td>
                             {{ line.account_name }}
@@ -194,7 +194,7 @@
 <div class="modal fade" id="reallocateModal-{{ forloop.counter }}" tabindex="-1" aria-labelledby="reallocateLabel-{{ forloop.counter }}" aria-hidden="true">
     <div class="modal-dialog">
         <div class="modal-content">
-            <form method="post" action="{% url 'core:tb_line_reallocate' pk=line.pk %}">
+            <form method="post" action="{% url 'core:tb_line_reallocate' pk=line.pk %}" class="reallocate-form" data-line-pk="{{ line.pk }}">
                 {% csrf_token %}
                 <div class="modal-header">
                     <h6 class="modal-title" id="reallocateLabel-{{ forloop.counter }}">
@@ -256,5 +256,86 @@ document.querySelectorAll('[id^="reallocateModal-"]').forEach(function(modal) {
         if (searchInput) searchInput.focus();
     });
 });
+
+// AJAX reallocation — live row removal
+document.querySelectorAll('.reallocate-form').forEach(function(form) {
+    form.addEventListener('submit', function(e) {
+        e.preventDefault();
+        const linePk = this.dataset.linePk;
+        const url = this.action;
+        const formData = new FormData(this);
+        const submitBtn = this.querySelector('button[type="submit"]');
+        const origText = submitBtn.innerHTML;
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Reallocating...';
+
+        fetch(url, {
+            method: 'POST',
+            body: formData,
+            headers: { 'X-Requested-With': 'XMLHttpRequest' }
+        })
+        .then(function(resp) { return resp.json().then(function(data) { return {ok: resp.ok, data: data}; }); })
+        .then(function(result) {
+            if (result.ok && result.data.success) {
+                // Close the modal
+                const modal = form.closest('.modal');
+                const bsModal = bootstrap.Modal.getInstance(modal);
+                if (bsModal) bsModal.hide();
+
+                // Remove the table row with animation
+                const row = document.querySelector('tr[data-line-pk="' + linePk + '"]');
+                if (row) {
+                    row.style.transition = 'opacity 0.4s, background-color 0.3s';
+                    row.style.backgroundColor = '#d4edda';
+                    setTimeout(function() {
+                        row.style.opacity = '0';
+                        setTimeout(function() { row.remove(); renumberRows(); }, 400);
+                    }, 300);
+                }
+
+                // Show success toast
+                showToast(result.data.message, 'success');
+
+                // If no remaining lines, redirect
+                if (result.data.redirect_url) {
+                    setTimeout(function() { window.location.href = result.data.redirect_url; }, 1500);
+                }
+            } else {
+                showToast(result.data.message || 'Reallocation failed.', 'danger');
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = origText;
+            }
+        })
+        .catch(function(err) {
+            showToast('Network error: ' + err.message, 'danger');
+            submitBtn.disabled = false;
+            submitBtn.innerHTML = origText;
+        });
+    });
+});
+
+function renumberRows() {
+    const rows = document.querySelectorAll('tbody tr[data-line-pk]');
+    rows.forEach(function(row, i) {
+        const numCell = row.querySelector('td:first-child');
+        if (numCell) numCell.textContent = i + 1;
+    });
+    // Update entry count in subtitle
+    const countEl = document.querySelector('.text-muted small, small.text-muted');
+    if (countEl && rows.length > 0) {
+        const txt = countEl.textContent;
+        countEl.textContent = txt.replace(/\d+ entr(y|ies)/, rows.length + (rows.length === 1 ? ' entry' : ' entries'));
+    }
+}
+
+function showToast(message, type) {
+    const container = document.querySelector('.mb-3') || document.querySelector('.mb-4');
+    const alert = document.createElement('div');
+    alert.className = 'alert alert-' + type + ' alert-dismissible fade show';
+    alert.setAttribute('role', 'alert');
+    alert.innerHTML = message + '<button type="button" class="btn-close" data-bs-dismiss="alert"></button>';
+    container.parentNode.insertBefore(alert, container);
+    setTimeout(function() { alert.remove(); }, 5000);
+}
 </script>
 {% endblock %}
