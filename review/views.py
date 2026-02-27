@@ -268,7 +268,7 @@ def review_dashboard(request):
     my_unfinalised_years = (
         FinancialYear.objects.filter(
             entity__in=my_entities,
-            status__in=["draft", "in_review", "reviewed"],
+            status__in=["draft", "in_review", "finished"],
         )
         .select_related("entity", "entity__primary_accountant", "entity__reviewer")
         .order_by("-end_date")[:15]
@@ -301,7 +301,7 @@ def review_dashboard(request):
     if user.is_admin:
         total_entities = Entity.objects.filter(is_archived=False).count()
         total_unfinalised = FinancialYear.objects.filter(
-            status__in=["draft", "in_review", "reviewed"]
+            status__in=["draft", "in_review", "finished"]
         ).count()
         total_finalised = FinancialYear.objects.filter(status="finalised").count()
         from core.models import EvaReview
@@ -349,7 +349,7 @@ def review_dashboard(request):
     if user.is_admin:
         all_unfinalised_years = (
             FinancialYear.objects.filter(
-                status__in=["draft", "in_review", "reviewed"],
+                status__in=["draft", "in_review", "finished"],
             )
             .select_related("entity", "entity__primary_accountant", "entity__reviewer")
             .order_by("-end_date")[:15]

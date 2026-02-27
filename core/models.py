@@ -414,7 +414,7 @@ class FinancialYear(models.Model):
     class Status(models.TextChoices):
         DRAFT = "draft", "Draft"
         IN_REVIEW = "in_review", "In Review"
-        REVIEWED = "reviewed", "Reviewed"
+        FINISHED = "finished", "Finished"
         PREPARED = "prepared", "Prepared (Eva Reviewing)"
         PENDING_EVA = "pending_eva", "Pending Eva Review"
         EVA_CLEARED = "eva_cleared", "Eva Cleared"
@@ -513,13 +513,13 @@ class FinancialYear(models.Model):
 
     @property
     def can_ask_eva(self):
-        """Eva can be triggered from Draft status when TB is ready."""
-        return self.status in (self.Status.DRAFT, self.Status.IN_REVIEW, self.Status.REVIEWED, self.Status.PREPARED)
+        """Eva can be triggered once the file is Finished."""
+        return self.status in (self.Status.FINISHED, self.Status.PREPARED)
 
     @property
     def is_eva_reviewable(self):
         """Can the 'Ask Eva to Review' button be clicked?"""
-        return self.status == self.Status.DRAFT
+        return self.status == self.Status.FINISHED
 
     @property
     def can_finalise(self):
