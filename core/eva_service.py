@@ -1038,11 +1038,16 @@ SHAREPOINT_FOLDER_MAP = {
 }
 
 
-def sync_knowledge_brain():
+def sync_knowledge_brain(limit=0):
     """
     Sync the Knowledge Brain from SharePoint via Microsoft Graph API.
     This function is designed to be called as a management command or
     scheduled task (Celery Beat every 2 hours).
+
+    Args:
+        limit: Maximum number of documents to process in this run.
+               0 = no limit (process all). Use limit=1 with a shell
+               loop for memory-constrained servers.
 
     Requires environment variables:
     - SHAREPOINT_TENANT_ID
@@ -1058,6 +1063,7 @@ def sync_knowledge_brain():
     each document to prevent OOM kills on memory-constrained servers.
     """
     import gc
+    import time
     import requests as http_requests
     from core.models import KnowledgeDocument, KnowledgeChunk
     from core.models import AuditLog
@@ -1120,10 +1126,14 @@ def sync_knowledge_brain():
             return {"error": f"Drive not found for library '{library_name}'", "added": 0, "updated": 0}
         logger.info(f"Resolved drive_id: {drive_id}")
 
-    stats = {"added": 0, "updated": 0, "errors": 0, "total_chunks": 0}
+    stats = {"added": 0, "updated": 0, "skipped": 0, "errors": 0, "total_chunks": 0}
+    docs_processed = 0
 
     # Iterate through each folder in the mapping
+    limit_reached = False
     for folder_path, category in SHAREPOINT_FOLDER_MAP.items():
+        if limit_reached:
+            break
         full_path = folder_path  # Drive root is already the library
         list_url = (
             f"{graph_base}/sites/{site_id}/drives/{drive_id}"
@@ -1167,7 +1177,14 @@ def sync_knowledge_brain():
             ).first()
 
             if existing and str(existing.sharepoint_modified_at) == modified_at:
+                stats["skipped"] += 1
                 continue  # No changes
+
+            # Check if we've hit the document limit for this run
+            if limit > 0 and docs_processed >= limit:
+                logger.info(f"Reached document limit ({limit}). Stopping.")
+                limit_reached = True
+                break
 
             # Download the file
             download_url = (
@@ -1246,12 +1263,13 @@ def sync_knowledge_brain():
                     # Clear the chunk data we just processed
                     chunks[i] = None
 
-                    # Every 10 chunks, force garbage collection and
-                    # reset Django's internal query log to free memory
-                    if (i + 1) % 10 == 0:
+                    # Every 5 chunks, sleep briefly and force garbage collection
+                    if (i + 1) % 5 == 0:
+                        time.sleep(0.5)  # Let the OS reclaim memory
                         gc.collect()
-                        from django.db import reset_queries
+                        from django.db import reset_queries, close_old_connections
                         reset_queries()
+                        close_old_connections()
 
                 # Free the chunks list
                 del chunks
@@ -1262,13 +1280,17 @@ def sync_knowledge_brain():
                 doc.synced_at = timezone.now()
                 doc.save()
 
+                docs_processed += 1
+
                 # Log progress after each document
-                doc_count = stats["added"] + stats["updated"]
                 logger.info(
-                    f"[{doc_count}] Synced {item_name} "
+                    f"[{docs_processed}] Synced {item_name} "
                     f"({num_chunks} chunks). "
                     f"Total chunks so far: {stats['total_chunks']}"
                 )
+
+                # Sleep between documents to let OS stabilise memory
+                time.sleep(2)
 
             except Exception as e:
                 logger.error(f"Failed to process {item_name}: {e}")
@@ -1283,8 +1305,10 @@ def sync_knowledge_brain():
                 except OSError:
                     pass
                 # Force garbage collection after each document
-                # to prevent memory accumulation on constrained servers
                 gc.collect()
+                from django.db import reset_queries, close_old_connections
+                reset_queries()
+                close_old_connections()
 
     # Log the sync
     try:
