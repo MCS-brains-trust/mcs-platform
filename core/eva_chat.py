@@ -100,12 +100,12 @@ Status: {fy.get_status_display()}
         for line in tb_lines:
             mapped = ""
             if line.mapped_line_item:
-                mapped = f" [{line.mapped_line_item.code}]"
+                mapped = f" [{line.mapped_line_item.standard_code}]"
             tb_text.append(
                 f"{line.account_code:<8} "
                 f"{(line.account_name or '')[:38]:<40} "
-                f"{_decimal_to_str(line.effective_dr):>14} "
-                f"{_decimal_to_str(line.effective_cr):>14} "
+                f"{_decimal_to_str(line.debit):>14} "
+                f"{_decimal_to_str(line.credit):>14} "
                 f"{_decimal_to_str(line.prior_debit):>14} "
                 f"{_decimal_to_str(line.prior_credit):>14}"
                 f"{mapped}"

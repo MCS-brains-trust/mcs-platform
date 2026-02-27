@@ -169,7 +169,7 @@ def _build_check_context(financial_year, check_id):
         # Look for loan accounts in TB
         loan_lines = fy.trial_balance_lines.filter(
             account_name__icontains="loan"
-        ).values_list("account_code", "account_name", "effective_dr", "effective_cr")
+        ).values_list("account_code", "account_name", "debit", "credit")
         if loan_lines:
             extra.append("=== LOAN ACCOUNTS ===")
             for code, name, dr, cr in loan_lines:
