@@ -7,6 +7,8 @@ const CLASSIFY_URL = '{% url "core:review_classify_ai" pk=fy.pk %}';
 const CLASSIFY_STATUS_URL = '{% url "core:review_classify_status" pk=fy.pk %}';
 const BULK_APPROVE_URL = '{% url "core:review_bulk_approve_group" pk=fy.pk %}';
 const COA_SEARCH_URL = '{% url "core:entity_coa_search_api" pk=fy.pk %}';
+const DELETE_ALL_URL = '{% url "core:review_delete_all_transactions" pk=fy.pk %}';
+const DELETE_SELECTED_URL = '{% url "core:review_delete_selected_transactions" pk=fy.pk %}';
 const CSRF_TOKEN = '{{ csrf_token }}';
 const ENTITY_ID = '{{ fy.entity.pk }}';
 const FY_ID = '{{ fy.pk }}';
@@ -1185,6 +1187,126 @@ function approveAllAndPush() {
         btn.disabled = false;
         btn.innerHTML = '<i class="bi bi-check-all"></i> Approve All & Push to TB';
     });
+}
+
+// ===== Delete Transactions =====
+function deleteSingleTransaction(txnId) {
+    if (!confirm('Delete this transaction? This cannot be undone.')) return;
+
+    const url = '{% url "core:review_delete_transaction" pk=fy.pk txn_pk="00000000-0000-0000-0000-000000000000" %}'.replace('00000000-0000-0000-0000-000000000000', txnId);
+
+    fetch(url, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': CSRF_TOKEN }
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            // Remove from pending table
+            const pendingRow = document.getElementById('pending-row-' + txnId);
+            const overrideRow = document.getElementById('gst-override-row-' + txnId);
+            const apportRow = document.getElementById('apportionment-row-' + txnId);
+            const splitEditor = document.getElementById('split-editor-' + txnId);
+            if (pendingRow) { pendingRow.style.transition = 'opacity 0.3s'; pendingRow.style.opacity = '0'; setTimeout(() => pendingRow.remove(), 300); }
+            if (overrideRow) overrideRow.remove();
+            if (apportRow) apportRow.remove();
+            if (splitEditor) splitEditor.remove();
+
+            // Remove from confirmed table
+            const confirmedRow = document.getElementById('confirmed-row-' + txnId);
+            if (confirmedRow) { confirmedRow.style.transition = 'opacity 0.3s'; confirmedRow.style.opacity = '0'; setTimeout(() => confirmedRow.remove(), 300); }
+
+            // Update badges
+            const pendingBadge = document.getElementById('pendingBadge');
+            const confirmedBadge = document.getElementById('confirmedBadge');
+            if (pendingBadge && data.remaining_pending !== undefined) pendingBadge.textContent = data.remaining_pending + ' pending';
+            if (confirmedBadge && data.remaining_confirmed !== undefined) confirmedBadge.textContent = data.remaining_confirmed + ' confirmed';
+
+            showReviewNotification(data.message || 'Transaction deleted.');
+        } else {
+            alert('Error: ' + (data.message || 'Could not delete transaction'));
+        }
+    })
+    .catch(err => alert('Network error while deleting transaction.'));
+}
+
+function deleteAllTransactions(scope) {
+    const scopeLabel = scope === 'all' ? 'ALL' : scope;
+    const msg = scope === 'all'
+        ? 'This will permanently delete ALL imported transactions (pending and confirmed). Any trial balance entries from confirmed transactions will be reversed. This cannot be undone. Continue?'
+        : 'This will permanently delete all ' + scope + ' transactions. ' + (scope === 'confirmed' ? 'Trial balance entries will be reversed. ' : '') + 'This cannot be undone. Continue?';
+
+    if (!confirm(msg)) return;
+
+    fetch(DELETE_ALL_URL, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': CSRF_TOKEN,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ scope: scope })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            showReviewNotification(data.message || 'Transactions deleted.');
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            alert('Error: ' + (data.message || 'Could not delete transactions'));
+        }
+    })
+    .catch(err => alert('Network error while deleting transactions.'));
+}
+
+function deleteSelectedTransactions() {
+    const checked = document.querySelectorAll('#pendingTableBody .row-select:checked');
+    if (checked.length === 0) {
+        alert('No transactions selected.');
+        return;
+    }
+    if (!confirm('Delete ' + checked.length + ' selected transactions? This cannot be undone.')) return;
+
+    const txnIds = Array.from(checked).map(cb => cb.value);
+
+    fetch(DELETE_SELECTED_URL, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': CSRF_TOKEN,
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ transaction_ids: txnIds })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            // Remove rows from table
+            txnIds.forEach(id => {
+                const row = document.getElementById('pending-row-' + id);
+                const overrideRow = document.getElementById('gst-override-row-' + id);
+                const apportRow = document.getElementById('apportionment-row-' + id);
+                const splitEditor = document.getElementById('split-editor-' + id);
+                if (row) { row.style.transition = 'opacity 0.3s'; row.style.opacity = '0'; setTimeout(() => row.remove(), 300); }
+                if (overrideRow) overrideRow.remove();
+                if (apportRow) apportRow.remove();
+                if (splitEditor) splitEditor.remove();
+            });
+
+            // Update badges
+            const pendingBadge = document.getElementById('pendingBadge');
+            const confirmedBadge = document.getElementById('confirmedBadge');
+            if (pendingBadge && data.remaining_pending !== undefined) pendingBadge.textContent = data.remaining_pending + ' pending';
+            if (confirmedBadge && data.remaining_confirmed !== undefined) confirmedBadge.textContent = data.remaining_confirmed + ' confirmed';
+
+            // Hide bulk toolbar
+            const toolbar = document.getElementById('bulkToolbar');
+            if (toolbar) toolbar.style.display = 'none';
+
+            showReviewNotification(data.message || 'Selected transactions deleted.');
+        } else {
+            alert('Error: ' + (data.message || 'Could not delete transactions'));
+        }
+    })
+    .catch(err => alert('Network error while deleting transactions.'));
 }
 
 // ===== AI Classification =====

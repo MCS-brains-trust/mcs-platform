@@ -36,6 +36,23 @@
             <i class="bi bi-check-all"></i> Approve All &amp; Push to TB
         </button>
         {% endif %}
+        {% if pending_review.count > 0 or confirmed_review.count > 0 %}
+        <div class="dropdown d-inline">
+            <button class="btn btn-outline-danger btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="bi bi-trash3"></i> Delete
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end">
+                {% if pending_review.count > 0 %}
+                <li><a class="dropdown-item" href="#" onclick="deleteAllTransactions('pending'); return false;"><i class="bi bi-clock-history me-1"></i> Delete All Pending ({{ pending_review.count }})</a></li>
+                {% endif %}
+                {% if confirmed_review.count > 0 %}
+                <li><a class="dropdown-item" href="#" onclick="deleteAllTransactions('confirmed'); return false;"><i class="bi bi-check-circle me-1"></i> Delete All Confirmed ({{ confirmed_review.count }})</a></li>
+                {% endif %}
+                <li><hr class="dropdown-divider"></li>
+                <li><a class="dropdown-item text-danger" href="#" onclick="deleteAllTransactions('all'); return false;"><i class="bi bi-trash3-fill me-1"></i> Delete All Transactions</a></li>
+            </ul>
+        </div>
+        {% endif %}
     </div>
 </div>
 
@@ -103,6 +120,10 @@
                 {% endif %}
                 <button class="btn btn-sm btn-outline-success" onclick="bulkApproveSelected()">
                     <i class="bi bi-check-all"></i> Approve Selected
+                </button>
+                <div class="vr mx-1"></div>
+                <button class="btn btn-sm btn-outline-danger" onclick="deleteSelectedTransactions()">
+                    <i class="bi bi-trash3"></i> Delete Selected
                 </button>
             </div>
         </div>
@@ -329,6 +350,10 @@
                             onclick="openSplitEditor('{{ txn.pk }}', {{ txn.amount }}, '{{ txn.ai_suggested_code|default:"" }}', '{{ txn.ai_suggested_name|default:"" }}')">
                         <i class="bi bi-scissors"></i>
                     </button>
+                    <button class="btn btn-sm btn-outline-danger py-0 px-1 ms-1" title="Delete transaction"
+                            onclick="deleteSingleTransaction('{{ txn.pk }}')">
+                        <i class="bi bi-trash3"></i>
+                    </button>
                 </td>
             </tr>
             {# --- Apportionment Reason Row (shown when AI detects partial credit) --- #}
@@ -487,6 +512,10 @@
                     <button class="btn btn-sm btn-outline-warning py-0 px-1 txn-unconfirm-btn" title="Unconfirm &amp; move back to pending"
                             data-txn-id="{{ txn.pk }}" data-unconfirm-url="{% url 'core:review_unconfirm_transaction' pk=txn.pk %}">
                         <i class="bi bi-arrow-counterclockwise"></i>
+                    </button>
+                    <button class="btn btn-sm btn-outline-danger py-0 px-1 ms-1" title="Delete transaction"
+                            onclick="deleteSingleTransaction('{{ txn.pk }}')">
+                        <i class="bi bi-trash3"></i>
                     </button>
                 </td>
             </tr>

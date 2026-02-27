@@ -6286,6 +6286,209 @@ def review_approve_all(request, pk):
 
 
 # ---------------------------------------------------------------------------
+# Delete Transactions
+# ---------------------------------------------------------------------------
+@login_required
+@require_POST
+def review_delete_transaction(request, pk, txn_pk):
+    """Delete a single imported bank transaction (AJAX).
+    If the transaction was confirmed and pushed to TB, reverses the TB impact first.
+    """
+    fy = get_financial_year_for_user(request, pk)
+    if not request.user.can_do_accounting:
+        return JsonResponse({"error": "Permission denied"}, status=403)
+
+    from review.models import PendingTransaction
+    txn = get_object_or_404(PendingTransaction, pk=txn_pk, job__entity=fy.entity)
+
+    # If confirmed, reverse TB impact before deleting
+    if txn.is_confirmed and txn.confirmed_code:
+        _reverse_tb_for_transaction(txn, fy)
+
+    desc_preview = txn.description[:50]
+    # Also delete any split children
+    split_children = PendingTransaction.objects.filter(split_parent=txn)
+    for child in split_children:
+        if child.is_confirmed and child.confirmed_code:
+            _reverse_tb_for_transaction(child, fy)
+        child.delete()
+
+    txn.delete()
+
+    # Return updated counts
+    remaining_pending = PendingTransaction.objects.filter(
+        job__entity=fy.entity, is_confirmed=False
+    ).count()
+    remaining_confirmed = PendingTransaction.objects.filter(
+        job__entity=fy.entity, is_confirmed=True
+    ).count()
+
+    return JsonResponse({
+        "status": "ok",
+        "message": f"Deleted: {desc_preview}",
+        "remaining_pending": remaining_pending,
+        "remaining_confirmed": remaining_confirmed,
+    })
+
+
+@login_required
+@require_POST
+def review_delete_all_transactions(request, pk):
+    """Delete all imported bank transactions for a financial year's entity (AJAX).
+    Supports filtering by status: 'pending', 'confirmed', or 'all'.
+    Reverses TB impact for any confirmed transactions before deleting.
+    """
+    fy = get_financial_year_for_user(request, pk)
+    if not request.user.can_do_accounting:
+        return JsonResponse({"error": "Permission denied"}, status=403)
+
+    import json
+    try:
+        body = json.loads(request.body)
+    except (json.JSONDecodeError, ValueError):
+        body = {}
+    scope = body.get('scope', request.POST.get('scope', 'all'))
+
+    from review.models import PendingTransaction
+    qs = PendingTransaction.objects.filter(job__entity=fy.entity)
+
+    if scope == 'pending':
+        qs = qs.filter(is_confirmed=False)
+    elif scope == 'confirmed':
+        qs = qs.filter(is_confirmed=True)
+    # else 'all' — no filter
+
+    # Reverse TB for confirmed transactions
+    confirmed_txns = qs.filter(is_confirmed=True, confirmed_code__gt='')
+    for txn in confirmed_txns:
+        _reverse_tb_for_transaction(txn, fy)
+
+    count = qs.count()
+    qs.delete()
+
+    # Return updated counts
+    remaining_pending = PendingTransaction.objects.filter(
+        job__entity=fy.entity, is_confirmed=False
+    ).count()
+    remaining_confirmed = PendingTransaction.objects.filter(
+        job__entity=fy.entity, is_confirmed=True
+    ).count()
+
+    return JsonResponse({
+        "status": "ok",
+        "message": f"Deleted {count} {scope} transactions.",
+        "deleted_count": count,
+        "remaining_pending": remaining_pending,
+        "remaining_confirmed": remaining_confirmed,
+    })
+
+
+@login_required
+@require_POST
+def review_delete_selected_transactions(request, pk):
+    """Delete selected imported bank transactions by ID list (AJAX).
+    Reverses TB impact for any confirmed transactions before deleting.
+    """
+    fy = get_financial_year_for_user(request, pk)
+    if not request.user.can_do_accounting:
+        return JsonResponse({"error": "Permission denied"}, status=403)
+
+    import json
+    try:
+        body = json.loads(request.body)
+    except (json.JSONDecodeError, ValueError):
+        body = {}
+    txn_ids = body.get('transaction_ids', [])
+    if not txn_ids:
+        return JsonResponse({"error": "No transactions selected"}, status=400)
+
+    from review.models import PendingTransaction
+    qs = PendingTransaction.objects.filter(pk__in=txn_ids, job__entity=fy.entity)
+
+    # Reverse TB for confirmed transactions
+    confirmed_txns = qs.filter(is_confirmed=True, confirmed_code__gt='')
+    for txn in confirmed_txns:
+        _reverse_tb_for_transaction(txn, fy)
+
+    count = qs.count()
+    qs.delete()
+
+    # Return updated counts
+    remaining_pending = PendingTransaction.objects.filter(
+        job__entity=fy.entity, is_confirmed=False
+    ).count()
+    remaining_confirmed = PendingTransaction.objects.filter(
+        job__entity=fy.entity, is_confirmed=True
+    ).count()
+
+    return JsonResponse({
+        "status": "ok",
+        "message": f"Deleted {count} selected transactions.",
+        "deleted_count": count,
+        "remaining_pending": remaining_pending,
+        "remaining_confirmed": remaining_confirmed,
+    })
+
+
+def _reverse_tb_for_transaction(txn, fy):
+    """Reverse the trial balance impact of a single confirmed transaction.
+    Used by delete operations to clean up TB lines before removing transactions.
+    """
+    if not txn.confirmed_code:
+        return
+
+    # Reverse the main account TB line
+    tb_line = TrialBalanceLine.objects.filter(
+        financial_year=fy,
+        account_code=txn.confirmed_code,
+        is_adjustment=False,
+    ).first()
+    if not tb_line:
+        tb_line = TrialBalanceLine.objects.filter(
+            financial_year=fy,
+            account_code=txn.confirmed_code,
+        ).first()
+    if tb_line:
+        has_gst = txn.confirmed_gst_amount and txn.confirmed_gst_amount > 0
+        net_for_tb = txn.net_amount if has_gst else abs(txn.amount)
+
+        if txn.amount > 0:
+            tb_line.debit = max(Decimal("0"), tb_line.debit - net_for_tb)
+        else:
+            tb_line.credit = max(Decimal("0"), tb_line.credit - net_for_tb)
+
+        if tb_line.debit == 0 and tb_line.credit == 0:
+            tb_line.delete()
+        else:
+            tb_line.save()
+
+    # Reverse the GST clearing account line
+    if txn.confirmed_gst_amount and txn.confirmed_gst_amount > 0:
+        gst_amt = txn.confirmed_gst_amount
+        gst_code = '9100' if txn.amount > 0 else '9110'
+        gst_line = TrialBalanceLine.objects.filter(
+            financial_year=fy,
+            account_code=gst_code,
+            is_adjustment=False,
+        ).first()
+        if not gst_line:
+            gst_line = TrialBalanceLine.objects.filter(
+                financial_year=fy,
+                account_code=gst_code,
+            ).first()
+        if gst_line:
+            if txn.amount > 0:
+                gst_line.credit = max(Decimal("0"), gst_line.credit - gst_amt)
+            else:
+                gst_line.debit = max(Decimal("0"), gst_line.debit - gst_amt)
+
+            if gst_line.debit == 0 and gst_line.credit == 0:
+                gst_line.delete()
+            else:
+                gst_line.save()
+
+
+# ---------------------------------------------------------------------------
 # Activity Log / Notifications
 # ---------------------------------------------------------------------------
 @login_required

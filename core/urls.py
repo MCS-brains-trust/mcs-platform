@@ -158,6 +158,11 @@ urlpatterns = [
     path("years/<uuid:pk>/review/classify-status/", views.review_classify_status, name="review_classify_status"),
     path("years/<uuid:pk>/review/bulk-approve-group/", views.review_bulk_approve_group, name="review_bulk_approve_group"),
 
+    # Delete Transactions
+    path("years/<uuid:pk>/review/delete-transaction/<uuid:txn_pk>/", views.review_delete_transaction, name="review_delete_transaction"),
+    path("years/<uuid:pk>/review/delete-all/", views.review_delete_all_transactions, name="review_delete_all_transactions"),
+    path("years/<uuid:pk>/review/delete-selected/", views.review_delete_selected_transactions, name="review_delete_selected_transactions"),
+
     # Notifications / Activity
     path("api/notifications/", views.notifications_api, name="notifications_api"),
     path("api/notifications/<uuid:pk>/read/", views.mark_notification_read, name="mark_notification_read"),
