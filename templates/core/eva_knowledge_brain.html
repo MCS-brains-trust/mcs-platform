@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% load humanize %}
+{% block title %}Eva Knowledge Brain — StatementHub{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Dashboard</a></li>
+        <li class="breadcrumb-item active">Eva Knowledge Brain</li>
+    </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-start mb-4">
+    <div>
+        <h4 class="mb-1"><i class="bi bi-stars" style="color: #0F6B74;"></i> Eva Knowledge Brain</h4>
+        <p class="text-muted mb-0">Manage the document library that powers Eva's contextual intelligence.</p>
+    </div>
+    <div class="d-flex gap-2">
+        <button type="button" class="btn btn-primary" onclick="triggerSync()" id="syncBtn">
+            <i class="bi bi-cloud-arrow-down"></i> Sync from SharePoint
+        </button>
+    </div>
+</div>
+
+<!-- Stats Cards -->
+<div class="row g-3 mb-4">
+    <div class="col-md-3">
+        <div class="card">
+            <div class="card-body text-center">
+                <h3 class="mb-0">{{ total_count }}</h3>
+                <small class="text-muted">Total Documents</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card">
+            <div class="card-body text-center">
+                <h3 class="mb-0 text-success">{{ synced_count }}</h3>
+                <small class="text-muted">Synced</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card">
+            <div class="card-body text-center">
+                <h3 class="mb-0 text-warning">{{ pending_count }}</h3>
+                <small class="text-muted">Pending</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card">
+            <div class="card-body text-center">
+                <h3 class="mb-0 text-danger">{{ error_count }}</h3>
+                <small class="text-muted">Errors</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Category Filter -->
+<div class="mb-3">
+    <div class="btn-group" role="group">
+        <a href="{% url 'core:knowledge_brain_admin' %}" class="btn btn-sm {% if not selected_category %}btn-primary{% else %}btn-outline-primary{% endif %}">All</a>
+        {% for value, label in categories %}
+        <a href="{% url 'core:knowledge_brain_admin' %}?category={{ value }}" class="btn btn-sm {% if selected_category == value %}btn-primary{% else %}btn-outline-primary{% endif %}">{{ label }}</a>
+        {% endfor %}
+    </div>
+</div>
+
+<!-- Documents Table -->
+<div class="card">
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Title</th>
+                        <th style="width: 150px;">Category</th>
+                        <th style="width: 80px;">Type</th>
+                        <th style="width: 80px;">Chunks</th>
+                        <th style="width: 100px;">Status</th>
+                        <th style="width: 140px;">Last Synced</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for doc in documents %}
+                    <tr>
+                        <td>
+                            {{ doc.title }}
+                            {% if doc.is_archived %}<span class="badge bg-secondary ms-1">Archived</span>{% endif %}
+                            <br><small class="text-muted">{{ doc.sharepoint_path }}</small>
+                        </td>
+                        <td><span class="badge bg-info text-dark">{{ doc.get_category_display }}</span></td>
+                        <td><code>{{ doc.file_type }}</code></td>
+                        <td class="text-center">{{ doc.chunk_count }}</td>
+                        <td>
+                            {% if doc.sync_status == 'synced' %}
+                            <span class="badge bg-success"><i class="bi bi-check-circle"></i> Synced</span>
+                            {% elif doc.sync_status == 'pending' %}
+                            <span class="badge bg-warning text-dark"><i class="bi bi-clock"></i> Pending</span>
+                            {% elif doc.sync_status == 'error' %}
+                            <span class="badge bg-danger"><i class="bi bi-x-circle"></i> Error</span>
+                            {% else %}
+                            <span class="badge bg-secondary">{{ doc.sync_status }}</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if doc.synced_at %}
+                            <small>{{ doc.synced_at|date:"d M Y H:i" }}</small>
+                            {% else %}
+                            <small class="text-muted">Never</small>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="6" class="text-center py-4 text-muted">
+                            <i class="bi bi-journal-text" style="font-size: 2rem;"></i>
+                            <p class="mt-2">No documents in the Knowledge Brain yet.</p>
+                            <p class="small">Click "Sync from SharePoint" to import documents from the Eva Knowledge Brain SharePoint library.</p>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+function triggerSync() {
+    var btn = document.getElementById('syncBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Syncing...';
+
+    fetch('{% url "core:trigger_knowledge_sync" %}', {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': '{{ csrf_token }}',
+            'X-Requested-With': 'XMLHttpRequest',
+        },
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.status === 'accepted') {
+            btn.innerHTML = '<i class="bi bi-check-circle"></i> Sync Triggered';
+            btn.className = 'btn btn-success';
+            setTimeout(function() {
+                location.reload();
+            }, 5000);
+        } else {
+            alert(data.error || 'Sync failed');
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-cloud-arrow-down"></i> Sync from SharePoint';
+        }
+    })
+    .catch(function() {
+        alert('Connection error');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-cloud-arrow-down"></i> Sync from SharePoint';
+    });
+}
+</script>
+{% endblock %}

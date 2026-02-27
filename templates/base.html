@@ -338,6 +338,10 @@
            href="{% url 'core:bulk_import_start' %}">
             <i class="bi bi-cloud-upload-fill"></i> Bulk Import
         </a>
+        <a class="sh-nav-item {% if active_nav == 'knowledge_brain' %}active{% endif %}"
+           href="{% url 'core:knowledge_brain_admin' %}">
+            <i class="bi bi-stars"></i> Eva Knowledge Brain
+        </a>
         {% endif %}
     </div>
 

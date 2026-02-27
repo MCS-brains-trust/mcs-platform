@@ -1,0 +1,407 @@
+{% comment %}
+Eva AI Practice Intelligence — Chat Panel
+Floating chat bubble + expandable panel for the FY workspace.
+Included at the bottom of financial_year_detail.html.
+{% endcomment %}
+
+<!-- Eva Chat Bubble -->
+<div id="eva-chat-bubble" onclick="toggleEvaChat()" title="Ask Eva">
+    <i class="bi bi-stars" style="font-size: 1.5rem;"></i>
+    <span id="eva-pulse-dot" style="display:none;"></span>
+</div>
+
+<!-- Eva Chat Panel -->
+<div id="eva-chat-panel" style="display:none;">
+    <!-- Header -->
+    <div id="eva-chat-header">
+        <div class="d-flex align-items-center gap-2">
+            <i class="bi bi-stars" style="font-size: 1.2rem;"></i>
+            <div>
+                <strong>Eva</strong>
+                <small class="d-block" style="font-size: 0.7rem; opacity: 0.8;">AI Practice Intelligence</small>
+            </div>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+            <div class="form-check form-switch" title="Deep Analysis (Opus model)">
+                <input class="form-check-input" type="checkbox" id="evaOpusToggle" style="cursor:pointer;">
+                <label class="form-check-label" for="evaOpusToggle" style="font-size: 0.7rem; cursor:pointer;">Opus</label>
+            </div>
+            <button type="button" class="btn btn-sm btn-link text-white p-0" onclick="toggleEvaChat()">
+                <i class="bi bi-dash-lg"></i>
+            </button>
+        </div>
+    </div>
+
+    <!-- Status Bar -->
+    <div id="eva-status-bar">
+        <span id="eva-status-indicator" class="eva-status-dot"></span>
+        <small id="eva-status-text">Ready</small>
+    </div>
+
+    <!-- Messages Area -->
+    <div id="eva-messages">
+        <div class="eva-msg eva-msg-assistant">
+            <div class="eva-msg-content">
+                <strong>Eva</strong>
+                <p>G'day! I'm Eva, your AI practice intelligence assistant. I have access to the full trial balance, journals, and the MC & S Knowledge Brain for <strong>{{ entity.entity_name }}</strong>.</p>
+                <p class="mb-0">Ask me anything — compliance questions, account queries, or technical guidance.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Input Area -->
+    <div id="eva-input-area">
+        <div class="d-flex gap-2">
+            <input type="text" id="eva-input" class="form-control form-control-sm"
+                   placeholder="Ask Eva anything..." autocomplete="off"
+                   onkeydown="if(event.key==='Enter')sendEvaMessage()">
+            <button type="button" class="btn btn-sm" id="eva-send-btn" onclick="sendEvaMessage()"
+                    style="background: #0F6B74; color: white; min-width: 40px;">
+                <i class="bi bi-send"></i>
+            </button>
+        </div>
+    </div>
+</div>
+
+<style>
+/* ── Eva Chat Bubble ── */
+#eva-chat-bubble {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: #0F6B74;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+    z-index: 1050;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+#eva-chat-bubble:hover {
+    transform: scale(1.08);
+    box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+}
+#eva-pulse-dot {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #F59E0B;
+    animation: evaPulse 1.5s ease-in-out infinite;
+}
+@keyframes evaPulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.6; transform: scale(1.3); }
+}
+
+/* ── Eva Chat Panel ── */
+#eva-chat-panel {
+    position: fixed;
+    bottom: 90px;
+    right: 24px;
+    width: 380px;
+    height: 520px;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+    z-index: 1050;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+#eva-chat-header {
+    background: #0F6B74;
+    color: white;
+    padding: 12px 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+#eva-status-bar {
+    background: #f0fdf4;
+    border-bottom: 1px solid #e5e7eb;
+    padding: 4px 16px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+.eva-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #22c55e;
+    display: inline-block;
+}
+.eva-status-dot.thinking {
+    background: #F59E0B;
+    animation: evaPulse 1s ease-in-out infinite;
+}
+
+/* ── Messages ── */
+#eva-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.eva-msg {
+    max-width: 90%;
+}
+.eva-msg-user {
+    align-self: flex-end;
+}
+.eva-msg-assistant {
+    align-self: flex-start;
+}
+.eva-msg-content {
+    padding: 10px 14px;
+    border-radius: 12px;
+    font-size: 0.85rem;
+    line-height: 1.5;
+}
+.eva-msg-user .eva-msg-content {
+    background: #0F6B74;
+    color: white;
+    border-bottom-right-radius: 4px;
+}
+.eva-msg-assistant .eva-msg-content {
+    background: #f3f4f6;
+    color: #1f2937;
+    border-bottom-left-radius: 4px;
+}
+.eva-msg-assistant .eva-msg-content strong {
+    color: #0F6B74;
+    font-size: 0.75rem;
+    display: block;
+    margin-bottom: 4px;
+}
+.eva-msg-assistant .eva-msg-content p {
+    margin-bottom: 8px;
+}
+.eva-msg-assistant .eva-msg-content p:last-child {
+    margin-bottom: 0;
+}
+.eva-msg-proactive .eva-msg-content {
+    border-left: 3px solid #F59E0B;
+}
+
+/* ── Input ── */
+#eva-input-area {
+    border-top: 1px solid #e5e7eb;
+    padding: 10px 16px;
+    flex-shrink: 0;
+}
+#eva-input {
+    font-size: 0.85rem;
+}
+
+/* ── Typing indicator ── */
+.eva-typing {
+    display: flex;
+    gap: 4px;
+    padding: 8px 14px;
+}
+.eva-typing span {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #9ca3af;
+    animation: evaTyping 1.2s ease-in-out infinite;
+}
+.eva-typing span:nth-child(2) { animation-delay: 0.2s; }
+.eva-typing span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes evaTyping {
+    0%, 100% { opacity: 0.3; transform: translateY(0); }
+    50% { opacity: 1; transform: translateY(-3px); }
+}
+
+/* ── Markdown in Eva messages ── */
+.eva-msg-content code {
+    background: rgba(0,0,0,0.06);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 0.82rem;
+}
+.eva-msg-content ul, .eva-msg-content ol {
+    padding-left: 20px;
+    margin-bottom: 8px;
+}
+.eva-msg-content li {
+    margin-bottom: 2px;
+}
+</style>
+
+<script>
+(function() {
+    var evaPanelOpen = false;
+    var evaLoading = false;
+    var csrfToken = '{{ csrf_token }}';
+    var fyPk = '{{ fy.pk }}';
+
+    window.toggleEvaChat = function() {
+        var panel = document.getElementById('eva-chat-panel');
+        var bubble = document.getElementById('eva-chat-bubble');
+        evaPanelOpen = !evaPanelOpen;
+        panel.style.display = evaPanelOpen ? 'flex' : 'none';
+        bubble.style.display = evaPanelOpen ? 'none' : 'flex';
+
+        if (evaPanelOpen) {
+            // Load conversation history on first open
+            if (document.querySelectorAll('#eva-messages .eva-msg').length <= 1) {
+                loadEvaHistory();
+            }
+            document.getElementById('eva-input').focus();
+        }
+    };
+
+    function loadEvaHistory() {
+        fetch('/api/financial-years/' + fyPk + '/eva-chat/', {
+            headers: {'X-Requested-With': 'XMLHttpRequest'},
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.messages && data.messages.length > 0) {
+                var container = document.getElementById('eva-messages');
+                // Keep the welcome message, add history after
+                data.messages.forEach(function(msg) {
+                    appendMessage(msg.role, msg.content, msg.is_proactive);
+                });
+                scrollToBottom();
+            }
+        })
+        .catch(function(err) {
+            console.error('Eva history load failed:', err);
+        });
+    }
+
+    window.sendEvaMessage = function() {
+        if (evaLoading) return;
+        var input = document.getElementById('eva-input');
+        var text = input.value.trim();
+        if (!text) return;
+
+        input.value = '';
+        appendMessage('user', text);
+        scrollToBottom();
+
+        // Show typing indicator
+        evaLoading = true;
+        setEvaStatus('thinking', 'Eva is thinking...');
+        showTypingIndicator();
+
+        var opusToggle = document.getElementById('evaOpusToggle');
+        var useOpus = opusToggle ? opusToggle.checked : false;
+
+        fetch('/api/financial-years/' + fyPk + '/eva-chat/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken,
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+            body: JSON.stringify({
+                message: text,
+                opus_override: useOpus,
+            }),
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            hideTypingIndicator();
+            evaLoading = false;
+            setEvaStatus('ready', 'Ready');
+
+            if (data.error) {
+                appendMessage('assistant', 'Sorry, I encountered an error: ' + data.error);
+            } else if (data.message) {
+                appendMessage('assistant', data.message.content);
+            }
+            scrollToBottom();
+        })
+        .catch(function(err) {
+            hideTypingIndicator();
+            evaLoading = false;
+            setEvaStatus('ready', 'Ready');
+            appendMessage('assistant', 'Sorry, I encountered a connection error. Please try again.');
+            scrollToBottom();
+        });
+    };
+
+    function appendMessage(role, content, isProactive) {
+        var container = document.getElementById('eva-messages');
+        var div = document.createElement('div');
+        div.className = 'eva-msg eva-msg-' + role;
+        if (isProactive) div.className += ' eva-msg-proactive';
+
+        var inner = document.createElement('div');
+        inner.className = 'eva-msg-content';
+
+        if (role === 'assistant') {
+            inner.innerHTML = '<strong>Eva</strong>' + formatMarkdown(content);
+        } else {
+            inner.textContent = content;
+        }
+
+        div.appendChild(inner);
+        container.appendChild(div);
+    }
+
+    function formatMarkdown(text) {
+        // Simple markdown formatting
+        var html = text
+            .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+            .replace(/\*(.*?)\*/g, '<em>$1</em>')
+            .replace(/`(.*?)`/g, '<code>$1</code>')
+            .replace(/^### (.*$)/gm, '<h6>$1</h6>')
+            .replace(/^## (.*$)/gm, '<h5>$1</h5>')
+            .replace(/^# (.*$)/gm, '<h4>$1</h4>')
+            .replace(/^- (.*$)/gm, '<li>$1</li>')
+            .replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>')
+            .replace(/\n\n/g, '</p><p>')
+            .replace(/\n/g, '<br>');
+        return '<p>' + html + '</p>';
+    }
+
+    function showTypingIndicator() {
+        var container = document.getElementById('eva-messages');
+        var div = document.createElement('div');
+        div.className = 'eva-msg eva-msg-assistant';
+        div.id = 'eva-typing-indicator';
+        div.innerHTML = '<div class="eva-msg-content"><strong>Eva</strong><div class="eva-typing"><span></span><span></span><span></span></div></div>';
+        container.appendChild(div);
+        scrollToBottom();
+    }
+
+    function hideTypingIndicator() {
+        var el = document.getElementById('eva-typing-indicator');
+        if (el) el.remove();
+    }
+
+    function setEvaStatus(state, text) {
+        var dot = document.getElementById('eva-status-indicator');
+        var label = document.getElementById('eva-status-text');
+        dot.className = 'eva-status-dot' + (state === 'thinking' ? ' thinking' : '');
+        label.textContent = text;
+    }
+
+    function scrollToBottom() {
+        var container = document.getElementById('eva-messages');
+        setTimeout(function() {
+            container.scrollTop = container.scrollHeight;
+        }, 50);
+    }
+})();
+</script>

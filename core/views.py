@@ -43,6 +43,16 @@ def _get_subsequent_finalised_years(fy):
     return result
 
 
+def _compute_amber_indicators(fy):
+    """Compute amber indicators for the trial balance view.
+    Returns a dict keyed by account_code with a list of trigger dicts."""
+    try:
+        from core.views_eva import compute_amber_indicators_for_context
+        return compute_amber_indicators_for_context(fy)
+    except Exception:
+        return {}
+
+
 def _resolve_account_name(entity, account_code, raw_name):
     """Resolve a human-readable account name, falling back through multiple sources.
 
@@ -905,6 +915,8 @@ def financial_year_detail(request, pk):
         "active_tab": request.GET.get("tab", ""),
         # Reopen feature: list of subsequent finalised years for cascade info
         "subsequent_finalised_years": _get_subsequent_finalised_years(fy),
+        # Eva Amber Indicators
+        "amber_indicators": _compute_amber_indicators(fy),
     }
     return render(request, "core/financial_year_detail.html", context)
 
@@ -928,7 +940,26 @@ def financial_year_status(request, pk):
         messages.error(request, "Only senior accountants can mark as reviewed.")
         return redirect("core:financial_year_detail", pk=pk)
 
-    # Finalisation Gate: enforce risk engine completion and flag resolution
+    # Eva Finalisation Gate: finalisation now requires Eva clearance
+    if new_status == "finalised":
+        if fy.status != FinancialYear.Status.EVA_CLEARED:
+            messages.error(
+                request,
+                "Finalisation is now gated through Eva. Please use the 'Ask Eva to Review' "
+                "button to submit this financial year for compliance review. Once Eva clears it, "
+                "you can finalise."
+            )
+            return redirect("core:financial_year_detail", pk=pk)
+
+    # Prevent manual status change to prepared/eva_cleared
+    if new_status in ["prepared", "eva_cleared"]:
+        messages.error(
+            request,
+            "This status is managed by Eva's review process and cannot be set manually."
+        )
+        return redirect("core:financial_year_detail", pk=pk)
+
+    # Legacy Finalisation Gate: enforce risk engine completion and flag resolution
     if new_status == "finalised":
         override_reason = request.POST.get("override_reason", "").strip()
         force_override = request.POST.get("force_override") == "1"

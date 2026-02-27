@@ -8,6 +8,7 @@ from . import views_tax_planning
 from . import views_templates
 from . import eva_chat
 from . import eva_engine
+from . import views_eva
 
 app_name = "core"
 
@@ -262,8 +263,12 @@ urlpatterns = [
     path("api/financial-years/<uuid:pk>/eva-review-status/", eva_engine.eva_review_status, name="eva_review_status"),
     path("api/eva-findings/<uuid:pk>/resolve/", eva_engine.eva_finding_resolve, name="eva_resolve_finding"),
     path("api/financial-years/<uuid:pk>/eva-preflight/", eva_engine.eva_preflight, name="eva_preflight"),
+    path("api/financial-years/<uuid:pk>/eva-rerun/", views_eva.eva_rerun_review, name="eva_rerun_review"),
+    path("api/financial-years/<uuid:pk>/eva-finalise/", views_eva.eva_finalise, name="eva_finalise"),
 
     # Knowledge Brain
     path("api/knowledge/sync/", eva_engine.knowledge_sync, name="knowledge_sync"),
     path("api/knowledge/documents/", eva_engine.knowledge_documents, name="knowledge_documents"),
+    path("admin/eva/knowledge-brain/", views_eva.knowledge_brain_admin, name="knowledge_brain_admin"),
+    path("admin/eva/knowledge-brain/sync/", views_eva.trigger_knowledge_sync, name="trigger_knowledge_sync"),
 ]

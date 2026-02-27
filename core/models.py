@@ -347,7 +347,7 @@ class FinancialYear(models.Model):
         DRAFT = "draft", "Draft"
         IN_REVIEW = "in_review", "In Review"
         REVIEWED = "reviewed", "Reviewed"
-        PREPARED = "prepared", "Prepared"
+        PREPARED = "prepared", "Prepared (Eva Reviewing)"
         PENDING_EVA = "pending_eva", "Pending Eva Review"
         EVA_CLEARED = "eva_cleared", "Eva Cleared"
         EVA_ERROR = "eva_error", "Eva Error"
@@ -385,6 +385,10 @@ class FinancialYear(models.Model):
         related_name="reviewed_years",
     )
     finalised_at = models.DateTimeField(null=True, blank=True)
+    eva_model_override = models.CharField(
+        max_length=10, blank=True, default="",
+        help_text="Stores 'opus' if manually escalated to Opus model. Empty otherwise.",
+    )
     reopened_at = models.DateTimeField(
         null=True, blank=True,
         help_text="Timestamp of the last reopen action",
@@ -445,8 +449,17 @@ class FinancialYear(models.Model):
         return self.status in (self.Status.DRAFT, self.Status.IN_REVIEW, self.Status.REVIEWED, self.Status.PREPARED)
 
     @property
+    def is_eva_reviewable(self):
+        """Can the 'Ask Eva to Review' button be clicked?"""
+        return self.status == self.Status.DRAFT
+
+    @property
     def can_finalise(self):
         """Finalisation requires Eva clearance."""
+
+    @property
+    def is_finalisable(self):
+        """Can the Finalise button be clicked? Only when Eva has cleared."""
         return self.status == self.Status.EVA_CLEARED
 
 
@@ -1441,6 +1454,10 @@ class AuditLog(models.Model):
         TEMPLATE_CHANGE = "template_change", "Template Modified"
         AI_FEEDBACK = "ai_feedback", "AI Feedback"
         REOPEN = "reopen", "Year Reopened"
+        EVA_CHAT = "eva_chat", "Eva Chat"
+        EVA_REVIEW = "eva_review", "Eva Review"
+        EVA_FINDING = "eva_finding", "Eva Finding"
+        EVA_SYNC = "eva_sync", "Eva Knowledge Sync"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(

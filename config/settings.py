@@ -284,3 +284,17 @@ RATELIMIT_IP_META_KEY = "HTTP_X_FORWARDED_FOR"
 
 # Build version timestamp — updated with each deployment
 BUILD_TIMESTAMP = "2026-02-23 16:20 AEDT"
+
+# ── Eva AI Practice Intelligence ──────────────────────────────────────────────
+# SharePoint / Microsoft Graph API credentials for Knowledge Brain sync
+SHAREPOINT_TENANT_ID = os.environ.get("SHAREPOINT_TENANT_ID", "")
+SHAREPOINT_CLIENT_ID = os.environ.get("SHAREPOINT_CLIENT_ID", "")
+SHAREPOINT_CLIENT_SECRET = os.environ.get("SHAREPOINT_CLIENT_SECRET", "")
+SHAREPOINT_SITE_ID = os.environ.get("SHAREPOINT_SITE_ID", "")
+SHAREPOINT_DRIVE_ID = os.environ.get("SHAREPOINT_DRIVE_ID", "")
+
+# Eva model configuration
+# Default model tier for Eva chat (haiku, sonnet, opus)
+EVA_DEFAULT_MODEL = os.environ.get("EVA_DEFAULT_MODEL", "sonnet")
+# Enable/disable Eva features globally
+EVA_ENABLED = os.environ.get("EVA_ENABLED", "true").lower() == "true"

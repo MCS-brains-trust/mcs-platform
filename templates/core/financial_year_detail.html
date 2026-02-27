@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% load humanize %}
+{% load mcs_filters %}
 {% block title %}{{ fy.entity.entity_name }} - {{ fy.year_label }} - StatementHub{% endblock %}
 
 {% block content %}
@@ -18,7 +19,8 @@
         <p class="text-muted mb-0">
             {{ fy.start_date|date:"d M Y" }} to {{ fy.end_date|date:"d M Y" }}
             &middot;
-            <span class="badge bg-{% if fy.status == 'draft' %}warning text-dark{% elif fy.status == 'in_review' %}info{% elif fy.status == 'reviewed' %}primary{% else %}success{% endif %} fs-6">
+            <span class="badge bg-{% if fy.status == 'draft' %}warning text-dark{% elif fy.status == 'in_review' %}info{% elif fy.status == 'reviewed' %}primary{% elif fy.status == 'prepared' %}info{% elif fy.status == 'eva_cleared' %}success{% else %}success{% endif %} fs-6">
+                {% if fy.status == 'prepared' %}<span class="spinner-border spinner-border-sm me-1" style="width:12px;height:12px;"></span>{% endif %}
                 {{ fy.get_status_display }}
             </span>
             {% if fy.reopened_at %}
@@ -107,22 +109,22 @@
                     <div class="vr d-none d-md-block"></div>
 
                     <!-- Ask Eva to Review Button -->
-                    {% if fy.status != 'finalised' %}
+                    {% if fy.can_ask_eva %}
                     <button type="button" class="btn btn-sm btn-outline-info" id="askEvaBtn" onclick="evaAskReview()">
                         <i class="bi bi-robot"></i> Ask Eva to Review
                     </button>
                     {% endif %}
 
-                    <!-- Finalise Button -->
-                    {% if fy.status != 'finalised' %}
-                    <form method="post" action="{% url 'core:financial_year_status' pk=fy.pk %}" id="finaliseForm">
-                        {% csrf_token %}
-                        <input type="hidden" name="status" value="finalised">
-                        <button type="button" class="btn btn-sm btn-success" id="finaliseBtn"
-                            {% if open_risk_count > 0 %}onclick="showAuditRiskWarning()"{% else %}onclick="confirmFinalise()"{% endif %}>
-                            <i class="bi bi-check-circle"></i> Finalise
-                        </button>
-                    </form>
+                    <!-- Finalise Button (Eva-gated) -->
+                    {% if fy.status == 'eva_cleared' %}
+                    <button type="button" class="btn btn-sm btn-success" onclick="evaFinalise()">
+                        <i class="bi bi-check-circle"></i> Finalise
+                    </button>
+                    {% elif fy.status != 'finalised' %}
+                    <button type="button" class="btn btn-sm btn-success" disabled
+                            title="Submit to Eva for review before finalising">
+                        <i class="bi bi-lock"></i> Finalise (Eva Review Required)
+                    </button>
                     {% else %}
                     <span class="badge bg-success fs-6 py-2 px-3">
                         <i class="bi bi-check-circle-fill"></i> Finalised
@@ -314,6 +316,9 @@
         </div>
     </div>
 </div>
+
+<!-- ===== EVA FINALISATION GATE ===== -->
+{% include "core/partials/eva_review_panel.html" %}
 
 <!-- ===== TABS ===== -->
 <ul class="nav nav-tabs" id="workspaceTabs" role="tablist">
@@ -1313,6 +1318,14 @@
                             <span class="badge bg-danger"><i class="bi bi-trash"></i> Deleted</span>
                             {% elif log.action == 'reopen' %}
                             <span class="badge bg-warning text-dark"><i class="bi bi-unlock"></i> Reopened</span>
+                            {% elif log.action == 'eva_chat' %}
+                            <span class="badge" style="background:#0F6B74;"><i class="bi bi-stars"></i> Eva Chat</span>
+                            {% elif log.action == 'eva_review' %}
+                            <span class="badge" style="background:#0F6B74;"><i class="bi bi-shield-check"></i> Eva Review</span>
+                            {% elif log.action == 'eva_finding' %}
+                            <span class="badge bg-warning text-dark"><i class="bi bi-exclamation-triangle"></i> Eva Finding</span>
+                            {% elif log.action == 'eva_sync' %}
+                            <span class="badge bg-info text-dark"><i class="bi bi-cloud-arrow-down"></i> Eva Sync</span>
                             {% else %}
                             <span class="badge bg-secondary">{{ log.get_action_display }}</span>
                             {% endif %}
@@ -2970,4 +2983,7 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 </script>
+
+<!-- ===== EVA CHAT PANEL ===== -->
+{% include "core/partials/eva_chat_panel.html" %}
 {% endblock %}

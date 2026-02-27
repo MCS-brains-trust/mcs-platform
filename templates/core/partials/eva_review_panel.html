@@ -1,0 +1,351 @@
+{% comment %}
+Eva AI Practice Intelligence — Finalisation Gate Review Panel
+Displayed in the workspace toolbar area when an Eva review exists or can be triggered.
+{% endcomment %}
+
+<!-- Eva Finalisation Gate -->
+<div class="card mb-4" id="eva-review-card">
+    <div class="card-header d-flex justify-content-between align-items-center" style="background: linear-gradient(135deg, #0F6B74 0%, #0d5a62 100%); color: white;">
+        <div class="d-flex align-items-center gap-2">
+            <i class="bi bi-stars"></i>
+            <strong>Eva — Finalisation Gate</strong>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+            <span id="eva-review-status-badge" class="badge bg-light text-dark">
+                {% if fy.status == 'prepared' %}
+                    <span class="spinner-border spinner-border-sm me-1" style="width: 12px; height: 12px;"></span> Reviewing...
+                {% elif fy.status == 'eva_cleared' %}
+                    <i class="bi bi-check-circle-fill text-success"></i> Cleared
+                {% elif fy.status == 'finalised' %}
+                    <i class="bi bi-lock-fill text-success"></i> Finalised
+                {% else %}
+                    <i class="bi bi-clock"></i> Not Submitted
+                {% endif %}
+            </span>
+        </div>
+    </div>
+    <div class="card-body">
+        {% if fy.status == 'draft' %}
+        <!-- DRAFT: Show "Ask Eva to Review" button -->
+        <div class="text-center py-3" id="eva-review-prompt">
+            <i class="bi bi-shield-check" style="font-size: 2.5rem; color: #0F6B74;"></i>
+            <p class="mt-2 mb-3">Submit this financial year to Eva for a structured compliance review before finalisation.</p>
+            <p class="text-muted small mb-3">Eva will check: Division 7A, Superannuation, ATO Benchmarks, Trust Distributions, Going Concern, Related Party, TPAR, and Thin Capitalisation (as applicable to this entity type).</p>
+            <button type="button" class="btn btn-lg" style="background: #0F6B74; color: white;" onclick="askEvaToReview()" id="eva-review-btn">
+                <i class="bi bi-stars me-1"></i> Ask Eva to Review
+            </button>
+            <div id="eva-preflight-errors" class="mt-3" style="display:none;"></div>
+        </div>
+
+        {% elif fy.status == 'prepared' %}
+        <!-- PREPARED: Eva is reviewing -->
+        <div class="text-center py-4" id="eva-review-progress">
+            <div class="spinner-border text-info mb-3" role="status" style="width: 3rem; height: 3rem;">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="fw-semibold mb-1">Eva is reviewing this financial year...</p>
+            <p class="text-muted small">This typically takes 30–60 seconds. The page will update automatically.</p>
+            <div class="progress mt-3" style="height: 6px; max-width: 300px; margin: 0 auto;">
+                <div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%; background: #0F6B74;" id="eva-review-progress-bar"></div>
+            </div>
+        </div>
+
+        {% elif fy.status == 'eva_cleared' %}
+        <!-- EVA_CLEARED: Ready to finalise -->
+        <div class="text-center py-3" id="eva-cleared-panel">
+            <i class="bi bi-check-circle-fill text-success" style="font-size: 2.5rem;"></i>
+            <p class="fw-semibold mt-2 mb-1 text-success">Eva has cleared this financial year</p>
+            <p class="text-muted small mb-3">No material compliance issues identified. You may now finalise.</p>
+            <button type="button" class="btn btn-success btn-lg" onclick="evaFinalise()" id="eva-finalise-btn">
+                <i class="bi bi-check-circle me-1"></i> Finalise Financial Year
+            </button>
+        </div>
+
+        {% elif fy.status == 'finalised' %}
+        <!-- FINALISED -->
+        <div class="text-center py-3">
+            <i class="bi bi-lock-fill text-success" style="font-size: 2rem;"></i>
+            <p class="fw-semibold mt-2 mb-0">This financial year has been finalised</p>
+            {% if fy.finalised_at %}
+            <small class="text-muted">Finalised on {{ fy.finalised_at|date:"d M Y" }}</small>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        <!-- Eva Findings Panel (populated via JS) -->
+        <div id="eva-findings-panel" style="display:none;">
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h6 class="mb-0"><i class="bi bi-exclamation-triangle-fill text-warning"></i> Eva Findings</h6>
+                <div>
+                    <span id="eva-findings-count" class="badge bg-warning text-dark me-2"></span>
+                    <button type="button" class="btn btn-sm btn-outline-primary" onclick="rerunEvaReview()" id="eva-rerun-btn">
+                        <i class="bi bi-arrow-repeat"></i> Re-run Review
+                    </button>
+                </div>
+            </div>
+            <div id="eva-findings-list"></div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    var csrfToken = '{{ csrf_token }}';
+    var fyPk = '{{ fy.pk }}';
+    var pollInterval = null;
+
+    // ── Ask Eva to Review ──
+    window.askEvaToReview = function() {
+        var btn = document.getElementById('eva-review-btn');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Submitting...';
+
+        fetch('/api/financial-years/' + fyPk + '/ask-eva-review/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken,
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+            body: JSON.stringify({}),
+        })
+        .then(function(r) { return r.json().then(function(d) { return {status: r.status, data: d}; }); })
+        .then(function(result) {
+            if (result.status === 202) {
+                // Accepted — switch to progress view
+                document.getElementById('eva-review-prompt').style.display = 'none';
+                var progressDiv = document.createElement('div');
+                progressDiv.className = 'text-center py-4';
+                progressDiv.id = 'eva-review-progress';
+                progressDiv.innerHTML = '<div class="spinner-border text-info mb-3" role="status" style="width: 3rem; height: 3rem;"><span class="visually-hidden">Loading...</span></div><p class="fw-semibold mb-1">Eva is reviewing this financial year...</p><p class="text-muted small">This typically takes 30–60 seconds.</p><div class="progress mt-3" style="height: 6px; max-width: 300px; margin: 0 auto;"><div class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%; background: #0F6B74;" id="eva-review-progress-bar"></div></div>';
+                document.getElementById('eva-review-card').querySelector('.card-body').prepend(progressDiv);
+                startPolling();
+            } else {
+                // Error — show pre-flight errors
+                var errDiv = document.getElementById('eva-preflight-errors');
+                errDiv.style.display = 'block';
+                errDiv.innerHTML = '<div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill me-1"></i> ' + (result.data.error || 'Unknown error') + '</div>';
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-stars me-1"></i> Ask Eva to Review';
+            }
+        })
+        .catch(function(err) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-stars me-1"></i> Ask Eva to Review';
+            alert('Connection error. Please try again.');
+        });
+    };
+
+    // ── Poll for review status ──
+    function startPolling() {
+        var progress = 0;
+        pollInterval = setInterval(function() {
+            progress = Math.min(progress + 8, 90);
+            var bar = document.getElementById('eva-review-progress-bar');
+            if (bar) bar.style.width = progress + '%';
+
+            fetch('/api/financial-years/' + fyPk + '/eva-review/', {
+                headers: {'X-Requested-With': 'XMLHttpRequest'},
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (!data.review) return;
+                var review = data.review;
+
+                if (review.status === 'in_progress' || review.status === 'pending') {
+                    return; // Keep polling
+                }
+
+                clearInterval(pollInterval);
+
+                if (review.status === 'cleared') {
+                    // Cleared — reload to show finalise button
+                    location.reload();
+                } else if (review.status === 'findings_raised') {
+                    // Findings — show them
+                    showFindings(data);
+                } else if (review.status === 'error') {
+                    // Error
+                    var progressDiv = document.getElementById('eva-review-progress');
+                    if (progressDiv) {
+                        progressDiv.innerHTML = '<div class="alert alert-danger"><i class="bi bi-exclamation-triangle-fill me-1"></i> Eva encountered an error: ' + (review.error_message || 'Unknown error') + '<br><button class="btn btn-sm btn-outline-danger mt-2" onclick="location.reload()">Try Again</button></div>';
+                    }
+                }
+            });
+        }, 3000);
+    }
+
+    // ── Show Findings ──
+    function showFindings(data) {
+        var progressDiv = document.getElementById('eva-review-progress');
+        if (progressDiv) progressDiv.style.display = 'none';
+        var promptDiv = document.getElementById('eva-review-prompt');
+        if (promptDiv) promptDiv.style.display = 'none';
+
+        var panel = document.getElementById('eva-findings-panel');
+        panel.style.display = 'block';
+
+        var countBadge = document.getElementById('eva-findings-count');
+        countBadge.textContent = data.review.open_finding_count + ' open / ' + data.review.finding_count + ' total';
+
+        var list = document.getElementById('eva-findings-list');
+        list.innerHTML = '';
+
+        data.findings.forEach(function(f) {
+            var card = document.createElement('div');
+            card.className = 'card mb-3 border-' + (f.severity === 'critical' ? 'danger' : 'warning');
+            card.id = 'finding-card-' + f.id;
+
+            var severityBadge = f.severity === 'critical'
+                ? '<span class="badge bg-danger">Critical</span>'
+                : '<span class="badge bg-warning text-dark">Advisory</span>';
+
+            var statusBadge = f.status === 'addressed'
+                ? '<span class="badge bg-success"><i class="bi bi-check-circle"></i> Addressed</span>'
+                : '<span class="badge bg-secondary">Open</span>';
+
+            var confidenceBadge = '<span class="badge bg-' + (f.confidence === 'high' ? 'success' : f.confidence === 'medium' ? 'info' : 'secondary') + '">' + f.confidence + ' confidence</span>';
+
+            var resolvedInfo = '';
+            if (f.status === 'addressed' && f.resolved_by) {
+                resolvedInfo = '<div class="mt-2 p-2 bg-light rounded"><small class="text-muted"><i class="bi bi-check-circle text-success"></i> Addressed by ' + f.resolved_by + ' on ' + new Date(f.resolved_at).toLocaleDateString() + '</small><p class="mb-0 mt-1 small">' + f.resolution_note + '</p></div>';
+            }
+
+            var resolutionForm = f.status === 'open'
+                ? '<div class="mt-3 border-top pt-3"><label class="form-label fw-semibold small">Resolution Note <span class="text-danger">*</span></label><textarea class="form-control form-control-sm" id="resolution-' + f.id + '" rows="2" placeholder="Document how this finding was addressed..."></textarea><button type="button" class="btn btn-sm btn-success mt-2" onclick="resolveEvaFinding(\'' + f.id + '\')" id="resolve-btn-' + f.id + '" disabled><i class="bi bi-check-circle me-1"></i> Mark as Addressed</button></div>'
+                : '';
+
+            card.innerHTML = '<div class="card-body"><div class="d-flex justify-content-between align-items-start mb-2"><div class="d-flex gap-2">' + severityBadge + statusBadge + confidenceBadge + '</div><small class="text-muted">' + f.check_display + '</small></div><h6 class="card-title">' + f.title + '</h6><p class="card-text small">' + f.explanation + '</p><div class="bg-light p-2 rounded mb-2"><small class="fw-semibold text-primary"><i class="bi bi-lightbulb me-1"></i>Recommendation</small><p class="small mb-0">' + f.recommendation + '</p></div>' + (f.legislation_reference ? '<small class="text-muted"><i class="bi bi-book me-1"></i>' + f.legislation_reference + '</small><br>' : '') + (f.knowledge_brain_citation ? '<small class="text-muted"><i class="bi bi-journal-text me-1"></i>' + f.knowledge_brain_citation + '</small>' : '') + resolvedInfo + resolutionForm + '</div>';
+
+            list.appendChild(card);
+
+            // Enable resolve button when text is entered
+            if (f.status === 'open') {
+                var textarea = document.getElementById('resolution-' + f.id);
+                var resolveBtn = document.getElementById('resolve-btn-' + f.id);
+                textarea.addEventListener('input', function() {
+                    resolveBtn.disabled = textarea.value.trim().length === 0;
+                });
+            }
+        });
+    }
+
+    // ── Resolve Finding ──
+    window.resolveEvaFinding = function(findingId) {
+        var textarea = document.getElementById('resolution-' + findingId);
+        var note = textarea.value.trim();
+        if (!note) return;
+
+        var btn = document.getElementById('resolve-btn-' + findingId);
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Saving...';
+
+        fetch('/api/eva-findings/' + findingId + '/resolve/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken,
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+            body: JSON.stringify({resolution_note: note}),
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.status === 'ok') {
+                if (data.should_rerun) {
+                    // All findings addressed — Eva is re-running
+                    location.reload();
+                } else {
+                    // Mark this finding as addressed in the UI
+                    var card = document.getElementById('finding-card-' + findingId);
+                    card.className = card.className.replace('border-danger', 'border-success').replace('border-warning', 'border-success');
+                    btn.parentElement.innerHTML = '<div class="mt-2 p-2 bg-light rounded"><small class="text-success"><i class="bi bi-check-circle"></i> Addressed</small><p class="mb-0 mt-1 small">' + note + '</p></div>';
+
+                    // Update count
+                    var countBadge = document.getElementById('eva-findings-count');
+                    var parts = countBadge.textContent.split('/');
+                    var openCount = parseInt(parts[0]) - 1;
+                    countBadge.textContent = openCount + ' open /' + parts[1];
+                }
+            } else {
+                alert(data.error || 'Failed to resolve finding');
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-check-circle me-1"></i> Mark as Addressed';
+            }
+        })
+        .catch(function() {
+            alert('Connection error. Please try again.');
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-check-circle me-1"></i> Mark as Addressed';
+        });
+    };
+
+    // ── Re-run Review ──
+    window.rerunEvaReview = function() {
+        if (!confirm('Re-run Eva\'s compliance review? This will replace the current findings.')) return;
+
+        fetch('/api/financial-years/' + fyPk + '/eva-rerun/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken,
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.status === 'accepted') {
+                location.reload();
+            } else {
+                alert(data.error || 'Failed to re-run review');
+            }
+        });
+    };
+
+    // ── Finalise ──
+    window.evaFinalise = function() {
+        if (!confirm('Finalise this financial year? This will lock the trial balance and enable document generation.')) return;
+
+        var btn = document.getElementById('eva-finalise-btn');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Finalising...';
+
+        fetch('/api/financial-years/' + fyPk + '/eva-finalise/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken,
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.status === 'ok') {
+                location.reload();
+            } else {
+                alert(data.error || 'Failed to finalise');
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-check-circle me-1"></i> Finalise Financial Year';
+            }
+        });
+    };
+
+    // ── Auto-poll if status is PREPARED ──
+    {% if fy.status == 'prepared' %}
+    startPolling();
+    {% endif %}
+
+    // ── Load existing findings if status is PREPARED or has findings ──
+    {% if fy.status == 'prepared' or fy.status == 'draft' %}
+    fetch('/api/financial-years/' + fyPk + '/eva-review/', {
+        headers: {'X-Requested-With': 'XMLHttpRequest'},
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.review && data.review.status === 'findings_raised') {
+            showFindings(data);
+        }
+    });
+    {% endif %}
+})();
+</script>

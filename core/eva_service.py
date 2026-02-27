@@ -1,0 +1,1159 @@
+"""
+StatementHub — Eva AI Practice Intelligence Service Layer
+==========================================================
+Implements the core logic for Eva's three components:
+  1. Knowledge Brain — embedding, chunking, semantic search
+  2. Chat Interface — context building, RAG retrieval, LLM calls
+  3. Finalisation Gate — compliance checks, finding generation
+
+Uses the existing ai_service._call_llm() pattern for LLM calls.
+"""
+import json
+import logging
+import math
+import os
+import uuid
+from datetime import timedelta
+from decimal import Decimal
+
+from django.conf import settings
+from django.utils import timezone
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
+CHUNK_SIZE_TOKENS = 512
+CHUNK_OVERLAP_TOKENS = 64
+EMBEDDING_MODEL = "text-embedding-3-small"
+EMBEDDING_DIMENSIONS = 1536
+TOP_K_CHUNKS = 8
+
+# Entity-type to applicable compliance checks mapping
+ENTITY_CHECK_MAP = {
+    "company": [
+        "division_7a", "superannuation", "ato_benchmarks",
+        "going_concern", "related_party", "tpar", "thin_capitalisation",
+    ],
+    "trust": [
+        "division_7a", "superannuation", "ato_benchmarks",
+        "trust_distributions", "going_concern", "related_party", "tpar",
+    ],
+    "partnership": [
+        "superannuation", "ato_benchmarks", "going_concern",
+        "related_party", "tpar",
+    ],
+    "sole_trader": [
+        "superannuation", "ato_benchmarks", "going_concern",
+    ],
+    "smsf": [
+        "going_concern", "related_party",
+    ],
+}
+
+
+# ---------------------------------------------------------------------------
+# Embedding
+# ---------------------------------------------------------------------------
+def get_embedding(text):
+    """
+    Generate a vector embedding for the given text using OpenAI's
+    text-embedding-3-small model.
+    Returns a list of floats (1536 dimensions).
+    """
+    try:
+        from openai import OpenAI
+    except ImportError:
+        raise ImportError("openai package not installed. Run: pip install openai")
+
+    client = OpenAI()
+    response = client.embeddings.create(
+        model=EMBEDDING_MODEL,
+        input=text,
+    )
+    return response.data[0].embedding
+
+
+def cosine_similarity(vec_a, vec_b):
+    """Compute cosine similarity between two vectors."""
+    dot = sum(a * b for a, b in zip(vec_a, vec_b))
+    norm_a = math.sqrt(sum(a * a for a in vec_a))
+    norm_b = math.sqrt(sum(b * b for b in vec_b))
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
+# ---------------------------------------------------------------------------
+# Text Chunking
+# ---------------------------------------------------------------------------
+def chunk_text(text, chunk_size=CHUNK_SIZE_TOKENS, overlap=CHUNK_OVERLAP_TOKENS):
+    """
+    Split text into overlapping chunks of approximately chunk_size tokens.
+    Uses a simple word-based approximation (1 token ≈ 0.75 words).
+    Returns list of dicts: [{text, token_count, chunk_index}]
+    """
+    words = text.split()
+    # Approximate: 1 token ≈ 0.75 words, so chunk_size tokens ≈ chunk_size * 0.75 words
+    words_per_chunk = int(chunk_size * 0.75)
+    words_overlap = int(overlap * 0.75)
+
+    if not words:
+        return []
+
+    chunks = []
+    start = 0
+    chunk_index = 0
+
+    while start < len(words):
+        end = min(start + words_per_chunk, len(words))
+        chunk_words = words[start:end]
+        chunk_text_str = " ".join(chunk_words)
+        # Approximate token count
+        approx_tokens = int(len(chunk_words) / 0.75)
+        chunks.append({
+            "text": chunk_text_str,
+            "token_count": approx_tokens,
+            "chunk_index": chunk_index,
+        })
+        chunk_index += 1
+        if end >= len(words):
+            break
+        start = end - words_overlap
+
+    return chunks
+
+
+# ---------------------------------------------------------------------------
+# Document Parsing
+# ---------------------------------------------------------------------------
+def parse_document(file_path, file_type):
+    """
+    Extract text from a document file.
+    Supports: .docx, .pdf, .txt, .xlsx, .pptx
+    Returns the extracted text as a string.
+    """
+    file_type = file_type.lower().lstrip(".")
+
+    if file_type == "docx":
+        return _parse_docx(file_path)
+    elif file_type == "pdf":
+        return _parse_pdf(file_path)
+    elif file_type == "txt":
+        return _parse_txt(file_path)
+    elif file_type == "xlsx":
+        return _parse_xlsx(file_path)
+    elif file_type == "pptx":
+        return _parse_pptx(file_path)
+    else:
+        logger.warning(f"Unsupported file type: {file_type}")
+        return ""
+
+
+def _parse_docx(file_path):
+    """Extract text from a Word document."""
+    try:
+        from docx import Document
+        doc = Document(file_path)
+        return "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+    except Exception as e:
+        logger.error(f"Failed to parse DOCX {file_path}: {e}")
+        return ""
+
+
+def _parse_pdf(file_path):
+    """Extract text from a PDF document."""
+    try:
+        import pdfplumber
+        text_parts = []
+        with pdfplumber.open(file_path) as pdf:
+            for page in pdf.pages:
+                page_text = page.extract_text()
+                if page_text:
+                    text_parts.append(page_text)
+        return "\n".join(text_parts)
+    except ImportError:
+        # Fallback to PyPDF2
+        try:
+            from PyPDF2 import PdfReader
+            reader = PdfReader(file_path)
+            return "\n".join(
+                page.extract_text() or "" for page in reader.pages
+            )
+        except Exception as e:
+            logger.error(f"Failed to parse PDF {file_path}: {e}")
+            return ""
+    except Exception as e:
+        logger.error(f"Failed to parse PDF {file_path}: {e}")
+        return ""
+
+
+def _parse_txt(file_path):
+    """Read a plain text file."""
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except Exception as e:
+        logger.error(f"Failed to parse TXT {file_path}: {e}")
+        return ""
+
+
+def _parse_xlsx(file_path):
+    """Extract text from an Excel file."""
+    try:
+        from openpyxl import load_workbook
+        wb = load_workbook(file_path, read_only=True, data_only=True)
+        text_parts = []
+        for ws in wb.worksheets:
+            for row in ws.iter_rows(values_only=True):
+                row_text = " | ".join(str(c) for c in row if c is not None)
+                if row_text.strip():
+                    text_parts.append(row_text)
+        return "\n".join(text_parts)
+    except Exception as e:
+        logger.error(f"Failed to parse XLSX {file_path}: {e}")
+        return ""
+
+
+def _parse_pptx(file_path):
+    """Extract text from a PowerPoint file."""
+    try:
+        from pptx import Presentation
+        prs = Presentation(file_path)
+        text_parts = []
+        for slide in prs.slides:
+            for shape in slide.shapes:
+                if shape.has_text_frame:
+                    for para in shape.text_frame.paragraphs:
+                        if para.text.strip():
+                            text_parts.append(para.text)
+        return "\n".join(text_parts)
+    except Exception as e:
+        logger.error(f"Failed to parse PPTX {file_path}: {e}")
+        return ""
+
+
+# ---------------------------------------------------------------------------
+# Knowledge Brain — Semantic Search
+# ---------------------------------------------------------------------------
+def search_knowledge_brain(query, category_filter=None, top_k=TOP_K_CHUNKS):
+    """
+    Search the Knowledge Brain for chunks most relevant to the query.
+    Uses cosine similarity against stored embeddings.
+
+    Args:
+        query: The search query text
+        category_filter: Optional category string to filter documents
+        top_k: Number of top results to return
+
+    Returns:
+        List of dicts: [{chunk_id, text, document_title, category, similarity}]
+    """
+    from core.models_eva import KnowledgeChunk, KnowledgeDocument
+
+    query_embedding = get_embedding(query)
+
+    # Get all active (non-archived) chunks with embeddings
+    chunks_qs = KnowledgeChunk.objects.filter(
+        document__is_archived=False,
+        document__sync_status=KnowledgeDocument.SyncStatus.SYNCED,
+        embedding__isnull=False,
+    ).select_related("document")
+
+    if category_filter:
+        chunks_qs = chunks_qs.filter(document__category=category_filter)
+
+    # Score all chunks by cosine similarity
+    scored = []
+    for chunk in chunks_qs.iterator():
+        if chunk.embedding:
+            sim = cosine_similarity(query_embedding, chunk.embedding)
+            scored.append({
+                "chunk_id": str(chunk.id),
+                "text": chunk.text,
+                "document_title": chunk.document.title,
+                "document_id": str(chunk.document.id),
+                "category": chunk.document.get_category_display(),
+                "similarity": sim,
+            })
+
+    # Sort by similarity descending and return top_k
+    scored.sort(key=lambda x: x["similarity"], reverse=True)
+    return scored[:top_k]
+
+
+# ---------------------------------------------------------------------------
+# Context Building for Eva Chat
+# ---------------------------------------------------------------------------
+def build_financial_year_context(financial_year):
+    """
+    Build the structured context payload that accompanies every Eva chat message.
+    Includes: entity data, trial balance, journals, officers, Eva findings, amber indicators.
+    """
+    from core.models import (
+        TrialBalanceLine, AdjustingJournal, EntityOfficer,
+    )
+    from core.models_eva import EvaReview, EvaFinding
+
+    fy = financial_year
+    entity = fy.entity
+
+    # Entity info
+    entity_context = {
+        "entity_name": entity.entity_name,
+        "entity_type": entity.get_entity_type_display(),
+        "abn": entity.abn or "Not recorded",
+        "financial_year": f"{fy.start_date} to {fy.end_date}",
+        "year_label": fy.year_label,
+        "trading_as": entity.trading_as or "",
+        "trustee_name": entity.trustee_name or "",
+    }
+
+    # Trial balance (aggregated by account code)
+    tb_lines = TrialBalanceLine.objects.filter(
+        financial_year=fy
+    ).select_related("mapped_line_item").order_by("account_code")
+
+    tb_data = []
+    for line in tb_lines:
+        net_current = line.debit - line.credit
+        net_prior = line.prior_debit - line.prior_credit
+        tb_data.append({
+            "code": line.account_code,
+            "name": line.account_name,
+            "current_dr": str(line.debit),
+            "current_cr": str(line.credit),
+            "prior_dr": str(line.prior_debit),
+            "prior_cr": str(line.prior_credit),
+            "net_current": str(net_current),
+            "net_prior": str(net_prior),
+            "mapped_to": line.mapped_line_item.line_item_label if line.mapped_line_item else "Unmapped",
+            "is_adjustment": line.is_adjustment,
+        })
+
+    # Posted journals
+    journals = AdjustingJournal.objects.filter(
+        financial_year=fy, status="posted"
+    ).order_by("-posted_at")
+    journal_data = []
+    for j in journals[:20]:  # Last 20 journals
+        journal_data.append({
+            "reference": j.reference_number or "Draft",
+            "description": j.description or "",
+            "date": str(j.journal_date) if j.journal_date else "",
+            "total_debit": str(j.total_debit),
+            "total_credit": str(j.total_credit),
+        })
+
+    # Officers (directors, trustees, beneficiaries)
+    officers = EntityOfficer.objects.filter(entity=entity)
+    officer_data = []
+    for o in officers:
+        officer_data.append({
+            "name": o.full_name,
+            "roles": o.roles if hasattr(o, 'roles') and o.roles else [o.get_role_display()] if hasattr(o, 'role') else [],
+        })
+
+    # Existing Eva findings (if any review exists)
+    eva_findings = []
+    latest_review = EvaReview.objects.filter(financial_year=fy).first()
+    if latest_review:
+        for f in latest_review.findings.all():
+            eva_findings.append({
+                "check": f.get_check_name_display(),
+                "severity": f.get_severity_display(),
+                "title": f.title,
+                "status": f.get_status_display(),
+            })
+
+    return {
+        "entity": entity_context,
+        "trial_balance": tb_data,
+        "journals": journal_data,
+        "officers": officer_data,
+        "eva_findings": eva_findings,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Eva Chat — Process a message and generate response
+# ---------------------------------------------------------------------------
+EVA_CHAT_SYSTEM_PROMPT = """You are Eva, the AI Practice Intelligence system for MC & S Pty Ltd, an Australian accounting practice. You have been built from the accumulated expertise of the firm's principals and a comprehensive library of Australian tax and compliance materials.
+
+You are assisting {accountant_name} who is currently working on {entity_name} ({entity_type}) for the financial year ending {year_end_date}.
+
+You have access to: (1) the full trial balance for this financial year with prior year comparatives, (2) all posted journals, (3) entity director/trustee/beneficiary records, (4) retrieved excerpts from the MC & S Knowledge Brain most relevant to the accountant's question.
+
+When answering:
+- Ground your response in the retrieved Knowledge Brain documents where applicable. Cite the specific source (e.g., 'Based on TR 2023/1...' or 'Per MC & S Technical Position memo dated March 2024...').
+- When the answer relies on data from the current financial year context, state what data was observed (e.g., 'I can see the loan balance is $68,400 as at 30 June 2025...').
+- When you do not have sufficient information in context to answer confidently, say so explicitly and suggest where to find the answer.
+- You do not make definitive legal or tax advice statements. You provide the relevant framework and recommend the accountant apply their professional judgment.
+- Response length should match question complexity. Short factual questions get short answers. Complex technical questions get structured, comprehensive responses.
+- Your tone is precise, professional, and collegial. You are a knowledgeable colleague, not a search engine.
+- Use markdown formatting for structure where appropriate (headings, bold, lists)."""
+
+EVA_FINALISATION_SYSTEM_PROMPT = """You are Eva, conducting a formal compliance review of {entity_name} ({entity_type}) for the financial year ending {year_end_date}.
+
+You must check the following applicable compliance areas: {applicable_checks}
+
+For each area, review the financial data provided and determine whether a material compliance issue exists.
+
+Return your findings as a JSON array. Each finding must include:
+- check_name: one of {check_names}
+- severity: "critical" or "advisory"
+- title: brief plain-English title (max 100 chars)
+- explanation: plain English, maximum 3 sentences
+- recommendation: specific action the accountant should take
+- legislation_reference: e.g. 'ITAA 1936 s.109D'
+- knowledge_brain_citation: if a firm Knowledge Brain document was cited (otherwise empty string)
+- confidence: "high", "medium", or "low"
+
+Rules:
+- Only raise findings where the data provides clear evidence of a material issue.
+- Set severity to "advisory" for uncertain or ambiguous situations.
+- Do not raise findings outside the designated check areas.
+- A finding with "low" confidence must be "advisory" regardless of the check type.
+- If no material issues are found for any check area, return an empty JSON array: []
+
+Return ONLY the JSON array, no other text."""
+
+
+def process_eva_chat(financial_year, user, message_text, opus_override=False):
+    """
+    Process a chat message from the accountant and generate Eva's response.
+
+    Args:
+        financial_year: FinancialYear instance
+        user: User instance (the accountant)
+        message_text: The accountant's question
+        opus_override: If True, use Opus model instead of Sonnet
+
+    Returns:
+        EvaMessage instance (the assistant response)
+    """
+    from core.models_eva import EvaConversation, EvaMessage
+    from core.models import AuditLog
+    from core.ai_service import _call_llm
+
+    # Get or create conversation
+    conversation, _ = EvaConversation.objects.get_or_create(
+        financial_year=financial_year,
+        user=user,
+    )
+
+    # Save user message
+    user_msg = EvaMessage.objects.create(
+        conversation=conversation,
+        role=EvaMessage.Role.USER,
+        content=message_text,
+    )
+    conversation.message_count = conversation.messages.count()
+    conversation.save(update_fields=["message_count", "last_active_at"])
+
+    # Build context
+    fy_context = build_financial_year_context(financial_year)
+
+    # Search Knowledge Brain for relevant chunks
+    retrieved_chunks = []
+    try:
+        retrieved_chunks = search_knowledge_brain(message_text, top_k=TOP_K_CHUNKS)
+    except Exception as e:
+        logger.warning(f"Knowledge Brain search failed: {e}")
+
+    # Build the system prompt
+    entity = financial_year.entity
+    system_prompt = EVA_CHAT_SYSTEM_PROMPT.format(
+        accountant_name=user.get_full_name() or user.email,
+        entity_name=entity.entity_name,
+        entity_type=entity.get_entity_type_display(),
+        year_end_date=financial_year.end_date.strftime("%d %B %Y"),
+    )
+
+    # Build the user prompt with context
+    kb_context = ""
+    if retrieved_chunks:
+        kb_context = "\n\n--- KNOWLEDGE BRAIN EXCERPTS ---\n"
+        for i, chunk in enumerate(retrieved_chunks, 1):
+            kb_context += f"\n[{i}] Source: {chunk['document_title']} ({chunk['category']})\n"
+            kb_context += f"{chunk['text']}\n"
+
+    # Get recent conversation history (last 10 exchanges)
+    recent_messages = list(
+        conversation.messages.order_by("-created_at")[:20]
+    )[::-1]  # Reverse to chronological order
+    history = ""
+    for msg in recent_messages[:-1]:  # Exclude the just-created user message
+        role_label = "Accountant" if msg.role == "user" else "Eva"
+        history += f"\n{role_label}: {msg.content}\n"
+
+    user_prompt = f"""--- ENTITY CONTEXT ---
+{json.dumps(fy_context['entity'], indent=2)}
+
+--- TRIAL BALANCE (Current Year) ---
+{json.dumps(fy_context['trial_balance'][:100], indent=2)}
+{"[... " + str(len(fy_context['trial_balance']) - 100) + " more accounts ...]" if len(fy_context['trial_balance']) > 100 else ""}
+
+--- POSTED JOURNALS ---
+{json.dumps(fy_context['journals'], indent=2)}
+
+--- OFFICERS / DIRECTORS / TRUSTEES ---
+{json.dumps(fy_context['officers'], indent=2)}
+
+--- EXISTING EVA FINDINGS ---
+{json.dumps(fy_context['eva_findings'], indent=2)}
+{kb_context}
+{f"--- CONVERSATION HISTORY ---{history}" if history else ""}
+
+--- ACCOUNTANT'S QUESTION ---
+{message_text}"""
+
+    # Select model tier
+    tier = "opus" if opus_override else "sonnet"
+
+    try:
+        response_text = _call_llm(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            tier=tier,
+            temperature=0.3,
+            max_tokens=4000,
+        )
+    except Exception as e:
+        logger.error(f"Eva chat LLM call failed: {e}")
+        response_text = (
+            "I apologise — I encountered a technical issue processing your question. "
+            "Please try again, or contact the system administrator if this persists."
+        )
+
+    # Save assistant message
+    chunk_ids = [c["chunk_id"] for c in retrieved_chunks]
+    model_label = "opus" if opus_override else "sonnet"
+    assistant_msg = EvaMessage.objects.create(
+        conversation=conversation,
+        role=EvaMessage.Role.ASSISTANT,
+        content=response_text,
+        model_used=model_label,
+        retrieved_chunk_ids=chunk_ids,
+    )
+    conversation.message_count = conversation.messages.count()
+    conversation.save(update_fields=["message_count", "last_active_at"])
+
+    # Log to activity
+    AuditLog.objects.create(
+        user=user,
+        action=AuditLog.Action.EVA_CHAT,
+        description=(
+            f"{user.get_full_name() or user.email} asked Eva a question. "
+            f"Topic: {message_text[:80]}. Model: {model_label}."
+        ),
+        affected_object_type="FinancialYear",
+        affected_object_id=str(financial_year.pk),
+        metadata={
+            "message_id": str(user_msg.pk),
+            "response_id": str(assistant_msg.pk),
+            "model": model_label,
+            "kb_docs_cited": [c["document_title"] for c in retrieved_chunks[:3]],
+        },
+    )
+
+    return assistant_msg
+
+
+# ---------------------------------------------------------------------------
+# Eva Finalisation Gate — Run compliance review
+# ---------------------------------------------------------------------------
+def run_eva_review(financial_year, user, opus_override=False):
+    """
+    Run Eva's structured compliance review (Finalisation Gate).
+
+    Args:
+        financial_year: FinancialYear instance
+        user: User who triggered the review
+        opus_override: If True, use Opus model
+
+    Returns:
+        EvaReview instance with findings
+    """
+    from core.models_eva import EvaReview, EvaFinding
+    from core.models import AuditLog, FinancialYear
+    from core.ai_service import _call_llm
+
+    entity = financial_year.entity
+    entity_type = entity.entity_type
+
+    # Determine applicable checks
+    applicable_checks = ENTITY_CHECK_MAP.get(entity_type, ["going_concern"])
+
+    # Create the review record
+    review = EvaReview.objects.create(
+        financial_year=financial_year,
+        triggered_by=user,
+        model_used="opus" if opus_override else "sonnet",
+        opus_override=opus_override,
+        status=EvaReview.Status.IN_PROGRESS,
+        checks_total=len(applicable_checks),
+    )
+
+    # Update FY status to PREPARED
+    financial_year.status = FinancialYear.Status.PREPARED
+    financial_year.save(update_fields=["status"])
+
+    # Log the trigger
+    AuditLog.objects.create(
+        user=user,
+        action=AuditLog.Action.EVA_REVIEW,
+        description=(
+            f"{user.get_full_name() or user.email} submitted this financial year "
+            f"to Eva for compliance review. Model: {'opus' if opus_override else 'sonnet'}."
+        ),
+        affected_object_type="FinancialYear",
+        affected_object_id=str(financial_year.pk),
+        metadata={"review_id": str(review.pk), "model": review.model_used},
+    )
+
+    # Build context
+    fy_context = build_financial_year_context(financial_year)
+
+    # Search Knowledge Brain for compliance-related content
+    kb_context = ""
+    try:
+        for check in applicable_checks:
+            chunks = search_knowledge_brain(
+                f"Australian {check.replace('_', ' ')} compliance requirements",
+                top_k=3,
+            )
+            if chunks:
+                kb_context += f"\n--- Knowledge Brain: {check} ---\n"
+                for chunk in chunks:
+                    kb_context += f"Source: {chunk['document_title']}\n{chunk['text']}\n\n"
+    except Exception as e:
+        logger.warning(f"Knowledge Brain search for review failed: {e}")
+
+    # Build check names for the prompt
+    check_display = {
+        "division_7a": "Division 7A",
+        "superannuation": "Superannuation Guarantee",
+        "ato_benchmarks": "ATO Industry Benchmarks",
+        "trust_distributions": "Trust Distributions",
+        "going_concern": "Going Concern",
+        "related_party": "Related Party Transactions",
+        "tpar": "TPAR Obligations",
+        "thin_capitalisation": "Thin Capitalisation",
+    }
+
+    applicable_display = [check_display.get(c, c) for c in applicable_checks]
+
+    system_prompt = EVA_FINALISATION_SYSTEM_PROMPT.format(
+        entity_name=entity.entity_name,
+        entity_type=entity.get_entity_type_display(),
+        year_end_date=financial_year.end_date.strftime("%d %B %Y"),
+        applicable_checks=", ".join(applicable_display),
+        check_names=json.dumps(applicable_checks),
+    )
+
+    user_prompt = f"""--- ENTITY CONTEXT ---
+{json.dumps(fy_context['entity'], indent=2)}
+
+--- FULL TRIAL BALANCE ---
+{json.dumps(fy_context['trial_balance'], indent=2)}
+
+--- POSTED JOURNALS ---
+{json.dumps(fy_context['journals'], indent=2)}
+
+--- OFFICERS / DIRECTORS / TRUSTEES / BENEFICIARIES ---
+{json.dumps(fy_context['officers'], indent=2)}
+{kb_context}
+
+Please conduct your compliance review now and return the JSON array of findings."""
+
+    tier = "opus" if opus_override else "sonnet"
+
+    try:
+        response_text = _call_llm(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            tier=tier,
+            temperature=0.2,
+            max_tokens=8000,
+        )
+
+        # Parse the JSON response
+        # Strip any markdown code fences
+        cleaned = response_text.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
+        if cleaned.endswith("```"):
+            cleaned = cleaned[:-3]
+        cleaned = cleaned.strip()
+        if cleaned.startswith("json"):
+            cleaned = cleaned[4:].strip()
+
+        findings_data = json.loads(cleaned)
+
+        if not isinstance(findings_data, list):
+            raise ValueError("Expected JSON array of findings")
+
+        # Create finding records
+        for fd in findings_data:
+            EvaFinding.objects.create(
+                eva_review=review,
+                check_name=fd.get("check_name", "going_concern"),
+                severity=fd.get("severity", "advisory"),
+                title=fd.get("title", "Untitled Finding"),
+                explanation=fd.get("explanation", ""),
+                recommendation=fd.get("recommendation", ""),
+                legislation_reference=fd.get("legislation_reference", ""),
+                knowledge_brain_citation=fd.get("knowledge_brain_citation", ""),
+                confidence=fd.get("confidence", "medium"),
+            )
+
+        review.checks_completed = len(applicable_checks)
+        review.completed_at = timezone.now()
+
+        if review.findings.exists():
+            review.status = EvaReview.Status.FINDINGS_RAISED
+            AuditLog.objects.create(
+                user=user,
+                action=AuditLog.Action.EVA_REVIEW,
+                description=(
+                    f"Eva has identified {review.findings.count()} matter(s) "
+                    f"requiring attention before this year can be finalised."
+                ),
+                affected_object_type="FinancialYear",
+                affected_object_id=str(financial_year.pk),
+                metadata={
+                    "review_id": str(review.pk),
+                    "finding_count": review.findings.count(),
+                    "critical_count": review.findings.filter(severity="critical").count(),
+                },
+            )
+        else:
+            review.status = EvaReview.Status.CLEARED
+            financial_year.status = FinancialYear.Status.EVA_CLEARED
+            financial_year.save(update_fields=["status"])
+            AuditLog.objects.create(
+                user=user,
+                action=AuditLog.Action.EVA_REVIEW,
+                description=(
+                    f"Eva completed compliance review. No material issues identified. "
+                    f"Model: {review.model_used}. "
+                    f"Duration: {(review.completed_at - review.triggered_at).seconds}s."
+                ),
+                affected_object_type="FinancialYear",
+                affected_object_id=str(financial_year.pk),
+                metadata={"review_id": str(review.pk)},
+            )
+
+        review.save()
+
+    except json.JSONDecodeError as e:
+        logger.error(f"Eva review JSON parse error: {e}\nRaw response: {response_text[:500]}")
+        review.status = EvaReview.Status.ERROR
+        review.error_message = f"Failed to parse Eva's response: {e}"
+        review.completed_at = timezone.now()
+        review.save()
+        # Reset FY status
+        financial_year.status = FinancialYear.Status.DRAFT
+        financial_year.save(update_fields=["status"])
+        AuditLog.objects.create(
+            user=user,
+            action=AuditLog.Action.EVA_REVIEW,
+            description=f"Eva review encountered a parse error. Finalisation blocked. Error: {e}",
+            affected_object_type="FinancialYear",
+            affected_object_id=str(financial_year.pk),
+        )
+
+    except Exception as e:
+        logger.error(f"Eva review failed: {e}")
+        review.status = EvaReview.Status.ERROR
+        review.error_message = str(e)
+        review.completed_at = timezone.now()
+        review.save()
+        # Reset FY status
+        financial_year.status = FinancialYear.Status.DRAFT
+        financial_year.save(update_fields=["status"])
+        AuditLog.objects.create(
+            user=user,
+            action=AuditLog.Action.EVA_REVIEW,
+            description=f"Eva review encountered an API error. Finalisation blocked. Error: {e}",
+            affected_object_type="FinancialYear",
+            affected_object_id=str(financial_year.pk),
+        )
+
+    return review
+
+
+def resolve_eva_finding(finding, user, resolution_note):
+    """
+    Mark an Eva finding as addressed with the accountant's resolution note.
+    If all findings are now addressed, triggers a re-run.
+
+    Returns:
+        (finding, should_rerun: bool)
+    """
+    from core.models_eva import EvaFinding
+    from core.models import AuditLog
+
+    finding.status = EvaFinding.Status.ADDRESSED
+    finding.resolution_note = resolution_note
+    finding.resolved_by = user
+    finding.resolved_at = timezone.now()
+    finding.save()
+
+    # Log
+    AuditLog.objects.create(
+        user=user,
+        action=AuditLog.Action.EVA_FINDING,
+        description=(
+            f"{user.get_full_name() or user.email} addressed Eva finding: "
+            f"{finding.title}. Note: \"{resolution_note[:200]}\""
+        ),
+        affected_object_type="FinancialYear",
+        affected_object_id=str(finding.eva_review.financial_year.pk),
+        metadata={
+            "finding_id": str(finding.pk),
+            "review_id": str(finding.eva_review.pk),
+        },
+    )
+
+    # Check if all findings are now addressed
+    review = finding.eva_review
+    open_count = review.findings.filter(status=EvaFinding.Status.OPEN).count()
+    should_rerun = (open_count == 0)
+
+    return finding, should_rerun
+
+
+# ---------------------------------------------------------------------------
+# Amber Indicators — Trial Balance variance analysis
+# ---------------------------------------------------------------------------
+def compute_amber_indicators(financial_year, materiality_pct_revenue=15, materiality_pct_expenses=20):
+    """
+    Compute amber indicators for all trial balance lines in a financial year.
+    Returns a dict keyed by account_code with list of trigger descriptions.
+
+    Trigger conditions:
+    1. Significant variance — $ (exceeds section materiality threshold)
+    2. Significant variance — % (>15% revenue, >20% expenses)
+    3. Account dropped (non-zero PY, zero CY)
+    4. Account added (non-zero CY, no PY)
+    5. Opening balance mismatch
+    6. Balance sign change
+    """
+    from core.models import TrialBalanceLine
+    from collections import defaultdict
+
+    ZERO = Decimal("0")
+    indicators = defaultdict(list)
+
+    lines = TrialBalanceLine.objects.filter(
+        financial_year=financial_year,
+    ).select_related("mapped_line_item")
+
+    # Aggregate lines by account code
+    account_data = defaultdict(lambda: {
+        "current_dr": ZERO, "current_cr": ZERO,
+        "prior_dr": ZERO, "prior_cr": ZERO,
+        "opening": ZERO, "prior_closing": ZERO,
+        "name": "", "section": "",
+    })
+
+    for line in lines:
+        code = line.account_code
+        d = account_data[code]
+        d["current_dr"] += line.debit or ZERO
+        d["current_cr"] += line.credit or ZERO
+        d["prior_dr"] += line.prior_debit or ZERO
+        d["prior_cr"] += line.prior_credit or ZERO
+        d["opening"] += line.opening_balance or ZERO
+        d["prior_closing"] += line.prior_closing_balance or ZERO
+        if not d["name"]:
+            d["name"] = line.account_name
+        if not d["section"] and line.mapped_line_item:
+            d["section"] = (line.mapped_line_item.statement_section or "").lower()
+
+    for code, d in account_data.items():
+        net_current = d["current_dr"] - d["current_cr"]
+        net_prior = d["prior_dr"] - d["prior_cr"]
+        variance = net_current - net_prior
+        triggers = []
+
+        # 1 & 2: Significant variance
+        if net_prior != ZERO:
+            pct = abs(variance / abs(net_prior) * 100)
+            section = d["section"]
+            threshold = materiality_pct_revenue if ("revenue" in section or "income" in section) else materiality_pct_expenses
+
+            if pct > threshold:
+                triggers.append({
+                    "type": f"Significant variance ({pct:.1f}%)",
+                    "prior": str(net_prior),
+                    "current": str(net_current),
+                    "movement": str(variance),
+                    "pct": f"{pct:.1f}",
+                })
+
+        # 3: Account dropped
+        if net_prior != ZERO and net_current == ZERO:
+            triggers.append({
+                "type": "Account dropped",
+                "prior": str(net_prior),
+                "current": "0.00",
+                "movement": str(-net_prior),
+                "pct": "-100.0",
+            })
+
+        # 4: Account added
+        if net_prior == ZERO and net_current != ZERO:
+            triggers.append({
+                "type": "Account added",
+                "prior": "0.00",
+                "current": str(net_current),
+                "movement": str(net_current),
+                "pct": "N/A",
+            })
+
+        # 5: Opening balance mismatch
+        if d["prior_closing"] != ZERO and d["opening"] != d["prior_closing"]:
+            triggers.append({
+                "type": "Opening balance mismatch",
+                "prior": f"PY closing: {d['prior_closing']}",
+                "current": f"Opening: {d['opening']}",
+                "movement": str(d["opening"] - d["prior_closing"]),
+                "pct": "N/A",
+            })
+
+        # 6: Balance sign change
+        if net_prior != ZERO and net_current != ZERO:
+            if (net_prior > ZERO and net_current < ZERO) or (net_prior < ZERO and net_current > ZERO):
+                triggers.append({
+                    "type": "Balance sign change",
+                    "prior": str(net_prior),
+                    "current": str(net_current),
+                    "movement": str(variance),
+                    "pct": "N/A",
+                })
+
+        if triggers:
+            indicators[code] = triggers
+
+    return dict(indicators)
+
+
+# ---------------------------------------------------------------------------
+# SharePoint Sync — Knowledge Brain document sync
+# ---------------------------------------------------------------------------
+SHAREPOINT_FOLDER_MAP = {
+    "01 - Firm Knowledge/Procedures": "firm_procedures",
+    "01 - Firm Knowledge/Technical Positions": "firm_technical",
+    "01 - Firm Knowledge/Training": "firm_training",
+    "01 - Firm Knowledge/Precedents": "firm_precedents",
+    "02 - ATO Materials/Rulings": "ato_rulings",
+    "02 - ATO Materials/Practice Statements": "ato_statements",
+    "02 - ATO Materials/Alerts": "ato_alerts",
+    "02 - ATO Materials/Benchmarks": "ato_benchmarks",
+    "03 - Legislation/ITAA 1936": "legislation",
+    "03 - Legislation/ITAA 1997": "legislation",
+    "03 - Legislation/Other Acts": "legislation",
+    "04 - AASB Standards": "aasb_standards",
+    "05 - Professional Bodies/CPA Australia": "cpa_materials",
+    "05 - Professional Bodies/CA ANZ": "ca_anz_materials",
+    "06 - Treasury": "treasury",
+}
+
+
+def sync_knowledge_brain():
+    """
+    Sync the Knowledge Brain from SharePoint via Microsoft Graph API.
+    This function is designed to be called as a management command or
+    scheduled task (Celery Beat every 2 hours).
+
+    Requires environment variables:
+    - SHAREPOINT_TENANT_ID
+    - SHAREPOINT_CLIENT_ID
+    - SHAREPOINT_CLIENT_SECRET
+    - SHAREPOINT_SITE_ID
+    - SHAREPOINT_DRIVE_ID
+    """
+    import requests as http_requests
+    from core.models_eva import KnowledgeDocument, KnowledgeChunk
+    from core.models import AuditLog
+    import tempfile
+
+    tenant_id = os.environ.get("SHAREPOINT_TENANT_ID", "")
+    client_id = os.environ.get("SHAREPOINT_CLIENT_ID", "")
+    client_secret = os.environ.get("SHAREPOINT_CLIENT_SECRET", "")
+    site_id = os.environ.get("SHAREPOINT_SITE_ID", "")
+    drive_id = os.environ.get("SHAREPOINT_DRIVE_ID", "")
+
+    if not all([tenant_id, client_id, client_secret, site_id, drive_id]):
+        logger.error("SharePoint credentials not configured. Set SHAREPOINT_* env vars.")
+        return {"error": "SharePoint credentials not configured", "added": 0, "updated": 0}
+
+    # Get OAuth2 token
+    token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+    token_data = {
+        "grant_type": "client_credentials",
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "scope": "https://graph.microsoft.com/.default",
+    }
+    token_resp = http_requests.post(token_url, data=token_data)
+    token_resp.raise_for_status()
+    access_token = token_resp.json()["access_token"]
+
+    headers = {"Authorization": f"Bearer {access_token}"}
+    graph_base = "https://graph.microsoft.com/v1.0"
+
+    stats = {"added": 0, "updated": 0, "errors": 0, "total_chunks": 0}
+
+    # Iterate through each folder in the mapping
+    for folder_path, category in SHAREPOINT_FOLDER_MAP.items():
+        full_path = f"Eva Knowledge Brain/{folder_path}"
+        list_url = (
+            f"{graph_base}/sites/{site_id}/drives/{drive_id}"
+            f"/root:/{full_path}:/children"
+        )
+
+        try:
+            resp = http_requests.get(list_url, headers=headers)
+            if resp.status_code == 404:
+                logger.info(f"SharePoint folder not found: {full_path}")
+                continue
+            resp.raise_for_status()
+            items = resp.json().get("value", [])
+        except Exception as e:
+            logger.error(f"Failed to list SharePoint folder {full_path}: {e}")
+            stats["errors"] += 1
+            continue
+
+        for item in items:
+            if item.get("folder"):
+                # Skip Archive subfolders
+                if "archive" in item["name"].lower():
+                    # Mark any existing docs from this path as archived
+                    KnowledgeDocument.objects.filter(
+                        sharepoint_path__startswith=f"{full_path}/{item['name']}",
+                        is_archived=False,
+                    ).update(is_archived=True)
+                continue
+
+            item_id = item["id"]
+            item_name = item["name"]
+            modified_at = item.get("lastModifiedDateTime", "")
+            file_ext = item_name.rsplit(".", 1)[-1].lower() if "." in item_name else ""
+
+            if file_ext not in ("docx", "pdf", "txt", "xlsx", "pptx"):
+                continue
+
+            # Check if document already exists and is up to date
+            existing = KnowledgeDocument.objects.filter(
+                sharepoint_item_id=item_id
+            ).first()
+
+            if existing and str(existing.sharepoint_modified_at) == modified_at:
+                continue  # No changes
+
+            # Download the file
+            download_url = (
+                f"{graph_base}/sites/{site_id}/drives/{drive_id}"
+                f"/items/{item_id}/content"
+            )
+            try:
+                file_resp = http_requests.get(download_url, headers=headers)
+                file_resp.raise_for_status()
+            except Exception as e:
+                logger.error(f"Failed to download {item_name}: {e}")
+                stats["errors"] += 1
+                continue
+
+            # Save to temp file and parse
+            with tempfile.NamedTemporaryFile(suffix=f".{file_ext}", delete=False) as tmp:
+                tmp.write(file_resp.content)
+                tmp_path = tmp.name
+
+            try:
+                text = parse_document(tmp_path, file_ext)
+                if not text.strip():
+                    logger.warning(f"No text extracted from {item_name}")
+                    continue
+
+                # Chunk the text
+                chunks = chunk_text(text)
+
+                # Create or update the document record
+                if existing:
+                    doc = existing
+                    doc.title = item_name.rsplit(".", 1)[0]
+                    doc.sharepoint_modified_at = modified_at
+                    doc.file_type = file_ext
+                    doc.file_size_bytes = len(file_resp.content)
+                    doc.is_archived = False
+                    # Delete old chunks
+                    doc.chunks.all().delete()
+                    stats["updated"] += 1
+                else:
+                    doc = KnowledgeDocument.objects.create(
+                        title=item_name.rsplit(".", 1)[0],
+                        category=category,
+                        sharepoint_path=f"{full_path}/{item_name}",
+                        sharepoint_item_id=item_id,
+                        sharepoint_modified_at=modified_at,
+                        file_type=file_ext,
+                        file_size_bytes=len(file_resp.content),
+                    )
+                    stats["added"] += 1
+
+                # Embed and store chunks
+                for chunk_data in chunks:
+                    try:
+                        embedding = get_embedding(chunk_data["text"])
+                    except Exception as e:
+                        logger.error(f"Embedding failed for chunk {chunk_data['chunk_index']} of {item_name}: {e}")
+                        embedding = None
+
+                    KnowledgeChunk.objects.create(
+                        document=doc,
+                        chunk_index=chunk_data["chunk_index"],
+                        text=chunk_data["text"],
+                        embedding=embedding,
+                        token_count=chunk_data["token_count"],
+                    )
+                    stats["total_chunks"] += 1
+
+                doc.chunk_count = len(chunks)
+                doc.sync_status = KnowledgeDocument.SyncStatus.SYNCED
+                doc.synced_at = timezone.now()
+                doc.save()
+
+            except Exception as e:
+                logger.error(f"Failed to process {item_name}: {e}")
+                if existing:
+                    existing.sync_status = KnowledgeDocument.SyncStatus.ERROR
+                    existing.sync_error = str(e)
+                    existing.save()
+                stats["errors"] += 1
+            finally:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+
+    # Log the sync
+    try:
+        AuditLog.objects.create(
+            action=AuditLog.Action.EVA_SYNC,
+            description=(
+                f"Eva Knowledge Brain synced. Documents added: {stats['added']}. "
+                f"Documents updated: {stats['updated']}. "
+                f"Total chunks: {stats['total_chunks']}."
+            ),
+            metadata=stats,
+        )
+    except Exception:
+        pass
+
+    logger.info(f"Knowledge Brain sync complete: {stats}")
+    return stats

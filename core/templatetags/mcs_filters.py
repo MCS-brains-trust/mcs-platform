@@ -23,3 +23,11 @@ def abs_value(value):
         return abs(Decimal(str(value)))
     except (TypeError, ValueError):
         return value
+
+
+@register.filter
+def get_item(dictionary, key):
+    """Get an item from a dictionary by key. Used for amber_indicators lookup."""
+    if isinstance(dictionary, dict):
+        return dictionary.get(key, [])
+    return []
