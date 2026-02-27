@@ -110,7 +110,7 @@
 
                     <!-- Ask Eva to Review Button -->
                     {% if fy.can_ask_eva %}
-                    <button type="button" class="btn btn-sm btn-outline-info" id="askEvaBtn" onclick="evaAskReview()">
+                    <button type="button" class="btn btn-sm btn-outline-info" id="askEvaBtn" onclick="document.getElementById('eva-review-card').scrollIntoView({behavior:'smooth'}); askEvaToReview();">
                         <i class="bi bi-robot"></i> Ask Eva to Review
                     </button>
                     {% endif %}
