@@ -1224,8 +1224,9 @@ def sync_knowledge_brain():
                     )
                     stats["added"] += 1
 
-                # Embed and store chunks one at a time
-                for chunk_data in chunks:
+                # Embed and store chunks one at a time with periodic memory cleanup
+                num_chunks = len(chunks)
+                for i, chunk_data in enumerate(chunks):
                     try:
                         embedding = get_embedding(chunk_data["text"])
                     except Exception as e:
@@ -1242,8 +1243,21 @@ def sync_knowledge_brain():
                     stats["total_chunks"] += 1
                     # Free embedding vector immediately
                     del embedding
+                    # Clear the chunk data we just processed
+                    chunks[i] = None
 
-                doc.chunk_count = len(chunks)
+                    # Every 10 chunks, force garbage collection and
+                    # reset Django's internal query log to free memory
+                    if (i + 1) % 10 == 0:
+                        gc.collect()
+                        from django.db import reset_queries
+                        reset_queries()
+
+                # Free the chunks list
+                del chunks
+                gc.collect()
+
+                doc.chunk_count = num_chunks
                 doc.sync_status = KnowledgeDocument.SyncStatus.SYNCED
                 doc.synced_at = timezone.now()
                 doc.save()
@@ -1252,7 +1266,7 @@ def sync_knowledge_brain():
                 doc_count = stats["added"] + stats["updated"]
                 logger.info(
                     f"[{doc_count}] Synced {item_name} "
-                    f"({len(chunks)} chunks). "
+                    f"({num_chunks} chunks). "
                     f"Total chunks so far: {stats['total_chunks']}"
                 )
 
