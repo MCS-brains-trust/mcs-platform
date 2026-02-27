@@ -1053,7 +1053,11 @@ def sync_knowledge_brain():
 
     Optionally, you can set SHAREPOINT_SITE_ID and SHAREPOINT_DRIVE_ID directly
     to skip the auto-resolution step.
+
+    Processes documents one at a time with explicit memory cleanup between
+    each document to prevent OOM kills on memory-constrained servers.
     """
+    import gc
     import requests as http_requests
     from core.models import KnowledgeDocument, KnowledgeChunk
     from core.models import AuditLog
@@ -1192,13 +1196,18 @@ def sync_knowledge_brain():
                 # Chunk the text
                 chunks = chunk_text(text)
 
+                # Free the raw text and file content immediately
+                del text
+                file_size = len(file_resp.content)
+                del file_resp
+
                 # Create or update the document record
                 if existing:
                     doc = existing
                     doc.title = item_name.rsplit(".", 1)[0]
                     doc.sharepoint_modified_at = modified_at
                     doc.file_type = file_ext
-                    doc.file_size_bytes = len(file_resp.content)
+                    doc.file_size_bytes = file_size
                     doc.is_archived = False
                     # Delete old chunks
                     doc.chunks.all().delete()
@@ -1211,11 +1220,11 @@ def sync_knowledge_brain():
                         sharepoint_item_id=item_id,
                         sharepoint_modified_at=modified_at,
                         file_type=file_ext,
-                        file_size_bytes=len(file_resp.content),
+                        file_size_bytes=file_size,
                     )
                     stats["added"] += 1
 
-                # Embed and store chunks
+                # Embed and store chunks one at a time
                 for chunk_data in chunks:
                     try:
                         embedding = get_embedding(chunk_data["text"])
@@ -1231,11 +1240,21 @@ def sync_knowledge_brain():
                         token_count=chunk_data["token_count"],
                     )
                     stats["total_chunks"] += 1
+                    # Free embedding vector immediately
+                    del embedding
 
                 doc.chunk_count = len(chunks)
                 doc.sync_status = KnowledgeDocument.SyncStatus.SYNCED
                 doc.synced_at = timezone.now()
                 doc.save()
+
+                # Log progress after each document
+                doc_count = stats["added"] + stats["updated"]
+                logger.info(
+                    f"[{doc_count}] Synced {item_name} "
+                    f"({len(chunks)} chunks). "
+                    f"Total chunks so far: {stats['total_chunks']}"
+                )
 
             except Exception as e:
                 logger.error(f"Failed to process {item_name}: {e}")
@@ -1249,6 +1268,9 @@ def sync_knowledge_brain():
                     os.unlink(tmp_path)
                 except OSError:
                     pass
+                # Force garbage collection after each document
+                # to prevent memory accumulation on constrained servers
+                gc.collect()
 
     # Log the sync
     try:
