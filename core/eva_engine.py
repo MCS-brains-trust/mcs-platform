@@ -119,8 +119,8 @@ def run_preflight_checks(financial_year):
     # Check 2: TB must be balanced (DR == CR)
     from django.db.models import Sum
     totals = fy.trial_balance_lines.aggregate(
-        total_dr=Sum("effective_dr"),
-        total_cr=Sum("effective_cr"),
+        total_dr=Sum("debit"),
+        total_cr=Sum("credit"),
     )
     total_dr = totals["total_dr"] or ZERO
     total_cr = totals["total_cr"] or ZERO
