@@ -28,7 +28,7 @@ class EntityForm(forms.ModelForm):
             "entity_name", "trading_as", "entity_type", "abn", "acn", "tfn",
             "registration_date", "financial_year_end",
             "reporting_framework", "company_size", "show_cents",
-            "is_gst_registered",
+            "is_gst_registered", "bas_frequency",
             "contact_email", "contact_phone",
             "address_line_1", "address_line_2", "suburb", "state", "postcode", "country",
             "assigned_accountant", "xpm_client_id",

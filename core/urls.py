@@ -2,9 +2,12 @@
 from django.urls import path
 from . import views
 from . import views_audit
+from . import views_bas
 from . import views_upgrades
 from . import views_tax_planning
 from . import views_templates
+from . import eva_chat
+from . import eva_engine
 
 app_name = "core"
 
@@ -125,9 +128,12 @@ urlpatterns = [
     path("notes/<uuid:pk>/delete/", views.meeting_note_delete, name="meeting_note_delete"),
     path("notes/<uuid:pk>/toggle-followup/", views.meeting_note_toggle_followup, name="meeting_note_toggle_followup"),
 
-    # GST Activity Statement
-    path("years/<uuid:pk>/gst/", views.gst_activity_statement, name="gst_activity_statement"),
-    path("years/<uuid:pk>/gst/download/", views.gst_activity_statement_download, name="gst_activity_statement_download"),
+    # GST Activity Statement (Period-Aware Redesign)
+    path("years/<uuid:pk>/gst/", views_bas.bas_dashboard, name="gst_activity_statement"),
+    path("years/<uuid:pk>/gst/download/", views_bas.bas_download, name="gst_activity_statement_download"),
+    path("years/<uuid:pk>/gst/lodge/<int:period_number>/", views_bas.bas_lodge_period, name="bas_lodge_period"),
+    path("years/<uuid:pk>/gst/unlodge/<int:period_number>/", views_bas.bas_unlodge_period, name="bas_unlodge_period"),
+    path("years/<uuid:pk>/gst/coverage/<int:period_number>/", views_bas.bas_coverage_check, name="bas_coverage_check"),
 
     # Depreciation
     path("years/<uuid:pk>/depreciation/add/", views.depreciation_add, name="depreciation_add"),
@@ -245,4 +251,19 @@ urlpatterns = [
     path("templates/<uuid:pk>/delete/", views_templates.template_delete, name="template_delete"),
     path("templates/<uuid:pk>/toggle-active/", views_templates.template_toggle_active, name="template_toggle_active"),
     path("templates/<uuid:pk>/update-structure/", views_templates.template_update_structure, name="template_update_structure"),
+
+    # ===== EVA AI PRACTICE INTELLIGENCE =====
+    # Chat Interface (GET = history, POST = send message)
+    path("api/financial-years/<uuid:pk>/eva-chat/", eva_chat.eva_chat_dispatch, name="eva_chat_api"),
+
+    # Finalisation Gate
+    path("api/financial-years/<uuid:pk>/ask-eva-review/", eva_engine.ask_eva_review, name="ask_eva_review"),
+    path("api/financial-years/<uuid:pk>/eva-review/", eva_engine.eva_review_detail, name="eva_review_detail"),
+    path("api/financial-years/<uuid:pk>/eva-review-status/", eva_engine.eva_review_status, name="eva_review_status"),
+    path("api/eva-findings/<uuid:pk>/resolve/", eva_engine.eva_finding_resolve, name="eva_resolve_finding"),
+    path("api/financial-years/<uuid:pk>/eva-preflight/", eva_engine.eva_preflight, name="eva_preflight"),
+
+    # Knowledge Brain
+    path("api/knowledge/sync/", eva_engine.knowledge_sync, name="knowledge_sync"),
+    path("api/knowledge/documents/", eva_engine.knowledge_documents, name="knowledge_documents"),
 ]

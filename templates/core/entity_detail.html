@@ -76,6 +76,12 @@
             {% endif %}
         </button>
     </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="rules-tab" data-bs-toggle="tab" data-bs-target="#rules" type="button" role="tab">
+            <i class="bi bi-bookmark-star"></i> Classification Rules
+            <span class="badge bg-info" id="rules-count-badge" style="display:none;">0</span>
+        </button>
+    </li>
 </ul>
 
 <div class="tab-content" id="entityTabContent">
@@ -664,6 +670,100 @@
         {% endif %}
     </div>
 
+    <!-- ============ CLASSIFICATION RULES TAB ============ -->
+    <div class="tab-pane fade" id="rules" role="tabpanel">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h6 class="mb-0"><i class="bi bi-bookmark-star"></i> Classification Rules</h6>
+                <button class="btn btn-sm btn-primary" onclick="showAddRuleForm()">
+                    <i class="bi bi-plus"></i> Add Rule
+                </button>
+            </div>
+            <div class="card-body">
+                <p class="text-muted" style="font-size:0.85rem;">
+                    Classification rules automatically assign account codes and GST treatment to transactions
+                    matching specific description patterns. Rules are entity-specific and run before AI classification.
+                </p>
+
+                <!-- Add/Edit Rule Form (hidden by default) -->
+                <div id="rule-form-container" style="display:none;" class="mb-3 p-3 bg-light rounded border">
+                    <h6 id="rule-form-title">Add New Rule</h6>
+                    <input type="hidden" id="rule-edit-id" value="">
+                    <div class="row g-2">
+                        <div class="col-md-4">
+                            <label class="form-label" style="font-size:0.82rem;">Description Pattern</label>
+                            <input type="text" class="form-control form-control-sm" id="rule-pattern" placeholder="e.g. WOOLWORTHS">
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label" style="font-size:0.82rem;">Match Type</label>
+                            <select class="form-select form-select-sm" id="rule-match-type">
+                                <option value="contains">Contains</option>
+                                <option value="exact">Exact Match</option>
+                                <option value="starts_with">Starts With</option>
+                                <option value="regex">Regex</option>
+                            </select>
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label" style="font-size:0.82rem;">Account Code</label>
+                            <input type="text" class="form-control form-control-sm" id="rule-account-code" placeholder="e.g. 5100">
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label" style="font-size:0.82rem;">Account Name</label>
+                            <input type="text" class="form-control form-control-sm" id="rule-account-name" placeholder="e.g. Groceries">
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label" style="font-size:0.82rem;">GST Treatment</label>
+                            <select class="form-select form-select-sm" id="rule-gst-treatment">
+                                <option value="">— None —</option>
+                                <option value="taxable">Taxable</option>
+                                <option value="gst_free">GST-Free</option>
+                                <option value="input_taxed">Input Taxed</option>
+                                <option value="out_of_scope">Out of Scope</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="row g-2 mt-1">
+                        <div class="col-md-2">
+                            <label class="form-label" style="font-size:0.82rem;">Creditable %</label>
+                            <input type="number" class="form-control form-control-sm" id="rule-creditable-pct" value="100" min="0" max="100">
+                        </div>
+                        <div class="col-md-10 d-flex align-items-end gap-2">
+                            <button class="btn btn-sm btn-primary" onclick="saveRule()">Save Rule</button>
+                            <button class="btn btn-sm btn-outline-secondary" onclick="cancelRuleForm()">Cancel</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Rules Table -->
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover" id="rules-table">
+                        <thead>
+                            <tr>
+                                <th>Pattern</th>
+                                <th>Match</th>
+                                <th>Account</th>
+                                <th>GST</th>
+                                <th>Credit %</th>
+                                <th>Matched</th>
+                                <th>Created</th>
+                                <th>Status</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="rules-tbody">
+                            <tr id="rules-loading">
+                                <td colspan="9" class="text-center py-3 text-muted">
+                                    <div class="spinner-border spinner-border-sm" role="status"></div>
+                                    Loading rules...
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
 </div>
 
 <!-- XRM Confirmation Modal -->
@@ -892,8 +992,163 @@ document.addEventListener('DOMContentLoaded', function() {
     document.querySelectorAll('#entityTabs button').forEach(btn => {
         btn.addEventListener('shown.bs.tab', function(e) {
             window.location.hash = e.target.getAttribute('data-bs-target');
+            // Load rules when the rules tab is shown
+            if (e.target.id === 'rules-tab') loadRules();
         });
     });
 });
+
+// ========================================================================
+// Classification Rules Management
+// ========================================================================
+const ENTITY_ID = "{{ entity.pk }}";
+const CSRF_TOKEN = "{{ csrf_token }}";
+let rulesLoaded = false;
+
+function loadRules() {
+    if (rulesLoaded) return;
+    fetch(`/review/api/review/rules/entity/${ENTITY_ID}/`)
+    .then(r => r.json())
+    .then(data => {
+        rulesLoaded = true;
+        const tbody = document.getElementById('rules-tbody');
+        const badge = document.getElementById('rules-count-badge');
+        if (data.rules && data.rules.length > 0) {
+            badge.textContent = data.rules.length;
+            badge.style.display = 'inline';
+            tbody.innerHTML = data.rules.map(r => `
+                <tr id="rule-row-${r.id}">
+                    <td><strong>${escapeHtml(r.description_pattern)}</strong></td>
+                    <td><span class="badge bg-secondary bg-opacity-25 text-dark">${escapeHtml(r.match_type_display)}</span></td>
+                    <td><strong>${escapeHtml(r.account_code)}</strong> ${escapeHtml(r.account_name)}</td>
+                    <td>${r.gst_treatment ? `<span class="badge bg-info bg-opacity-25 text-dark">${escapeHtml(r.gst_treatment)}</span>` : '\u2014'}</td>
+                    <td>${r.creditable_percentage}%</td>
+                    <td><span class="badge bg-light text-dark">${r.matched_count} txns</span></td>
+                    <td style="font-size:0.78rem;">${escapeHtml(r.created_by)}<br><span class="text-muted">${escapeHtml(r.created_at)}</span></td>
+                    <td>
+                        <span class="badge ${r.is_active ? 'bg-success' : 'bg-secondary'}" style="cursor:pointer;" onclick="toggleRule('${r.id}')">
+                            ${r.is_active ? 'Active' : 'Inactive'}
+                        </span>
+                    </td>
+                    <td>
+                        <div class="btn-group btn-group-sm">
+                            <button class="btn btn-outline-primary" style="font-size:0.75rem;" onclick="editRule('${r.id}', ${JSON.stringify(JSON.stringify(r))})"><i class="bi bi-pencil"></i></button>
+                            <button class="btn btn-outline-danger" style="font-size:0.75rem;" onclick="deleteRule('${r.id}')"><i class="bi bi-trash"></i></button>
+                        </div>
+                    </td>
+                </tr>
+            `).join('');
+        } else {
+            badge.style.display = 'none';
+            tbody.innerHTML = '<tr><td colspan="9" class="text-center py-4 text-muted"><i class="bi bi-bookmark display-6"></i><p class="mt-2">No classification rules yet. Rules are created automatically when you override and approve transactions during review, or you can add them manually.</p></td></tr>';
+        }
+    })
+    .catch(err => {
+        document.getElementById('rules-tbody').innerHTML = '<tr><td colspan="9" class="text-center py-3 text-danger">Error loading rules: ' + err.message + '</td></tr>';
+    });
+}
+
+function escapeHtml(text) {
+    if (!text) return '';
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function showAddRuleForm() {
+    document.getElementById('rule-form-container').style.display = 'block';
+    document.getElementById('rule-form-title').textContent = 'Add New Rule';
+    document.getElementById('rule-edit-id').value = '';
+    document.getElementById('rule-pattern').value = '';
+    document.getElementById('rule-match-type').value = 'contains';
+    document.getElementById('rule-account-code').value = '';
+    document.getElementById('rule-account-name').value = '';
+    document.getElementById('rule-gst-treatment').value = '';
+    document.getElementById('rule-creditable-pct').value = '100';
+}
+
+function cancelRuleForm() {
+    document.getElementById('rule-form-container').style.display = 'none';
+}
+
+function editRule(ruleId, ruleJson) {
+    const r = JSON.parse(ruleJson);
+    document.getElementById('rule-form-container').style.display = 'block';
+    document.getElementById('rule-form-title').textContent = 'Edit Rule';
+    document.getElementById('rule-edit-id').value = ruleId;
+    document.getElementById('rule-pattern').value = r.description_pattern || '';
+    document.getElementById('rule-match-type').value = r.match_type || 'contains';
+    document.getElementById('rule-account-code').value = r.account_code || '';
+    document.getElementById('rule-account-name').value = r.account_name || '';
+    document.getElementById('rule-gst-treatment').value = r.gst_treatment || '';
+    document.getElementById('rule-creditable-pct').value = r.creditable_percentage || '100';
+}
+
+function saveRule() {
+    const editId = document.getElementById('rule-edit-id').value;
+    const payload = {
+        entity_id: ENTITY_ID,
+        description_pattern: document.getElementById('rule-pattern').value,
+        match_type: document.getElementById('rule-match-type').value,
+        account_code: document.getElementById('rule-account-code').value,
+        account_name: document.getElementById('rule-account-name').value,
+        gst_treatment: document.getElementById('rule-gst-treatment').value,
+        creditable_percentage: document.getElementById('rule-creditable-pct').value,
+    };
+
+    const url = editId ? `/review/api/review/rules/${editId}/update/` : '/review/api/review/rules/create/';
+    fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
+        body: JSON.stringify(payload),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            cancelRuleForm();
+            rulesLoaded = false;
+            loadRules();
+        } else {
+            alert(data.message || 'Error saving rule.');
+        }
+    });
+}
+
+function toggleRule(ruleId) {
+    fetch(`/review/api/review/rules/${ruleId}/toggle/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            rulesLoaded = false;
+            loadRules();
+        }
+    });
+}
+
+function deleteRule(ruleId) {
+    if (!confirm('Delete this classification rule? This cannot be undone.')) return;
+    fetch(`/review/api/review/rules/${ruleId}/delete/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            rulesLoaded = false;
+            loadRules();
+        }
+    });
+}
+
+// Auto-load rules if hash is #rules
+if (window.location.hash === '#rules') {
+    setTimeout(() => {
+        const rulesTab = document.getElementById('rules-tab');
+        if (rulesTab) { new bootstrap.Tab(rulesTab).show(); loadRules(); }
+    }, 100);
+}
 </script>
 {% endblock %}

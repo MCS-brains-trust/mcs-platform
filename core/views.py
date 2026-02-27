@@ -16,7 +16,7 @@ from .models import (
     JournalLine, GeneratedDocument, AuditLog, EntityOfficer,
     ClientAssociate, AccountingSoftware, MeetingNote,
     DepreciationAsset, RiskFlag, StockItem, ActivityLog, EntityChartOfAccount,
-    BulkJournalUpload,
+    BulkJournalUpload, BASPeriod,
 )
 from .forms import (
     ClientForm, EntityForm, FinancialYearForm,
@@ -625,10 +625,13 @@ def financial_year_detail(request, pk):
         for code, group in code_groups.items():
             if len(group) == 1:
                 # Single entry — no aggregation needed
-                group[0].account_name = _resolve_account_name(fy.entity, group[0].account_code, group[0].account_name)
-                group[0].sub_entries = []
-                group[0].is_aggregated = False
-                agg_lines.append(group[0])
+                line = group[0]
+                line.account_name = _resolve_account_name(fy.entity, line.account_code, line.account_name)
+                line.sub_entries = []
+                line.is_aggregated = False
+                # variance_amount and variance_percentage are computed
+                # by the TrialBalanceLine model @property — no need to set.
+                agg_lines.append(line)
             else:
                 # Multiple entries — build an aggregated summary row
                 # Use the first line as the base (for mapping, risk flags, etc.)
@@ -773,6 +776,11 @@ def financial_year_detail(request, pk):
     for line in tb_lines:
         line.risk_flags_list = flagged_accounts.get(line.account_code, [])
 
+    # Annotate TB lines with Eva amber indicators
+    from core.eva_amber import annotate_tb_lines_with_amber
+    for section_name, section_lines in aggregated_sections.items():
+        annotate_tb_lines_with_amber(section_lines)
+
     # Depreciation assets
     depreciation_assets = DepreciationAsset.objects.filter(financial_year=fy)
     dep_categories = OrderedDict()
@@ -793,16 +801,28 @@ def financial_year_detail(request, pk):
     stock_total_closing = stock_items.aggregate(total=Sum('closing_value'))['total'] or Decimal('0')
 
     # Review items (pending transactions from bank statement uploads for this entity)
-    from review.models import PendingTransaction, ReviewJob
+    from review.models import PendingTransaction, ReviewJob, ClassificationRule, EntityGSTSetting
     review_jobs = ReviewJob.objects.filter(entity=fy.entity)
     pending_review = PendingTransaction.objects.filter(
         job__entity=fy.entity,
         is_confirmed=False,
-    ).select_related('job').order_by('date')
+    ).select_related('job', 'matched_rule').order_by('date')
     confirmed_review = PendingTransaction.objects.filter(
         job__entity=fy.entity,
         is_confirmed=True,
     ).select_related('job').order_by('date')
+
+    # Entity GST context for enhanced review workflow
+    entity_is_gst_registered = getattr(fy.entity, 'is_gst_registered', True)
+    entity_gst_registration_date = getattr(fy.entity, 'gst_registration_date', None)
+    entity_gst_settings = EntityGSTSetting.objects.filter(
+        entity=fy.entity
+    ).filter(
+        Q(financial_year=fy) | Q(financial_year__isnull=True)
+    ).order_by('-created_at')
+    entity_classification_rules = ClassificationRule.objects.filter(
+        entity=fy.entity, is_active=True
+    ).order_by('-created_at')
 
     # Activity / Audit trail — all AuditLog entries for this financial year
     activity_logs = AuditLog.objects.filter(
@@ -866,6 +886,10 @@ def financial_year_detail(request, pk):
         "pending_review": pending_review,
         "confirmed_review": confirmed_review,
         "review_jobs": review_jobs,
+        "entity_is_gst_registered": entity_is_gst_registered,
+        "entity_gst_registration_date": entity_gst_registration_date,
+        "entity_gst_settings": entity_gst_settings,
+        "entity_classification_rules": entity_classification_rules,
         # Activity
         "activity_logs": activity_logs,
         # Chart of Accounts (entity-level)
