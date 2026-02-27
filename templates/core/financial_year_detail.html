@@ -4,6 +4,18 @@
 {% block title %}{{ fy.entity.entity_name }} - {{ fy.year_label }} - StatementHub{% endblock %}
 
 {% block content %}
+<style>
+.amber-indicator {
+    color: #D97706;
+    font-size: 0.85rem;
+    margin-left: 4px;
+    cursor: default;
+    vertical-align: middle;
+}
+.amber-indicator:hover {
+    color: #B45309;
+}
+</style>
 <nav aria-label="breadcrumb">
     <ol class="breadcrumb">
         <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
@@ -79,12 +91,7 @@
         <a href="{% url 'core:trial_balance_view' pk=fy.pk %}" class="btn btn-outline-dark btn-sm" target="_blank">
             <i class="bi bi-file-earmark-text"></i> Preview Trial Balance
         </a>
-        <span class="badge bg-danger fs-6" data-risk-banner title="Documents will include AUDIT RISK watermark until all risk flags are resolved" {% if open_risk_count == 0 %}style="display:none"{% endif %}>
-            <i class="bi bi-exclamation-triangle-fill"></i> AUDIT RISK
-        </span>
-        <span class="badge bg-info fs-6" data-risk-engine-status style="display:none">
-            <i class="bi bi-arrow-repeat"></i> Risk engine running...
-        </span>
+
     </div>
 </div>
 
@@ -196,25 +203,7 @@
     </div>
 </div>
 
-<!-- Audit Risk Warning Modal -->
-<div class="modal fade" id="auditRiskWarningModal" tabindex="-1">
-    <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header bg-danger text-white">
-                <h5 class="modal-title"><i class="bi bi-exclamation-triangle-fill"></i> Cannot Finalise</h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body">
-                <p>This financial year has <strong>{{ open_risk_count }} open audit risk flag{{ open_risk_count|pluralize }}</strong> that must be resolved before finalisation.</p>
-                <p>Each risk flag requires a minimum <strong>5-word resolution description</strong> explaining how the risk was addressed.</p>
-                <p>Go to the <strong>Audit Risk</strong> tab to review and resolve all outstanding flags.</p>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
-            </div>
-        </div>
-    </div>
-</div>
+
 
 <!-- Reopen Financial Year Modal -->
 {% if fy.status == 'finalised' and user.can_finalise %}
@@ -325,9 +314,6 @@
     <li class="nav-item">
         <button class="nav-link{% if active_tab != 'journals' %} active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-tb" type="button">
             <i class="bi bi-table"></i> Trial Balance ({{ tb_lines.count }})
-            {% if flagged_account_count > 0 %}
-            <span class="badge bg-danger" data-tb-risk-badge title="{{ flagged_account_count }} account{{ flagged_account_count|pluralize }} flagged">{{ flagged_account_count }} <i class="bi bi-flag-fill"></i></span>
-            {% endif %}
         </button>
     </li>
     <li class="nav-item">
@@ -335,16 +321,7 @@
             <i class="bi bi-journal-text"></i> Journals ({{ adjustments.count|add:bulk_journal_uploads.count }})
         </button>
     </li>
-    <li class="nav-item">
-        <button class="nav-link" id="audit-risk-tab" data-bs-toggle="tab" data-bs-target="#tab-audit" type="button">
-            <i class="bi bi-shield-exclamation"></i> Audit Risk
-            {% if flagged_account_count > 0 %}
-            <span class="badge bg-danger" data-risk-badge data-audit-risk-badge>{{ flagged_account_count }}</span>
-            {% else %}
-            <span class="badge bg-secondary" data-risk-badge data-audit-risk-badge>0</span>
-            {% endif %}
-        </button>
-    </li>
+
     <li class="nav-item">
         <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-depreciation" type="button">
             <i class="bi bi-graph-down-arrow"></i> Depreciation ({{ depreciation_assets.count }})
@@ -446,20 +423,12 @@
                         </td>
                     </tr>
                     {% for line in lines %}
-                    <tr class="{% if line.risk_flags_list %}table-danger{% elif not line.mapped_line_item %}table-warning{% endif %}{% if line.is_adjustment %} fst-italic{% endif %}" style="border-color: #e9ecef;">
-                        <td><code class="{% if line.risk_flags_list %}text-danger fw-bold{% else %}text-muted{% endif %}">{{ line.account_code }}</code></td>
+                    <tr class="{% if not line.mapped_line_item %}table-warning{% endif %}{% if line.is_adjustment %} fst-italic{% endif %}" style="border-color: #e9ecef;">
+                        <td><code class="text-muted">{{ line.account_code }}</code></td>
                         <td>
-                            {% if line.risk_flags_list %}<i class="bi bi-exclamation-octagon-fill text-danger me-1" title="{% for rf in line.risk_flags_list %}{{ rf.title }}{% if not forloop.last %}; {% endif %}{% endfor %}"></i>{% endif %}
                             {{ line.account_name }}
                             {% if line.amber_indicators %}<span class="amber-indicator" data-bs-toggle="tooltip" data-bs-html="true" title="{% for ai in line.amber_indicators %}{{ ai.message }}{% if not forloop.last %}&lt;br&gt;&lt;br&gt;{% endif %}{% endfor %}">&#9888;</span>{% endif %}
                             {% if not line.mapped_line_item %}<small class="text-danger ms-1"><i class="bi bi-exclamation-triangle"></i></small>{% endif %}
-                            {% if line.risk_flags_list %}
-                            <div class="mt-1">
-                                {% for rf in line.risk_flags_list %}
-                                <small class="text-danger d-block" style="font-size: 0.75rem;"><i class="bi bi-flag-fill"></i> {{ rf.title }}</small>
-                                {% endfor %}
-                            </div>
-                            {% endif %}
                         </td>
                         <td class="text-end">{% if line.display_dr and line.display_dr != 0 %}<a href="{% url 'core:account_code_breakdown' pk=fy.pk account_code=line.account_code %}" target="_blank" class="text-decoration-none" title="View {% if line.is_aggregated %}{{ line.sub_count }} entries{% else %}account details{% endif %} &amp; re-allocate">{{ line.display_dr|floatformat:2|intcomma }}</a>{% endif %}</td>
                         <td class="text-end">{% if line.display_cr and line.display_cr != 0 %}<a href="{% url 'core:account_code_breakdown' pk=fy.pk account_code=line.account_code %}" target="_blank" class="text-decoration-none" title="View {% if line.is_aggregated %}{{ line.sub_count }} entries{% else %}account details{% endif %} &amp; re-allocate">{{ line.display_cr|floatformat:2|intcomma }}</a>{% endif %}</td>
@@ -619,219 +588,6 @@
         </div>
         {% endif %}
     </div>
-
-    <!-- ===== AUDIT RISK TAB ===== -->
-    <div class="tab-pane fade p-3" id="tab-audit">
-        <div class="d-flex justify-content-between align-items-center mb-3">
-            <div>
-                <h6 class="mb-0">
-                    <i class="bi bi-shield-exclamation"></i> Audit Risk Flags
-                    {% if flagged_account_count > 0 or entity_level_flag_count > 0 %}
-                    <span class="badge bg-danger ms-1" data-flagged-accounts-badge>{{ flagged_account_count }} Account{{ flagged_account_count|pluralize }} Flagged</span>
-                    {% else %}
-                    <span class="badge bg-success ms-1" data-flagged-accounts-badge>No Issues</span>
-                    {% endif %}
-                </h6>
-                {% if open_risk_count > 0 %}
-                <small class="text-muted" data-risk-summary>
-                    <span class="open-count">{{ open_risk_count }}</span> open flag{{ open_risk_count|pluralize }} across {{ flagged_account_count }} account{{ flagged_account_count|pluralize }}
-                    {% if entity_level_flag_count > 0 %}
-                    + {{ entity_level_flag_count }} entity-level check{{ entity_level_flag_count|pluralize }}
-                    {% endif %}
-                </small>
-                {% endif %}
-            </div>
-            <div class="d-flex gap-2">
-                {% if not fy.is_locked %}
-                <form method="post" action="{% url 'core:run_risk_engine' pk=fy.pk %}">
-                    {% csrf_token %}
-                    <button type="submit" class="btn btn-primary btn-sm">
-                        <i class="bi bi-cpu"></i> Run Risk Engine
-                    </button>
-                </form>
-                {% endif %}
-                <a href="{% url 'core:risk_flags' pk=fy.pk %}" class="btn btn-outline-primary btn-sm">
-                    <i class="bi bi-shield-exclamation"></i> View All Flags
-                </a>
-            </div>
-        </div>
-
-        {% if sorted_grouped_flags or entity_level_flags %}
-        <div class="accordion" id="auditRiskAccordion">
-            {% for group in sorted_grouped_flags %}
-            <div class="accordion-item">
-                <h2 class="accordion-header">
-                    <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse" data-bs-target="#risk-acc-{{ group.code|slugify }}">
-                        <span class="d-flex align-items-center gap-2 w-100">
-                            <span class="badge bg-{% if group.max_severity == 'CRITICAL' %}danger{% elif group.max_severity == 'HIGH' %}danger{% elif group.max_severity == 'MEDIUM' %}warning text-dark{% else %}info{% endif %}" style="min-width: 70px;">{{ group.max_severity }}</span>
-                            <code class="me-1">{{ group.code }}</code>
-                            <strong>{{ group.name }}</strong>
-                            <span class="badge bg-danger ms-auto me-3">{{ group.open_count }} open</span>
-                        </span>
-                    </button>
-                </h2>
-                <div id="risk-acc-{{ group.code|slugify }}" class="accordion-collapse collapse" data-bs-parent="#auditRiskAccordion">
-                    <div class="accordion-body p-0">
-                        <table class="table table-sm mb-0" style="font-size: 0.85rem;">
-                            <thead class="table-light">
-                                <tr>
-                                    <th style="width: 80px;">Severity</th>
-                                    <th style="width: 80px;">Status</th>
-                                    <th>Issue</th>
-                                    <th>Description</th>
-                                    <th style="width: 100px;">Action</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for flag in group.flags %}
-                                <tr data-flag-id="{{ flag.pk }}" class="{% if flag.status == 'open' %}{% if flag.severity == 'CRITICAL' or flag.severity == 'HIGH' %}table-danger{% elif flag.severity == 'MEDIUM' %}table-warning{% endif %}{% endif %}">
-                                    <td>
-                                        <span class="badge bg-{% if flag.severity == 'CRITICAL' %}danger{% elif flag.severity == 'HIGH' %}danger{% elif flag.severity == 'MEDIUM' %}warning text-dark{% else %}info{% endif %}">
-                                            {{ flag.severity }}
-                                        </span>
-                                    </td>
-                                    <td class="flag-status-cell">
-                                        <span class="badge bg-{% if flag.status == 'open' %}danger{% elif flag.status == 'reviewed' %}info{% else %}success{% endif %}">
-                                            {{ flag.get_status_display }}
-                                        </span>
-                                    </td>
-                                    <td class="{% if flag.status == 'open' %}fw-bold text-danger{% endif %}">{{ flag.title }}</td>
-                                    <td class="{% if flag.status == 'open' %}text-danger{% endif %}" style="font-size: 0.82rem;">{{ flag.description|truncatewords:30 }}</td>
-                                    <td class="flag-action-cell">
-                                        {% if flag.status == 'open' %}
-                                        <button class="btn btn-sm btn-outline-success resolve-risk-btn" title="Resolve this risk"
-                                                data-flag-id="{{ flag.pk }}" data-flag-title="{{ flag.title }}">
-                                            <i class="bi bi-check-lg"></i>
-                                        </button>
-                                        {% elif flag.resolution_notes %}
-                                        <small class="text-muted" title="{{ flag.resolution_notes }}">{{ flag.resolved_at|date:"d/m/Y" }}</small>
-                                        {% else %}
-                                        <small class="text-muted">{{ flag.resolved_at|date:"d/m/Y"|default:"-" }}</small>
-                                        {% endif %}
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-            {% endfor %}
-
-            {% if entity_level_flags %}
-            <div class="accordion-item">
-                <h2 class="accordion-header">
-                    <button class="accordion-button collapsed py-2" type="button" data-bs-toggle="collapse" data-bs-target="#risk-entity-level">
-                        <span class="d-flex align-items-center gap-2 w-100">
-                            <span class="badge bg-secondary" style="min-width: 70px;">ENTITY</span>
-                            <i class="bi bi-building"></i>
-                            <strong>Entity-Level Checks</strong>
-                            <span class="badge bg-danger ms-auto me-3">{{ entity_level_flag_count }} open</span>
-                        </span>
-                    </button>
-                </h2>
-                <div id="risk-entity-level" class="accordion-collapse collapse" data-bs-parent="#auditRiskAccordion">
-                    <div class="accordion-body p-0">
-                        <table class="table table-sm mb-0" style="font-size: 0.85rem;">
-                            <thead class="table-light">
-                                <tr>
-                                    <th style="width: 80px;">Severity</th>
-                                    <th style="width: 80px;">Status</th>
-                                    <th>Issue</th>
-                                    <th>Description</th>
-                                    <th style="width: 100px;">Action</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for flag in entity_level_flags %}
-                                <tr data-flag-id="{{ flag.pk }}" class="{% if flag.status == 'open' %}{% if flag.severity == 'CRITICAL' or flag.severity == 'HIGH' %}table-danger{% elif flag.severity == 'MEDIUM' %}table-warning{% endif %}{% endif %}">
-                                    <td>
-                                        <span class="badge bg-{% if flag.severity == 'CRITICAL' %}danger{% elif flag.severity == 'HIGH' %}danger{% elif flag.severity == 'MEDIUM' %}warning text-dark{% else %}info{% endif %}">
-                                            {{ flag.severity }}
-                                        </span>
-                                    </td>
-                                    <td class="flag-status-cell">
-                                        <span class="badge bg-{% if flag.status == 'open' %}danger{% elif flag.status == 'reviewed' %}info{% else %}success{% endif %}">
-                                            {{ flag.get_status_display }}
-                                        </span>
-                                    </td>
-                                    <td class="{% if flag.status == 'open' %}fw-bold text-danger{% endif %}">{{ flag.title }}</td>
-                                    <td class="{% if flag.status == 'open' %}text-danger{% endif %}" style="font-size: 0.82rem;">{{ flag.description|truncatewords:30 }}</td>
-                                    <td class="flag-action-cell">
-                                        {% if flag.status == 'open' %}
-                                        <button class="btn btn-sm btn-outline-success resolve-risk-btn" title="Resolve this risk"
-                                                data-flag-id="{{ flag.pk }}" data-flag-title="{{ flag.title }}">
-                                            <i class="bi bi-check-lg"></i>
-                                        </button>
-                                        {% elif flag.resolution_notes %}
-                                        <small class="text-muted" title="{{ flag.resolution_notes }}">{{ flag.resolved_at|date:"d/m/Y" }}</small>
-                                        {% else %}
-                                        <small class="text-muted">{{ flag.resolved_at|date:"d/m/Y"|default:"-" }}</small>
-                                        {% endif %}
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-            {% endif %}
-        </div>
-        {% else %}
-        <div class="text-center py-5 text-muted">
-            <i class="bi bi-shield-check" style="font-size: 3rem; color: #198754;"></i>
-            <p class="mt-2 mb-1">No audit risk flags.</p>
-            <p class="small">Run an audit check to scan the trial balance for potential issues.</p>
-        </div>
-        {% endif %}
-
-        {% if open_risk_count > 0 %}
-        <div class="alert alert-danger mt-3" data-finalisation-blocked>
-            <i class="bi bi-exclamation-triangle-fill"></i>
-            <strong>Finalisation Blocked:</strong> {{ open_risk_count }} open audit risk flag{{ open_risk_count|pluralize }} must be resolved before this financial year can be finalised.
-            Each resolution requires a minimum 5-word description. All generated documents will carry an <strong>AUDIT RISK</strong> watermark until all flags are resolved.
-        </div>
-        {% endif %}
-    </div>
-
-    <!-- Resolve Risk Flag Modal -->
-    <div class="modal fade" id="resolveRiskModal" tabindex="-1">
-        <div class="modal-dialog">
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title"><i class="bi bi-shield-check"></i> Resolve Audit Risk</h5>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
-                </div>
-                <form method="post" id="resolveRiskForm">
-                    {% csrf_token %}
-                    <input type="hidden" name="new_status" value="resolved">
-                    <div class="modal-body">
-                        <div class="alert alert-danger" id="resolveRiskError" style="display:none;"></div>
-                        <p class="fw-bold" id="resolveRiskTitle"></p>
-                        <div class="mb-3">
-                            <label class="form-label fw-semibold">Resolution Notes <span class="text-danger">*</span></label>
-                            <textarea name="resolution_notes" class="form-control" rows="3" required
-                                      id="resolveRiskNotes"
-                                      placeholder="Describe how this risk was addressed (minimum 5 words)..."></textarea>
-                            <div class="form-text">
-                                <span id="resolveWordCount">0</span> / 5 words minimum
-                            </div>
-                        </div>
-                    </div>
-                    <div class="modal-footer">
-                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
-                        <button type="submit" class="btn btn-success" id="resolveRiskSubmit" disabled>
-                            <i class="bi bi-check-circle"></i> Resolve
-                        </button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <!-- Eva Review Panel (inside Audit Risk tab) -->
-    {% include 'core/includes/eva_panel.html' %}
 
     <!-- ===== DEPRECIATION TAB ===== -->
     <div class="tab-pane fade p-3" id="tab-depreciation">
@@ -1826,193 +1582,7 @@
     });
 })();
 
-// ===== Audit Risk: Resolve Modal (AJAX) =====
-(function() {
-    let currentFlagId = null;
 
-    document.addEventListener('click', function(e) {
-        const btn = e.target.closest('.resolve-risk-btn');
-        if (!btn) return;
-        currentFlagId = btn.dataset.flagId;
-        const flagTitle = btn.dataset.flagTitle;
-        document.getElementById('resolveRiskTitle').textContent = flagTitle;
-        document.getElementById('resolveRiskNotes').value = '';
-        document.getElementById('resolveWordCount').textContent = '0';
-        document.getElementById('resolveRiskSubmit').disabled = true;
-        document.getElementById('resolveRiskError').style.display = 'none';
-        const modal = new bootstrap.Modal(document.getElementById('resolveRiskModal'));
-        modal.show();
-    });
-
-    const notesField = document.getElementById('resolveRiskNotes');
-    const wordCount = document.getElementById('resolveWordCount');
-    const submitBtn = document.getElementById('resolveRiskSubmit');
-    if (notesField) {
-        notesField.addEventListener('input', function() {
-            const words = this.value.trim().split(/\s+/).filter(w => w.length > 0).length;
-            wordCount.textContent = words;
-            submitBtn.disabled = words < 5;
-            wordCount.style.color = words >= 5 ? '#198754' : '#dc3545';
-        });
-    }
-
-    // AJAX form submission — stay on the Audit Risk tab
-    const form = document.getElementById('resolveRiskForm');
-    if (form) {
-        form.addEventListener('submit', function(e) {
-            e.preventDefault();
-            if (!currentFlagId) return;
-
-            const url = '/risk-flags/' + currentFlagId + '/resolve/';
-            const formData = new FormData(form);
-            const errorDiv = document.getElementById('resolveRiskError');
-            errorDiv.style.display = 'none';
-            submitBtn.disabled = true;
-            submitBtn.innerHTML = '<i class="bi bi-hourglass-split"></i> Resolving...';
-
-            fetch(url, {
-                method: 'POST',
-                headers: { 'X-Requested-With': 'XMLHttpRequest' },
-                body: formData
-            })
-            .then(resp => resp.json().then(data => ({status: resp.status, data})))
-            .then(({status, data}) => {
-                if (data.ok) {
-                    // Close the modal
-                    bootstrap.Modal.getInstance(document.getElementById('resolveRiskModal')).hide();
-
-                    // Remove the resolved flag's row with animation
-                    const flagRow = document.querySelector(`tr[data-flag-id="${currentFlagId}"]`);
-                    let accordion = null;
-                    if (flagRow) {
-                        accordion = flagRow.closest('.accordion-collapse');
-                        flagRow.style.transition = 'opacity 0.4s, transform 0.4s';
-                        flagRow.style.opacity = '0';
-                        flagRow.style.transform = 'translateX(30px)';
-                        setTimeout(() => {
-                            flagRow.remove();
-                            // If no more open rows in this accordion section, remove the whole section
-                            if (accordion) {
-                                const remainingRows = accordion.querySelectorAll('tr[data-flag-id]');
-                                if (remainingRows.length === 0) {
-                                    const accordionItem = accordion.closest('.accordion-item');
-                                    if (accordionItem) {
-                                        accordionItem.style.transition = 'opacity 0.3s';
-                                        accordionItem.style.opacity = '0';
-                                        setTimeout(() => accordionItem.remove(), 300);
-                                    }
-                                }
-                            }
-                        }, 400);
-                    }
-
-                    // Update the accordion header badge (decrement open count)
-                    if (accordion) {
-                        const accId = accordion.id;
-                        const header = document.querySelector(`[data-bs-target="#${accId}"] .badge`);
-                        if (header) {
-                            const current = parseInt(header.textContent) || 0;
-                            const newCount = Math.max(0, current - 1);
-                            header.textContent = newCount + ' open';
-                            if (newCount === 0) {
-                                header.classList.remove('bg-danger', 'bg-warning');
-                                header.classList.add('bg-success');
-                                header.textContent = 'All resolved';
-                            }
-                        }
-                    }
-
-                    // Update tab badges
-                    if (typeof data.flagged_account_count !== 'undefined') {
-                        // TB tab badge
-                        const tbBadge = document.querySelector('[data-tb-risk-badge]');
-                        if (tbBadge) {
-                            if (data.flagged_account_count > 0) {
-                                tbBadge.textContent = data.flagged_account_count;
-                                tbBadge.style.display = '';
-                            } else {
-                                tbBadge.style.display = 'none';
-                            }
-                        }
-                        // Audit Risk tab badge
-                        const auditBadge = document.querySelector('[data-audit-risk-badge]');
-                        if (auditBadge) {
-                            if (data.flagged_account_count > 0) {
-                                auditBadge.textContent = data.flagged_account_count;
-                            } else {
-                                auditBadge.textContent = '0';
-                                auditBadge.classList.remove('bg-danger');
-                                auditBadge.classList.add('bg-success');
-                            }
-                        }
-                    }
-
-                    // Update the summary line
-                    const summaryEl = document.querySelector('[data-risk-summary]');
-                    if (summaryEl && typeof data.open_count !== 'undefined') {
-                        if (data.open_count === 0) {
-                            summaryEl.innerHTML = '<i class="bi bi-check-circle-fill text-success"></i> All audit risk flags have been resolved.';
-                        } else {
-                            summaryEl.querySelector('.open-count').textContent = data.open_count;
-                        }
-                    }
-
-                    // Update the "X Accounts Flagged" badge in the Audit Risk tab header
-                    const flaggedBadge = document.querySelector('[data-flagged-accounts-badge]');
-                    if (flaggedBadge) {
-                        if (data.flagged_account_count > 0) {
-                            flaggedBadge.textContent = data.flagged_account_count + ' Account' + (data.flagged_account_count === 1 ? '' : 's') + ' Flagged';
-                            flaggedBadge.className = 'badge bg-danger ms-1';
-                        } else {
-                            flaggedBadge.textContent = 'No Issues';
-                            flaggedBadge.className = 'badge bg-success ms-1';
-                        }
-                    }
-
-                    // Hide the Finalisation Blocked alert when all flags resolved
-                    if (data.open_count === 0) {
-                        const blockedAlert = document.querySelector('[data-finalisation-blocked]');
-                        if (blockedAlert) {
-                            blockedAlert.style.transition = 'opacity 0.4s';
-                            blockedAlert.style.opacity = '0';
-                            setTimeout(() => blockedAlert.remove(), 400);
-                        }
-                    }
-
-                    // Update AUDIT RISK banner
-                    if (data.open_count === 0) {
-                        const banner = document.querySelector('[data-risk-banner]');
-                        if (banner) banner.style.display = 'none';
-                    }
-
-                    // Show a brief success toast
-                    showResolveToast('Flag resolved successfully', 'success');
-                } else {
-                    errorDiv.textContent = data.error || 'An error occurred.';
-                    errorDiv.style.display = 'block';
-                    submitBtn.disabled = false;
-                    submitBtn.innerHTML = '<i class="bi bi-check-circle"></i> Resolve';
-                }
-            })
-            .catch(err => {
-                errorDiv.textContent = 'Network error. Please try again.';
-                errorDiv.style.display = 'block';
-                submitBtn.disabled = false;
-                submitBtn.innerHTML = '<i class="bi bi-check-circle"></i> Resolve';
-            });
-        });
-    }
-
-    function showResolveToast(message, type) {
-        const toast = document.createElement('div');
-        toast.className = `alert alert-${type === 'success' ? 'success' : 'danger'} position-fixed shadow`;
-        toast.style.cssText = 'top:20px;right:20px;z-index:9999;min-width:300px;opacity:0;transition:opacity 0.3s';
-        toast.innerHTML = `<i class="bi bi-${type === 'success' ? 'check-circle-fill' : 'exclamation-circle-fill'}"></i> ${message}`;
-        document.body.appendChild(toast);
-        requestAnimationFrame(() => toast.style.opacity = '1');
-        setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300); }, 2500);
-    }
-})();
 
 // ===== Review Tab: Searchable COA Dropdown =====
 (function() {
@@ -2210,9 +1780,6 @@
 // ===== Finalise & Download Workflow =====
 let selectedFormat = 'docx';
 
-function showAuditRiskWarning() {
-    new bootstrap.Modal(document.getElementById('auditRiskWarningModal')).show();
-}
 
 function confirmFinalise() {
     const msg = 'Are you sure you want to finalise this financial year?\n\n' +
@@ -2354,88 +1921,7 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 </script>
 
-<script>
-// ===== Risk Engine Badge Polling =====
-(function() {
-    const POLL_INTERVAL = 10000; // 10 seconds
-    const badgeUrl = '{% url "core:risk_badge_api" pk=fy.pk %}';
-    let polling = true;
 
-    function updateBadges(data) {
-        // Use flagged_account_count for both tab badges (TB and Audit Risk)
-        const acctCount = data.flagged_account_count || 0;
-
-        // Update all badge elements that show risk count (both tabs use account count)
-        document.querySelectorAll('[data-risk-badge]').forEach(function(el) {
-            el.textContent = acctCount;
-            if (acctCount > 0) {
-                el.className = 'badge bg-danger';
-            } else {
-                el.className = 'badge bg-secondary';
-                el.textContent = '0';
-            }
-        });
-
-        // Update the TB tab risk badge
-        const tbBadge = document.querySelector('[data-tb-risk-badge]');
-        if (tbBadge) {
-            if (acctCount > 0) {
-                tbBadge.innerHTML = acctCount + ' <i class="bi bi-flag-fill"></i>';
-                tbBadge.className = 'badge bg-danger';
-                tbBadge.style.display = '';
-            } else {
-                tbBadge.style.display = 'none';
-            }
-        }
-
-        // Update the Audit Risk tab badge specifically
-        const tabBadge = document.querySelector('#audit-risk-tab .badge');
-        if (tabBadge) {
-            tabBadge.textContent = acctCount > 0 ? acctCount : '0';
-            tabBadge.className = acctCount > 0 ? 'badge bg-danger' : 'badge bg-secondary';
-        }
-
-        // Update the header AUDIT RISK banner
-        const riskBanner = document.querySelector('[data-risk-banner]');
-        if (riskBanner) {
-            riskBanner.style.display = data.open_count > 0 ? '' : 'none';
-        }
-
-        // Show engine pending indicator
-        const pendingIndicator = document.querySelector('[data-risk-engine-status]');
-        if (pendingIndicator) {
-            if (data.engine_pending) {
-                pendingIndicator.innerHTML = '<i class="bi bi-arrow-repeat spin"></i> Risk engine running...';
-                pendingIndicator.style.display = '';
-            } else {
-                pendingIndicator.style.display = 'none';
-            }
-        }
-    }
-
-    function pollBadge() {
-        if (!polling) return;
-        fetch(badgeUrl)
-            .then(function(r) { return r.json(); })
-            .then(function(data) {
-                updateBadges(data);
-                setTimeout(pollBadge, POLL_INTERVAL);
-            })
-            .catch(function() {
-                setTimeout(pollBadge, POLL_INTERVAL * 3);
-            });
-    }
-
-    // Start polling after initial page load
-    setTimeout(pollBadge, POLL_INTERVAL);
-
-    // Stop polling when page is hidden, resume when visible
-    document.addEventListener('visibilitychange', function() {
-        polling = !document.hidden;
-        if (polling) pollBadge();
-    });
-})();
-</script>
 
 <!-- Quick-Add Account Modal for Bank Statement Review -->
 <div class="modal fade" id="reviewQuickAddModal" tabindex="-1" aria-labelledby="reviewQuickAddLabel" aria-hidden="true">
