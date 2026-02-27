@@ -13,49 +13,6 @@
             <p class="text-muted mb-0" id="liveDateTime" style="font-size: 1.05rem;"></p>
         </div>
 
-        <!-- Audit Risk Alerts -->
-        <div class="card border-0 shadow-sm mb-4">
-            <div class="card-header bg-white border-bottom d-flex justify-content-between align-items-center">
-                <h6 class="mb-0">
-                    <i class="bi bi-shield-exclamation text-danger me-1"></i>
-                    Audit Risk Alerts
-                    {% if open_risk_count > 0 %}
-                    <span class="badge bg-danger ms-1">{{ open_risk_count }}</span>
-                    {% endif %}
-                </h6>
-            </div>
-            <div class="card-body">
-                {% if risk_summary %}
-                    {% for key, info in risk_summary.items %}
-                    <div class="mb-3">
-                        <div class="d-flex justify-content-between align-items-center mb-1">
-                            <a href="{% url 'core:risk_flags' pk=info.fy_pk %}" class="fw-semibold text-decoration-none">
-                                {{ info.entity_name }}
-                            </a>
-                            <span class="badge bg-danger">{{ info.flags|length }} issue{{ info.flags|length|pluralize }}</span>
-                        </div>
-                        <div class="ps-3">
-                            {% for flag in info.flags %}
-                            <div class="d-flex align-items-start mb-1">
-                                <i class="bi bi-exclamation-triangle-fill me-2 {% if flag.severity == 'high' %}text-danger{% elif flag.severity == 'medium' %}text-warning{% else %}text-info{% endif %}" style="font-size: 0.8rem; margin-top: 3px;"></i>
-                                <small class="{% if flag.severity == 'high' %}text-danger{% elif flag.severity == 'medium' %}text-dark{% else %}text-muted{% endif %}">
-                                    {{ flag.title }}
-                                </small>
-                            </div>
-                            {% endfor %}
-                        </div>
-                    </div>
-                    {% if not forloop.last %}<hr class="my-2">{% endif %}
-                    {% endfor %}
-                {% else %}
-                    <div class="text-center py-3">
-                        <i class="bi bi-shield-check text-success" style="font-size: 2rem;"></i>
-                        <p class="text-muted mb-0 mt-2">No open audit risks across your clients.</p>
-                    </div>
-                {% endif %}
-            </div>
-        </div>
-
         <!-- Unfinalised Clients -->
         <div class="card border-0 shadow-sm mb-4">
             <div class="card-header bg-white border-bottom">

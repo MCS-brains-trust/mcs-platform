@@ -47,35 +47,7 @@
         color: #6c757d;
         margin-top: 4px;
     }
-    .risk-card {
-        background: white;
-        border-radius: 12px;
-        padding: 16px 20px;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.08);
-        transition: all 0.2s;
-        text-decoration: none;
-        color: inherit;
-        display: block;
-        margin-bottom: 10px;
-    }
-    .risk-card:hover {
-        box-shadow: 0 4px 12px rgba(0,0,0,0.12);
-        transform: translateY(-1px);
-        color: inherit;
-    }
-    .risk-card.has-critical { border-left: 4px solid #dc3545; }
-    .risk-card.has-high { border-left: 4px solid #fd7e14; }
-    .risk-card.has-medium { border-left: 4px solid #ffc107; }
-    .risk-card.has-low { border-left: 4px solid #0dcaf0; }
-    .risk-card .entity-name {
-        font-weight: 600;
-        font-size: 1rem;
-        color: #1a1a2e;
-    }
-    .risk-card .meta {
-        font-size: 0.82rem;
-        color: #6c757d;
-    }
+
     .no-data-box {
         text-align: center;
         padding: 30px;
@@ -191,10 +163,10 @@
         </a>
     </div>
     <div class="col-md-3">
-        <a href="#risk-alerts" class="metric-card-link">
-            <div class="metric-card border-start border-4 border-danger">
-                <div class="metric-value text-danger">{{ my_open_flags_count }}</div>
-                <div class="metric-label">My Open Risk Flags</div>
+        <a href="#unfinalised-files" class="metric-card-link">
+            <div class="metric-card border-start border-4 border-success">
+                <div class="metric-value text-success">{{ my_finalised_count|default:"0" }}</div>
+                <div class="metric-label">Finalised This Year</div>
             </div>
         </a>
     </div>
@@ -225,12 +197,12 @@
                 <div class="pm-label">Unfinalised</div>
             </div>
             <div class="col practice-metric">
-                <div class="pm-value text-danger">{{ practice_metrics.total_open_flags }}</div>
-                <div class="pm-label">Open Flags</div>
+                <div class="pm-value text-success">{{ practice_metrics.total_finalised|default:"0" }}</div>
+                <div class="pm-label">Finalised</div>
             </div>
             <div class="col practice-metric">
-                <div class="pm-value" style="color: #dc3545;">{{ practice_metrics.total_critical_flags }}</div>
-                <div class="pm-label">Critical Flags</div>
+                <div class="pm-value" style="color: #6f42c1;">{{ practice_metrics.total_eva_reviews|default:"0" }}</div>
+                <div class="pm-label">Eva Reviews</div>
             </div>
             <div class="col practice-metric">
                 <div class="pm-value text-info">{{ practice_metrics.total_pending_reviews }}</div>
@@ -253,7 +225,7 @@
                     <th>Staff Member</th>
                     <th class="text-center">Primary</th>
                     <th class="text-center">Reviewer</th>
-                    <th class="text-center">Open Flags</th>
+
                 </tr>
             </thead>
             <tbody>
@@ -262,13 +234,7 @@
                     <td class="fw-bold">{{ w.name }}</td>
                     <td class="text-center"><span class="badge bg-primary rounded-pill">{{ w.primary }}</span></td>
                     <td class="text-center"><span class="badge bg-info rounded-pill">{{ w.review }}</span></td>
-                    <td class="text-center">
-                        {% if w.open_flags > 0 %}
-                        <span class="badge bg-danger rounded-pill">{{ w.open_flags }}</span>
-                        {% else %}
-                        <span class="badge bg-success rounded-pill">0</span>
-                        {% endif %}
-                    </td>
+
                 </tr>
                 {% endfor %}
             </tbody>
@@ -282,55 +248,7 @@
     <!-- Main Column -->
     <div class="col-lg-8">
 
-        <!-- MY RISK ALERTS -->
-        <div id="risk-alerts" class="d-flex justify-content-between align-items-center mb-3">
-            <div class="section-header mb-0">
-                <i class="bi bi-shield-exclamation text-danger"></i> My Risk Alerts
-            </div>
-            {% if risk_alerts %}
-            <span class="badge bg-danger rounded-pill px-3">
-                {{ risk_alerts|length }} entit{{ risk_alerts|length|pluralize:"y,ies" }} with risks
-            </span>
-            {% endif %}
-        </div>
 
-        {% for alert in risk_alerts %}
-        <a href="{% url 'core:risk_flags' pk=alert.financial_year.pk %}" class="risk-card {% if alert.critical_count %}has-critical{% elif alert.high_count %}has-high{% elif alert.medium_count %}has-medium{% else %}has-low{% endif %}">
-            <div class="d-flex justify-content-between align-items-start">
-                <div>
-                    <div class="entity-name">{{ alert.entity_name }}</div>
-                    <div class="meta mt-1">
-                        <i class="bi bi-calendar3"></i> {{ alert.year_label }}
-                    </div>
-                </div>
-                <div class="text-end">
-                    <div class="d-flex gap-2 justify-content-end flex-wrap">
-                        {% if alert.critical_count %}
-                        <span class="badge bg-danger rounded-pill px-2 py-1">{{ alert.critical_count }} CRITICAL</span>
-                        {% endif %}
-                        {% if alert.high_count and alert.high_count != alert.critical_count %}
-                        <span class="badge rounded-pill px-2 py-1" style="background: #fd7e14;">{{ alert.high_count|add:"-"|add:alert.critical_count }} HIGH</span>
-                        {% endif %}
-                        {% if alert.medium_count %}
-                        <span class="badge bg-warning text-dark rounded-pill px-2 py-1">{{ alert.medium_count }} MEDIUM</span>
-                        {% endif %}
-                        {% if alert.low_count %}
-                        <span class="badge bg-info text-dark rounded-pill px-2 py-1">{{ alert.low_count }} LOW</span>
-                        {% endif %}
-                    </div>
-                    <div class="mt-1">
-                        <small class="text-muted">{{ alert.total_flags }} total flags</small>
-                    </div>
-                </div>
-            </div>
-        </a>
-        {% empty %}
-        <div class="no-data-box mb-4">
-            <i class="bi bi-shield-check text-success" style="font-size: 2.5rem;"></i>
-            <h6 class="mt-2 text-muted">No open risk flags</h6>
-            <p class="text-muted small mb-0">All your entities are clear.</p>
-        </div>
-        {% endfor %}
 
         <!-- MY UNFINALISED FILES -->
         <div id="unfinalised-files" class="section-header mt-4">

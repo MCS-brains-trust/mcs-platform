@@ -274,45 +274,11 @@ def review_dashboard(request):
         .order_by("-end_date")[:15]
     )
 
-    # --- MY OPEN RISK FLAGS ---
-    my_open_flags = (
-        RiskFlag.objects.filter(
-            financial_year__entity__in=my_entities,
-            status__in=["open", "reviewed"],
-        )
-        .select_related("financial_year", "financial_year__entity")
-        .order_by("-severity", "-created_at")[:20]
-    )
-
-    # Group risk flags by entity for display
-    risk_alerts = []
-    flagged_years = (
-        FinancialYear.objects.filter(
-            entity__in=my_entities,
-            risk_flags__status="open",
-        )
-        .select_related("entity")
-        .distinct()
-    )
-    for fy in flagged_years:
-        open_flags = fy.risk_flags.filter(status="open")
-        critical_count = open_flags.filter(severity="CRITICAL").count()
-        high_count = open_flags.filter(severity__in=["HIGH", "CRITICAL"]).count()
-        medium_count = open_flags.filter(severity="MEDIUM").count()
-        low_count = open_flags.filter(severity="LOW").count()
-        total_flags = open_flags.count()
-        if total_flags > 0:
-            risk_alerts.append({
-                "entity_name": fy.entity.entity_name,
-                "year_label": fy.year_label,
-                "financial_year": fy,
-                "critical_count": critical_count,
-                "high_count": high_count,
-                "medium_count": medium_count,
-                "low_count": low_count,
-                "total_flags": total_flags,
-            })
-    risk_alerts.sort(key=lambda x: (x["critical_count"], x["high_count"], x["total_flags"]), reverse=True)
+    # --- FINALISED COUNT ---
+    my_finalised_count = FinancialYear.objects.filter(
+        entity__in=my_entities,
+        status="finalised",
+    ).count()
 
     # --- PENDING BANK STATEMENT REVIEWS ---
     pending_jobs = ReviewJob.objects.filter(
@@ -337,9 +303,10 @@ def review_dashboard(request):
         total_unfinalised = FinancialYear.objects.filter(
             status__in=["draft", "in_review", "reviewed"]
         ).count()
-        total_open_flags = RiskFlag.objects.filter(status="open").count()
-        total_critical_flags = RiskFlag.objects.filter(
-            status="open", severity="CRITICAL"
+        total_finalised = FinancialYear.objects.filter(status="finalised").count()
+        from core.models import EvaReview
+        total_eva_reviews = EvaReview.objects.filter(
+            status__in=["cleared", "findings_raised"]
         ).count()
         total_pending_reviews = ReviewJob.objects.filter(
             status__in=["awaiting_review", "in_progress"]
@@ -357,24 +324,19 @@ def review_dashboard(request):
             r_count = Entity.objects.filter(
                 is_archived=False, reviewer=staff
             ).count()
-            open_flags_count = RiskFlag.objects.filter(
-                financial_year__entity__primary_accountant=staff,
-                status="open"
-            ).count()
             if p_count > 0 or r_count > 0:
                 staff_workload.append({
                     "name": staff.get_full_name() or staff.username,
                     "primary": p_count,
                     "review": r_count,
-                    "open_flags": open_flags_count,
                 })
         staff_workload.sort(key=lambda x: x["primary"], reverse=True)
 
         practice_metrics = {
             "total_entities": total_entities,
             "total_unfinalised": total_unfinalised,
-            "total_open_flags": total_open_flags,
-            "total_critical_flags": total_critical_flags,
+            "total_finalised": total_finalised,
+            "total_eva_reviews": total_eva_reviews,
             "total_pending_reviews": total_pending_reviews,
             "unassigned_entities": unassigned_entities,
             "staff_workload": staff_workload,
@@ -451,9 +413,7 @@ def review_dashboard(request):
         "my_primary_count": my_primary_count,
         "my_review_count": my_review_count,
         "my_unfinalised_years": my_unfinalised_years,
-        "my_open_flags_count": my_open_flags.count(),
-        # Risk alerts
-        "risk_alerts": risk_alerts,
+        "my_finalised_count": my_finalised_count,
         # Bank statement reviews
         "pending_jobs": pending_jobs,
         "completed_jobs": completed_jobs,
