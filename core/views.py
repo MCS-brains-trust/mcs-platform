@@ -6489,6 +6489,174 @@ def _reverse_tb_for_transaction(txn, fy):
 
 
 # ---------------------------------------------------------------------------
+# Bulk Edit Transactions (Assign Account)
+# ---------------------------------------------------------------------------
+@login_required
+@require_POST
+def review_bulk_edit_transactions(request, pk):
+    """Bulk assign an account code to selected transactions (AJAX).
+    Optionally approves them and pushes to TB in one step.
+    """
+    import json
+    fy = get_financial_year_for_user(request, pk)
+    if not request.user.can_do_accounting:
+        return JsonResponse({"error": "Permission denied"}, status=403)
+
+    try:
+        body = json.loads(request.body)
+    except (json.JSONDecodeError, ValueError):
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+    txn_ids = body.get('transaction_ids', [])
+    account_code = body.get('account_code', '').strip()
+    account_name = body.get('account_name', '').strip()
+    tax_code = body.get('tax_code', '').strip()
+    approve = body.get('approve', False)
+
+    if not txn_ids:
+        return JsonResponse({"error": "No transactions selected"}, status=400)
+    if not account_code:
+        return JsonResponse({"error": "No account code specified"}, status=400)
+
+    from review.models import PendingTransaction
+    txns = PendingTransaction.objects.filter(pk__in=txn_ids, job__entity=fy.entity, is_confirmed=False)
+
+    # Map tax_code to tax_type for TB posting
+    TAX_CODE_MAP = {
+        'GST': {'expense': 'GST on Expenses', 'income': 'GST on Income'},
+        'INP': {'expense': 'GST on Expenses', 'income': 'GST on Income'},
+        'FRE': {'expense': 'GST Free Expenses', 'income': 'GST Free Income'},
+        'ITS': {'expense': 'Input Taxed', 'income': 'Input Taxed'},
+        'N-T': {'expense': 'N-T', 'income': 'N-T'},
+        'CAP': {'expense': 'GST on Expenses', 'income': 'GST on Income'},
+        'GNR': {'expense': 'GST on Expenses', 'income': 'GST on Income'},
+        'ADS': {'expense': 'GST on Expenses', 'income': 'GST on Income'},
+    }
+
+    count = 0
+    tb_count = 0
+    for txn in txns:
+        direction = 'expense' if txn.amount < 0 else 'income'
+        tax_type = ''
+        if tax_code and tax_code in TAX_CODE_MAP:
+            tax_type = TAX_CODE_MAP[tax_code][direction]
+        elif txn.ai_suggested_tax_type:
+            tax_type = txn.ai_suggested_tax_type
+
+        # Determine GST
+        has_gst = tax_code in ('GST', 'INP', 'CAP', 'GNR', 'ADS')
+        abs_amount = abs(txn.amount)
+        if has_gst:
+            gst_amount = (abs_amount / Decimal('11')).quantize(Decimal('0.01'))
+            net_amount = abs_amount - gst_amount
+        else:
+            gst_amount = Decimal('0.00')
+            net_amount = abs_amount
+
+        # Update the AI suggestion fields so the row displays correctly
+        txn.ai_suggested_code = account_code
+        txn.ai_suggested_name = account_name
+        txn.ai_suggested_tax_type = tax_type
+        txn.gst_amount = gst_amount
+        txn.net_amount = net_amount
+
+        if approve:
+            txn.confirmed_code = account_code
+            txn.confirmed_name = account_name
+            txn.confirmed_tax_type = tax_type
+            txn.confirmed_gst_amount = gst_amount
+            txn.is_confirmed = True
+            txn.save()
+
+            # Push to TB
+            if account_code and txn.amount != 0:
+                net_for_tb = net_amount if has_gst else abs_amount
+                tb_line, created = _get_or_create_tb_line(
+                    financial_year=fy,
+                    account_code=account_code,
+                    defaults={
+                        "account_name": account_name,
+                        "debit": net_for_tb if txn.amount > 0 else Decimal("0"),
+                        "credit": net_for_tb if txn.amount < 0 else Decimal("0"),
+                        "closing_balance": net_for_tb if txn.amount > 0 else -net_for_tb,
+                        "tax_type": tax_type,
+                        "source": "bank_statement",
+                    },
+                )
+                if not created:
+                    if txn.amount > 0:
+                        tb_line.debit += net_for_tb
+                        tb_line.closing_balance += net_for_tb
+                    else:
+                        tb_line.credit += net_for_tb
+                        tb_line.closing_balance -= net_for_tb
+                    if not tb_line.tax_type:
+                        tb_line.tax_type = tax_type
+                    if not tb_line.source:
+                        tb_line.source = 'bank_statement'
+                    tb_line.save()
+                tb_count += 1
+
+                # GST clearing account
+                if has_gst and gst_amount > 0:
+                    if txn.amount > 0:
+                        gst_line, gst_created = _get_or_create_tb_line(
+                            financial_year=fy,
+                            account_code='9100',
+                            defaults={
+                                "account_name": 'GST Collected',
+                                "debit": Decimal("0"),
+                                "credit": gst_amount,
+                                "closing_balance": -gst_amount,
+                                "tax_type": 'GST on Income',
+                                "source": "bank_statement",
+                            },
+                        )
+                        if not gst_created:
+                            gst_line.credit += gst_amount
+                            gst_line.closing_balance -= gst_amount
+                            gst_line.save()
+                    else:
+                        gst_line, gst_created = _get_or_create_tb_line(
+                            financial_year=fy,
+                            account_code='9110',
+                            defaults={
+                                "account_name": 'GST Paid',
+                                "debit": gst_amount,
+                                "credit": Decimal("0"),
+                                "closing_balance": gst_amount,
+                                "tax_type": 'GST on Expenses',
+                                "source": "bank_statement",
+                            },
+                        )
+                        if not gst_created:
+                            gst_line.debit += gst_amount
+                            gst_line.closing_balance += gst_amount
+                            gst_line.save()
+        else:
+            txn.save()
+
+        count += 1
+
+    remaining_pending = PendingTransaction.objects.filter(
+        job__entity=fy.entity, is_confirmed=False
+    ).count()
+    remaining_confirmed = PendingTransaction.objects.filter(
+        job__entity=fy.entity, is_confirmed=True
+    ).count()
+
+    action = 'assigned and approved' if approve else 'assigned'
+    return JsonResponse({
+        "status": "ok",
+        "message": f"Account {account_code} {action} to {count} transactions." + (f" {tb_count} pushed to TB." if approve else ""),
+        "count": count,
+        "tb_count": tb_count,
+        "remaining_pending": remaining_pending,
+        "remaining_confirmed": remaining_confirmed,
+    })
+
+
+# ---------------------------------------------------------------------------
 # Activity Log / Notifications
 # ---------------------------------------------------------------------------
 @login_required

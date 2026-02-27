@@ -158,6 +158,9 @@ urlpatterns = [
     path("years/<uuid:pk>/review/classify-status/", views.review_classify_status, name="review_classify_status"),
     path("years/<uuid:pk>/review/bulk-approve-group/", views.review_bulk_approve_group, name="review_bulk_approve_group"),
 
+    # Bulk Edit Transactions
+    path("years/<uuid:pk>/review/bulk-edit/", views.review_bulk_edit_transactions, name="review_bulk_edit_transactions"),
+
     # Delete Transactions
     path("years/<uuid:pk>/review/delete-transaction/<uuid:txn_pk>/", views.review_delete_transaction, name="review_delete_transaction"),
     path("years/<uuid:pk>/review/delete-all/", views.review_delete_all_transactions, name="review_delete_all_transactions"),

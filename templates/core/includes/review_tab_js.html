@@ -9,6 +9,7 @@ const BULK_APPROVE_URL = '{% url "core:review_bulk_approve_group" pk=fy.pk %}';
 const COA_SEARCH_URL = '{% url "core:entity_coa_search_api" pk=fy.pk %}';
 const DELETE_ALL_URL = '{% url "core:review_delete_all_transactions" pk=fy.pk %}';
 const DELETE_SELECTED_URL = '{% url "core:review_delete_selected_transactions" pk=fy.pk %}';
+const BULK_EDIT_URL = '{% url "core:review_bulk_edit_transactions" pk=fy.pk %}';
 const CSRF_TOKEN = '{{ csrf_token }}';
 const ENTITY_ID = '{{ fy.entity.pk }}';
 const FY_ID = '{{ fy.pk }}';
@@ -1307,6 +1308,151 @@ function deleteSelectedTransactions() {
         }
     })
     .catch(err => alert('Network error while deleting transactions.'));
+}
+
+// ===== Bulk Edit (Assign Account to Selected) =====
+let bulkEditSearchTimer = null;
+
+document.addEventListener('input', function(e) {
+    if (e.target.id !== 'bulkEditCoaSearch') return;
+    const query = e.target.value.trim();
+    const resultsDiv = document.getElementById('bulkEditCoaResults');
+    if (bulkEditSearchTimer) clearTimeout(bulkEditSearchTimer);
+    if (query.length < 1) {
+        if (resultsDiv) resultsDiv.innerHTML = '<div class="text-center text-muted py-2"><small>Type to search...</small></div>';
+        return;
+    }
+    bulkEditSearchTimer = setTimeout(function() {
+        fetch(COA_SEARCH_URL + '?q=' + encodeURIComponent(query))
+        .then(r => r.json())
+        .then(data => {
+            let html = '';
+            if (data.items.length === 0) {
+                html = '<div class="text-center text-muted py-2"><small>No matching accounts.</small></div>';
+            } else {
+                html = data.items.slice(0, 10).map(item =>
+                    '<a href="#" class="dropdown-item small py-1 bulk-edit-coa-option" ' +
+                    'data-code="' + item.code + '" ' +
+                    'data-name="' + item.name + '" ' +
+                    'data-tax="' + (item.tax_code || '') + '">' +
+                    '<strong>' + item.code + '</strong> \u2014 ' + item.name +
+                    (item.mapping_label !== 'Unmapped' ? ' <span class="badge bg-light text-dark" style="font-size:0.65rem;">' + item.mapping_label + '</span>' : '') +
+                    '</a>'
+                ).join('');
+            }
+            if (resultsDiv) resultsDiv.innerHTML = html;
+        });
+    }, 200);
+});
+
+// Handle bulk edit COA option selection
+document.addEventListener('click', function(e) {
+    const opt = e.target.closest('.bulk-edit-coa-option');
+    if (!opt) return;
+    e.preventDefault();
+    const code = opt.dataset.code;
+    const name = opt.dataset.name;
+    const tax = opt.dataset.tax || '';
+
+    document.getElementById('bulkEditAccountCode').value = code;
+    document.getElementById('bulkEditAccountName').value = name;
+    document.getElementById('bulkEditAccountTax').value = tax;
+    document.getElementById('bulkEditAccountLabel').textContent = code + ' \u2014 ' + name;
+    document.getElementById('bulkEditSelectedAccount').classList.remove('d-none');
+    document.getElementById('bulkEditAssignBtn').disabled = false;
+    document.getElementById('bulkEditApproveBtn').disabled = false;
+
+    // Clear search
+    document.getElementById('bulkEditCoaSearch').value = '';
+    document.getElementById('bulkEditCoaResults').innerHTML = '<div class="text-center text-muted py-2"><small>Account selected. Click Assign or Assign & Approve below.</small></div>';
+});
+
+function _getBulkEditSelection() {
+    const code = document.getElementById('bulkEditAccountCode').value;
+    const name = document.getElementById('bulkEditAccountName').value;
+    const tax = document.getElementById('bulkEditAccountTax').value;
+    const checked = document.querySelectorAll('#pendingTableBody .row-select:checked');
+    const txnIds = Array.from(checked).map(cb => cb.value);
+    return { code, name, tax, txnIds };
+}
+
+function bulkEditAssign() {
+    const { code, name, tax, txnIds } = _getBulkEditSelection();
+    if (!code || txnIds.length === 0) { alert('Select an account and at least one transaction.'); return; }
+
+    fetch(BULK_EDIT_URL, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': CSRF_TOKEN, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transaction_ids: txnIds, account_code: code, account_name: name, tax_code: tax, approve: false })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            // Update each row in the pending table
+            txnIds.forEach(id => {
+                const row = document.getElementById('pending-row-' + id);
+                if (row) {
+                    row.dataset.code = code;
+                    const codeEl = row.querySelector('.review-ai-code');
+                    if (codeEl) codeEl.textContent = code;
+                    const btn = row.querySelector('.review-coa-btn');
+                    if (btn) btn.textContent = name;
+                    // Update hidden form fields
+                    const form = row.querySelector('.review-approve-form');
+                    if (form) {
+                        const ci = form.querySelector('.review-code-input'); if (ci) ci.value = code;
+                        const ni = form.querySelector('.review-name-input'); if (ni) ni.value = name;
+                        const ti = form.querySelector('.review-tax-input'); if (ti) ti.value = tax;
+                    }
+                }
+            });
+            // Close dropdown
+            const dd = bootstrap.Dropdown.getInstance(document.getElementById('bulkEditBtn'));
+            if (dd) dd.hide();
+            _resetBulkEditPanel();
+            showReviewNotification(data.message || 'Account assigned to ' + txnIds.length + ' transactions.');
+        } else {
+            alert('Error: ' + (data.message || 'Could not assign account'));
+        }
+    })
+    .catch(err => alert('Network error during bulk edit.'));
+}
+
+function bulkEditAssignAndApprove() {
+    const { code, name, tax, txnIds } = _getBulkEditSelection();
+    if (!code || txnIds.length === 0) { alert('Select an account and at least one transaction.'); return; }
+    if (!confirm('Assign account ' + code + ' and approve ' + txnIds.length + ' transactions? This will push them to the Trial Balance.')) return;
+
+    fetch(BULK_EDIT_URL, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': CSRF_TOKEN, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transaction_ids: txnIds, account_code: code, account_name: name, tax_code: tax, approve: true })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            // Close dropdown
+            const dd = bootstrap.Dropdown.getInstance(document.getElementById('bulkEditBtn'));
+            if (dd) dd.hide();
+            _resetBulkEditPanel();
+            showReviewNotification(data.message || 'Assigned and approved ' + txnIds.length + ' transactions.');
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            alert('Error: ' + (data.message || 'Could not assign and approve'));
+        }
+    })
+    .catch(err => alert('Network error during bulk edit.'));
+}
+
+function _resetBulkEditPanel() {
+    document.getElementById('bulkEditCoaSearch').value = '';
+    document.getElementById('bulkEditCoaResults').innerHTML = '<div class="text-center text-muted py-2"><small>Type to search...</small></div>';
+    document.getElementById('bulkEditSelectedAccount').classList.add('d-none');
+    document.getElementById('bulkEditAssignBtn').disabled = true;
+    document.getElementById('bulkEditApproveBtn').disabled = true;
+    document.getElementById('bulkEditAccountCode').value = '';
+    document.getElementById('bulkEditAccountName').value = '';
+    document.getElementById('bulkEditAccountTax').value = '';
 }
 
 // ===== AI Classification =====

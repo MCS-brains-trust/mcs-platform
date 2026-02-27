@@ -122,6 +122,33 @@
                     <i class="bi bi-check-all"></i> Approve Selected
                 </button>
                 <div class="vr mx-1"></div>
+                <div class="dropdown d-inline">
+                    <button class="btn btn-sm btn-outline-warning dropdown-toggle" type="button" id="bulkEditBtn" data-bs-toggle="dropdown" data-bs-auto-close="outside">
+                        <i class="bi bi-pencil-square"></i> Bulk Edit
+                    </button>
+                    <div class="dropdown-menu p-3" style="width:420px;">
+                        <h6 class="dropdown-header px-0">Assign Account to Selected Transactions</h6>
+                        <input type="text" class="form-control form-control-sm mb-2" id="bulkEditCoaSearch" placeholder="Search by code, name, or BAS label..." autocomplete="off">
+                        <div id="bulkEditCoaResults" class="overflow-auto mb-2" style="max-height:250px;">
+                            <div class="text-center text-muted py-2"><small>Type to search...</small></div>
+                        </div>
+                        <div id="bulkEditSelectedAccount" class="d-none alert alert-info py-1 px-2 mb-2" style="font-size:0.82rem;">
+                            <strong>Selected:</strong> <span id="bulkEditAccountLabel"></span>
+                            <input type="hidden" id="bulkEditAccountCode">
+                            <input type="hidden" id="bulkEditAccountName">
+                            <input type="hidden" id="bulkEditAccountTax">
+                        </div>
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-sm btn-primary flex-fill" onclick="bulkEditAssign()" id="bulkEditAssignBtn" disabled>
+                                <i class="bi bi-pencil me-1"></i> Assign Only
+                            </button>
+                            <button class="btn btn-sm btn-success flex-fill" onclick="bulkEditAssignAndApprove()" id="bulkEditApproveBtn" disabled>
+                                <i class="bi bi-check-lg me-1"></i> Assign &amp; Approve
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div class="vr mx-1"></div>
                 <button class="btn btn-sm btn-outline-danger" onclick="deleteSelectedTransactions()">
                     <i class="bi bi-trash3"></i> Delete Selected
                 </button>
