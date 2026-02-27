@@ -55,7 +55,7 @@ def eva_chat_api(request, pk):
 
 def _eva_chat_history(request, fy):
     """Retrieve the full conversation history for this financial year."""
-    from core.models_eva import EvaConversation
+    from core.models import EvaConversation
 
     conversation = EvaConversation.objects.filter(
         financial_year=fy, user=request.user
@@ -213,7 +213,7 @@ def eva_review_status(request, pk):
     GET /api/financial-years/<pk>/eva-review/
     Retrieve the current Eva review status and findings.
     """
-    from core.models_eva import EvaReview
+    from core.models import EvaReview
 
     fy = get_object_or_404(FinancialYear, pk=pk)
     review = EvaReview.objects.filter(financial_year=fy).order_by("-triggered_at").first()
@@ -269,7 +269,7 @@ def eva_resolve_finding(request, pk):
     Mark an Eva finding as addressed.
     Body (JSON): {"resolution_note": "..."}
     """
-    from core.models_eva import EvaFinding
+    from core.models import EvaFinding
 
     finding = get_object_or_404(EvaFinding, pk=pk)
 
@@ -402,7 +402,7 @@ def knowledge_brain_admin(request):
     if not request.user.is_staff:
         return redirect("core:entity_list")
 
-    from core.models_eva import KnowledgeDocument
+    from core.models import KnowledgeDocument
 
     documents = KnowledgeDocument.objects.all().order_by("-updated_at")
 

@@ -250,7 +250,7 @@ def search_knowledge_brain(query, category_filter=None, top_k=TOP_K_CHUNKS):
     Returns:
         List of dicts: [{chunk_id, text, document_title, category, similarity}]
     """
-    from core.models_eva import KnowledgeChunk, KnowledgeDocument
+    from core.models import KnowledgeChunk, KnowledgeDocument
 
     query_embedding = get_embedding(query)
 
@@ -294,7 +294,7 @@ def build_financial_year_context(financial_year):
     from core.models import (
         TrialBalanceLine, AdjustingJournal, EntityOfficer,
     )
-    from core.models_eva import EvaReview, EvaFinding
+    from core.models import EvaReview, EvaFinding
 
     fy = financial_year
     entity = fy.entity
@@ -433,7 +433,7 @@ def process_eva_chat(financial_year, user, message_text, opus_override=False):
     Returns:
         EvaMessage instance (the assistant response)
     """
-    from core.models_eva import EvaConversation, EvaMessage
+    from core.models import EvaConversation, EvaMessage
     from core.models import AuditLog
     from core.ai_service import _call_llm
 
@@ -576,7 +576,7 @@ def run_eva_review(financial_year, user, opus_override=False):
     Returns:
         EvaReview instance with findings
     """
-    from core.models_eva import EvaReview, EvaFinding
+    from core.models import EvaReview, EvaFinding
     from core.models import AuditLog, FinancialYear
     from core.ai_service import _call_llm
 
@@ -793,7 +793,7 @@ def resolve_eva_finding(finding, user, resolution_note):
     Returns:
         (finding, should_rerun: bool)
     """
-    from core.models_eva import EvaFinding
+    from core.models import EvaFinding
     from core.models import AuditLog
 
     finding.status = EvaFinding.Status.ADDRESSED
@@ -978,7 +978,7 @@ def sync_knowledge_brain():
     - SHAREPOINT_DRIVE_ID
     """
     import requests as http_requests
-    from core.models_eva import KnowledgeDocument, KnowledgeChunk
+    from core.models import KnowledgeDocument, KnowledgeChunk
     from core.models import AuditLog
     import tempfile
 
