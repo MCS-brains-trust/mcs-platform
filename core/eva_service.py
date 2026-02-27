@@ -131,7 +131,7 @@ def chunk_text(text, chunk_size=CHUNK_SIZE_TOKENS, overlap=CHUNK_OVERLAP_TOKENS)
 def parse_document(file_path, file_type):
     """
     Extract text from a document file.
-    Supports: .docx, .pdf, .txt, .xlsx, .pptx
+    Supports: .docx, .pdf, .txt, .xlsx, .pptx, .msg
     Returns the extracted text as a string.
     """
     file_type = file_type.lower().lstrip(".")
@@ -146,6 +146,8 @@ def parse_document(file_path, file_type):
         return _parse_xlsx(file_path)
     elif file_type == "pptx":
         return _parse_pptx(file_path)
+    elif file_type == "msg":
+        return _parse_msg(file_path)
     else:
         logger.warning(f"Unsupported file type: {file_type}")
         return ""
@@ -231,6 +233,57 @@ def _parse_pptx(file_path):
         return "\n".join(text_parts)
     except Exception as e:
         logger.error(f"Failed to parse PPTX {file_path}: {e}")
+        return ""
+
+
+def _parse_msg(file_path):
+    """Extract text from an Outlook .msg email file.
+
+    Extracts the subject, sender, date, and body text.
+    Also extracts text from any supported attachments
+    (PDF, DOCX, TXT, XLSX, PPTX) embedded in the email.
+    """
+    try:
+        import extract_msg
+        msg = extract_msg.Message(file_path)
+        msg_message = msg.body or ""
+
+        parts = []
+        if msg.subject:
+            parts.append(f"Subject: {msg.subject}")
+        if msg.sender:
+            parts.append(f"From: {msg.sender}")
+        if msg.date:
+            parts.append(f"Date: {msg.date}")
+        parts.append("")
+        parts.append(msg_message)
+
+        # Extract text from supported attachments
+        for attachment in msg.attachments:
+            att_name = getattr(attachment, "longFilename", None) or getattr(attachment, "filename", None) or ""
+            att_ext = att_name.rsplit(".", 1)[-1].lower() if "." in att_name else ""
+            if att_ext in ("pdf", "docx", "txt", "xlsx", "pptx"):
+                try:
+                    import tempfile as _tempfile
+                    with _tempfile.NamedTemporaryFile(suffix=f".{att_ext}", delete=False) as att_tmp:
+                        att_tmp.write(attachment.data)
+                        att_tmp_path = att_tmp.name
+                    att_text = parse_document(att_tmp_path, att_ext)
+                    if att_text.strip():
+                        parts.append(f"\n--- Attachment: {att_name} ---")
+                        parts.append(att_text)
+                    import os
+                    os.unlink(att_tmp_path)
+                except Exception as e:
+                    logger.warning(f"Failed to parse .msg attachment {att_name}: {e}")
+
+        msg.close()
+        return "\n".join(parts)
+    except ImportError:
+        logger.error("extract-msg package not installed. Run: pip install extract-msg")
+        return ""
+    except Exception as e:
+        logger.error(f"Failed to parse MSG {file_path}: {e}")
         return ""
 
 
@@ -1101,7 +1154,7 @@ def sync_knowledge_brain():
             modified_at = item.get("lastModifiedDateTime", "")
             file_ext = item_name.rsplit(".", 1)[-1].lower() if "." in item_name else ""
 
-            if file_ext not in ("docx", "pdf", "txt", "xlsx", "pptx"):
+            if file_ext not in ("docx", "pdf", "txt", "xlsx", "pptx", "msg"):
                 continue
 
             # Check if document already exists and is up to date
