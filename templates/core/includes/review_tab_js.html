@@ -1,14 +1,109 @@
 <script>
 // ===== Enhanced Bank Statement Review — JavaScript =====
+// Full spec: sorting, search, split, GST controls, creditable %,
+// GST override, apportionment detection, entity GST settings, rule memory.
+
 const CLASSIFY_URL = '{% url "core:review_classify_ai" pk=fy.pk %}';
 const CLASSIFY_STATUS_URL = '{% url "core:review_classify_status" pk=fy.pk %}';
 const BULK_APPROVE_URL = '{% url "core:review_bulk_approve_group" pk=fy.pk %}';
 const COA_SEARCH_URL = '{% url "core:entity_coa_search_api" pk=fy.pk %}';
 const CSRF_TOKEN = '{{ csrf_token }}';
+const ENTITY_ID = '{{ fy.entity.pk }}';
+const FY_ID = '{{ fy.pk }}';
+const IS_GST_REGISTERED = {{ entity_is_gst_registered|yesno:"true,false" }};
+
 let isGroupView = false;
 let undoTimer = null;
 let undoBulkData = null;
 let pendingRuleData = null;
+let pendingEntityGstSettingData = null;
+let currentSortCol = null;
+let currentSortDir = 'asc';
+
+// ===== Column Sorting (Spec Section 6.2) =====
+function sortPendingTable(column) {
+    const tbody = document.getElementById('pendingTableBody');
+    if (!tbody) return;
+
+    // Toggle direction
+    if (currentSortCol === column) {
+        currentSortDir = currentSortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+        currentSortCol = column;
+        currentSortDir = 'asc';
+    }
+
+    // Update sort icons
+    ['date', 'description', 'amount'].forEach(col => {
+        const icon = document.getElementById('sort-icon-' + col);
+        if (icon) {
+            if (col === column) {
+                icon.className = currentSortDir === 'asc'
+                    ? 'bi bi-sort-down-alt text-primary'
+                    : 'bi bi-sort-up text-primary';
+                icon.style.fontSize = '0.75rem';
+            } else {
+                icon.className = 'bi bi-arrow-down-up text-muted';
+                icon.style.fontSize = '0.7rem';
+            }
+        }
+    });
+
+    // Collect rows (review-row only, skip split/apportionment rows)
+    const rows = Array.from(tbody.querySelectorAll('tr.review-row'));
+    const associatedRows = {};
+
+    // Map each review-row to its associated rows (apportionment + split editor)
+    rows.forEach(row => {
+        const txnId = row.id.replace('pending-row-', '');
+        associatedRows[txnId] = [];
+        const apportRow = document.getElementById('apportionment-row-' + txnId);
+        const splitRow = document.getElementById('split-editor-' + txnId);
+        if (apportRow) associatedRows[txnId].push(apportRow);
+        if (splitRow) associatedRows[txnId].push(splitRow);
+    });
+
+    rows.sort((a, b) => {
+        let valA, valB;
+        if (column === 'date') {
+            // Parse dd/mm/yyyy to comparable value
+            valA = parseDateForSort(a.dataset.date);
+            valB = parseDateForSort(b.dataset.date);
+        } else if (column === 'description') {
+            valA = (a.dataset.description || '').toLowerCase();
+            valB = (b.dataset.description || '').toLowerCase();
+        } else if (column === 'amount') {
+            valA = parseFloat(a.dataset.amount || 0);
+            valB = parseFloat(b.dataset.amount || 0);
+        }
+        let cmp = 0;
+        if (valA < valB) cmp = -1;
+        else if (valA > valB) cmp = 1;
+        return currentSortDir === 'asc' ? cmp : -cmp;
+    });
+
+    // Re-append in sorted order with associated rows
+    rows.forEach(row => {
+        const txnId = row.id.replace('pending-row-', '');
+        tbody.appendChild(row);
+        (associatedRows[txnId] || []).forEach(assocRow => tbody.appendChild(assocRow));
+    });
+}
+
+function parseDateForSort(dateStr) {
+    if (!dateStr) return 0;
+    // Handle dd/mm/yyyy
+    const parts = dateStr.split('/');
+    if (parts.length === 3) {
+        return new Date(parts[2], parts[1] - 1, parts[0]).getTime();
+    }
+    // Handle yyyy-mm-dd
+    const parts2 = dateStr.split('-');
+    if (parts2.length === 3 && parts2[0].length === 4) {
+        return new Date(parts2[0], parts2[1] - 1, parts2[2]).getTime();
+    }
+    return new Date(dateStr).getTime() || 0;
+}
 
 // ===== View Toggle (Pending / Confirmed) =====
 function showReviewView(view) {
@@ -59,7 +154,7 @@ function applyEnhancedSearch() {
 
         let show = true;
 
-        // Text search (description)
+        // Text search (description, code, date)
         if (query && !amountOp) {
             if (!desc.includes(query) && !code.toLowerCase().includes(query) && !date.includes(query)) {
                 show = false;
@@ -80,9 +175,12 @@ function applyEnhancedSearch() {
         if (codeFilter && code !== codeFilter) show = false;
 
         row.style.display = show ? '' : 'none';
-        // Also hide/show the split editor row
-        const splitRow = document.getElementById('split-editor-' + row.id.replace('pending-row-', ''));
+        // Also hide/show associated rows
+        const txnId = row.id.replace('pending-row-', '');
+        const splitRow = document.getElementById('split-editor-' + txnId);
+        const apportRow = document.getElementById('apportionment-row-' + txnId);
         if (splitRow && !show) splitRow.classList.add('d-none');
+        if (apportRow && !show) apportRow.classList.add('d-none');
 
         if (show) visibleCount++;
     });
@@ -118,7 +216,6 @@ function clearSearch() {
             opt.textContent = code;
             select.appendChild(opt);
         });
-        select.addEventListener('change', applyEnhancedSearch);
     }
 })();
 
@@ -146,25 +243,67 @@ function toggleSelectAllFiltered(master) {
     updateBulkSelection();
 }
 
-// ===== GST Treatment Controls =====
+// ===== GST Treatment Controls (AC-GST-01/05) =====
 function updateGstTreatment(select) {
     const txnId = select.dataset.txnId;
     const treatment = select.value;
     const amount = Math.abs(parseFloat(select.dataset.amount || 0));
     const gstCell = document.getElementById('gst-amt-' + txnId);
     const netCell = document.getElementById('net-amt-' + txnId);
+    const credPctCell = document.getElementById('cred-pct-cell-' + txnId);
     const row = document.getElementById('pending-row-' + txnId);
 
     let gstAmt = 0, netAmt = amount;
     if (treatment === 'gst') {
-        gstAmt = amount / 11;
-        netAmt = amount - gstAmt;
+        const credPct = parseFloat(row?.dataset.creditablePct || 100);
+        const fullGst = amount / 11;
+        gstAmt = fullGst * credPct / 100;
+        netAmt = amount - (amount / 11);
     }
-    if (gstCell) gstCell.textContent = '$' + gstAmt.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-    if (netCell) netCell.textContent = '$' + netAmt.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-    if (row) row.dataset.gstTreatment = treatment;
 
-    // Update the hidden form field
+    // Update GST display
+    const gstDisplay = document.getElementById('gst-amt-display-' + txnId);
+    if (gstDisplay) gstDisplay.textContent = '$' + gstAmt.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    if (netCell) netCell.textContent = '$' + netAmt.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    if (row) {
+        row.dataset.gstTreatment = treatment;
+        row.dataset.isGstManual = 'true';
+    }
+
+    // Show/hide creditable % field based on treatment (AC-APT-01)
+    if (credPctCell) {
+        if (treatment === 'gst') {
+            const credPctVal = row?.dataset.creditablePct || '100';
+            credPctCell.innerHTML = `
+                <div class="d-flex align-items-center justify-content-end gap-1">
+                    <input type="number" class="form-control form-control-sm creditable-pct-input text-end py-0"
+                           style="width:58px; font-size:0.78rem;${credPctVal !== '100' ? ' border-color:#f59e0b; font-weight:600;' : ''}"
+                           value="${credPctVal}" min="0" max="100" step="0.01"
+                           data-txn-id="${txnId}" onchange="updateCreditablePct(this)">
+                    <span style="font-size:0.7rem;">%</span>
+                </div>`;
+        } else {
+            credPctCell.innerHTML = '<span class="text-muted" style="font-size:0.75rem;">&mdash;</span>';
+        }
+    }
+
+    // Add manual indicator (AC-GST-05)
+    const gstTd = select.closest('td');
+    let indicator = gstTd?.querySelector('.gst-manual-indicator');
+    if (!indicator && gstTd) {
+        const wrapper = gstTd.querySelector('.d-flex');
+        if (wrapper) {
+            const dot = document.createElement('span');
+            dot.className = 'gst-manual-indicator';
+            dot.title = 'Manually set';
+            dot.style.cssText = 'color:#f59e0b; font-size:0.6rem;';
+            dot.innerHTML = '&#9679;';
+            wrapper.insertBefore(dot, wrapper.firstChild);
+        }
+    }
+    select.style.borderColor = '#f59e0b';
+
+    // Update hidden form fields
     const form = row?.querySelector('.review-approve-form');
     if (form) {
         const gstFlag = form.querySelector('.review-gst-flag');
@@ -177,31 +316,178 @@ function updateGstTreatment(select) {
     fetch('/review/api/review/transaction/' + txnId + '/gst-treatment/', {
         method: 'POST',
         headers: { 'X-CSRFToken': CSRF_TOKEN, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ gst_treatment: treatment })
+        body: JSON.stringify({ gst_treatment: treatment, is_manual: true })
     }).catch(err => console.warn('GST update failed:', err));
 }
 
-// ===== Bulk GST =====
+// ===== Creditable Percentage (AC-APT-01/02/08) =====
+function updateCreditablePct(input) {
+    const txnId = input.dataset.txnId;
+    let pct = parseFloat(input.value);
+    if (isNaN(pct) || pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
+    input.value = pct;
+
+    const row = document.getElementById('pending-row-' + txnId);
+    if (row) row.dataset.creditablePct = pct;
+
+    const amount = Math.abs(parseFloat(row?.dataset.amount || 0));
+    const fullGst = amount / 11;
+    const gstAmt = fullGst * pct / 100;
+    const netAmt = amount - fullGst;
+
+    // Update display
+    const gstDisplay = document.getElementById('gst-amt-display-' + txnId);
+    const netCell = document.getElementById('net-amt-' + txnId);
+    if (gstDisplay) gstDisplay.textContent = '$' + gstAmt.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    if (netCell) netCell.textContent = '$' + netAmt.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+
+    // Style the input
+    if (pct !== 100) {
+        input.style.borderColor = '#f59e0b';
+        input.style.fontWeight = '600';
+    } else {
+        input.style.borderColor = '';
+        input.style.fontWeight = '';
+    }
+
+    // Update hidden form fields
+    const form = row?.querySelector('.review-approve-form');
+    if (form) {
+        const gstAmtInput = form.querySelector('.review-gst-amount');
+        const credPctInput = form.querySelector('.review-cred-pct');
+        if (gstAmtInput) gstAmtInput.value = gstAmt.toFixed(2);
+        if (credPctInput) credPctInput.value = pct;
+    }
+
+    // Persist to server
+    fetch('/review/api/review/transaction/' + txnId + '/creditable-pct/', {
+        method: 'POST',
+        headers: { 'X-CSRFToken': CSRF_TOKEN, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ creditable_percentage: pct })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok' && pct !== 100) {
+            // Prompt to save as entity setting (AC-APT-08) for vehicle/entertainment
+            const apportType = row?.dataset.apportionmentType;
+            if (apportType === 'vehicle' || apportType === 'entertainment' || apportType === 'phone_business_use') {
+                promptSaveEntityGstSetting(txnId, apportType, pct);
+            }
+        }
+    })
+    .catch(err => console.warn('Creditable % update failed:', err));
+}
+
+// ===== GST Amount Override (AC-APT-10/11/12/13) =====
+function toggleGstOverride(event, txnId) {
+    event.preventDefault();
+    const editor = document.getElementById('gst-override-editor-' + txnId);
+    if (editor) editor.classList.toggle('d-none');
+}
+
+function previewGstOverride(input) {
+    const txnId = input.dataset.txnId;
+    const overrideAmt = parseFloat(input.value || 0);
+    const row = document.getElementById('pending-row-' + txnId);
+    const amount = Math.abs(parseFloat(row?.dataset.amount || 0));
+    const standardGst = amount / 11;
+    const impliedPct = standardGst > 0 ? (overrideAmt / standardGst * 100).toFixed(2) : 0;
+
+    const impliedEl = document.getElementById('gst-override-implied-' + txnId);
+    if (impliedEl) impliedEl.textContent = 'Implied: ' + impliedPct + '%';
+}
+
+function saveGstOverride(txnId) {
+    const editor = document.getElementById('gst-override-editor-' + txnId);
+    if (!editor) return;
+
+    const amtInput = editor.querySelector('.gst-override-input');
+    const reasonInput = editor.querySelector('.gst-override-reason');
+    const overrideAmt = parseFloat(amtInput?.value || 0);
+    const reason = (reasonInput?.value || '').trim();
+
+    if (!reason) {
+        alert('A reason is mandatory for GST amount overrides.');
+        reasonInput?.focus();
+        return;
+    }
+
+    fetch('/review/api/review/transaction/' + txnId + '/gst-override/', {
+        method: 'POST',
+        headers: { 'X-CSRFToken': CSRF_TOKEN, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gst_amount: overrideAmt, reason: reason })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            // Update display
+            const gstDisplay = document.getElementById('gst-amt-display-' + txnId);
+            if (gstDisplay) {
+                gstDisplay.innerHTML = '$' + parseFloat(data.gst_amount).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',') +
+                    ' <i class="bi bi-pencil-fill text-warning" style="font-size:0.6rem;" title="Overridden"></i>';
+            }
+            const netCell = document.getElementById('net-amt-' + txnId);
+            if (netCell) netCell.textContent = '$' + parseFloat(data.net_amount).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+
+            // Update creditable % display
+            const row = document.getElementById('pending-row-' + txnId);
+            if (row) {
+                row.dataset.creditablePct = data.implied_creditable_percentage;
+                row.dataset.hasGstOverride = 'true';
+            }
+            const credInput = document.querySelector('.creditable-pct-input[data-txn-id="' + txnId + '"]');
+            if (credInput) credInput.value = data.implied_creditable_percentage;
+
+            // Update form hidden fields
+            const form = row?.querySelector('.review-approve-form');
+            if (form) {
+                const gstAmtInput = form.querySelector('.review-gst-amount');
+                if (gstAmtInput) gstAmtInput.value = data.gst_amount;
+            }
+
+            editor.classList.add('d-none');
+            showReviewNotification('GST override saved for transaction.');
+        } else {
+            alert('Error: ' + (data.message || 'Unknown error'));
+        }
+    })
+    .catch(err => alert('Network error: ' + err));
+}
+
+function cancelGstOverride(txnId) {
+    const editor = document.getElementById('gst-override-editor-' + txnId);
+    if (editor) editor.classList.add('d-none');
+}
+
+// ===== Bulk GST (AC-GST-02/03/04) =====
 function applyBulkGst() {
     const treatment = document.getElementById('bulkGstSelect')?.value;
     if (!treatment) return;
     const checked = document.querySelectorAll('#pendingTableBody .row-select:checked');
     if (checked.length === 0) return;
 
+    // Store undo data before changing
+    const undoItems = [];
     const txnIds = [];
     checked.forEach(cb => {
         const row = cb.closest('tr');
         const select = row?.querySelector('.gst-treatment-select');
         if (select) {
+            undoItems.push({
+                id: cb.value,
+                gst_treatment: select.value,
+                creditable_pct: row?.dataset.creditablePct || '100',
+                is_gst_manual: row?.dataset.isGstManual || 'false'
+            });
             txnIds.push(cb.value);
             select.value = treatment;
             updateGstTreatment(select);
         }
     });
 
-    // Store for undo
-    undoBulkData = { txn_ids: txnIds, treatment: treatment };
-    showUndoToast('GST changed to ' + treatment.replace('_', ' ') + ' for ' + txnIds.length + ' transactions.');
+    undoBulkData = { items: undoItems, treatment: treatment };
+    showUndoToast('GST changed to ' + treatment.replace(/_/g, ' ') + ' for ' + txnIds.length + ' transactions.');
 }
 
 function showUndoToast(message) {
@@ -227,12 +513,11 @@ function showUndoToast(message) {
 
 function undoBulkGst() {
     if (!undoBulkData) return;
-    // Reset all affected rows to GST 10% (default)
-    undoBulkData.txn_ids.forEach(txnId => {
-        const row = document.getElementById('pending-row-' + txnId);
+    undoBulkData.items.forEach(item => {
+        const row = document.getElementById('pending-row-' + item.id);
         const select = row?.querySelector('.gst-treatment-select');
         if (select) {
-            select.value = 'gst';
+            select.value = item.gst_treatment;
             updateGstTreatment(select);
         }
     });
@@ -246,6 +531,20 @@ function undoBulkGst() {
 function bulkApproveSelected() {
     const checked = document.querySelectorAll('#pendingTableBody .row-select:checked');
     if (checked.length === 0) return;
+
+    // Check for unconfirmed apportionment
+    let hasUnconfirmedApport = false;
+    checked.forEach(cb => {
+        const row = document.getElementById('pending-row-' + cb.value);
+        if (row?.dataset.apportionmentType && row?.dataset.creditablePct === '100' &&
+            (row?.dataset.apportionmentType === 'vehicle' || row?.dataset.apportionmentType === 'entertainment')) {
+            hasUnconfirmedApport = true;
+        }
+    });
+    if (hasUnconfirmedApport) {
+        if (!confirm('Some transactions have unconfirmed business use percentages. Approve anyway?')) return;
+    }
+
     if (!confirm('Approve ' + checked.length + ' selected transactions and push to Trial Balance?')) return;
 
     checked.forEach(cb => {
@@ -258,6 +557,134 @@ function bulkApproveSelected() {
     });
 }
 
+// ===== Apportionment Detection (AC-APT-03/04/05/06) =====
+function detectApportionmentForRow(txnId) {
+    fetch('/review/api/review/transaction/' + txnId + '/detect-apportionment/', {
+        method: 'POST',
+        headers: { 'X-CSRFToken': CSRF_TOKEN, 'Content-Type': 'application/json' },
+        body: '{}'
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status !== 'ok') return;
+        if (!data.apportionment_type) return;
+
+        const row = document.getElementById('pending-row-' + txnId);
+        if (row) {
+            row.dataset.apportionmentType = data.apportionment_type;
+            row.dataset.apportionmentReason = data.reason;
+        }
+
+        // Show apportionment reason row
+        const apportRow = document.getElementById('apportionment-row-' + txnId);
+        const reasonEl = document.getElementById('apportionment-reason-' + txnId);
+        const actionEl = document.getElementById('apportionment-action-' + txnId);
+        if (apportRow && reasonEl) {
+            apportRow.classList.remove('d-none');
+            reasonEl.textContent = data.reason;
+
+            // Set creditable percentage if AI suggests it
+            if (data.creditable_percentage && data.creditable_percentage !== '100') {
+                const credInput = document.querySelector('.creditable-pct-input[data-txn-id="' + txnId + '"]');
+                if (credInput) {
+                    credInput.value = data.creditable_percentage;
+                    credInput.style.borderColor = '#f59e0b';
+                    credInput.style.fontWeight = '600';
+                    if (row) row.dataset.creditablePct = data.creditable_percentage;
+                }
+            }
+
+            // Show confirmation prompt for vehicle/entertainment (AC-APT-04)
+            if (data.requires_confirmation && actionEl) {
+                actionEl.innerHTML = '<button class="btn btn-sm btn-outline-primary py-0 px-2" style="font-size:0.75rem;" ' +
+                    'onclick="promptBusinessUsePct(\'' + txnId + '\', \'' + data.apportionment_type + '\')">Confirm business use %</button>';
+            }
+        }
+    })
+    .catch(err => console.warn('Apportionment detection failed for ' + txnId + ':', err));
+}
+
+function promptBusinessUsePct(txnId, apportType) {
+    const pct = prompt('Enter business use percentage (0-100):');
+    if (pct === null) return;
+    const pctNum = parseFloat(pct);
+    if (isNaN(pctNum) || pctNum < 0 || pctNum > 100) {
+        alert('Please enter a valid percentage between 0 and 100.');
+        return;
+    }
+    const credInput = document.querySelector('.creditable-pct-input[data-txn-id="' + txnId + '"]');
+    if (credInput) {
+        credInput.value = pctNum;
+        updateCreditablePct(credInput);
+    }
+    // Update the apportionment action to show confirmed
+    const actionEl = document.getElementById('apportionment-action-' + txnId);
+    if (actionEl) actionEl.innerHTML = '<span class="badge bg-success" style="font-size:0.7rem;">Confirmed: ' + pctNum + '%</span>';
+}
+
+// Run apportionment detection on page load for all pending rows
+if (IS_GST_REGISTERED) {
+    document.querySelectorAll('#pendingTableBody .review-row').forEach(row => {
+        const txnId = row.id.replace('pending-row-', '');
+        if (txnId) detectApportionmentForRow(txnId);
+    });
+}
+
+// ===== Entity GST Setting Prompt (AC-APT-08) =====
+function promptSaveEntityGstSetting(txnId, settingType, pctValue) {
+    const typeLabels = {
+        'vehicle': 'Vehicle Business Use',
+        'entertainment': 'Entertainment FBT Method',
+        'phone_business_use': 'Phone/Internet Business Use',
+        'home_office_use': 'Home Office Business Use'
+    };
+    const settingTypeMap = {
+        'vehicle': 'vehicle_business_use',
+        'entertainment': 'entertainment_method',
+        'phone_business_use': 'phone_business_use',
+        'home_office_use': 'home_office_use'
+    };
+    pendingEntityGstSettingData = {
+        txn_id: txnId,
+        setting_type: settingTypeMap[settingType] || 'custom',
+        value: pctValue,
+        label: typeLabels[settingType] || settingType
+    };
+    const prompt = document.getElementById('entityGstSettingPrompt');
+    const text = document.getElementById('entityGstSettingText');
+    if (text) text.innerHTML = 'Save <strong>' + (typeLabels[settingType] || settingType) + ' = ' + pctValue + '%</strong> as a default for this entity? This will be applied to all matching future transactions.';
+    if (prompt) prompt.classList.remove('d-none');
+}
+
+function confirmSaveEntityGstSetting() {
+    if (!pendingEntityGstSettingData) return;
+    fetch('/review/api/review/entity-gst-setting/', {
+        method: 'POST',
+        headers: { 'X-CSRFToken': CSRF_TOKEN, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            entity_id: ENTITY_ID,
+            setting_type: pendingEntityGstSettingData.setting_type,
+            value: String(pendingEntityGstSettingData.value),
+            label: pendingEntityGstSettingData.label,
+            financial_year_id: FY_ID
+        })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            showReviewNotification('Entity GST setting saved: ' + pendingEntityGstSettingData.label + ' = ' + pendingEntityGstSettingData.value + '%');
+        }
+        dismissEntityGstSettingPrompt();
+    })
+    .catch(err => { console.warn(err); dismissEntityGstSettingPrompt(); });
+}
+
+function dismissEntityGstSettingPrompt() {
+    const prompt = document.getElementById('entityGstSettingPrompt');
+    if (prompt) prompt.classList.add('d-none');
+    pendingEntityGstSettingData = null;
+}
+
 // ===== Split Transaction Editor =====
 let splitLineCounters = {};
 
@@ -266,13 +693,9 @@ function openSplitEditor(txnId, amount, code, name) {
     if (!editor) return;
     editor.classList.remove('d-none');
     splitLineCounters[txnId] = 0;
-
     const container = document.getElementById('split-lines-' + txnId);
     container.innerHTML = '';
-
-    // Add first line with AI suggestion
     addSplitLine(txnId, Math.abs(amount), code, name);
-    // Add second blank line
     addSplitLine(txnId, 0, '', '');
 }
 
@@ -282,8 +705,6 @@ function addSplitLine(txnId, amount, code, name) {
     const lineNum = splitLineCounters[txnId];
     const container = document.getElementById('split-lines-' + txnId);
     if (!container) return;
-
-    // Check max 5 lines
     if (lineNum > 5) { alert('Maximum 5 split lines.'); return; }
 
     const lineHtml = `
@@ -311,6 +732,9 @@ function addSplitLine(txnId, amount, code, name) {
                 <option value="input_taxed">Input Taxed</option>
                 <option value="out_of_scope">Out of Scope</option>
             </select>
+        </div>
+        <div class="col-md-1">
+            <input type="number" class="form-control form-control-sm split-cred-pct text-end" value="100" min="0" max="100" step="0.01" title="Creditable %">
         </div>
         <div class="col-auto">
             ${lineNum > 1 ? `<button class="btn btn-sm btn-outline-danger py-0" onclick="removeSplitLine('${txnId}', ${lineNum})"><i class="bi bi-x"></i></button>` : ''}
@@ -345,7 +769,7 @@ function updateSplitTotals(txnId) {
             residualEl.classList.add('text-warning');
             residualEl.classList.remove('text-success');
         } else {
-            residualEl.textContent = 'Balanced ✓';
+            residualEl.textContent = 'Balanced \u2713';
             residualEl.classList.remove('text-warning');
             residualEl.classList.add('text-success');
         }
@@ -373,8 +797,6 @@ function searchSplitAccount(input) {
             ).join('');
         }
         resultsDiv.classList.remove('d-none');
-
-        // Attach click handlers
         resultsDiv.querySelectorAll('.split-coa-option').forEach(opt => {
             opt.addEventListener('click', function(e) {
                 e.preventDefault();
@@ -389,7 +811,6 @@ function searchSplitAccount(input) {
     });
 }
 
-// Close split account results when clicking outside
 document.addEventListener('click', function(e) {
     if (!e.target.closest('.split-account-search') && !e.target.closest('.split-account-results')) {
         document.querySelectorAll('.split-account-results').forEach(d => d.classList.add('d-none'));
@@ -409,8 +830,9 @@ function confirmSplit(txnId) {
         const name = line.querySelector('.split-account-name')?.value || '';
         const amount = parseFloat(line.querySelector('.split-amount')?.value || 0);
         const gst = line.querySelector('.split-gst')?.value || 'gst';
+        const credPct = parseFloat(line.querySelector('.split-cred-pct')?.value || 100);
         if (amount > 0) {
-            lines.push({ account_code: code, account_name: name, amount: amount, gst_treatment: gst });
+            lines.push({ account_code: code, account_name: name, amount: amount, gst_treatment: gst, creditable_percentage: credPct });
             total += amount;
         }
     });
@@ -424,7 +846,6 @@ function confirmSplit(txnId) {
         return;
     }
 
-    // Send to server
     fetch('/review/api/review/transaction/' + txnId + '/split/', {
         method: 'POST',
         headers: { 'X-CSRFToken': CSRF_TOKEN, 'Content-Type': 'application/json' },
@@ -433,7 +854,6 @@ function confirmSplit(txnId) {
     .then(r => r.json())
     .then(data => {
         if (data.status === 'ok') {
-            // Reload the page to show split children
             location.reload();
         } else {
             alert('Error: ' + (data.message || 'Unknown error'));
@@ -447,7 +867,7 @@ function cancelSplit(txnId) {
     if (editor) editor.classList.add('d-none');
 }
 
-// ===== Classification Rule Prompt =====
+// ===== Classification Rule Prompt (AC-RUL-01/04) =====
 function promptSaveRule(txnId, keyword, accountCode, accountName, gstTreatment) {
     pendingRuleData = {
         txn_id: txnId,
@@ -464,22 +884,25 @@ function promptSaveRule(txnId, keyword, accountCode, accountName, gstTreatment) 
 
 function confirmSaveRule() {
     if (!pendingRuleData) return;
+    const row = document.getElementById('pending-row-' + pendingRuleData.txn_id);
+    const credPct = row?.dataset.creditablePct || '100';
     fetch('/review/api/review/rules/create/', {
         method: 'POST',
         headers: { 'X-CSRFToken': CSRF_TOKEN, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-            entity_id: '{{ fy.entity.pk }}',
+            entity_id: ENTITY_ID,
             description_pattern: pendingRuleData.keyword,
             match_type: 'contains',
             account_code: pendingRuleData.account_code,
             account_name: pendingRuleData.account_name,
-            gst_treatment: pendingRuleData.gst_treatment || 'gst'
+            gst_treatment: pendingRuleData.gst_treatment || 'gst',
+            creditable_percentage: credPct
         })
     })
     .then(r => r.json())
     .then(data => {
         if (data.status === 'ok') {
-            showReviewNotification('Rule saved: "' + pendingRuleData.keyword + '" → ' + pendingRuleData.account_code);
+            showReviewNotification('Rule saved: "' + pendingRuleData.keyword + '" \u2192 ' + pendingRuleData.account_code);
         }
         dismissRulePrompt();
     })
@@ -490,6 +913,36 @@ function dismissRulePrompt() {
     const toast = document.getElementById('rulePromptToast');
     if (toast) toast.classList.add('d-none');
     pendingRuleData = null;
+}
+
+// ===== Classification Rules Management (AC-RUL-05) =====
+function toggleRule(ruleId) {
+    fetch('/review/api/review/rules/' + ruleId + '/toggle/', {
+        method: 'POST',
+        headers: { 'X-CSRFToken': CSRF_TOKEN }
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            location.reload();
+        }
+    });
+}
+
+function deleteRule(ruleId) {
+    if (!confirm('Delete this classification rule? This will not affect previously approved transactions.')) return;
+    fetch('/review/api/review/rules/' + ruleId + '/delete/', {
+        method: 'POST',
+        headers: { 'X-CSRFToken': CSRF_TOKEN }
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            const row = document.getElementById('rule-row-' + ruleId);
+            if (row) row.remove();
+            showReviewNotification('Rule deleted.');
+        }
+    });
 }
 
 function showReviewNotification(message) {
@@ -513,17 +966,20 @@ function _addRowToConfirmedTable(data) {
     const amtClass = amt < 0 ? 'text-danger' : 'text-success';
     const amtFormatted = '$' + absAmt.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
     const hasGst = data.has_gst;
-    const gstAmt = hasGst ? (absAmt / 11).toFixed(2) : '0.00';
-    const netAmt = hasGst ? (absAmt - parseFloat(gstAmt)).toFixed(2) : absAmt.toFixed(2);
+    const credPct = data.creditable_percentage || 100;
+    const gstAmt = hasGst ? (absAmt / 11 * credPct / 100).toFixed(2) : '0.00';
+    const netAmt = hasGst ? (absAmt - (absAmt / 11)).toFixed(2) : absAmt.toFixed(2);
     const gstBadge = hasGst
         ? '<span class="badge bg-success"><i class="bi bi-check-lg"></i></span>'
         : '<span class="badge bg-secondary"><i class="bi bi-x-lg"></i></span>';
+    const credPctDisplay = hasGst ? (credPct != 100 ? '<span class="fw-bold text-warning">' + credPct + '%</span>' : '100%') : '&mdash;';
     const row = `<tr id="confirmed-row-${data.id}">
         <td><input type="checkbox" class="confirmed-checkbox" value="${data.id}" onclick="updateConfirmedSelection()"></td>
         <td>${data.date}</td>
         <td>${data.description}</td>
         <td class="text-end ${amtClass}">${amtFormatted}</td>
         <td class="text-center">${gstBadge}</td>
+        <td class="text-end">${credPctDisplay}</td>
         <td class="text-end">$${gstAmt}</td>
         <td class="text-end">$${netAmt}</td>
         <td><code>${data.confirmed_code}</code></td>
@@ -544,23 +1000,35 @@ function _addRowToPendingTable(data) {
     const amtFormatted = '$' + absAmt.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
     const gstAmt = (absAmt / 11).toFixed(2);
     const netAmt = (absAmt - parseFloat(gstAmt)).toFixed(2);
-    const row = `<tr id="pending-row-${data.id}" class="review-row"
-        data-description="${data.description}" data-amount="${data.amount}" data-date="${data.date}"
-        data-code="${data.ai_code || ''}" data-gst-treatment="gst" data-status="classified" data-is-split="false">
-        <td><input type="checkbox" class="row-select" value="${data.id}" onclick="updateBulkSelection()"></td>
-        <td>${data.date}</td>
-        <td>${data.description}</td>
-        <td class="text-end ${amtClass}">${amtFormatted}</td>
-        <td class="text-center">
-            <select class="form-select form-select-sm gst-treatment-select py-0" data-txn-id="${data.id}" data-amount="${data.amount}" onchange="updateGstTreatment(this)" style="font-size:0.78rem;">
+    const gstDisabled = !IS_GST_REGISTERED ? 'disabled' : '';
+    const gstSuppressed = !IS_GST_REGISTERED
+        ? '<span class="badge bg-secondary" style="font-size:0.75rem;">Out of Scope</span>'
+        : `<select class="form-select form-select-sm gst-treatment-select py-0" data-txn-id="${data.id}" data-amount="${data.amount}" onchange="updateGstTreatment(this)" style="font-size:0.78rem;">
                 <option value="gst" selected>GST 10%</option>
                 <option value="gst_free">GST-Free</option>
                 <option value="input_taxed">Input Taxed</option>
                 <option value="out_of_scope">Out of Scope</option>
                 <option value="bas_excluded">BAS Excluded</option>
-            </select>
-        </td>
-        <td class="text-end" id="gst-amt-${data.id}">$${gstAmt}</td>
+           </select>`;
+    const credPctHtml = IS_GST_REGISTERED
+        ? `<div class="d-flex align-items-center justify-content-end gap-1">
+               <input type="number" class="form-control form-control-sm creditable-pct-input text-end py-0" style="width:58px; font-size:0.78rem;" value="100" min="0" max="100" step="0.01" data-txn-id="${data.id}" onchange="updateCreditablePct(this)">
+               <span style="font-size:0.7rem;">%</span>
+           </div>`
+        : '<span class="text-muted" style="font-size:0.75rem;">&mdash;</span>';
+
+    const row = `<tr id="pending-row-${data.id}" class="review-row"
+        data-description="${data.description}" data-amount="${data.amount}" data-date="${data.date}"
+        data-code="${data.ai_code || ''}" data-gst-treatment="gst" data-creditable-pct="100"
+        data-has-gst-override="false" data-is-gst-manual="false"
+        data-status="classified" data-is-split="false" data-apportionment-type="" data-apportionment-reason="">
+        <td><input type="checkbox" class="row-select" value="${data.id}" onclick="updateBulkSelection()"></td>
+        <td>${data.date}</td>
+        <td>${data.description}</td>
+        <td class="text-end ${amtClass}">${amtFormatted}</td>
+        <td class="text-center">${gstSuppressed}</td>
+        <td class="text-end creditable-pct-cell" id="cred-pct-cell-${data.id}">${credPctHtml}</td>
+        <td class="text-end" id="gst-amt-${data.id}"><span id="gst-amt-display-${data.id}">$${gstAmt}</span>${IS_GST_REGISTERED ? '<div><a href="#" class="gst-override-link text-muted" style="font-size:0.65rem; text-decoration:none;" onclick="toggleGstOverride(event, \'' + data.id + '\')">Override</a></div><div id="gst-override-editor-' + data.id + '" class="d-none mt-1" style="min-width:130px;"><input type="number" class="form-control form-control-sm gst-override-input py-0 mb-1" style="font-size:0.75rem; width:95px;" step="0.01" min="0" placeholder="GST $" data-txn-id="' + data.id + '" oninput="previewGstOverride(this)"><div class="text-muted" style="font-size:0.65rem;" id="gst-override-implied-' + data.id + '"></div><input type="text" class="form-control form-control-sm gst-override-reason py-0 mb-1" style="font-size:0.75rem;" placeholder="Reason (required)" data-txn-id="' + data.id + '"><div class="d-flex gap-1"><button class="btn btn-sm btn-outline-success py-0 px-1" style="font-size:0.7rem;" onclick="saveGstOverride(\'' + data.id + '\')">Save</button><button class="btn btn-sm btn-outline-secondary py-0 px-1" style="font-size:0.7rem;" onclick="cancelGstOverride(\'' + data.id + '\')">Cancel</button></div></div>' : ''}</td>
         <td class="text-end" id="net-amt-${data.id}">$${netAmt}</td>
         <td><code class="review-ai-code">${data.ai_code || '-'}</code></td>
         <td>
@@ -586,12 +1054,15 @@ function _addRowToPendingTable(data) {
                 <input type="hidden" name="confirmed_tax_type" value="${data.ai_tax || ''}" class="review-tax-input">
                 <input type="hidden" name="has_gst" value="1" class="review-gst-flag">
                 <input type="hidden" name="gst_amount" value="${gstAmt}" class="review-gst-amount">
+                <input type="hidden" name="creditable_percentage" value="100" class="review-cred-pct">
                 <button type="submit" class="btn btn-sm btn-outline-success py-0 px-1"><i class="bi bi-check-lg"></i></button>
             </form>
             <button class="btn btn-sm btn-outline-secondary py-0 px-1 ms-1" onclick="openSplitEditor('${data.id}', ${data.amount}, '${data.ai_code || ''}', '${data.ai_name || ''}')"><i class="bi bi-scissors"></i></button>
         </td>
     </tr>`;
     pendingBody.insertAdjacentHTML('afterbegin', row);
+    // Detect apportionment for the new row
+    if (IS_GST_REGISTERED) detectApportionmentForRow(data.id);
 }
 
 // ===== Approve All & Push to TB =====
@@ -717,8 +1188,10 @@ document.addEventListener('submit', function(e) {
             // Remove from pending
             const pendingRow = document.getElementById('pending-row-' + txnId);
             const splitEditor = document.getElementById('split-editor-' + txnId);
+            const apportRow = document.getElementById('apportionment-row-' + txnId);
             if (pendingRow) { pendingRow.style.transition = 'opacity 0.3s'; pendingRow.style.opacity = '0'; setTimeout(() => pendingRow.remove(), 300); }
             if (splitEditor) splitEditor.remove();
+            if (apportRow) apportRow.remove();
 
             // Add to confirmed
             _addRowToConfirmedTable(data);
@@ -729,13 +1202,12 @@ document.addEventListener('submit', function(e) {
             if (pendingBadge) pendingBadge.textContent = (data.remaining_pending ?? '') + ' pending';
             if (confirmedBadge) confirmedBadge.textContent = (data.remaining_confirmed ?? '') + ' confirmed';
 
-            // Check if this was an override — prompt rule save
+            // Check if this was an override — prompt rule save (AC-RUL-01)
             const code = formData.get('confirmed_code');
             const name = formData.get('confirmed_name');
-            const aiCode = document.querySelector('#pending-row-' + txnId)?.dataset.code;
+            const aiCode = pendingRow?.dataset.code;
             if (code && aiCode && code !== aiCode) {
-                // User overrode the AI suggestion — prompt to save rule
-                const desc = document.querySelector('#pending-row-' + txnId)?.dataset.description || '';
+                const desc = pendingRow?.dataset.description || '';
                 const keyword = desc.split(' ').slice(0, 3).join(' ');
                 if (keyword) {
                     const gst = formData.get('has_gst') === '1' ? 'gst' : 'gst_free';
@@ -800,7 +1272,6 @@ function updateConfirmedSelection() {
     const count = document.getElementById('confirmedSelectedCount');
     const btn = document.getElementById('bulkUnconfirmBtn');
     if (checked.length > 0) {
-        if (toolbar) toolbar.style.display = '' + ' !important';
         if (toolbar) toolbar.removeAttribute('style');
         if (count) count.textContent = checked.length + ' selected';
         if (btn) btn.disabled = false;
@@ -864,7 +1335,7 @@ function bulkUnconfirmSelected() {
                         'data-code="' + item.code + '" ' +
                         'data-name="' + item.name + '" ' +
                         'data-tax="' + (item.tax_code || '') + '">' +
-                        '<strong>' + item.code + '</strong> — ' + item.name +
+                        '<strong>' + item.code + '</strong> \u2014 ' + item.name +
                         (item.mapping_label !== 'Unmapped' ? ' <span class="badge bg-light text-dark" style="font-size:0.65rem;">' + item.mapping_label + '</span>' : '') +
                         '</a>'
                     ).join('');
@@ -910,6 +1381,9 @@ function bulkUnconfirmSelected() {
         // Close the dropdown
         const bsDropdown = bootstrap.Dropdown.getInstance(btn);
         if (bsDropdown) bsDropdown.hide();
+
+        // Re-run apportionment detection with new account code
+        if (IS_GST_REGISTERED) detectApportionmentForRow(txnId);
     });
 })();
 </script>

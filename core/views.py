@@ -802,16 +802,28 @@ def financial_year_detail(request, pk):
     stock_total_closing = stock_items.aggregate(total=Sum('closing_value'))['total'] or Decimal('0')
 
     # Review items (pending transactions from bank statement uploads for this entity)
-    from review.models import PendingTransaction, ReviewJob
+    from review.models import PendingTransaction, ReviewJob, ClassificationRule, EntityGSTSetting
     review_jobs = ReviewJob.objects.filter(entity=fy.entity)
     pending_review = PendingTransaction.objects.filter(
         job__entity=fy.entity,
         is_confirmed=False,
-    ).select_related('job').order_by('date')
+    ).select_related('job', 'matched_rule').order_by('date')
     confirmed_review = PendingTransaction.objects.filter(
         job__entity=fy.entity,
         is_confirmed=True,
     ).select_related('job').order_by('date')
+
+    # Entity GST context for enhanced review workflow
+    entity_is_gst_registered = getattr(fy.entity, 'is_gst_registered', True)
+    entity_gst_registration_date = getattr(fy.entity, 'gst_registration_date', None)
+    entity_gst_settings = EntityGSTSetting.objects.filter(
+        entity=fy.entity
+    ).filter(
+        Q(financial_year=fy) | Q(financial_year__isnull=True)
+    ).order_by('-created_at')
+    entity_classification_rules = ClassificationRule.objects.filter(
+        entity=fy.entity, is_active=True
+    ).order_by('-created_at')
 
     # Activity / Audit trail — all AuditLog entries for this financial year
     activity_logs = AuditLog.objects.filter(
@@ -875,6 +887,10 @@ def financial_year_detail(request, pk):
         "pending_review": pending_review,
         "confirmed_review": confirmed_review,
         "review_jobs": review_jobs,
+        "entity_is_gst_registered": entity_is_gst_registered,
+        "entity_gst_registration_date": entity_gst_registration_date,
+        "entity_gst_settings": entity_gst_settings,
+        "entity_classification_rules": entity_classification_rules,
         # Activity
         "activity_logs": activity_logs,
         # Chart of Accounts (entity-level)
