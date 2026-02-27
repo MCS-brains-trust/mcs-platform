@@ -1,0 +1,915 @@
+<script>
+// ===== Enhanced Bank Statement Review — JavaScript =====
+const CLASSIFY_URL = '{% url "core:review_classify_ai" pk=fy.pk %}';
+const CLASSIFY_STATUS_URL = '{% url "core:review_classify_status" pk=fy.pk %}';
+const BULK_APPROVE_URL = '{% url "core:review_bulk_approve_group" pk=fy.pk %}';
+const COA_SEARCH_URL = '{% url "core:entity_coa_search_api" pk=fy.pk %}';
+const CSRF_TOKEN = '{{ csrf_token }}';
+let isGroupView = false;
+let undoTimer = null;
+let undoBulkData = null;
+let pendingRuleData = null;
+
+// ===== View Toggle (Pending / Confirmed) =====
+function showReviewView(view) {
+    const pendingSection = document.getElementById('pendingSection');
+    const confirmedSection = document.getElementById('confirmedSection');
+    const toolbar = document.getElementById('reviewToolbar');
+    if (view === 'confirmed') {
+        if (pendingSection) pendingSection.style.display = 'none';
+        if (confirmedSection) confirmedSection.style.display = '';
+        if (toolbar) toolbar.style.display = 'none';
+    } else {
+        if (pendingSection) pendingSection.style.display = '';
+        if (confirmedSection) confirmedSection.style.display = 'none';
+        if (toolbar) toolbar.style.display = '';
+    }
+}
+
+// ===== Enhanced Search & Filter =====
+function applyEnhancedSearch() {
+    const query = (document.getElementById('reviewSearchBox')?.value || '').toLowerCase().trim();
+    const statusFilter = document.getElementById('reviewStatusFilter')?.value || '';
+    const gstFilter = document.getElementById('reviewGstFilter')?.value || '';
+    const codeFilter = document.getElementById('aiClassFilter')?.value || '';
+    const clearBtn = document.getElementById('searchClearBtn');
+    if (clearBtn) clearBtn.classList.toggle('d-none', !query);
+
+    let visibleCount = 0;
+    let totalCount = 0;
+    const rows = document.querySelectorAll('#pendingTableBody .review-row');
+
+    // Parse amount queries
+    let amountOp = null, amountVal = null;
+    const amtMatch = query.match(/(?:over|above|>)\s*\$?([\d,.]+)/i);
+    const amtMatchUnder = query.match(/(?:under|below|<)\s*\$?([\d,.]+)/i);
+    if (amtMatch) { amountOp = 'over'; amountVal = parseFloat(amtMatch[1].replace(/,/g, '')); }
+    else if (amtMatchUnder) { amountOp = 'under'; amountVal = parseFloat(amtMatchUnder[1].replace(/,/g, '')); }
+
+    rows.forEach(row => {
+        totalCount++;
+        const desc = (row.dataset.description || '').toLowerCase();
+        const amount = parseFloat(row.dataset.amount || 0);
+        const absAmount = Math.abs(amount);
+        const date = row.dataset.date || '';
+        const code = row.dataset.code || '';
+        const gst = row.dataset.gstTreatment || '';
+        const status = row.dataset.status || '';
+        const isSplit = row.dataset.isSplit === 'true';
+
+        let show = true;
+
+        // Text search (description)
+        if (query && !amountOp) {
+            if (!desc.includes(query) && !code.toLowerCase().includes(query) && !date.includes(query)) {
+                show = false;
+            }
+        }
+        // Amount filter
+        if (amountOp === 'over' && absAmount <= amountVal) show = false;
+        if (amountOp === 'under' && absAmount >= amountVal) show = false;
+
+        // Status filter
+        if (statusFilter) {
+            if (statusFilter === 'split' && !isSplit) show = false;
+            else if (statusFilter !== 'split' && status !== statusFilter) show = false;
+        }
+        // GST filter
+        if (gstFilter && gst !== gstFilter) show = false;
+        // Code filter
+        if (codeFilter && code !== codeFilter) show = false;
+
+        row.style.display = show ? '' : 'none';
+        // Also hide/show the split editor row
+        const splitRow = document.getElementById('split-editor-' + row.id.replace('pending-row-', ''));
+        if (splitRow && !show) splitRow.classList.add('d-none');
+
+        if (show) visibleCount++;
+    });
+
+    const filterCount = document.getElementById('filterCount');
+    if (filterCount) {
+        if (query || statusFilter || gstFilter || codeFilter) {
+            filterCount.textContent = visibleCount + ' of ' + totalCount;
+        } else {
+            filterCount.textContent = '';
+        }
+    }
+}
+
+function clearSearch() {
+    const box = document.getElementById('reviewSearchBox');
+    if (box) { box.value = ''; }
+    applyEnhancedSearch();
+}
+
+// Populate account code filter dropdown
+(function() {
+    const codes = {};
+    document.querySelectorAll('#pendingTableBody .review-row').forEach(row => {
+        const code = row.dataset.code;
+        if (code && code !== '-') codes[code] = true;
+    });
+    const select = document.getElementById('aiClassFilter');
+    if (select) {
+        Object.keys(codes).sort().forEach(code => {
+            const opt = document.createElement('option');
+            opt.value = code;
+            opt.textContent = code;
+            select.appendChild(opt);
+        });
+        select.addEventListener('change', applyEnhancedSearch);
+    }
+})();
+
+// ===== Bulk Selection =====
+function updateBulkSelection() {
+    const checked = document.querySelectorAll('#pendingTableBody .row-select:checked');
+    const bar = document.getElementById('bulkActionsBar');
+    const count = document.getElementById('bulkSelectedCount');
+    if (checked.length > 0) {
+        bar?.classList.remove('d-none');
+        if (count) count.textContent = checked.length + ' selected';
+    } else {
+        bar?.classList.add('d-none');
+    }
+}
+
+function toggleSelectAllFiltered(master) {
+    const rows = document.querySelectorAll('#pendingTableBody .review-row');
+    rows.forEach(row => {
+        if (row.style.display !== 'none') {
+            const cb = row.querySelector('.row-select');
+            if (cb) cb.checked = master.checked;
+        }
+    });
+    updateBulkSelection();
+}
+
+// ===== GST Treatment Controls =====
+function updateGstTreatment(select) {
+    const txnId = select.dataset.txnId;
+    const treatment = select.value;
+    const amount = Math.abs(parseFloat(select.dataset.amount || 0));
+    const gstCell = document.getElementById('gst-amt-' + txnId);
+    const netCell = document.getElementById('net-amt-' + txnId);
+    const row = document.getElementById('pending-row-' + txnId);
+
+    let gstAmt = 0, netAmt = amount;
+    if (treatment === 'gst') {
+        gstAmt = amount / 11;
+        netAmt = amount - gstAmt;
+    }
+    if (gstCell) gstCell.textContent = '$' + gstAmt.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    if (netCell) netCell.textContent = '$' + netAmt.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    if (row) row.dataset.gstTreatment = treatment;
+
+    // Update the hidden form field
+    const form = row?.querySelector('.review-approve-form');
+    if (form) {
+        const gstFlag = form.querySelector('.review-gst-flag');
+        const gstAmtInput = form.querySelector('.review-gst-amount');
+        if (gstFlag) gstFlag.value = treatment === 'gst' ? '1' : '0';
+        if (gstAmtInput) gstAmtInput.value = gstAmt.toFixed(2);
+    }
+
+    // Persist to server
+    fetch('/review/api/review/transaction/' + txnId + '/gst-treatment/', {
+        method: 'POST',
+        headers: { 'X-CSRFToken': CSRF_TOKEN, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gst_treatment: treatment })
+    }).catch(err => console.warn('GST update failed:', err));
+}
+
+// ===== Bulk GST =====
+function applyBulkGst() {
+    const treatment = document.getElementById('bulkGstSelect')?.value;
+    if (!treatment) return;
+    const checked = document.querySelectorAll('#pendingTableBody .row-select:checked');
+    if (checked.length === 0) return;
+
+    const txnIds = [];
+    checked.forEach(cb => {
+        const row = cb.closest('tr');
+        const select = row?.querySelector('.gst-treatment-select');
+        if (select) {
+            txnIds.push(cb.value);
+            select.value = treatment;
+            updateGstTreatment(select);
+        }
+    });
+
+    // Store for undo
+    undoBulkData = { txn_ids: txnIds, treatment: treatment };
+    showUndoToast('GST changed to ' + treatment.replace('_', ' ') + ' for ' + txnIds.length + ' transactions.');
+}
+
+function showUndoToast(message) {
+    const toast = document.getElementById('undoToast');
+    const text = document.getElementById('undoToastText');
+    const countdown = document.getElementById('undoCountdown');
+    if (!toast) return;
+    if (text) text.textContent = message;
+    toast.classList.remove('d-none');
+    let seconds = 5;
+    if (countdown) countdown.textContent = seconds + 's';
+    if (undoTimer) clearInterval(undoTimer);
+    undoTimer = setInterval(() => {
+        seconds--;
+        if (countdown) countdown.textContent = seconds + 's';
+        if (seconds <= 0) {
+            clearInterval(undoTimer);
+            toast.classList.add('d-none');
+            undoBulkData = null;
+        }
+    }, 1000);
+}
+
+function undoBulkGst() {
+    if (!undoBulkData) return;
+    // Reset all affected rows to GST 10% (default)
+    undoBulkData.txn_ids.forEach(txnId => {
+        const row = document.getElementById('pending-row-' + txnId);
+        const select = row?.querySelector('.gst-treatment-select');
+        if (select) {
+            select.value = 'gst';
+            updateGstTreatment(select);
+        }
+    });
+    const toast = document.getElementById('undoToast');
+    if (toast) toast.classList.add('d-none');
+    if (undoTimer) clearInterval(undoTimer);
+    undoBulkData = null;
+}
+
+// ===== Bulk Approve Selected =====
+function bulkApproveSelected() {
+    const checked = document.querySelectorAll('#pendingTableBody .row-select:checked');
+    if (checked.length === 0) return;
+    if (!confirm('Approve ' + checked.length + ' selected transactions and push to Trial Balance?')) return;
+
+    checked.forEach(cb => {
+        const row = cb.closest('tr');
+        const form = row?.querySelector('.review-approve-form');
+        if (form) {
+            const btn = form.querySelector('button[type="submit"]');
+            if (btn) btn.click();
+        }
+    });
+}
+
+// ===== Split Transaction Editor =====
+let splitLineCounters = {};
+
+function openSplitEditor(txnId, amount, code, name) {
+    const editor = document.getElementById('split-editor-' + txnId);
+    if (!editor) return;
+    editor.classList.remove('d-none');
+    splitLineCounters[txnId] = 0;
+
+    const container = document.getElementById('split-lines-' + txnId);
+    container.innerHTML = '';
+
+    // Add first line with AI suggestion
+    addSplitLine(txnId, Math.abs(amount), code, name);
+    // Add second blank line
+    addSplitLine(txnId, 0, '', '');
+}
+
+function addSplitLine(txnId, amount, code, name) {
+    if (!splitLineCounters[txnId] && splitLineCounters[txnId] !== 0) splitLineCounters[txnId] = 0;
+    splitLineCounters[txnId]++;
+    const lineNum = splitLineCounters[txnId];
+    const container = document.getElementById('split-lines-' + txnId);
+    if (!container) return;
+
+    // Check max 5 lines
+    if (lineNum > 5) { alert('Maximum 5 split lines.'); return; }
+
+    const lineHtml = `
+    <div class="row g-2 align-items-center mb-1 split-line" id="split-line-${txnId}-${lineNum}" data-txn-id="${txnId}">
+        <div class="col-auto"><span class="badge bg-secondary">${lineNum}</span></div>
+        <div class="col-md-4">
+            <div class="input-group input-group-sm">
+                <input type="text" class="form-control split-account-search" placeholder="Search account..."
+                       data-txn-id="${txnId}" data-line="${lineNum}" value="${name ? code + ' — ' + name : ''}"
+                       oninput="searchSplitAccount(this)">
+                <input type="hidden" class="split-account-code" value="${code}">
+                <input type="hidden" class="split-account-name" value="${name}">
+            </div>
+            <div class="split-account-results position-absolute bg-white border shadow-sm d-none" style="z-index:1050; max-height:200px; overflow-y:auto; width:350px;"></div>
+        </div>
+        <div class="col-md-2">
+            <input type="number" class="form-control form-control-sm split-amount" step="0.01"
+                   value="${amount || ''}" placeholder="Amount" data-txn-id="${txnId}"
+                   oninput="updateSplitTotals('${txnId}')">
+        </div>
+        <div class="col-md-2">
+            <select class="form-select form-select-sm split-gst">
+                <option value="gst">GST 10%</option>
+                <option value="gst_free">GST-Free</option>
+                <option value="input_taxed">Input Taxed</option>
+                <option value="out_of_scope">Out of Scope</option>
+            </select>
+        </div>
+        <div class="col-auto">
+            ${lineNum > 1 ? `<button class="btn btn-sm btn-outline-danger py-0" onclick="removeSplitLine('${txnId}', ${lineNum})"><i class="bi bi-x"></i></button>` : ''}
+        </div>
+    </div>`;
+    container.insertAdjacentHTML('beforeend', lineHtml);
+    updateSplitTotals(txnId);
+}
+
+function removeSplitLine(txnId, lineNum) {
+    const line = document.getElementById('split-line-' + txnId + '-' + lineNum);
+    if (line) line.remove();
+    updateSplitTotals(txnId);
+}
+
+function updateSplitTotals(txnId) {
+    const container = document.getElementById('split-lines-' + txnId);
+    if (!container) return;
+    const row = document.getElementById('pending-row-' + txnId);
+    const originalAmount = Math.abs(parseFloat(row?.dataset.amount || 0));
+    let allocated = 0;
+    container.querySelectorAll('.split-amount').forEach(input => {
+        allocated += parseFloat(input.value || 0);
+    });
+    const allocatedEl = document.getElementById('split-allocated-' + txnId);
+    const residualEl = document.getElementById('split-residual-' + txnId);
+    if (allocatedEl) allocatedEl.textContent = '$' + allocated.toFixed(2);
+    const residual = originalAmount - allocated;
+    if (residualEl) {
+        if (Math.abs(residual) > 0.01) {
+            residualEl.textContent = 'Residual: $' + residual.toFixed(2);
+            residualEl.classList.add('text-warning');
+            residualEl.classList.remove('text-success');
+        } else {
+            residualEl.textContent = 'Balanced ✓';
+            residualEl.classList.remove('text-warning');
+            residualEl.classList.add('text-success');
+        }
+    }
+}
+
+function searchSplitAccount(input) {
+    const query = input.value.trim();
+    const resultsDiv = input.closest('.col-md-4').querySelector('.split-account-results');
+    if (!resultsDiv) return;
+    if (query.length < 1) { resultsDiv.classList.add('d-none'); return; }
+
+    fetch(COA_SEARCH_URL + '?q=' + encodeURIComponent(query))
+    .then(r => r.json())
+    .then(data => {
+        if (data.items.length === 0) {
+            resultsDiv.innerHTML = '<div class="p-2 text-muted small">No results</div>';
+        } else {
+            resultsDiv.innerHTML = data.items.slice(0, 8).map(item =>
+                `<a href="#" class="dropdown-item small py-1 split-coa-option"
+                    data-code="${item.code}" data-name="${item.name}">
+                    <strong>${item.code}</strong> — ${item.name}
+                    ${item.mapping_label !== 'Unmapped' ? '<span class="badge bg-light text-dark ms-1" style="font-size:0.65rem;">' + item.mapping_label + '</span>' : ''}
+                </a>`
+            ).join('');
+        }
+        resultsDiv.classList.remove('d-none');
+
+        // Attach click handlers
+        resultsDiv.querySelectorAll('.split-coa-option').forEach(opt => {
+            opt.addEventListener('click', function(e) {
+                e.preventDefault();
+                const code = this.dataset.code;
+                const name = this.dataset.name;
+                input.value = code + ' — ' + name;
+                input.closest('.col-md-4').querySelector('.split-account-code').value = code;
+                input.closest('.col-md-4').querySelector('.split-account-name').value = name;
+                resultsDiv.classList.add('d-none');
+            });
+        });
+    });
+}
+
+// Close split account results when clicking outside
+document.addEventListener('click', function(e) {
+    if (!e.target.closest('.split-account-search') && !e.target.closest('.split-account-results')) {
+        document.querySelectorAll('.split-account-results').forEach(d => d.classList.add('d-none'));
+    }
+});
+
+function confirmSplit(txnId) {
+    const container = document.getElementById('split-lines-' + txnId);
+    const row = document.getElementById('pending-row-' + txnId);
+    if (!container || !row) return;
+    const originalAmount = Math.abs(parseFloat(row.dataset.amount || 0));
+
+    const lines = [];
+    let total = 0;
+    container.querySelectorAll('.split-line').forEach(line => {
+        const code = line.querySelector('.split-account-code')?.value || '';
+        const name = line.querySelector('.split-account-name')?.value || '';
+        const amount = parseFloat(line.querySelector('.split-amount')?.value || 0);
+        const gst = line.querySelector('.split-gst')?.value || 'gst';
+        if (amount > 0) {
+            lines.push({ account_code: code, account_name: name, amount: amount, gst_treatment: gst });
+            total += amount;
+        }
+    });
+
+    if (Math.abs(originalAmount - total) > 0.01) {
+        alert('Split amounts must equal the original amount ($' + originalAmount.toFixed(2) + '). Current total: $' + total.toFixed(2));
+        return;
+    }
+    if (lines.length < 2) {
+        alert('A split must have at least 2 lines.');
+        return;
+    }
+
+    // Send to server
+    fetch('/review/api/review/transaction/' + txnId + '/split/', {
+        method: 'POST',
+        headers: { 'X-CSRFToken': CSRF_TOKEN, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lines: lines })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            // Reload the page to show split children
+            location.reload();
+        } else {
+            alert('Error: ' + (data.message || 'Unknown error'));
+        }
+    })
+    .catch(err => alert('Network error: ' + err));
+}
+
+function cancelSplit(txnId) {
+    const editor = document.getElementById('split-editor-' + txnId);
+    if (editor) editor.classList.add('d-none');
+}
+
+// ===== Classification Rule Prompt =====
+function promptSaveRule(txnId, keyword, accountCode, accountName, gstTreatment) {
+    pendingRuleData = {
+        txn_id: txnId,
+        keyword: keyword,
+        account_code: accountCode,
+        account_name: accountName,
+        gst_treatment: gstTreatment
+    };
+    const toast = document.getElementById('rulePromptToast');
+    const text = document.getElementById('rulePromptText');
+    if (text) text.innerHTML = 'Always classify "<strong>' + keyword + '</strong>" as <strong>' + accountCode + ' — ' + accountName + '</strong>?';
+    if (toast) toast.classList.remove('d-none');
+}
+
+function confirmSaveRule() {
+    if (!pendingRuleData) return;
+    fetch('/review/api/review/rules/create/', {
+        method: 'POST',
+        headers: { 'X-CSRFToken': CSRF_TOKEN, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            entity_id: '{{ fy.entity.pk }}',
+            description_pattern: pendingRuleData.keyword,
+            match_type: 'contains',
+            account_code: pendingRuleData.account_code,
+            account_name: pendingRuleData.account_name,
+            gst_treatment: pendingRuleData.gst_treatment || 'gst'
+        })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            showReviewNotification('Rule saved: "' + pendingRuleData.keyword + '" → ' + pendingRuleData.account_code);
+        }
+        dismissRulePrompt();
+    })
+    .catch(err => { console.warn(err); dismissRulePrompt(); });
+}
+
+function dismissRulePrompt() {
+    const toast = document.getElementById('rulePromptToast');
+    if (toast) toast.classList.add('d-none');
+    pendingRuleData = null;
+}
+
+function showReviewNotification(message) {
+    const notif = document.getElementById('reviewNotification');
+    const text = document.getElementById('reviewNotificationText');
+    if (notif && text) {
+        text.textContent = message;
+        notif.classList.remove('d-none');
+        setTimeout(() => notif.classList.add('d-none'), 5000);
+    }
+}
+
+// ===== Helper: Add a row to the confirmed table =====
+function _addRowToConfirmedTable(data) {
+    const confirmedBody = document.getElementById('confirmedTableBody');
+    if (!confirmedBody) return;
+    const emptyMsg = document.getElementById('confirmedEmptyMsg');
+    if (emptyMsg) emptyMsg.style.display = 'none';
+    const amt = parseFloat(data.amount);
+    const absAmt = Math.abs(amt);
+    const amtClass = amt < 0 ? 'text-danger' : 'text-success';
+    const amtFormatted = '$' + absAmt.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    const hasGst = data.has_gst;
+    const gstAmt = hasGst ? (absAmt / 11).toFixed(2) : '0.00';
+    const netAmt = hasGst ? (absAmt - parseFloat(gstAmt)).toFixed(2) : absAmt.toFixed(2);
+    const gstBadge = hasGst
+        ? '<span class="badge bg-success"><i class="bi bi-check-lg"></i></span>'
+        : '<span class="badge bg-secondary"><i class="bi bi-x-lg"></i></span>';
+    const row = `<tr id="confirmed-row-${data.id}">
+        <td><input type="checkbox" class="confirmed-checkbox" value="${data.id}" onclick="updateConfirmedSelection()"></td>
+        <td>${data.date}</td>
+        <td>${data.description}</td>
+        <td class="text-end ${amtClass}">${amtFormatted}</td>
+        <td class="text-center">${gstBadge}</td>
+        <td class="text-end">$${gstAmt}</td>
+        <td class="text-end">$${netAmt}</td>
+        <td><code>${data.confirmed_code}</code></td>
+        <td>${data.confirmed_name}</td>
+        <td><small>${data.confirmed_tax_type || '-'}</small></td>
+        <td><button class="btn btn-sm btn-outline-warning py-0 px-1 txn-unconfirm-btn" data-txn-id="${data.id}" data-unconfirm-url="${data.unconfirm_url}"><i class="bi bi-arrow-counterclockwise"></i></button></td>
+    </tr>`;
+    confirmedBody.insertAdjacentHTML('afterbegin', row);
+}
+
+// ===== Helper: Add a row back to the pending table =====
+function _addRowToPendingTable(data) {
+    const pendingBody = document.getElementById('pendingTableBody');
+    if (!pendingBody) return;
+    const amt = parseFloat(data.amount);
+    const absAmt = Math.abs(amt);
+    const amtClass = amt < 0 ? 'text-danger' : 'text-success';
+    const amtFormatted = '$' + absAmt.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    const gstAmt = (absAmt / 11).toFixed(2);
+    const netAmt = (absAmt - parseFloat(gstAmt)).toFixed(2);
+    const row = `<tr id="pending-row-${data.id}" class="review-row"
+        data-description="${data.description}" data-amount="${data.amount}" data-date="${data.date}"
+        data-code="${data.ai_code || ''}" data-gst-treatment="gst" data-status="classified" data-is-split="false">
+        <td><input type="checkbox" class="row-select" value="${data.id}" onclick="updateBulkSelection()"></td>
+        <td>${data.date}</td>
+        <td>${data.description}</td>
+        <td class="text-end ${amtClass}">${amtFormatted}</td>
+        <td class="text-center">
+            <select class="form-select form-select-sm gst-treatment-select py-0" data-txn-id="${data.id}" data-amount="${data.amount}" onchange="updateGstTreatment(this)" style="font-size:0.78rem;">
+                <option value="gst" selected>GST 10%</option>
+                <option value="gst_free">GST-Free</option>
+                <option value="input_taxed">Input Taxed</option>
+                <option value="out_of_scope">Out of Scope</option>
+                <option value="bas_excluded">BAS Excluded</option>
+            </select>
+        </td>
+        <td class="text-end" id="gst-amt-${data.id}">$${gstAmt}</td>
+        <td class="text-end" id="net-amt-${data.id}">$${netAmt}</td>
+        <td><code class="review-ai-code">${data.ai_code || '-'}</code></td>
+        <td>
+            <div class="dropdown d-inline">
+                <button class="btn btn-sm btn-outline-info dropdown-toggle py-0 review-coa-btn" type="button"
+                        data-bs-toggle="dropdown" data-bs-auto-close="outside" style="font-size:0.78rem;" data-txn-id="${data.id}">
+                    ${data.ai_name || 'Unclassified'}
+                </button>
+                <div class="dropdown-menu p-2" style="width:380px; max-height:350px;">
+                    <input type="text" class="form-control form-control-sm mb-2 review-coa-search" placeholder="Search by code, name, or BAS label..." data-txn-id="${data.id}">
+                    <div class="review-coa-results overflow-auto" style="max-height:280px;" data-txn-id="${data.id}">
+                        <div class="text-center text-muted py-2"><small>Type to search...</small></div>
+                    </div>
+                </div>
+            </div>
+        </td>
+        <td><span class="badge bg-secondary">-</span></td>
+        <td class="text-nowrap">
+            <form method="post" action="${data.approve_url}" class="d-inline review-approve-form" data-txn-id="${data.id}">
+                <input type="hidden" name="csrfmiddlewaretoken" value="${CSRF_TOKEN}">
+                <input type="hidden" name="confirmed_code" value="${data.ai_code || ''}" class="review-code-input">
+                <input type="hidden" name="confirmed_name" value="${data.ai_name || ''}" class="review-name-input">
+                <input type="hidden" name="confirmed_tax_type" value="${data.ai_tax || ''}" class="review-tax-input">
+                <input type="hidden" name="has_gst" value="1" class="review-gst-flag">
+                <input type="hidden" name="gst_amount" value="${gstAmt}" class="review-gst-amount">
+                <button type="submit" class="btn btn-sm btn-outline-success py-0 px-1"><i class="bi bi-check-lg"></i></button>
+            </form>
+            <button class="btn btn-sm btn-outline-secondary py-0 px-1 ms-1" onclick="openSplitEditor('${data.id}', ${data.amount}, '${data.ai_code || ''}', '${data.ai_name || ''}')"><i class="bi bi-scissors"></i></button>
+        </td>
+    </tr>`;
+    pendingBody.insertAdjacentHTML('afterbegin', row);
+}
+
+// ===== Approve All & Push to TB =====
+function approveAllAndPush() {
+    const btn = document.getElementById('approveAllPushBtn');
+    if (!btn) return;
+    const url = btn.dataset.url;
+    if (!url) return;
+    if (!confirm('This will approve ALL pending transactions and push them to the Trial Balance. Continue?')) return;
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Processing...';
+
+    fetch(url, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': CSRF_TOKEN }
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            showReviewNotification(data.message || 'All transactions approved and pushed to TB.');
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            alert('Error: ' + (data.message || 'Unknown error'));
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-check-all"></i> Approve All & Push to TB';
+        }
+    })
+    .catch(err => {
+        alert('Network error.');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-check-all"></i> Approve All & Push to TB';
+    });
+}
+
+// ===== AI Classification =====
+function startAiClassification() {
+    const btn = document.getElementById('classifyAiBtn');
+    if (!btn) return;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Starting...';
+
+    fetch(CLASSIFY_URL, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': CSRF_TOKEN }
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok' || data.status === 'started') {
+            const progress = document.getElementById('classifyProgress');
+            if (progress) progress.classList.remove('d-none');
+            startClassifyPolling();
+        } else {
+            alert('Error: ' + (data.message || 'Could not start classification'));
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-robot"></i> Classify with AI';
+        }
+    })
+    .catch(err => {
+        alert('Network error.');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-robot"></i> Classify with AI';
+    });
+}
+
+function startClassifyPolling() {
+    setTimeout(pollClassifyStatus, 3000);
+}
+
+function pollClassifyStatus() {
+    fetch(CLASSIFY_STATUS_URL)
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'running' || data.status === 'started') {
+            updateClassifyProgress(data);
+            setTimeout(pollClassifyStatus, 3000);
+        } else if (data.status === 'complete' || data.status === 'done') {
+            showClassifyComplete(data);
+        } else {
+            const btn = document.getElementById('classifyAiBtn');
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-robot"></i> Classify with AI'; }
+            const progress = document.getElementById('classifyProgress');
+            if (progress) progress.classList.add('d-none');
+        }
+    })
+    .catch(err => setTimeout(pollClassifyStatus, 5000));
+}
+
+function updateClassifyProgress(data) {
+    const bar = document.getElementById('classifyProgressBar');
+    const text = document.getElementById('classifyProgressText');
+    const pct = data.progress || 0;
+    if (bar) bar.style.width = pct + '%';
+    if (text) text.textContent = 'Classifying... ' + Math.round(pct) + '% (' + (data.classified || 0) + ' of ' + (data.total || 0) + ')';
+}
+
+function showClassifyComplete(data) {
+    const progress = document.getElementById('classifyProgress');
+    if (progress) progress.classList.add('d-none');
+    showReviewNotification('AI classification complete. ' + (data.classified || 0) + ' transactions classified.');
+    setTimeout(() => location.reload(), 1500);
+}
+
+// ===== Approve Transaction (AJAX form submit) =====
+document.addEventListener('submit', function(e) {
+    const form = e.target.closest('.review-approve-form');
+    if (!form) return;
+    e.preventDefault();
+
+    const txnId = form.dataset.txnId;
+    const btn = form.querySelector('button[type="submit"]');
+    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>'; }
+
+    const formData = new FormData(form);
+    fetch(form.action, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': CSRF_TOKEN },
+        body: formData
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            // Remove from pending
+            const pendingRow = document.getElementById('pending-row-' + txnId);
+            const splitEditor = document.getElementById('split-editor-' + txnId);
+            if (pendingRow) { pendingRow.style.transition = 'opacity 0.3s'; pendingRow.style.opacity = '0'; setTimeout(() => pendingRow.remove(), 300); }
+            if (splitEditor) splitEditor.remove();
+
+            // Add to confirmed
+            _addRowToConfirmedTable(data);
+
+            // Update badges
+            const pendingBadge = document.getElementById('pendingBadge');
+            const confirmedBadge = document.getElementById('confirmedBadge');
+            if (pendingBadge) pendingBadge.textContent = (data.remaining_pending ?? '') + ' pending';
+            if (confirmedBadge) confirmedBadge.textContent = (data.remaining_confirmed ?? '') + ' confirmed';
+
+            // Check if this was an override — prompt rule save
+            const code = formData.get('confirmed_code');
+            const name = formData.get('confirmed_name');
+            const aiCode = document.querySelector('#pending-row-' + txnId)?.dataset.code;
+            if (code && aiCode && code !== aiCode) {
+                // User overrode the AI suggestion — prompt to save rule
+                const desc = document.querySelector('#pending-row-' + txnId)?.dataset.description || '';
+                const keyword = desc.split(' ').slice(0, 3).join(' ');
+                if (keyword) {
+                    const gst = formData.get('has_gst') === '1' ? 'gst' : 'gst_free';
+                    promptSaveRule(txnId, keyword, code, name, gst);
+                }
+            }
+        } else {
+            alert('Error: ' + (data.message || 'Unknown error'));
+            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg"></i>'; }
+        }
+    })
+    .catch(err => {
+        alert('Network error.');
+        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg"></i>'; }
+    });
+});
+
+// ===== Unconfirm Transaction =====
+document.addEventListener('click', function(e) {
+    const btn = e.target.closest('.txn-unconfirm-btn');
+    if (!btn) return;
+    e.preventDefault();
+    const txnId = btn.dataset.txnId;
+    const url = btn.dataset.unconfirmUrl;
+    if (!url) return;
+    if (!confirm('Move this transaction back to pending?')) return;
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+
+    fetch(url, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': CSRF_TOKEN }
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            const confirmedRow = document.getElementById('confirmed-row-' + txnId);
+            if (confirmedRow) confirmedRow.remove();
+            _addRowToPendingTable(data);
+            const pendingBadge = document.getElementById('pendingBadge');
+            const confirmedBadge = document.getElementById('confirmedBadge');
+            if (pendingBadge) pendingBadge.textContent = (data.remaining_pending ?? '') + ' pending';
+            if (confirmedBadge) confirmedBadge.textContent = (data.remaining_confirmed ?? '') + ' confirmed';
+        } else {
+            alert('Error: ' + (data.message || 'Unknown error'));
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-arrow-counterclockwise"></i>';
+        }
+    })
+    .catch(err => {
+        alert('Network error.');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-arrow-counterclockwise"></i>';
+    });
+});
+
+// ===== Confirmed Selection =====
+function updateConfirmedSelection() {
+    const checked = document.querySelectorAll('#confirmedTableBody .confirmed-checkbox:checked');
+    const toolbar = document.getElementById('confirmedBulkToolbar');
+    const count = document.getElementById('confirmedSelectedCount');
+    const btn = document.getElementById('bulkUnconfirmBtn');
+    if (checked.length > 0) {
+        if (toolbar) toolbar.style.display = '' + ' !important';
+        if (toolbar) toolbar.removeAttribute('style');
+        if (count) count.textContent = checked.length + ' selected';
+        if (btn) btn.disabled = false;
+    } else {
+        if (toolbar) toolbar.style.display = 'none !important';
+        if (btn) btn.disabled = true;
+    }
+}
+
+function toggleConfirmedSelectAll(master) {
+    document.querySelectorAll('#confirmedTableBody .confirmed-checkbox').forEach(cb => {
+        cb.checked = master.checked;
+    });
+    updateConfirmedSelection();
+}
+
+function bulkUnconfirmSelected() {
+    const checked = document.querySelectorAll('#confirmedTableBody .confirmed-checkbox:checked');
+    if (checked.length === 0) return;
+    if (!confirm('Move ' + checked.length + ' transactions back to pending?')) return;
+    checked.forEach(cb => {
+        const url = cb.dataset.unconfirmUrl;
+        if (url) {
+            fetch(url, { method: 'POST', headers: { 'X-CSRFToken': CSRF_TOKEN } })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'ok') {
+                    const row = document.getElementById('confirmed-row-' + cb.value);
+                    if (row) row.remove();
+                    _addRowToPendingTable(data);
+                }
+            });
+        }
+    });
+}
+
+// ===== COA Search in Pending Table =====
+(function() {
+    const searchTimers = {};
+    document.addEventListener('input', function(e) {
+        if (!e.target.classList.contains('review-coa-search')) return;
+        const txnId = e.target.dataset.txnId;
+        const query = e.target.value.trim();
+        const resultsDiv = document.querySelector('.review-coa-results[data-txn-id="' + txnId + '"]');
+        if (searchTimers[txnId]) clearTimeout(searchTimers[txnId]);
+        if (query.length < 1) {
+            if (resultsDiv) resultsDiv.innerHTML = '<div class="text-center text-muted py-2"><small>Type to search...</small></div>';
+            return;
+        }
+        searchTimers[txnId] = setTimeout(function() {
+            fetch(COA_SEARCH_URL + '?q=' + encodeURIComponent(query))
+            .then(resp => resp.json())
+            .then(data => {
+                let html = '';
+                if (data.items.length === 0) {
+                    html = '<div class="text-center text-muted py-2"><small>No matching accounts.</small></div>';
+                } else {
+                    html = data.items.slice(0, 8).map(item =>
+                        '<a href="#" class="dropdown-item small py-1 review-coa-option" ' +
+                        'data-txn-id="' + txnId + '" ' +
+                        'data-code="' + item.code + '" ' +
+                        'data-name="' + item.name + '" ' +
+                        'data-tax="' + (item.tax_code || '') + '">' +
+                        '<strong>' + item.code + '</strong> — ' + item.name +
+                        (item.mapping_label !== 'Unmapped' ? ' <span class="badge bg-light text-dark" style="font-size:0.65rem;">' + item.mapping_label + '</span>' : '') +
+                        '</a>'
+                    ).join('');
+                }
+                if (resultsDiv) resultsDiv.innerHTML = html;
+            });
+        }, 200);
+    });
+
+    // Handle COA option selection
+    document.addEventListener('click', function(e) {
+        const opt = e.target.closest('.review-coa-option');
+        if (!opt) return;
+        e.preventDefault();
+        const txnId = opt.dataset.txnId;
+        const code = opt.dataset.code;
+        const name = opt.dataset.name;
+        const tax = opt.dataset.tax || '';
+
+        // Update the button text
+        const btn = document.querySelector('.review-coa-btn[data-txn-id="' + txnId + '"]');
+        if (btn) btn.textContent = name;
+
+        // Update the code display
+        const row = document.getElementById('pending-row-' + txnId);
+        if (row) {
+            const codeEl = row.querySelector('.review-ai-code');
+            if (codeEl) codeEl.textContent = code;
+            row.dataset.code = code;
+        }
+
+        // Update hidden form fields
+        const form = document.querySelector('.review-approve-form[data-txn-id="' + txnId + '"]');
+        if (form) {
+            const codeInput = form.querySelector('.review-code-input');
+            const nameInput = form.querySelector('.review-name-input');
+            const taxInput = form.querySelector('.review-tax-input');
+            if (codeInput) codeInput.value = code;
+            if (nameInput) nameInput.value = name;
+            if (taxInput) taxInput.value = tax;
+        }
+
+        // Close the dropdown
+        const bsDropdown = bootstrap.Dropdown.getInstance(btn);
+        if (bsDropdown) bsDropdown.hide();
+    });
+})();
+</script>

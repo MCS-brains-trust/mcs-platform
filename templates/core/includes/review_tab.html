@@ -1,0 +1,358 @@
+{% load humanize %}
+{# ===== ENHANCED BANK STATEMENT REVIEW TAB ===== #}
+{# Replaces the old Group by Code UI with natural language search, #}
+{# split editor, GST treatment controls, and classification rules. #}
+
+{# --- Header Bar --- #}
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h6 class="mb-0">
+        <i class="bi bi-clipboard-check"></i> Bank Statement Review
+        <span class="badge bg-warning text-dark" id="pendingBadge" style="cursor:pointer;" onclick="showReviewView('pending')" title="Click to view pending transactions">{{ pending_review.count }} pending</span>
+        <span class="badge bg-success" id="confirmedBadge" style="cursor:pointer;" onclick="showReviewView('confirmed')" title="Click to view confirmed transactions">{{ confirmed_review.count }} confirmed</span>
+    </h6>
+    <div class="d-flex gap-2">
+        {% if pending_review.count > 0 %}
+        <button type="button" class="btn btn-primary btn-sm" id="classifyAiBtn" onclick="startAiClassification()">
+            <i class="bi bi-robot"></i> Classify with AI
+        </button>
+        <button type="button" class="btn btn-outline-success btn-sm" id="approveAllPushBtn" onclick="approveAllAndPush()"
+                data-url="{% url 'core:review_approve_all' pk=fy.pk %}">
+            <i class="bi bi-check-all"></i> Approve All &amp; Push to TB
+        </button>
+        {% endif %}
+    </div>
+</div>
+
+{# --- Search & Filter Toolbar --- #}
+{% if pending_review %}
+<div class="card border-0 bg-light mb-3" id="reviewToolbar">
+    <div class="card-body py-2 px-3">
+        <div class="row g-2 align-items-center">
+            <div class="col-md-5">
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+                    <input type="text" class="form-control" id="reviewSearchBox"
+                           placeholder="Search descriptions, amounts (e.g. over $500), dates..."
+                           oninput="applyEnhancedSearch()">
+                    <button class="btn btn-outline-secondary d-none" type="button" id="searchClearBtn" onclick="clearSearch()">
+                        <i class="bi bi-x-lg"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="col-md-2">
+                <select id="reviewStatusFilter" class="form-select form-select-sm" onchange="applyEnhancedSearch()">
+                    <option value="">All Statuses</option>
+                    <option value="unclassified">Unclassified</option>
+                    <option value="classified">AI Classified</option>
+                    <option value="rule">Rule Applied</option>
+                    <option value="split">Split</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <select id="reviewGstFilter" class="form-select form-select-sm" onchange="applyEnhancedSearch()">
+                    <option value="">All GST</option>
+                    <option value="gst">Taxable (GST)</option>
+                    <option value="gst_free">GST-Free</option>
+                    <option value="input_taxed">Input Taxed</option>
+                    <option value="out_of_scope">Out of Scope</option>
+                    <option value="bas_excluded">BAS Excluded</option>
+                </select>
+            </div>
+            <div class="col-md-2">
+                <select id="aiClassFilter" class="form-select form-select-sm" onchange="applyEnhancedSearch()">
+                    <option value="">All Account Codes</option>
+                </select>
+            </div>
+            <div class="col-md-1 text-end">
+                <span id="filterCount" class="text-muted" style="font-size: 0.78rem;"></span>
+            </div>
+        </div>
+        {# --- Bulk Actions Bar (shown when rows selected) --- #}
+        <div id="bulkActionsBar" class="d-none mt-2 pt-2 border-top">
+            <div class="d-flex align-items-center gap-2">
+                <input type="checkbox" id="selectAllFiltered" onclick="toggleSelectAllFiltered(this)" title="Select all visible">
+                <span class="text-muted" style="font-size:0.8rem;" id="bulkSelectedCount">0 selected</span>
+                <div class="vr mx-1"></div>
+                <select id="bulkGstSelect" class="form-select form-select-sm" style="width:160px;">
+                    <option value="">Set GST...</option>
+                    <option value="gst">Taxable (GST)</option>
+                    <option value="gst_free">GST-Free</option>
+                    <option value="input_taxed">Input Taxed</option>
+                    <option value="out_of_scope">Out of Scope</option>
+                    <option value="bas_excluded">BAS Excluded</option>
+                </select>
+                <button class="btn btn-sm btn-outline-primary" onclick="applyBulkGst()">Apply</button>
+                <div class="vr mx-1"></div>
+                <button class="btn btn-sm btn-outline-success" onclick="bulkApproveSelected()">
+                    <i class="bi bi-check-all"></i> Approve Selected
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# --- AI Classification Progress Bar --- #}
+<div id="classifyProgress" class="d-none mb-3">
+    <div class="d-flex align-items-center gap-2 mb-1">
+        <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+        <span id="classifyProgressText" style="font-size: 0.85rem;">Classifying transactions...</span>
+    </div>
+    <div class="progress" style="height: 6px;">
+        <div class="progress-bar bg-primary" role="progressbar" id="classifyProgressBar" style="width: 0%"></div>
+    </div>
+</div>
+{% endif %}
+
+{# --- Undo Toast --- #}
+<div id="undoToast" class="position-fixed bottom-0 start-50 translate-middle-x mb-3 d-none" style="z-index:1055;">
+    <div class="toast show bg-dark text-white" role="alert">
+        <div class="toast-body d-flex align-items-center gap-2">
+            <span id="undoToastText">GST changed for 5 transactions.</span>
+            <button class="btn btn-sm btn-warning" onclick="undoBulkGst()">Undo</button>
+            <span id="undoCountdown" class="text-muted" style="font-size:0.75rem;">5s</span>
+        </div>
+    </div>
+</div>
+
+{# --- Notification Area --- #}
+<div id="reviewNotification" class="alert alert-success alert-dismissible d-none mb-3" role="alert" style="font-size: 0.85rem;">
+    <i class="bi bi-check-circle-fill me-1"></i>
+    <span id="reviewNotificationText"></span>
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+</div>
+
+{# --- Rule Prompt Toast --- #}
+<div id="rulePromptToast" class="position-fixed bottom-0 end-0 mb-3 me-3 d-none" style="z-index:1055; max-width:380px;">
+    <div class="card shadow border-primary">
+        <div class="card-body py-2 px-3">
+            <div class="d-flex align-items-start gap-2">
+                <i class="bi bi-lightbulb text-primary mt-1"></i>
+                <div class="flex-grow-1">
+                    <p class="mb-1" style="font-size:0.85rem;" id="rulePromptText"></p>
+                    <div class="d-flex gap-2">
+                        <button class="btn btn-sm btn-primary" onclick="confirmSaveRule()">Yes, save rule</button>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="dismissRulePrompt()">No thanks</button>
+                    </div>
+                </div>
+                <button class="btn-close" style="font-size:0.6rem;" onclick="dismissRulePrompt()"></button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# ===== PENDING TRANSACTIONS TABLE ===== #}
+<div id="pendingSection">
+{% if pending_review %}
+<h6 class="text-muted mt-3 mb-2" style="font-size: 0.85rem;">PENDING REVIEW</h6>
+<div class="table-responsive">
+    <table class="table table-sm table-hover" style="font-size: 0.82rem;" id="pendingTable">
+        <thead class="table-warning">
+            <tr>
+                <th style="width:30px;"><input type="checkbox" id="pendingSelectAll" onclick="toggleSelectAllFiltered(this)"></th>
+                <th style="width: 85px;">Date</th>
+                <th>Description</th>
+                <th class="text-end" style="width: 100px;">Amount</th>
+                <th class="text-center" style="width: 100px;">GST Treatment</th>
+                <th class="text-end" style="width: 80px;">GST Amt</th>
+                <th class="text-end" style="width: 80px;">Net Amt</th>
+                <th style="width: 70px;">Code</th>
+                <th>Account <small class="text-muted">(click to change)</small></th>
+                <th style="width: 50px;">Conf.</th>
+                <th style="width: 100px;">Action</th>
+            </tr>
+        </thead>
+        <tbody id="pendingTableBody">
+            {% for txn in pending_review %}
+            <tr id="pending-row-{{ txn.pk }}" class="review-row"
+                data-description="{{ txn.description }}"
+                data-amount="{{ txn.amount }}"
+                data-date="{{ txn.date }}"
+                data-code="{{ txn.ai_suggested_code|default:'' }}"
+                data-gst-treatment="{{ txn.gst_treatment|default:'gst' }}"
+                data-status="{% if txn.matched_rule %}rule{% elif txn.ai_suggested_code %}classified{% else %}unclassified{% endif %}"
+                data-is-split="{{ txn.is_split|yesno:'true,false' }}">
+                <td><input type="checkbox" class="row-select" value="{{ txn.pk }}" onclick="updateBulkSelection()"></td>
+                <td>{{ txn.date }}</td>
+                <td>
+                    {{ txn.description|truncatewords:8 }}
+                    {% if txn.matched_rule %}<span class="badge bg-info text-white" style="font-size:0.65rem;">Rule</span>{% endif %}
+                    {% if txn.is_split %}<span class="badge bg-purple text-white" style="font-size:0.65rem;">Split</span>{% endif %}
+                </td>
+                <td class="text-end {% if txn.amount < 0 %}text-danger{% else %}text-success{% endif %}">
+                    ${{ txn.amount|floatformat:2|intcomma }}
+                </td>
+                <td class="text-center">
+                    <select class="form-select form-select-sm gst-treatment-select py-0"
+                            data-txn-id="{{ txn.pk }}" data-amount="{{ txn.amount }}"
+                            onchange="updateGstTreatment(this)" style="font-size:0.78rem;">
+                        <option value="gst" {% if txn.gst_treatment == 'gst' or not txn.gst_treatment %}selected{% endif %}>GST 10%</option>
+                        <option value="gst_free" {% if txn.gst_treatment == 'gst_free' %}selected{% endif %}>GST-Free</option>
+                        <option value="input_taxed" {% if txn.gst_treatment == 'input_taxed' %}selected{% endif %}>Input Taxed</option>
+                        <option value="out_of_scope" {% if txn.gst_treatment == 'out_of_scope' %}selected{% endif %}>Out of Scope</option>
+                        <option value="bas_excluded" {% if txn.gst_treatment == 'bas_excluded' %}selected{% endif %}>BAS Excluded</option>
+                    </select>
+                </td>
+                <td class="text-end gst-amount-cell" id="gst-amt-{{ txn.pk }}">
+                    {% if txn.gst_treatment == 'gst' or not txn.gst_treatment %}
+                    ${{ txn.gst_amount|floatformat:2|intcomma }}
+                    {% else %}$0.00{% endif %}
+                </td>
+                <td class="text-end net-amount-cell" id="net-amt-{{ txn.pk }}">
+                    {% if txn.gst_treatment == 'gst' or not txn.gst_treatment %}
+                    ${{ txn.net_amount|floatformat:2|intcomma }}
+                    {% else %}${{ txn.amount|floatformat:2|intcomma }}{% endif %}
+                </td>
+                <td><code class="review-ai-code">{{ txn.ai_suggested_code|default:"-" }}</code></td>
+                <td>
+                    <div class="dropdown d-inline">
+                        <button class="btn btn-sm btn-outline-info dropdown-toggle py-0 review-coa-btn" type="button"
+                                data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
+                                style="font-size: 0.78rem;" data-txn-id="{{ txn.pk }}">
+                            {{ txn.ai_suggested_name|default:"Unclassified" }}
+                        </button>
+                        <div class="dropdown-menu p-2" style="width: 380px; max-height: 350px;">
+                            <input type="text" class="form-control form-control-sm mb-2 review-coa-search"
+                                   placeholder="Search by code, name, or BAS label..." data-txn-id="{{ txn.pk }}">
+                            <div class="review-coa-results overflow-auto" style="max-height: 280px;" data-txn-id="{{ txn.pk }}">
+                                <div class="text-center text-muted py-2"><small>Type to search chart of accounts...</small></div>
+                            </div>
+                        </div>
+                    </div>
+                </td>
+                <td>
+                    {% if txn.ai_confidence > 0 %}
+                    <span class="badge bg-{% if txn.ai_confidence >= 4 %}success{% elif txn.ai_confidence >= 3 %}info{% else %}warning text-dark{% endif %}">
+                        {{ txn.ai_confidence }}/5
+                    </span>
+                    {% else %}
+                    <span class="badge bg-secondary">-</span>
+                    {% endif %}
+                </td>
+                <td class="text-nowrap">
+                    <form method="post" action="{% url 'core:review_approve_transaction' pk=txn.pk %}" class="d-inline review-approve-form" data-txn-id="{{ txn.pk }}">
+                        {% csrf_token %}
+                        <input type="hidden" name="confirmed_code" value="{{ txn.ai_suggested_code }}" class="review-code-input">
+                        <input type="hidden" name="confirmed_name" value="{{ txn.ai_suggested_name }}" class="review-name-input">
+                        <input type="hidden" name="confirmed_tax_type" value="{{ txn.ai_suggested_tax_type }}" class="review-tax-input">
+                        <input type="hidden" name="has_gst" value="{% if txn.gst_treatment == 'gst' or not txn.gst_treatment %}1{% else %}0{% endif %}" class="review-gst-flag">
+                        <input type="hidden" name="gst_amount" value="{{ txn.gst_amount|default:'0.00' }}" class="review-gst-amount">
+                        <button type="submit" class="btn btn-sm btn-outline-success py-0 px-1" title="Approve &amp; push to TB">
+                            <i class="bi bi-check-lg"></i>
+                        </button>
+                    </form>
+                    <button class="btn btn-sm btn-outline-secondary py-0 px-1 ms-1" title="Split transaction"
+                            onclick="openSplitEditor('{{ txn.pk }}', {{ txn.amount }}, '{{ txn.ai_suggested_code|default:"" }}', '{{ txn.ai_suggested_name|default:"" }}')">
+                        <i class="bi bi-scissors"></i>
+                    </button>
+                </td>
+            </tr>
+            {# --- Split Editor Row (hidden by default) --- #}
+            <tr id="split-editor-{{ txn.pk }}" class="d-none bg-light">
+                <td colspan="11">
+                    <div class="p-2">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <strong style="font-size:0.85rem;"><i class="bi bi-scissors me-1"></i>Split Transaction — ${{ txn.amount|floatformat:2|intcomma }}</strong>
+                            <div>
+                                <button class="btn btn-sm btn-outline-secondary me-1" onclick="addSplitLine('{{ txn.pk }}')">
+                                    <i class="bi bi-plus-lg"></i> Add Line
+                                </button>
+                                <button class="btn btn-sm btn-success me-1" onclick="confirmSplit('{{ txn.pk }}')">
+                                    <i class="bi bi-check-lg"></i> Confirm Split
+                                </button>
+                                <button class="btn btn-sm btn-outline-danger" onclick="cancelSplit('{{ txn.pk }}')">
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                        <div class="split-lines-container" id="split-lines-{{ txn.pk }}">
+                            {# Lines are added dynamically by JS #}
+                        </div>
+                        <div class="d-flex justify-content-end mt-2 gap-3" style="font-size:0.85rem;">
+                            <span>Original: <strong>${{ txn.amount|floatformat:2|intcomma }}</strong></span>
+                            <span>Allocated: <strong id="split-allocated-{{ txn.pk }}">$0.00</strong></span>
+                            <span id="split-residual-{{ txn.pk }}" class="text-warning fw-bold"></span>
+                        </div>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+</div>
+
+{# ===== CONFIRMED TRANSACTIONS PANEL ===== #}
+<div id="confirmedSection" style="display:none;">
+<div class="d-flex justify-content-between align-items-center mt-3 mb-2">
+    <h6 class="text-muted mb-0" style="font-size: 0.85rem;"><i class="bi bi-check-circle-fill text-success me-1"></i>CONFIRMED TRANSACTIONS</h6>
+    <div class="d-flex gap-2 align-items-center">
+        <div id="confirmedBulkToolbar" style="display:none !important;">
+            <span class="text-muted" style="font-size:0.8rem;" id="confirmedSelectedCount">0 selected</span>
+            <button type="button" class="btn btn-outline-warning btn-sm ms-2" id="bulkUnconfirmBtn" onclick="bulkUnconfirmSelected()" disabled>
+                <i class="bi bi-arrow-counterclockwise"></i> Unconfirm Selected
+            </button>
+        </div>
+    </div>
+</div>
+<div class="table-responsive">
+    <table class="table table-sm" style="font-size: 0.85rem;" id="confirmedTable">
+        <thead class="table-success">
+            <tr>
+                <th style="width: 35px;"><input type="checkbox" id="confirmedSelectAll" onclick="toggleConfirmedSelectAll(this)" title="Select all"></th>
+                <th style="width: 90px;">Date</th>
+                <th>Description</th>
+                <th class="text-end" style="width: 110px;">Amount</th>
+                <th class="text-center" style="width: 55px;">GST</th>
+                <th class="text-end" style="width: 90px;">GST Amt</th>
+                <th class="text-end" style="width: 90px;">Net Amt</th>
+                <th style="width: 80px;">Code</th>
+                <th>Account</th>
+                <th>Tax Type</th>
+                <th style="width: 60px;">Action</th>
+            </tr>
+        </thead>
+        <tbody id="confirmedTableBody">
+            {% for txn in confirmed_review %}
+            <tr id="confirmed-row-{{ txn.pk }}">
+                <td><input type="checkbox" class="confirmed-checkbox" value="{{ txn.pk }}" data-unconfirm-url="{% url 'core:review_unconfirm_transaction' pk=txn.pk %}" onclick="updateConfirmedSelection()"></td>
+                <td>{{ txn.date }}</td>
+                <td>{{ txn.description|truncatewords:8 }}</td>
+                <td class="text-end {% if txn.amount < 0 %}text-danger{% else %}text-success{% endif %}">
+                    ${{ txn.amount|floatformat:2|intcomma }}
+                </td>
+                <td class="text-center">
+                    {% if txn.confirmed_tax_type == 'GST on Income' or txn.confirmed_tax_type == 'GST on Expenses' %}
+                    <span class="badge bg-success"><i class="bi bi-check-lg"></i></span>
+                    {% else %}
+                    <span class="badge bg-secondary"><i class="bi bi-x-lg"></i></span>
+                    {% endif %}
+                </td>
+                <td class="text-end">${{ txn.confirmed_gst_amount|default:txn.gst_amount|floatformat:2|intcomma }}</td>
+                <td class="text-end">${{ txn.net_amount|floatformat:2|intcomma }}</td>
+                <td><code>{{ txn.confirmed_code }}</code></td>
+                <td>{{ txn.confirmed_name }}</td>
+                <td><small>{{ txn.confirmed_tax_type|default:"-" }}</small></td>
+                <td>
+                    <button class="btn btn-sm btn-outline-warning py-0 px-1 txn-unconfirm-btn" title="Unconfirm &amp; move back to pending"
+                            data-txn-id="{{ txn.pk }}" data-unconfirm-url="{% url 'core:review_unconfirm_transaction' pk=txn.pk %}">
+                        <i class="bi bi-arrow-counterclockwise"></i>
+                    </button>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+<div id="confirmedEmptyMsg" class="text-center text-muted py-3" style="display:{% if confirmed_review %}none{% else %}block{% endif %};">
+    <small>No confirmed transactions yet.</small>
+</div>
+</div>
+
+{% if not pending_review and not confirmed_review %}
+<div class="text-center py-5 text-muted" id="reviewEmptyState">
+    <i class="bi bi-clipboard-check" style="font-size: 3rem;"></i>
+    <p class="mt-2 mb-1">No items pending review.</p>
+    <p class="small">Upload bank statements or import trial balances to populate this tab.</p>
+</div>
+{% endif %}
