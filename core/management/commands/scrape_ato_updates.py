@@ -539,7 +539,7 @@ class Command(BaseCommand):
         # Embed and store chunks
         embedded_count = 0
         for chunk_data in chunks:
-            embedding = None
+            embedding = []  # Default to empty list (NOT None — DB column is NOT NULL)
             if not no_embed:
                 try:
                     embedding = get_embedding(chunk_data["text"])
