@@ -1,25 +1,25 @@
 """
 Management command: scrape_ato_updates
 
-Scrapes the ATO "What's New" page and the ATO Legal Database "What's New"
-page, generates a structured Markdown document, and uploads it to the
-Eva Knowledge Brain SharePoint library under 02_Tax_Legislation/ATO_Rulings.
+Scrapes the ATO "What's New" page (via Coveo API) and the ATO Legal Database
+"What's New" page, generates a structured Markdown document, and saves it
+directly into Eva's Knowledge Brain database (KnowledgeDocument + chunks).
 
-Designed to run on the StatementHub VPS (Australian IP) as a daily cron job.
+Designed to run on the StatementHub VPS as a daily cron job.
 
 Usage:
     python manage.py scrape_ato_updates
-    python manage.py scrape_ato_updates --dry-run   # scrape only, no upload
-    python manage.py scrape_ato_updates --no-sync    # upload but skip KB sync
+    python manage.py scrape_ato_updates --dry-run   # scrape only, save to /tmp/
+    python manage.py scrape_ato_updates --no-embed   # save to DB without embeddings
 
 Cron (daily at 7:00 AM AEST):
-    0 7 * * * cd /opt/statementhub && source venv/bin/activate && python manage.py scrape_ato_updates >> /var/log/ato_scrape.log 2>&1
+    0 7 * * * cd /opt/statementhub && source venv/bin/activate && \
+    python manage.py scrape_ato_updates >> /var/log/ato_scrape.log 2>&1
 """
-import os
 import logging
 import re
 from collections import OrderedDict
-from datetime import date
+from datetime import date, datetime
 
 import requests as http_requests
 from bs4 import BeautifulSoup
@@ -28,9 +28,9 @@ from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
-# ──────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────
 # ATO source URLs
-# ──────────────────────────────────────────────────────────────
+# ──────────────────────────────────────────────────────────
 ATO_WHATS_NEW_URL = "https://www.ato.gov.au/whats-new"
 ATO_LEGAL_DB_URL = "https://www.ato.gov.au/law/view/whatsnew.htm"
 ATO_NEW_LEGISLATION_URL = (
@@ -38,8 +38,16 @@ ATO_NEW_LEGISLATION_URL = (
     "latest-news-on-tax-law-and-policy"
 )
 
-# SharePoint target folder inside the Eva Knowledge Brain library
-SHAREPOINT_UPLOAD_FOLDER = "02_Tax_Legislation/ATO_Rulings"
+# Coveo search API (used by the ATO What's New React SPA)
+COVEO_API_URL = (
+    "https://australiantaxationofficeproductionfe8uurdl.org.coveo.com"
+    "/rest/search/v2"
+    "?organizationId=australiantaxationofficeproductionfe8uurdl"
+)
+COVEO_TOKEN = "xxf77fcd30-975f-4235-a06f-e4c3d369e6d6"
+
+# Knowledge Brain category for ATO updates
+KB_CATEGORY = "tax_legislation"
 
 # Browser-like headers (the VPS's Australian IP should pass Akamai)
 BROWSER_HEADERS = {
@@ -67,24 +75,24 @@ BROWSER_HEADERS = {
 class Command(BaseCommand):
     help = (
         "Scrape ATO announcements (Legal Database + What's New) "
-        "and upload to Eva Knowledge Brain on SharePoint"
+        "and save to Eva Knowledge Brain"
     )
 
     def add_arguments(self, parser):
         parser.add_argument(
             "--dry-run",
             action="store_true",
-            help="Scrape and generate the document but do not upload to SharePoint",
+            help="Scrape and generate the document but do not save to DB",
         )
         parser.add_argument(
-            "--no-sync",
+            "--no-embed",
             action="store_true",
-            help="Upload to SharePoint but skip triggering a Knowledge Brain sync",
+            help="Save to DB but skip generating embeddings (faster)",
         )
 
     def handle(self, *args, **options):
         dry_run = options.get("dry_run", False)
-        no_sync = options.get("no_sync", False)
+        no_embed = options.get("no_embed", False)
         self.stdout.write("=" * 60)
         self.stdout.write("ATO Update Scraper — Starting")
         self.stdout.write("=" * 60)
@@ -95,12 +103,13 @@ class Command(BaseCommand):
 
         # 1. Scrape both sources
         legal_db_items = self._scrape_legal_database()
-        whats_new_items = self._scrape_whats_new()
+        whats_new_items = self._scrape_whats_new_coveo()
 
         if not legal_db_items and not whats_new_items:
             self.stdout.write(self.style.WARNING(
                 "No items scraped from either source. "
-                "The ATO may be blocking this server's IP."
+                "The ATO may be blocking this server's IP, "
+                "or the Coveo API token may have expired."
             ))
             return
 
@@ -112,12 +121,11 @@ class Command(BaseCommand):
         # 2. Generate Markdown document
         today = date.today()
         markdown = self._generate_markdown(today, legal_db_items, whats_new_items)
+        filename = f"ATO_Updates_{today.strftime('%Y-%m-%d')}"
 
-        # 3. Upload to SharePoint (or save locally for dry-run)
-        filename = f"ATO_Updates_{today.strftime('%Y-%m-%d')}.md"
-
+        # 3. Save
         if dry_run:
-            local_path = f"/tmp/{filename}"
+            local_path = f"/tmp/{filename}.md"
             with open(local_path, "w") as f:
                 f.write(markdown)
             self.stdout.write(self.style.SUCCESS(
@@ -126,18 +134,8 @@ class Command(BaseCommand):
             self.stdout.write(f"Document size: {len(markdown)} bytes")
             return
 
-        success = self._upload_to_sharepoint(filename, markdown)
-        if success:
-            self.stdout.write(self.style.SUCCESS(
-                f"Uploaded {filename} to SharePoint "
-                f"({SHAREPOINT_UPLOAD_FOLDER})"
-            ))
-            if not no_sync:
-                self._trigger_sync()
-        else:
-            self.stdout.write(self.style.ERROR(
-                "Failed to upload to SharePoint. Check logs."
-            ))
+        # Save directly to Eva Knowledge Brain database
+        self._save_to_knowledge_brain(filename, markdown, no_embed)
 
     # ──────────────────────────────────────────────────────────
     # Scraper: ATO Legal Database What's New
@@ -200,7 +198,6 @@ class Command(BaseCommand):
 
                 href = link.get("href", "")
                 if href and not href.startswith("http"):
-                    # Legal DB uses relative URLs like /law/view/document?DocID=...
                     href = f"https://www.ato.gov.au{href}"
 
                 # Extract description from adjacent table cell
@@ -225,42 +222,118 @@ class Command(BaseCommand):
         return items
 
     # ──────────────────────────────────────────────────────────
-    # Scraper: ATO What's New (general announcements)
+    # Scraper: ATO What's New (via Coveo search API)
     # ──────────────────────────────────────────────────────────
-    def _scrape_whats_new(self):
+    def _scrape_whats_new_coveo(self):
         """
-        Scrapes https://www.ato.gov.au/whats-new
+        Fetches ATO What's New items via the Coveo search API.
+        The ATO website is a Next.js React SPA that uses Coveo for search.
+        Direct HTML scraping returns an empty shell, so we call the same
+        API the frontend uses.
 
         Returns a list of dicts with keys:
             date, title, url, description
         """
-        self.stdout.write("Scraping ATO What's New...")
+        self.stdout.write("Scraping ATO What's New (via Coveo API)...")
+        items = []
+
+        payload = {
+            "locale": "en-US",
+            "debug": False,
+            "tab": "default",
+            "timezone": "UTC",
+            "context": {"database": "web", "language": "en"},
+            "fieldsToInclude": [
+                "dateupdated", "description", "pagetitle", "quickcode",
+            ],
+            "q": "",
+            "enableQuerySyntax": False,
+            "searchHub": "ATOGov WhatsNew",
+            "sortCriteria": "@dateupdated descending",
+            "numberOfResults": 100,
+            "firstResult": 0,
+        }
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {COVEO_TOKEN}",
+        }
+
+        try:
+            resp = http_requests.post(
+                COVEO_API_URL,
+                json=payload,
+                headers=headers,
+                timeout=30,
+            )
+            if resp.status_code != 200:
+                self.stdout.write(self.style.WARNING(
+                    f"Coveo API returned HTTP {resp.status_code}"
+                ))
+                # Fall back to HTML scraping
+                return self._scrape_whats_new_html_fallback()
+
+            data = resp.json()
+            results = data.get("results", [])
+
+            for r in results:
+                raw = r.get("raw", {})
+
+                # Parse the epoch timestamp
+                date_epoch = raw.get("dateupdated")
+                date_text = ""
+                if date_epoch:
+                    try:
+                        dt = datetime.fromtimestamp(date_epoch / 1000)
+                        date_text = dt.strftime("%d %B %Y")
+                    except (ValueError, TypeError, OSError):
+                        pass
+
+                # Title: remove " | Australian Taxation Office" suffix
+                title = r.get("title", "")
+                title = re.sub(
+                    r"\s*\|\s*Australian Taxation Office\s*$", "", title
+                )
+
+                url = r.get("clickUri", "")
+                description = raw.get("description", "")
+
+                if title:
+                    items.append({
+                        "date": date_text,
+                        "title": title,
+                        "url": url,
+                        "description": description,
+                    })
+
+        except Exception as e:
+            logger.error(f"Coveo API failed: {e}")
+            self.stdout.write(self.style.WARNING(
+                f"Coveo API failed: {e}. Trying HTML fallback..."
+            ))
+            return self._scrape_whats_new_html_fallback()
+
+        self.stdout.write(f"  Found {len(items)} items from What's New")
+        return items
+
+    def _scrape_whats_new_html_fallback(self):
+        """
+        Fallback HTML scraper for ATO What's New.
+        Only works if the server IP isn't blocked by Akamai and the
+        page renders server-side (unlikely for the React SPA).
+        """
+        self.stdout.write("  Trying HTML fallback for What's New...")
         items = []
 
         try:
             resp = self.session.get(ATO_WHATS_NEW_URL, timeout=30)
             if resp.status_code != 200:
-                self.stdout.write(self.style.WARNING(
-                    f"What's New returned HTTP {resp.status_code}"
-                ))
                 return items
-        except Exception as e:
-            logger.error(f"Failed to fetch ATO What's New: {e}")
-            self.stdout.write(self.style.ERROR(f"Request failed: {e}"))
+        except Exception:
             return items
 
         soup = BeautifulSoup(resp.text, "html.parser")
 
-        # Check for access denied
-        title_tag = soup.find("title")
-        if title_tag and "access denied" in title_tag.text.lower():
-            self.stdout.write(self.style.WARNING(
-                "ATO What's New returned 'Access Denied'. "
-                "The server IP may be blocked by Akamai."
-            ))
-            return items
-
-        # The What's New page uses article-like cards with h2 titles
         for article_link in soup.find_all("a", href=True):
             h2 = article_link.find("h2")
             if not h2:
@@ -274,12 +347,10 @@ class Command(BaseCommand):
             if href and not href.startswith("http"):
                 href = f"https://www.ato.gov.au{href}"
 
-            # Find the description paragraph
             parent = article_link.parent
             desc_p = parent.find("p") if parent else None
             description = desc_p.get_text(strip=True) if desc_p else ""
 
-            # Find the date
             date_text = ""
             if parent:
                 for text_node in parent.stripped_strings:
@@ -294,7 +365,9 @@ class Command(BaseCommand):
                 "description": description,
             })
 
-        self.stdout.write(f"  Found {len(items)} items from What's New")
+        self.stdout.write(
+            f"  HTML fallback found {len(items)} items"
+        )
         return items
 
     # ──────────────────────────────────────────────────────────
@@ -407,137 +480,110 @@ class Command(BaseCommand):
         return "\n".join(lines)
 
     # ──────────────────────────────────────────────────────────
-    # SharePoint upload via Microsoft Graph API
+    # Save directly to Eva Knowledge Brain database
     # ──────────────────────────────────────────────────────────
-    def _upload_to_sharepoint(self, filename, content):
+    def _save_to_knowledge_brain(self, title, markdown, no_embed=False):
         """
-        Upload a file to the Eva Knowledge Brain SharePoint library.
-        Uses the same credentials as the existing sync_knowledge_brain().
+        Save the scraped ATO update document directly into the
+        KnowledgeDocument / KnowledgeChunk tables, bypassing SharePoint.
+
+        This uses the same chunking and embedding pipeline as the
+        sync_knowledge_brain() function in eva_service.py.
         """
-        tenant_id = os.environ.get("SHAREPOINT_TENANT_ID", "")
-        client_id = os.environ.get("SHAREPOINT_CLIENT_ID", "")
-        client_secret = os.environ.get("SHAREPOINT_CLIENT_SECRET", "")
-        site_url = os.environ.get("SHAREPOINT_SITE_URL", "")
-        library_name = os.environ.get(
-            "SHAREPOINT_LIBRARY_NAME", "Eva Knowledge Brain"
+        try:
+            from core.models import KnowledgeDocument, KnowledgeChunk
+            from core.models import AuditLog
+            from core.eva_service import chunk_text, get_embedding
+        except ImportError as e:
+            self.stdout.write(self.style.ERROR(
+                f"Failed to import Knowledge Brain models: {e}"
+            ))
+            return
+
+        today_str = date.today().strftime("%Y-%m-%d")
+        sharepoint_path = (
+            f"02_Tax_Legislation/ATO_Rulings/{title}.md"
         )
-        site_id = os.environ.get("SHAREPOINT_SITE_ID", "")
-        drive_id = os.environ.get("SHAREPOINT_DRIVE_ID", "")
 
-        if not all([tenant_id, client_id, client_secret]):
-            logger.error("SharePoint credentials not configured.")
-            self.stdout.write(self.style.ERROR(
-                "SharePoint credentials not configured. "
-                "Set SHAREPOINT_TENANT_ID, SHAREPOINT_CLIENT_ID, "
-                "SHAREPOINT_CLIENT_SECRET."
-            ))
-            return False
+        # Check if today's document already exists (idempotent)
+        existing = KnowledgeDocument.objects.filter(
+            sharepoint_path=sharepoint_path,
+        ).first()
 
-        if not site_id and not site_url:
-            logger.error("SharePoint site not configured.")
-            self.stdout.write(self.style.ERROR(
-                "Set either SHAREPOINT_SITE_ID or SHAREPOINT_SITE_URL."
-            ))
-            return False
-
-        try:
-            # Get OAuth2 token
-            token_url = (
-                f"https://login.microsoftonline.com/"
-                f"{tenant_id}/oauth2/v2.0/token"
+        if existing:
+            self.stdout.write(
+                f"Updating existing document: {existing.title}"
             )
-            token_data = {
-                "grant_type": "client_credentials",
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "scope": "https://graph.microsoft.com/.default",
-            }
-            token_resp = http_requests.post(token_url, data=token_data)
-            token_resp.raise_for_status()
-            access_token = token_resp.json()["access_token"]
-            graph_base = "https://graph.microsoft.com/v1.0"
+            doc = existing
+            doc.title = title
+            doc.sync_status = KnowledgeDocument.SyncStatus.PENDING
+            doc.save()
+            # Delete old chunks
+            doc.chunks.all().delete()
+        else:
+            doc = KnowledgeDocument.objects.create(
+                title=title,
+                category=KB_CATEGORY,
+                sharepoint_path=sharepoint_path,
+                sharepoint_item_id=f"ato-scrape-{today_str}",
+                sharepoint_modified_at=timezone.now().isoformat(),
+                file_type="md",
+                file_size_bytes=len(markdown.encode("utf-8")),
+            )
+            self.stdout.write(f"Created new document: {title}")
 
-            auth_headers = {"Authorization": f"Bearer {access_token}"}
+        # Chunk the text
+        chunks = chunk_text(markdown)
+        self.stdout.write(f"  Generated {len(chunks)} chunks")
 
-            # Resolve site_id if needed
-            if not site_id:
-                from urllib.parse import urlparse
-
-                parsed = urlparse(site_url)
-                hostname = parsed.hostname
-                site_path = parsed.path.rstrip("/")
-                resolve_url = (
-                    f"{graph_base}/sites/{hostname}:{site_path}"
-                )
-                site_resp = http_requests.get(
-                    resolve_url, headers=auth_headers
-                )
-                site_resp.raise_for_status()
-                site_id = site_resp.json()["id"]
-
-            # Resolve drive_id if needed
-            if not drive_id:
-                drives_url = f"{graph_base}/sites/{site_id}/drives"
-                drives_resp = http_requests.get(
-                    drives_url, headers=auth_headers
-                )
-                drives_resp.raise_for_status()
-                for drv in drives_resp.json().get("value", []):
-                    if drv.get("name") == library_name:
-                        drive_id = drv["id"]
-                        break
-                if not drive_id:
+        # Embed and store chunks
+        embedded_count = 0
+        for chunk_data in chunks:
+            embedding = None
+            if not no_embed:
+                try:
+                    embedding = get_embedding(chunk_data["text"])
+                    embedded_count += 1
+                except Exception as e:
                     logger.error(
-                        f"Drive not found for library '{library_name}'"
+                        f"Embedding failed for chunk "
+                        f"{chunk_data['chunk_index']}: {e}"
                     )
-                    return False
 
-            # Upload the file (simple upload API, < 4MB)
-            upload_path = f"{SHAREPOINT_UPLOAD_FOLDER}/{filename}"
-            upload_url = (
-                f"{graph_base}/sites/{site_id}/drives/{drive_id}"
-                f"/root:/{upload_path}:/content"
+            KnowledgeChunk.objects.create(
+                document=doc,
+                chunk_index=chunk_data["chunk_index"],
+                text=chunk_data["text"],
+                embedding=embedding,
+                token_count=chunk_data["token_count"],
             )
 
-            upload_headers = {
-                "Authorization": f"Bearer {access_token}",
-                "Content-Type": "application/octet-stream",
-            }
-            file_bytes = content.encode("utf-8")
-            upload_resp = http_requests.put(
-                upload_url, headers=upload_headers, data=file_bytes
-            )
-            upload_resp.raise_for_status()
+        # Finalise the document
+        doc.chunk_count = len(chunks)
+        doc.sync_status = KnowledgeDocument.SyncStatus.SYNCED
+        doc.synced_at = timezone.now()
+        doc.save()
 
-            web_url = upload_resp.json().get("webUrl", "unknown")
-            logger.info(f"Uploaded {filename} to SharePoint: {web_url}")
-            self.stdout.write(f"SharePoint URL: {web_url}")
-            return True
-
-        except Exception as e:
-            logger.error(f"SharePoint upload failed: {e}")
-            self.stdout.write(self.style.ERROR(
-                f"SharePoint upload failed: {e}"
-            ))
-            return False
-
-    # ──────────────────────────────────────────────────────────
-    # Trigger Knowledge Brain sync after upload
-    # ──────────────────────────────────────────────────────────
-    def _trigger_sync(self):
-        """Trigger a Knowledge Brain sync so Eva picks up the new document."""
+        # Audit log
         try:
-            from core.eva_service import sync_knowledge_brain
+            AuditLog.objects.create(
+                action=AuditLog.Action.EVA_SYNC,
+                description=(
+                    f"ATO Update scraper saved '{title}' to "
+                    f"Knowledge Brain. {len(chunks)} chunks, "
+                    f"{embedded_count} embedded."
+                ),
+                metadata={
+                    "source": "scrape_ato_updates",
+                    "document_id": str(doc.pk),
+                    "chunks": len(chunks),
+                    "embedded": embedded_count,
+                },
+            )
+        except Exception:
+            pass
 
-            self.stdout.write("Triggering Eva Knowledge Brain sync...")
-            stats = sync_knowledge_brain()
-            self.stdout.write(self.style.SUCCESS(
-                f"Sync complete: {stats}"
-            ))
-        except Exception as e:
-            logger.error(f"Knowledge Brain sync failed: {e}")
-            self.stdout.write(self.style.WARNING(
-                f"Upload succeeded but sync failed: {e}. "
-                "The document will be picked up on the next "
-                "scheduled sync."
-            ))
+        self.stdout.write(self.style.SUCCESS(
+            f"Saved to Knowledge Brain: {title} "
+            f"({len(chunks)} chunks, {embedded_count} embedded)"
+        ))
