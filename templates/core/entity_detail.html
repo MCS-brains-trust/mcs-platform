@@ -141,7 +141,7 @@
                             <td><span class="badge bg-secondary">{{ fy.get_period_type_display }}</span></td>
                             <td>{{ fy.start_date|date:"d M Y" }} &mdash; {{ fy.end_date|date:"d M Y" }}</td>
                             <td>
-                                <span class="badge bg-{% if fy.status == 'draft' %}warning text-dark{% elif fy.status == 'in_review' %}info{% elif fy.status == 'reviewed' %}primary{% else %}success{% endif %}">
+                                <span class="badge bg-{% if fy.status == 'draft' %}warning text-dark{% elif fy.status == 'in_review' %}info{% elif fy.status == 'finished' %}primary{% else %}success{% endif %}">
                                     {{ fy.get_status_display }}
                                 </span>
                                 {% if fy.reopened_at %}

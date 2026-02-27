@@ -3,10 +3,19 @@ Eva Finalisation Gate — Structured Compliance Review Engine
 
 This module handles:
 1. Pre-flight checks before Eva review can be triggered
-2. The 8 compliance checks with entity-type filtering
-3. LLM-powered analysis for each check
-4. Finding creation and resolution workflow
-5. Status transitions (PREPARED → PENDING_EVA → EVA_CLEARED / FINDINGS_RAISED)
+2. Risk engine pre-run (deterministic checks run FIRST)
+3. The 8 compliance checks with entity-type filtering
+4. LLM-powered analysis for each check, with risk engine findings
+   injected as CONFIRMED HARD FACTS
+5. Finding creation and resolution workflow
+6. Status transitions (PREPARED → PENDING_EVA → EVA_CLEARED / FINDINGS_RAISED)
+
+Architecture (v2.0 — KB v2 spec):
+    1. Risk engine deterministic checks (always first)
+    2. Knowledge Brain retrieval (mandatory per check)
+    3. Prompt assembly (system prompt + KB chunks + financial context + hard facts)
+    4. LLM reasons, explains, cites, adds context
+    5. Present findings — confirmed (risk engine) separated from additional (LLM)
 """
 import json
 import logging
@@ -23,6 +32,23 @@ from django.views.decorators.http import require_GET, require_POST
 logger = logging.getLogger(__name__)
 
 ZERO = Decimal("0")
+
+# ---------------------------------------------------------------------------
+# Loan Detection Keywords (shared with risk_engine.py)
+# ---------------------------------------------------------------------------
+# Defect 1 fix: expanded from just "loan" to match risk_engine._LOAN_KEYWORDS
+LOAN_KEYWORDS = {
+    "loan", "director", "shareholder", "associate",
+    "advance", "current account", "drawings",
+    "related party", "beneficiary",
+}
+
+# Related party transaction keywords
+RELATED_PARTY_KEYWORDS = {
+    "management fee", "consulting fee", "director fee",
+    "related party", "intercompany", "inter-company",
+    "loan", "advance", "distribution",
+}
 
 # ---------------------------------------------------------------------------
 # Compliance Check Definitions
@@ -150,11 +176,132 @@ def run_preflight_checks(financial_year):
 
 
 # ---------------------------------------------------------------------------
-# Build Check Context for LLM
+# Risk Engine Pre-Run — Deterministic Hard Facts
 # ---------------------------------------------------------------------------
-def _build_check_context(financial_year, check_id):
-    """Build the specific context needed for a compliance check."""
+def _run_risk_engine_precheck(financial_year):
+    """
+    Run the risk engine's deterministic Tier 1 + Tier 2 checks BEFORE
+    the LLM review. Returns a dict of check_id -> list of risk flags.
+
+    These findings are CONFIRMED HARD FACTS that the LLM cannot override.
+    """
+    from core.risk_engine import run_risk_engine, _load_trial_balance, _check_div7a_loans
+    from core.models import RiskFlag
+
+    # Run the full risk engine (Tier 1 + Tier 2)
+    try:
+        risk_results = run_risk_engine(financial_year, tiers=[1, 2])
+        logger.info(
+            f"Risk engine pre-run: {risk_results['flags_created']} flags created, "
+            f"{risk_results['flags_auto_resolved']} auto-resolved"
+        )
+    except Exception as e:
+        logger.error(f"Risk engine pre-run failed: {e}")
+        risk_results = {"flags_created": 0, "errors": [str(e)]}
+
+    # Collect all open risk flags for this FY, grouped by relevance to each check
+    open_flags = RiskFlag.objects.filter(
+        financial_year=financial_year,
+        status__in=["open", "reviewed"],
+    ).order_by("tier", "severity")
+
+    # Map risk flags to Eva compliance check IDs
+    check_flags = {
+        "div7a": [],
+        "gst_reconciliation": [],
+        "related_party": [],
+        "smsf_compliance": [],
+        "trust_distribution": [],
+        "depreciation_review": [],
+        "tb_integrity": [],
+        "comparative_consistency": [],
+    }
+
+    for flag in open_flags:
+        rule_id = flag.rule_id or ""
+        title_lower = (flag.title or "").lower()
+        desc_lower = (flag.description or "").lower()
+
+        # Division 7A flags
+        if "div7a" in rule_id.lower() or "division 7a" in title_lower or "division 7a" in desc_lower:
+            check_flags["div7a"].append(flag)
+        # Loan-related flags that aren't explicitly Div 7A
+        elif any(kw in title_lower for kw in ("loan", "director", "shareholder", "advance")):
+            check_flags["div7a"].append(flag)
+
+        # GST flags
+        if "gst" in rule_id.lower() or "gst" in title_lower:
+            check_flags["gst_reconciliation"].append(flag)
+
+        # Related party / management fee flags
+        if any(kw in title_lower for kw in ("related party", "management fee", "intercompany")):
+            check_flags["related_party"].append(flag)
+
+        # Superannuation flags
+        if any(kw in title_lower for kw in ("super", "sgc", "sg rate")):
+            check_flags["related_party"].append(flag)  # Grouped with related party for now
+
+        # Variance flags — relevant to comparative consistency and TB integrity
+        if "variance" in rule_id.lower() or "variance" in title_lower:
+            check_flags["comparative_consistency"].append(flag)
+
+        # Revenue/expense benchmark flags
+        if "benchmark" in rule_id.lower() or "benchmark" in title_lower:
+            check_flags["comparative_consistency"].append(flag)
+
+        # Solvency / balance sign flags
+        if "solvency" in rule_id.lower() or "balance sign" in title_lower:
+            check_flags["tb_integrity"].append(flag)
+
+    return check_flags, risk_results
+
+
+def _format_risk_flags_as_hard_facts(flags):
+    """
+    Format risk engine flags as CONFIRMED HARD FACTS text block for the LLM prompt.
+    The LLM MUST acknowledge these — it cannot dismiss or override them.
+    """
+    if not flags:
+        return ""
+
+    lines = [
+        "╔══════════════════════════════════════════════════════════════╗",
+        "║  CONFIRMED HARD FACTS — RISK ENGINE (DETERMINISTIC)        ║",
+        "║  These findings are mathematically verified. You MUST       ║",
+        "║  acknowledge each one. You CANNOT dismiss or override them. ║",
+        "╚══════════════════════════════════════════════════════════════╝",
+        "",
+    ]
+
+    for i, flag in enumerate(flags, 1):
+        lines.append(f"CONFIRMED FINDING #{i}:")
+        lines.append(f"  Rule: {flag.rule_id}")
+        lines.append(f"  Severity: {flag.severity}")
+        lines.append(f"  Title: {flag.title}")
+        lines.append(f"  Detail: {flag.description}")
+        if flag.recommended_action:
+            lines.append(f"  Action Required: {flag.recommended_action}")
+        if flag.legislation_ref:
+            lines.append(f"  Legislation: {flag.legislation_ref}")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Build Check Context for LLM (v2.0 — uses effective balances)
+# ---------------------------------------------------------------------------
+def _build_check_context(financial_year, check_id, risk_flags=None):
+    """
+    Build the specific context needed for a compliance check.
+
+    Defect 2 fix: Uses netted effective balances (aggregated across
+    original TB lines + adjusting journals) instead of raw debit/credit.
+
+    Defect 3 fix: Injects risk engine findings as confirmed hard facts.
+    """
     from core.eva_chat import build_context_payload
+    from core.risk_engine import _load_trial_balance
 
     fy = financial_year
     entity = fy.entity
@@ -162,18 +309,50 @@ def _build_check_context(financial_year, check_id):
     # Base context (TB, journals, associates)
     base_context = build_context_payload(fy)
 
-    # Add check-specific context
+    # Load the risk engine's aggregated TB data (with effective balances)
+    tb_data = _load_trial_balance(fy)
+
+    # Add check-specific context using EFFECTIVE balances
     extra = []
 
     if check_id == "div7a":
-        # Look for loan accounts in TB
-        loan_lines = fy.trial_balance_lines.filter(
-            account_name__icontains="loan"
-        ).values_list("account_code", "account_name", "debit", "credit")
-        if loan_lines:
-            extra.append("=== LOAN ACCOUNTS ===")
-            for code, name, dr, cr in loan_lines:
-                extra.append(f"{code} {name}: DR {dr} / CR {cr}")
+        # Defect 1+2 fix: Use expanded keywords AND effective balances
+        extra.append("=== LOAN & RELATED PARTY ACCOUNTS (EFFECTIVE BALANCES) ===")
+        found_any = False
+        for line in tb_data["lines"]:
+            name_lower = (line.account_name or "").lower()
+            if any(kw in name_lower for kw in LOAN_KEYWORDS):
+                net = line.effective_dr - line.effective_cr
+                balance_type = "DEBIT (owed TO company)" if net > ZERO else "CREDIT (owed BY company)"
+                extra.append(
+                    f"  {line.account_code} {line.account_name}: "
+                    f"Effective DR ${line.effective_dr:,.2f} / CR ${line.effective_cr:,.2f} "
+                    f"→ Net ${net:,.2f} {balance_type}"
+                )
+                found_any = True
+        if not found_any:
+            extra.append("  No loan/director/shareholder accounts found in TB.")
+
+    elif check_id == "related_party":
+        # Enhanced related party detection with effective balances
+        extra.append("=== RELATED PARTY TRANSACTION ACCOUNTS (EFFECTIVE BALANCES) ===")
+        found_any = False
+        for line in tb_data["lines"]:
+            name_lower = (line.account_name or "").lower()
+            if any(kw in name_lower for kw in RELATED_PARTY_KEYWORDS):
+                net = line.effective_dr - line.effective_cr
+                extra.append(
+                    f"  {line.account_code} {line.account_name}: "
+                    f"Effective DR ${line.effective_dr:,.2f} / CR ${line.effective_cr:,.2f} "
+                    f"→ Net ${net:,.2f}"
+                )
+                # Include prior year for comparison
+                prior_net = (line.prior_debit or ZERO) - (line.prior_credit or ZERO)
+                if prior_net != ZERO:
+                    extra.append(f"    Prior Year Net: ${prior_net:,.2f}")
+                found_any = True
+        if not found_any:
+            extra.append("  No related party accounts identified by keyword search.")
 
     elif check_id == "trust_distribution":
         # Check for distribution-related journals
@@ -199,17 +378,87 @@ def _build_check_context(financial_year, check_id):
                     f"Dep ${a.depreciation_amount}, Closing ${a.closing_wdv}"
                 )
 
+    elif check_id == "comparative_consistency":
+        # Add summary of significant variances using effective balances
+        extra.append("=== SIGNIFICANT YEAR-ON-YEAR MOVEMENTS (EFFECTIVE BALANCES) ===")
+        variance_count = 0
+        for line in tb_data["lines"]:
+            current_net = line.effective_dr - line.effective_cr
+            prior_net = (line.prior_debit or ZERO) - (line.prior_credit or ZERO)
+            if prior_net != ZERO:
+                variance_pct = abs((current_net - prior_net) / abs(prior_net) * 100)
+                abs_variance = abs(current_net - prior_net)
+                if variance_pct >= 25 and abs_variance >= Decimal("5000"):
+                    direction = "increased" if current_net > prior_net else "decreased"
+                    extra.append(
+                        f"  {line.account_code} {line.account_name}: "
+                        f"${prior_net:,.2f} → ${current_net:,.2f} "
+                        f"({direction} {variance_pct:.1f}%, ${abs_variance:,.2f})"
+                    )
+                    variance_count += 1
+        if variance_count == 0:
+            extra.append("  No significant variances detected (>25% and >$5,000).")
+
+    # Inject risk engine hard facts (Defect 3 fix)
+    hard_facts_text = ""
+    if risk_flags:
+        hard_facts_text = _format_risk_flags_as_hard_facts(risk_flags)
+
+    # Retrieve Knowledge Brain context for this check
+    kb_context = ""
+    try:
+        from core.eva_knowledge import retrieve_relevant_chunks, format_rag_context
+        check_def = next((c for c in COMPLIANCE_CHECKS if c["id"] == check_id), None)
+        if check_def:
+            search_query = f"{check_def['name']} {check_def['description']} Australian tax law"
+            chunks = retrieve_relevant_chunks(search_query, top_k=4)
+            if chunks:
+                kb_context = "\n\n=== KNOWLEDGE BRAIN REFERENCE ===\n"
+                kb_context += format_rag_context(chunks)
+    except Exception as e:
+        logger.warning(f"Knowledge Brain retrieval failed for {check_id}: {e}")
+
     extra_text = "\n".join(extra) if extra else ""
-    return f"{base_context}\n\n{extra_text}"
+
+    # Assemble: Hard Facts first, then KB context, then base context, then extras
+    parts = []
+    if hard_facts_text:
+        parts.append(hard_facts_text)
+    if kb_context:
+        parts.append(kb_context)
+    parts.append(base_context)
+    if extra_text:
+        parts.append(extra_text)
+
+    return "\n\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
-# Eva Review System Prompts
+# Eva Review System Prompts (v2.0 — retrieval-first, hard facts mandatory)
 # ---------------------------------------------------------------------------
 EVA_REVIEW_SYSTEM_PROMPT = """You are Eva, the AI Compliance Reviewer for MC & S Accountants.
 You are performing a structured compliance review of a financial year before finalisation.
 
-Your task is to analyse the provided financial data and check for the specific compliance issue described.
+CRITICAL RULES — YOU MUST FOLLOW THESE:
+
+1. CONFIRMED HARD FACTS: If the prompt contains a "CONFIRMED HARD FACTS" section,
+   these findings come from the deterministic risk engine and are mathematically verified.
+   You MUST acknowledge every confirmed finding. You CANNOT dismiss, override, or
+   contradict them. Your role is to EXPLAIN them in plain English, cite the relevant
+   legislation, and provide actionable recommendations.
+
+2. KNOWLEDGE BRAIN: If the prompt contains a "KNOWLEDGE BRAIN REFERENCE" section,
+   you MUST ground your analysis in those documents. Cite the specific document title
+   when referencing firm policies, ATO rulings, or accounting standards.
+
+3. ADDITIONAL FINDINGS: Beyond the confirmed hard facts, you may raise ADDITIONAL
+   findings if you identify genuine compliance issues in the data. These must be
+   clearly supported by evidence in the trial balance.
+
+4. EFFECTIVE BALANCES: When loan/related party accounts are shown with "Effective"
+   balances, these are the NETTED values after all adjusting journals. Use these
+   values, not the raw debit/credit columns from the trial balance.
+
 You must respond with a JSON object (no markdown, no code fences) with exactly this structure:
 
 {
@@ -219,33 +468,44 @@ You must respond with a JSON object (no markdown, no code fences) with exactly t
   "explanation": "Plain English explanation of the issue found (2-3 sentences)",
   "recommendation": "What the accountant should do to address this (1-2 sentences)",
   "legislation_reference": "Relevant legislation section (e.g. 's.109D ITAA 1936')",
-  "confidence": "HIGH", "MEDIUM", or "LOW"
+  "confidence": "HIGH", "MEDIUM", or "LOW",
+  "source": "risk_engine" or "eva_analysis"
 }
 
 Rules:
-1. Only raise a finding if there is genuine evidence of an issue in the data
-2. Do NOT raise findings for missing data — only for data that suggests a problem
+1. If confirmed hard facts exist for this check, has_finding MUST be true and source MUST be "risk_engine"
+2. For additional findings you identify independently, set source to "eva_analysis"
 3. Be specific — reference actual account codes and amounts from the trial balance
 4. Use Australian tax law and accounting standards
 5. For CRITICAL findings, there must be clear evidence of a breach or material risk
 6. For ADVISORY findings, flag items that warrant further review
-7. If no issue is found, set has_finding to false and leave other fields empty
+7. If no confirmed hard facts AND no issues found, set has_finding to false
 """
 
 
 # ---------------------------------------------------------------------------
 # Run a Single Compliance Check
 # ---------------------------------------------------------------------------
-def _run_single_check(financial_year, check_def):
+def _run_single_check(financial_year, check_def, risk_flags=None):
     """
-    Run a single compliance check using the LLM.
+    Run a single compliance check using the LLM, with risk engine
+    findings injected as confirmed hard facts.
 
     Returns:
         dict with finding data, or None if no finding
     """
     from core.ai_service import _call_llm
 
-    context = _build_check_context(financial_year, check_def["id"])
+    context = _build_check_context(financial_year, check_def["id"], risk_flags=risk_flags)
+
+    # If there are confirmed hard facts, tell the LLM explicitly
+    hard_facts_note = ""
+    if risk_flags:
+        hard_facts_note = (
+            f"\n\nIMPORTANT: The risk engine has identified {len(risk_flags)} confirmed "
+            f"finding(s) for this check. You MUST acknowledge each one in your response. "
+            f"Set has_finding to true and source to 'risk_engine'."
+        )
 
     user_prompt = f"""COMPLIANCE CHECK: {check_def["name"]}
 Description: {check_def["description"]}
@@ -254,7 +514,7 @@ Default Severity: {check_def["severity_default"]}
 
 {context}
 
-Analyse the above data for this specific compliance check and respond with the JSON structure.
+Analyse the above data for this specific compliance check and respond with the JSON structure.{hard_facts_note}
 """
 
     # Determine tier based on override
@@ -284,11 +544,34 @@ Analyse the above data for this specific compliance check and respond with the J
         result["check_id"] = check_def["id"]
         result["check_name"] = check_def["name"]
         result["model_used"] = tier
+        # Ensure source field exists
+        if "source" not in result:
+            result["source"] = "risk_engine" if risk_flags else "eva_analysis"
         return result
 
     except json.JSONDecodeError as e:
         logger.error(f"Eva check {check_def['id']} JSON parse error: {e}")
         logger.error(f"Raw response: {response_text[:500]}")
+
+        # If there were hard facts, create a finding anyway — the risk engine
+        # already confirmed the issue, we just couldn't get the LLM to explain it
+        if risk_flags:
+            flag = risk_flags[0]
+            return {
+                "check_id": check_def["id"],
+                "check_name": check_def["name"],
+                "has_finding": True,
+                "title": flag.title,
+                "severity": flag.severity,
+                "explanation": flag.description,
+                "recommendation": flag.recommended_action or "",
+                "legislation_reference": flag.legislation_ref or "",
+                "confidence": "HIGH",
+                "source": "risk_engine",
+                "model_used": tier,
+                "error": f"LLM parse failed, using risk engine finding directly: {e}",
+            }
+
         return {
             "check_id": check_def["id"],
             "check_name": check_def["name"],
@@ -297,6 +580,25 @@ Analyse the above data for this specific compliance check and respond with the J
         }
     except Exception as e:
         logger.error(f"Eva check {check_def['id']} error: {e}")
+
+        # Same fallback for hard facts
+        if risk_flags:
+            flag = risk_flags[0]
+            return {
+                "check_id": check_def["id"],
+                "check_name": check_def["name"],
+                "has_finding": True,
+                "title": flag.title,
+                "severity": flag.severity,
+                "explanation": flag.description,
+                "recommendation": flag.recommended_action or "",
+                "legislation_reference": flag.legislation_ref or "",
+                "confidence": "HIGH",
+                "source": "risk_engine",
+                "model_used": tier,
+                "error": f"LLM call failed, using risk engine finding directly: {e}",
+            }
+
         return {
             "check_id": check_def["id"],
             "check_name": check_def["name"],
@@ -343,20 +645,36 @@ def _run_eva_review_background(fy_pk, user_pk):
         fy.status = fy.Status.PENDING_EVA
         fy.save(update_fields=["status"])
 
+        # ── STEP 1: Run risk engine FIRST (deterministic checks) ─────
+        _eva_review_tasks[task_key] = {
+            "status": "running",
+            "review_id": str(review.pk),
+            "total_checks": 0,
+            "completed_checks": 0,
+            "current_check": "Running risk engine (deterministic checks)...",
+            "findings_count": 0,
+        }
+
+        check_flags, risk_results = _run_risk_engine_precheck(fy)
+
+        # Count total confirmed flags
+        total_risk_flags = sum(len(flags) for flags in check_flags.values())
+        logger.info(
+            f"Risk engine pre-run complete: {total_risk_flags} relevant flags "
+            f"mapped to Eva checks"
+        )
+
+        # ── STEP 2: Run LLM checks with hard facts injected ─────────
         # Filter checks by entity type
         applicable_checks = [
             c for c in COMPLIANCE_CHECKS
             if entity_type in c["entity_types"]
         ]
 
-        _eva_review_tasks[task_key] = {
-            "status": "running",
-            "review_id": str(review.pk),
+        _eva_review_tasks[task_key].update({
             "total_checks": len(applicable_checks),
-            "completed_checks": 0,
-            "current_check": "",
-            "findings_count": 0,
-        }
+            "risk_flags_found": total_risk_flags,
+        })
 
         findings_created = 0
 
@@ -364,7 +682,10 @@ def _run_eva_review_background(fy_pk, user_pk):
             _eva_review_tasks[task_key]["current_check"] = check_def["name"]
             _eva_review_tasks[task_key]["completed_checks"] = i
 
-            result = _run_single_check(fy, check_def)
+            # Get risk engine flags relevant to this check
+            relevant_flags = check_flags.get(check_def["id"], [])
+
+            result = _run_single_check(fy, check_def, risk_flags=relevant_flags)
 
             if result and result.get("has_finding"):
                 # Retrieve Knowledge Brain citation if available
@@ -395,6 +716,29 @@ def _run_eva_review_background(fy_pk, user_pk):
                 findings_created += 1
                 _eva_review_tasks[task_key]["findings_count"] = findings_created
 
+            # If the LLM didn't raise a finding but there ARE confirmed hard facts,
+            # create findings directly from the risk engine flags
+            elif relevant_flags and not (result and result.get("has_finding")):
+                logger.warning(
+                    f"LLM missed confirmed hard facts for {check_def['id']}. "
+                    f"Creating findings directly from risk engine."
+                )
+                for flag in relevant_flags:
+                    EvaFinding.objects.create(
+                        eva_review=review,
+                        check_name=check_def["id"],
+                        severity=flag.severity if flag.severity in ("CRITICAL", "ADVISORY") else "ADVISORY",
+                        title=flag.title,
+                        plain_english_explanation=flag.description,
+                        recommendation=flag.recommended_action or "",
+                        legislation_reference=flag.legislation_ref or "",
+                        knowledge_brain_citation="",
+                        confidence="HIGH",
+                        status="open",
+                    )
+                    findings_created += 1
+                    _eva_review_tasks[task_key]["findings_count"] = findings_created
+
         # Update review status
         duration = time.time() - start_time
         if findings_created > 0:
@@ -416,6 +760,7 @@ def _run_eva_review_background(fy_pk, user_pk):
             description=(
                 f"Eva compliance review for {fy.entity.entity_name} ({fy.year_label}) "
                 f"completed in {duration:.1f}s. "
+                f"Risk engine found {total_risk_flags} confirmed issue(s). "
                 f"{'No findings — cleared for finalisation.' if findings_created == 0 else f'{findings_created} finding(s) require attention.'}"
             ),
             entity=fy.entity,
@@ -429,6 +774,7 @@ def _run_eva_review_background(fy_pk, user_pk):
             "total_checks": len(applicable_checks),
             "completed_checks": len(applicable_checks),
             "findings_count": findings_created,
+            "risk_flags_found": total_risk_flags,
             "review_status": review.status,
             "duration": round(duration, 1),
         }
@@ -510,7 +856,8 @@ def ask_eva_review(request, pk):
         title=f"Eva Review Triggered — {fy.entity.entity_name}",
         description=(
             f"Eva compliance review triggered for {fy.entity.entity_name} ({fy.year_label}). "
-            f"Model: {'Opus (override)' if fy.eva_model_override == 'opus' else 'Sonnet'}."
+            f"Model: {'Opus (override)' if fy.eva_model_override == 'opus' else 'Sonnet'}. "
+            f"Pipeline: Risk Engine → Knowledge Brain → LLM (v2.0)."
         ),
         entity=fy.entity,
         financial_year=fy,
@@ -527,7 +874,7 @@ def ask_eva_review(request, pk):
 
     return JsonResponse({
         "status": "running",
-        "message": "Eva review started. This may take 30-60 seconds.",
+        "message": "Eva review started. Risk engine runs first, then LLM analysis. This may take 30-60 seconds.",
     })
 
 

@@ -298,11 +298,11 @@ def dashboard(request):
     else:
         greeting = "Good evening"
 
-    # Unfinalised financial years (Draft, In Review, Reviewed) — grouped by client
+    # Unfinalised financial years (Draft, In Review, Finished) — grouped by client
     unfinalised_years = (
         FinancialYear.objects.filter(
             entity__client__in=clients,
-            status__in=["draft", "in_review", "reviewed"],
+            status__in=["draft", "in_review", "finished"],
         )
         .select_related("entity", "entity__client")
         .order_by("entity__client__name", "entity__entity_name", "-end_date")
@@ -936,8 +936,8 @@ def financial_year_status(request, pk):
         messages.error(request, "Only senior accountants can finalise.")
         return redirect("core:financial_year_detail", pk=pk)
 
-    if new_status == "reviewed" and not request.user.is_senior:
-        messages.error(request, "Only senior accountants can mark as reviewed.")
+    if new_status == "finished" and not request.user.is_senior:
+        messages.error(request, "Only senior accountants can mark as finished.")
         return redirect("core:financial_year_detail", pk=pk)
 
     # Eva Finalisation Gate: finalisation now requires Eva clearance
@@ -1137,7 +1137,7 @@ def financial_year_status(request, pk):
 
     old_status = fy.status
     fy.status = new_status
-    if new_status == "reviewed":
+    if new_status == "finished":
         fy.reviewed_by = request.user
     if new_status == "finalised":
         fy.finalised_at = timezone.now()
@@ -5898,7 +5898,7 @@ def review_approve_transaction(request, pk):
         # Find the financial year for this entity that covers this transaction
         from datetime import datetime as dt
         entity = txn.job.entity
-        fys = FinancialYear.objects.filter(entity=entity, status__in=['draft', 'in_review', 'reviewed'])
+        fys = FinancialYear.objects.filter(entity=entity, status__in=['draft', 'in_review', 'finished'])
         target_fy = None
         for fy_candidate in fys:
             # Try to parse the transaction date
@@ -6049,7 +6049,7 @@ def review_unconfirm_transaction(request, pk):
     if txn.job and txn.job.entity and txn.confirmed_code:
         from datetime import datetime as dt
         entity = txn.job.entity
-        fys = FinancialYear.objects.filter(entity=entity, status__in=['draft', 'in_review', 'reviewed'])
+        fys = FinancialYear.objects.filter(entity=entity, status__in=['draft', 'in_review', 'finished'])
         target_fy = None
         for fy_candidate in fys:
             txn_date = None

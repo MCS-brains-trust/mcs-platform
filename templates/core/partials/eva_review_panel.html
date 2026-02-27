@@ -26,7 +26,7 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
     </div>
     <div class="card-body">
         {% if fy.can_ask_eva and fy.status != 'prepared' %}
-        <!-- Show "Ask Eva to Review" button (available in Draft, In Review, Reviewed) -->
+        <!-- Show "Ask Eva to Review" button (available when status is Finished) -->
         <div class="text-center py-3" id="eva-review-prompt">
             <i class="bi bi-shield-check" style="font-size: 2.5rem; color: #0F6B74;"></i>
             <p class="mt-2 mb-3">Submit this financial year to Eva for a structured compliance review before finalisation.</p>

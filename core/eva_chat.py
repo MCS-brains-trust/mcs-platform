@@ -130,7 +130,7 @@ Status: {fy.get_status_display()}
                 jnl_text.append(
                     f"  {line.account_code} {line.account_name}: "
                     f"DR {_decimal_to_str(line.debit)} / CR {_decimal_to_str(line.credit)}"
-                    f" — {line.narration or ''}"
+                    f" — {line.description or ''}"
                 )
         sections.append("\n".join(jnl_text))
 
