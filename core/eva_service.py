@@ -978,6 +978,10 @@ SHAREPOINT_FOLDER_MAP = {
     "06_Training_Materials/Eva_User_Guide": "training_eva",
     "06_Training_Materials/StatementHub_Procedures": "training_statementhub",
     "06_Training_Materials/Onboarding": "training_onboarding",
+    # 07_Benchmarks
+    "07_Benchmarks/ATO_Benchmarks": "ato_benchmarks",
+    "07_Benchmarks/Industry_Benchmarks": "industry_benchmarks",
+    "07_Benchmarks/Financial_Ratios": "financial_ratios",
 }
 
 
