@@ -281,8 +281,8 @@ Include this in the FY detail template. Requires: fy, entity context variables.
             <div class="eva-subtitle">Practice Intelligence</div>
         </div>
         <div id="eva-status-dot" title="Ready"></div>
-        <button onclick="evaToggleChat()" style="background:none;border:none;color:white;font-size:18px;cursor:pointer;padding:0;margin-left:4px;">
-            <i class="bi bi-x-lg"></i>
+        <button onclick="evaToggleChat()" style="background:none;border:none;color:white;font-size:18px;cursor:pointer;padding:4px 6px;margin-left:4px;line-height:1;" title="Minimise">
+            <i class="bi bi-dash-lg"></i>
         </button>
     </div>
     <div id="eva-chat-messages">
@@ -360,10 +360,17 @@ let evaHistoryLoaded = false;
 
 function evaToggleChat() {
     evaChatOpen = !evaChatOpen;
-    document.getElementById('eva-chat-panel').classList.toggle('open', evaChatOpen);
+    var panel = document.getElementById('eva-chat-panel');
+    var bubble = document.getElementById('eva-chat-toggle');
+    panel.classList.toggle('open', evaChatOpen);
+    if (bubble) bubble.style.display = evaChatOpen ? 'none' : 'flex';
     if (evaChatOpen && !evaHistoryLoaded) {
         evaLoadHistory();
         evaHistoryLoaded = true;
+    }
+    if (evaChatOpen) {
+        var input = document.getElementById('eva-chat-input');
+        if (input) input.focus();
     }
 }
 
