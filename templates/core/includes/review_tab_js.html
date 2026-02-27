@@ -1322,10 +1322,14 @@ function startAiClassification() {
     })
     .then(r => r.json())
     .then(data => {
-        if (data.status === 'ok' || data.status === 'started') {
+        if (data.status === 'ok' || data.status === 'started' || data.status === 'running') {
             const progress = document.getElementById('classifyProgress');
             if (progress) progress.classList.remove('d-none');
             startClassifyPolling();
+        } else if (data.status === 'complete') {
+            showReviewNotification(data.message || 'All transactions already classified.');
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-robot"></i> Classify with AI';
         } else {
             alert('Error: ' + (data.message || 'Could not start classification'));
             btn.disabled = false;
