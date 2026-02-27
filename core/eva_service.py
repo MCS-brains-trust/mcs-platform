@@ -974,23 +974,33 @@ def sync_knowledge_brain():
     - SHAREPOINT_TENANT_ID
     - SHAREPOINT_CLIENT_ID
     - SHAREPOINT_CLIENT_SECRET
-    - SHAREPOINT_SITE_ID
-    - SHAREPOINT_DRIVE_ID
+    - SHAREPOINT_SITE_URL (e.g. https://tenant.sharepoint.com/sites/SiteName)
+    - SHAREPOINT_LIBRARY_NAME (e.g. Eva Knowledge Brain)
+
+    Optionally, you can set SHAREPOINT_SITE_ID and SHAREPOINT_DRIVE_ID directly
+    to skip the auto-resolution step.
     """
     import requests as http_requests
     from core.models import KnowledgeDocument, KnowledgeChunk
     from core.models import AuditLog
     import tempfile
+    from urllib.parse import urlparse
 
     tenant_id = os.environ.get("SHAREPOINT_TENANT_ID", "")
     client_id = os.environ.get("SHAREPOINT_CLIENT_ID", "")
     client_secret = os.environ.get("SHAREPOINT_CLIENT_SECRET", "")
+    site_url = os.environ.get("SHAREPOINT_SITE_URL", "")
+    library_name = os.environ.get("SHAREPOINT_LIBRARY_NAME", "Eva Knowledge Brain")
     site_id = os.environ.get("SHAREPOINT_SITE_ID", "")
     drive_id = os.environ.get("SHAREPOINT_DRIVE_ID", "")
 
-    if not all([tenant_id, client_id, client_secret, site_id, drive_id]):
-        logger.error("SharePoint credentials not configured. Set SHAREPOINT_* env vars.")
+    if not all([tenant_id, client_id, client_secret]):
+        logger.error("SharePoint credentials not configured. Set SHAREPOINT_TENANT_ID, SHAREPOINT_CLIENT_ID, SHAREPOINT_CLIENT_SECRET.")
         return {"error": "SharePoint credentials not configured", "added": 0, "updated": 0}
+
+    if not site_id and not site_url:
+        logger.error("Set either SHAREPOINT_SITE_ID or SHAREPOINT_SITE_URL.")
+        return {"error": "SharePoint site not configured", "added": 0, "updated": 0}
 
     # Get OAuth2 token
     token_url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
@@ -1003,9 +1013,34 @@ def sync_knowledge_brain():
     token_resp = http_requests.post(token_url, data=token_data)
     token_resp.raise_for_status()
     access_token = token_resp.json()["access_token"]
-
     headers = {"Authorization": f"Bearer {access_token}"}
     graph_base = "https://graph.microsoft.com/v1.0"
+
+    # Auto-resolve site_id from site_url if not provided
+    if not site_id:
+        parsed = urlparse(site_url)
+        hostname = parsed.hostname  # e.g. mcandscomau.sharepoint.com
+        site_path = parsed.path.rstrip("/")  # e.g. /sites/MCS354
+        resolve_url = f"{graph_base}/sites/{hostname}:{site_path}"
+        logger.info(f"Resolving SharePoint site ID from: {resolve_url}")
+        site_resp = http_requests.get(resolve_url, headers=headers)
+        site_resp.raise_for_status()
+        site_id = site_resp.json()["id"]
+        logger.info(f"Resolved site_id: {site_id}")
+
+    # Auto-resolve drive_id from library name if not provided
+    if not drive_id:
+        drives_url = f"{graph_base}/sites/{site_id}/drives"
+        drives_resp = http_requests.get(drives_url, headers=headers)
+        drives_resp.raise_for_status()
+        for drv in drives_resp.json().get("value", []):
+            if drv.get("name") == library_name:
+                drive_id = drv["id"]
+                break
+        if not drive_id:
+            logger.error(f"Could not find drive for library '{library_name}'. Available: {[d['name'] for d in drives_resp.json().get('value', [])]}")
+            return {"error": f"Drive not found for library '{library_name}'", "added": 0, "updated": 0}
+        logger.info(f"Resolved drive_id: {drive_id}")
 
     stats = {"added": 0, "updated": 0, "errors": 0, "total_chunks": 0}
 
