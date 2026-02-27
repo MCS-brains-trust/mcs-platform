@@ -90,6 +90,68 @@ class Entity(models.Model):
         LARGE = "large_proprietary", "Large Proprietary"
         PUBLIC = "public", "Public"
 
+    class Industry(models.TextChoices):
+        # Professional Services
+        ACCOUNTING = "accounting", "Accounting & Tax Services"
+        LEGAL = "legal", "Legal Services"
+        CONSULTING = "consulting", "Management Consulting"
+        IT_SERVICES = "it_services", "IT & Technology Services"
+        ENGINEERING = "engineering", "Engineering Services"
+        ARCHITECTURE = "architecture", "Architecture & Design"
+        FINANCIAL_SERVICES = "financial_services", "Financial Services & Planning"
+        REAL_ESTATE = "real_estate", "Real Estate & Property Services"
+        MARKETING = "marketing", "Marketing & Advertising"
+        PROFESSIONAL_OTHER = "professional_other", "Other Professional Services"
+        # Healthcare
+        MEDICAL_GP = "medical_gp", "Medical — General Practice"
+        MEDICAL_SPECIALIST = "medical_specialist", "Medical — Specialist"
+        DENTAL = "dental", "Dental"
+        ALLIED_HEALTH = "allied_health", "Allied Health (Physio, Chiro, etc.)"
+        PHARMACY = "pharmacy", "Pharmacy"
+        VETERINARY = "veterinary", "Veterinary"
+        HEALTHCARE_OTHER = "healthcare_other", "Other Healthcare"
+        # Construction & Trades
+        CONSTRUCTION = "construction", "Construction — Builder"
+        ELECTRICAL = "electrical", "Electrical Contractor"
+        PLUMBING = "plumbing", "Plumbing Contractor"
+        TRADES_OTHER = "trades_other", "Other Trades & Contracting"
+        # Hospitality & Food
+        RESTAURANT = "restaurant", "Restaurant & Cafe"
+        HOTEL = "hotel", "Hotel & Accommodation"
+        CATERING = "catering", "Catering"
+        FOOD_MANUFACTURING = "food_manufacturing", "Food Manufacturing"
+        HOSPITALITY_OTHER = "hospitality_other", "Other Hospitality"
+        # Retail & Wholesale
+        RETAIL = "retail", "Retail — General"
+        ECOMMERCE = "ecommerce", "E-Commerce & Online Retail"
+        WHOLESALE = "wholesale", "Wholesale & Distribution"
+        # Transport & Logistics
+        TRANSPORT = "transport", "Transport & Logistics"
+        COURIER = "courier", "Courier & Delivery"
+        # Primary Industries
+        AGRICULTURE = "agriculture", "Agriculture & Farming"
+        MINING = "mining", "Mining & Resources"
+        FISHING = "fishing", "Fishing & Aquaculture"
+        # Manufacturing
+        MANUFACTURING = "manufacturing", "Manufacturing — General"
+        # Not-for-Profit
+        NFP_CHARITY = "nfp_charity", "Not-for-Profit — Charity"
+        NFP_ASSOCIATION = "nfp_association", "Not-for-Profit — Association"
+        NFP_OTHER = "nfp_other", "Not-for-Profit — Other"
+        # Education
+        EDUCATION = "education", "Education & Training"
+        CHILDCARE = "childcare", "Childcare"
+        # Property & Investment
+        PROPERTY_INVESTMENT = "property_investment", "Property Investment"
+        INVESTMENT = "investment", "Investment & Holding Company"
+        SMSF_INDUSTRY = "smsf_industry", "SMSF / Superannuation"
+        # Other
+        BEAUTY = "beauty", "Beauty & Personal Care"
+        FITNESS = "fitness", "Fitness & Recreation"
+        CLEANING = "cleaning", "Cleaning Services"
+        SECURITY = "security", "Security Services"
+        OTHER = "other", "Other"
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     client = models.ForeignKey(
         Client, on_delete=models.SET_NULL, null=True, blank=True,
@@ -143,6 +205,12 @@ class Entity(models.Model):
         choices=CompanySize.choices,
         blank=True,
         help_text="Companies only",
+    )
+    industry = models.CharField(
+        max_length=30,
+        choices=Industry.choices,
+        default="",
+        help_text="Industry classification — used by Eva for AI analysis, GST coding, and benchmarking.",
     )
     template_id = models.ForeignKey(
         "FinancialStatementTemplate",

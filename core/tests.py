@@ -471,7 +471,6 @@ class EntityFormSecurityTests(SecurityTestBase):
         from core.forms import EntityForm
         form = EntityForm(user=self.accountant)
         self.assertNotIn("assigned_accountant", form.fields)
-        self.assertNotIn("xpm_client_id", form.fields)
 
     def test_senior_can_set_assigned_accountant(self):
         """Senior users should see assigned_accountant field."""

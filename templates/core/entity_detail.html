@@ -204,6 +204,10 @@
                                     <td>{{ entity.get_entity_type_display }}</td>
                                 </tr>
                                 <tr>
+                                    <td class="text-muted">Industry</td>
+                                    <td>{{ entity.get_industry_display|default:"—" }}</td>
+                                </tr>
+                                <tr>
                                     <td class="text-muted">ABN</td>
                                     <td>{{ entity.abn|default:"—" }}</td>
                                 </tr>
@@ -215,12 +219,7 @@
                                     <td class="text-muted">TFN</td>
                                     <td>{{ entity.tfn|default:"—" }}</td>
                                 </tr>
-                                {% if entity.registration_date %}
-                                <tr>
-                                    <td class="text-muted">Registration Date</td>
-                                    <td>{{ entity.registration_date|date:"d M Y" }}</td>
-                                </tr>
-                                {% endif %}
+
                                 <tr>
                                     <td class="text-muted">GST Registered</td>
                                     <td>{% if entity.is_gst_registered %}<span class="badge bg-success">Yes</span>{% else %}<span class="badge bg-secondary">No</span>{% endif %}</td>
@@ -235,10 +234,7 @@
                                     <td>{{ entity.get_company_size_display }}</td>
                                 </tr>
                                 {% endif %}
-                                <tr>
-                                    <td class="text-muted">FY End</td>
-                                    <td>{{ entity.financial_year_end }}</td>
-                                </tr>
+
                             </tbody>
                         </table>
                     </div>
@@ -256,10 +252,7 @@
                                     <td class="text-muted" style="width:40%">Email</td>
                                     <td>{{ entity.contact_email|default:"—" }}</td>
                                 </tr>
-                                <tr>
-                                    <td class="text-muted">Phone</td>
-                                    <td>{{ entity.contact_phone|default:"—" }}</td>
-                                </tr>
+
                                 <tr>
                                     <td class="text-muted">Address</td>
                                     <td>
@@ -284,10 +277,7 @@
                     <div class="card-body">
                         <table class="table table-sm table-borderless mb-0">
                             <tbody>
-                                <tr>
-                                    <td class="text-muted" style="width:40%">XPM Client ID</td>
-                                    <td>{{ entity.xpm_client_id|default:"—" }}</td>
-                                </tr>
+
                                 <tr>
                                     <td class="text-muted">Assigned Accountant</td>
                                     <td>{{ entity.assigned_accountant.get_full_name|default:"—" }}</td>

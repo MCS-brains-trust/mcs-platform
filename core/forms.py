@@ -25,17 +25,14 @@ class EntityForm(forms.ModelForm):
     class Meta:
         model = Entity
         fields = (
-            "entity_name", "trading_as", "entity_type", "abn", "acn", "tfn",
-            "registration_date", "financial_year_end",
+            "entity_name", "trading_as", "entity_type", "industry", "abn", "acn", "tfn",
             "reporting_framework", "company_size", "show_cents",
             "is_gst_registered", "bas_frequency",
-            "contact_email", "contact_phone",
+            "contact_email",
             "address_line_1", "address_line_2", "suburb", "state", "postcode", "country",
-            "assigned_accountant", "xpm_client_id",
+            "assigned_accountant",
         )
-        widgets = {
-            "registration_date": forms.DateInput(attrs={"type": "date"}),
-        }
+        widgets = {}
 
     def __init__(self, *args, user=None, **kwargs):
         super().__init__(*args, **kwargs)
@@ -44,10 +41,12 @@ class EntityForm(forms.ModelForm):
                 field.widget.attrs["class"] = "form-check-input"
             else:
                 field.widget.attrs["class"] = "form-control"
-        # Only senior users can change assigned_accountant and xpm_client_id
+        # Industry is required
+        self.fields["industry"].required = True
+        self.fields["industry"].widget.attrs["class"] = "form-select"
+        # Only senior users can change assigned_accountant
         if user and not user.is_senior:
             self.fields.pop("assigned_accountant", None)
-            self.fields.pop("xpm_client_id", None)
 
     def save(self, commit=True):
         entity = super().save(commit=False)
