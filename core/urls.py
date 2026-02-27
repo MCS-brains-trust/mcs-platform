@@ -269,6 +269,6 @@ urlpatterns = [
     # Knowledge Brain
     path("api/knowledge/sync/", eva_engine.knowledge_sync, name="knowledge_sync"),
     path("api/knowledge/documents/", eva_engine.knowledge_documents, name="knowledge_documents"),
-    path("admin/eva/knowledge-brain/", views_eva.knowledge_brain_admin, name="knowledge_brain_admin"),
-    path("admin/eva/knowledge-brain/sync/", views_eva.trigger_knowledge_sync, name="trigger_knowledge_sync"),
+    path("eva/knowledge-brain/", views_eva.knowledge_brain_admin, name="knowledge_brain_admin"),
+    path("eva/knowledge-brain/sync/", views_eva.trigger_knowledge_sync, name="trigger_knowledge_sync"),
 ]
