@@ -230,8 +230,8 @@
                 <td class="text-end {% if txn.amount < 0 %}text-danger{% else %}text-success{% endif %}">
                     ${{ txn.amount|floatformat:2|intcomma }}
                 </td>
-                {# --- GST Treatment Column (AC-GST-01/05/06) --- #}
-                <td class="text-center">
+                {# --- GST Treatment Column (AC-GST-01/05/06) + Override trigger --- #}
+                <td class="text-center gst-treatment-cell" id="gst-treatment-cell-{{ txn.pk }}">
                     {% if not entity_is_gst_registered %}
                     <span class="badge bg-secondary" style="font-size:0.75rem;">Out of Scope</span>
                     {% else %}
@@ -247,68 +247,37 @@
                             <option value="bas_excluded" {% if txn.gst_treatment == 'bas_excluded' %}selected{% endif %}>BAS Excluded</option>
                         </select>
                     </div>
+                    {% if txn.gst_treatment == 'gst' or not txn.gst_treatment %}
+                    <div class="mt-1">
+                        <a href="#" class="gst-override-link text-muted" style="font-size:0.65rem; text-decoration:none;"
+                           onclick="openGstOverride(event, '{{ txn.pk }}')">
+                            {% if txn.gst_amount_override %}<i class="bi bi-pencil-fill text-warning" style="font-size:0.55rem;"></i> Edit override{% else %}<i class="bi bi-pencil" style="font-size:0.55rem;"></i> Override{% endif %}
+                        </a>
+                    </div>
+                    {% endif %}
                     {% endif %}
                 </td>
-                {# --- Creditable Percentage Column (AC-APT-01/02) --- #}
+                {# --- Creditable Percentage Column (read-only, set by AI/rules) --- #}
                 <td class="text-end creditable-pct-cell" id="cred-pct-cell-{{ txn.pk }}">
                     {% if txn.gst_treatment == 'gst' or not txn.gst_treatment %}
-                    <div class="d-flex align-items-center justify-content-end gap-1">
-                        <input type="number" class="form-control form-control-sm creditable-pct-input text-end py-0"
-                               style="width:58px; font-size:0.78rem;{% if txn.creditable_percentage != 100 %} border-color:#f59e0b; font-weight:600;{% endif %}"
-                               value="{{ txn.creditable_percentage|default:'100' }}"
-                               min="0" max="100" step="0.01"
-                               data-txn-id="{{ txn.pk }}"
-                               onchange="updateCreditablePct(this)"
-                               {% if not entity_is_gst_registered %}disabled{% endif %}>
-                        <span style="font-size:0.7rem;">%</span>
-                    </div>
+                    <span class="creditable-pct-display{% if txn.creditable_percentage != 100 %} fw-bold text-warning{% endif %}" data-txn-id="{{ txn.pk }}" id="cred-pct-display-{{ txn.pk }}"
+                          style="font-size:0.8rem;">{{ txn.creditable_percentage|default:'100' }}%</span>
                     {% if txn.gst_amount_override %}
-                    <span class="badge bg-warning text-dark mt-1" style="font-size:0.6rem;" title="GST overridden: {{ txn.gst_override_reason }}">
-                        <i class="bi bi-pencil-fill"></i> Override
+                    <br><span class="badge bg-warning text-dark" style="font-size:0.55rem;" title="Reason: {{ txn.gst_override_reason }}">
+                        <i class="bi bi-pencil-fill"></i> Overridden
                     </span>
                     {% endif %}
                     {% else %}
                     <span class="text-muted" style="font-size:0.75rem;">&mdash;</span>
                     {% endif %}
                 </td>
-                {# --- GST Amount Column with Override (AC-APT-10/11/12/13) --- #}
+                {# --- GST Amount Column (display only, override editor is in a separate row) --- #}
                 <td class="text-end gst-amount-cell" id="gst-amt-{{ txn.pk }}">
                     <span id="gst-amt-display-{{ txn.pk }}">
                     {% if txn.gst_treatment == 'gst' or not txn.gst_treatment %}
                     ${{ txn.gst_amount|floatformat:2|intcomma }}{% if txn.gst_amount_override %} <i class="bi bi-pencil-fill text-warning" style="font-size:0.6rem;" title="Overridden"></i>{% endif %}
                     {% else %}$0.00{% endif %}
                     </span>
-                    {% if entity_is_gst_registered %}
-                    {% if txn.gst_treatment == 'gst' or not txn.gst_treatment %}
-                    <div>
-                        <a href="#" class="gst-override-link text-muted" style="font-size:0.65rem; text-decoration:none;"
-                           onclick="toggleGstOverride(event, '{{ txn.pk }}')">
-                            {% if txn.gst_amount_override %}Edit override{% else %}Override{% endif %}
-                        </a>
-                    </div>
-                    <div id="gst-override-editor-{{ txn.pk }}" class="d-none mt-1" style="min-width:130px;">
-                        <input type="number" class="form-control form-control-sm gst-override-input py-0 mb-1"
-                               style="font-size:0.75rem; width:95px;"
-                               step="0.01" min="0" placeholder="GST $"
-                               value="{{ txn.gst_amount_override|default:'' }}"
-                               data-txn-id="{{ txn.pk }}"
-                               oninput="previewGstOverride(this)">
-                        <div class="text-muted" style="font-size:0.65rem;" id="gst-override-implied-{{ txn.pk }}">
-                            {% if txn.gst_amount_override %}Implied: {{ txn.creditable_percentage }}%{% endif %}
-                        </div>
-                        <input type="text" class="form-control form-control-sm gst-override-reason py-0 mb-1"
-                               style="font-size:0.75rem;" placeholder="Reason (required)"
-                               value="{{ txn.gst_override_reason|default:'' }}"
-                               data-txn-id="{{ txn.pk }}">
-                        <div class="d-flex gap-1">
-                            <button class="btn btn-sm btn-outline-success py-0 px-1" style="font-size:0.7rem;"
-                                    onclick="saveGstOverride('{{ txn.pk }}')">Save</button>
-                            <button class="btn btn-sm btn-outline-secondary py-0 px-1" style="font-size:0.7rem;"
-                                    onclick="cancelGstOverride('{{ txn.pk }}')">Cancel</button>
-                        </div>
-                    </div>
-                    {% endif %}
-                    {% endif %}
                 </td>
                 <td class="text-end net-amount-cell" id="net-amt-{{ txn.pk }}">
                     {% if txn.gst_treatment == 'gst' or not txn.gst_treatment %}
@@ -369,6 +338,51 @@
                         <i class="bi bi-info-circle text-primary"></i>
                         <span id="apportionment-reason-{{ txn.pk }}" class="text-muted"></span>
                         <span id="apportionment-action-{{ txn.pk }}"></span>
+                    </div>
+                </td>
+            </tr>
+            {# --- GST Override Editor Row (hidden by default, shown when Override clicked) --- #}
+            <tr id="gst-override-row-{{ txn.pk }}" class="d-none bg-light">
+                <td colspan="12">
+                    <div class="d-flex align-items-start gap-3 px-3 py-2" style="font-size:0.82rem;">
+                        <div>
+                            <i class="bi bi-pencil-square text-warning"></i>
+                            <strong>GST Override</strong> for ${{ txn.amount|floatformat:2|intcomma }}
+                        </div>
+                        <div>
+                            <label class="form-label mb-0" style="font-size:0.75rem;">Creditable %</label>
+                            <input type="number" class="form-control form-control-sm override-cred-pct-input py-0"
+                                   style="width:80px; font-size:0.78rem;"
+                                   value="{{ txn.creditable_percentage|default:'100' }}"
+                                   min="0" max="100" step="0.01"
+                                   data-txn-id="{{ txn.pk }}"
+                                   oninput="previewOverrideCalc('{{ txn.pk }}')">
+                        </div>
+                        <div>
+                            <label class="form-label mb-0" style="font-size:0.75rem;">GST Amount $</label>
+                            <input type="number" class="form-control form-control-sm override-gst-amt-input py-0"
+                                   style="width:95px; font-size:0.78rem;"
+                                   step="0.01" min="0"
+                                   placeholder="Auto"
+                                   value="{{ txn.gst_amount_override|default:'' }}"
+                                   data-txn-id="{{ txn.pk }}"
+                                   oninput="previewOverrideFromGstAmt('{{ txn.pk }}')">
+                            <div class="text-muted" style="font-size:0.65rem;" id="override-implied-{{ txn.pk }}"></div>
+                        </div>
+                        <div>
+                            <label class="form-label mb-0" style="font-size:0.75rem;">Reason (required)</label>
+                            <input type="text" class="form-control form-control-sm override-reason-input py-0"
+                                   style="width:180px; font-size:0.78rem;"
+                                   placeholder="e.g. Business use 65%"
+                                   value="{{ txn.gst_override_reason|default:'' }}"
+                                   data-txn-id="{{ txn.pk }}">
+                        </div>
+                        <div class="d-flex align-items-end gap-1" style="padding-top:18px;">
+                            <button class="btn btn-sm btn-success py-0 px-2" style="font-size:0.78rem;"
+                                    onclick="saveGstOverride('{{ txn.pk }}')"><i class="bi bi-check-lg me-1"></i>Save</button>
+                            <button class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size:0.78rem;"
+                                    onclick="cancelGstOverride('{{ txn.pk }}')">Cancel</button>
+                        </div>
                     </div>
                 </td>
             </tr>

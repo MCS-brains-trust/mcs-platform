@@ -270,20 +270,27 @@ function updateGstTreatment(select) {
         row.dataset.isGstManual = 'true';
     }
 
-    // Show/hide creditable % field based on treatment (AC-APT-01)
+    // Show/hide creditable % display and Override link based on treatment
     if (credPctCell) {
         if (treatment === 'gst') {
             const credPctVal = row?.dataset.creditablePct || '100';
-            credPctCell.innerHTML = `
-                <div class="d-flex align-items-center justify-content-end gap-1">
-                    <input type="number" class="form-control form-control-sm creditable-pct-input text-end py-0"
-                           style="width:58px; font-size:0.78rem;${credPctVal !== '100' ? ' border-color:#f59e0b; font-weight:600;' : ''}"
-                           value="${credPctVal}" min="0" max="100" step="0.01"
-                           data-txn-id="${txnId}" onchange="updateCreditablePct(this)">
-                    <span style="font-size:0.7rem;">%</span>
-                </div>`;
+            const isOverridden = credPctVal !== '100';
+            credPctCell.innerHTML = `<span class="creditable-pct-display${isOverridden ? ' fw-bold text-warning' : ''}" data-txn-id="${txnId}" id="cred-pct-display-${txnId}" style="font-size:0.8rem;">${credPctVal}%</span>`;
         } else {
             credPctCell.innerHTML = '<span class="text-muted" style="font-size:0.75rem;">&mdash;</span>';
+        }
+    }
+
+    // Show/hide Override link in GST treatment cell
+    const gstTreatmentCell = document.getElementById('gst-treatment-cell-' + txnId);
+    if (gstTreatmentCell) {
+        const existingOverrideLink = gstTreatmentCell.querySelector('.gst-override-link-wrapper');
+        if (existingOverrideLink) existingOverrideLink.remove();
+        if (treatment === 'gst') {
+            const linkDiv = document.createElement('div');
+            linkDiv.className = 'mt-1 gst-override-link-wrapper';
+            linkDiv.innerHTML = '<a href="#" class="gst-override-link text-muted" style="font-size:0.65rem; text-decoration:none;" onclick="openGstOverride(event, \'' + txnId + '\')"><i class="bi bi-pencil" style="font-size:0.55rem;"></i> Override</a>';
+            gstTreatmentCell.appendChild(linkDiv);
         }
     }
 
@@ -320,47 +327,86 @@ function updateGstTreatment(select) {
     }).catch(err => console.warn('GST update failed:', err));
 }
 
-// ===== Creditable Percentage (AC-APT-01/02/08) =====
-function updateCreditablePct(input) {
-    const txnId = input.dataset.txnId;
-    let pct = parseFloat(input.value);
-    if (isNaN(pct) || pct < 0) pct = 0;
-    if (pct > 100) pct = 100;
-    input.value = pct;
-
+// ===== GST Override (Cred.% + GST Amount + Reason) =====
+// Opens the override editor row below the transaction
+function openGstOverride(event, txnId) {
+    event.preventDefault();
+    const overrideRow = document.getElementById('gst-override-row-' + txnId);
+    if (!overrideRow) return;
+    // Toggle visibility
+    if (!overrideRow.classList.contains('d-none')) {
+        overrideRow.classList.add('d-none');
+        return;
+    }
+    overrideRow.classList.remove('d-none');
+    // Pre-populate GST amount from current calculated value
     const row = document.getElementById('pending-row-' + txnId);
-    if (row) row.dataset.creditablePct = pct;
+    const amount = Math.abs(parseFloat(row?.dataset.amount || 0));
+    const credPct = parseFloat(row?.dataset.creditablePct || 100);
+    const fullGst = amount / 11;
+    const currentGstAmt = (fullGst * credPct / 100).toFixed(2);
+    const gstAmtInput = overrideRow.querySelector('.override-gst-amt-input');
+    if (gstAmtInput && !gstAmtInput.value) gstAmtInput.value = currentGstAmt;
+    // Focus the cred pct input
+    const credInput = overrideRow.querySelector('.override-cred-pct-input');
+    if (credInput) credInput.focus();
+}
 
+// When user changes Cred.%, auto-calculate the GST amount
+function previewOverrideCalc(txnId) {
+    const overrideRow = document.getElementById('gst-override-row-' + txnId);
+    if (!overrideRow) return;
+    const row = document.getElementById('pending-row-' + txnId);
     const amount = Math.abs(parseFloat(row?.dataset.amount || 0));
     const fullGst = amount / 11;
-    const gstAmt = fullGst * pct / 100;
-    const netAmt = amount - fullGst;
+    const credInput = overrideRow.querySelector('.override-cred-pct-input');
+    const gstAmtInput = overrideRow.querySelector('.override-gst-amt-input');
+    const pct = parseFloat(credInput?.value || 100);
+    const gstAmt = (fullGst * pct / 100).toFixed(2);
+    if (gstAmtInput) gstAmtInput.value = gstAmt;
+    const impliedEl = document.getElementById('override-implied-' + txnId);
+    if (impliedEl) impliedEl.textContent = '';
+}
 
-    // Update display
-    const gstDisplay = document.getElementById('gst-amt-display-' + txnId);
-    const netCell = document.getElementById('net-amt-' + txnId);
-    if (gstDisplay) gstDisplay.textContent = '$' + gstAmt.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-    if (netCell) netCell.textContent = '$' + netAmt.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+// When user changes GST Amount directly, back-calculate the implied Cred.%
+function previewOverrideFromGstAmt(txnId) {
+    const overrideRow = document.getElementById('gst-override-row-' + txnId);
+    if (!overrideRow) return;
+    const row = document.getElementById('pending-row-' + txnId);
+    const amount = Math.abs(parseFloat(row?.dataset.amount || 0));
+    const fullGst = amount / 11;
+    const gstAmtInput = overrideRow.querySelector('.override-gst-amt-input');
+    const credInput = overrideRow.querySelector('.override-cred-pct-input');
+    const gstAmt = parseFloat(gstAmtInput?.value || 0);
+    const impliedPct = fullGst > 0 ? (gstAmt / fullGst * 100) : 0;
+    if (credInput) credInput.value = impliedPct.toFixed(2);
+    const impliedEl = document.getElementById('override-implied-' + txnId);
+    if (impliedEl) impliedEl.textContent = 'Implied: ' + impliedPct.toFixed(2) + '%';
+}
 
-    // Style the input
-    if (pct !== 100) {
-        input.style.borderColor = '#f59e0b';
-        input.style.fontWeight = '600';
-    } else {
-        input.style.borderColor = '';
-        input.style.fontWeight = '';
+function saveGstOverride(txnId) {
+    const overrideRow = document.getElementById('gst-override-row-' + txnId);
+    if (!overrideRow) return;
+
+    const credInput = overrideRow.querySelector('.override-cred-pct-input');
+    const gstAmtInput = overrideRow.querySelector('.override-gst-amt-input');
+    const reasonInput = overrideRow.querySelector('.override-reason-input');
+    const pct = parseFloat(credInput?.value || 100);
+    const overrideAmt = parseFloat(gstAmtInput?.value || 0);
+    const reason = (reasonInput?.value || '').trim();
+
+    if (!reason) {
+        alert('A reason is mandatory for GST overrides.');
+        reasonInput?.focus();
+        return;
+    }
+    if (pct < 0 || pct > 100) {
+        alert('Creditable percentage must be between 0 and 100.');
+        credInput?.focus();
+        return;
     }
 
-    // Update hidden form fields
-    const form = row?.querySelector('.review-approve-form');
-    if (form) {
-        const gstAmtInput = form.querySelector('.review-gst-amount');
-        const credPctInput = form.querySelector('.review-cred-pct');
-        if (gstAmtInput) gstAmtInput.value = gstAmt.toFixed(2);
-        if (credPctInput) credPctInput.value = pct;
-    }
-
-    // Persist to server
+    // Save creditable percentage first
     fetch('/review/api/review/transaction/' + txnId + '/creditable-pct/', {
         method: 'POST',
         headers: { 'X-CSRFToken': CSRF_TOKEN, 'Content-Type': 'application/json' },
@@ -368,60 +414,47 @@ function updateCreditablePct(input) {
     })
     .then(r => r.json())
     .then(data => {
-        if (data.status === 'ok' && pct !== 100) {
-            // Prompt to save as entity setting (AC-APT-08) for vehicle/entertainment
-            const apportType = row?.dataset.apportionmentType;
-            if (apportType === 'vehicle' || apportType === 'entertainment' || apportType === 'phone_business_use') {
-                promptSaveEntityGstSetting(txnId, apportType, pct);
-            }
-        }
-    })
-    .catch(err => console.warn('Creditable % update failed:', err));
-}
-
-// ===== GST Amount Override (AC-APT-10/11/12/13) =====
-function toggleGstOverride(event, txnId) {
-    event.preventDefault();
-    const editor = document.getElementById('gst-override-editor-' + txnId);
-    if (editor) editor.classList.toggle('d-none');
-}
-
-function previewGstOverride(input) {
-    const txnId = input.dataset.txnId;
-    const overrideAmt = parseFloat(input.value || 0);
-    const row = document.getElementById('pending-row-' + txnId);
-    const amount = Math.abs(parseFloat(row?.dataset.amount || 0));
-    const standardGst = amount / 11;
-    const impliedPct = standardGst > 0 ? (overrideAmt / standardGst * 100).toFixed(2) : 0;
-
-    const impliedEl = document.getElementById('gst-override-implied-' + txnId);
-    if (impliedEl) impliedEl.textContent = 'Implied: ' + impliedPct + '%';
-}
-
-function saveGstOverride(txnId) {
-    const editor = document.getElementById('gst-override-editor-' + txnId);
-    if (!editor) return;
-
-    const amtInput = editor.querySelector('.gst-override-input');
-    const reasonInput = editor.querySelector('.gst-override-reason');
-    const overrideAmt = parseFloat(amtInput?.value || 0);
-    const reason = (reasonInput?.value || '').trim();
-
-    if (!reason) {
-        alert('A reason is mandatory for GST amount overrides.');
-        reasonInput?.focus();
-        return;
-    }
-
-    fetch('/review/api/review/transaction/' + txnId + '/gst-override/', {
-        method: 'POST',
-        headers: { 'X-CSRFToken': CSRF_TOKEN, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ gst_amount: overrideAmt, reason: reason })
+        if (data.status !== 'ok') throw new Error(data.message || 'Failed to save creditable %');
+        // Then save GST amount override
+        return fetch('/review/api/review/transaction/' + txnId + '/gst-override/', {
+            method: 'POST',
+            headers: { 'X-CSRFToken': CSRF_TOKEN, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ gst_amount: overrideAmt, reason: reason })
+        });
     })
     .then(r => r.json())
     .then(data => {
         if (data.status === 'ok') {
-            // Update display
+            const row = document.getElementById('pending-row-' + txnId);
+            if (row) {
+                row.dataset.creditablePct = pct;
+                row.dataset.hasGstOverride = 'true';
+            }
+
+            // Update the read-only Cred.% display
+            const credDisplay = document.getElementById('cred-pct-display-' + txnId);
+            if (credDisplay) {
+                credDisplay.textContent = pct + '%';
+                if (pct !== 100) {
+                    credDisplay.className = 'creditable-pct-display fw-bold text-warning';
+                } else {
+                    credDisplay.className = 'creditable-pct-display';
+                }
+            }
+            // Add "Overridden" badge below cred display
+            const credCell = document.getElementById('cred-pct-cell-' + txnId);
+            if (credCell) {
+                const existingBadge = credCell.querySelector('.badge');
+                if (existingBadge) existingBadge.remove();
+                const badge = document.createElement('span');
+                badge.className = 'badge bg-warning text-dark d-block mt-1';
+                badge.style.fontSize = '0.55rem';
+                badge.title = 'Reason: ' + reason;
+                badge.innerHTML = '<i class="bi bi-pencil-fill"></i> Overridden';
+                credCell.appendChild(badge);
+            }
+
+            // Update GST amount display
             const gstDisplay = document.getElementById('gst-amt-display-' + txnId);
             if (gstDisplay) {
                 gstDisplay.innerHTML = '$' + parseFloat(data.gst_amount).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',') +
@@ -430,34 +463,38 @@ function saveGstOverride(txnId) {
             const netCell = document.getElementById('net-amt-' + txnId);
             if (netCell) netCell.textContent = '$' + parseFloat(data.net_amount).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
 
-            // Update creditable % display
-            const row = document.getElementById('pending-row-' + txnId);
-            if (row) {
-                row.dataset.creditablePct = data.implied_creditable_percentage;
-                row.dataset.hasGstOverride = 'true';
-            }
-            const credInput = document.querySelector('.creditable-pct-input[data-txn-id="' + txnId + '"]');
-            if (credInput) credInput.value = data.implied_creditable_percentage;
+            // Update Override link text
+            const gstTreatmentCell = document.getElementById('gst-treatment-cell-' + txnId);
+            const overrideLink = gstTreatmentCell?.querySelector('.gst-override-link');
+            if (overrideLink) overrideLink.innerHTML = '<i class="bi bi-pencil-fill text-warning" style="font-size:0.55rem;"></i> Edit override';
 
-            // Update form hidden fields
+            // Update hidden form fields
             const form = row?.querySelector('.review-approve-form');
             if (form) {
-                const gstAmtInput = form.querySelector('.review-gst-amount');
-                if (gstAmtInput) gstAmtInput.value = data.gst_amount;
+                const gstAmtHidden = form.querySelector('.review-gst-amount');
+                const credPctHidden = form.querySelector('.review-cred-pct');
+                if (gstAmtHidden) gstAmtHidden.value = data.gst_amount;
+                if (credPctHidden) credPctHidden.value = pct;
             }
 
-            editor.classList.add('d-none');
-            showReviewNotification('GST override saved for transaction.');
+            overrideRow.classList.add('d-none');
+            showReviewNotification('GST override saved: ' + pct + '% creditable, reason: ' + reason);
+
+            // Prompt entity setting save for vehicle/entertainment
+            const apportType = row?.dataset.apportionmentType;
+            if (pct !== 100 && (apportType === 'vehicle' || apportType === 'entertainment' || apportType === 'phone_business_use')) {
+                promptSaveEntityGstSetting(txnId, apportType, pct);
+            }
         } else {
             alert('Error: ' + (data.message || 'Unknown error'));
         }
     })
-    .catch(err => alert('Network error: ' + err));
+    .catch(err => alert('Error: ' + err));
 }
 
 function cancelGstOverride(txnId) {
-    const editor = document.getElementById('gst-override-editor-' + txnId);
-    if (editor) editor.classList.add('d-none');
+    const overrideRow = document.getElementById('gst-override-row-' + txnId);
+    if (overrideRow) overrideRow.classList.add('d-none');
 }
 
 // ===== Bulk GST (AC-GST-02/03/04) =====
@@ -583,15 +620,38 @@ function detectApportionmentForRow(txnId) {
             apportRow.classList.remove('d-none');
             reasonEl.textContent = data.reason;
 
-            // Set creditable percentage if AI suggests it
+            // Set creditable percentage display if AI suggests it
             if (data.creditable_percentage && data.creditable_percentage !== '100') {
-                const credInput = document.querySelector('.creditable-pct-input[data-txn-id="' + txnId + '"]');
-                if (credInput) {
-                    credInput.value = data.creditable_percentage;
-                    credInput.style.borderColor = '#f59e0b';
-                    credInput.style.fontWeight = '600';
-                    if (row) row.dataset.creditablePct = data.creditable_percentage;
+                if (row) row.dataset.creditablePct = data.creditable_percentage;
+                const credDisplay = document.getElementById('cred-pct-display-' + txnId);
+                if (credDisplay) {
+                    credDisplay.textContent = data.creditable_percentage + '%';
+                    credDisplay.className = 'creditable-pct-display fw-bold text-warning';
                 }
+                // Also update the override row's cred pct input default
+                const overrideRow = document.getElementById('gst-override-row-' + txnId);
+                const overrideCredInput = overrideRow?.querySelector('.override-cred-pct-input');
+                if (overrideCredInput) overrideCredInput.value = data.creditable_percentage;
+                // Update GST amount display
+                const amount = Math.abs(parseFloat(row?.dataset.amount || 0));
+                const fullGst = amount / 11;
+                const gstAmt = fullGst * parseFloat(data.creditable_percentage) / 100;
+                const gstDisplay = document.getElementById('gst-amt-display-' + txnId);
+                if (gstDisplay) gstDisplay.textContent = '$' + gstAmt.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+                // Update hidden form fields
+                const form = row?.querySelector('.review-approve-form');
+                if (form) {
+                    const gstAmtHidden = form.querySelector('.review-gst-amount');
+                    const credPctHidden = form.querySelector('.review-cred-pct');
+                    if (gstAmtHidden) gstAmtHidden.value = gstAmt.toFixed(2);
+                    if (credPctHidden) credPctHidden.value = data.creditable_percentage;
+                }
+                // Persist to server
+                fetch('/review/api/review/transaction/' + txnId + '/creditable-pct/', {
+                    method: 'POST',
+                    headers: { 'X-CSRFToken': CSRF_TOKEN, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ creditable_percentage: parseFloat(data.creditable_percentage) })
+                }).catch(err => console.warn('Auto cred % save failed:', err));
             }
 
             // Show confirmation prompt for vehicle/entertainment (AC-APT-04)
@@ -612,14 +672,22 @@ function promptBusinessUsePct(txnId, apportType) {
         alert('Please enter a valid percentage between 0 and 100.');
         return;
     }
-    const credInput = document.querySelector('.creditable-pct-input[data-txn-id="' + txnId + '"]');
-    if (credInput) {
-        credInput.value = pctNum;
-        updateCreditablePct(credInput);
+    // Open the override row with the confirmed percentage pre-filled
+    const overrideRow = document.getElementById('gst-override-row-' + txnId);
+    if (overrideRow) {
+        overrideRow.classList.remove('d-none');
+        const credInput = overrideRow.querySelector('.override-cred-pct-input');
+        if (credInput) credInput.value = pctNum;
+        previewOverrideCalc(txnId);
+        const reasonInput = overrideRow.querySelector('.override-reason-input');
+        if (reasonInput && !reasonInput.value) {
+            const typeLabels = { 'vehicle': 'Vehicle business use', 'entertainment': 'Entertainment FBT', 'phone_business_use': 'Phone business use' };
+            reasonInput.value = (typeLabels[apportType] || 'Business use') + ' ' + pctNum + '%';
+        }
     }
     // Update the apportionment action to show confirmed
     const actionEl = document.getElementById('apportionment-action-' + txnId);
-    if (actionEl) actionEl.innerHTML = '<span class="badge bg-success" style="font-size:0.7rem;">Confirmed: ' + pctNum + '%</span>';
+    if (actionEl) actionEl.innerHTML = '<span class="badge bg-info" style="font-size:0.7rem;">Review override below</span>';
 }
 
 // Run apportionment detection on page load for all pending rows
@@ -1000,21 +1068,22 @@ function _addRowToPendingTable(data) {
     const amtFormatted = '$' + absAmt.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
     const gstAmt = (absAmt / 11).toFixed(2);
     const netAmt = (absAmt - parseFloat(gstAmt)).toFixed(2);
-    const gstDisabled = !IS_GST_REGISTERED ? 'disabled' : '';
-    const gstSuppressed = !IS_GST_REGISTERED
+    // GST treatment cell with Override link
+    const gstCellHtml = !IS_GST_REGISTERED
         ? '<span class="badge bg-secondary" style="font-size:0.75rem;">Out of Scope</span>'
-        : `<select class="form-select form-select-sm gst-treatment-select py-0" data-txn-id="${data.id}" data-amount="${data.amount}" onchange="updateGstTreatment(this)" style="font-size:0.78rem;">
-                <option value="gst" selected>GST 10%</option>
-                <option value="gst_free">GST-Free</option>
-                <option value="input_taxed">Input Taxed</option>
-                <option value="out_of_scope">Out of Scope</option>
-                <option value="bas_excluded">BAS Excluded</option>
-           </select>`;
+        : `<div class="d-flex align-items-center justify-content-center gap-1">
+               <select class="form-select form-select-sm gst-treatment-select py-0" data-txn-id="${data.id}" data-amount="${data.amount}" onchange="updateGstTreatment(this)" style="font-size:0.78rem;">
+                   <option value="gst" selected>GST 10%</option>
+                   <option value="gst_free">GST-Free</option>
+                   <option value="input_taxed">Input Taxed</option>
+                   <option value="out_of_scope">Out of Scope</option>
+                   <option value="bas_excluded">BAS Excluded</option>
+               </select>
+           </div>
+           <div class="mt-1 gst-override-link-wrapper"><a href="#" class="gst-override-link text-muted" style="font-size:0.65rem; text-decoration:none;" onclick="openGstOverride(event, '${data.id}')"><i class="bi bi-pencil" style="font-size:0.55rem;"></i> Override</a></div>`;
+    // Read-only creditable percentage display
     const credPctHtml = IS_GST_REGISTERED
-        ? `<div class="d-flex align-items-center justify-content-end gap-1">
-               <input type="number" class="form-control form-control-sm creditable-pct-input text-end py-0" style="width:58px; font-size:0.78rem;" value="100" min="0" max="100" step="0.01" data-txn-id="${data.id}" onchange="updateCreditablePct(this)">
-               <span style="font-size:0.7rem;">%</span>
-           </div>`
+        ? `<span class="creditable-pct-display" data-txn-id="${data.id}" id="cred-pct-display-${data.id}" style="font-size:0.8rem;">100%</span>`
         : '<span class="text-muted" style="font-size:0.75rem;">&mdash;</span>';
 
     const row = `<tr id="pending-row-${data.id}" class="review-row"
@@ -1026,9 +1095,9 @@ function _addRowToPendingTable(data) {
         <td>${data.date}</td>
         <td>${data.description}</td>
         <td class="text-end ${amtClass}">${amtFormatted}</td>
-        <td class="text-center">${gstSuppressed}</td>
+        <td class="text-center gst-treatment-cell" id="gst-treatment-cell-${data.id}">${gstCellHtml}</td>
         <td class="text-end creditable-pct-cell" id="cred-pct-cell-${data.id}">${credPctHtml}</td>
-        <td class="text-end" id="gst-amt-${data.id}"><span id="gst-amt-display-${data.id}">$${gstAmt}</span>${IS_GST_REGISTERED ? '<div><a href="#" class="gst-override-link text-muted" style="font-size:0.65rem; text-decoration:none;" onclick="toggleGstOverride(event, \'' + data.id + '\')">Override</a></div><div id="gst-override-editor-' + data.id + '" class="d-none mt-1" style="min-width:130px;"><input type="number" class="form-control form-control-sm gst-override-input py-0 mb-1" style="font-size:0.75rem; width:95px;" step="0.01" min="0" placeholder="GST $" data-txn-id="' + data.id + '" oninput="previewGstOverride(this)"><div class="text-muted" style="font-size:0.65rem;" id="gst-override-implied-' + data.id + '"></div><input type="text" class="form-control form-control-sm gst-override-reason py-0 mb-1" style="font-size:0.75rem;" placeholder="Reason (required)" data-txn-id="' + data.id + '"><div class="d-flex gap-1"><button class="btn btn-sm btn-outline-success py-0 px-1" style="font-size:0.7rem;" onclick="saveGstOverride(\'' + data.id + '\')">Save</button><button class="btn btn-sm btn-outline-secondary py-0 px-1" style="font-size:0.7rem;" onclick="cancelGstOverride(\'' + data.id + '\')">Cancel</button></div></div>' : ''}</td>
+        <td class="text-end" id="gst-amt-${data.id}"><span id="gst-amt-display-${data.id}">$${gstAmt}</span></td>
         <td class="text-end" id="net-amt-${data.id}">$${netAmt}</td>
         <td><code class="review-ai-code">${data.ai_code || '-'}</code></td>
         <td>
@@ -1060,7 +1129,27 @@ function _addRowToPendingTable(data) {
             <button class="btn btn-sm btn-outline-secondary py-0 px-1 ms-1" onclick="openSplitEditor('${data.id}', ${data.amount}, '${data.ai_code || ''}', '${data.ai_name || ''}')"><i class="bi bi-scissors"></i></button>
         </td>
     </tr>`;
-    pendingBody.insertAdjacentHTML('afterbegin', row);
+    // Also add the override editor row and apportionment row
+    const overrideRowHtml = IS_GST_REGISTERED ? `<tr id="gst-override-row-${data.id}" class="d-none bg-light">
+        <td colspan="12">
+            <div class="d-flex align-items-start gap-3 px-3 py-2" style="font-size:0.82rem;">
+                <div><i class="bi bi-pencil-square text-warning"></i> <strong>GST Override</strong> for ${amtFormatted}</div>
+                <div><label class="form-label mb-0" style="font-size:0.75rem;">Creditable %</label>
+                    <input type="number" class="form-control form-control-sm override-cred-pct-input py-0" style="width:80px; font-size:0.78rem;" value="100" min="0" max="100" step="0.01" data-txn-id="${data.id}" oninput="previewOverrideCalc('${data.id}')"></div>
+                <div><label class="form-label mb-0" style="font-size:0.75rem;">GST Amount $</label>
+                    <input type="number" class="form-control form-control-sm override-gst-amt-input py-0" style="width:95px; font-size:0.78rem;" step="0.01" min="0" placeholder="Auto" data-txn-id="${data.id}" oninput="previewOverrideFromGstAmt('${data.id}')">
+                    <div class="text-muted" style="font-size:0.65rem;" id="override-implied-${data.id}"></div></div>
+                <div><label class="form-label mb-0" style="font-size:0.75rem;">Reason (required)</label>
+                    <input type="text" class="form-control form-control-sm override-reason-input py-0" style="width:180px; font-size:0.78rem;" placeholder="e.g. Business use 65%" data-txn-id="${data.id}"></div>
+                <div class="d-flex align-items-end gap-1" style="padding-top:18px;">
+                    <button class="btn btn-sm btn-success py-0 px-2" style="font-size:0.78rem;" onclick="saveGstOverride('${data.id}')"><i class="bi bi-check-lg me-1"></i>Save</button>
+                    <button class="btn btn-sm btn-outline-secondary py-0 px-2" style="font-size:0.78rem;" onclick="cancelGstOverride('${data.id}')">Cancel</button>
+                </div>
+            </div>
+        </td>
+    </tr>` : '';
+    const apportRowHtml = `<tr id="apportionment-row-${data.id}" class="d-none bg-light"><td colspan="12"><div class="d-flex align-items-center gap-2 px-2 py-1" style="font-size:0.8rem;"><i class="bi bi-info-circle text-primary"></i><span id="apportionment-reason-${data.id}" class="text-muted"></span><span id="apportionment-action-${data.id}"></span></div></td></tr>`;
+    pendingBody.insertAdjacentHTML('afterbegin', apportRowHtml + overrideRowHtml + row);
     // Detect apportionment for the new row
     if (IS_GST_REGISTERED) detectApportionmentForRow(data.id);
 }
