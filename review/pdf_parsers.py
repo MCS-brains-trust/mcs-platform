@@ -413,10 +413,6 @@ def parse_anz_statement(pdf_content):
         if not line:
             continue
 
-        # Skip "EFFECTIVE DATE" lines
-        if line.startswith("EFFECTIVE DATE"):
-            continue
-
         # Skip "BALANCE BROUGHT FORWARD" line
         if "BALANCE BROUGHT FORWARD" in line:
             continue
@@ -431,12 +427,12 @@ def parse_anz_statement(pdf_content):
             if dm:
                 if current_txn:
                     transactions.append(current_txn)
-                    current_txn = None
-                transactions.append({
+                # Set as current_txn so continuation lines can attach
+                current_txn = {
                     "date": _anz_date_to_iso(date_str, year),
                     "description": dm.group(1).strip(),
                     "amount": -_amt(dm.group(2)),
-                })
+                }
                 continue
 
             # Try credit
@@ -444,12 +440,12 @@ def parse_anz_statement(pdf_content):
             if cm:
                 if current_txn:
                     transactions.append(current_txn)
-                    current_txn = None
-                transactions.append({
+                # Set as current_txn so continuation lines can attach
+                current_txn = {
                     "date": _anz_date_to_iso(date_str, year),
                     "description": cm.group(1).strip(),
                     "amount": _amt(cm.group(2)),
-                })
+                }
                 continue
 
             # No amount — start of multi-line
@@ -461,30 +457,27 @@ def parse_anz_statement(pdf_content):
                 "amount": 0,
             }
         else:
-            # Continuation line
+            # Continuation line — attach to current transaction
             if current_txn:
                 dm = ANZ_DEBIT_RE.match(line)
                 if dm:
                     desc_part = dm.group(1).strip()
                     if desc_part:
-                        current_txn["description"] += " " + desc_part
+                        current_txn["description"] += " | " + desc_part
                     current_txn["amount"] = -_amt(dm.group(2))
-                    transactions.append(current_txn)
-                    current_txn = None
                     continue
                 cm = ANZ_CREDIT_RE.match(line)
                 if cm:
                     desc_part = cm.group(1).strip()
                     if desc_part:
-                        current_txn["description"] += " " + desc_part
+                        current_txn["description"] += " | " + desc_part
                     current_txn["amount"] = _amt(cm.group(2))
-                    transactions.append(current_txn)
-                    current_txn = None
                     continue
-                # Pure description continuation
-                current_txn["description"] += " " + line.strip()
+                # Pure description continuation (e.g., "TO JONATHON HOLLWAY")
+                # Also include EFFECTIVE DATE lines as they contain useful info
+                current_txn["description"] += " | " + line.strip()
 
-    if current_txn and current_txn["amount"] != 0:
+    if current_txn:
         transactions.append(current_txn)
 
     result["transactions"] = transactions
