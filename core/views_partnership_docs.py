@@ -108,9 +108,9 @@ def generate_partner_statements(request, pk):
             continue
 
         context = {
-            "entity_name": entity.name,
+            "entity_name": entity.entity_name,
             "abn": entity.abn or "",
-            "partner_name": partner.name,
+            "partner_name": partner.full_name,
             "partner_tfn": "",  # Not stored for privacy
             "financial_year_end": str(fy.end_date),
             "profit_share_percentage": percentage,
@@ -134,7 +134,7 @@ def generate_partner_statements(request, pk):
             financial_year=fy,
             entity=entity,
             document_type="partner_statement",
-            title=f"Partner Statement — {partner.name} — {entity.name} {fy.end_date.year}",
+            title=f"Partner Statement — {partner.full_name} — {entity.entity_name} {fy.end_date.year}",
             context_data=context,
             generated_by=request.user,
             status="generated",
@@ -160,7 +160,7 @@ def generate_partnership_tax_summary(request, pk):
     partners = EntityOfficer.objects.filter(entity=entity, role="partner")
 
     context = {
-        "entity_name": entity.name,
+        "entity_name": entity.entity_name,
         "abn": entity.abn or "",
         "tfn": entity.tfn or "",
         "financial_year_end": str(fy.end_date),
@@ -172,7 +172,7 @@ def generate_partnership_tax_summary(request, pk):
         financial_year=fy,
         entity=entity,
         document_type="partnership_tax_summary",
-        title=f"Partnership Tax Summary — {entity.name} — {fy.end_date.year}",
+        title=f"Partnership Tax Summary — {entity.entity_name} — {fy.end_date.year}",
         context_data=context,
         generated_by=request.user,
         status="generated",
@@ -234,7 +234,7 @@ def engagement_letter_generate(request, pk):
     )
 
     context = {
-        "entity_name": entity.name,
+        "entity_name": entity.entity_name,
         "entity_type": entity.entity_type,
         "abn": entity.abn or "",
         "acn": entity.acn or "",
@@ -251,7 +251,7 @@ def engagement_letter_generate(request, pk):
         financial_year=fy,
         entity=entity,
         document_type="engagement_letter",
-        title=f"Engagement Letter — {entity.name}",
+        title=f"Engagement Letter — {entity.entity_name}",
         context_data=context,
         generated_by=request.user,
         status="generated",

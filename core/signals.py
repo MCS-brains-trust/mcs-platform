@@ -369,3 +369,83 @@ def handle_legal_document_created(sender, instance, created, **kwargs):
             )
     except Exception:
         logger.exception("Failed to log document creation activity")
+
+
+# ============================================================================
+# GOVERNING DOCUMENT OCR TRIGGER (Phase 7)
+# ============================================================================
+
+@receiver(post_save, sender="core.GoverningDocument")
+def handle_governing_document_upload(sender, instance, created, **kwargs):
+    """
+    When a GoverningDocument is uploaded, queue OCR text extraction.
+    Only triggers on creation (new upload), not on subsequent saves.
+    """
+    if not created:
+        return
+
+    if instance.extraction_status != "pending":
+        return
+
+    try:
+        from core.tasks import extract_governing_document
+        extract_governing_document.delay(str(instance.pk))
+        logger.info("Queued OCR extraction for GoverningDocument %s", instance.pk)
+    except Exception:
+        logger.warning(
+            "Could not queue OCR extraction (Celery may not be running)"
+        )
+
+
+# ============================================================================
+# DIVIDEND EVENT ACTIVITY LOGGING (Phase 11)
+# ============================================================================
+
+@receiver(post_save, sender="core.DividendEvent")
+def handle_dividend_event_created(sender, instance, created, **kwargs):
+    """Log dividend event creation as an activity."""
+    if not created:
+        return
+
+    try:
+        from core.models import ActivityLog
+        if instance.financial_year:
+            ActivityLog.objects.create(
+                financial_year=instance.financial_year,
+                action_type="dividend_declared",
+                description=(
+                    f"Dividend declared: {instance.get_dividend_type_display()} "
+                    f"${instance.total_amount:,.2f} "
+                    f"({instance.franking_percentage}% franked)"
+                ),
+            )
+    except Exception:
+        logger.exception("Failed to log dividend event activity")
+
+
+# ============================================================================
+# EVA CONVERSATION ACTIVITY LOGGING (Phase 3)
+# ============================================================================
+
+@receiver(post_save, sender="core.EvaMessage")
+def handle_eva_message_created(sender, instance, created, **kwargs):
+    """Log Eva chat messages to the activity trail."""
+    if not created:
+        return
+
+    # Only log user messages (not assistant responses)
+    if instance.role != "user":
+        return
+
+    try:
+        from core.models import ActivityLog
+        conversation = instance.conversation
+        if conversation and conversation.financial_year:
+            ActivityLog.objects.create(
+                financial_year=conversation.financial_year,
+                user=conversation.user,
+                action_type="eva_chat",
+                description=f"Eva chat message ({conversation.interaction_type})",
+            )
+    except Exception:
+        logger.exception("Failed to log Eva message activity")

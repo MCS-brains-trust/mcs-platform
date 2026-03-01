@@ -57,7 +57,7 @@ def bulk_generate_packages(request):
         if not fy:
             results["skipped"].append({
                 "id": str(eid),
-                "name": entity.name,
+                "name": entity.entity_name,
                 "reason": "No financial year in FINISHED or later status",
             })
             continue
@@ -65,7 +65,7 @@ def bulk_generate_packages(request):
         if fy.package_assembled:
             results["skipped"].append({
                 "id": str(eid),
-                "name": entity.name,
+                "name": entity.entity_name,
                 "reason": "Package already assembled",
             })
             continue
@@ -76,14 +76,14 @@ def bulk_generate_packages(request):
             assemble_client_package.delay(str(fy.pk), str(request.user.pk))
             results["queued"].append({
                 "id": str(eid),
-                "name": entity.name,
+                "name": entity.entity_name,
                 "fy": str(fy),
             })
         except Exception:
             # Celery not running — mark as queued anyway for the response
             results["queued"].append({
                 "id": str(eid),
-                "name": entity.name,
+                "name": entity.entity_name,
                 "fy": str(fy),
                 "note": "Celery not available — will need manual assembly",
             })
@@ -145,7 +145,7 @@ def bulk_readiness_check(request):
 
         readiness.append({
             "entity_id": str(entity.pk),
-            "entity_name": entity.name,
+            "entity_name": entity.entity_name,
             "entity_type": entity.entity_type,
             "fy": str(fy),
             "fy_id": str(fy.pk),

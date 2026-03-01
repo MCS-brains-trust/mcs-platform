@@ -35,7 +35,7 @@ def generate_client_summary(financial_year_id, format_type="bullet"):
     context = _build_summary_context(fy, entity)
 
     # Generate via Claude
-    summary_text = _call_llm(context, format_type, entity.name, fy)
+    summary_text = _call_llm(context, format_type, entity.entity_name, fy)
 
     if not summary_text:
         logger.error("Failed to generate client summary for FY %s", fy)
@@ -67,7 +67,7 @@ def generate_client_summary(financial_year_id, format_type="bullet"):
 def _build_summary_context(fy, entity):
     """Build a comprehensive context dict for the summary LLM call."""
     context = {
-        "entity_name": entity.name,
+        "entity_name": entity.entity_name,
         "entity_type": entity.entity_type,
         "abn": entity.abn or "N/A",
         "financial_year": f"{fy.start_date} to {fy.end_date}",

@@ -308,6 +308,13 @@ CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = "Australia/Melbourne"
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
+CELERY_BEAT_SCHEDULE = {
+    "sync-knowledge-brain-nightly": {
+        "task": "core.sync_knowledge_brain",
+        "schedule": 86400,  # Every 24 hours
+        "options": {"expires": 3600},
+    },
+}
 
 # ── AWS (Textract OCR) ──────────────────────────────────────────────────────
 AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID", "")
