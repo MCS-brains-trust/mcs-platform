@@ -1,0 +1,276 @@
+{% load humanize %}
+{# Governing Documents Tab — Entity Level #}
+
+<div class="p-3">
+    {# ===== Section A: Primary Operative Document ===== #}
+    <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h6 class="mb-0">
+                <i class="bi bi-file-earmark-lock text-primary"></i>
+                Primary Operative Document
+            </h6>
+            <div>
+                {% if primary_governing_doc %}
+                <span class="badge bg-success"><i class="bi bi-check-circle"></i> Uploaded</span>
+                {% else %}
+                <span class="badge bg-warning text-dark"><i class="bi bi-exclamation-triangle"></i> Not Uploaded</span>
+                {% endif %}
+            </div>
+        </div>
+        <div class="card-body">
+            {% if primary_governing_doc %}
+            <div class="d-flex align-items-center justify-content-between">
+                <div>
+                    <strong>{{ primary_governing_doc.original_filename }}</strong>
+                    <br>
+                    <small class="text-muted">
+                        Uploaded {{ primary_governing_doc.uploaded_at|date:"d M Y" }}
+                        {% if primary_governing_doc.document_date %}
+                        | Document Date: {{ primary_governing_doc.document_date|date:"d M Y" }}
+                        {% endif %}
+                        | {{ primary_governing_doc.file_size_bytes|filesizeformat }}
+                    </small>
+                    <br>
+                    {% if primary_governing_doc.extraction_status == 'completed' %}
+                    <span class="badge bg-success mt-1"><i class="bi bi-check-circle"></i> Text Extracted</span>
+                    {% elif primary_governing_doc.extraction_status == 'completed_with_warnings' %}
+                    <span class="badge bg-warning text-dark mt-1"><i class="bi bi-exclamation-triangle"></i> Extracted with Warnings</span>
+                    {% elif primary_governing_doc.extraction_status == 'ocr_pending' %}
+                    <span class="badge bg-info mt-1"><i class="bi bi-hourglass-split"></i> OCR Processing...</span>
+                    {% elif primary_governing_doc.extraction_status == 'pending' %}
+                    <span class="badge bg-secondary mt-1"><i class="bi bi-clock"></i> Extraction Pending</span>
+                    {% elif primary_governing_doc.extraction_status == 'failed' %}
+                    <span class="badge bg-danger mt-1"><i class="bi bi-x-circle"></i> Extraction Failed</span>
+                    {% endif %}
+                </div>
+                <div class="d-flex gap-2">
+                    <a href="{{ primary_governing_doc.file.url }}" class="btn btn-sm btn-outline-primary" target="_blank">
+                        <i class="bi bi-download"></i> Download
+                    </a>
+                    <button class="btn btn-sm btn-outline-info" onclick="extractText('{{ primary_governing_doc.pk }}')"
+                            {% if primary_governing_doc.extraction_status == 'completed' %}disabled{% endif %}>
+                        <i class="bi bi-file-text"></i> Extract Text
+                    </button>
+                    <button class="btn btn-sm btn-outline-danger" onclick="archiveDocument('{{ primary_governing_doc.pk }}')">
+                        <i class="bi bi-archive"></i> Archive
+                    </button>
+                </div>
+            </div>
+            {% if primary_governing_doc.extracted_text %}
+            <div class="mt-3">
+                <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse"
+                        data-bs-target="#extracted-text-preview">
+                    <i class="bi bi-eye"></i> Preview Extracted Text
+                </button>
+                <div class="collapse mt-2" id="extracted-text-preview">
+                    <div class="card card-body bg-light" style="max-height: 300px; overflow-y: auto; font-size: 0.85rem;">
+                        <pre class="mb-0" style="white-space: pre-wrap;">{{ primary_governing_doc.extracted_text|truncatechars:5000 }}</pre>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+            {% if primary_governing_doc.low_confidence_pages %}
+            <div class="alert alert-warning mt-2 small">
+                <i class="bi bi-exclamation-triangle"></i>
+                <strong>Low confidence pages:</strong> {{ primary_governing_doc.low_confidence_pages|join:", " }}
+                — These pages may need manual review.
+            </div>
+            {% endif %}
+            {% else %}
+            {# Upload zone #}
+            <form method="post" action="{% url 'core:governing_doc_upload' pk=entity.pk %}"
+                  enctype="multipart/form-data" id="govdoc-upload-form">
+                {% csrf_token %}
+                <input type="hidden" name="is_primary" value="true">
+                <div class="border border-2 border-dashed rounded p-4 text-center" id="govdoc-dropzone"
+                     ondragover="event.preventDefault(); this.classList.add('border-primary', 'bg-light')"
+                     ondragleave="this.classList.remove('border-primary', 'bg-light')"
+                     ondrop="handleGovDocDrop(event, true)">
+                    <i class="bi bi-cloud-arrow-up display-4 text-muted"></i>
+                    <p class="mt-2 mb-1">Drag & drop your
+                        {% if entity.entity_type == 'trust' or entity.entity_type == 'trust_discretionary' or entity.entity_type == 'trust_unit' or entity.entity_type == 'trust_hybrid' %}trust deed
+                        {% elif entity.entity_type == 'partnership' %}partnership agreement
+                        {% elif entity.entity_type == 'smsf' %}SMSF deed
+                        {% else %}constitution
+                        {% endif %}
+                        here</p>
+                    <p class="text-muted small">PDF or DOCX, max 50MB</p>
+                    <label class="btn btn-sm btn-primary">
+                        <i class="bi bi-upload"></i> Browse Files
+                        <input type="file" name="file" accept=".pdf,.docx" class="d-none"
+                               onchange="this.form.submit()">
+                    </label>
+                </div>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+
+    {# ===== Section B: Amendments & Supplementary Documents ===== #}
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h6 class="mb-0">
+                <i class="bi bi-files text-info"></i>
+                Amendments & Supplementary Documents
+            </h6>
+            <button class="btn btn-sm btn-outline-primary" data-bs-toggle="collapse"
+                    data-bs-target="#amendment-upload-section">
+                <i class="bi bi-plus-lg"></i> Add Document
+            </button>
+        </div>
+        <div class="card-body">
+            {# Upload section (collapsed) #}
+            <div class="collapse mb-3" id="amendment-upload-section">
+                <form method="post" action="{% url 'core:governing_doc_upload' pk=entity.pk %}"
+                      enctype="multipart/form-data">
+                    {% csrf_token %}
+                    <input type="hidden" name="is_primary" value="false">
+                    <div class="row g-2 align-items-end">
+                        <div class="col-md-3">
+                            <label class="form-label small">Document Type</label>
+                            <select name="document_type" class="form-select form-select-sm">
+                                <option value="amendment">Amendment</option>
+                                <option value="supplementary">Supplementary Document</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label small">Document Date</label>
+                            <input type="date" name="document_date" class="form-control form-control-sm">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small">Description</label>
+                            <input type="text" name="description" class="form-control form-control-sm"
+                                   placeholder="e.g. Change of Trustee">
+                        </div>
+                        <div class="col-md-2">
+                            <label class="form-label small">File</label>
+                            <input type="file" name="file" accept=".pdf,.docx" class="form-control form-control-sm" required>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-sm btn-primary mt-2">
+                        <i class="bi bi-upload"></i> Upload
+                    </button>
+                </form>
+            </div>
+
+            {# Documents list #}
+            {% if amendment_docs %}
+            <div class="table-responsive">
+                <table class="table table-sm table-hover align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Type</th>
+                            <th>Description</th>
+                            <th>Document Date</th>
+                            <th>Uploaded</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for doc in amendment_docs %}
+                        <tr>
+                            <td>
+                                <span class="badge bg-{% if doc.document_type == 'amendment' %}info{% else %}secondary{% endif %}">
+                                    {{ doc.get_document_type_display }}
+                                </span>
+                            </td>
+                            <td>
+                                {{ doc.description|default:doc.original_filename }}
+                            </td>
+                            <td>{{ doc.document_date|date:"d M Y"|default:"—" }}</td>
+                            <td>
+                                <small class="text-muted">{{ doc.uploaded_at|date:"d M Y" }}</small>
+                            </td>
+                            <td>
+                                {% if doc.extraction_status == 'completed' %}
+                                <span class="badge bg-success">Extracted</span>
+                                {% elif doc.extraction_status == 'completed_with_warnings' %}
+                                <span class="badge bg-warning text-dark">Warnings</span>
+                                {% elif doc.extraction_status == 'ocr_pending' %}
+                                <span class="badge bg-info">OCR...</span>
+                                {% elif doc.extraction_status == 'pending' %}
+                                <span class="badge bg-secondary">Pending</span>
+                                {% elif doc.extraction_status == 'failed' %}
+                                <span class="badge bg-danger">Failed</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <div class="btn-group btn-group-sm">
+                                    <a href="{{ doc.file.url }}" class="btn btn-outline-primary" target="_blank"
+                                       title="Download">
+                                        <i class="bi bi-download"></i>
+                                    </a>
+                                    <button class="btn btn-outline-info" onclick="extractText('{{ doc.pk }}')"
+                                            title="Extract Text"
+                                            {% if doc.extraction_status == 'completed' %}disabled{% endif %}>
+                                        <i class="bi bi-file-text"></i>
+                                    </button>
+                                    <button class="btn btn-outline-danger" onclick="archiveDocument('{{ doc.pk }}')"
+                                            title="Archive">
+                                        <i class="bi bi-archive"></i>
+                                    </button>
+                                </div>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <p class="text-muted small text-center py-3">No amendments or supplementary documents uploaded yet.</p>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<script>
+function handleGovDocDrop(event, isPrimary) {
+    event.preventDefault();
+    event.currentTarget.classList.remove('border-primary', 'bg-light');
+    const files = event.dataTransfer.files;
+    if (files.length === 0) return;
+
+    const form = document.getElementById('govdoc-upload-form');
+    const input = form.querySelector('input[type="file"]');
+    input.files = files;
+    form.submit();
+}
+
+function extractText(docId) {
+    if (!confirm('Start text extraction for this document?')) return;
+    const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '{{ csrf_token }}';
+    fetch(`/api/governing-docs/${docId}/extract/`, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrfToken },
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            alert(data.message || 'Extraction started. Refresh the page to see results.');
+            location.reload();
+        } else {
+            alert('Error: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(err => alert('Error: ' + err.message));
+}
+
+function archiveDocument(docId) {
+    if (!confirm('Archive this document? It will be hidden from the active list.')) return;
+    const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]')?.value || '{{ csrf_token }}';
+    fetch(`/api/governing-docs/${docId}/archive/`, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': csrfToken },
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            location.reload();
+        } else {
+            alert('Error: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(err => alert('Error: ' + err.message));
+}
+</script>

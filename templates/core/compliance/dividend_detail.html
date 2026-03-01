@@ -1,0 +1,119 @@
+{% extends "core/base.html" %}
+{% load humanize %}
+
+{% block title %}{{ event.get_dividend_type_display }} Dividend — {{ entity.name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.name }}</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy }}</a></li>
+            <li class="breadcrumb-item active">{{ event.get_dividend_type_display }} Dividend</li>
+        </ol>
+    </nav>
+
+    <div class="row">
+        <div class="col-lg-8">
+            <div class="card mb-3">
+                <div class="card-header bg-primary text-white d-flex justify-content-between">
+                    <h5 class="mb-0">
+                        <i class="bi bi-cash-coin"></i>
+                        {{ event.get_dividend_type_display }} Dividend — ${{ event.total_amount|floatformat:2 }}
+                    </h5>
+                    <span class="badge bg-light text-dark">Declared {{ event.declaration_date|date:"d M Y" }}</span>
+                </div>
+                <div class="card-body">
+                    <div class="row g-3 mb-4">
+                        <div class="col-md-3">
+                            <small class="text-muted d-block">Record Date</small>
+                            <strong>{{ event.record_date|date:"d M Y" }}</strong>
+                        </div>
+                        <div class="col-md-3">
+                            <small class="text-muted d-block">Payment Date</small>
+                            <strong>{{ event.payment_date|date:"d M Y" }}</strong>
+                        </div>
+                        <div class="col-md-3">
+                            <small class="text-muted d-block">Franking</small>
+                            <strong>{{ event.franking_percentage }}%</strong>
+                        </div>
+                        <div class="col-md-3">
+                            <small class="text-muted d-block">Tax Rate</small>
+                            <strong>{{ event.company_tax_rate }}%</strong>
+                        </div>
+                    </div>
+
+                    {% if event.franking_account_closing_balance is not None and event.franking_account_closing_balance < 0 %}
+                    <div class="alert alert-warning">
+                        <i class="bi bi-exclamation-triangle"></i>
+                        <strong>Franking Deficit:</strong> Closing balance is ${{ event.franking_account_closing_balance|floatformat:2 }}
+                    </div>
+                    {% endif %}
+
+                    <h6 class="border-bottom pb-2 mb-3">Shareholder Allocations</h6>
+                    <table class="table table-sm">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Shareholder</th>
+                                <th class="text-end">Shares</th>
+                                <th class="text-end">Dividend $</th>
+                                <th class="text-end">Franking Credit $</th>
+                                <th class="text-end">Withholding Tax $</th>
+                                <th>Statement</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for a in allocations %}
+                            <tr>
+                                <td>{{ a.shareholder.name }}</td>
+                                <td class="text-end">{{ a.shares_held|intcomma }}</td>
+                                <td class="text-end">${{ a.dividend_amount|floatformat:2 }}</td>
+                                <td class="text-end">${{ a.franking_credit|floatformat:2 }}</td>
+                                <td class="text-end">${{ a.withholding_tax|floatformat:2 }}</td>
+                                <td>
+                                    {% if a.dividend_statement %}
+                                    <a href="{% url 'core:legal_doc_download' doc_pk=a.dividend_statement.pk fmt='docx' %}"
+                                       class="btn btn-sm btn-outline-primary">
+                                        <i class="bi bi-download"></i>
+                                    </a>
+                                    {% else %}
+                                    <span class="text-muted small">—</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-4">
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-info-circle"></i> Resolution Details</h6>
+                </div>
+                <div class="card-body small">
+                    <p><strong>Resolution Type:</strong> {{ event.resolution_type|title }}</p>
+                    {% if event.meeting_location %}
+                    <p><strong>Meeting Location:</strong> {{ event.meeting_location }}</p>
+                    {% endif %}
+                    <p>
+                        <strong>Solvency Confirmed:</strong>
+                        {% if event.solvency_confirmed %}
+                        <span class="badge bg-success">Yes</span>
+                        {% else %}
+                        <span class="badge bg-danger">No</span>
+                        {% endif %}
+                    </p>
+                    {% if event.franking_account_opening_balance is not None %}
+                    <p><strong>Franking Opening:</strong> ${{ event.franking_account_opening_balance|floatformat:2 }}</p>
+                    <p><strong>Franking Closing:</strong> ${{ event.franking_account_closing_balance|floatformat:2 }}</p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

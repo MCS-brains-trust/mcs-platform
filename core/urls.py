@@ -9,6 +9,14 @@ from . import views_templates
 from . import eva_chat
 from . import eva_engine
 from . import views_eva
+from . import views_trust
+from . import views_governing_docs
+from . import views_legal_docs
+from . import views_client_summary
+from . import views_compliance_docs
+from . import views_partnership_docs
+from . import views_package_assembly
+from . import views_bulk_operations
 
 app_name = "core"
 
@@ -19,6 +27,53 @@ urlpatterns = [
     path("entities/create/", views.entity_create, name="entity_create"),
     path("entities/<uuid:pk>/", views.entity_detail, name="entity_detail"),
     path("entities/<uuid:pk>/edit/", views.entity_edit, name="entity_edit"),
+
+    # Governing Documents
+    path("entities/<uuid:pk>/governing-docs/upload/", views_governing_docs.governing_doc_upload, name="governing_doc_upload"),
+    path("api/governing-docs/<uuid:doc_pk>/extract/", views_governing_docs.governing_doc_extract, name="governing_doc_extract"),
+    path("api/governing-docs/<uuid:doc_pk>/archive/", views_governing_docs.governing_doc_archive, name="governing_doc_archive"),
+
+    # Legal Document Generation
+    path("legal-templates/", views_legal_docs.legal_template_list, name="legal_template_list"),
+    path("legal-templates/upload/", views_legal_docs.legal_template_upload, name="legal_template_upload"),
+    path("years/<uuid:pk>/legal-docs/wizard/<str:doc_type>/", views_legal_docs.legal_doc_wizard, name="legal_doc_wizard"),
+    path("years/<uuid:pk>/legal-docs/generate/<str:doc_type>/", views_legal_docs.legal_doc_generate, name="legal_doc_generate"),
+    path("years/<uuid:pk>/legal-docs/", views_legal_docs.legal_doc_list, name="legal_doc_list"),
+    path("legal-docs/<uuid:doc_pk>/download/<str:fmt>/", views_legal_docs.legal_doc_download, name="legal_doc_download"),
+    path("legal-docs/<uuid:doc_pk>/fusesign/", views_legal_docs.legal_doc_send_fusesign, name="legal_doc_send_fusesign"),
+
+    # Eva Client Summary
+    path("years/<uuid:pk>/client-summary/", views_client_summary.client_summary_view, name="client_summary_view"),
+    path("years/<uuid:pk>/client-summary/api/", views_client_summary.client_summary_api, name="client_summary_api"),
+    path("years/<uuid:pk>/client-summary/generate/", views_client_summary.client_summary_generate, name="client_summary_generate"),
+
+    # Company Compliance Documents
+    path("years/<uuid:pk>/dividends/wizard/", views_compliance_docs.dividend_wizard, name="dividend_wizard"),
+    path("years/<uuid:pk>/dividends/create/", views_compliance_docs.dividend_create, name="dividend_create"),
+    path("years/<uuid:pk>/dividends/<uuid:event_pk>/", views_compliance_docs.dividend_detail, name="dividend_detail"),
+    path("years/<uuid:pk>/compliance/solvency-resolution/", views_compliance_docs.generate_solvency_resolution, name="generate_solvency_resolution"),
+    path("years/<uuid:pk>/compliance/directors-declaration/", views_compliance_docs.generate_directors_declaration, name="generate_directors_declaration"),
+    path("years/<uuid:pk>/compliance/directors-report/", views_compliance_docs.directors_report_wizard, name="directors_report_wizard"),
+    path("years/<uuid:pk>/compliance/directors-report/draft-eva/", views_compliance_docs.directors_report_draft_with_eva, name="directors_report_draft_eva"),
+    path("years/<uuid:pk>/compliance/loan-acknowledgment/", views_compliance_docs.generate_loan_acknowledgment, name="generate_loan_acknowledgment"),
+    path("years/<uuid:pk>/compliance/management-rep-letter/", views_compliance_docs.generate_management_rep_letter, name="generate_management_rep_letter"),
+    path("years/<uuid:pk>/compliance/cover-letter/", views_compliance_docs.generate_cover_letter, name="generate_cover_letter"),
+
+    # Partnership + Cross-Entity Documents
+    path("years/<uuid:pk>/partner-statements/", views_partnership_docs.partner_statements, name="partner_statements"),
+    path("years/<uuid:pk>/partner-statements/generate/", views_partnership_docs.generate_partner_statements, name="generate_partner_statements"),
+    path("years/<uuid:pk>/partnership-tax-summary/", views_partnership_docs.generate_partnership_tax_summary, name="generate_partnership_tax_summary"),
+    path("entities/<uuid:pk>/engagement-letter/", views_partnership_docs.engagement_letter_wizard, name="engagement_letter_wizard"),
+    path("entities/<uuid:pk>/engagement-letter/generate/", views_partnership_docs.engagement_letter_generate, name="engagement_letter_generate"),
+
+    # Package Assembly
+    path("years/<uuid:pk>/package/", views_package_assembly.package_assembly, name="package_assembly"),
+    path("years/<uuid:pk>/package/assemble/", views_package_assembly.package_assemble, name="package_assemble"),
+    path("years/<uuid:pk>/package/send-for-signing/", views_package_assembly.package_send_for_signing, name="package_send_for_signing"),
+
+    # Bulk Operations
+    path("bulk/generate-packages/", views_bulk_operations.bulk_generate_packages, name="bulk_generate_packages"),
+    path("bulk/readiness-check/", views_bulk_operations.bulk_readiness_check, name="bulk_readiness_check"),
 
     # Backward-compat: redirect old client_list URL
     path("clients/", views.entity_list, name="client_list"),
@@ -277,6 +332,20 @@ urlpatterns = [
     # Knowledge Brain
     path("api/knowledge/sync/", eva_engine.knowledge_sync, name="knowledge_sync"),
     path("api/knowledge/documents/", eva_engine.knowledge_documents, name="knowledge_documents"),
+    path("api/knowledge/search/", eva_engine.knowledge_search, name="knowledge_search"),
+    path("api/knowledge/status/", eva_engine.knowledge_status, name="knowledge_status"),
     path("eva/knowledge-brain/", views_eva.knowledge_brain_admin, name="knowledge_brain_admin"),
     path("eva/knowledge-brain/sync/", views_eva.trigger_knowledge_sync, name="trigger_knowledge_sync"),
+
+    # ===== TRUST DISTRIBUTION TAB =====
+    path("api/years/<uuid:pk>/trust-workspace/", views_trust.trust_workspace_api, name="trust_workspace_api"),
+    path("api/years/<uuid:pk>/trust-workspace/stage/<int:stage_num>/", views_trust.trust_stage_update, name="trust_stage_update"),
+    path("api/years/<uuid:pk>/trust-workspace/beneficiaries/", views_trust.beneficiary_profiles_api, name="beneficiary_profiles_api"),
+    path("api/years/<uuid:pk>/trust-workspace/scenarios/", views_trust.distribution_scenarios_api, name="distribution_scenarios_api"),
+    path("api/years/<uuid:pk>/trust-workspace/scenarios/<uuid:scenario_pk>/confirm/", views_trust.confirm_scenario, name="confirm_scenario"),
+    path("api/years/<uuid:pk>/trust-workspace/scenarios/<uuid:scenario_pk>/delete/", views_trust.delete_scenario, name="delete_scenario"),
+    path("api/years/<uuid:pk>/trust-workspace/section-100a/", views_trust.section_100a_api, name="section_100a_api"),
+    path("api/years/<uuid:pk>/trust-workspace/elections/", views_trust.trust_elections_api, name="trust_elections_api"),
+    path("api/years/<uuid:pk>/trust-workspace/elections/<uuid:election_pk>/confirm/", views_trust.confirm_election, name="confirm_election"),
+    path("api/years/<uuid:pk>/trust-workspace/eva-context/", views_trust.trust_eva_context, name="trust_eva_context"),
 ]

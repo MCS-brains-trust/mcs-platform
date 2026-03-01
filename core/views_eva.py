@@ -94,6 +94,7 @@ def _eva_chat_send(request, fy):
         return JsonResponse({"error": "Message cannot be empty"}, status=400)
 
     opus_override = data.get("opus_override", False)
+    interaction_type = data.get("interaction_type", "general")
 
     from core.eva_service import process_eva_chat
     try:
@@ -102,7 +103,16 @@ def _eva_chat_send(request, fy):
             user=request.user,
             message_text=message_text,
             opus_override=opus_override,
+            interaction_type=interaction_type,
         )
+        # Build citation list from M2M
+        citations = []
+        for chunk in assistant_msg.knowledge_chunks_cited.select_related("document").all():
+            citations.append({
+                "chunk_id": str(chunk.id),
+                "document_title": chunk.document.title,
+                "category": chunk.document.get_category_display(),
+            })
         return JsonResponse({
             "status": "ok",
             "message": {
@@ -112,6 +122,10 @@ def _eva_chat_send(request, fy):
                 "model_used": assistant_msg.model_used,
                 "created_at": assistant_msg.created_at.isoformat(),
                 "retrieved_chunks": assistant_msg.retrieved_chunk_ids,
+                "citations": citations,
+                "token_count_prompt": assistant_msg.token_count_prompt,
+                "token_count_response": assistant_msg.token_count_response,
+                "interaction_type": assistant_msg.interaction_type,
             },
         })
     except Exception as e:
@@ -370,7 +384,7 @@ def eva_finalise(request, pk):
             "current_status": fy.get_status_display(),
         }, status=400)
 
-    fy.status = FinancialYear.Status.FINALISED
+    fy.status = FinancialYear.Status.LOCKED
     fy.finalised_at = timezone.now()
     fy.save(update_fields=["status", "finalised_at"])
 
@@ -379,14 +393,21 @@ def eva_finalise(request, pk):
 
     _log_action(
         request, AuditLog.Action.STATUS_CHANGE,
-        f"{request.user.get_full_name() or request.user.email} finalised this financial year. "
-        f"Eva clearance on record. Documents locked.",
+        f"{request.user.get_full_name() or request.user.email} locked this financial year. "
+        f"Eva clearance on record. All documents and data locked.",
         fy,
     )
 
+    # Trigger Eva Client Summary generation (async if Celery available)
+    try:
+        from core.tasks import generate_eva_client_summary
+        generate_eva_client_summary.delay(str(fy.pk), str(request.user.pk))
+    except Exception as e:
+        logger.warning(f"Could not trigger client summary generation: {e}")
+
     return JsonResponse({
         "status": "ok",
-        "message": "Financial year has been finalised.",
+        "message": "Financial year has been locked. Eva Client Summary is being generated.",
     })
 
 

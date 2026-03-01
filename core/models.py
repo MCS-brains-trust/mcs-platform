@@ -281,6 +281,39 @@ class Entity(models.Model):
         max_length=9, blank=True, default="", verbose_name="Trustee ACN",
         help_text="ACN of the trustee company (trusts and SMSFs only)",
     )
+    # --- Phase 1 additions (Master Implementation Spec §6.1) ---
+    is_large_proprietary = models.BooleanField(
+        default=False,
+        help_text="Companies only: True = large proprietary (s.45A Corporations Act). Affects Director's Declaration wording.",
+    )
+    total_shares_on_issue = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text="Companies only: total ordinary shares on issue. Used for dividend calculations.",
+    )
+    default_engagement_fee = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        help_text="Default annual engagement fee (AUD). Pre-populates engagement letter wizard.",
+    )
+    default_engagement_services = models.JSONField(
+        default=list, blank=True,
+        help_text="Default services list for engagement letters, e.g. ['Tax Return', 'Financial Statements', 'BAS']",
+    )
+    deed_date = models.DateField(
+        null=True, blank=True,
+        help_text="Date of the operative trust deed or partnership agreement.",
+    )
+    deed_reference = models.CharField(
+        max_length=255, blank=True, default="",
+        help_text="Reference number or title of the operative deed.",
+    )
+    vesting_date = models.DateField(
+        null=True, blank=True,
+        help_text="Trust vesting date (trusts only). Used for compliance checks.",
+    )
+    appointor = models.CharField(
+        max_length=255, blank=True, default="",
+        help_text="Name of the appointor (trusts only).",
+    )
     is_archived = models.BooleanField(
         default=False,
         help_text="Archived entities are hidden from the default list but data is preserved.",
@@ -361,6 +394,37 @@ class EntityOfficer(models.Model):
         max_digits=5, decimal_places=2, null=True, blank=True,
         help_text="Distribution % (trust beneficiaries only)",
     )
+    # --- Phase 1 additions (Master Implementation Spec §6.1) ---
+    shares_held = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text="Number of shares held (shareholders/directors of companies only). Used for dividend calculations.",
+    )
+    email = models.EmailField(
+        blank=True, default="",
+        help_text="Contact email for this officer. Used for FuseSign and engagement letters.",
+    )
+    class TaxResidency(models.TextChoices):
+        RESIDENT = "resident", "Australian Resident"
+        NON_RESIDENT = "non_resident", "Non-Resident"
+        TEMPORARY = "temporary", "Temporary Resident"
+    tax_residency = models.CharField(
+        max_length=15, choices=TaxResidency.choices, default=TaxResidency.RESIDENT,
+        help_text="Tax residency status. Affects withholding tax on dividends and trust distributions.",
+    )
+    class BeneficiaryType(models.TextChoices):
+        ADULT = "adult", "Adult Individual"
+        MINOR = "minor", "Minor (Under 18)"
+        COMPANY = "company", "Company"
+        TRUST = "trust", "Trust"
+        SMSF = "smsf", "SMSF"
+    beneficiary_type = models.CharField(
+        max_length=10, choices=BeneficiaryType.choices, blank=True, default="",
+        help_text="Type of beneficiary (trust beneficiaries only). Affects distribution modelling and Div 6AA.",
+    )
+    other_income = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True,
+        help_text="Estimated other taxable income for this beneficiary. Used in trust distribution planning.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -419,7 +483,8 @@ class FinancialYear(models.Model):
         PENDING_EVA = "pending_eva", "Pending Eva Review"
         EVA_CLEARED = "eva_cleared", "Eva Cleared"
         EVA_ERROR = "eva_error", "Eva Error"
-        FINALISED = "finalised", "Finalised"
+        LOCKED = "locked", "Locked"
+        FINALISED = "finalised", "Finalised"  # Legacy — use LOCKED for new workflow
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     entity = models.ForeignKey(
@@ -473,9 +538,44 @@ class FinancialYear(models.Model):
         blank=True, default="",
         help_text="Reason provided for reopening this financial year",
     )
-    eva_model_override = models.CharField(
-        max_length=10, blank=True, default="",
-        help_text="Set to 'opus' if manually escalated for deep review",
+    # --- Phase 1 additions (Master Implementation Spec §6.2) ---
+    package_assembled = models.BooleanField(
+        default=False,
+        help_text="Whether the client package has been assembled for this FY.",
+    )
+    package_assembled_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Timestamp when the client package was assembled.",
+    )
+    package_assembled_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="assembled_packages",
+        help_text="User who assembled the client package.",
+    )
+    package_sent_for_signing = models.BooleanField(
+        default=False,
+        help_text="Whether the package has been sent for signing via FuseSign.",
+    )
+    package_sent_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Timestamp when the package was sent for signing.",
+    )
+    package_fusesign_id = models.CharField(
+        max_length=255, blank=True, default="",
+        help_text="FuseSign envelope ID for the client package.",
+    )
+    locked_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="Timestamp when Eva cleared and locked this financial year.",
+    )
+    locked_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="locked_years",
+        help_text="User (or system) who locked this financial year.",
     )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -507,9 +607,22 @@ class FinancialYear(models.Model):
                 self.period_type = self.PeriodType.INTERIM
         super().save(*args, **kwargs)
 
+    # --- Status transition constants ---
+    VALID_TRANSITIONS = {
+        'draft': ['in_review'],
+        'in_review': ['draft', 'finished'],
+        'finished': ['in_review', 'prepared', 'pending_eva'],
+        'prepared': ['finished', 'eva_cleared', 'eva_error'],
+        'pending_eva': ['finished', 'eva_cleared', 'eva_error'],
+        'eva_cleared': ['locked', 'finished'],  # finished = reopen
+        'eva_error': ['finished'],
+        'locked': ['draft'],  # reopen resets to draft
+        'finalised': ['draft'],  # legacy: reopen resets to draft
+    }
+
     @property
     def is_locked(self):
-        return self.status == self.Status.FINALISED
+        return self.status in (self.Status.LOCKED, self.Status.FINALISED)
 
     @property
     def can_ask_eva(self):
@@ -524,11 +637,28 @@ class FinancialYear(models.Model):
     @property
     def can_finalise(self):
         """Finalisation requires Eva clearance."""
+        return self.status == self.Status.EVA_CLEARED
 
     @property
     def is_finalisable(self):
         """Can the Finalise button be clicked? Only when Eva has cleared."""
         return self.status == self.Status.EVA_CLEARED
+
+    @property
+    def can_assemble_package(self):
+        """Package assembly available from FINISHED onwards."""
+        return self.status in (
+            self.Status.FINISHED, self.Status.EVA_CLEARED,
+            self.Status.LOCKED, self.Status.FINALISED,
+        )
+
+    def transition_to(self, new_status):
+        """Validate and execute a status transition. Returns True if valid."""
+        allowed = self.VALID_TRANSITIONS.get(self.status, [])
+        if new_status not in allowed:
+            return False
+        self.status = new_status
+        return True
 
 
 # ---------------------------------------------------------------------------
@@ -3208,6 +3338,18 @@ class EvaFinding(models.Model):
     )
     plain_english_explanation = models.TextField()
     recommendation = models.TextField()
+    remediation_firm_procedure = models.TextField(
+        blank=True, default="",
+        help_text="Firm-specific procedure for addressing this finding",
+    )
+    remediation_authority = models.TextField(
+        blank=True, default="",
+        help_text="Authoritative guidance (ATO, legislation) for this finding",
+    )
+    remediation_synthesis = models.TextField(
+        blank=True, default="",
+        help_text="Synthesised remediation combining firm procedure + authority",
+    )
     legislation_reference = models.CharField(max_length=255, blank=True, default="")
     knowledge_brain_citation = models.CharField(
         max_length=500, blank=True, default="",
@@ -3259,6 +3401,12 @@ class KnowledgeDocument(models.Model):
         CPA_MATERIALS = "cpa_materials", "CPA Materials"
         CA_ANZ_MATERIALS = "ca_anz_materials", "CA ANZ Materials"
         TREASURY = "treasury", "Treasury"
+        APES_STANDARDS = "apes_standards", "APES Standards"
+        TPB_GUIDANCE = "tpb_guidance", "TPB Guidance"
+        CASE_LAW = "case_law", "Case Law"
+        INDUSTRY_GUIDES = "industry_guides", "Industry Guides"
+        CLIENT_PRECEDENTS = "client_precedents", "Client Precedents"
+        OTHER = "other", "Other"
 
     class SyncStatus(models.TextChoices):
         PENDING = "pending", "Pending"
@@ -3390,6 +3538,31 @@ class EvaMessage(models.Model):
         help_text="List of KnowledgeChunk IDs used in this response",
     )
     tokens_used = models.IntegerField(default=0)
+    token_count_prompt = models.IntegerField(
+        default=0,
+        help_text="Number of tokens in the prompt sent to the model",
+    )
+    token_count_response = models.IntegerField(
+        default=0,
+        help_text="Number of tokens in the model's response",
+    )
+    knowledge_chunks_cited = models.ManyToManyField(
+        "KnowledgeChunk", blank=True,
+        related_name="cited_in_messages",
+        help_text="Knowledge Brain chunks cited in this response",
+    )
+
+    class InteractionType(models.TextChoices):
+        GENERAL = "general", "General"
+        TRUST_PLANNING = "trust_planning", "Trust Planning"
+        FINALISATION = "finalisation", "Finalisation"
+
+    interaction_type = models.CharField(
+        max_length=20,
+        choices=InteractionType.choices,
+        default=InteractionType.GENERAL,
+        help_text="Context of this interaction",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -3400,6 +3573,744 @@ class EvaMessage(models.Model):
 
     def __str__(self):
         return f"{self.get_role_display()} message in {self.conversation}"
+
+
+# ---------------------------------------------------------------------------
+# Phase 5 — Eva Trust Tax Planning
+# ---------------------------------------------------------------------------
+class EvaTrustPlanningSession(models.Model):
+    """An interactive trust distribution planning session with Eva."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    conversation = models.ForeignKey(
+        EvaConversation, on_delete=models.CASCADE,
+        related_name="trust_planning_sessions",
+    )
+    financial_year = models.ForeignKey(
+        FinancialYear, on_delete=models.CASCADE,
+        related_name="trust_planning_sessions",
+    )
+    triggered_at = models.DateTimeField(auto_now_add=True)
+    triggered_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="triggered_trust_planning_sessions",
+    )
+    net_distributable_income = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True,
+    )
+    beneficiary_incomes_provided = models.BooleanField(default=False)
+    recommended_distribution = models.JSONField(
+        default=dict, blank=True,
+        help_text="Eva's recommended distribution allocation",
+    )
+    final_distribution = models.JSONField(
+        default=dict, blank=True,
+        help_text="User-confirmed final distribution",
+    )
+    resolution_pre_populated = models.BooleanField(
+        default=False,
+        help_text="Whether the trustee resolution was pre-populated from this session",
+    )
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-triggered_at"]
+
+    def __str__(self):
+        return f"Trust Planning Session for {self.financial_year}"
+
+
+# ---------------------------------------------------------------------------
+# Phase 6 — Trust Distribution Tab
+# ---------------------------------------------------------------------------
+class TrustWorkspace(models.Model):
+    """Master workspace for the 6-stage trust distribution workflow."""
+
+    class StageStatus(models.TextChoices):
+        NOT_STARTED = "not_started", "Not Started"
+        IN_PROGRESS = "in_progress", "In Progress"
+        COMPLETED = "completed", "Completed"
+
+    class RiskRating(models.TextChoices):
+        GREEN = "green", "Green"
+        AMBER = "amber", "Amber"
+        RED = "red", "Red"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    financial_year = models.OneToOneField(
+        FinancialYear, on_delete=models.CASCADE, related_name="trust_workspace",
+    )
+    # Stage statuses
+    stage_1_status = models.CharField(
+        max_length=15, choices=StageStatus.choices, default=StageStatus.NOT_STARTED,
+        help_text="Income Calculation",
+    )
+    stage_2_status = models.CharField(
+        max_length=15, choices=StageStatus.choices, default=StageStatus.NOT_STARTED,
+        help_text="Beneficiary Profiling",
+    )
+    stage_3_status = models.CharField(
+        max_length=15, choices=StageStatus.choices, default=StageStatus.NOT_STARTED,
+        help_text="Distribution Modelling",
+    )
+    stage_4_status = models.CharField(
+        max_length=15, choices=StageStatus.choices, default=StageStatus.NOT_STARTED,
+        help_text="Section 100A Assessment",
+    )
+    stage_5_status = models.CharField(
+        max_length=15, choices=StageStatus.choices, default=StageStatus.NOT_STARTED,
+        help_text="Trust Elections",
+    )
+    stage_6_status = models.CharField(
+        max_length=15, choices=StageStatus.choices, default=StageStatus.NOT_STARTED,
+        help_text="Documents",
+    )
+    # Financial data
+    net_distributable_income = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True,
+    )
+    income_streams = models.JSONField(
+        default=dict, blank=True,
+        help_text="Breakdown: ordinary, cgt_discount, cgt_non_discount, franked_dividends, franking_credits, tax_free",
+    )
+    confirmed_scenario = models.ForeignKey(
+        "DistributionScenario", on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="+",
+    )
+    section_100a_overall_risk = models.CharField(
+        max_length=10, choices=RiskRating.choices, blank=True, default="",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Trust Workspace for {self.financial_year}"
+
+    def all_stages_completed(self):
+        return all([
+            self.stage_1_status == self.StageStatus.COMPLETED,
+            self.stage_2_status == self.StageStatus.COMPLETED,
+            self.stage_3_status == self.StageStatus.COMPLETED,
+            self.stage_4_status == self.StageStatus.COMPLETED,
+            self.stage_5_status == self.StageStatus.COMPLETED,
+            self.stage_6_status == self.StageStatus.COMPLETED,
+        ])
+
+
+class BeneficiaryProfile(models.Model):
+    """Tax profile for a beneficiary within a trust distribution workspace."""
+
+    class BeneficiaryType(models.TextChoices):
+        ADULT = "adult", "Adult Individual"
+        MINOR = "minor", "Minor"
+        COMPANY = "company", "Company"
+        TRUST = "trust", "Trust"
+        SMSF = "smsf", "SMSF"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    trust_workspace = models.ForeignKey(
+        TrustWorkspace, on_delete=models.CASCADE, related_name="beneficiary_profiles",
+    )
+    beneficiary = models.ForeignKey(
+        "EntityOfficer", on_delete=models.CASCADE,
+        related_name="trust_beneficiary_profiles",
+    )
+    beneficiary_type = models.CharField(
+        max_length=10, choices=BeneficiaryType.choices, default=BeneficiaryType.ADULT,
+    )
+    other_income = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True,
+        help_text="Beneficiary's other taxable income outside this trust",
+    )
+    marginal_rate = models.DecimalField(
+        max_digits=5, decimal_places=4, null=True, blank=True,
+        help_text="Current marginal tax rate (e.g. 0.3250 for 32.5%)",
+    )
+    bracket_remaining = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True,
+        help_text="Remaining capacity in current tax bracket",
+    )
+    franking_surplus = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True,
+        help_text="Excess franking credits available",
+    )
+    include_in_distribution = models.BooleanField(default=True)
+    exclusion_reason = models.TextField(blank=True, default="")
+    tax_residency = models.CharField(max_length=20, blank=True, default="AU")
+
+    class Meta:
+        unique_together = ["trust_workspace", "beneficiary"]
+        ordering = ["beneficiary__name"]
+
+    def __str__(self):
+        return f"{self.beneficiary} profile in {self.trust_workspace}"
+
+
+class DistributionScenario(models.Model):
+    """A named distribution scenario (up to 3 per workspace)."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    trust_workspace = models.ForeignKey(
+        TrustWorkspace, on_delete=models.CASCADE, related_name="scenarios",
+    )
+    name = models.CharField(
+        max_length=100, default="Scenario 1",
+        help_text="User-friendly scenario name",
+    )
+    allocations = models.JSONField(
+        default=dict, blank=True,
+        help_text="JSON: {beneficiary_id: {stream: amount, ...}, ...}",
+    )
+    total_tax = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True,
+    )
+    tax_saved_vs_equal = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True,
+        help_text="Tax saved compared to equal distribution",
+    )
+    is_confirmed = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["created_at"]
+
+    def __str__(self):
+        return f"{self.name} — {self.trust_workspace}"
+
+
+class Section100AAssessment(models.Model):
+    """Section 100A reimbursement agreement assessment per beneficiary."""
+
+    class Answer(models.TextChoices):
+        YES = "yes", "Yes"
+        NO = "no", "No"
+        UNSURE = "unsure", "Unsure"
+
+    class RiskRating(models.TextChoices):
+        GREEN = "green", "Green"
+        AMBER = "amber", "Amber"
+        RED = "red", "Red"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    trust_workspace = models.ForeignKey(
+        TrustWorkspace, on_delete=models.CASCADE, related_name="section_100a_assessments",
+    )
+    beneficiary = models.ForeignKey(
+        "EntityOfficer", on_delete=models.CASCADE,
+        related_name="section_100a_assessments",
+    )
+    q1 = models.CharField(max_length=10, choices=Answer.choices, blank=True, default="",
+        help_text="Was the distribution made under a reimbursement agreement?")
+    q2 = models.CharField(max_length=10, choices=Answer.choices, blank=True, default="",
+        help_text="Did the beneficiary receive the economic benefit?")
+    q3 = models.CharField(max_length=10, choices=Answer.choices, blank=True, default="",
+        help_text="Was the distribution part of a pre-arranged plan?")
+    q4 = models.CharField(max_length=10, choices=Answer.choices, blank=True, default="",
+        help_text="Were funds redirected to another party?")
+    q5 = models.CharField(max_length=10, choices=Answer.choices, blank=True, default="",
+        help_text="Is the beneficiary a related party of the trustee?")
+    q6 = models.CharField(max_length=10, choices=Answer.choices, blank=True, default="",
+        help_text="Was there a tax benefit from the arrangement?")
+    q7 = models.CharField(max_length=10, choices=Answer.choices, blank=True, default="",
+        help_text="Is the arrangement consistent with an ordinary family dealing?")
+    q8 = models.CharField(max_length=10, choices=Answer.choices, blank=True, default="",
+        help_text="Does the arrangement fall within a safe harbour?")
+    risk_rating = models.CharField(
+        max_length=10, choices=RiskRating.choices, blank=True, default="",
+        help_text="Calculated: GREEN (0 indicators), AMBER (1-2), RED (3+ or Q1+Q6 both YES)",
+    )
+    resolution_strategy = models.TextField(
+        blank=True, default="",
+        help_text="Mandatory for AMBER/RED ratings",
+    )
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="reviewed_100a_assessments",
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        unique_together = ["trust_workspace", "beneficiary"]
+
+    def calculate_risk_rating(self):
+        """Calculate risk rating based on answers."""
+        yes_count = sum(
+            1 for q in [self.q1, self.q2, self.q3, self.q4, self.q5, self.q6, self.q7, self.q8]
+            if q == self.Answer.YES
+        )
+        # Q7 and Q8 are protective — YES is good
+        risk_indicators = sum(
+            1 for q in [self.q1, self.q2, self.q3, self.q4, self.q5, self.q6]
+            if q == self.Answer.YES
+        )
+        if risk_indicators >= 3 or (self.q1 == self.Answer.YES and self.q6 == self.Answer.YES):
+            return self.RiskRating.RED
+        elif risk_indicators >= 1:
+            return self.RiskRating.AMBER
+        return self.RiskRating.GREEN
+
+    def save(self, *args, **kwargs):
+        self.risk_rating = self.calculate_risk_rating()
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"S100A Assessment: {self.beneficiary} — {self.risk_rating}"
+
+
+class TrustElectionRecord(models.Model):
+    """Family Trust Election (FTE) or Interposed Entity Election (IEE) record."""
+
+    class ElectionType(models.TextChoices):
+        FTE = "fte", "Family Trust Election"
+        IEE = "iee", "Interposed Entity Election"
+
+    class ElectionStatus(models.TextChoices):
+        IN_PLACE = "in_place", "In Place"
+        NOT_IN_PLACE = "not_in_place", "Not In Place"
+        REQUIRED_NOT_YET_MADE = "required_not_yet_made", "Required — Not Yet Made"
+        NOT_APPLICABLE = "not_applicable", "Not Applicable"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    trust_workspace = models.ForeignKey(
+        TrustWorkspace, on_delete=models.CASCADE, related_name="election_records",
+    )
+    election_type = models.CharField(
+        max_length=5, choices=ElectionType.choices,
+    )
+    status = models.CharField(
+        max_length=25, choices=ElectionStatus.choices, default=ElectionStatus.NOT_APPLICABLE,
+    )
+    effective_date = models.DateField(null=True, blank=True)
+    test_individual = models.ForeignKey(
+        "EntityOfficer", on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="trust_election_test_individual",
+        help_text="The test individual for the FTE",
+    )
+    related_entity = models.ForeignKey(
+        "Entity", on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="trust_election_related",
+        help_text="Related entity for IEE",
+    )
+    election_document = models.FileField(
+        upload_to="trust_elections/", blank=True,
+        help_text="Uploaded election form document",
+    )
+    confirmed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="confirmed_trust_elections",
+    )
+    confirmed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        unique_together = ["trust_workspace", "election_type"]
+
+    def __str__(self):
+        return f"{self.get_election_type_display()} — {self.get_status_display()}"
+
+
+# ---------------------------------------------------------------------------
+# Phase 7 — Governing Documents + OCR
+# ---------------------------------------------------------------------------
+class GoverningDocument(models.Model):
+    """A governing document (trust deed, constitution, etc.) stored at entity level."""
+
+    class DocumentType(models.TextChoices):
+        TRUST_DEED = "trust_deed", "Trust Deed"
+        COMPANY_CONSTITUTION = "company_constitution", "Company Constitution"
+        PARTNERSHIP_AGREEMENT = "partnership_agreement", "Partnership Agreement"
+        SMSF_DEED = "smsf_deed", "SMSF Deed"
+        AMENDMENT = "amendment", "Amendment"
+        SUPPLEMENTARY = "supplementary", "Supplementary Document"
+
+    class ExtractionStatus(models.TextChoices):
+        PENDING = "pending", "Pending"
+        COMPLETED = "completed", "Completed"
+        COMPLETED_WITH_WARNINGS = "completed_with_warnings", "Completed with Warnings"
+        OCR_PENDING = "ocr_pending", "OCR Pending"
+        FAILED = "failed", "Failed"
+
+    class Status(models.TextChoices):
+        ACTIVE = "active", "Active"
+        ARCHIVED = "archived", "Archived"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entity = models.ForeignKey(
+        Entity, on_delete=models.CASCADE, related_name="governing_documents",
+    )
+    document_type = models.CharField(
+        max_length=30, choices=DocumentType.choices,
+    )
+    is_primary = models.BooleanField(
+        default=False,
+        help_text="Whether this is the primary operative document",
+    )
+    file = models.FileField(upload_to="governing_documents/")
+    original_filename = models.CharField(max_length=500, blank=True, default="")
+    file_size_bytes = models.PositiveIntegerField(default=0)
+    document_date = models.DateField(
+        null=True, blank=True,
+        help_text="Date of the document (execution date)",
+    )
+    description = models.TextField(blank=True, default="")
+    status = models.CharField(
+        max_length=10, choices=Status.choices, default=Status.ACTIVE,
+    )
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="uploaded_governing_docs",
+    )
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+    archived_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="archived_governing_docs",
+    )
+    archived_at = models.DateTimeField(null=True, blank=True)
+    # OCR / Text extraction
+    extracted_text = models.TextField(
+        blank=True, default="",
+        help_text="Full extracted text from the document",
+    )
+    extraction_status = models.CharField(
+        max_length=30, choices=ExtractionStatus.choices,
+        default=ExtractionStatus.PENDING,
+    )
+    low_confidence_pages = models.JSONField(
+        default=list, blank=True,
+        help_text="List of page numbers with low OCR confidence",
+    )
+    textract_job_id = models.CharField(
+        max_length=255, blank=True, default="",
+        help_text="AWS Textract job ID for async OCR processing",
+    )
+
+    class Meta:
+        ordering = ["-uploaded_at"]
+        indexes = [
+            models.Index(fields=["entity", "document_type", "status"]),
+        ]
+
+    def __str__(self):
+        return f"{self.get_document_type_display()} — {self.entity}"
+
+
+# ---------------------------------------------------------------------------
+# Phase 8 — Legal Document Generation
+# ---------------------------------------------------------------------------
+class LegalDocumentTemplate(models.Model):
+    """A Word template (.docx) for generating legal/compliance documents."""
+
+    class DocumentType(models.TextChoices):
+        # Legal documents
+        DIV7A_LOAN_AGREEMENT = "div7a_loan_agreement", "Div 7A Loan Agreement"
+        TRUST_DEED_CHANGE_TRUSTEE = "trust_deed_change_trustee", "Trust Deed — Change Trustee"
+        TRUST_DEED_ADD_BENEFICIARY = "trust_deed_add_beneficiary", "Trust Deed — Add Beneficiary"
+        TRUST_DEED_REMOVE_BENEFICIARY = "trust_deed_remove_beneficiary", "Trust Deed — Remove Beneficiary"
+        TRUST_DEED_EXTEND_VESTING = "trust_deed_extend_vesting", "Trust Deed — Extend Vesting"
+        TRUST_DEED_UPDATE_DISTRIBUTION = "trust_deed_update_distribution", "Trust Deed — Update Distribution"
+        COMPANY_CONSTITUTION = "company_constitution", "Company Constitution"
+        COMPANY_CONSTITUTION_SPECIAL = "company_constitution_special", "Company Constitution — Special Purpose"
+        DISCRETIONARY_TRUST_DEED = "discretionary_trust_deed", "Discretionary Trust Deed"
+        UNIT_TRUST_DEED = "unit_trust_deed", "Unit Trust Deed"
+        PARTNERSHIP_AGREEMENT = "partnership_agreement", "Partnership Agreement"
+        # Compliance documents
+        DIVIDEND_STATEMENT = "dividend_statement", "Dividend Statement"
+        DIVIDEND_MINUTES = "dividend_minutes", "Dividend Declaration Minutes"
+        SOLVENCY_RESOLUTION = "solvency_resolution", "Solvency Resolution"
+        DIRECTORS_DECLARATION = "directors_declaration", "Director's Declaration"
+        DIRECTORS_DECLARATION_LARGE = "directors_declaration_large", "Director's Declaration — Large Proprietary"
+        DIRECTORS_DECLARATION_GP = "directors_declaration_gp", "Director's Declaration — General Purpose"
+        DIRECTORS_REPORT = "directors_report", "Director's Report"
+        SHAREHOLDER_LOAN_ACK = "shareholder_loan_ack", "Shareholder Loan Acknowledgment"
+        PARTNER_STATEMENT = "partner_statement", "Partner Statement"
+        PARTNERSHIP_TAX_SUMMARY = "partnership_tax_summary", "Partnership Tax Summary"
+        ENGAGEMENT_LETTER = "engagement_letter", "Client Engagement Letter"
+        MANAGEMENT_REP_LETTER = "management_rep_letter", "Management Representation Letter"
+        MANAGEMENT_REP_LETTER_TRUST = "management_rep_letter_trust", "Management Representation Letter — Trust"
+        MANAGEMENT_REP_LETTER_PARTNERSHIP = "management_rep_letter_partnership", "Management Representation Letter — Partnership"
+        CLIENT_COVER_LETTER = "client_cover_letter", "Client Cover Letter"
+        DISTRIBUTION_MINUTES = "distribution_minutes", "Trust Distribution Minutes"
+        SECTION_100A_SUMMARY = "section_100a_summary", "Section 100A Summary"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=255)
+    document_type = models.CharField(
+        max_length=50, choices=DocumentType.choices, unique=True,
+    )
+    entity_types = models.JSONField(
+        default=list, blank=True,
+        help_text="List of entity types this template applies to, e.g. ['company', 'trust']",
+    )
+    template_file = models.FileField(upload_to="legal_templates/")
+    version = models.PositiveIntegerField(default=1)
+    is_active = models.BooleanField(default=True)
+    solicitor_approved = models.BooleanField(default=False)
+    solicitor_name = models.CharField(max_length=255, blank=True, default="")
+    approval_date = models.DateField(null=True, blank=True)
+    variable_schema = models.JSONField(
+        default=dict, blank=True,
+        help_text="JSON schema describing template variables and their types",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="created_legal_templates",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["name"]
+
+    def __str__(self):
+        return f"{self.name} v{self.version}"
+
+
+class LegalDocument(models.Model):
+    """A generated legal/compliance document instance."""
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        FINAL = "final", "Final"
+        EXECUTED = "executed", "Executed"
+
+    class FuseSignStatus(models.TextChoices):
+        NOT_SENT = "not_sent", "Not Sent"
+        SENT = "sent", "Sent for Signing"
+        SIGNED = "signed", "Signed"
+        DECLINED = "declined", "Declined"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entity = models.ForeignKey(
+        Entity, on_delete=models.CASCADE, related_name="legal_documents",
+    )
+    financial_year = models.ForeignKey(
+        FinancialYear, on_delete=models.CASCADE,
+        null=True, blank=True, related_name="legal_documents",
+    )
+    template = models.ForeignKey(
+        LegalDocumentTemplate, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="generated_documents",
+    )
+    document_type = models.CharField(
+        max_length=50, choices=LegalDocumentTemplate.DocumentType.choices,
+    )
+    version = models.PositiveIntegerField(default=1)
+    status = models.CharField(
+        max_length=10, choices=Status.choices, default=Status.DRAFT,
+    )
+    parameters = models.JSONField(
+        default=dict, blank=True,
+        help_text="Template variable values used for generation",
+    )
+    generated_file = models.FileField(
+        upload_to="legal_documents/", blank=True,
+        help_text="Generated .docx file",
+    )
+    pdf_file = models.FileField(
+        upload_to="legal_documents_pdf/", blank=True,
+        help_text="PDF version of the generated document",
+    )
+    generated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="generated_legal_docs",
+    )
+    generated_at = models.DateTimeField(auto_now_add=True)
+    governing_document = models.ForeignKey(
+        GoverningDocument, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="generated_legal_docs",
+        help_text="Source governing document used for context",
+    )
+    disclaimer_acknowledged = models.BooleanField(default=False)
+    disclaimer_acknowledged_at = models.DateTimeField(null=True, blank=True)
+    auto_saved_to_governing_docs = models.BooleanField(
+        default=False,
+        help_text="Whether this was auto-saved as an amendment to governing docs",
+    )
+    # FuseSign integration
+    fusesign_envelope_id = models.CharField(max_length=255, blank=True, default="")
+    fusesign_status = models.CharField(
+        max_length=15, choices=FuseSignStatus.choices, default=FuseSignStatus.NOT_SENT,
+    )
+
+    class Meta:
+        ordering = ["-generated_at"]
+        indexes = [
+            models.Index(fields=["entity", "document_type"]),
+            models.Index(fields=["financial_year", "document_type"]),
+        ]
+
+    def __str__(self):
+        return f"{self.get_document_type_display()} — {self.entity} ({self.get_status_display()})"
+
+
+# ---------------------------------------------------------------------------
+# Phase 10 — Eva Client Summary
+# ---------------------------------------------------------------------------
+class EvaClientSummary(models.Model):
+    """Auto-generated client summary when a financial year is locked."""
+
+    class Format(models.TextChoices):
+        BULLET = "bullet", "Bullet Point"
+        NARRATIVE = "narrative", "Narrative"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    financial_year = models.ForeignKey(
+        FinancialYear, on_delete=models.CASCADE, related_name="client_summaries",
+    )
+    format_type = models.CharField(
+        max_length=15, choices=Format.choices, default=Format.BULLET,
+    )
+    # Five sections
+    financial_highlights = models.TextField(blank=True, default="")
+    compliance_status = models.TextField(blank=True, default="")
+    tax_position = models.TextField(blank=True, default="")
+    recommendations = models.TextField(blank=True, default="")
+    year_on_year_comparison = models.TextField(blank=True, default="")
+    # Full content
+    full_content = models.TextField(
+        blank=True, default="",
+        help_text="Complete rendered summary content",
+    )
+    version = models.PositiveIntegerField(default=1)
+    model_used = models.CharField(max_length=10, blank=True, default="")
+    generated_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-generated_at"]
+
+    def __str__(self):
+        return f"Client Summary ({self.get_format_type_display()}) — {self.financial_year}"
+
+
+# ---------------------------------------------------------------------------
+# Phase 11 — Company Compliance Documents
+# ---------------------------------------------------------------------------
+class DividendEvent(models.Model):
+    """A dividend declaration event for a company entity."""
+
+    class DividendType(models.TextChoices):
+        INTERIM = "interim", "Interim"
+        FINAL = "final", "Final"
+        SPECIAL = "special", "Special"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entity = models.ForeignKey(
+        Entity, on_delete=models.CASCADE, related_name="dividend_events",
+    )
+    financial_year = models.ForeignKey(
+        FinancialYear, on_delete=models.CASCADE, related_name="dividend_events",
+    )
+    dividend_type = models.CharField(
+        max_length=10, choices=DividendType.choices,
+    )
+    total_amount = models.DecimalField(max_digits=15, decimal_places=2)
+    franking_percentage = models.DecimalField(
+        max_digits=5, decimal_places=2, default=100.00,
+        help_text="Percentage of dividend that is franked (0-100)",
+    )
+    company_tax_rate = models.DecimalField(
+        max_digits=5, decimal_places=2, default=25.00,
+        help_text="Company tax rate used for franking calculations",
+    )
+    record_date = models.DateField()
+    payment_date = models.DateField()
+    declaration_date = models.DateField()
+    solvency_confirmed = models.BooleanField(
+        default=False,
+        help_text="Directors have confirmed solvency under s.254T",
+    )
+    franking_account_opening_balance = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True,
+    )
+    franking_account_closing_balance = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True,
+    )
+    resolution_type = models.CharField(
+        max_length=50, blank=True, default="board_resolution",
+        help_text="Type of resolution: board_resolution, circular_resolution",
+    )
+    meeting_location = models.CharField(max_length=255, blank=True, default="")
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="created_dividend_events",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-declaration_date"]
+
+    def __str__(self):
+        return f"{self.get_dividend_type_display()} Dividend — {self.entity} ({self.declaration_date})"
+
+    @property
+    def franking_credit_per_dollar(self):
+        """Calculate franking credit per dollar of dividend."""
+        if self.company_tax_rate and self.franking_percentage:
+            rate = self.company_tax_rate / 100
+            return (rate / (1 - rate)) * (self.franking_percentage / 100)
+        return 0
+
+
+class DividendShareholderAllocation(models.Model):
+    """Allocation of a dividend to an individual shareholder."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    dividend_event = models.ForeignKey(
+        DividendEvent, on_delete=models.CASCADE, related_name="allocations",
+    )
+    shareholder = models.ForeignKey(
+        "EntityOfficer", on_delete=models.CASCADE,
+        related_name="dividend_allocations",
+    )
+    shares_held = models.PositiveIntegerField(default=0)
+    dividend_amount = models.DecimalField(max_digits=15, decimal_places=2)
+    franking_credit = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    withholding_tax = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Withholding tax for non-resident shareholders",
+    )
+    dividend_statement = models.ForeignKey(
+        LegalDocument, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="dividend_allocations",
+        help_text="Generated dividend statement document",
+    )
+
+    class Meta:
+        unique_together = ["dividend_event", "shareholder"]
+
+    def __str__(self):
+        return f"{self.shareholder} — ${self.dividend_amount}"
+
+
+# ---------------------------------------------------------------------------
+# Phase 12 — Engagement Letter Config
+# ---------------------------------------------------------------------------
+class EngagementLetterConfig(models.Model):
+    """Entity-level engagement letter configuration (APES 305 compliant)."""
+
+    class FeeBasis(models.TextChoices):
+        FIXED = "fixed", "Fixed Fee"
+        HOURLY = "hourly", "Hourly Rate"
+        VALUE_BASED = "value_based", "Value-Based"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entity = models.OneToOneField(
+        Entity, on_delete=models.CASCADE, related_name="engagement_letter_config",
+    )
+    services_engaged = models.JSONField(
+        default=list, blank=True,
+        help_text="List of services: ['tax_return', 'financial_statements', 'bas', ...]",
+    )
+    fee_amount = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+    )
+    fee_basis = models.CharField(
+        max_length=15, choices=FeeBasis.choices, default=FeeBasis.FIXED,
+    )
+    additional_terms = models.TextField(blank=True, default="")
+    last_generated_fy = models.ForeignKey(
+        FinancialYear, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="+",
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"Engagement Config — {self.entity}"
 
 
 from .models_office_admin import *  # noqa: F401, F403

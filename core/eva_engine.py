@@ -117,6 +117,46 @@ COMPLIANCE_CHECKS = [
                          "sole_trader", "partnership", "smsf"],
         "severity_default": "ADVISORY",
     },
+    {
+        "id": "super_guarantee",
+        "name": "Superannuation Guarantee Compliance",
+        "description": "Verify super guarantee obligations are met — correct rate applied, paid on time, all eligible employees covered",
+        "entity_types": ["company", "trust_discretionary", "trust_unit", "trust_hybrid",
+                         "sole_trader", "partnership"],
+        "severity_default": "CRITICAL",
+    },
+    {
+        "id": "ato_benchmarks",
+        "name": "ATO Industry Benchmarks",
+        "description": "Compare key financial ratios against ATO small business benchmarks for the entity's industry",
+        "entity_types": ["company", "trust_discretionary", "trust_unit", "trust_hybrid",
+                         "sole_trader", "partnership"],
+        "severity_default": "ADVISORY",
+    },
+    {
+        "id": "going_concern",
+        "name": "Going Concern Assessment",
+        "description": "Assess whether there are indicators the entity may not continue as a going concern within 12 months",
+        "entity_types": ["company", "trust_discretionary", "trust_unit", "trust_hybrid",
+                         "partnership", "smsf"],
+        "severity_default": "CRITICAL",
+    },
+    {
+        "id": "tpar",
+        "name": "Taxable Payments Annual Report (TPAR)",
+        "description": "Check if entity is required to lodge TPAR and whether contractor payments are properly recorded",
+        "entity_types": ["company", "trust_discretionary", "trust_unit", "trust_hybrid",
+                         "sole_trader", "partnership"],
+        "severity_default": "ADVISORY",
+    },
+    {
+        "id": "thin_capitalisation",
+        "name": "Thin Capitalisation",
+        "description": "Assess thin capitalisation rules for entities with foreign-controlled debt or international dealings",
+        "entity_types": ["company", "trust_discretionary", "trust_unit", "trust_hybrid",
+                         "partnership"],
+        "severity_default": "ADVISORY",
+    },
 ]
 
 
@@ -377,6 +417,137 @@ def _build_check_context(financial_year, check_id, risk_flags=None):
                     f"{a.asset_name}: Opening ${a.opening_wdv}, "
                     f"Dep ${a.depreciation_amount}, Closing ${a.closing_wdv}"
                 )
+
+    elif check_id == "super_guarantee":
+        # Check for superannuation-related accounts
+        extra.append("=== SUPERANNUATION ACCOUNTS (EFFECTIVE BALANCES) ===")
+        super_kw = ["super", "superannuation", "sgc", "super guarantee", "super payable"]
+        found_any = False
+        for line in tb_data["lines"]:
+            name_lower = (line.account_name or "").lower()
+            if any(kw in name_lower for kw in super_kw):
+                net = line.effective_dr - line.effective_cr
+                extra.append(
+                    f"  {line.account_code} {line.account_name}: "
+                    f"Effective DR ${line.effective_dr:,.2f} / CR ${line.effective_cr:,.2f} "
+                    f"\u2192 Net ${net:,.2f}"
+                )
+                found_any = True
+        if not found_any:
+            extra.append("  No superannuation accounts found in TB.")
+        # Check for wages/salary accounts to estimate SG obligation
+        wage_kw = ["wage", "salary", "salaries", "payroll", "director fee"]
+        extra.append("\n=== WAGES & SALARY ACCOUNTS ===")
+        for line in tb_data["lines"]:
+            name_lower = (line.account_name or "").lower()
+            if any(kw in name_lower for kw in wage_kw):
+                net = line.effective_dr - line.effective_cr
+                extra.append(f"  {line.account_code} {line.account_name}: Net ${net:,.2f}")
+
+    elif check_id == "ato_benchmarks":
+        # Provide key financial ratios for benchmark comparison
+        extra.append("=== KEY FINANCIAL RATIOS FOR ATO BENCHMARK COMPARISON ===")
+        total_revenue = ZERO
+        total_expenses = ZERO
+        total_cogs = ZERO
+        for line in tb_data["lines"]:
+            section = (getattr(line, 'statement_section', '') or '').lower()
+            name_lower = (line.account_name or "").lower()
+            net = line.effective_dr - line.effective_cr
+            if 'revenue' in section or 'income' in section:
+                total_revenue += abs(net)
+            elif 'cost of' in name_lower or 'cogs' in name_lower:
+                total_cogs += abs(net)
+            elif 'expense' in section:
+                total_expenses += abs(net)
+        gross_profit = total_revenue - total_cogs
+        net_profit = total_revenue - total_cogs - total_expenses
+        extra.append(f"  Total Revenue: ${total_revenue:,.2f}")
+        extra.append(f"  Cost of Goods Sold: ${total_cogs:,.2f}")
+        extra.append(f"  Gross Profit: ${gross_profit:,.2f}")
+        extra.append(f"  Total Expenses: ${total_expenses:,.2f}")
+        extra.append(f"  Net Profit: ${net_profit:,.2f}")
+        if total_revenue > ZERO:
+            extra.append(f"  Gross Profit Margin: {(gross_profit / total_revenue * 100):.1f}%")
+            extra.append(f"  Net Profit Margin: {(net_profit / total_revenue * 100):.1f}%")
+            extra.append(f"  Expense Ratio: {(total_expenses / total_revenue * 100):.1f}%")
+        extra.append(f"  Industry: {entity.industry or 'Not specified'}")
+
+    elif check_id == "going_concern":
+        # Provide indicators for going concern assessment
+        extra.append("=== GOING CONCERN INDICATORS ===")
+        # Cash position
+        cash_kw = ["cash", "bank", "petty cash", "term deposit"]
+        total_cash = ZERO
+        for line in tb_data["lines"]:
+            name_lower = (line.account_name or "").lower()
+            if any(kw in name_lower for kw in cash_kw):
+                net = line.effective_dr - line.effective_cr
+                total_cash += net
+                extra.append(f"  {line.account_code} {line.account_name}: Net ${net:,.2f}")
+        extra.append(f"  Total Cash/Bank: ${total_cash:,.2f}")
+        # Liabilities vs assets
+        total_current_liab = ZERO
+        total_current_asset = ZERO
+        for line in tb_data["lines"]:
+            section = (getattr(line, 'statement_section', '') or '').lower()
+            net = line.effective_dr - line.effective_cr
+            if 'current liabilit' in section:
+                total_current_liab += abs(net)
+            elif 'current asset' in section:
+                total_current_asset += net
+        extra.append(f"  Current Assets: ${total_current_asset:,.2f}")
+        extra.append(f"  Current Liabilities: ${total_current_liab:,.2f}")
+        if total_current_liab > ZERO:
+            extra.append(f"  Current Ratio: {(total_current_asset / total_current_liab):.2f}")
+        # Net profit/loss
+        total_revenue = ZERO
+        total_expenses = ZERO
+        for line in tb_data["lines"]:
+            section = (getattr(line, 'statement_section', '') or '').lower()
+            net = line.effective_dr - line.effective_cr
+            if 'revenue' in section or 'income' in section:
+                total_revenue += abs(net)
+            elif 'expense' in section:
+                total_expenses += abs(net)
+        extra.append(f"  Revenue: ${total_revenue:,.2f}, Expenses: ${total_expenses:,.2f}")
+        extra.append(f"  Net Result: ${(total_revenue - total_expenses):,.2f}")
+
+    elif check_id == "tpar":
+        # Check for contractor/subcontractor payment accounts
+        extra.append("=== CONTRACTOR & SUBCONTRACTOR ACCOUNTS ===")
+        tpar_kw = ["contractor", "subcontractor", "sub-contractor", "labour hire",
+                   "building", "cleaning", "courier", "road freight", "it services"]
+        found_any = False
+        for line in tb_data["lines"]:
+            name_lower = (line.account_name or "").lower()
+            if any(kw in name_lower for kw in tpar_kw):
+                net = line.effective_dr - line.effective_cr
+                extra.append(f"  {line.account_code} {line.account_name}: Net ${net:,.2f}")
+                found_any = True
+        if not found_any:
+            extra.append("  No contractor/subcontractor accounts found.")
+        extra.append(f"  Industry: {entity.industry or 'Not specified'}")
+
+    elif check_id == "thin_capitalisation":
+        # Check for international-related accounts and debt levels
+        extra.append("=== THIN CAPITALISATION INDICATORS ===")
+        debt_kw = ["loan", "borrowing", "debt", "mortgage", "finance", "intercompany"]
+        equity_kw = ["equity", "capital", "retained", "reserve", "share"]
+        total_debt = ZERO
+        total_equity = ZERO
+        for line in tb_data["lines"]:
+            name_lower = (line.account_name or "").lower()
+            net = line.effective_dr - line.effective_cr
+            if any(kw in name_lower for kw in debt_kw):
+                extra.append(f"  DEBT: {line.account_code} {line.account_name}: Net ${net:,.2f}")
+                total_debt += abs(net)
+            elif any(kw in name_lower for kw in equity_kw):
+                total_equity += abs(net)
+        extra.append(f"  Total Debt: ${total_debt:,.2f}")
+        extra.append(f"  Total Equity: ${total_equity:,.2f}")
+        if total_equity > ZERO:
+            extra.append(f"  Debt-to-Equity Ratio: {(total_debt / total_equity):.2f}")
 
     elif check_id == "comparative_consistency":
         # Add summary of significant variances using effective balances
@@ -1162,4 +1333,85 @@ def knowledge_documents(request):
             for d in docs
         ],
         "total": qs.count(),
+    })
+
+
+@login_required
+@require_GET
+def knowledge_search(request):
+    """
+    Semantic search across Knowledge Brain chunks.
+
+    GET /api/knowledge/search/?q=division+7a&category=ato_rulings&limit=8
+    """
+    from core.eva_service import search_knowledge_brain
+
+    query = request.GET.get("q", "").strip()
+    if not query:
+        return JsonResponse({"error": "Query parameter 'q' is required."}, status=400)
+
+    category = request.GET.get("category", None)
+    limit = min(int(request.GET.get("limit", 8)), 20)
+
+    try:
+        results = search_knowledge_brain(query, category_filter=category, top_k=limit)
+        return JsonResponse({
+            "query": query,
+            "results": results,
+            "count": len(results),
+        })
+    except Exception as e:
+        logger.error(f"Knowledge search error: {e}")
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+@login_required
+@require_GET
+def knowledge_status(request):
+    """
+    Return Knowledge Brain sync status and statistics.
+
+    GET /api/knowledge/status/
+    """
+    from core.models import KnowledgeDocument, KnowledgeChunk
+
+    total_docs = KnowledgeDocument.objects.filter(is_archived=False).count()
+    synced_docs = KnowledgeDocument.objects.filter(
+        is_archived=False,
+        sync_status=KnowledgeDocument.SyncStatus.SYNCED,
+    ).count()
+    error_docs = KnowledgeDocument.objects.filter(
+        is_archived=False,
+        sync_status=KnowledgeDocument.SyncStatus.ERROR,
+    ).count()
+    total_chunks = KnowledgeChunk.objects.count()
+
+    # Category breakdown
+    from django.db.models import Count
+    categories = (
+        KnowledgeDocument.objects
+        .filter(is_archived=False)
+        .values("category")
+        .annotate(count=Count("id"))
+        .order_by("category")
+    )
+
+    last_sync = (
+        KnowledgeDocument.objects
+        .filter(synced_at__isnull=False)
+        .order_by("-synced_at")
+        .values_list("synced_at", flat=True)
+        .first()
+    )
+
+    return JsonResponse({
+        "total_documents": total_docs,
+        "synced_documents": synced_docs,
+        "error_documents": error_docs,
+        "total_chunks": total_chunks,
+        "categories": [
+            {"category": c["category"], "count": c["count"]}
+            for c in categories
+        ],
+        "last_sync": last_sync.isoformat() if last_sync else None,
     })

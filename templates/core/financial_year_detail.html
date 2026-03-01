@@ -197,6 +197,19 @@
                         <i class="bi bi-arrow-right-circle"></i> Roll Forward
                     </button>
                     {% endif %}
+
+                    <div class="vr d-none d-md-block"></div>
+
+                    <!-- Package Assembly -->
+                    {% if fy.status == 'finalised' or fy.status == 'FINISHED' or fy.status == 'EVA_CLEARED' or fy.status == 'LOCKED' %}
+                    <a href="{% url 'core:package_assembly' pk=fy.pk %}" class="btn btn-sm btn-outline-success">
+                        <i class="bi bi-box-seam"></i> Assemble Client Package
+                    </a>
+                    {% else %}
+                    <button type="button" class="btn btn-sm btn-outline-success" disabled title="Financial year must be finished before assembling package">
+                        <i class="bi bi-box-seam"></i> Assemble Client Package
+                    </button>
+                    {% endif %}
                 </div>
             </div>
         </div>
@@ -357,7 +370,12 @@
             <i class="bi bi-diagram-3"></i> Chart of Accounts ({{ entity_accounts_count }})
         </button>
     </li>
-    {% if entity.entity_type == 'trust' %}
+    {% if entity.entity_type == 'trust' or entity.entity_type == 'trust_discretionary' or entity.entity_type == 'trust_unit' or entity.entity_type == 'trust_hybrid' %}
+    <li class="nav-item">
+        <button class="nav-link{% if active_tab == 'trust' %} active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-trust" type="button">
+            <i class="bi bi-diagram-2"></i> Trust Distribution
+        </button>
+    </li>
     <li class="nav-item">
         <a class="nav-link" href="{% url 'core:tax_planning_tab' pk=fy.pk %}">
             <i class="bi bi-calculator"></i> Tax Planning
@@ -400,8 +418,14 @@
                 </div>
             </div>
         </div>
+        <div class="d-flex align-items-center gap-2 mb-2">
+            <button type="button" class="btn btn-sm btn-outline-warning" id="btn-amber-filter" onclick="toggleAmberFilter()" title="Show only accounts with amber indicators">
+                <span>&#9888;</span> Show Amber Only
+            </button>
+            <small class="text-muted" id="amber-count-label"></small>
+        </div>
         <div class="table-responsive">
-            <table class="table table-sm mb-0" style="font-size: 0.88rem;">
+            <table class="table table-sm mb-0" id="tb-table" style="font-size: 0.88rem;">
                 <thead>
                     <tr class="border-bottom border-2 border-dark">
                         <th style="width: 80px;"></th>
@@ -423,7 +447,7 @@
                         </td>
                     </tr>
                     {% for line in lines %}
-                    <tr class="{% if not line.mapped_line_item %}table-warning{% endif %}{% if line.is_adjustment %} fst-italic{% endif %}" style="border-color: #e9ecef;">
+                    <tr class="{% if not line.mapped_line_item %}table-warning{% endif %}{% if line.is_adjustment %} fst-italic{% endif %}" style="border-color: #e9ecef;" {% if line.amber_indicators %}data-amber="true"{% endif %}>
                         <td><code class="text-muted">{{ line.account_code }}</code></td>
                         <td>
                             {{ line.account_name }}
@@ -1017,6 +1041,13 @@
     <!-- Add Account: now uses full-page form at {% url 'core:entity_coa_add' pk=fy.pk %} -->
 
     <!-- Edit Account: now uses full-page form at entity_coa_edit URL -->
+
+    <!-- ===== TRUST DISTRIBUTION TAB ===== -->
+    {% if entity.entity_type == 'trust' or entity.entity_type == 'trust_discretionary' or entity.entity_type == 'trust_unit' or entity.entity_type == 'trust_hybrid' %}
+    <div class="tab-pane fade{% if active_tab == 'trust' %} show active{% endif %} p-0" id="tab-trust">
+        {% include 'core/includes/trust_tab.html' %}
+    </div>
+    {% endif %}
 
     <!-- ===== ACTIVITY TAB ===== -->
     <div class="tab-pane fade p-3" id="tab-activity">
@@ -2467,6 +2498,72 @@ document.addEventListener('DOMContentLoaded', function() {
     tooltipTriggerList.forEach(function(el) {
         new bootstrap.Tooltip(el);
     });
+});
+</script>
+
+<script>
+// ===== Amber Indicator Filter =====
+let amberFilterActive = false;
+function toggleAmberFilter() {
+    amberFilterActive = !amberFilterActive;
+    const btn = document.getElementById('btn-amber-filter');
+    const table = document.getElementById('tb-table');
+    if (!table) return;
+    const rows = table.querySelectorAll('tbody tr');
+    let amberCount = 0;
+    let visibleCount = 0;
+    rows.forEach(row => {
+        const isSection = row.querySelector('td[colspan]');
+        const isAmber = row.hasAttribute('data-amber');
+        if (isAmber) amberCount++;
+        if (amberFilterActive) {
+            if (isSection) {
+                row.style.display = 'none';
+            } else if (!isAmber) {
+                row.style.display = 'none';
+            } else {
+                row.style.display = '';
+                visibleCount++;
+            }
+        } else {
+            row.style.display = '';
+        }
+    });
+    // Show section headers that have visible amber rows after them
+    if (amberFilterActive) {
+        const allRows = Array.from(rows);
+        for (let i = 0; i < allRows.length; i++) {
+            if (allRows[i].querySelector('td[colspan]')) {
+                for (let j = i + 1; j < allRows.length; j++) {
+                    if (allRows[j].querySelector('td[colspan]')) break;
+                    if (allRows[j].hasAttribute('data-amber') && allRows[j].style.display !== 'none') {
+                        allRows[i].style.display = '';
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    if (amberFilterActive) {
+        btn.classList.remove('btn-outline-warning');
+        btn.classList.add('btn-warning', 'text-white');
+        btn.innerHTML = '<span>&#9888;</span> Show All';
+    } else {
+        btn.classList.remove('btn-warning', 'text-white');
+        btn.classList.add('btn-outline-warning');
+        btn.innerHTML = '<span>&#9888;</span> Show Amber Only';
+    }
+    document.getElementById('amber-count-label').textContent = amberFilterActive ? visibleCount + ' amber accounts shown' : '';
+}
+// Set amber count on load
+document.addEventListener('DOMContentLoaded', function() {
+    const table = document.getElementById('tb-table');
+    if (table) {
+        const count = table.querySelectorAll('tr[data-amber]').length;
+        if (count > 0) {
+            document.getElementById('amber-count-label').textContent = count + ' accounts with amber indicators';
+        }
+    }
 });
 </script>
 

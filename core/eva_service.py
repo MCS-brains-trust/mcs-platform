@@ -473,7 +473,7 @@ Rules:
 Return ONLY the JSON array, no other text."""
 
 
-def process_eva_chat(financial_year, user, message_text, opus_override=False):
+def process_eva_chat(financial_year, user, message_text, opus_override=False, interaction_type="general"):
     """
     Process a chat message from the accountant and generate Eva's response.
 
@@ -501,9 +501,27 @@ def process_eva_chat(financial_year, user, message_text, opus_override=False):
         conversation=conversation,
         role=EvaMessage.Role.USER,
         content=message_text,
+        interaction_type=interaction_type,
     )
     conversation.message_count = conversation.messages.count()
     conversation.save(update_fields=["message_count", "last_active_at"])
+
+    # Check if this is a trust planning query
+    from core.eva_trust_planning import (
+        is_trust_planning_query, get_trust_planning_prompt,
+        get_or_create_planning_session,
+    )
+    is_trust_planning = is_trust_planning_query(
+        message_text, financial_year.entity.entity_type
+    )
+    if is_trust_planning:
+        interaction_type = "trust_planning"
+        user_msg.interaction_type = "trust_planning"
+        user_msg.save(update_fields=["interaction_type"])
+        # Get or create planning session
+        planning_session = get_or_create_planning_session(
+            financial_year, conversation, user
+        )
 
     # Build context
     fy_context = build_financial_year_context(financial_year)
@@ -517,12 +535,20 @@ def process_eva_chat(financial_year, user, message_text, opus_override=False):
 
     # Build the system prompt
     entity = financial_year.entity
-    system_prompt = EVA_CHAT_SYSTEM_PROMPT.format(
-        accountant_name=user.get_full_name() or user.email,
-        entity_name=entity.entity_name,
-        entity_type=entity.get_entity_type_display(),
-        year_end_date=financial_year.end_date.strftime("%d %B %Y"),
-    )
+    if is_trust_planning:
+        from core.eva_trust_planning import TRUST_PLANNING_SYSTEM_PROMPT
+        system_prompt = TRUST_PLANNING_SYSTEM_PROMPT.format(
+            entity_name=entity.entity_name,
+            entity_type=entity.get_entity_type_display(),
+            year_end_date=financial_year.end_date.strftime("%d %B %Y"),
+        )
+    else:
+        system_prompt = EVA_CHAT_SYSTEM_PROMPT.format(
+            accountant_name=user.get_full_name() or user.email,
+            entity_name=entity.entity_name,
+            entity_type=entity.get_entity_type_display(),
+            year_end_date=financial_year.end_date.strftime("%d %B %Y"),
+        )
 
     # Build the user prompt with context
     kb_context = ""
@@ -562,6 +588,24 @@ def process_eva_chat(financial_year, user, message_text, opus_override=False):
 --- ACCOUNTANT'S QUESTION ---
 {message_text}"""
 
+    # Inject trust planning context if applicable
+    if is_trust_planning:
+        from core.eva_trust_planning import build_trust_planning_context
+        trust_ctx = build_trust_planning_context(financial_year)
+        trust_section = f"""\n\n--- TRUST DISTRIBUTION PLANNING CONTEXT ---
+=== INCOME STREAMS ===
+{json.dumps(trust_ctx['income_summary'], indent=2)}
+
+=== BENEFICIARY PROFILES ===
+{json.dumps(trust_ctx['beneficiaries'], indent=2)}
+
+=== COMPLIANCE FLAGS ===
+{json.dumps(trust_ctx['compliance_flags'], indent=2)}
+
+=== EXISTING SCENARIOS ===
+{json.dumps(trust_ctx.get('existing_scenarios', []), indent=2)}"""
+        user_prompt += trust_section
+
     # Select model tier
     tier = "opus" if opus_override else "sonnet"
 
@@ -583,13 +627,25 @@ def process_eva_chat(financial_year, user, message_text, opus_override=False):
     # Save assistant message
     chunk_ids = [c["chunk_id"] for c in retrieved_chunks]
     model_label = "opus" if opus_override else "sonnet"
+    # Estimate token counts (rough: 1 token ≈ 4 chars)
+    prompt_tokens = len(user_prompt) // 4 + len(system_prompt) // 4
+    response_tokens = len(response_text) // 4
     assistant_msg = EvaMessage.objects.create(
         conversation=conversation,
         role=EvaMessage.Role.ASSISTANT,
         content=response_text,
         model_used=model_label,
         retrieved_chunk_ids=chunk_ids,
+        tokens_used=prompt_tokens + response_tokens,
+        token_count_prompt=prompt_tokens,
+        token_count_response=response_tokens,
+        interaction_type=interaction_type,
     )
+    # Link M2M knowledge chunks cited
+    if chunk_ids:
+        from core.models import KnowledgeChunk
+        cited_chunks = KnowledgeChunk.objects.filter(id__in=chunk_ids)
+        assistant_msg.knowledge_chunks_cited.set(cited_chunks)
     conversation.message_count = conversation.messages.count()
     conversation.save(update_fields=["message_count", "last_active_at"])
 

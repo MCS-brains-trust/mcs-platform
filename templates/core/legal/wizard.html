@@ -1,0 +1,361 @@
+{% extends "core/base.html" %}
+{% load humanize %}
+
+{% block title %}Generate {{ template.get_document_type_display }} — {{ entity.name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.name }}</a></li>
+            {% if fy %}
+            <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy }}</a></li>
+            {% endif %}
+            <li class="breadcrumb-item active">Generate Document</li>
+        </ol>
+    </nav>
+
+    {% if error %}
+    <div class="alert alert-danger">
+        <i class="bi bi-exclamation-triangle"></i> {{ error }}
+    </div>
+    {% else %}
+
+    <div class="row">
+        {# Left: Wizard Form #}
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-file-earmark-text"></i>
+                        Generate: {{ template.get_document_type_display }}
+                    </h5>
+                </div>
+                <div class="card-body">
+                    {# Step indicator #}
+                    <div class="d-flex justify-content-between mb-4">
+                        <div class="text-center flex-fill" id="step-1-indicator">
+                            <span class="badge bg-primary rounded-pill">1</span>
+                            <small class="d-block mt-1">Review Data</small>
+                        </div>
+                        <div class="text-center flex-fill" id="step-2-indicator">
+                            <span class="badge bg-secondary rounded-pill">2</span>
+                            <small class="d-block mt-1">Custom Fields</small>
+                        </div>
+                        <div class="text-center flex-fill" id="step-3-indicator">
+                            <span class="badge bg-secondary rounded-pill">3</span>
+                            <small class="d-block mt-1">Disclaimer</small>
+                        </div>
+                        <div class="text-center flex-fill" id="step-4-indicator">
+                            <span class="badge bg-secondary rounded-pill">4</span>
+                            <small class="d-block mt-1">Generate</small>
+                        </div>
+                    </div>
+
+                    {# Step 1: Pre-populated entity data review #}
+                    <div id="step-1">
+                        <h6 class="border-bottom pb-2 mb-3">Review Pre-Populated Data</h6>
+                        <p class="text-muted small">The following data has been auto-populated from the entity record. Review and correct any values before proceeding.</p>
+
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label small fw-bold">Entity Name</label>
+                                <input type="text" class="form-control form-control-sm" name="entity_name"
+                                       value="{{ pre_populated.entity_name }}">
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label small fw-bold">ABN</label>
+                                <input type="text" class="form-control form-control-sm" name="abn"
+                                       value="{{ pre_populated.abn }}">
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label small fw-bold">ACN</label>
+                                <input type="text" class="form-control form-control-sm" name="acn"
+                                       value="{{ pre_populated.acn }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label small fw-bold">Registered Address</label>
+                                <input type="text" class="form-control form-control-sm" name="registered_address"
+                                       value="{{ pre_populated.registered_address }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label small fw-bold">Principal Place of Business</label>
+                                <input type="text" class="form-control form-control-sm" name="principal_place_of_business"
+                                       value="{{ pre_populated.principal_place_of_business }}">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label small fw-bold">Financial Year</label>
+                                <input type="text" class="form-control form-control-sm bg-light" name="fy_label"
+                                       value="{{ pre_populated.fy_label }}" readonly>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label small fw-bold">Date of Incorporation</label>
+                                <input type="text" class="form-control form-control-sm" name="date_of_incorporation"
+                                       value="{{ pre_populated.date_of_incorporation }}">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label small fw-bold">State of Registration</label>
+                                <input type="text" class="form-control form-control-sm" name="state_of_registration"
+                                       value="{{ pre_populated.state_of_registration }}">
+                            </div>
+                        </div>
+
+                        {# Officers table #}
+                        {% if pre_populated.all_officers %}
+                        <h6 class="border-bottom pb-2 mb-3 mt-4">Officers</h6>
+                        <table class="table table-sm">
+                            <thead class="table-light">
+                                <tr><th>Name</th><th>Role</th></tr>
+                            </thead>
+                            <tbody>
+                                {% for officer in pre_populated.all_officers %}
+                                <tr><td>{{ officer.name }}</td><td>{{ officer.role }}</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                        {% endif %}
+
+                        <div class="d-flex justify-content-end mt-3">
+                            <button class="btn btn-primary" onclick="goToStep(2)">
+                                Next <i class="bi bi-arrow-right"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    {# Step 2: Custom template variables #}
+                    <div id="step-2" class="d-none">
+                        <h6 class="border-bottom pb-2 mb-3">Document-Specific Fields</h6>
+                        <p class="text-muted small">Fill in any additional fields required for this document.</p>
+
+                        <div id="custom-fields-container" class="row g-3">
+                            {# Dynamically populated from variable_schema #}
+                        </div>
+
+                        <div class="d-flex justify-content-between mt-3">
+                            <button class="btn btn-outline-secondary" onclick="goToStep(1)">
+                                <i class="bi bi-arrow-left"></i> Back
+                            </button>
+                            <button class="btn btn-primary" onclick="goToStep(3)">
+                                Next <i class="bi bi-arrow-right"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    {# Step 3: Disclaimer #}
+                    <div id="step-3" class="d-none">
+                        <h6 class="border-bottom pb-2 mb-3">Disclaimer</h6>
+                        <div class="alert alert-warning">
+                            <i class="bi bi-exclamation-triangle"></i>
+                            <strong>Important Notice</strong>
+                            <p class="mt-2 mb-0">{{ disclaimer }}</p>
+                        </div>
+                        <div class="form-check mt-3">
+                            <input class="form-check-input" type="checkbox" id="disclaimer-check"
+                                   onchange="document.getElementById('generate-btn').disabled = !this.checked">
+                            <label class="form-check-label" for="disclaimer-check">
+                                I acknowledge and accept the above disclaimer.
+                            </label>
+                        </div>
+
+                        <div class="d-flex justify-content-between mt-3">
+                            <button class="btn btn-outline-secondary" onclick="goToStep(2)">
+                                <i class="bi bi-arrow-left"></i> Back
+                            </button>
+                            <button class="btn btn-success" id="generate-btn" disabled onclick="generateDocument()">
+                                <i class="bi bi-file-earmark-check"></i> Generate Document
+                            </button>
+                        </div>
+                    </div>
+
+                    {# Step 4: Result #}
+                    <div id="step-4" class="d-none">
+                        <div class="text-center py-4" id="generating-spinner">
+                            <div class="spinner-border text-primary" role="status"></div>
+                            <p class="mt-2 text-muted">Generating document...</p>
+                        </div>
+                        <div class="d-none" id="generation-result">
+                            <div class="text-center py-4">
+                                <i class="bi bi-check-circle-fill text-success" style="font-size: 3rem;"></i>
+                                <h5 class="mt-2">Document Generated Successfully</h5>
+                            </div>
+                            <div class="d-flex justify-content-center gap-3">
+                                <a id="download-docx-btn" href="#" class="btn btn-outline-primary">
+                                    <i class="bi bi-file-earmark-word"></i> Download Word
+                                </a>
+                                <a id="download-pdf-btn" href="#" class="btn btn-outline-danger">
+                                    <i class="bi bi-file-earmark-pdf"></i> Download PDF
+                                </a>
+                                <button id="fusesign-btn" class="btn btn-outline-success" onclick="sendToFuseSign()">
+                                    <i class="bi bi-pen"></i> Send to FuseSign
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {# Right: Governing Document Context #}
+        <div class="col-lg-4">
+            {% if governing_doc %}
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-file-earmark-lock text-info"></i> Governing Document Context</h6>
+                </div>
+                <div class="card-body">
+                    <p class="small text-muted">Eva has read the following document and will use it to validate the generated output:</p>
+                    <p class="small"><strong>{{ governing_doc.original_filename }}</strong></p>
+                    {% if governing_doc.extracted_text %}
+                    <div class="bg-light p-2 rounded" style="max-height: 400px; overflow-y: auto; font-size: 0.75rem;">
+                        <pre class="mb-0" style="white-space: pre-wrap;">{{ governing_doc.extracted_text|truncatechars:3000 }}</pre>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% else %}
+            <div class="card border-warning">
+                <div class="card-body text-center py-4">
+                    <i class="bi bi-exclamation-triangle text-warning" style="font-size: 2rem;"></i>
+                    <p class="mt-2 mb-0 small">No governing document uploaded. Upload one on the entity's <strong>Governing Documents</strong> tab for Eva to validate against.</p>
+                </div>
+            </div>
+            {% endif %}
+
+            {# Template info #}
+            <div class="card mt-3">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-file-earmark-code"></i> Template Info</h6>
+                </div>
+                <div class="card-body small">
+                    <p><strong>Template:</strong> {{ template.name }}</p>
+                    <p><strong>Version:</strong> {{ template.version }}</p>
+                    {% if template.solicitor_approved %}
+                    <p><span class="badge bg-success">Solicitor Approved</span> by {{ template.solicitor_name }} on {{ template.approval_date|date:"d M Y" }}</p>
+                    {% else %}
+                    <p><span class="badge bg-warning text-dark">Not Yet Solicitor Approved</span></p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% endif %}
+</div>
+
+<script>
+const CSRF_TOKEN = '{{ csrf_token }}';
+const GENERATE_URL = '{% url "core:legal_doc_generate" pk=fy.pk doc_type=doc_type %}';
+const VARIABLE_SCHEMA = {{ variable_schema|safe }};
+let generatedDocId = null;
+
+function goToStep(step) {
+    for (let i = 1; i <= 4; i++) {
+        document.getElementById(`step-${i}`).classList.toggle('d-none', i !== step);
+        const indicator = document.getElementById(`step-${i}-indicator`);
+        const badge = indicator.querySelector('.badge');
+        badge.classList.remove('bg-primary', 'bg-secondary', 'bg-success');
+        badge.classList.add(i < step ? 'bg-success' : (i === step ? 'bg-primary' : 'bg-secondary'));
+    }
+}
+
+// Populate custom fields from schema
+document.addEventListener('DOMContentLoaded', function() {
+    const container = document.getElementById('custom-fields-container');
+    const vars = VARIABLE_SCHEMA.variables || [];
+    const prePopulated = {{ pre_populated|safe }};
+
+    vars.forEach(v => {
+        if (prePopulated[v]) return; // Skip pre-populated fields
+        const col = document.createElement('div');
+        col.className = 'col-md-6';
+        const label = v.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        col.innerHTML = `
+            <label class="form-label small fw-bold">${label}</label>
+            <input type="text" class="form-control form-control-sm" name="${v}" data-custom="true">
+        `;
+        container.appendChild(col);
+    });
+
+    if (container.children.length === 0) {
+        container.innerHTML = '<p class="text-muted">No additional fields required for this template.</p>';
+    }
+});
+
+function generateDocument() {
+    goToStep(4);
+    // Collect all form values
+    const params = {};
+    document.querySelectorAll('input[name], select[name], textarea[name]').forEach(el => {
+        if (el.value) params[el.name] = el.value;
+    });
+    params.disclaimer_acknowledged = true;
+
+    fetch(GENERATE_URL, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': CSRF_TOKEN,
+        },
+        body: JSON.stringify(params),
+    })
+    .then(r => r.json())
+    .then(data => {
+        document.getElementById('generating-spinner').classList.add('d-none');
+        document.getElementById('generation-result').classList.remove('d-none');
+        if (data.status === 'ok') {
+            generatedDocId = data.document_id;
+            if (data.docx_url) document.getElementById('download-docx-btn').href = data.docx_url;
+            if (data.pdf_url) {
+                document.getElementById('download-pdf-btn').href = data.pdf_url;
+            } else {
+                document.getElementById('download-pdf-btn').classList.add('d-none');
+            }
+        } else {
+            document.getElementById('generation-result').innerHTML = `
+                <div class="alert alert-danger"><i class="bi bi-x-circle"></i> ${data.error || 'Generation failed.'}</div>
+            `;
+        }
+    })
+    .catch(err => {
+        document.getElementById('generating-spinner').classList.add('d-none');
+        document.getElementById('generation-result').classList.remove('d-none');
+        document.getElementById('generation-result').innerHTML = `
+            <div class="alert alert-danger"><i class="bi bi-x-circle"></i> Error: ${err.message}</div>
+        `;
+    });
+}
+
+function sendToFuseSign() {
+    if (!generatedDocId) return;
+    if (!confirm('Send this document to FuseSign for electronic signing?')) return;
+
+    const btn = document.getElementById('fusesign-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Sending...';
+
+    fetch(`/years/${generatedDocId}/legal-docs/${generatedDocId}/fusesign/`, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': CSRF_TOKEN },
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            btn.innerHTML = '<i class="bi bi-check-circle"></i> Sent!';
+            btn.classList.remove('btn-outline-success');
+            btn.classList.add('btn-success');
+            alert(data.message);
+        } else {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-pen"></i> Send to FuseSign';
+            alert('Error: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(err => {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-pen"></i> Send to FuseSign';
+        alert('Error: ' + err.message);
+    });
+}
+</script>
+{% endblock %}

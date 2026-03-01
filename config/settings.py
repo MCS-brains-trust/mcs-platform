@@ -31,6 +31,7 @@ INSTALLED_APPS = [
     "crispy_forms",
     "crispy_bootstrap5",
     "csp",
+    "django_celery_beat",
     # Local apps
     "accounts.apps.AccountsConfig",
     "core.apps.CoreConfig",
@@ -298,3 +299,23 @@ SHAREPOINT_DRIVE_ID = os.environ.get("SHAREPOINT_DRIVE_ID", "")
 EVA_DEFAULT_MODEL = os.environ.get("EVA_DEFAULT_MODEL", "sonnet")
 # Enable/disable Eva features globally
 EVA_ENABLED = os.environ.get("EVA_ENABLED", "true").lower() == "true"
+
+# ── Celery Task Queue ────────────────────────────────────────────────────────
+CELERY_BROKER_URL = os.environ.get("CELERY_BROKER_URL", "redis://localhost:6379/0")
+CELERY_RESULT_BACKEND = os.environ.get("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_TIMEZONE = "Australia/Melbourne"
+CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
+
+# ── AWS (Textract OCR) ──────────────────────────────────────────────────────
+AWS_ACCESS_KEY_ID = os.environ.get("AWS_ACCESS_KEY_ID", "")
+AWS_SECRET_ACCESS_KEY = os.environ.get("AWS_SECRET_ACCESS_KEY", "")
+AWS_REGION = os.environ.get("AWS_REGION", "ap-southeast-2")
+AWS_TEXTRACT_SNS_TOPIC_ARN = os.environ.get("AWS_TEXTRACT_SNS_TOPIC_ARN", "")
+AWS_TEXTRACT_ROLE_ARN = os.environ.get("AWS_TEXTRACT_ROLE_ARN", "")
+
+# ── FuseSign Integration ────────────────────────────────────────────────────
+FUSESIGN_API_KEY = os.environ.get("FUSESIGN_API_KEY", "")
+FUSESIGN_API_URL = os.environ.get("FUSESIGN_API_URL", "https://api.fusesign.com")

@@ -1,0 +1,137 @@
+{% extends "core/base.html" %}
+
+{% block title %}Engagement Letter — {{ entity.name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.name }}</a></li>
+            <li class="breadcrumb-item active">Engagement Letter</li>
+        </ol>
+    </nav>
+
+    <div class="row">
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0"><i class="bi bi-envelope-paper"></i> Engagement Letter (APES 305)</h5>
+                </div>
+                <div class="card-body">
+                    <h6 class="border-bottom pb-2 mb-3">Services Engaged</h6>
+                    <div class="row g-2 mb-4">
+                        {% for svc_id, svc_label in service_options %}
+                        <div class="col-md-6">
+                            <div class="form-check">
+                                <input class="form-check-input svc-check" type="checkbox"
+                                       value="{{ svc_id }}" id="svc-{{ svc_id }}"
+                                       {% if svc_id in config.services_engaged %}checked{% endif %}>
+                                <label class="form-check-label" for="svc-{{ svc_id }}">{{ svc_label }}</label>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+
+                    <h6 class="border-bottom pb-2 mb-3">Fee Arrangement</h6>
+                    <div class="row g-3 mb-4">
+                        <div class="col-md-4">
+                            <label class="form-label small fw-bold">Fee Basis</label>
+                            <select id="fee_basis" class="form-select form-select-sm">
+                                <option value="fixed" {% if config.fee_basis == 'fixed' %}selected{% endif %}>Fixed Fee</option>
+                                <option value="hourly" {% if config.fee_basis == 'hourly' %}selected{% endif %}>Hourly Rate</option>
+                                <option value="value_based" {% if config.fee_basis == 'value_based' %}selected{% endif %}>Value-Based</option>
+                            </select>
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small fw-bold">Fee Amount ($)</label>
+                            <input type="number" id="fee_amount" class="form-control form-control-sm"
+                                   value="{{ config.fee_amount|default:'' }}" step="0.01" min="0">
+                        </div>
+                        <div class="col-md-4">
+                            <label class="form-label small fw-bold">Date</label>
+                            <input type="date" id="letter_date" class="form-control form-control-sm">
+                        </div>
+                    </div>
+
+                    <h6 class="border-bottom pb-2 mb-3">Additional Terms</h6>
+                    <textarea id="additional_terms" class="form-control mb-4" rows="4"
+                              placeholder="Any additional terms or conditions...">{{ config.additional_terms }}</textarea>
+
+                    <div class="d-flex justify-content-end gap-2">
+                        <a href="{% url 'core:entity_detail' pk=entity.pk %}" class="btn btn-outline-secondary">Cancel</a>
+                        <button class="btn btn-success" onclick="generateLetter()">
+                            <i class="bi bi-check-circle"></i> Generate Engagement Letter
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-4">
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-info-circle"></i> APES 305 Requirements</h6>
+                </div>
+                <div class="card-body small">
+                    <p>The engagement letter must include:</p>
+                    <ul>
+                        <li>Objective and scope of the engagement</li>
+                        <li>Responsibilities of the member and client</li>
+                        <li>Identification of applicable financial reporting framework</li>
+                        <li>Expected form and content of reports</li>
+                        <li>Basis of fees and billing arrangements</li>
+                        <li>Limitation of liability (if applicable)</li>
+                    </ul>
+                    <p class="text-muted mt-2">
+                        {% if config.last_generated_fy %}
+                        Last generated for: {{ config.last_generated_fy }}
+                        {% else %}
+                        No engagement letter generated yet.
+                        {% endif %}
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+const CSRF_TOKEN = '{{ csrf_token }}';
+const GENERATE_URL = '{% url "core:engagement_letter_generate" pk=entity.pk %}';
+
+function generateLetter() {
+    const services = [];
+    document.querySelectorAll('.svc-check:checked').forEach(cb => services.push(cb.value));
+
+    if (services.length === 0) {
+        alert('Please select at least one service.');
+        return;
+    }
+
+    const payload = {
+        services: services,
+        fee_amount: document.getElementById('fee_amount').value || null,
+        fee_basis: document.getElementById('fee_basis').value,
+        additional_terms: document.getElementById('additional_terms').value,
+        date: document.getElementById('letter_date').value,
+    };
+
+    fetch(GENERATE_URL, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN},
+        body: JSON.stringify(payload),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            alert(data.message);
+            location.href = '{% url "core:entity_detail" pk=entity.pk %}';
+        } else {
+            alert('Error: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(err => alert('Error: ' + err.message));
+}
+</script>
+{% endblock %}

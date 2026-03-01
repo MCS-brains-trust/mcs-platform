@@ -1,0 +1,176 @@
+{% extends "core/base.html" %}
+{% load humanize %}
+
+{% block title %}Partner Statements — {{ entity.name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.name }}</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy }}</a></li>
+            <li class="breadcrumb-item active">Partner Statements</li>
+        </ol>
+    </nav>
+
+    {% if error %}
+    <div class="alert alert-warning">{{ error }}</div>
+    {% else %}
+    <div class="row">
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-header bg-primary text-white d-flex justify-content-between">
+                    <h5 class="mb-0"><i class="bi bi-people"></i> Partner Profit Allocation</h5>
+                    <span class="badge bg-light text-dark">Net Profit: ${{ net_profit|floatformat:2 }}</span>
+                </div>
+                <div class="card-body">
+                    <div class="row g-3 mb-4">
+                        <div class="col-md-4">
+                            <small class="text-muted d-block">Total Revenue</small>
+                            <strong>${{ total_revenue|floatformat:2 }}</strong>
+                        </div>
+                        <div class="col-md-4">
+                            <small class="text-muted d-block">Total Expenses</small>
+                            <strong>${{ total_expenses|floatformat:2 }}</strong>
+                        </div>
+                        <div class="col-md-4">
+                            <small class="text-muted d-block">Net Profit</small>
+                            <strong class="{% if net_profit < 0 %}text-danger{% else %}text-success{% endif %}">
+                                ${{ net_profit|floatformat:2 }}
+                            </strong>
+                        </div>
+                    </div>
+
+                    <table class="table table-sm">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Partner</th>
+                                <th class="text-end">Share %</th>
+                                <th class="text-end">Profit Share $</th>
+                                <th class="text-end">Capital Opening $</th>
+                                <th class="text-end">Drawings $</th>
+                                <th class="text-end">Contributions $</th>
+                            </tr>
+                        </thead>
+                        <tbody id="partner-body">
+                            {% for p in partners %}
+                            <tr data-id="{{ p.pk }}">
+                                <td>{{ p.name }}</td>
+                                <td><input type="number" class="form-control form-control-sm text-end pct-input"
+                                           value="{% widthratio 1 partners|length 100 %}" min="0" max="100" step="0.01"
+                                           oninput="recalcPartners()"></td>
+                                <td class="text-end share-cell">$0.00</td>
+                                <td><input type="number" class="form-control form-control-sm text-end cap-input"
+                                           value="0" step="0.01"></td>
+                                <td><input type="number" class="form-control form-control-sm text-end draw-input"
+                                           value="0" step="0.01"></td>
+                                <td><input type="number" class="form-control form-control-sm text-end contrib-input"
+                                           value="0" step="0.01"></td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                        <tfoot class="fw-bold">
+                            <tr>
+                                <td>Total</td>
+                                <td class="text-end" id="total-pct">0%</td>
+                                <td class="text-end" id="total-share">$0.00</td>
+                                <td colspan="3"></td>
+                            </tr>
+                        </tfoot>
+                    </table>
+
+                    <div class="d-flex justify-content-end gap-2 mt-3">
+                        <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary">Cancel</a>
+                        <button class="btn btn-success" onclick="generateStatements()">
+                            <i class="bi bi-check-circle"></i> Generate Partner Statements
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-4">
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-file-earmark-text"></i> Existing Statements</h6>
+                </div>
+                <div class="list-group list-group-flush">
+                    {% for doc in existing_docs %}
+                    <div class="list-group-item">
+                        <div class="d-flex justify-content-between">
+                            <span>{{ doc.title }}</span>
+                            <span class="badge bg-{{ doc.status|default:'secondary' }}">{{ doc.get_status_display }}</span>
+                        </div>
+                    </div>
+                    {% empty %}
+                    <div class="list-group-item text-center text-muted py-3">No statements generated yet.</div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+const CSRF_TOKEN = '{{ csrf_token }}';
+const GENERATE_URL = '{% url "core:generate_partner_statements" pk=fy.pk %}';
+const NET_PROFIT = {{ net_profit|default:0 }};
+
+function recalcPartners() {
+    let totalPct = 0;
+    let totalShare = 0;
+    document.querySelectorAll('#partner-body tr').forEach(row => {
+        const pct = parseFloat(row.querySelector('.pct-input').value) || 0;
+        const share = NET_PROFIT * pct / 100;
+        row.querySelector('.share-cell').textContent = '$' + share.toFixed(2);
+        totalPct += pct;
+        totalShare += share;
+    });
+    document.getElementById('total-pct').textContent = totalPct.toFixed(1) + '%';
+    document.getElementById('total-pct').className = Math.abs(totalPct - 100) < 0.01 ? 'text-end text-success' : 'text-end text-danger';
+    document.getElementById('total-share').textContent = '$' + totalShare.toFixed(2);
+}
+
+function generateStatements() {
+    const allocations = [];
+    let totalPct = 0;
+    document.querySelectorAll('#partner-body tr').forEach(row => {
+        const pct = parseFloat(row.querySelector('.pct-input').value) || 0;
+        totalPct += pct;
+        allocations.push({
+            partner_id: row.dataset.id,
+            percentage: pct,
+            partner_share: NET_PROFIT * pct / 100,
+            capital_opening: parseFloat(row.querySelector('.cap-input').value) || 0,
+            drawings: parseFloat(row.querySelector('.draw-input').value) || 0,
+            contributions: parseFloat(row.querySelector('.contrib-input').value) || 0,
+        });
+    });
+
+    if (Math.abs(totalPct - 100) > 0.01) {
+        alert('Profit allocation must total 100%. Currently: ' + totalPct.toFixed(1) + '%');
+        return;
+    }
+
+    fetch(GENERATE_URL, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN},
+        body: JSON.stringify({allocations}),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            alert(data.message);
+            location.reload();
+        } else {
+            alert('Error: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(err => alert('Error: ' + err.message));
+}
+
+recalcPartners();
+</script>
+{% endblock %}

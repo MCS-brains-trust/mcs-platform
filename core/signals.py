@@ -260,3 +260,112 @@ def on_journal_deleted(sender, instance, **kwargs):
     fy = instance.financial_year
     if fy and fy.status != "finalised":
         trigger_risk_recalc(fy, "journal_deleted")
+
+
+# ============================================================================
+# FINANCIAL YEAR STATUS TRANSITION SIGNALS (Phase 14)
+# ============================================================================
+
+@receiver(post_save, sender="core.FinancialYear")
+def track_fy_status_change(sender, instance, created, **kwargs):
+    """
+    Handle FinancialYear status transitions:
+    - DRAFT → IN_REVIEW: Log activity
+    - IN_REVIEW → FINISHED: Trigger Eva Finalisation Review
+    - EVA_CLEARED → LOCKED: Trigger Eva Client Summary generation
+    """
+    if created:
+        return
+
+    # Detect status change by comparing with cached old value
+    old_status = getattr(instance, "_old_status", None)
+    new_status = instance.status
+
+    if old_status is None or old_status == new_status:
+        return
+
+    logger.info(
+        "FY %s status transition: %s → %s",
+        instance.pk, old_status, new_status,
+    )
+
+    # Log the status change as an activity
+    try:
+        from core.models import ActivityLog
+        ActivityLog.objects.create(
+            financial_year=instance,
+            action_type="status_change",
+            description=f"Status changed from {old_status} to {new_status}",
+        )
+    except Exception:
+        logger.exception("Failed to log status change activity")
+
+    # Trigger Eva Finalisation Review when moving to FINISHED
+    if new_status == "FINISHED" and old_status != "FINISHED":
+        try:
+            from core.tasks import eva_finalisation_review
+            eva_finalisation_review.delay(str(instance.pk))
+            logger.info("Queued Eva finalisation review for FY %s", instance.pk)
+        except Exception:
+            logger.warning(
+                "Could not queue Eva finalisation review (Celery may not be running)"
+            )
+
+    # Trigger Eva Client Summary when year is LOCKED
+    if new_status == "LOCKED" and old_status != "LOCKED":
+        try:
+            from core.tasks import eva_client_summary
+            eva_client_summary.delay(str(instance.pk))
+            logger.info("Queued Eva client summary for FY %s", instance.pk)
+        except Exception:
+            logger.warning(
+                "Could not queue Eva client summary (Celery may not be running)"
+            )
+
+
+@receiver(post_save, sender="core.EvaReview")
+def handle_eva_review_completion(sender, instance, **kwargs):
+    """
+    When an EvaReview is completed with all critical/high findings resolved,
+    auto-transition the FY to EVA_CLEARED.
+    """
+    if instance.status != "completed":
+        return
+
+    fy = instance.financial_year
+    if fy.status != "FINISHED":
+        return
+
+    # Check if all critical/high findings are resolved
+    from core.models import EvaFinding
+    unresolved = EvaFinding.objects.filter(
+        review=instance,
+        severity__in=["critical", "high"],
+    ).exclude(
+        status__in=["resolved", "not_applicable"],
+    ).count()
+
+    if unresolved == 0:
+        fy.status = "EVA_CLEARED"
+        fy.save(update_fields=["status"])
+        logger.info(
+            "FY %s auto-transitioned to EVA_CLEARED (all findings resolved)", fy.pk
+        )
+
+
+@receiver(post_save, sender="core.LegalDocument")
+def handle_legal_document_created(sender, instance, created, **kwargs):
+    """Log legal document creation as an activity."""
+    if not created:
+        return
+
+    try:
+        from core.models import ActivityLog
+        if instance.financial_year:
+            ActivityLog.objects.create(
+                financial_year=instance.financial_year,
+                action_type="document_generated",
+                description=f"Generated: {instance.title}",
+            )
+    except Exception:
+        logger.exception("Failed to log document creation activity")

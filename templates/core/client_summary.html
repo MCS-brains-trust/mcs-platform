@@ -1,0 +1,161 @@
+{% extends "core/base.html" %}
+{% load humanize %}
+
+{% block title %}Client Summary — {{ entity.name }} {{ fy }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.name }}</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy }}</a></li>
+            <li class="breadcrumb-item active">Client Summary</li>
+        </ol>
+    </nav>
+
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h4>
+            <i class="bi bi-file-earmark-richtext text-primary"></i>
+            Eva Client Summary — {{ entity.name }}
+        </h4>
+        <div class="d-flex gap-2">
+            <div class="btn-group">
+                <button class="btn btn-primary" onclick="generateSummary('bullet')">
+                    <i class="bi bi-list-ul"></i> Generate Bullet
+                </button>
+                <button class="btn btn-outline-primary" onclick="generateSummary('narrative')">
+                    <i class="bi bi-text-paragraph"></i> Generate Narrative
+                </button>
+            </div>
+            {% if summary %}
+            <button class="btn btn-outline-secondary" onclick="window.print()">
+                <i class="bi bi-printer"></i> Print
+            </button>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if summary %}
+    <div class="row">
+        <div class="col-lg-9">
+            {# Summary Content #}
+            <div class="card mb-3" id="summary-content">
+                <div class="card-header d-flex justify-content-between">
+                    <span>
+                        <span class="badge bg-{% if summary.format_type == 'bullet' %}primary{% else %}info{% endif %}">
+                            {{ summary.get_format_type_display }}
+                        </span>
+                        Version {{ summary.version }}
+                    </span>
+                    <small class="text-muted">Generated {{ summary.generated_at|date:"d M Y H:i" }}</small>
+                </div>
+                <div class="card-body">
+                    {# Section 1: Financial Highlights #}
+                    <div class="mb-4">
+                        <h5 class="text-primary border-bottom pb-2">
+                            <i class="bi bi-graph-up-arrow"></i> Financial Highlights
+                        </h5>
+                        <div class="summary-section">{{ summary.financial_highlights|linebreaks }}</div>
+                    </div>
+
+                    {# Section 2: Compliance Status #}
+                    <div class="mb-4">
+                        <h5 class="text-success border-bottom pb-2">
+                            <i class="bi bi-shield-check"></i> Compliance Status
+                        </h5>
+                        <div class="summary-section">{{ summary.compliance_status|linebreaks }}</div>
+                    </div>
+
+                    {# Section 3: Tax Position #}
+                    <div class="mb-4">
+                        <h5 class="text-warning border-bottom pb-2">
+                            <i class="bi bi-calculator"></i> Tax Position
+                        </h5>
+                        <div class="summary-section">{{ summary.tax_position|linebreaks }}</div>
+                    </div>
+
+                    {# Section 4: Recommendations #}
+                    <div class="mb-4">
+                        <h5 class="text-info border-bottom pb-2">
+                            <i class="bi bi-lightbulb"></i> Recommendations
+                        </h5>
+                        <div class="summary-section">{{ summary.recommendations|linebreaks }}</div>
+                    </div>
+
+                    {# Section 5: Year-on-Year Comparison #}
+                    <div class="mb-4">
+                        <h5 class="text-secondary border-bottom pb-2">
+                            <i class="bi bi-arrow-left-right"></i> Year-on-Year Comparison
+                        </h5>
+                        <div class="summary-section">{{ summary.year_on_year_comparison|linebreaks }}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-3">
+            {# Version History #}
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-clock-history"></i> Version History</h6>
+                </div>
+                <div class="list-group list-group-flush">
+                    {% for s in all_summaries %}
+                    <a href="?v={{ s.pk }}" class="list-group-item list-group-item-action {% if s.pk == summary.pk %}active{% endif %}">
+                        <div class="d-flex justify-content-between">
+                            <strong>v{{ s.version }}</strong>
+                            <span class="badge bg-{% if s.format_type == 'bullet' %}primary{% else %}info{% endif %}">
+                                {{ s.get_format_type_display }}
+                            </span>
+                        </div>
+                        <small>{{ s.generated_at|date:"d M Y H:i" }}</small>
+                    </a>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% else %}
+    <div class="card">
+        <div class="card-body text-center py-5">
+            <i class="bi bi-file-earmark-richtext text-muted" style="font-size: 3rem;"></i>
+            <h5 class="mt-3">No Client Summary Generated</h5>
+            <p class="text-muted">
+                Client summaries are automatically generated when a financial year is locked via the Eva Finalisation Gate.
+                You can also generate one manually using the buttons above.
+            </p>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+const CSRF_TOKEN = '{{ csrf_token }}';
+const GENERATE_URL = '{% url "core:client_summary_generate" pk=fy.pk %}';
+
+function generateSummary(formatType) {
+    if (!confirm(`Generate a new ${formatType} client summary? This will create a new version.`)) return;
+
+    const formData = new FormData();
+    formData.append('format_type', formatType);
+
+    fetch(GENERATE_URL, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': CSRF_TOKEN },
+        body: formData,
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            alert(data.message);
+            location.reload();
+        } else {
+            alert('Error: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(err => alert('Error: ' + err.message));
+}
+</script>
+{% endblock %}

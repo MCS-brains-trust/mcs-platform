@@ -1,0 +1,769 @@
+<script>
+(function() {
+    // ===== Constants =====
+    const FY_ID = "{{ fy.pk }}";
+    const CSRF = document.querySelector('[name=csrfmiddlewaretoken]')?.value
+                 || "{{ csrf_token }}";
+    const BASE = `/api/years/${FY_ID}/trust-workspace`;
+
+    let workspace = null;
+    let beneficiaryProfiles = [];
+    let scenarios = [];
+    let assessments = [];
+    let elections = [];
+    let currentStage = 1;
+    let autoSaveTimer = null;
+
+    // ===== Initialization =====
+    document.addEventListener('DOMContentLoaded', function() {
+        // Only init if trust tab exists
+        if (!document.getElementById('trust-workspace-container')) return;
+
+        // Load workspace when trust tab is shown
+        const trustTab = document.querySelector('[data-bs-target="#tab-trust"]');
+        if (trustTab) {
+            trustTab.addEventListener('shown.bs.tab', function() {
+                if (!workspace) loadWorkspace();
+            });
+            // Also load if tab is already active
+            if (trustTab.classList.contains('active')) {
+                loadWorkspace();
+            }
+        }
+    });
+
+    async function loadWorkspace() {
+        try {
+            const resp = await fetch(`${BASE}/`, {
+                headers: { 'X-CSRFToken': CSRF },
+            });
+            workspace = await resp.json();
+            renderWorkspaceState();
+            loadBeneficiaryProfiles();
+            loadScenarios();
+            loadAssessments();
+            loadElections();
+            startAutoSave();
+        } catch (e) {
+            console.error('Failed to load trust workspace:', e);
+        }
+    }
+
+    function renderWorkspaceState() {
+        if (!workspace) return;
+
+        // Update stage badges and progress
+        let completed = 0;
+        for (let i = 1; i <= 6; i++) {
+            const status = workspace.stages[i].status;
+            const badge = document.getElementById(`stage-badge-${i}`);
+            const check = document.getElementById(`stage-check-${i}`);
+            const btn = document.getElementById(`stage-${i}-complete-btn`);
+
+            if (status === 'completed') {
+                completed++;
+                badge.classList.remove('bg-primary', 'bg-secondary');
+                badge.classList.add('bg-success');
+                check.classList.remove('d-none');
+                if (btn) {
+                    btn.innerHTML = '<i class="bi bi-arrow-counterclockwise"></i> Reopen';
+                    btn.classList.remove('btn-outline-success');
+                    btn.classList.add('btn-outline-warning');
+                    btn.setAttribute('onclick', `reopenStage(${i})`);
+                }
+            } else if (status === 'in_progress') {
+                badge.classList.remove('bg-success', 'bg-secondary');
+                badge.classList.add('bg-primary');
+                check.classList.add('d-none');
+            } else {
+                badge.classList.remove('bg-success', 'bg-primary');
+                badge.classList.add('bg-secondary');
+                check.classList.add('d-none');
+            }
+        }
+
+        // Progress bar
+        const pct = Math.round((completed / 6) * 100);
+        document.getElementById('trust-progress-bar').style.width = pct + '%';
+        document.getElementById('trust-progress-text').textContent = `${completed}/6`;
+
+        // Income data
+        const streams = workspace.income_streams || {};
+        const ndi = parseFloat(workspace.net_distributable_income) || 0;
+
+        document.getElementById('trust-ndi').textContent = formatCurrency(ndi);
+
+        // Populate income stream inputs
+        document.querySelectorAll('.income-stream-input').forEach(input => {
+            const key = input.dataset.stream;
+            if (streams[key] !== undefined) {
+                input.value = streams[key];
+            }
+        });
+        updateStreamTotals();
+
+        // Section 100A risk badge
+        if (workspace.section_100a_overall_risk) {
+            const riskBadge = document.getElementById('trust-100a-risk-badge');
+            const riskLabel = document.getElementById('trust-100a-risk-label');
+            riskBadge.style.display = 'block';
+            riskLabel.textContent = workspace.section_100a_overall_risk.toUpperCase();
+            riskLabel.className = 'badge bg-' + ({
+                green: 'success', amber: 'warning', red: 'danger'
+            }[workspace.section_100a_overall_risk] || 'secondary');
+        }
+    }
+
+    // ===== Stage Navigation =====
+    window.showTrustStage = function(stageNum) {
+        currentStage = stageNum;
+
+        // Update nav active state
+        document.querySelectorAll('#trust-stage-nav .list-group-item').forEach(btn => {
+            btn.classList.toggle('active', parseInt(btn.dataset.stage) === stageNum);
+        });
+
+        // Show/hide stage content
+        document.querySelectorAll('.trust-stage').forEach(el => el.classList.add('d-none'));
+        document.getElementById(`trust-stage-${stageNum}`).classList.remove('d-none');
+
+        // Auto-set stage to in_progress if not_started
+        if (workspace && workspace.stages[stageNum].status === 'not_started') {
+            updateStageStatus(stageNum, 'in_progress');
+        }
+    };
+
+    window.markStageComplete = function(stageNum) {
+        updateStageStatus(stageNum, 'completed');
+    };
+
+    window.reopenStage = function(stageNum) {
+        updateStageStatus(stageNum, 'in_progress');
+    };
+
+    async function updateStageStatus(stageNum, status) {
+        try {
+            const resp = await fetch(`${BASE}/stage/${stageNum}/`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                body: JSON.stringify({ status }),
+            });
+            const data = await resp.json();
+            if (data.status === 'ok') {
+                workspace.stages[stageNum].status = data.new_status;
+                renderWorkspaceState();
+            }
+        } catch (e) {
+            console.error('Failed to update stage:', e);
+        }
+    }
+
+    // ===== Stage 1: Income Streams =====
+    document.querySelectorAll('.income-stream-input').forEach(input => {
+        input.addEventListener('change', function() {
+            updateStreamTotals();
+            saveIncomeStreams();
+        });
+    });
+
+    function updateStreamTotals() {
+        let total = 0;
+        document.querySelectorAll('.income-stream-input').forEach(input => {
+            total += parseFloat(input.value) || 0;
+        });
+        document.getElementById('trust-streams-total').textContent = formatCurrency(total);
+
+        const ndi = parseFloat(workspace?.net_distributable_income) || 0;
+        const mismatch = document.getElementById('trust-streams-mismatch');
+        if (Math.abs(total - ndi) > 0.01 && ndi > 0) {
+            mismatch.classList.remove('d-none');
+        } else {
+            mismatch.classList.add('d-none');
+        }
+    }
+
+    async function saveIncomeStreams() {
+        const streams = {};
+        document.querySelectorAll('.income-stream-input').forEach(input => {
+            streams[input.dataset.stream] = parseFloat(input.value) || 0;
+        });
+
+        try {
+            await fetch(`${BASE}/`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                body: JSON.stringify({ income_streams: streams }),
+            });
+            if (workspace) workspace.income_streams = streams;
+        } catch (e) {
+            console.error('Failed to save income streams:', e);
+        }
+    }
+
+    // ===== Stage 2: Beneficiary Profiles =====
+    async function loadBeneficiaryProfiles() {
+        try {
+            const resp = await fetch(`${BASE}/beneficiaries/`, {
+                headers: { 'X-CSRFToken': CSRF },
+            });
+            const data = await resp.json();
+            beneficiaryProfiles = data.profiles || [];
+            renderBeneficiaryProfiles();
+        } catch (e) {
+            console.error('Failed to load beneficiary profiles:', e);
+        }
+    }
+
+    function renderBeneficiaryProfiles() {
+        const container = document.getElementById('beneficiary-profiles-container');
+        if (!beneficiaryProfiles.length) {
+            container.innerHTML = '<div class="alert alert-info"><i class="bi bi-info-circle"></i> No beneficiaries found. Add officers/beneficiaries to the entity first.</div>';
+            return;
+        }
+
+        let html = '<div class="row g-3">';
+        beneficiaryProfiles.forEach(p => {
+            html += `
+            <div class="col-md-6">
+                <div class="card ${p.include_in_distribution ? '' : 'border-secondary opacity-50'}">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <strong>${escapeHtml(p.beneficiary_name)}</strong>
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" ${p.include_in_distribution ? 'checked' : ''}
+                                   onchange="toggleBeneficiary('${p.id}', this.checked)">
+                            <label class="form-check-label small">Include</label>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-2">
+                            <div class="col-6">
+                                <label class="form-label small text-muted">Type</label>
+                                <select class="form-select form-select-sm" onchange="updateBeneficiaryField('${p.id}', 'beneficiary_type', this.value)">
+                                    <option value="adult" ${p.beneficiary_type === 'adult' ? 'selected' : ''}>Adult Individual</option>
+                                    <option value="minor" ${p.beneficiary_type === 'minor' ? 'selected' : ''}>Minor</option>
+                                    <option value="company" ${p.beneficiary_type === 'company' ? 'selected' : ''}>Company</option>
+                                    <option value="trust" ${p.beneficiary_type === 'trust' ? 'selected' : ''}>Trust</option>
+                                    <option value="smsf" ${p.beneficiary_type === 'smsf' ? 'selected' : ''}>SMSF</option>
+                                </select>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small text-muted">Tax Residency</label>
+                                <select class="form-select form-select-sm" onchange="updateBeneficiaryField('${p.id}', 'tax_residency', this.value)">
+                                    <option value="AU" ${p.tax_residency === 'AU' ? 'selected' : ''}>Australian</option>
+                                    <option value="NR" ${p.tax_residency === 'NR' ? 'selected' : ''}>Non-Resident</option>
+                                </select>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small text-muted">Other Income ($)</label>
+                                <input type="number" class="form-control form-control-sm" value="${p.other_income || ''}"
+                                       onchange="updateBeneficiaryField('${p.id}', 'other_income', this.value)" step="0.01">
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small text-muted">Marginal Rate (%)</label>
+                                <input type="number" class="form-control form-control-sm"
+                                       value="${p.marginal_rate ? (parseFloat(p.marginal_rate) * 100).toFixed(1) : ''}"
+                                       onchange="updateBeneficiaryField('${p.id}', 'marginal_rate', this.value / 100)" step="0.1" min="0" max="47">
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small text-muted">Bracket Remaining ($)</label>
+                                <input type="number" class="form-control form-control-sm" value="${p.bracket_remaining || ''}"
+                                       onchange="updateBeneficiaryField('${p.id}', 'bracket_remaining', this.value)" step="0.01">
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small text-muted">Franking Surplus ($)</label>
+                                <input type="number" class="form-control form-control-sm" value="${p.franking_surplus || ''}"
+                                       onchange="updateBeneficiaryField('${p.id}', 'franking_surplus', this.value)" step="0.01">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+        });
+        html += '</div>';
+        container.innerHTML = html;
+    }
+
+    window.toggleBeneficiary = function(profileId, included) {
+        updateBeneficiaryField(profileId, 'include_in_distribution', included);
+    };
+
+    window.updateBeneficiaryField = async function(profileId, field, value) {
+        try {
+            const body = { id: profileId };
+            body[field] = value;
+            await fetch(`${BASE}/beneficiaries/`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                body: JSON.stringify(body),
+            });
+            // Refresh profiles
+            const profile = beneficiaryProfiles.find(p => p.id === profileId);
+            if (profile) profile[field] = value;
+            if (field === 'include_in_distribution') renderBeneficiaryProfiles();
+        } catch (e) {
+            console.error('Failed to update beneficiary:', e);
+        }
+    };
+
+    // ===== Stage 3: Distribution Scenarios =====
+    async function loadScenarios() {
+        try {
+            const resp = await fetch(`${BASE}/scenarios/`, {
+                headers: { 'X-CSRFToken': CSRF },
+            });
+            const data = await resp.json();
+            scenarios = data.scenarios || [];
+            renderScenarioTabs();
+        } catch (e) {
+            console.error('Failed to load scenarios:', e);
+        }
+    }
+
+    function renderScenarioTabs() {
+        const tabs = document.getElementById('scenario-tabs');
+        const content = document.getElementById('scenario-content');
+
+        if (!scenarios.length) {
+            tabs.innerHTML = '';
+            content.innerHTML = '<div class="alert alert-info"><i class="bi bi-info-circle"></i> No scenarios yet. Click "New Scenario" to create one.</div>';
+            return;
+        }
+
+        let tabHtml = '';
+        scenarios.forEach((s, idx) => {
+            tabHtml += `
+            <li class="nav-item">
+                <button class="nav-link ${idx === 0 ? 'active' : ''}" data-bs-toggle="tab"
+                        data-bs-target="#scenario-${s.id}" type="button">
+                    ${escapeHtml(s.name)}
+                    ${s.is_confirmed ? '<i class="bi bi-check-circle-fill text-success ms-1"></i>' : ''}
+                </button>
+            </li>`;
+        });
+        tabs.innerHTML = tabHtml;
+
+        let contentHtml = '<div class="tab-content">';
+        const activeProfiles = beneficiaryProfiles.filter(p => p.include_in_distribution);
+        const streams = ['ordinary', 'cgt_discount', 'cgt_non_discount', 'franked_dividends', 'franking_credits', 'tax_free'];
+        const streamLabels = {
+            ordinary: 'Ordinary', cgt_discount: 'CGT Discount', cgt_non_discount: 'CGT Non-Discount',
+            franked_dividends: 'Franked Dividends', franking_credits: 'Franking Credits', tax_free: 'Tax-Free'
+        };
+
+        scenarios.forEach((s, idx) => {
+            contentHtml += `<div class="tab-pane fade ${idx === 0 ? 'show active' : ''}" id="scenario-${s.id}">`;
+            contentHtml += `
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <input type="text" class="form-control form-control-sm" style="width: 200px;" value="${escapeHtml(s.name)}"
+                       onchange="renameScenario('${s.id}', this.value)">
+                <div>
+                    ${!s.is_confirmed ? `<button class="btn btn-sm btn-success me-1" onclick="confirmScenario('${s.id}')"><i class="bi bi-check-lg"></i> Confirm</button>` : '<span class="badge bg-success me-1">Confirmed</span>'}
+                    <button class="btn btn-sm btn-outline-danger" onclick="deleteScenario('${s.id}')"><i class="bi bi-trash"></i></button>
+                </div>
+            </div>`;
+
+            // Allocation grid
+            contentHtml += '<div class="table-responsive"><table class="table table-sm table-bordered">';
+            contentHtml += '<thead class="table-light"><tr><th>Stream</th>';
+            activeProfiles.forEach(p => {
+                contentHtml += `<th class="text-center" style="min-width:120px;">${escapeHtml(p.beneficiary_name)}</th>`;
+            });
+            contentHtml += '<th class="text-center">Total</th></tr></thead><tbody>';
+
+            const allocs = s.allocations || {};
+
+            streams.forEach(stream => {
+                const streamTotal = parseFloat(workspace?.income_streams?.[stream]) || 0;
+                contentHtml += `<tr><td class="fw-semibold small">${streamLabels[stream]}</td>`;
+                let rowTotal = 0;
+                activeProfiles.forEach(p => {
+                    const val = allocs[p.beneficiary_id]?.[stream] || 0;
+                    rowTotal += parseFloat(val) || 0;
+                    contentHtml += `<td><input type="number" class="form-control form-control-sm text-end scenario-alloc"
+                        data-scenario="${s.id}" data-beneficiary="${p.beneficiary_id}" data-stream="${stream}"
+                        value="${val}" step="0.01" onchange="updateAllocation('${s.id}', '${p.beneficiary_id}', '${stream}', this.value)"></td>`;
+                });
+                contentHtml += `<td class="text-end fw-semibold small">${formatCurrency(rowTotal)} / ${formatCurrency(streamTotal)}</td>`;
+                contentHtml += '</tr>';
+            });
+
+            // Totals row
+            contentHtml += '<tr class="table-info fw-semibold"><td>TOTAL</td>';
+            activeProfiles.forEach(p => {
+                let benTotal = 0;
+                streams.forEach(stream => {
+                    benTotal += parseFloat(allocs[p.beneficiary_id]?.[stream]) || 0;
+                });
+                contentHtml += `<td class="text-end">${formatCurrency(benTotal)}</td>`;
+            });
+            let grandTotal = 0;
+            Object.values(allocs).forEach(benAlloc => {
+                Object.values(benAlloc).forEach(v => { grandTotal += parseFloat(v) || 0; });
+            });
+            contentHtml += `<td class="text-end">${formatCurrency(grandTotal)}</td></tr>`;
+            contentHtml += '</tbody></table></div>';
+
+            // Tax summary
+            if (s.total_tax) {
+                contentHtml += `<div class="alert alert-light small">
+                    <strong>Estimated Total Tax:</strong> ${formatCurrency(parseFloat(s.total_tax))}
+                    ${s.tax_saved_vs_equal ? ` | <strong>Tax Saved vs Equal:</strong> ${formatCurrency(parseFloat(s.tax_saved_vs_equal))}` : ''}
+                </div>`;
+            }
+
+            contentHtml += '</div>';
+        });
+        contentHtml += '</div>';
+        content.innerHTML = contentHtml;
+    }
+
+    window.addScenario = async function() {
+        if (scenarios.length >= 3) {
+            alert('Maximum 3 scenarios allowed.');
+            return;
+        }
+        try {
+            const resp = await fetch(`${BASE}/scenarios/`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                body: JSON.stringify({ name: `Scenario ${scenarios.length + 1}` }),
+            });
+            const scenario = await resp.json();
+            if (!scenario.error) {
+                scenarios.push(scenario);
+                renderScenarioTabs();
+            } else {
+                alert(scenario.error);
+            }
+        } catch (e) {
+            console.error('Failed to add scenario:', e);
+        }
+    };
+
+    window.updateAllocation = async function(scenarioId, beneficiaryId, stream, value) {
+        const scenario = scenarios.find(s => s.id === scenarioId);
+        if (!scenario) return;
+
+        if (!scenario.allocations) scenario.allocations = {};
+        if (!scenario.allocations[beneficiaryId]) scenario.allocations[beneficiaryId] = {};
+        scenario.allocations[beneficiaryId][stream] = parseFloat(value) || 0;
+
+        try {
+            await fetch(`${BASE}/scenarios/`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                body: JSON.stringify({ id: scenarioId, allocations: scenario.allocations }),
+            });
+        } catch (e) {
+            console.error('Failed to update allocation:', e);
+        }
+    };
+
+    window.renameScenario = async function(scenarioId, name) {
+        try {
+            await fetch(`${BASE}/scenarios/`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                body: JSON.stringify({ id: scenarioId, name }),
+            });
+            const s = scenarios.find(s => s.id === scenarioId);
+            if (s) s.name = name;
+        } catch (e) {
+            console.error('Failed to rename scenario:', e);
+        }
+    };
+
+    window.confirmScenario = async function(scenarioId) {
+        if (!confirm('Confirm this scenario as the final distribution?')) return;
+        try {
+            await fetch(`${BASE}/scenarios/${scenarioId}/confirm/`, {
+                method: 'POST',
+                headers: { 'X-CSRFToken': CSRF },
+            });
+            scenarios.forEach(s => s.is_confirmed = (s.id === scenarioId));
+            renderScenarioTabs();
+        } catch (e) {
+            console.error('Failed to confirm scenario:', e);
+        }
+    };
+
+    window.deleteScenario = async function(scenarioId) {
+        if (!confirm('Delete this scenario?')) return;
+        try {
+            await fetch(`${BASE}/scenarios/${scenarioId}/delete/`, {
+                method: 'POST',
+                headers: { 'X-CSRFToken': CSRF },
+            });
+            scenarios = scenarios.filter(s => s.id !== scenarioId);
+            renderScenarioTabs();
+        } catch (e) {
+            console.error('Failed to delete scenario:', e);
+        }
+    };
+
+    // ===== Stage 4: Section 100A =====
+    async function loadAssessments() {
+        try {
+            const resp = await fetch(`${BASE}/section-100a/`, {
+                headers: { 'X-CSRFToken': CSRF },
+            });
+            const data = await resp.json();
+            assessments = data.assessments || [];
+            renderAssessments();
+        } catch (e) {
+            console.error('Failed to load assessments:', e);
+        }
+    }
+
+    function renderAssessments() {
+        const container = document.getElementById('section-100a-container');
+        const activeProfiles = beneficiaryProfiles.filter(p => p.include_in_distribution);
+
+        if (!activeProfiles.length) {
+            container.innerHTML = '<div class="alert alert-info">No beneficiaries to assess. Complete Stage 2 first.</div>';
+            return;
+        }
+
+        const questions = [
+            { key: 'q1', text: 'Was the distribution made under a reimbursement agreement?' },
+            { key: 'q2', text: 'Did the beneficiary receive the economic benefit of the distribution?' },
+            { key: 'q3', text: 'Was the distribution part of a pre-arranged plan?' },
+            { key: 'q4', text: 'Were funds redirected to another party?' },
+            { key: 'q5', text: 'Is the beneficiary a related party of the trustee?' },
+            { key: 'q6', text: 'Was there a tax benefit from the arrangement?' },
+            { key: 'q7', text: 'Is the arrangement consistent with an ordinary family dealing? (protective)' },
+            { key: 'q8', text: 'Does the arrangement fall within a safe harbour? (protective)' },
+        ];
+
+        let html = '<div class="accordion" id="s100a-accordion">';
+        activeProfiles.forEach((p, idx) => {
+            const assessment = assessments.find(a => a.beneficiary_id === p.beneficiary_id) || {};
+            const riskClass = { green: 'success', amber: 'warning', red: 'danger' }[assessment.risk_rating] || 'secondary';
+
+            html += `
+            <div class="accordion-item">
+                <h2 class="accordion-header">
+                    <button class="accordion-button ${idx > 0 ? 'collapsed' : ''}" type="button"
+                            data-bs-toggle="collapse" data-bs-target="#s100a-${p.id}">
+                        <span class="me-2">${escapeHtml(p.beneficiary_name)}</span>
+                        ${assessment.risk_rating ? `<span class="badge bg-${riskClass}">${assessment.risk_rating.toUpperCase()}</span>` : '<span class="badge bg-secondary">Not Assessed</span>'}
+                    </button>
+                </h2>
+                <div id="s100a-${p.id}" class="accordion-collapse collapse ${idx === 0 ? 'show' : ''}"
+                     data-bs-parent="#s100a-accordion">
+                    <div class="accordion-body">
+                        <table class="table table-sm">
+                            <tbody>`;
+
+            questions.forEach(q => {
+                const val = assessment[q.key] || '';
+                html += `
+                <tr>
+                    <td class="small" style="width:60%">${q.text}</td>
+                    <td>
+                        <select class="form-select form-select-sm"
+                                onchange="update100A('${p.beneficiary_id}', '${assessment.id || ''}', '${q.key}', this.value)">
+                            <option value="">—</option>
+                            <option value="yes" ${val === 'yes' ? 'selected' : ''}>Yes</option>
+                            <option value="no" ${val === 'no' ? 'selected' : ''}>No</option>
+                            <option value="unsure" ${val === 'unsure' ? 'selected' : ''}>Unsure</option>
+                        </select>
+                    </td>
+                </tr>`;
+            });
+
+            html += `</tbody></table>`;
+
+            if (assessment.risk_rating === 'amber' || assessment.risk_rating === 'red') {
+                html += `
+                <div class="mt-2">
+                    <label class="form-label small fw-semibold text-danger">Resolution Strategy (mandatory)</label>
+                    <textarea class="form-control form-control-sm" rows="2"
+                              onchange="update100AResolution('${assessment.id}', this.value)">${escapeHtml(assessment.resolution_strategy || '')}</textarea>
+                </div>`;
+            }
+
+            html += `</div></div></div>`;
+        });
+        html += '</div>';
+        container.innerHTML = html;
+    }
+
+    window.update100A = async function(beneficiaryId, assessmentId, question, value) {
+        const body = { beneficiary_id: beneficiaryId };
+        if (assessmentId) body.id = assessmentId;
+        body[question] = value;
+
+        try {
+            const resp = await fetch(`${BASE}/section-100a/`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                body: JSON.stringify(body),
+            });
+            const updated = await resp.json();
+            // Update local state
+            const idx = assessments.findIndex(a => a.beneficiary_id === beneficiaryId);
+            if (idx >= 0) assessments[idx] = updated;
+            else assessments.push(updated);
+            renderAssessments();
+        } catch (e) {
+            console.error('Failed to update 100A:', e);
+        }
+    };
+
+    window.update100AResolution = async function(assessmentId, value) {
+        try {
+            await fetch(`${BASE}/section-100a/`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                body: JSON.stringify({ id: assessmentId, resolution_strategy: value }),
+            });
+        } catch (e) {
+            console.error('Failed to update resolution:', e);
+        }
+    };
+
+    // ===== Stage 5: Trust Elections =====
+    async function loadElections() {
+        try {
+            const resp = await fetch(`${BASE}/elections/`, {
+                headers: { 'X-CSRFToken': CSRF },
+            });
+            const data = await resp.json();
+            elections = data.elections || [];
+            renderElections();
+        } catch (e) {
+            console.error('Failed to load elections:', e);
+        }
+    }
+
+    function renderElections() {
+        const container = document.getElementById('trust-elections-container');
+
+        if (!elections.length) {
+            container.innerHTML = '<div class="alert alert-info"><i class="bi bi-info-circle"></i> No election records yet. Add FTE or IEE records below.</div>';
+            return;
+        }
+
+        let html = '<div class="table-responsive"><table class="table table-sm table-bordered"><thead class="table-light"><tr>';
+        html += '<th>Type</th><th>Status</th><th>Effective Date</th><th>Test Individual / Related Entity</th><th>Confirmed</th><th>Actions</th>';
+        html += '</tr></thead><tbody>';
+
+        elections.forEach(e => {
+            html += `<tr>
+                <td><span class="badge bg-primary">${escapeHtml(e.election_type_display)}</span></td>
+                <td>
+                    <select class="form-select form-select-sm" onchange="updateElection('${e.id}', 'status', this.value)">
+                        <option value="in_place" ${e.status === 'in_place' ? 'selected' : ''}>In Place</option>
+                        <option value="not_in_place" ${e.status === 'not_in_place' ? 'selected' : ''}>Not In Place</option>
+                        <option value="required_not_yet_made" ${e.status === 'required_not_yet_made' ? 'selected' : ''}>Required — Not Yet Made</option>
+                        <option value="not_applicable" ${e.status === 'not_applicable' ? 'selected' : ''}>Not Applicable</option>
+                    </select>
+                </td>
+                <td><input type="date" class="form-control form-control-sm" value="${e.effective_date || ''}"
+                           onchange="updateElection('${e.id}', 'effective_date', this.value)"></td>
+                <td>${e.test_individual_name || e.related_entity_id || '—'}</td>
+                <td>${e.confirmed_at ? '<span class="badge bg-success">Confirmed</span>' : '<button class="btn btn-sm btn-outline-success" onclick="confirmElection(\'' + e.id + '\')">Confirm</button>'}</td>
+                <td><button class="btn btn-sm btn-outline-secondary" disabled><i class="bi bi-upload"></i></button></td>
+            </tr>`;
+        });
+
+        html += '</tbody></table></div>';
+        container.innerHTML = html;
+    }
+
+    window.addElection = async function(type) {
+        try {
+            const resp = await fetch(`${BASE}/elections/`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                body: JSON.stringify({ election_type: type }),
+            });
+            const election = await resp.json();
+            if (!election.error) {
+                elections.push(election);
+                renderElections();
+            }
+        } catch (e) {
+            console.error('Failed to add election:', e);
+        }
+    };
+
+    window.updateElection = async function(electionId, field, value) {
+        const body = { id: electionId };
+        body[field] = value;
+        try {
+            const resp = await fetch(`${BASE}/elections/`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                body: JSON.stringify(body),
+            });
+            const updated = await resp.json();
+            const idx = elections.findIndex(e => e.id === electionId);
+            if (idx >= 0) elections[idx] = updated;
+            renderElections();
+        } catch (e) {
+            console.error('Failed to update election:', e);
+        }
+    };
+
+    window.confirmElection = async function(electionId) {
+        try {
+            await fetch(`${BASE}/elections/${electionId}/confirm/`, {
+                method: 'POST',
+                headers: { 'X-CSRFToken': CSRF },
+            });
+            loadElections();
+        } catch (e) {
+            console.error('Failed to confirm election:', e);
+        }
+    };
+
+    // ===== Stage 6: Documents =====
+    const resDateInput = document.getElementById('trust-resolution-date');
+    if (resDateInput) {
+        resDateInput.addEventListener('change', function() {
+            const warning = document.getElementById('trust-resolution-warning');
+            const maxDate = resDateInput.getAttribute('max');
+            if (this.value > maxDate) {
+                warning.classList.remove('d-none');
+            } else {
+                warning.classList.add('d-none');
+            }
+        });
+    }
+
+    window.generateBeneficiaryStatements = function() {
+        alert('Beneficiary statement generation will be available in the Legal Document Generation phase.');
+    };
+    window.generate100ASummary = function() {
+        alert('Section 100A summary generation will be available in the Legal Document Generation phase.');
+    };
+    window.generateDistributionSummary = function() {
+        alert('Distribution summary generation will be available in the Legal Document Generation phase.');
+    };
+
+    // ===== Auto-save =====
+    function startAutoSave() {
+        if (autoSaveTimer) clearInterval(autoSaveTimer);
+        autoSaveTimer = setInterval(() => {
+            saveIncomeStreams();
+        }, 120000); // 2 minutes
+    }
+
+    // ===== Utilities =====
+    function formatCurrency(val) {
+        return '$' + (parseFloat(val) || 0).toLocaleString('en-AU', {
+            minimumFractionDigits: 2, maximumFractionDigits: 2
+        });
+    }
+
+    function escapeHtml(str) {
+        if (!str) return '';
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    }
+
+})();
+</script>

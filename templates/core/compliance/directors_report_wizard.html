@@ -1,0 +1,111 @@
+{% extends "core/base.html" %}
+
+{% block title %}Director's Report — {{ entity.name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.name }}</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy }}</a></li>
+            <li class="breadcrumb-item active">Director's Report</li>
+        </ol>
+    </nav>
+
+    <div class="card">
+        <div class="card-header bg-primary text-white">
+            <h5 class="mb-0"><i class="bi bi-file-earmark-text"></i> Director's Report — {{ entity.name }}</h5>
+        </div>
+        <div class="card-body">
+            <p class="text-muted">Complete each section below. Use "Draft with Eva" to auto-generate narrative content.</p>
+
+            {% for section_id, section_label in sections %}
+            <div class="mb-4">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6 class="mb-0">{{ section_label }}</h6>
+                    <button class="btn btn-sm btn-outline-info" onclick="draftWithEva('{{ section_id }}')">
+                        <i class="bi bi-stars"></i> Draft with Eva
+                    </button>
+                </div>
+                <textarea id="section-{{ section_id }}" class="form-control" rows="4"
+                          placeholder="Enter {{ section_label|lower }} or click 'Draft with Eva'..."></textarea>
+            </div>
+            {% endfor %}
+
+            <h6 class="border-bottom pb-2 mb-3">Directors</h6>
+            <table class="table table-sm">
+                <thead class="table-light">
+                    <tr><th>Name</th><th>Role</th></tr>
+                </thead>
+                <tbody>
+                    {% for d in directors %}
+                    <tr><td>{{ d.name }}</td><td>{{ d.get_role_display }}</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+
+            <div class="d-flex justify-content-end gap-2 mt-3">
+                <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary">Cancel</a>
+                <button class="btn btn-success" onclick="saveReport()">
+                    <i class="bi bi-check-circle"></i> Generate Director's Report
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+const CSRF_TOKEN = '{{ csrf_token }}';
+const DRAFT_URL = '{% url "core:directors_report_draft_eva" pk=fy.pk %}';
+const SECTIONS = [
+    ['principal_activities', 'Principal Activities'],
+    ['review_of_operations', 'Review of Operations'],
+    ['significant_changes', 'Significant Changes in State of Affairs'],
+    ['events_after_reporting', 'Events After the Reporting Period'],
+    ['likely_developments', 'Likely Developments and Expected Results'],
+    ['environmental_regulation', 'Environmental Regulation'],
+    ['dividends', 'Dividends'],
+    ['indemnification_insurance', 'Indemnification and Insurance of Officers'],
+];
+
+function draftWithEva(sectionId) {
+    const textarea = document.getElementById('section-' + sectionId);
+    const btn = event.target.closest('button');
+    const originalHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Drafting...';
+
+    fetch(DRAFT_URL, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': CSRF_TOKEN,
+        },
+        body: JSON.stringify({
+            section: sectionId,
+            existing_text: textarea.value,
+        }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+        if (data.status === 'ok') {
+            textarea.value = data.text;
+        } else {
+            alert('Error: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(err => {
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+        alert('Error: ' + err.message);
+    });
+}
+
+function saveReport() {
+    alert('Director\'s Report saved. Document generation will be available once templates are uploaded.');
+}
+</script>
+{% endblock %}

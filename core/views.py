@@ -494,6 +494,13 @@ def entity_detail(request, pk):
         "software_configs": software_configs,
         "meeting_notes": meeting_notes,
         "pending_followups": pending_followups,
+        # Governing Documents tab
+        "primary_governing_doc": entity.governing_documents.filter(
+            is_primary=True, status="active"
+        ).first(),
+        "amendment_docs": entity.governing_documents.filter(
+            is_primary=False, status="active"
+        ).order_by("-document_date", "-uploaded_at"),
     }
     return render(request, "core/entity_detail.html", context)
 
