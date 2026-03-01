@@ -134,17 +134,24 @@ Status: {fy.get_status_display()}
                 )
         sections.append("\n".join(jnl_text))
 
-    # ── Associates (Directors/Trustees/Beneficiaries) ─────────────────
+    # ── Officers (Directors/Trustees/Beneficiaries) ────────────────────
     try:
-        associates = entity.associates.all()
-        if associates.exists():
-            assoc_text = ["=== ASSOCIATES (Directors/Trustees/Beneficiaries) ==="]
-            for a in associates:
-                role = a.get_role_display() if hasattr(a, "get_role_display") else a.role
-                assoc_text.append(f"- {a.name} ({role})")
-            sections.append("\n".join(assoc_text))
-    except Exception:
-        pass  # Associates may not exist for all entity types
+        from core.models import EntityOfficer
+        officers = entity.officers.filter(date_ceased__isnull=True).order_by("display_order")
+        if officers.exists():
+            officer_text = ["=== OFFICERS (Directors/Trustees/Partners/Beneficiaries) ==="]
+            for o in officers:
+                role = o.get_role_display()
+                title_str = f" — {o.title}" if o.title else ""
+                appointed = f", appointed {o.date_appointed}" if o.date_appointed else ""
+                shares = f", {o.shares_held} shares" if o.shares_held else ""
+                signatory = " [Signatory]" if o.is_signatory else ""
+                officer_text.append(
+                    f"- {o.full_name} ({role}{title_str}{appointed}{shares}{signatory})"
+                )
+            sections.append("\n".join(officer_text))
+    except Exception as e:
+        logger.warning(f"Eva context: failed to load officers: {e}")
 
     # ── Eva Findings ──────────────────────────────────────────────────
     latest_review = EvaReview.objects.filter(
@@ -177,15 +184,19 @@ Status: {fy.get_status_display()}
 @require_POST
 def eva_chat_send(request, pk):
     """
-    Send a message to Eva and get a response.
+    Send a message to Eva and get a streaming response via SSE.
 
     POST /api/financial-years/<pk>/eva-chat/
     Body: {"message": "...", "model_override": "opus"}  (model_override optional)
+
+    Returns: text/event-stream with token chunks, then a final [DONE] event
+    containing the message_id and sources.
     """
+    from django.http import StreamingHttpResponse
     from core.models import (
         EvaConversation, EvaMessage, FinancialYear, ActivityLog,
     )
-    from core.ai_service import _call_llm
+    from core.ai_service import _call_llm_stream
     from core.eva_knowledge import retrieve_relevant_chunks, format_rag_context
 
     try:
@@ -262,61 +273,81 @@ def eva_chat_send(request, pk):
 {user_message}
 """
 
-    # Call LLM
-    try:
-        response_text = _call_llm(
-            system_prompt=EVA_SYSTEM_PROMPT,
-            user_prompt=user_prompt,
-            tier=tier,
-            temperature=0.3,
-            max_tokens=2000,
-        )
-    except Exception as e:
-        logger.error(f"Eva chat LLM error: {e}")
-        response_text = (
-            "I'm sorry, I encountered an error processing your question. "
-            "Please try again or contact support if the issue persists."
-        )
+    # Capture variables needed in the generator closure
+    _fy = fy
+    _conversation = conversation
+    _tier = tier
+    _retrieved_ids = retrieved_ids
+    _rag_chunks = rag_chunks
+    _request_user = request.user
 
-    # Save assistant message
-    assistant_msg = EvaMessage.objects.create(
-        conversation=conversation,
-        role="assistant",
-        content=response_text,
-        model_used=tier,
-        retrieved_chunk_ids=retrieved_ids,
+    def stream_response():
+        full_text = []
+        try:
+            for chunk in _call_llm_stream(
+                system_prompt=EVA_SYSTEM_PROMPT,
+                user_prompt=user_prompt,
+                tier=_tier,
+                temperature=0.3,
+                max_tokens=2000,
+            ):
+                full_text.append(chunk)
+                # SSE format: data: <json>\n\n
+                yield f"data: {json.dumps({'token': chunk})}\n\n"
+        except Exception as e:
+            logger.error(f"Eva chat LLM stream error: {e}")
+            error_msg = "I'm sorry, I encountered an error. Please try again."
+            full_text.append(error_msg)
+            yield f"data: {json.dumps({'token': error_msg})}\n\n"
+
+        # Save the complete response to DB
+        response_text = "".join(full_text)
+        try:
+            assistant_msg = EvaMessage.objects.create(
+                conversation=_conversation,
+                role="assistant",
+                content=response_text,
+                model_used=_tier,
+                retrieved_chunk_ids=_retrieved_ids,
+            )
+            _conversation.message_count = _conversation.messages.count()
+            _conversation.save(update_fields=["message_count", "last_active_at"])
+
+            # Send final event with metadata
+            sources = [
+                {
+                    "title": item["document_title"],
+                    "category": item["category"],
+                    "score": round(item["score"], 2),
+                }
+                for item in _rag_chunks[:3]
+            ]
+            yield f"data: {json.dumps({'done': True, 'message_id': str(assistant_msg.pk), 'sources': sources})}\n\n"
+        except Exception as e:
+            logger.error(f"Eva chat save error: {e}")
+            yield f"data: {json.dumps({'done': True, 'message_id': '', 'sources': []})}\n\n"
+
+        # Log activity (non-blocking)
+        try:
+            ActivityLog.objects.create(
+                user=_request_user,
+                event_type="eva_chat",
+                title=f"Eva Chat — {_fy.entity.entity_name}",
+                description=f"Chat message sent in {_fy.year_label}. Model: {_tier}.",
+                entity=_fy.entity,
+                financial_year=_fy,
+                url=f"/entities/years/{_fy.pk}/",
+            )
+        except Exception:
+            pass
+
+    response = StreamingHttpResponse(
+        stream_response(),
+        content_type="text/event-stream",
     )
-    conversation.message_count = conversation.messages.count()
-    conversation.save(update_fields=["message_count", "last_active_at"])
-
-    # Log activity
-    try:
-        ActivityLog.objects.create(
-            user=request.user,
-            event_type="eva_chat",
-            title=f"Eva Chat — {fy.entity.entity_name}",
-            description=f"Chat message sent in {fy.year_label}. Model: {tier}.",
-            entity=fy.entity,
-            financial_year=fy,
-            url=f"/entities/years/{fy.pk}/",
-        )
-    except Exception:
-        pass  # Don't fail the response if logging fails
-
-    return JsonResponse({
-        "message_id": str(assistant_msg.pk),
-        "content": response_text,
-        "model_used": tier,
-        "sources": [
-            {
-                "title": item["document_title"],
-                "category": item["category"],
-                "score": round(item["score"], 2),
-            }
-            for item in rag_chunks[:3]  # Top 3 sources for display
-        ],
-        "created_at": assistant_msg.created_at.isoformat(),
-    })
+    response["Cache-Control"] = "no-cache"
+    response["X-Accel-Buffering"] = "no"  # Disable nginx buffering
+    return response
 
 
 @login_required

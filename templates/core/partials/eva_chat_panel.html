@@ -98,7 +98,17 @@ Included at the bottom of financial_year_detail.html.
 }
 @keyframes evaPulse {
     0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.6; transform: scale(1.3); }
+}
+
+/* ── Streaming cursor ── */
+.eva-cursor {
+    animation: evaBlink 0.7s step-end infinite;
+    font-weight: bold;
+    color: #0F6B74;
+}
+@keyframes evaBlink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
 }
 
 /* ── Eva Chat Panel ── */
@@ -318,18 +328,81 @@ Included at the bottom of financial_year_detail.html.
                 opus_override: useOpus,
             }),
         })
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            hideTypingIndicator();
-            evaLoading = false;
-            setEvaStatus('ready', 'Ready');
+        .then(function(r) {
+            // Check if this is a streaming response
+            var ct = r.headers.get('content-type') || '';
+            if (ct.indexOf('text/event-stream') !== -1) {
+                // Streaming SSE response — read tokens as they arrive
+                hideTypingIndicator();
+                var streamDiv = appendStreamingMessage();
+                var rawText = '';
+                var reader = r.body.getReader();
+                var decoder = new TextDecoder();
 
-            if (data.error) {
-                appendMessage('assistant', 'Sorry, I encountered an error: ' + data.error);
-            } else if (data.message) {
-                appendMessage('assistant', data.message.content);
+                function readChunk() {
+                    reader.read().then(function(result) {
+                        if (result.done) {
+                            // Stream finished — finalise
+                            evaLoading = false;
+                            setEvaStatus('ready', 'Ready');
+                            // Re-render with full markdown
+                            if (streamDiv) {
+                                streamDiv.innerHTML = '<strong>Eva</strong>' + formatMarkdown(rawText);
+                            }
+                            scrollToBottom();
+                            return;
+                        }
+                        var text = decoder.decode(result.value, {stream: true});
+                        // Parse SSE lines: "data: {...}\n\n"
+                        var lines = text.split('\n');
+                        for (var i = 0; i < lines.length; i++) {
+                            var line = lines[i].trim();
+                            if (line.indexOf('data: ') === 0) {
+                                try {
+                                    var payload = JSON.parse(line.substring(6));
+                                    if (payload.token) {
+                                        rawText += payload.token;
+                                        setEvaStatus('thinking', 'Eva is writing...');
+                                        if (streamDiv) {
+                                            streamDiv.innerHTML = '<strong>Eva</strong>' + formatMarkdown(rawText);
+                                        }
+                                        scrollToBottom();
+                                    }
+                                    if (payload.done) {
+                                        evaLoading = false;
+                                        setEvaStatus('ready', 'Ready');
+                                        if (streamDiv) {
+                                            streamDiv.innerHTML = '<strong>Eva</strong>' + formatMarkdown(rawText);
+                                        }
+                                        scrollToBottom();
+                                    }
+                                } catch(e) { /* skip malformed lines */ }
+                            }
+                        }
+                        readChunk();
+                    }).catch(function(err) {
+                        evaLoading = false;
+                        setEvaStatus('ready', 'Ready');
+                        scrollToBottom();
+                    });
+                }
+                readChunk();
+            } else {
+                // Non-streaming fallback (JSON response)
+                return r.json().then(function(data) {
+                    hideTypingIndicator();
+                    evaLoading = false;
+                    setEvaStatus('ready', 'Ready');
+                    if (data.error) {
+                        appendMessage('assistant', 'Sorry, I encountered an error: ' + data.error);
+                    } else if (data.content) {
+                        appendMessage('assistant', data.content);
+                    } else if (data.message) {
+                        appendMessage('assistant', data.message.content || data.message);
+                    }
+                    scrollToBottom();
+                });
             }
-            scrollToBottom();
         })
         .catch(function(err) {
             hideTypingIndicator();
@@ -339,6 +412,20 @@ Included at the bottom of financial_year_detail.html.
             scrollToBottom();
         });
     };
+
+    function appendStreamingMessage() {
+        // Create an empty assistant message div for streaming tokens into
+        var container = document.getElementById('eva-messages');
+        var div = document.createElement('div');
+        div.className = 'eva-msg eva-msg-assistant';
+        var inner = document.createElement('div');
+        inner.className = 'eva-msg-content';
+        inner.innerHTML = '<strong>Eva</strong><span class="eva-cursor">|</span>';
+        div.appendChild(inner);
+        container.appendChild(div);
+        scrollToBottom();
+        return inner;
+    }
 
     function appendMessage(role, content, isProactive) {
         var container = document.getElementById('eva-messages');

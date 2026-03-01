@@ -129,6 +129,60 @@ def _call_openai_compat(system_prompt, user_prompt, model, temperature, max_toke
 
 
 # ---------------------------------------------------------------------------
+# Streaming LLM Client
+# ---------------------------------------------------------------------------
+def _call_llm_stream(system_prompt, user_prompt, tier="sonnet", temperature=0.3, max_tokens=2000):
+    """
+    Stream LLM response as a generator of text chunks.
+    Yields partial text as it arrives from the API.
+    """
+    model = _get_model(tier)
+
+    if _use_anthropic():
+        yield from _stream_anthropic(system_prompt, user_prompt, model, temperature, max_tokens)
+    else:
+        yield from _stream_openai_compat(system_prompt, user_prompt, model, temperature, max_tokens)
+
+
+def _stream_anthropic(system_prompt, user_prompt, model, temperature, max_tokens):
+    """Stream from Anthropic API."""
+    import anthropic
+    import os
+    client = anthropic.Anthropic(
+        api_key=os.environ.get("ANTHROPIC_API_KEY", getattr(settings, "ANTHROPIC_API_KEY", ""))
+    )
+
+    with client.messages.stream(
+        model=model,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_prompt}],
+    ) as stream:
+        for text in stream.text_stream:
+            yield text
+
+
+def _stream_openai_compat(system_prompt, user_prompt, model, temperature, max_tokens):
+    """Stream from OpenAI-compatible API."""
+    from openai import OpenAI
+    client = OpenAI()
+    response = client.chat.completions.create(
+        model=model,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=temperature,
+        max_tokens=max_tokens,
+        stream=True,
+    )
+    for chunk in response:
+        if chunk.choices and chunk.choices[0].delta.content:
+            yield chunk.choices[0].delta.content
+
+
+# ---------------------------------------------------------------------------
 # Data Hash for Cache Invalidation
 # ---------------------------------------------------------------------------
 def _compute_flag_hash(flag):
