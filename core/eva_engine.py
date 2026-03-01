@@ -874,13 +874,13 @@ def _run_eva_review_background(fy_pk, user_pk):
 
                 EvaFinding.objects.create(
                     eva_review=review,
-                    check_name=check_def["id"],
+                    check_name=check_def["id"][:50],
                     severity=result.get("severity", check_def["severity_default"]),
-                    title=result.get("title", check_def["name"]),
+                    title=(result.get("title", check_def["name"]) or "")[:255],
                     plain_english_explanation=result.get("explanation", ""),
                     recommendation=result.get("recommendation", ""),
-                    legislation_reference=result.get("legislation_reference", ""),
-                    knowledge_brain_citation=kb_citation,
+                    legislation_reference=(result.get("legislation_reference", "") or "")[:255],
+                    knowledge_brain_citation=(kb_citation or "")[:500],
                     confidence=result.get("confidence", "MEDIUM"),
                     status="open",
                 )
@@ -897,12 +897,12 @@ def _run_eva_review_background(fy_pk, user_pk):
                 for flag in relevant_flags:
                     EvaFinding.objects.create(
                         eva_review=review,
-                        check_name=check_def["id"],
+                        check_name=check_def["id"][:50],
                         severity=flag.severity if flag.severity in ("CRITICAL", "ADVISORY") else "ADVISORY",
-                        title=flag.title,
+                        title=(flag.title or "")[:255],
                         plain_english_explanation=flag.description,
                         recommendation=flag.recommended_action or "",
-                        legislation_reference=flag.legislation_ref or "",
+                        legislation_reference=(flag.legislation_ref or "")[:255],
                         knowledge_brain_citation="",
                         confidence="HIGH",
                         status="open",
