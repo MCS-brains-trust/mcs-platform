@@ -1,0 +1,472 @@
+{% extends "core/base.html" %}
+{% load humanize %}
+
+{% block title %}Change of Trustee — {{ entity.entity_name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy }}</a></li>
+            <li class="breadcrumb-item active">Change of Trustee</li>
+        </ol>
+    </nav>
+
+    {% if error %}
+    <div class="alert alert-danger">
+        <i class="bi bi-exclamation-triangle"></i> {{ error }}
+    </div>
+    {% else %}
+
+    <div class="row">
+        {# Left: Wizard Form #}
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-arrow-left-right"></i>
+                        Change of Trustee — 3 Documents
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info small mb-4">
+                        <i class="bi bi-info-circle"></i>
+                        This wizard generates <strong>three documents</strong> in a single run:
+                        Deed of Change of Trustee, Outgoing Trustee Director Resolution, and New Trustee Director Resolution.
+                    </div>
+
+                    {# Step indicator #}
+                    <div class="d-flex justify-content-between mb-4">
+                        <div class="text-center flex-fill" id="step-1-indicator">
+                            <span class="badge bg-primary rounded-pill">1</span>
+                            <small class="d-block mt-1">Trustee Details</small>
+                        </div>
+                        <div class="text-center flex-fill" id="step-2-indicator">
+                            <span class="badge bg-secondary rounded-pill">2</span>
+                            <small class="d-block mt-1">Review</small>
+                        </div>
+                        <div class="text-center flex-fill" id="step-3-indicator">
+                            <span class="badge bg-secondary rounded-pill">3</span>
+                            <small class="d-block mt-1">Disclaimer</small>
+                        </div>
+                        <div class="text-center flex-fill" id="step-4-indicator">
+                            <span class="badge bg-secondary rounded-pill">4</span>
+                            <small class="d-block mt-1">Generate</small>
+                        </div>
+                    </div>
+
+                    {# ============================================================ #}
+                    {# Step 1: Trustee Details — 5 wizard fields                    #}
+                    {# ============================================================ #}
+                    <div id="step-1">
+                        <h6 class="border-bottom pb-2 mb-3">Trustee Details</h6>
+
+                        {# Trust info (read-only) #}
+                        <div class="bg-light rounded p-3 mb-4">
+                            <p class="small fw-bold text-muted mb-2">TRUST</p>
+                            <div class="row g-2">
+                                <div class="col-md-6">
+                                    <span class="small fw-bold">Trust Name:</span>
+                                    <span class="small">{{ entity.entity_name }}</span>
+                                </div>
+                                <div class="col-md-3">
+                                    <span class="small fw-bold">ABN:</span>
+                                    <span class="small">{{ entity.abn }}</span>
+                                </div>
+                                <div class="col-md-3">
+                                    <span class="small fw-bold">Deed Date:</span>
+                                    <span class="small">{{ entity.deed_date|date:"d M Y"|default:"Not set" }}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        {# Field 1: Outgoing Trustee (pre-populated) #}
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">Outgoing Trustee <span class="text-danger">*</span></label>
+                            <select class="form-select form-select-sm" name="outgoing_trustee_entity_id" id="outgoing-trustee-select">
+                                <option value="">— Select outgoing trustee —</option>
+                                {% for e in company_entities %}
+                                <option value="{{ e.pk }}"
+                                        data-name="{{ e.entity_name }}"
+                                        data-acn="{{ e.acn }}"
+                                        {% if outgoing_trustee and e.pk == outgoing_trustee.pk %}selected{% endif %}>
+                                    {{ e.entity_name }}{% if e.acn %} (ACN {{ e.acn }}){% endif %}
+                                </option>
+                                {% endfor %}
+                            </select>
+                            {% if entity.trustee_name %}
+                            <div class="form-text">Current trustee: <strong>{{ entity.trustee_name }}</strong></div>
+                            {% endif %}
+                        </div>
+
+                        {# Field 2: New Trustee #}
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">New Trustee <span class="text-danger">*</span></label>
+                            <select class="form-select form-select-sm" name="new_trustee_entity_id" id="new-trustee-select">
+                                <option value="">— Select new trustee —</option>
+                                {% for e in company_entities %}
+                                <option value="{{ e.pk }}"
+                                        data-name="{{ e.entity_name }}"
+                                        data-acn="{{ e.acn }}">
+                                    {{ e.entity_name }}{% if e.acn %} (ACN {{ e.acn }}){% endif %}
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <div class="form-text">Must be a Company entity. <a href="{% url 'core:entity_create' %}" target="_blank">Create new entity</a> if not in system.</div>
+                        </div>
+
+                        {# Field 3: Deed Execution Date #}
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">Deed Execution Date <span class="text-danger">*</span></label>
+                            <input type="date" class="form-control form-control-sm" name="deed_execution_date"
+                                   id="deed-execution-date" style="max-width: 250px;">
+                        </div>
+
+                        {# Field 4: Meeting Location (conditional) #}
+                        <div class="mb-3" id="meeting-location-section">
+                            <label class="form-label small fw-bold">Meeting Location</label>
+                            <input type="text" class="form-control form-control-sm" name="meeting_location"
+                                   id="meeting-location" placeholder="e.g. Level 1, 123 Collins Street, Melbourne VIC 3000">
+                            <div class="form-text">Required if either trustee has multiple directors.</div>
+                        </div>
+
+                        {# Field 5: Chairperson selections (conditional) #}
+                        <div class="mb-3 d-none" id="outgoing-chairperson-section">
+                            <label class="form-label small fw-bold">Chairperson — Outgoing Trustee Meeting</label>
+                            <select class="form-select form-select-sm" name="outgoing_chairperson" id="outgoing-chairperson">
+                                <option value="">— Select chairperson —</option>
+                            </select>
+                            <div class="form-text">Only shown when outgoing trustee has multiple directors.</div>
+                        </div>
+
+                        <div class="mb-3 d-none" id="new-chairperson-section">
+                            <label class="form-label small fw-bold">Chairperson — New Trustee Meeting</label>
+                            <select class="form-select form-select-sm" name="new_chairperson" id="new-chairperson">
+                                <option value="">— Select chairperson —</option>
+                            </select>
+                            <div class="form-text">Only shown when new trustee has multiple directors.</div>
+                        </div>
+
+                        {# Eva clause pre-population #}
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">Appointment Clause Reference</label>
+                            <input type="text" class="form-control form-control-sm" name="appointment_clause"
+                                   value="{{ clause_data.appointment_clause }}" placeholder="e.g. 25"
+                                   style="max-width: 150px;">
+                            <div class="form-text">
+                                {% if governing_doc %}
+                                Eva will attempt to extract this from the trust deed.
+                                {% else %}
+                                <span class="text-warning">No deed on file — verify clause numbers manually.</span>
+                                {% endif %}
+                            </div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">Retirement Clause Reference</label>
+                            <input type="text" class="form-control form-control-sm" name="retirement_clause"
+                                   value="{{ clause_data.retirement_clause }}" placeholder="e.g. 25"
+                                   style="max-width: 150px;">
+                        </div>
+
+                        {# Reason for change (optional) #}
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">Reason for Change <span class="text-muted">(optional)</span></label>
+                            <textarea class="form-control form-control-sm" name="reason_for_change" rows="2"
+                                      placeholder="e.g. Corporate restructure, retirement of directors"></textarea>
+                        </div>
+
+                        <div class="d-flex justify-content-end mt-3">
+                            <button class="btn btn-primary" onclick="goToStep(2)">
+                                Next: Review <i class="bi bi-arrow-right"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    {# ============================================================ #}
+                    {# Step 2: Review                                               #}
+                    {# ============================================================ #}
+                    <div id="step-2" class="d-none">
+                        <h6 class="border-bottom pb-2 mb-3">Review — 3 Documents Will Be Generated</h6>
+
+                        <div class="table-responsive">
+                            <table class="table table-sm small">
+                                <thead class="table-light">
+                                    <tr><th>#</th><th>Document</th><th>Key Details</th></tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td>1</td>
+                                        <td>Deed of Change of Trustee</td>
+                                        <td id="review-deed-details"></td>
+                                    </tr>
+                                    <tr>
+                                        <td>2</td>
+                                        <td>Outgoing Trustee Director Resolution</td>
+                                        <td id="review-outgoing-details"></td>
+                                    </tr>
+                                    <tr>
+                                        <td>3</td>
+                                        <td>New Trustee Director Resolution</td>
+                                        <td id="review-new-details"></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="d-flex justify-content-between mt-3">
+                            <button class="btn btn-outline-secondary" onclick="goToStep(1)">
+                                <i class="bi bi-arrow-left"></i> Back
+                            </button>
+                            <button class="btn btn-primary" onclick="goToStep(3)">
+                                Next: Disclaimer <i class="bi bi-arrow-right"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    {# ============================================================ #}
+                    {# Step 3: Disclaimer                                           #}
+                    {# ============================================================ #}
+                    <div id="step-3" class="d-none">
+                        <h6 class="border-bottom pb-2 mb-3">Disclaimer</h6>
+                        <div class="alert alert-warning">
+                            <i class="bi bi-exclamation-triangle"></i>
+                            <strong>Important Notice</strong>
+                            <p class="mt-2 mb-0">{{ disclaimer }}</p>
+                        </div>
+                        <div class="form-check mt-3">
+                            <input class="form-check-input" type="checkbox" id="disclaimer-check"
+                                   onchange="document.getElementById('generate-btn').disabled = !this.checked">
+                            <label class="form-check-label" for="disclaimer-check">
+                                I acknowledge and accept the above disclaimer.
+                            </label>
+                        </div>
+
+                        <div class="d-flex justify-content-between mt-3">
+                            <button class="btn btn-outline-secondary" onclick="goToStep(2)">
+                                <i class="bi bi-arrow-left"></i> Back
+                            </button>
+                            <button class="btn btn-success" id="generate-btn" disabled onclick="generateDocument()">
+                                <i class="bi bi-file-earmark-check"></i> Generate 3 Documents
+                            </button>
+                        </div>
+                    </div>
+
+                    {# ============================================================ #}
+                    {# Step 4: Result                                               #}
+                    {# ============================================================ #}
+                    <div id="step-4" class="d-none">
+                        <div class="text-center py-4" id="generating-spinner">
+                            <div class="spinner-border text-primary" role="status"></div>
+                            <p class="mt-2 text-muted">Generating Change of Trustee documents (3 documents)...</p>
+                        </div>
+                        <div class="d-none" id="generation-result">
+                            <div class="text-center py-4">
+                                <i class="bi bi-check-circle-fill text-success" style="font-size: 3rem;"></i>
+                                <h5 class="mt-2">Change of Trustee Documents Generated</h5>
+                                <p class="text-muted small">3 documents saved to Governing Documents tab.</p>
+                            </div>
+                            <div id="doc-download-list" class="mb-3"></div>
+                            <div class="d-flex justify-content-center gap-3">
+                                <button id="fusesign-btn" class="btn btn-outline-success" onclick="sendToFuseSign()">
+                                    <i class="bi bi-pen"></i> Send All to FuseSign
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {# Right sidebar #}
+        <div class="col-lg-4">
+            {% if governing_doc %}
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-file-earmark-lock text-info"></i> Trust Deed</h6>
+                </div>
+                <div class="card-body">
+                    <p class="small text-muted">Eva will extract clause references from this deed:</p>
+                    <p class="small"><strong>{{ governing_doc.original_filename }}</strong></p>
+                    {% if governing_doc.extracted_text %}
+                    <div class="bg-light p-2 rounded" style="max-height: 300px; overflow-y: auto; font-size: 0.75rem;">
+                        <pre class="mb-0" style="white-space: pre-wrap;">{{ governing_doc.extracted_text|truncatechars:2000 }}</pre>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% else %}
+            <div class="card border-warning">
+                <div class="card-body text-center py-4">
+                    <i class="bi bi-exclamation-triangle text-warning" style="font-size: 2rem;"></i>
+                    <p class="mt-2 mb-0 small">No trust deed on file. Clause numbers will default to 25 — verify manually.</p>
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="card mt-3">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-file-earmark-code"></i> Template Info</h6>
+                </div>
+                <div class="card-body small">
+                    <p><strong>Template:</strong> {{ deed_template.name }}</p>
+                    <p><strong>Version:</strong> {{ deed_template.version }}</p>
+                    {% if deed_template.solicitor_approved %}
+                    <p><span class="badge bg-success">Solicitor Approved</span></p>
+                    {% else %}
+                    <p><span class="badge bg-warning text-dark">Not Yet Solicitor Approved</span></p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% endif %}
+</div>
+
+<script>
+const CSRF_TOKEN = '{{ csrf_token }}';
+const GENERATE_URL = '{% url "core:legal_doc_generate" pk=fy.pk doc_type="trust_deed_change_trustee" %}';
+let generatedDocIds = [];
+
+document.addEventListener('DOMContentLoaded', function() {
+    const dateInput = document.getElementById('deed-execution-date');
+    if (!dateInput.value) {
+        dateInput.value = new Date().toISOString().split('T')[0];
+    }
+});
+
+function goToStep(step) {
+    if (step === 2) {
+        if (!validateStep1()) return;
+        populateReview();
+    }
+
+    for (let i = 1; i <= 4; i++) {
+        document.getElementById(`step-${i}`).classList.toggle('d-none', i !== step);
+        const indicator = document.getElementById(`step-${i}-indicator`);
+        const badge = indicator.querySelector('.badge');
+        badge.classList.remove('bg-primary', 'bg-secondary', 'bg-success');
+        badge.classList.add(i < step ? 'bg-success' : (i === step ? 'bg-primary' : 'bg-secondary'));
+    }
+}
+
+function validateStep1() {
+    const outgoing = document.getElementById('outgoing-trustee-select').value;
+    const newTrustee = document.getElementById('new-trustee-select').value;
+    const date = document.getElementById('deed-execution-date').value;
+
+    if (!outgoing) { alert('Please select the outgoing trustee.'); return false; }
+    if (!newTrustee) { alert('Please select the new trustee.'); return false; }
+    if (outgoing === newTrustee) { alert('Outgoing and new trustee cannot be the same entity.'); return false; }
+    if (!date) { alert('Please enter a deed execution date.'); return false; }
+    return true;
+}
+
+function populateReview() {
+    const outSel = document.getElementById('outgoing-trustee-select');
+    const newSel = document.getElementById('new-trustee-select');
+    const outName = outSel.options[outSel.selectedIndex].dataset.name;
+    const newName = newSel.options[newSel.selectedIndex].dataset.name;
+    const date = new Date(document.getElementById('deed-execution-date').value)
+        .toLocaleDateString('en-AU', {day: 'numeric', month: 'long', year: 'numeric'});
+
+    document.getElementById('review-deed-details').textContent =
+        `${outName} → ${newName}, effective ${date}`;
+    document.getElementById('review-outgoing-details').textContent =
+        `Resolution by directors of ${outName} to retire as trustee`;
+    document.getElementById('review-new-details').textContent =
+        `Resolution by directors of ${newName} to accept appointment as trustee`;
+}
+
+function generateDocument() {
+    goToStep(4);
+    const params = {};
+    document.querySelectorAll('input[name], select[name], textarea[name]').forEach(el => {
+        if (el.type === 'radio') {
+            if (el.checked) params[el.name] = el.value;
+        } else if (el.value) {
+            params[el.name] = el.value;
+        }
+    });
+    params.disclaimer_acknowledged = true;
+
+    fetch(GENERATE_URL, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': CSRF_TOKEN,
+        },
+        body: JSON.stringify(params),
+    })
+    .then(r => r.json())
+    .then(data => {
+        document.getElementById('generating-spinner').classList.add('d-none');
+        document.getElementById('generation-result').classList.remove('d-none');
+        if (data.status === 'ok' || data.status === 'partial') {
+            generatedDocIds = data.document_ids || [];
+            const list = document.getElementById('doc-download-list');
+            list.innerHTML = '';
+            (data.documents || []).forEach((doc, i) => {
+                list.innerHTML += `
+                    <div class="d-flex justify-content-between align-items-center border-bottom py-2">
+                        <span class="small">${i+1}. ${doc.label}</span>
+                        <div>
+                            ${doc.docx_url ? `<a href="${doc.docx_url}" class="btn btn-sm btn-outline-primary"><i class="bi bi-file-earmark-word"></i> Word</a>` : ''}
+                            ${doc.pdf_url ? `<a href="${doc.pdf_url}" class="btn btn-sm btn-outline-danger ms-1"><i class="bi bi-file-earmark-pdf"></i> PDF</a>` : ''}
+                        </div>
+                    </div>`;
+            });
+        } else {
+            document.getElementById('generation-result').innerHTML = `
+                <div class="alert alert-danger"><i class="bi bi-x-circle"></i> ${data.error || 'Generation failed.'}</div>
+            `;
+        }
+    })
+    .catch(err => {
+        document.getElementById('generating-spinner').classList.add('d-none');
+        document.getElementById('generation-result').classList.remove('d-none');
+        document.getElementById('generation-result').innerHTML = `
+            <div class="alert alert-danger"><i class="bi bi-x-circle"></i> Error: ${err.message}</div>
+        `;
+    });
+}
+
+function sendToFuseSign() {
+    if (!generatedDocIds.length) return;
+    if (!confirm('Send all 3 documents to FuseSign for electronic signing?')) return;
+
+    const btn = document.getElementById('fusesign-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Sending...';
+
+    // Send each document to FuseSign
+    Promise.all(generatedDocIds.map(id =>
+        fetch(`/legal-docs/${id}/fusesign/`, {
+            method: 'POST',
+            headers: { 'X-CSRFToken': CSRF_TOKEN },
+        }).then(r => r.json())
+    ))
+    .then(results => {
+        const allOk = results.every(r => r.status === 'ok');
+        if (allOk) {
+            btn.innerHTML = '<i class="bi bi-check-circle"></i> All Sent!';
+            btn.classList.remove('btn-outline-success');
+            btn.classList.add('btn-success');
+            alert('All documents sent to FuseSign.');
+        } else {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-pen"></i> Send All to FuseSign';
+            alert('Some documents failed to send. Check the Activity tab for details.');
+        }
+    })
+    .catch(err => {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-pen"></i> Send All to FuseSign';
+        alert('Error: ' + err.message);
+    });
+}
+</script>
+{% endblock %}

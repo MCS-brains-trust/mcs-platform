@@ -1,0 +1,572 @@
+{% extends "core/base.html" %}
+{% load humanize %}
+
+{% block title %}Division 7A Loan Agreement — {{ entity.entity_name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy }}</a></li>
+            <li class="breadcrumb-item active">Division 7A Loan Agreement</li>
+        </ol>
+    </nav>
+
+    {% if error %}
+    <div class="alert alert-danger">
+        <i class="bi bi-exclamation-triangle"></i> {{ error }}
+    </div>
+    {% else %}
+
+    <div class="row">
+        {# Left: Wizard Form #}
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-file-earmark-text"></i>
+                        Generate: Division 7A Loan Agreement
+                    </h5>
+                </div>
+                <div class="card-body">
+                    {# Step indicator #}
+                    <div class="d-flex justify-content-between mb-4">
+                        <div class="text-center flex-fill" id="step-1-indicator">
+                            <span class="badge bg-primary rounded-pill">1</span>
+                            <small class="d-block mt-1">Loan Details</small>
+                        </div>
+                        <div class="text-center flex-fill" id="step-2-indicator">
+                            <span class="badge bg-secondary rounded-pill">2</span>
+                            <small class="d-block mt-1">Review</small>
+                        </div>
+                        <div class="text-center flex-fill" id="step-3-indicator">
+                            <span class="badge bg-secondary rounded-pill">3</span>
+                            <small class="d-block mt-1">Disclaimer</small>
+                        </div>
+                        <div class="text-center flex-fill" id="step-4-indicator">
+                            <span class="badge bg-secondary rounded-pill">4</span>
+                            <small class="d-block mt-1">Generate</small>
+                        </div>
+                    </div>
+
+                    {# ============================================================ #}
+                    {# Step 1: Loan Details — 4 wizard fields                       #}
+                    {# ============================================================ #}
+                    <div id="step-1">
+                        <h6 class="border-bottom pb-2 mb-3">Loan Details</h6>
+
+                        {# Lender info (read-only, from current entity) #}
+                        <div class="bg-light rounded p-3 mb-4">
+                            <p class="small fw-bold text-muted mb-2">LENDER (current entity)</p>
+                            <div class="row g-2">
+                                <div class="col-md-6">
+                                    <span class="small fw-bold">Entity:</span>
+                                    <span class="small">{{ entity.entity_name }}</span>
+                                </div>
+                                <div class="col-md-3">
+                                    <span class="small fw-bold">ACN:</span>
+                                    <span class="small">{{ entity.acn }}</span>
+                                </div>
+                                <div class="col-md-3">
+                                    <span class="small fw-bold">ABN:</span>
+                                    <span class="small">{{ entity.abn }}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        {% if risk_flag_data.loan_amount %}
+                        <div class="alert alert-info small">
+                            <i class="bi bi-info-circle"></i>
+                            <strong>Pre-populated from Risk Flag:</strong>
+                            Loan amount of <strong>${{ risk_flag_data.loan_amount }}</strong>
+                            detected on account {{ risk_flag_data.account_code }} ({{ risk_flag_data.account_name }}).
+                            <input type="hidden" name="risk_flag_id" value="{{ risk_flag_data.risk_flag_id }}">
+                            <input type="hidden" name="loan_amount" value="{{ risk_flag_data.loan_amount }}">
+                        </div>
+                        {% endif %}
+
+                        {# Field 1: Borrower Type #}
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">Borrower Type <span class="text-danger">*</span></label>
+                            <div class="d-flex gap-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="borrower_type"
+                                           id="bt-individual" value="individual" onchange="onBorrowerTypeChange()">
+                                    <label class="form-check-label" for="bt-individual">Individual</label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="borrower_type"
+                                           id="bt-trust" value="trust" onchange="onBorrowerTypeChange()">
+                                    <label class="form-check-label" for="bt-trust">Trust</label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="borrower_type"
+                                           id="bt-company" value="company" onchange="onBorrowerTypeChange()" checked>
+                                    <label class="form-check-label" for="bt-company">Company</label>
+                                </div>
+                            </div>
+                        </div>
+
+                        {# Field 2: Borrower Entity Picker #}
+                        <div class="mb-3" id="borrower-entity-section">
+                            <label class="form-label small fw-bold">Borrower Entity <span class="text-danger">*</span></label>
+                            <select class="form-select form-select-sm" name="borrower_entity_id" id="borrower-entity-select">
+                                <option value="">— Select borrower —</option>
+                                {% for e in related_entities %}
+                                <option value="{{ e.pk }}"
+                                        data-type="{{ e.entity_type }}"
+                                        data-name="{{ e.entity_name }}"
+                                        data-acn="{{ e.acn }}"
+                                        data-trustee="{{ e.trustee_name }}">
+                                    {{ e.entity_name }} ({{ e.get_entity_type_display }})
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <div class="form-text">Entities in the same client group are shown. Use the search below for others.</div>
+                            <div class="input-group input-group-sm mt-2">
+                                <input type="text" class="form-control" id="entity-search-input"
+                                       placeholder="Search all entities...">
+                                <button class="btn btn-outline-secondary" type="button" onclick="searchEntities()">
+                                    <i class="bi bi-search"></i>
+                                </button>
+                            </div>
+                            <div id="entity-search-results" class="list-group mt-1" style="max-height: 200px; overflow-y: auto;"></div>
+                        </div>
+
+                        {# Field 2 (alt): Individual Borrower — shown when borrower_type = individual #}
+                        <div class="mb-3 d-none" id="borrower-individual-section">
+                            <label class="form-label small fw-bold">Borrower (Individual) <span class="text-danger">*</span></label>
+                            <select class="form-select form-select-sm" name="borrower_officer_id" id="borrower-officer-select">
+                                <option value="">— Select individual —</option>
+                                {% for o in officers %}
+                                <option value="{{ o.pk }}" data-name="{{ o.full_name }}">
+                                    {{ o.full_name }} ({{ o.roles_display }})
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <div class="form-text">Directors and shareholders of the lender entity.</div>
+                        </div>
+
+                        {# Field 3: Agreement Date #}
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">Agreement Date <span class="text-danger">*</span></label>
+                            <input type="date" class="form-control form-control-sm" name="agreement_date"
+                                   id="agreement-date" style="max-width: 250px;">
+                        </div>
+
+                        {# Field 4: Loan Security Type #}
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">Loan Security Type</label>
+                            <div class="d-flex gap-3">
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="loan_security_type"
+                                           id="lst-unsecured" value="unsecured" checked>
+                                    <label class="form-check-label" for="lst-unsecured">Unsecured</label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="loan_security_type"
+                                           id="lst-secured" value="secured">
+                                    <label class="form-check-label" for="lst-secured">Secured</label>
+                                </div>
+                            </div>
+                            <div class="form-text">Metadata only — Clause 3 handles both secured and unsecured loans.</div>
+                        </div>
+
+                        <div class="d-flex justify-content-end mt-3">
+                            <button class="btn btn-primary" onclick="goToStep(2)" id="step1-next-btn">
+                                Next: Review <i class="bi bi-arrow-right"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    {# ============================================================ #}
+                    {# Step 2: Review pre-populated data                            #}
+                    {# ============================================================ #}
+                    <div id="step-2" class="d-none">
+                        <h6 class="border-bottom pb-2 mb-3">Review Generated Data</h6>
+                        <p class="text-muted small">Review the data that will be merged into the agreement. Correct any values before proceeding.</p>
+
+                        <div class="row g-3">
+                            <div class="col-12">
+                                <h6 class="text-primary small">Lender Details</h6>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label small fw-bold">Lender Name</label>
+                                <input type="text" class="form-control form-control-sm bg-light" name="lender_entity_name"
+                                       value="{{ entity.entity_name }}" readonly>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label small fw-bold">ACN</label>
+                                <input type="text" class="form-control form-control-sm bg-light" name="lender_acn"
+                                       value="{{ entity.acn }}" readonly>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label small fw-bold">ABN</label>
+                                <input type="text" class="form-control form-control-sm bg-light" name="lender_abn"
+                                       value="{{ entity.abn }}" readonly>
+                            </div>
+
+                            <div class="col-12 mt-3">
+                                <h6 class="text-primary small">Borrower Details</h6>
+                            </div>
+                            <div class="col-md-6" id="review-borrower-name-row">
+                                <label class="form-label small fw-bold">Borrower Name</label>
+                                <input type="text" class="form-control form-control-sm" id="review-borrower-name" name="borrower_display_name" readonly>
+                            </div>
+                            <div class="col-md-3" id="review-borrower-acn-row">
+                                <label class="form-label small fw-bold">Borrower ACN</label>
+                                <input type="text" class="form-control form-control-sm" id="review-borrower-acn" readonly>
+                            </div>
+                            <div class="col-md-3" id="review-borrower-type-row">
+                                <label class="form-label small fw-bold">Type</label>
+                                <input type="text" class="form-control form-control-sm bg-light" id="review-borrower-type" readonly>
+                            </div>
+
+                            <div class="col-12 mt-3">
+                                <h6 class="text-primary small">Agreement Details</h6>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label small fw-bold">Agreement Date</label>
+                                <input type="text" class="form-control form-control-sm bg-light" id="review-agreement-date" readonly>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label small fw-bold">Security Type</label>
+                                <input type="text" class="form-control form-control-sm bg-light" id="review-security-type" readonly>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label small fw-bold">Financial Year</label>
+                                <input type="text" class="form-control form-control-sm bg-light"
+                                       value="{{ fy.start_date|date:'d M Y' }} — {{ fy.end_date|date:'d M Y' }}" readonly>
+                            </div>
+                        </div>
+
+                        <div class="d-flex justify-content-between mt-3">
+                            <button class="btn btn-outline-secondary" onclick="goToStep(1)">
+                                <i class="bi bi-arrow-left"></i> Back
+                            </button>
+                            <button class="btn btn-primary" onclick="goToStep(3)">
+                                Next: Disclaimer <i class="bi bi-arrow-right"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    {# ============================================================ #}
+                    {# Step 3: Disclaimer                                           #}
+                    {# ============================================================ #}
+                    <div id="step-3" class="d-none">
+                        <h6 class="border-bottom pb-2 mb-3">Disclaimer</h6>
+                        <div class="alert alert-warning">
+                            <i class="bi bi-exclamation-triangle"></i>
+                            <strong>Important Notice</strong>
+                            <p class="mt-2 mb-0">{{ disclaimer }}</p>
+                        </div>
+                        <div class="form-check mt-3">
+                            <input class="form-check-input" type="checkbox" id="disclaimer-check"
+                                   onchange="document.getElementById('generate-btn').disabled = !this.checked">
+                            <label class="form-check-label" for="disclaimer-check">
+                                I acknowledge and accept the above disclaimer.
+                            </label>
+                        </div>
+
+                        <div class="d-flex justify-content-between mt-3">
+                            <button class="btn btn-outline-secondary" onclick="goToStep(2)">
+                                <i class="bi bi-arrow-left"></i> Back
+                            </button>
+                            <button class="btn btn-success" id="generate-btn" disabled onclick="generateDocument()">
+                                <i class="bi bi-file-earmark-check"></i> Generate Loan Agreement
+                            </button>
+                        </div>
+                    </div>
+
+                    {# ============================================================ #}
+                    {# Step 4: Result                                               #}
+                    {# ============================================================ #}
+                    <div id="step-4" class="d-none">
+                        <div class="text-center py-4" id="generating-spinner">
+                            <div class="spinner-border text-primary" role="status"></div>
+                            <p class="mt-2 text-muted">Generating Division 7A Loan Agreement...</p>
+                        </div>
+                        <div class="d-none" id="generation-result">
+                            <div class="text-center py-4">
+                                <i class="bi bi-check-circle-fill text-success" style="font-size: 3rem;"></i>
+                                <h5 class="mt-2">Loan Agreement Generated Successfully</h5>
+                                <p class="text-muted small">The document has been saved to the Governing Documents tab as an amendment record.</p>
+                            </div>
+                            <div class="d-flex justify-content-center gap-3">
+                                <a id="download-docx-btn" href="#" class="btn btn-outline-primary">
+                                    <i class="bi bi-file-earmark-word"></i> Download Word
+                                </a>
+                                <a id="download-pdf-btn" href="#" class="btn btn-outline-danger">
+                                    <i class="bi bi-file-earmark-pdf"></i> Download PDF
+                                </a>
+                                <button id="fusesign-btn" class="btn btn-outline-success" onclick="sendToFuseSign()">
+                                    <i class="bi bi-pen"></i> Send to FuseSign
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {# Right sidebar #}
+        <div class="col-lg-4">
+            {% if governing_doc %}
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-file-earmark-lock text-info"></i> Governing Document</h6>
+                </div>
+                <div class="card-body">
+                    <p class="small text-muted">Eva has read the trust deed / constitution for validation:</p>
+                    <p class="small"><strong>{{ governing_doc.original_filename }}</strong></p>
+                    {% if governing_doc.extracted_text %}
+                    <div class="bg-light p-2 rounded" style="max-height: 300px; overflow-y: auto; font-size: 0.75rem;">
+                        <pre class="mb-0" style="white-space: pre-wrap;">{{ governing_doc.extracted_text|truncatechars:2000 }}</pre>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% else %}
+            <div class="card border-warning">
+                <div class="card-body text-center py-4">
+                    <i class="bi bi-exclamation-triangle text-warning" style="font-size: 2rem;"></i>
+                    <p class="mt-2 mb-0 small">No governing document uploaded.</p>
+                </div>
+            </div>
+            {% endif %}
+
+            {# Template info #}
+            <div class="card mt-3">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-file-earmark-code"></i> Template Info</h6>
+                </div>
+                <div class="card-body small">
+                    <p><strong>Template:</strong> {{ template.name }}</p>
+                    <p><strong>Version:</strong> {{ template.version }}</p>
+                    {% if template.solicitor_approved %}
+                    <p><span class="badge bg-success">Solicitor Approved</span></p>
+                    {% else %}
+                    <p><span class="badge bg-warning text-dark">Not Yet Solicitor Approved</span></p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% endif %}
+</div>
+
+<script>
+const CSRF_TOKEN = '{{ csrf_token }}';
+const GENERATE_URL = '{% url "core:legal_doc_generate" pk=fy.pk doc_type="div7a_loan_agreement" %}';
+const ENTITY_SEARCH_URL = '{% url "core:legal_doc_entity_search" %}';
+const FY_START = '{{ fy.start_date|date:"Y-m-d" }}';
+let generatedDocId = null;
+
+// Default agreement date to FY start (loan likely existed from then)
+document.addEventListener('DOMContentLoaded', function() {
+    const dateInput = document.getElementById('agreement-date');
+    if (!dateInput.value) {
+        dateInput.value = new Date().toISOString().split('T')[0];
+    }
+    {% if risk_flag_data.loan_amount %}
+    // If from risk flag, default to FY start date
+    dateInput.value = FY_START;
+    {% endif %}
+});
+
+function onBorrowerTypeChange() {
+    const bt = document.querySelector('input[name="borrower_type"]:checked').value;
+    const entitySection = document.getElementById('borrower-entity-section');
+    const individualSection = document.getElementById('borrower-individual-section');
+
+    if (bt === 'individual') {
+        entitySection.classList.add('d-none');
+        individualSection.classList.remove('d-none');
+    } else {
+        entitySection.classList.remove('d-none');
+        individualSection.classList.add('d-none');
+    }
+}
+
+function searchEntities() {
+    const q = document.getElementById('entity-search-input').value.trim();
+    if (!q) return;
+
+    fetch(`${ENTITY_SEARCH_URL}?q=${encodeURIComponent(q)}&limit=10`)
+    .then(r => r.json())
+    .then(data => {
+        const container = document.getElementById('entity-search-results');
+        container.innerHTML = '';
+        data.results.forEach(e => {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'list-group-item list-group-item-action small py-1';
+            item.textContent = `${e.name} (${e.type}) ${e.acn ? '— ACN ' + e.acn : ''}`;
+            item.onclick = () => {
+                // Add to select if not present
+                const select = document.getElementById('borrower-entity-select');
+                let exists = false;
+                for (let opt of select.options) {
+                    if (opt.value === e.id) { exists = true; opt.selected = true; break; }
+                }
+                if (!exists) {
+                    const opt = new Option(`${e.name} (${e.type})`, e.id);
+                    opt.dataset.name = e.name;
+                    opt.dataset.acn = e.acn;
+                    opt.dataset.type = e.type;
+                    select.add(opt);
+                    opt.selected = true;
+                }
+                container.innerHTML = '';
+                document.getElementById('entity-search-input').value = '';
+            };
+            container.appendChild(item);
+        });
+        if (data.results.length === 0) {
+            container.innerHTML = '<div class="list-group-item small text-muted">No results found.</div>';
+        }
+    });
+}
+
+function goToStep(step) {
+    // Validate before advancing
+    if (step === 2) {
+        if (!validateStep1()) return;
+        populateReview();
+    }
+
+    for (let i = 1; i <= 4; i++) {
+        document.getElementById(`step-${i}`).classList.toggle('d-none', i !== step);
+        const indicator = document.getElementById(`step-${i}-indicator`);
+        const badge = indicator.querySelector('.badge');
+        badge.classList.remove('bg-primary', 'bg-secondary', 'bg-success');
+        badge.classList.add(i < step ? 'bg-success' : (i === step ? 'bg-primary' : 'bg-secondary'));
+    }
+}
+
+function validateStep1() {
+    const bt = document.querySelector('input[name="borrower_type"]:checked');
+    if (!bt) { alert('Please select a borrower type.'); return false; }
+
+    if (bt.value === 'individual') {
+        const sel = document.getElementById('borrower-officer-select');
+        if (!sel.value) { alert('Please select a borrower.'); return false; }
+    } else {
+        const sel = document.getElementById('borrower-entity-select');
+        if (!sel.value) { alert('Please select a borrower entity.'); return false; }
+    }
+
+    const date = document.getElementById('agreement-date').value;
+    if (!date) { alert('Please enter an agreement date.'); return false; }
+
+    return true;
+}
+
+function populateReview() {
+    const bt = document.querySelector('input[name="borrower_type"]:checked').value;
+    document.getElementById('review-borrower-type').value = bt.charAt(0).toUpperCase() + bt.slice(1);
+
+    if (bt === 'individual') {
+        const sel = document.getElementById('borrower-officer-select');
+        const opt = sel.options[sel.selectedIndex];
+        document.getElementById('review-borrower-name').value = opt.dataset.name || opt.textContent.trim();
+        document.getElementById('review-borrower-acn').value = 'N/A';
+        document.getElementById('review-borrower-acn-row').classList.add('d-none');
+    } else {
+        const sel = document.getElementById('borrower-entity-select');
+        const opt = sel.options[sel.selectedIndex];
+        document.getElementById('review-borrower-name').value = opt.dataset.name || opt.textContent.trim();
+        document.getElementById('review-borrower-acn').value = opt.dataset.acn || '';
+        document.getElementById('review-borrower-acn-row').classList.remove('d-none');
+    }
+
+    const date = document.getElementById('agreement-date').value;
+    document.getElementById('review-agreement-date').value = new Date(date).toLocaleDateString('en-AU', {day: 'numeric', month: 'long', year: 'numeric'});
+
+    const security = document.querySelector('input[name="loan_security_type"]:checked').value;
+    document.getElementById('review-security-type').value = security.charAt(0).toUpperCase() + security.slice(1);
+}
+
+function generateDocument() {
+    goToStep(4);
+    const params = {};
+    document.querySelectorAll('input[name], select[name], textarea[name]').forEach(el => {
+        if (el.type === 'radio') {
+            if (el.checked) params[el.name] = el.value;
+        } else if (el.value) {
+            params[el.name] = el.value;
+        }
+    });
+    params.disclaimer_acknowledged = true;
+
+    fetch(GENERATE_URL, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': CSRF_TOKEN,
+        },
+        body: JSON.stringify(params),
+    })
+    .then(r => r.json())
+    .then(data => {
+        document.getElementById('generating-spinner').classList.add('d-none');
+        document.getElementById('generation-result').classList.remove('d-none');
+        if (data.status === 'ok') {
+            generatedDocId = data.document_id;
+            if (data.docx_url) document.getElementById('download-docx-btn').href = data.docx_url;
+            if (data.pdf_url) {
+                document.getElementById('download-pdf-btn').href = data.pdf_url;
+            } else {
+                document.getElementById('download-pdf-btn').classList.add('d-none');
+            }
+        } else {
+            document.getElementById('generation-result').innerHTML = `
+                <div class="alert alert-danger"><i class="bi bi-x-circle"></i> ${data.error || 'Generation failed.'}</div>
+            `;
+        }
+    })
+    .catch(err => {
+        document.getElementById('generating-spinner').classList.add('d-none');
+        document.getElementById('generation-result').classList.remove('d-none');
+        document.getElementById('generation-result').innerHTML = `
+            <div class="alert alert-danger"><i class="bi bi-x-circle"></i> Error: ${err.message}</div>
+        `;
+    });
+}
+
+function sendToFuseSign() {
+    if (!generatedDocId) return;
+    if (!confirm('Send this document to FuseSign for electronic signing?')) return;
+
+    const btn = document.getElementById('fusesign-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Sending...';
+
+    fetch(`/legal-docs/${generatedDocId}/fusesign/`, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': CSRF_TOKEN },
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            btn.innerHTML = '<i class="bi bi-check-circle"></i> Sent!';
+            btn.classList.remove('btn-outline-success');
+            btn.classList.add('btn-success');
+            alert(data.message);
+        } else {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-pen"></i> Send to FuseSign';
+            alert('Error: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(err => {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-pen"></i> Send to FuseSign';
+        alert('Error: ' + err.message);
+    });
+}
+</script>
+{% endblock %}

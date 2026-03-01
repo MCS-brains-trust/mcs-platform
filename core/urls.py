@@ -41,6 +41,7 @@ urlpatterns = [
     path("years/<uuid:pk>/legal-docs/", views_legal_docs.legal_doc_list, name="legal_doc_list"),
     path("legal-docs/<uuid:doc_pk>/download/<str:fmt>/", views_legal_docs.legal_doc_download, name="legal_doc_download"),
     path("legal-docs/<uuid:doc_pk>/fusesign/", views_legal_docs.legal_doc_send_fusesign, name="legal_doc_send_fusesign"),
+    path("api/legal-docs/entity-search/", views_legal_docs.legal_doc_entity_search, name="legal_doc_entity_search"),
 
     # Eva Client Summary
     path("years/<uuid:pk>/client-summary/", views_client_summary.client_summary_view, name="client_summary_view"),

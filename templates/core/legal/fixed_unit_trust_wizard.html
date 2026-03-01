@@ -1,0 +1,630 @@
+{% extends "core/base.html" %}
+{% load humanize %}
+
+{% block title %}Fixed Unit Trust Deed — {{ entity.entity_name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
+            {% if fy %}
+            <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy }}</a></li>
+            {% endif %}
+            <li class="breadcrumb-item active">Fixed Unit Trust Deed</li>
+        </ol>
+    </nav>
+
+    {% if errors %}
+    <div class="alert alert-danger">
+        <i class="bi bi-exclamation-triangle"></i> <strong>Pre-flight Validation Failed</strong>
+        <ul class="mb-0 mt-2">
+            {% for err in errors %}
+            <li>{{ err }}</li>
+            {% endfor %}
+        </ul>
+    </div>
+    {% endif %}
+
+    {% if error %}
+    <div class="alert alert-danger">
+        <i class="bi bi-exclamation-triangle"></i> {{ error }}
+    </div>
+    {% else %}
+
+    <div class="row">
+        {# Left: Wizard Form #}
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-file-earmark-text"></i>
+                        Fixed Unit Trust Deed + Ancillaries — 5 Documents
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info small mb-4">
+                        <i class="bi bi-info-circle"></i>
+                        This wizard generates <strong>five documents</strong>:
+                        Trust Deed, Director Resolution, Unit Applications (per unitholder),
+                        Unit Certificates (per unitholder), and Register of Unitholders.
+                    </div>
+
+                    {# Step indicator #}
+                    <div class="d-flex justify-content-between mb-4">
+                        <div class="text-center flex-fill" id="step-1-indicator">
+                            <span class="badge bg-primary rounded-pill">1</span>
+                            <small class="d-block mt-1">Trust Details</small>
+                        </div>
+                        <div class="text-center flex-fill" id="step-2-indicator">
+                            <span class="badge bg-secondary rounded-pill">2</span>
+                            <small class="d-block mt-1">Unitholders</small>
+                        </div>
+                        <div class="text-center flex-fill" id="step-3-indicator">
+                            <span class="badge bg-secondary rounded-pill">3</span>
+                            <small class="d-block mt-1">Review</small>
+                        </div>
+                        <div class="text-center flex-fill" id="step-4-indicator">
+                            <span class="badge bg-secondary rounded-pill">4</span>
+                            <small class="d-block mt-1">Disclaimer</small>
+                        </div>
+                        <div class="text-center flex-fill" id="step-5-indicator">
+                            <span class="badge bg-secondary rounded-pill">5</span>
+                            <small class="d-block mt-1">Generate</small>
+                        </div>
+                    </div>
+
+                    {# ============================================================ #}
+                    {# Step 1: Trust Details — Fields 1-4                           #}
+                    {# ============================================================ #}
+                    <div id="step-1">
+                        <h6 class="border-bottom pb-2 mb-3">Trust & Trustee Details</h6>
+
+                        {# Field 1: Trust Name #}
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">Trust Name <span class="text-danger">*</span></label>
+                            <input type="text" class="form-control form-control-sm" name="trust_name"
+                                   id="trust-name" value="{{ entity.entity_name }}"
+                                   placeholder="e.g. SOMERSET HOLDING UNIT TRUST">
+                        </div>
+
+                        {# Field 2: Trustee Entity #}
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">Trustee Entity (Company) <span class="text-danger">*</span></label>
+                            <select class="form-select form-select-sm" name="trustee_entity_id" id="trustee-entity-select"
+                                    onchange="onTrusteeChange()">
+                                <option value="">— Select trustee —</option>
+                                {% for e in company_entities %}
+                                <option value="{{ e.pk }}"
+                                        data-name="{{ e.entity_name }}"
+                                        data-acn="{{ e.acn }}"
+                                        data-address="{{ e.registered_address }}"
+                                        data-directors="{{ e.director_count }}"
+                                        {% if current_trustee and e.pk == current_trustee.pk %}selected{% endif %}>
+                                    {{ e.entity_name }}{% if e.acn %} (ACN {{ e.acn }}){% endif %}
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <div id="trustee-director-warning" class="form-text text-danger d-none">
+                                <i class="bi bi-exclamation-triangle"></i> This entity has no directors on record. Add directors before generating.
+                            </div>
+                        </div>
+
+                        {# Field 5: Issue Price Per Unit #}
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-4">
+                                <label class="form-label small fw-bold">Issue Price Per Unit</label>
+                                <div class="input-group input-group-sm">
+                                    <span class="input-group-text">$</span>
+                                    <input type="number" class="form-control" name="issue_price_per_unit"
+                                           value="1.00" step="0.01" min="0.01">
+                                </div>
+                            </div>
+                            {# Field 6: Unit Class #}
+                            <div class="col-md-4">
+                                <label class="form-label small fw-bold">Unit Class</label>
+                                <input type="text" class="form-control form-control-sm" name="unit_class"
+                                       value="Ordinary">
+                            </div>
+                            {# Field 7: Governing State #}
+                            <div class="col-md-4">
+                                <label class="form-label small fw-bold">Governing State</label>
+                                <select class="form-select form-select-sm" name="governing_state" id="governing-state"
+                                        onchange="checkNSWWarning()">
+                                    <option value="VIC" selected>Victoria</option>
+                                    <option value="NSW">New South Wales</option>
+                                    <option value="QLD">Queensland</option>
+                                    <option value="SA">South Australia</option>
+                                    <option value="WA">Western Australia</option>
+                                    <option value="TAS">Tasmania</option>
+                                    <option value="NT">Northern Territory</option>
+                                    <option value="ACT">Australian Capital Territory</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        {# NSW stamp duty warning #}
+                        <div class="alert alert-warning small d-none" id="nsw-warning">
+                            <i class="bi bi-exclamation-triangle"></i>
+                            <strong>NSW Stamp Duty Warning:</strong> Stamp duty may apply to the establishment
+                            of this trust in NSW. Confirm with the client before proceeding.
+                        </div>
+
+                        <div class="d-flex justify-content-end mt-3">
+                            <button class="btn btn-primary" onclick="goToStep(2)">
+                                Next: Unitholders <i class="bi bi-arrow-right"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    {# ============================================================ #}
+                    {# Step 2: Unitholders — Field 3 (multi-entity picker + units)  #}
+                    {# ============================================================ #}
+                    <div id="step-2" class="d-none">
+                        <h6 class="border-bottom pb-2 mb-3">Unitholders</h6>
+                        <p class="text-muted small">Select one or more entities as unitholders and specify the number of units each will hold.</p>
+
+                        {# Add unitholder #}
+                        <div class="row g-2 mb-3">
+                            <div class="col-md-8">
+                                <select class="form-select form-select-sm" id="add-unitholder-select">
+                                    <option value="">— Select entity to add as unitholder —</option>
+                                    {% for e in all_entities %}
+                                    <option value="{{ e.pk }}"
+                                            data-name="{{ e.entity_name }}"
+                                            data-type="{{ e.get_entity_type_display }}"
+                                            data-acn="{{ e.acn }}"
+                                            data-directors="{{ e.director_count }}">
+                                        {{ e.entity_name }} ({{ e.get_entity_type_display }})
+                                    </option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <button class="btn btn-sm btn-outline-primary w-100" onclick="addUnitholder()">
+                                    <i class="bi bi-plus-circle"></i> Add Unitholder
+                                </button>
+                            </div>
+                        </div>
+
+                        {# Unitholder table #}
+                        <table class="table table-sm small" id="unitholders-table">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Entity</th>
+                                    <th>Type</th>
+                                    <th style="width: 120px;">Units</th>
+                                    <th style="width: 50px;"></th>
+                                </tr>
+                            </thead>
+                            <tbody id="unitholders-tbody">
+                                <tr id="no-unitholders-row">
+                                    <td colspan="4" class="text-center text-muted">No unitholders added yet.</td>
+                                </tr>
+                            </tbody>
+                            <tfoot>
+                                <tr class="table-light fw-bold">
+                                    <td colspan="2">Total Units</td>
+                                    <td id="total-units">0</td>
+                                    <td></td>
+                                </tr>
+                            </tfoot>
+                        </table>
+
+                        <div id="unitholder-errors" class="text-danger small d-none"></div>
+
+                        <div class="d-flex justify-content-between mt-3">
+                            <button class="btn btn-outline-secondary" onclick="goToStep(1)">
+                                <i class="bi bi-arrow-left"></i> Back
+                            </button>
+                            <button class="btn btn-primary" onclick="goToStep(3)">
+                                Next: Review <i class="bi bi-arrow-right"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    {# ============================================================ #}
+                    {# Step 3: Review                                               #}
+                    {# ============================================================ #}
+                    <div id="step-3" class="d-none">
+                        <h6 class="border-bottom pb-2 mb-3">Review — 5 Documents Will Be Generated</h6>
+
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-6">
+                                <span class="small fw-bold">Trust Name:</span>
+                                <span class="small" id="review-trust-name"></span>
+                            </div>
+                            <div class="col-md-6">
+                                <span class="small fw-bold">Trustee:</span>
+                                <span class="small" id="review-trustee-name"></span>
+                            </div>
+                            <div class="col-md-4">
+                                <span class="small fw-bold">Unit Class:</span>
+                                <span class="small" id="review-unit-class"></span>
+                            </div>
+                            <div class="col-md-4">
+                                <span class="small fw-bold">Issue Price:</span>
+                                <span class="small" id="review-issue-price"></span>
+                            </div>
+                            <div class="col-md-4">
+                                <span class="small fw-bold">State:</span>
+                                <span class="small" id="review-state"></span>
+                            </div>
+                        </div>
+
+                        <h6 class="small fw-bold mt-3">Unitholders & Unit Ranges</h6>
+                        <table class="table table-sm small">
+                            <thead class="table-light">
+                                <tr><th>Unitholder</th><th>Units</th><th>Range</th><th>Certificate #</th></tr>
+                            </thead>
+                            <tbody id="review-unitholders-tbody"></tbody>
+                        </table>
+
+                        <h6 class="small fw-bold mt-3">Documents to Generate</h6>
+                        <ol class="small">
+                            <li>Fixed Unit Trust Deed</li>
+                            <li>Director Resolution (Acceptance of Trusteeship)</li>
+                            <li>Unit Application(s) — one per unitholder</li>
+                            <li>Unit Certificate(s) — one per unitholder</li>
+                            <li>Register of Unitholders</li>
+                        </ol>
+
+                        <div class="d-flex justify-content-between mt-3">
+                            <button class="btn btn-outline-secondary" onclick="goToStep(2)">
+                                <i class="bi bi-arrow-left"></i> Back
+                            </button>
+                            <button class="btn btn-primary" onclick="goToStep(4)">
+                                Next: Disclaimer <i class="bi bi-arrow-right"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    {# ============================================================ #}
+                    {# Step 4: Disclaimer                                           #}
+                    {# ============================================================ #}
+                    <div id="step-4" class="d-none">
+                        <h6 class="border-bottom pb-2 mb-3">Disclaimer</h6>
+                        <div class="alert alert-warning">
+                            <i class="bi bi-exclamation-triangle"></i>
+                            <strong>Important Notice</strong>
+                            <p class="mt-2 mb-0">{{ disclaimer }}</p>
+                        </div>
+                        <div class="form-check mt-3">
+                            <input class="form-check-input" type="checkbox" id="disclaimer-check"
+                                   onchange="document.getElementById('generate-btn').disabled = !this.checked">
+                            <label class="form-check-label" for="disclaimer-check">
+                                I acknowledge and accept the above disclaimer.
+                            </label>
+                        </div>
+
+                        <div class="d-flex justify-content-between mt-3">
+                            <button class="btn btn-outline-secondary" onclick="goToStep(3)">
+                                <i class="bi bi-arrow-left"></i> Back
+                            </button>
+                            <button class="btn btn-success" id="generate-btn" disabled onclick="generateDocument()">
+                                <i class="bi bi-file-earmark-check"></i> Generate 5 Documents
+                            </button>
+                        </div>
+                    </div>
+
+                    {# ============================================================ #}
+                    {# Step 5: Result                                               #}
+                    {# ============================================================ #}
+                    <div id="step-5" class="d-none">
+                        <div class="text-center py-4" id="generating-spinner">
+                            <div class="spinner-border text-primary" role="status"></div>
+                            <p class="mt-2 text-muted">Generating Fixed Unit Trust documents (5 documents)...</p>
+                        </div>
+                        <div class="d-none" id="generation-result">
+                            <div class="text-center py-4">
+                                <i class="bi bi-check-circle-fill text-success" style="font-size: 3rem;"></i>
+                                <h5 class="mt-2">Fixed Unit Trust Documents Generated</h5>
+                                <p class="text-muted small">Trust deed saved as primary governing document.</p>
+                            </div>
+                            <div id="doc-download-list" class="mb-3"></div>
+                            <div class="d-flex justify-content-center gap-3">
+                                <button id="fusesign-btn" class="btn btn-outline-success" onclick="sendToFuseSign()">
+                                    <i class="bi bi-pen"></i> Send All to FuseSign
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {# Right sidebar #}
+        <div class="col-lg-4">
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-file-earmark-code"></i> Template Info</h6>
+                </div>
+                <div class="card-body small">
+                    <p><strong>Deed Template:</strong> {{ deed_template.name }}</p>
+                    <p><strong>Ancillaries Template:</strong> {{ ancillaries_template.name }}</p>
+                    {% if deed_template.solicitor_approved %}
+                    <p><span class="badge bg-success">Solicitor Approved</span></p>
+                    {% else %}
+                    <p><span class="badge bg-warning text-dark">Not Yet Solicitor Approved</span></p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% endif %}
+</div>
+
+<script>
+const CSRF_TOKEN = '{{ csrf_token }}';
+const GENERATE_URL = '{% url "core:legal_doc_generate" pk=fy.pk doc_type="fixed_unit_trust_deed" %}';
+const TOTAL_STEPS = 5;
+let unitholders = [];
+let generatedDocIds = [];
+
+function checkNSWWarning() {
+    const state = document.getElementById('governing-state').value;
+    document.getElementById('nsw-warning').classList.toggle('d-none', state !== 'NSW');
+}
+
+function onTrusteeChange() {
+    const sel = document.getElementById('trustee-entity-select');
+    const opt = sel.options[sel.selectedIndex];
+    const dirCount = parseInt(opt.dataset.directors || '0');
+    document.getElementById('trustee-director-warning').classList.toggle('d-none', dirCount > 0);
+}
+
+function addUnitholder() {
+    const sel = document.getElementById('add-unitholder-select');
+    const opt = sel.options[sel.selectedIndex];
+    if (!opt.value) return;
+
+    // Check not already added
+    if (unitholders.find(u => u.id === opt.value)) {
+        alert('This entity is already added as a unitholder.');
+        return;
+    }
+
+    const dirCount = parseInt(opt.dataset.directors || '0');
+    const uh = {
+        id: opt.value,
+        name: opt.dataset.name,
+        type: opt.dataset.type,
+        acn: opt.dataset.acn,
+        directors: dirCount,
+        units: 1,
+    };
+    unitholders.push(uh);
+    renderUnitholderTable();
+    sel.value = '';
+}
+
+function removeUnitholder(id) {
+    unitholders = unitholders.filter(u => u.id !== id);
+    renderUnitholderTable();
+}
+
+function updateUnits(id, val) {
+    const uh = unitholders.find(u => u.id === id);
+    if (uh) uh.units = parseInt(val) || 0;
+    updateTotalUnits();
+}
+
+function renderUnitholderTable() {
+    const tbody = document.getElementById('unitholders-tbody');
+    const noRow = document.getElementById('no-unitholders-row');
+
+    if (unitholders.length === 0) {
+        tbody.innerHTML = '<tr id="no-unitholders-row"><td colspan="4" class="text-center text-muted">No unitholders added yet.</td></tr>';
+        updateTotalUnits();
+        return;
+    }
+
+    tbody.innerHTML = '';
+    unitholders.forEach(uh => {
+        const dirWarning = uh.directors === 0 ?
+            '<span class="text-danger ms-1" title="No directors on record"><i class="bi bi-exclamation-triangle"></i></span>' : '';
+        tbody.innerHTML += `
+            <tr>
+                <td>${uh.name}${dirWarning}</td>
+                <td>${uh.type}${uh.acn ? ' — ACN ' + uh.acn : ''}</td>
+                <td><input type="number" class="form-control form-control-sm" value="${uh.units}" min="1"
+                           onchange="updateUnits('${uh.id}', this.value)"></td>
+                <td><button class="btn btn-sm btn-outline-danger" onclick="removeUnitholder('${uh.id}')">
+                    <i class="bi bi-x"></i></button></td>
+            </tr>`;
+    });
+    updateTotalUnits();
+}
+
+function updateTotalUnits() {
+    const total = unitholders.reduce((sum, u) => sum + (u.units || 0), 0);
+    document.getElementById('total-units').textContent = total;
+}
+
+function goToStep(step) {
+    // Validate before advancing
+    if (step === 2) {
+        if (!validateStep1()) return;
+    }
+    if (step === 3) {
+        if (!validateStep2()) return;
+        populateReview();
+    }
+
+    for (let i = 1; i <= TOTAL_STEPS; i++) {
+        document.getElementById(`step-${i}`).classList.toggle('d-none', i !== step);
+        const indicator = document.getElementById(`step-${i}-indicator`);
+        const badge = indicator.querySelector('.badge');
+        badge.classList.remove('bg-primary', 'bg-secondary', 'bg-success');
+        badge.classList.add(i < step ? 'bg-success' : (i === step ? 'bg-primary' : 'bg-secondary'));
+    }
+}
+
+function validateStep1() {
+    const trustName = document.getElementById('trust-name').value.trim();
+    const trustee = document.getElementById('trustee-entity-select').value;
+    if (!trustName) { alert('Please enter the trust name.'); return false; }
+    if (!trustee) { alert('Please select a trustee entity.'); return false; }
+    return true;
+}
+
+function validateStep2() {
+    const errDiv = document.getElementById('unitholder-errors');
+    const errs = [];
+
+    if (unitholders.length === 0) {
+        errs.push('At least one unitholder must be selected.');
+    }
+
+    unitholders.forEach(uh => {
+        if (!uh.units || uh.units <= 0) {
+            errs.push(`${uh.name}: units must be greater than zero.`);
+        }
+        if (uh.directors === 0) {
+            errs.push(`${uh.name}: has no directors on record. Update entity records first.`);
+        }
+    });
+
+    // Check trustee has directors
+    const trusteeSel = document.getElementById('trustee-entity-select');
+    const trusteeOpt = trusteeSel.options[trusteeSel.selectedIndex];
+    if (parseInt(trusteeOpt.dataset.directors || '0') === 0) {
+        errs.push('Trustee entity has no directors on record. Update entity records first.');
+    }
+
+    if (errs.length > 0) {
+        errDiv.innerHTML = errs.map(e => `<div><i class="bi bi-x-circle"></i> ${e}</div>`).join('');
+        errDiv.classList.remove('d-none');
+        return false;
+    }
+    errDiv.classList.add('d-none');
+    return true;
+}
+
+function populateReview() {
+    document.getElementById('review-trust-name').textContent = document.getElementById('trust-name').value;
+    const trusteeSel = document.getElementById('trustee-entity-select');
+    document.getElementById('review-trustee-name').textContent = trusteeSel.options[trusteeSel.selectedIndex].dataset.name;
+    document.getElementById('review-unit-class').textContent = document.querySelector('[name="unit_class"]').value;
+    document.getElementById('review-issue-price').textContent = '$' + parseFloat(document.querySelector('[name="issue_price_per_unit"]').value).toFixed(2);
+    document.getElementById('review-state').textContent = document.getElementById('governing-state').options[document.getElementById('governing-state').selectedIndex].text;
+
+    // Calculate unit ranges
+    const tbody = document.getElementById('review-unitholders-tbody');
+    tbody.innerHTML = '';
+    let cumStart = 1;
+    unitholders.forEach((uh, i) => {
+        const start = cumStart;
+        const end = cumStart + uh.units - 1;
+        cumStart = end + 1;
+        tbody.innerHTML += `
+            <tr>
+                <td>${uh.name}</td>
+                <td>${uh.units}</td>
+                <td>${start} – ${end}</td>
+                <td>${i + 1}</td>
+            </tr>`;
+    });
+}
+
+function generateDocument() {
+    // Move to step 5 (result)
+    for (let i = 1; i <= TOTAL_STEPS; i++) {
+        document.getElementById(`step-${i}`).classList.toggle('d-none', i !== 5);
+        const indicator = document.getElementById(`step-${i}-indicator`);
+        const badge = indicator.querySelector('.badge');
+        badge.classList.remove('bg-primary', 'bg-secondary', 'bg-success');
+        badge.classList.add(i < 5 ? 'bg-success' : (i === 5 ? 'bg-primary' : 'bg-secondary'));
+    }
+
+    // Build params
+    const params = {
+        trust_name: document.getElementById('trust-name').value,
+        trustee_entity_id: document.getElementById('trustee-entity-select').value,
+        unit_class: document.querySelector('[name="unit_class"]').value,
+        issue_price_per_unit: document.querySelector('[name="issue_price_per_unit"]').value,
+        governing_state: document.getElementById('governing-state').value,
+        unitholders: unitholders.map(uh => ({
+            entity_id: uh.id,
+            units: uh.units,
+        })),
+        disclaimer_acknowledged: true,
+    };
+
+    fetch(GENERATE_URL, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': CSRF_TOKEN,
+        },
+        body: JSON.stringify(params),
+    })
+    .then(r => r.json())
+    .then(data => {
+        document.getElementById('generating-spinner').classList.add('d-none');
+        document.getElementById('generation-result').classList.remove('d-none');
+        if (data.status === 'ok' || data.status === 'partial') {
+            generatedDocIds = data.document_ids || [];
+            const list = document.getElementById('doc-download-list');
+            list.innerHTML = '';
+            (data.documents || []).forEach((doc, i) => {
+                list.innerHTML += `
+                    <div class="d-flex justify-content-between align-items-center border-bottom py-2">
+                        <span class="small">${i+1}. ${doc.label}</span>
+                        <div>
+                            ${doc.docx_url ? `<a href="${doc.docx_url}" class="btn btn-sm btn-outline-primary"><i class="bi bi-file-earmark-word"></i> Word</a>` : ''}
+                            ${doc.pdf_url ? `<a href="${doc.pdf_url}" class="btn btn-sm btn-outline-danger ms-1"><i class="bi bi-file-earmark-pdf"></i> PDF</a>` : ''}
+                        </div>
+                    </div>`;
+            });
+        } else {
+            document.getElementById('generation-result').innerHTML = `
+                <div class="alert alert-danger"><i class="bi bi-x-circle"></i> ${data.error || 'Generation failed.'}</div>
+            `;
+        }
+    })
+    .catch(err => {
+        document.getElementById('generating-spinner').classList.add('d-none');
+        document.getElementById('generation-result').classList.remove('d-none');
+        document.getElementById('generation-result').innerHTML = `
+            <div class="alert alert-danger"><i class="bi bi-x-circle"></i> Error: ${err.message}</div>
+        `;
+    });
+}
+
+function sendToFuseSign() {
+    if (!generatedDocIds.length) return;
+    if (!confirm('Send all documents to FuseSign for electronic signing?')) return;
+
+    const btn = document.getElementById('fusesign-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Sending...';
+
+    Promise.all(generatedDocIds.map(id =>
+        fetch(`/legal-docs/${id}/fusesign/`, {
+            method: 'POST',
+            headers: { 'X-CSRFToken': CSRF_TOKEN },
+        }).then(r => r.json())
+    ))
+    .then(results => {
+        const allOk = results.every(r => r.status === 'ok');
+        if (allOk) {
+            btn.innerHTML = '<i class="bi bi-check-circle"></i> All Sent!';
+            btn.classList.remove('btn-outline-success');
+            btn.classList.add('btn-success');
+        } else {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-pen"></i> Send All to FuseSign';
+            alert('Some documents failed to send.');
+        }
+    })
+    .catch(err => {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-pen"></i> Send All to FuseSign';
+        alert('Error: ' + err.message);
+    });
+}
+</script>
+{% endblock %}
