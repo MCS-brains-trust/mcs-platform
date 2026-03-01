@@ -4018,6 +4018,8 @@ class LegalDocumentTemplate(models.Model):
         COMPANY_CONSTITUTION_SPECIAL = "company_constitution_special", "Company Constitution — Special Purpose"
         DISCRETIONARY_TRUST_DEED = "discretionary_trust_deed", "Discretionary Trust Deed"
         UNIT_TRUST_DEED = "unit_trust_deed", "Unit Trust Deed"
+        UNIT_TRUST_DEED_ANCILLARIES = "unit_trust_deed_ancillaries", "Unit Trust Deed \u2014 Ancillary Documents"
+        UNIT_TRANSFER = "unit_transfer", "Unit Transfer Package"
         PARTNERSHIP_AGREEMENT = "partnership_agreement", "Partnership Agreement"
         # Compliance documents
         DIVIDEND_STATEMENT = "dividend_statement", "Dividend Statement"
