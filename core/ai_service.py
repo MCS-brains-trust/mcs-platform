@@ -36,9 +36,9 @@ MODEL_TIERS = {
 
 # When Anthropic API is configured directly, use these:
 ANTHROPIC_MODEL_TIERS = {
-    "haiku": "claude-3-5-haiku-20241022",
-    "sonnet": "claude-3-5-sonnet-20241022",
-    "opus": "claude-3-opus-20240229",
+    "haiku": "claude-haiku-4-5",
+    "sonnet": "claude-sonnet-4-6",
+    "opus": "claude-opus-4-6",
 }
 
 
