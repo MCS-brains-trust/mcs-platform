@@ -214,6 +214,16 @@ def run_preflight_checks(financial_year):
                    else f"{unmapped} account(s) are unmapped. Map them before review.",
     })
 
+    # Check 4: ABN must be recorded
+    entity = fy.entity
+    has_abn = bool(getattr(entity, 'abn', None) and str(entity.abn).strip())
+    checks.append({
+        "name": "ABN recorded",
+        "passed": has_abn,
+        "message": f"ABN: {entity.abn}" if has_abn
+                   else "Entity ABN is not recorded. Add the ABN in entity details before submitting.",
+    })
+
     all_passed = all(c["passed"] for c in checks)
     return {"passed": all_passed, "checks": checks}
 
@@ -613,46 +623,103 @@ def _build_check_context(financial_year, check_id, risk_flags=None):
 EVA_REVIEW_SYSTEM_PROMPT = """You are Eva, the AI Compliance Reviewer for MC & S Accountants.
 You are performing a structured compliance review of a financial year before finalisation.
 
-CRITICAL RULES:
+═══════════════════════════════════════════════════════
+CRITICAL RULES
+═══════════════════════════════════════════════════════
 
 1. CONFIRMED HARD FACTS: If the prompt contains a "CONFIRMED HARD FACTS" section,
    these are mathematically verified by the risk engine. You MUST acknowledge every one.
-   You CANNOT dismiss or contradict them.
+   You CANNOT dismiss or contradict them. Set source to "risk_engine".
 
-2. KNOWLEDGE BRAIN: If provided, cite the specific document title.
+2. KNOWLEDGE BRAIN: If a "KNOWLEDGE BRAIN REFERENCE" section is provided, you MUST
+   cite the specific document title. If no Knowledge Brain material is provided for
+   this check, include this disclosure in remediation_firm_procedure:
+   "No firm-specific procedure found in the Knowledge Brain."
 
 3. ADDITIONAL FINDINGS: You may raise additional findings if clearly supported by
-   evidence in the trial balance data.
+   evidence in the trial balance data. Set source to "eva_analysis".
 
 4. EFFECTIVE BALANCES: Use "Effective" (netted) balances, not raw debit/credit columns.
 
-OUTPUT FORMAT — respond with a JSON object only (no markdown, no code fences):
+5. ONE FINDING PER CHECK: Each check produces at most ONE finding. If an account or
+   issue is primarily covered by another compliance check, do NOT duplicate the full
+   analysis. Instead, include a brief cross-reference in your explanation:
+   "See [other check name] for detailed [topic] analysis. For this check, confirm [specific additional requirement]."
+
+═══════════════════════════════════════════════════════
+SEVERITY CLASSIFICATION
+═══════════════════════════════════════════════════════
+
+CRITICAL: A specific, identifiable compliance exposure that creates financial risk to
+the client, the practice, or both. Requires action before financial statements can be
+signed. Resolution note must describe what action was taken (not just "reviewed" or "noted").
+
+ADVISORY: A matter requiring acknowledgement and documentation, but not blocking
+finalisation. May indicate a disclosure requirement, a best-practice gap, or a matter
+to monitor. Resolution note can be an acknowledgement with documented reasoning.
+
+═══════════════════════════════════════════════════════
+CONFIDENCE LEVELS
+═══════════════════════════════════════════════════════
+
+HIGH: The factual basis is verified from trial balance data and entity records.
+The issue objectively exists. Example: director loan debit balance confirmed from TB.
+
+MEDIUM: Indicators identified from available data, but the conclusion depends on
+information not in the platform. Example: thin capitalisation depends on whether
+entity has foreign dealings, which is not recorded.
+
+LOW: Inferred from patterns; the issue may not exist. Example: contractor payments
+suggest TPAR obligation, but the entity's industry is unconfirmed.
+
+Confidence reflects DATA AVAILABILITY, not issue severity.
+
+═══════════════════════════════════════════════════════
+OUTPUT FORMAT — JSON object only (no markdown, no code fences)
+═══════════════════════════════════════════════════════
 
 {
-  "has_finding": true/false,
-  "title": "Short title, max 12 words",
+  "has_finding": true or false,
+  "title": "Max 12 words",
   "severity": "CRITICAL" or "ADVISORY",
-  "explanation": "2-4 sentences MAX. State the issue, the key account(s)/amount(s), and why it matters.",
-  "recommendation": "1-3 actionable bullet points. Be direct. No preamble.",
-  "legislation_reference": "e.g. 's.109D ITAA 1936' — short citation only",
-  "confidence": "HIGH", "MEDIUM", or "LOW",
-  "source": "risk_engine" or "eva_analysis"
+  "confidence": "HIGH" or "MEDIUM" or "LOW",
+  "source": "risk_engine" or "eva_analysis",
+  "explanation": "2-3 sentences, max 60 words. Lead with the key number, state the issue, name the consequence.",
+  "legislation_reference": "Short citation only, e.g. s.109D ITAA 1936",
+  "remediation_firm_procedure": "How MC&S handles this issue. Cite Knowledge Brain document title if available. If no firm procedure found, state: No firm-specific procedure found in the Knowledge Brain.",
+  "remediation_authority": "Legislative reference, ATO ruling, or professional body guidance that supports the recommended action.",
+  "remediation_fix": "Concrete steps specific to THIS entity: what needs to be done, in what order, by whom, and by when. Use the entity's actual account codes and balances.",
+  "cross_references": ["check_id_1", "check_id_2"]
 }
 
-*** BREVITY IS MANDATORY ***
-- "explanation" must be 2-4 sentences. Do NOT list every account or repeat data the accountant can see.
-- "recommendation" must be 1-3 short action items. Do NOT restate the explanation.
-- "title" must be under 12 words.
-- Do NOT include paragraph-length text in any field.
-- Reference key account codes and amounts but do NOT exhaustively list every variance.
-- If multiple related issues exist, summarise the pattern rather than listing each one.
+═══════════════════════════════════════════════════════
+BREVITY IS MANDATORY
+═══════════════════════════════════════════════════════
 
-Rules:
-1. If confirmed hard facts exist, has_finding MUST be true and source MUST be "risk_engine"
-2. For your own findings, set source to "eva_analysis"
-3. Use Australian tax law and accounting standards
-4. CRITICAL = clear evidence of breach or material risk. ADVISORY = warrants further review.
-5. If no confirmed hard facts AND no issues found, set has_finding to false
+- "explanation" MUST be 2-3 sentences, MAXIMUM 60 words. Write like a senior
+  reviewer's margin note, not an audit memo.
+- Lead with the account and balance, state the issue, name the consequence.
+- Do NOT trace journal entries or calculate percentage movements in the explanation.
+- Do NOT comment on ATO enforcement posture.
+- Do NOT list every variance — summarise the pattern.
+- Do NOT reference more than 3 accounts in a single finding. If more accounts are
+  involved, summarise as "X accounts affected" and name only the top 2-3 by value.
+- Save supporting detail for the remediation sections.
+- Each remediation section should be 2-4 sentences max.
+- "cross_references" lists check IDs (e.g. "div7a", "super_guarantee") where the
+  same account or issue is also relevant. Use this instead of duplicating analysis.
+
+═══════════════════════════════════════════════════════
+ADDITIONAL RULES
+═══════════════════════════════════════════════════════
+
+1. If confirmed hard facts exist, has_finding MUST be true.
+2. Use Australian tax law and accounting standards.
+3. If no confirmed hard facts AND no issues found, set has_finding to false.
+4. The comparative_consistency check should only flag accounts NOT already covered
+   by another specific compliance check. Do not create a roll-up of all variances.
+5. If a finding would reference more than 3 accounts, split the concern or
+   summarise — never list more than 3 specific accounts.
 """
 
 
@@ -776,10 +843,14 @@ def _repair_truncated_json(fragment):
 # ---------------------------------------------------------------------------
 # Run a Single Compliance Check
 # ---------------------------------------------------------------------------
-def _run_single_check(financial_year, check_def, risk_flags=None):
+def _run_single_check(financial_year, check_def, risk_flags=None, prior_findings=None):
     """
     Run a single compliance check using the LLM, with risk engine
     findings injected as confirmed hard facts.
+
+    Args:
+        prior_findings: list of dicts with prior finding titles/check_names
+                        from previous reviews, used for deduplication context.
 
     Returns:
         dict with finding data, or None if no finding
@@ -797,6 +868,22 @@ def _run_single_check(financial_year, check_def, risk_flags=None):
             f"Set has_finding to true and source to 'risk_engine'."
         )
 
+    # If this is a re-run, inject prior findings context for deduplication
+    prior_findings_note = ""
+    if prior_findings:
+        prior_list = "\n".join(
+            f"  - [{pf['severity']}] {pf['title']} (check: {pf['check_name']}, status: {pf['status']})"
+            for pf in prior_findings
+            if pf['check_name'] == check_def['id']
+        )
+        if prior_list:
+            prior_findings_note = (
+                f"\n\nPRIOR FINDINGS FOR THIS CHECK (from previous review):\n{prior_list}\n"
+                f"If the underlying data has NOT changed and the issue persists, you may "
+                f"re-raise it but keep the same title for continuity. If the issue has been "
+                f"resolved (e.g. journal posted, balance cleared), set has_finding to false."
+            )
+
     user_prompt = f"""COMPLIANCE CHECK: {check_def["name"]}
 Description: {check_def["description"]}
 Entity Type: {financial_year.entity.get_entity_type_display()}
@@ -804,7 +891,7 @@ Default Severity: {check_def["severity_default"]}
 
 {context}
 
-Analyse the above data for this specific compliance check and respond with the JSON structure.{hard_facts_note}
+Analyse the above data for this specific compliance check and respond with the JSON structure.{hard_facts_note}{prior_findings_note}
 """
 
     # Determine tier based on override
@@ -818,7 +905,7 @@ Analyse the above data for this specific compliance check and respond with the J
             user_prompt=user_prompt,
             tier=tier,
             temperature=0.1,
-            max_tokens=1500,
+            max_tokens=2000,
         )
 
         result = _parse_llm_json(response_text, check_def["id"])
@@ -964,6 +1051,28 @@ def _run_eva_review_background(fy_pk, user_pk):
 
         findings_created = 0
 
+        # Collect prior findings from previous reviews for deduplication (Issue 7)
+        prior_findings = []
+        try:
+            previous_reviews = EvaReview.objects.filter(
+                financial_year=fy,
+                status__in=["findings_raised", "cleared"],
+            ).exclude(pk=review.pk).order_by("-completed_at")[:1]
+            if previous_reviews:
+                prev_review = previous_reviews[0]
+                prior_findings = list(
+                    prev_review.findings.values(
+                        "check_name", "title", "severity", "status",
+                        "plain_english_explanation",
+                    )
+                )
+                if prior_findings:
+                    review.is_rerun = True
+                    review.save(update_fields=["is_rerun"])
+                    print(f"[Eva] Re-run detected: {len(prior_findings)} prior findings loaded for deduplication", flush=True)
+        except Exception as pf_err:
+            print(f"[Eva] Prior findings lookup error (non-fatal): {pf_err}", flush=True)
+
         for i, check_def in enumerate(applicable_checks):
             _eva_review_tasks[task_key]["current_check"] = check_def["name"]
             _eva_review_tasks[task_key]["completed_checks"] = i
@@ -976,7 +1085,7 @@ def _run_eva_review_background(fy_pk, user_pk):
             relevant_flags = check_flags.get(check_def["id"], [])
 
             try:
-                result = _run_single_check(fy, check_def, risk_flags=relevant_flags)
+                result = _run_single_check(fy, check_def, risk_flags=relevant_flags, prior_findings=prior_findings)
             except Exception as check_err:
                 print(f"[Eva] EXCEPTION in _run_single_check for {check_def['id']}: {check_err}", flush=True)
                 traceback.print_exc()
@@ -1006,19 +1115,32 @@ def _run_eva_review_background(fy_pk, user_pk):
                 if raw_confidence not in ("high", "medium", "low"):
                     raw_confidence = "medium"
 
+                # Build combined recommendation from old field + new remediation_fix
+                recommendation_text = result.get("recommendation", "") or ""
+                remediation_fix = result.get("remediation_fix", "") or ""
+                if remediation_fix and not recommendation_text:
+                    recommendation_text = remediation_fix
+
                 try:
-                    EvaFinding.objects.create(
+                    finding = EvaFinding.objects.create(
                         eva_review=review,
                         check_name=check_def["id"][:50],
                         severity=raw_severity,
                         title=(result.get("title", check_def["name"]) or "")[:255],
                         plain_english_explanation=result.get("explanation", "") or "",
-                        recommendation=result.get("recommendation", "") or "",
+                        recommendation=recommendation_text,
+                        remediation_firm_procedure=result.get("remediation_firm_procedure", "") or "",
+                        remediation_authority=result.get("remediation_authority", "") or "",
+                        remediation_synthesis=remediation_fix,
                         legislation_reference=(result.get("legislation_reference", "") or "")[:255],
                         knowledge_brain_citation=(kb_citation or "")[:500],
                         confidence=raw_confidence,
                         status="open",
                     )
+                    # Store cross-references for post-processing
+                    cross_refs = result.get("cross_references", []) or []
+                    if cross_refs:
+                        finding._cross_ref_check_ids = cross_refs
                     findings_created += 1
                     _eva_review_tasks[task_key]["findings_count"] = findings_created
                     review.raw_response = {"progress": _eva_review_tasks[task_key]}
@@ -1057,6 +1179,24 @@ def _run_eva_review_background(fy_pk, user_pk):
                     except Exception as save_err:
                         print(f"[Eva] EXCEPTION saving risk flag finding for {check_def['id']}: {save_err}", flush=True)
                         traceback.print_exc()
+
+        # ── STEP 3: Post-processing — link cross-references ─────
+        print(f"[Eva] Post-processing: linking cross-references...", flush=True)
+        try:
+            all_findings = list(review.findings.all())
+            # Build a map of check_name -> finding for cross-referencing
+            finding_by_check = {f.check_name: f for f in all_findings}
+
+            for f in all_findings:
+                cross_ref_ids = getattr(f, '_cross_ref_check_ids', [])
+                if cross_ref_ids:
+                    for ref_check_id in cross_ref_ids:
+                        related = finding_by_check.get(ref_check_id)
+                        if related and related.pk != f.pk:
+                            f.related_findings.add(related)
+                            print(f"[Eva] Linked {f.check_name} <-> {ref_check_id}", flush=True)
+        except Exception as link_err:
+            print(f"[Eva] Cross-reference linking error (non-fatal): {link_err}", flush=True)
 
         # Update review status
         print(f"[Eva] All checks complete. Findings created: {findings_created}. Saving review...", flush=True)
@@ -1294,7 +1434,13 @@ def eva_review_detail(request, pk):
         return JsonResponse({"status": "not_started", "findings": []})
 
     findings = []
-    for f in review.findings.select_related("resolved_by").all():
+    for f in review.findings.select_related("resolved_by").prefetch_related("related_findings").all():
+        # Build related findings list
+        related = [
+            {"id": str(rf.pk), "check_name": rf.check_name, "title": rf.title}
+            for rf in f.related_findings.all()
+        ]
+
         findings.append({
             "id": str(f.pk),
             "check_name": f.check_name,
@@ -1302,6 +1448,9 @@ def eva_review_detail(request, pk):
             "title": f.title,
             "explanation": f.plain_english_explanation,
             "recommendation": f.recommendation,
+            "remediation_firm_procedure": f.remediation_firm_procedure,
+            "remediation_authority": f.remediation_authority,
+            "remediation_synthesis": f.remediation_synthesis,
             "legislation_reference": f.legislation_reference,
             "knowledge_brain_citation": f.knowledge_brain_citation,
             "confidence": f.confidence,
@@ -1309,6 +1458,7 @@ def eva_review_detail(request, pk):
             "resolution_note": f.resolution_note,
             "resolved_by": f.resolved_by.get_full_name() if f.resolved_by else None,
             "resolved_at": f.resolved_at.isoformat() if f.resolved_at else None,
+            "related_findings": related,
         })
 
     return JsonResponse({

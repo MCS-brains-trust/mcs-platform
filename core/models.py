@@ -3373,6 +3373,12 @@ class EvaFinding(models.Model):
     )
     resolved_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    related_findings = models.ManyToManyField(
+        "self",
+        blank=True,
+        symmetrical=True,
+        help_text="Other findings in this review that cover overlapping issues",
+    )
 
     class Meta:
         ordering = ["severity", "check_name"]
