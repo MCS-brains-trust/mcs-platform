@@ -4069,6 +4069,7 @@ class LegalDocument(models.Model):
 
     class Status(models.TextChoices):
         DRAFT = "draft", "Draft"
+        GENERATED = "generated", "Generated"
         FINAL = "final", "Final"
         EXECUTED = "executed", "Executed"
 
@@ -4093,7 +4094,15 @@ class LegalDocument(models.Model):
     document_type = models.CharField(
         max_length=50, choices=LegalDocumentTemplate.DocumentType.choices,
     )
+    title = models.CharField(
+        max_length=255, blank=True, default="",
+        help_text="Human-readable document title",
+    )
     version = models.PositiveIntegerField(default=1)
+    context_data = models.JSONField(
+        default=dict, blank=True,
+        help_text="Structured context data used for rendering",
+    )
     status = models.CharField(
         max_length=10, choices=Status.choices, default=Status.DRAFT,
     )

@@ -33,7 +33,7 @@ def dividend_wizard(request, pk):
     shareholders = EntityOfficer.objects.filter(
         entity=entity,
         role__in=["director", "shareholder", "director_shareholder"],
-    ).order_by("name")
+    ).order_by("full_name")
 
     total_shares = entity.total_shares_on_issue or sum(
         s.shares_held or 0 for s in shareholders
@@ -158,10 +158,10 @@ def generate_solvency_resolution(request, pk):
     )
 
     context = {
-        "entity_name": entity.name,
+        "entity_name": entity.entity_name,
         "acn": entity.acn or "",
         "abn": entity.abn or "",
-        "directors": [{"name": d.name} for d in directors],
+        "directors": [{"name": d.full_name} for d in directors],
         "financial_year_end": str(fy.end_date),
         "resolution_date": str(fy.end_date),
     }
@@ -170,7 +170,7 @@ def generate_solvency_resolution(request, pk):
         financial_year=fy,
         entity=entity,
         document_type="solvency_resolution",
-        title=f"Solvency Resolution — {entity.name} — {fy.end_date.year}",
+        title=f"Solvency Resolution — {entity.entity_name} — {fy.end_date.year}",
         context_data=context,
         generated_by=request.user,
         status="generated",
@@ -213,19 +213,19 @@ def generate_directors_declaration(request, pk):
     )
 
     context = {
-        "entity_name": entity.name,
+        "entity_name": entity.entity_name,
         "acn": entity.acn or "",
         "variant": variant,
-        "directors": [{"name": d.name} for d in directors],
+        "directors": [{"name": d.full_name} for d in directors],
         "financial_year_end": str(fy.end_date),
-        "signing_director": directors.first().name if directors.exists() else "",
+        "signing_director": directors.first().full_name if directors.exists() else "",
     }
 
     doc = LegalDocument.objects.create(
         financial_year=fy,
         entity=entity,
         document_type="directors_declaration",
-        title=f"Director's Declaration — {entity.name} — {fy.end_date.year}",
+        title=f"Director's Declaration — {entity.entity_name} — {fy.end_date.year}",
         context_data=context,
         generated_by=request.user,
         status="generated",
@@ -299,7 +299,7 @@ def directors_report_draft_with_eva(request, pk):
             "You are Eva, the AI assistant for MC & S Chartered Accountants. "
             "You are drafting a section of a Director's Report under the Corporations Act 2001 (Cth). "
             "Write professionally and concisely. Use Australian accounting terminology. "
-            f"The company is {entity.name} (ACN: {entity.acn or 'N/A'})."
+            f"The company is {entity.entity_name} (ACN: {entity.acn or 'N/A'})."
         )
 
         user_prompt = f"{prompt_text}\n\n"
@@ -340,7 +340,7 @@ def generate_loan_acknowledgment(request, pk):
         return JsonResponse({"status": "error", "error": "Invalid JSON"}, status=400)
 
     context = {
-        "entity_name": entity.name,
+        "entity_name": entity.entity_name,
         "acn": entity.acn or "",
         "abn": entity.abn or "",
         "shareholder_name": data.get("shareholder_name", ""),
@@ -354,7 +354,7 @@ def generate_loan_acknowledgment(request, pk):
         financial_year=fy,
         entity=entity,
         document_type="shareholder_loan_acknowledgment",
-        title=f"Loan Acknowledgment — {data.get('shareholder_name', 'Unknown')} — {entity.name}",
+        title=f"Loan Acknowledgment — {data.get('shareholder_name', 'Unknown')} — {entity.entity_name}",
         context_data=context,
         generated_by=request.user,
         status="generated",
@@ -383,19 +383,19 @@ def generate_management_rep_letter(request, pk):
     )
 
     context = {
-        "entity_name": entity.name,
+        "entity_name": entity.entity_name,
         "entity_type": entity.entity_type,
         "abn": entity.abn or "",
         "acn": entity.acn or "",
         "financial_year_end": str(fy.end_date),
-        "signatories": [{"name": d.name, "role": d.get_role_display()} for d in directors],
+        "signatories": [{"name": d.full_name, "role": d.get_role_display()} for d in directors],
     }
 
     doc = LegalDocument.objects.create(
         financial_year=fy,
         entity=entity,
         document_type="management_representation_letter",
-        title=f"Management Representation Letter — {entity.name} — {fy.end_date.year}",
+        title=f"Management Representation Letter — {entity.entity_name} — {fy.end_date.year}",
         context_data=context,
         generated_by=request.user,
         status="generated",
@@ -434,10 +434,10 @@ def generate_cover_letter(request, pk):
     from core.models import Document
     fs_docs = Document.objects.filter(financial_year=fy).exists()
     if fs_docs:
-        enclosed_list.insert(0, {"type": "Financial Statements", "title": f"Financial Statements — {entity.name}"})
+        enclosed_list.insert(0, {"type": "Financial Statements", "title": f"Financial Statements — {entity.entity_name}"})
 
     context = {
-        "entity_name": entity.name,
+        "entity_name": entity.entity_name,
         "entity_type": entity.entity_type,
         "abn": entity.abn or "",
         "financial_year_end": str(fy.end_date),
@@ -450,7 +450,7 @@ def generate_cover_letter(request, pk):
         financial_year=fy,
         entity=entity,
         document_type="cover_letter",
-        title=f"Cover Letter — {entity.name} — {fy.end_date.year}",
+        title=f"Cover Letter — {entity.entity_name} — {fy.end_date.year}",
         context_data=context,
         generated_by=request.user,
         status="generated",

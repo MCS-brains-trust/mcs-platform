@@ -170,4 +170,189 @@ class GoverningDocumentAdmin(admin.ModelAdmin):
     readonly_fields = ("uploaded_at",)
 
 
+# ---------------------------------------------------------------------------
+# Phase 1-14 Models
+# ---------------------------------------------------------------------------
+from .models import (
+    ActivityLog, RiskRule, RiskFlag, EntityRelationship,
+    BulkJournalUpload, BASPeriod,
+    EvaReview, EvaFinding, KnowledgeDocument, KnowledgeChunk,
+    EvaConversation, EvaMessage, EvaTrustPlanningSession,
+    TrustWorkspace, BeneficiaryProfile, DistributionScenario,
+    Section100AAssessment, TrustElectionRecord,
+    EvaClientSummary, DividendEvent, DividendShareholderAllocation,
+    EngagementLetterConfig,
+)
+
+
+@admin.register(ActivityLog)
+class ActivityLogAdmin(admin.ModelAdmin):
+    list_display = ("financial_year", "entity", "user", "action", "created_at")
+    list_filter = ("action",)
+    search_fields = ("description", "entity__entity_name")
+    readonly_fields = ("created_at",)
+
+
+@admin.register(RiskRule)
+class RiskRuleAdmin(admin.ModelAdmin):
+    list_display = ("rule_id", "name", "tier", "category", "is_active")
+    list_filter = ("tier", "category", "is_active")
+    search_fields = ("rule_id", "name")
+
+
+@admin.register(RiskFlag)
+class RiskFlagAdmin(admin.ModelAdmin):
+    list_display = ("financial_year", "rule", "severity", "status", "created_at")
+    list_filter = ("severity", "status")
+    search_fields = ("financial_year__entity__entity_name",)
+    readonly_fields = ("created_at",)
+
+
+@admin.register(EntityRelationship)
+class EntityRelationshipAdmin(admin.ModelAdmin):
+    list_display = ("from_entity", "to_entity", "relationship_type", "ownership_percentage")
+    list_filter = ("relationship_type",)
+    search_fields = ("from_entity__entity_name", "to_entity__entity_name")
+
+
+@admin.register(BulkJournalUpload)
+class BulkJournalUploadAdmin(admin.ModelAdmin):
+    list_display = ("financial_year", "status", "total_rows", "processed_rows", "uploaded_by", "created_at")
+    list_filter = ("status",)
+    readonly_fields = ("created_at",)
+
+
+@admin.register(BASPeriod)
+class BASPeriodAdmin(admin.ModelAdmin):
+    list_display = ("financial_year", "period_type", "period_start", "period_end", "status")
+    list_filter = ("period_type", "status")
+    search_fields = ("financial_year__entity__entity_name",)
+
+
+# --- Eva AI Models ---
+
+@admin.register(EvaReview)
+class EvaReviewAdmin(admin.ModelAdmin):
+    list_display = ("financial_year", "status", "triggered_by", "started_at", "completed_at")
+    list_filter = ("status",)
+    search_fields = ("financial_year__entity__entity_name",)
+    readonly_fields = ("started_at", "completed_at")
+
+
+@admin.register(EvaFinding)
+class EvaFindingAdmin(admin.ModelAdmin):
+    list_display = ("review", "check_id", "severity", "status", "created_at")
+    list_filter = ("severity", "status", "check_id")
+    search_fields = ("title", "explanation")
+    readonly_fields = ("created_at",)
+
+
+@admin.register(KnowledgeDocument)
+class KnowledgeDocumentAdmin(admin.ModelAdmin):
+    list_display = ("title", "category", "source_type", "status", "last_synced_at")
+    list_filter = ("category", "source_type", "status")
+    search_fields = ("title", "source_path")
+    readonly_fields = ("last_synced_at",)
+
+
+@admin.register(KnowledgeChunk)
+class KnowledgeChunkAdmin(admin.ModelAdmin):
+    list_display = ("document", "chunk_index", "token_count", "created_at")
+    search_fields = ("text",)
+    readonly_fields = ("created_at",)
+
+
+@admin.register(EvaConversation)
+class EvaConversationAdmin(admin.ModelAdmin):
+    list_display = ("financial_year", "user", "interaction_type", "created_at")
+    list_filter = ("interaction_type",)
+    search_fields = ("financial_year__entity__entity_name",)
+    readonly_fields = ("created_at",)
+
+
+@admin.register(EvaMessage)
+class EvaMessageAdmin(admin.ModelAdmin):
+    list_display = ("conversation", "role", "model_used", "created_at")
+    list_filter = ("role", "model_used")
+    readonly_fields = ("created_at",)
+
+
+@admin.register(EvaTrustPlanningSession)
+class EvaTrustPlanningSessionAdmin(admin.ModelAdmin):
+    list_display = ("financial_year", "status", "created_at")
+    list_filter = ("status",)
+    readonly_fields = ("created_at",)
+
+
+# --- Trust Distribution Tab Models ---
+
+@admin.register(TrustWorkspace)
+class TrustWorkspaceAdmin(admin.ModelAdmin):
+    list_display = ("financial_year", "current_stage", "overall_100a_risk", "created_at")
+    list_filter = ("current_stage", "overall_100a_risk")
+    search_fields = ("financial_year__entity__entity_name",)
+    readonly_fields = ("created_at",)
+
+
+@admin.register(BeneficiaryProfile)
+class BeneficiaryProfileAdmin(admin.ModelAdmin):
+    list_display = ("workspace", "officer", "beneficiary_type", "estimated_taxable_income", "marginal_rate")
+    list_filter = ("beneficiary_type",)
+
+
+@admin.register(DistributionScenario)
+class DistributionScenarioAdmin(admin.ModelAdmin):
+    list_display = ("workspace", "name", "total_tax", "is_confirmed", "created_at")
+    list_filter = ("is_confirmed",)
+    readonly_fields = ("created_at",)
+
+
+@admin.register(Section100AAssessment)
+class Section100AAssessmentAdmin(admin.ModelAdmin):
+    list_display = ("workspace", "beneficiary_profile", "risk_rating", "reviewed_by")
+    list_filter = ("risk_rating",)
+
+
+@admin.register(TrustElectionRecord)
+class TrustElectionRecordAdmin(admin.ModelAdmin):
+    list_display = ("workspace", "election_type", "status", "confirmed_by")
+    list_filter = ("election_type", "status")
+
+
+# --- Compliance Document Models ---
+
+@admin.register(EvaClientSummary)
+class EvaClientSummaryAdmin(admin.ModelAdmin):
+    list_display = ("financial_year", "format_type", "version", "generated_at")
+    list_filter = ("format_type",)
+    search_fields = ("financial_year__entity__entity_name",)
+    readonly_fields = ("generated_at",)
+
+
+class DividendShareholderAllocationInline(admin.TabularInline):
+    model = DividendShareholderAllocation
+    extra = 0
+
+
+@admin.register(DividendEvent)
+class DividendEventAdmin(admin.ModelAdmin):
+    list_display = ("financial_year", "dividend_type", "total_amount", "franking_percentage", "declaration_date", "payment_date")
+    list_filter = ("dividend_type",)
+    search_fields = ("financial_year__entity__entity_name",)
+    inlines = [DividendShareholderAllocationInline]
+
+
+@admin.register(DividendShareholderAllocation)
+class DividendShareholderAllocationAdmin(admin.ModelAdmin):
+    list_display = ("dividend_event", "shareholder", "shares_held", "amount", "franking_credit")
+
+
+@admin.register(EngagementLetterConfig)
+class EngagementLetterConfigAdmin(admin.ModelAdmin):
+    list_display = ("entity", "services_scope", "fee_basis", "last_generated_at")
+    list_filter = ("fee_basis",)
+    search_fields = ("entity__entity_name",)
+    readonly_fields = ("last_generated_at",)
+
+
 from . import admin_office_admin  # noqa: F401
