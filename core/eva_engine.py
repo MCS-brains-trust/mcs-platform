@@ -19,6 +19,7 @@ Architecture (v2.0 — KB v2 spec):
 """
 import json
 import logging
+import re
 import time
 import threading
 from decimal import Decimal
@@ -655,6 +656,123 @@ Rules:
 
 
 # ---------------------------------------------------------------------------
+# Robust JSON Extraction from LLM Responses
+# ---------------------------------------------------------------------------
+def _parse_llm_json(response_text, check_id="unknown"):
+    """
+    Parse JSON from an LLM response with multiple fallback strategies:
+      1. Direct parse after stripping markdown fences
+      2. Regex extraction of the first JSON object
+      3. Truncation repair — close open strings and braces
+
+    Raises json.JSONDecodeError only if ALL strategies fail.
+    """
+    # Strategy 1: Strip markdown fences and parse directly
+    cleaned = response_text.strip()
+    if cleaned.startswith("```"):
+        # Remove opening fence (possibly with language tag like ```json)
+        cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3]
+    cleaned = cleaned.strip()
+
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+
+    # Strategy 2: Regex — extract the first { ... } block
+    match = re.search(r'\{[\s\S]*\}', cleaned)
+    if match:
+        try:
+            return json.loads(match.group(0))
+        except json.JSONDecodeError:
+            pass
+
+    # Strategy 3: Truncation repair — the response was cut off mid-JSON
+    # Find the opening brace and attempt to close the JSON
+    brace_start = cleaned.find("{")
+    if brace_start >= 0:
+        fragment = cleaned[brace_start:]
+        repaired = _repair_truncated_json(fragment)
+        if repaired:
+            try:
+                result = json.loads(repaired)
+                logger.info(f"Eva check {check_id}: recovered truncated JSON via repair")
+                return result
+            except json.JSONDecodeError:
+                pass
+
+    # All strategies failed — raise so the caller's except block handles it
+    raise json.JSONDecodeError(
+        f"All JSON parse strategies failed for check {check_id}",
+        cleaned[:200], 0,
+    )
+
+
+def _repair_truncated_json(fragment):
+    """
+    Attempt to repair a truncated JSON object by:
+      1. Closing any open string (find last unescaped quote state)
+      2. Closing open braces/brackets
+      3. Returning the repaired string
+
+    Returns the repaired JSON string or None if repair seems hopeless.
+    """
+    # Must start with {
+    if not fragment.strip().startswith("{"):
+        return None
+
+    # Walk through to determine open/close state
+    in_string = False
+    escape_next = False
+    brace_depth = 0
+    bracket_depth = 0
+    last_good = 0
+
+    for i, ch in enumerate(fragment):
+        if escape_next:
+            escape_next = False
+            continue
+        if ch == "\\" and in_string:
+            escape_next = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        # Outside string
+        if ch == "{":
+            brace_depth += 1
+        elif ch == "}":
+            brace_depth -= 1
+        elif ch == "[":
+            bracket_depth += 1
+        elif ch == "]":
+            bracket_depth -= 1
+
+        if brace_depth == 0 and bracket_depth == 0:
+            # Fully closed — shouldn't be truncated, but let's try
+            return fragment[:i + 1]
+
+    # If we're here, the JSON is truncated. Try to close it.
+    repaired = fragment
+
+    # Close open string
+    if in_string:
+        repaired += '"'
+
+    # Close open brackets then braces
+    for _ in range(bracket_depth):
+        repaired += "]"
+    for _ in range(brace_depth):
+        repaired += "}"
+
+    return repaired
+
+
+# ---------------------------------------------------------------------------
 # Run a Single Compliance Check
 # ---------------------------------------------------------------------------
 def _run_single_check(financial_year, check_def, risk_flags=None):
@@ -699,19 +817,10 @@ Analyse the above data for this specific compliance check and respond with the J
             user_prompt=user_prompt,
             tier=tier,
             temperature=0.1,
-            max_tokens=1000,
+            max_tokens=4096,
         )
 
-        # Parse JSON response
-        # Strip markdown code fences if present
-        cleaned = response_text.strip()
-        if cleaned.startswith("```"):
-            cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
-        if cleaned.endswith("```"):
-            cleaned = cleaned[:-3]
-        cleaned = cleaned.strip()
-
-        result = json.loads(cleaned)
+        result = _parse_llm_json(response_text, check_def["id"])
         result["check_id"] = check_def["id"]
         result["check_name"] = check_def["name"]
         result["model_used"] = tier
