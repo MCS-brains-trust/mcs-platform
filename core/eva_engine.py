@@ -20,7 +20,9 @@ Architecture (v2.0 — KB v2 spec):
 import json
 import logging
 import re
+import sys
 import time
+import traceback
 import threading
 from decimal import Decimal
 
@@ -961,11 +963,19 @@ def _run_eva_review_background(fy_pk, user_pk):
         for i, check_def in enumerate(applicable_checks):
             _eva_review_tasks[task_key]["current_check"] = check_def["name"]
             _eva_review_tasks[task_key]["completed_checks"] = i
+            print(f"[Eva] Starting check {i+1}/{len(applicable_checks)}: {check_def['id']}", flush=True)
 
             # Get risk engine flags relevant to this check
             relevant_flags = check_flags.get(check_def["id"], [])
 
-            result = _run_single_check(fy, check_def, risk_flags=relevant_flags)
+            try:
+                result = _run_single_check(fy, check_def, risk_flags=relevant_flags)
+            except Exception as check_err:
+                print(f"[Eva] EXCEPTION in _run_single_check for {check_def['id']}: {check_err}", flush=True)
+                traceback.print_exc()
+                result = None
+
+            print(f"[Eva] Check {check_def['id']} result: has_finding={result.get('has_finding') if result else 'None'}, error={result.get('error', 'none') if result else 'N/A'}", flush=True)
 
             if result and result.get("has_finding"):
                 # Retrieve Knowledge Brain citation if available
@@ -981,45 +991,64 @@ def _run_eva_review_background(fy_pk, user_pk):
                 except Exception:
                     pass
 
-                EvaFinding.objects.create(
-                    eva_review=review,
-                    check_name=check_def["id"][:50],
-                    severity=result.get("severity", check_def["severity_default"]),
-                    title=(result.get("title", check_def["name"]) or "")[:255],
-                    plain_english_explanation=result.get("explanation", ""),
-                    recommendation=result.get("recommendation", ""),
-                    legislation_reference=(result.get("legislation_reference", "") or "")[:255],
-                    knowledge_brain_citation=(kb_citation or "")[:500],
-                    confidence=result.get("confidence", "MEDIUM"),
-                    status="open",
-                )
-                findings_created += 1
-                _eva_review_tasks[task_key]["findings_count"] = findings_created
+                # Normalise severity and confidence to lowercase (model choices are lowercase)
+                raw_severity = (result.get("severity", check_def["severity_default"]) or "advisory").lower()
+                if raw_severity not in ("critical", "advisory"):
+                    raw_severity = "advisory"
+                raw_confidence = (result.get("confidence", "medium") or "medium").lower()
+                if raw_confidence not in ("high", "medium", "low"):
+                    raw_confidence = "medium"
 
-            # If the LLM didn't raise a finding but there ARE confirmed hard facts,
-            # create findings directly from the risk engine flags
-            elif relevant_flags and not (result and result.get("has_finding")):
-                logger.warning(
-                    f"LLM missed confirmed hard facts for {check_def['id']}. "
-                    f"Creating findings directly from risk engine."
-                )
-                for flag in relevant_flags:
+                try:
                     EvaFinding.objects.create(
                         eva_review=review,
                         check_name=check_def["id"][:50],
-                        severity=flag.severity if flag.severity in ("CRITICAL", "ADVISORY") else "ADVISORY",
-                        title=(flag.title or "")[:255],
-                        plain_english_explanation=flag.description,
-                        recommendation=flag.recommended_action or "",
-                        legislation_reference=(flag.legislation_ref or "")[:255],
-                        knowledge_brain_citation="",
-                        confidence="HIGH",
+                        severity=raw_severity,
+                        title=(result.get("title", check_def["name"]) or "")[:255],
+                        plain_english_explanation=result.get("explanation", "") or "",
+                        recommendation=result.get("recommendation", "") or "",
+                        legislation_reference=(result.get("legislation_reference", "") or "")[:255],
+                        knowledge_brain_citation=(kb_citation or "")[:500],
+                        confidence=raw_confidence,
                         status="open",
                     )
                     findings_created += 1
                     _eva_review_tasks[task_key]["findings_count"] = findings_created
+                    print(f"[Eva] Finding created for {check_def['id']}: {(result.get('title', '')[:60])}", flush=True)
+                except Exception as save_err:
+                    print(f"[Eva] EXCEPTION saving finding for {check_def['id']}: {save_err}", flush=True)
+                    traceback.print_exc()
+
+            # If the LLM didn't raise a finding but there ARE confirmed hard facts,
+            # create findings directly from the risk engine flags
+            elif relevant_flags and not (result and result.get("has_finding")):
+                print(f"[Eva] LLM missed hard facts for {check_def['id']}, creating from risk engine", flush=True)
+                for flag in relevant_flags:
+                    # Normalise severity from risk engine flags
+                    flag_severity = (flag.severity or "advisory").lower()
+                    if flag_severity not in ("critical", "advisory"):
+                        flag_severity = "advisory"
+                    try:
+                        EvaFinding.objects.create(
+                            eva_review=review,
+                            check_name=check_def["id"][:50],
+                            severity=flag_severity,
+                            title=(flag.title or "")[:255],
+                            plain_english_explanation=flag.description or "",
+                            recommendation=flag.recommended_action or "",
+                            legislation_reference=(flag.legislation_ref or "")[:255],
+                            knowledge_brain_citation="",
+                            confidence="high",
+                            status="open",
+                        )
+                        findings_created += 1
+                        _eva_review_tasks[task_key]["findings_count"] = findings_created
+                    except Exception as save_err:
+                        print(f"[Eva] EXCEPTION saving risk flag finding for {check_def['id']}: {save_err}", flush=True)
+                        traceback.print_exc()
 
         # Update review status
+        print(f"[Eva] All checks complete. Findings created: {findings_created}. Saving review...", flush=True)
         duration = time.time() - start_time
         if findings_created > 0:
             review.status = "findings_raised"
@@ -1031,6 +1060,7 @@ def _run_eva_review_background(fy_pk, user_pk):
         review.completed_at = timezone.now()
         review.duration_seconds = duration
         review.save(update_fields=["status", "completed_at", "duration_seconds"])
+        print(f"[Eva] Review saved with status={review.status}, duration={duration:.1f}s", flush=True)
 
         # Log activity
         ActivityLog.objects.create(
@@ -1060,7 +1090,9 @@ def _run_eva_review_background(fy_pk, user_pk):
         }
 
     except Exception as e:
-        logger.error(f"Eva review background error: {e}")
+        print(f"[Eva] FATAL BACKGROUND ERROR: {e}", flush=True)
+        traceback.print_exc()
+        logger.error(f"Eva review background error: {e}", exc_info=True)
         duration = time.time() - start_time
 
         # Try to update the review record
@@ -1073,8 +1105,9 @@ def _run_eva_review_background(fy_pk, user_pk):
 
             fy.status = fy.Status.EVA_ERROR
             fy.save(update_fields=["status"])
-        except Exception:
-            pass
+        except Exception as inner_e:
+            print(f"[Eva] EXCEPTION in error handler: {inner_e}", flush=True)
+            traceback.print_exc()
 
         _eva_review_tasks[task_key] = {
             "status": "error",
