@@ -10,6 +10,7 @@ const COA_SEARCH_URL = '{% url "core:entity_coa_search_api" pk=fy.pk %}';
 const DELETE_ALL_URL = '{% url "core:review_delete_all_transactions" pk=fy.pk %}';
 const DELETE_SELECTED_URL = '{% url "core:review_delete_selected_transactions" pk=fy.pk %}';
 const BULK_EDIT_URL = '{% url "core:review_bulk_edit_transactions" pk=fy.pk %}';
+const APPROVE_SELECTED_URL = '{% url "core:review_approve_selected" pk=fy.pk %}';
 const CSRF_TOKEN = '{{ csrf_token }}';
 const ENTITY_ID = '{{ fy.entity.pk }}';
 const FY_ID = '{{ fy.pk }}';
@@ -587,13 +588,80 @@ function bulkApproveSelected() {
 
     if (!confirm('Approve ' + checked.length + ' selected transactions and push to Trial Balance?')) return;
 
+    // Collect per-transaction form data for the batch request
+    const transactions = [];
     checked.forEach(cb => {
-        const row = cb.closest('tr');
+        const txnId = cb.value;
+        const row = document.getElementById('pending-row-' + txnId);
         const form = row?.querySelector('.review-approve-form');
         if (form) {
-            const btn = form.querySelector('button[type="submit"]');
-            if (btn) btn.click();
+            transactions.push({
+                id: txnId,
+                confirmed_code: form.querySelector('.review-code-input')?.value || '',
+                confirmed_name: form.querySelector('.review-name-input')?.value || '',
+                confirmed_tax_type: form.querySelector('.review-tax-input')?.value || '',
+                has_gst: form.querySelector('.review-gst-flag')?.value || '0',
+                gst_amount: form.querySelector('.review-gst-amount')?.value || '0.00',
+                creditable_percentage: form.querySelector('.review-cred-pct')?.value || '100',
+            });
         }
+    });
+
+    if (transactions.length === 0) return;
+
+    // Disable the approve button and show spinner
+    const approveBtn = document.querySelector('[onclick="bulkApproveSelected()"]');
+    const originalBtnHtml = approveBtn ? approveBtn.innerHTML : '';
+    if (approveBtn) {
+        approveBtn.disabled = true;
+        approveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Approving...';
+    }
+
+    fetch(APPROVE_SELECTED_URL, {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': CSRF_TOKEN,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ transactions: transactions })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            // Remove approved rows from the pending table
+            (data.approved_ids || []).forEach(id => {
+                const row = document.getElementById('pending-row-' + id);
+                const overrideRow = document.getElementById('gst-override-row-' + id);
+                const apportRow = document.getElementById('apportionment-row-' + id);
+                const splitEditor = document.getElementById('split-editor-' + id);
+                if (row) { row.style.transition = 'opacity 0.3s'; row.style.opacity = '0'; setTimeout(() => row.remove(), 300); }
+                if (overrideRow) overrideRow.remove();
+                if (apportRow) apportRow.remove();
+                if (splitEditor) splitEditor.remove();
+            });
+
+            // Update badges
+            const pendingBadge = document.getElementById('pendingBadge');
+            const confirmedBadge = document.getElementById('confirmedBadge');
+            if (pendingBadge && data.remaining_pending !== undefined) pendingBadge.textContent = data.remaining_pending + ' pending';
+            if (confirmedBadge && data.remaining_confirmed !== undefined) confirmedBadge.textContent = data.remaining_confirmed + ' confirmed';
+
+            // Hide bulk toolbar
+            const bar = document.getElementById('bulkActionsBar');
+            if (bar) bar.classList.add('d-none');
+
+            showReviewNotification(data.message || 'Approved ' + data.approved_count + ' transactions.');
+            // Reload after a short delay to refresh the confirmed table and TB
+            setTimeout(() => location.reload(), 1500);
+        } else {
+            alert('Error: ' + (data.message || 'Could not approve transactions'));
+            if (approveBtn) { approveBtn.disabled = false; approveBtn.innerHTML = originalBtnHtml; }
+        }
+    })
+    .catch(err => {
+        console.error('Bulk approve error:', err);
+        alert('Network error while approving transactions. Please try again.');
+        if (approveBtn) { approveBtn.disabled = false; approveBtn.innerHTML = originalBtnHtml; }
     });
 }
 
@@ -1528,103 +1596,16 @@ function showClassifyComplete(data) {
 }
 
 // ===== Approve Transaction (AJAX form submit) =====
-document.addEventListener('submit', function(e) {
-    const form = e.target.closest('.review-approve-form');
-    if (!form) return;
-    e.preventDefault();
-
-    const txnId = form.dataset.txnId;
-    const btn = form.querySelector('button[type="submit"]');
-    if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>'; }
-
-    const formData = new FormData(form);
-    fetch(form.action, {
-        method: 'POST',
-        headers: { 'X-CSRFToken': CSRF_TOKEN },
-        body: formData
-    })
-    .then(r => r.json())
-    .then(data => {
-        if (data.status === 'ok') {
-            // Remove from pending
-            const pendingRow = document.getElementById('pending-row-' + txnId);
-            const splitEditor = document.getElementById('split-editor-' + txnId);
-            const apportRow = document.getElementById('apportionment-row-' + txnId);
-            if (pendingRow) { pendingRow.style.transition = 'opacity 0.3s'; pendingRow.style.opacity = '0'; setTimeout(() => pendingRow.remove(), 300); }
-            if (splitEditor) splitEditor.remove();
-            if (apportRow) apportRow.remove();
-
-            // Add to confirmed
-            _addRowToConfirmedTable(data);
-
-            // Update badges
-            const pendingBadge = document.getElementById('pendingBadge');
-            const confirmedBadge = document.getElementById('confirmedBadge');
-            if (pendingBadge) pendingBadge.textContent = (data.remaining_pending ?? '') + ' pending';
-            if (confirmedBadge) confirmedBadge.textContent = (data.remaining_confirmed ?? '') + ' confirmed';
-
-            // Check if this was an override — prompt rule save (AC-RUL-01)
-            const code = formData.get('confirmed_code');
-            const name = formData.get('confirmed_name');
-            const aiCode = pendingRow?.dataset.code;
-            if (code && aiCode && code !== aiCode) {
-                const desc = pendingRow?.dataset.description || '';
-                const keyword = desc.split(' ').slice(0, 3).join(' ');
-                if (keyword) {
-                    const gst = formData.get('has_gst') === '1' ? 'gst' : 'gst_free';
-                    promptSaveRule(txnId, keyword, code, name, gst);
-                }
-            }
-        } else {
-            alert('Error: ' + (data.message || 'Unknown error'));
-            if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg"></i>'; }
-        }
-    })
-    .catch(err => {
-        alert('Network error.');
-        if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg"></i>'; }
-    });
-});
+// NOTE: The submit handler for .review-approve-form is defined in
+// financial_year_detail.html (the parent template). It sends the
+// X-Requested-With header required by the server to return JSON.
+// Do NOT add a duplicate handler here.
 
 // ===== Unconfirm Transaction =====
-document.addEventListener('click', function(e) {
-    const btn = e.target.closest('.txn-unconfirm-btn');
-    if (!btn) return;
-    e.preventDefault();
-    const txnId = btn.dataset.txnId;
-    const url = btn.dataset.unconfirmUrl;
-    if (!url) return;
-    if (!confirm('Move this transaction back to pending?')) return;
-
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
-
-    fetch(url, {
-        method: 'POST',
-        headers: { 'X-CSRFToken': CSRF_TOKEN }
-    })
-    .then(r => r.json())
-    .then(data => {
-        if (data.status === 'ok') {
-            const confirmedRow = document.getElementById('confirmed-row-' + txnId);
-            if (confirmedRow) confirmedRow.remove();
-            _addRowToPendingTable(data);
-            const pendingBadge = document.getElementById('pendingBadge');
-            const confirmedBadge = document.getElementById('confirmedBadge');
-            if (pendingBadge) pendingBadge.textContent = (data.remaining_pending ?? '') + ' pending';
-            if (confirmedBadge) confirmedBadge.textContent = (data.remaining_confirmed ?? '') + ' confirmed';
-        } else {
-            alert('Error: ' + (data.message || 'Unknown error'));
-            btn.disabled = false;
-            btn.innerHTML = '<i class="bi bi-arrow-counterclockwise"></i>';
-        }
-    })
-    .catch(err => {
-        alert('Network error.');
-        btn.disabled = false;
-        btn.innerHTML = '<i class="bi bi-arrow-counterclockwise"></i>';
-    });
-});
+// NOTE: The click handler for .txn-unconfirm-btn is defined in
+// financial_year_detail.html (the parent template). It sends the
+// X-Requested-With header required by the server to return JSON.
+// Do NOT add a duplicate handler here.
 
 // ===== Confirmed Selection =====
 function updateConfirmedSelection() {

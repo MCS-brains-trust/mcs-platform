@@ -6292,9 +6292,173 @@ def review_approve_all(request, pk):
     return redirect("core:financial_year_detail", pk=pk)
 
 
+@login_required
+@require_POST
+def review_approve_selected(request, pk):
+    """Approve selected pending transactions by ID list (AJAX).
+    Each transaction is approved using its current form data (GST settings,
+    account code, etc.) and auto-pushed to the trial balance.
+    """
+    import json
+    fy = get_financial_year_for_user(request, pk)
+    if not request.user.can_do_accounting:
+        return JsonResponse({"status": "error", "message": "Permission denied."}, status=403)
+
+    from review.models import PendingTransaction
+
+    try:
+        body = json.loads(request.body)
+    except (json.JSONDecodeError, ValueError):
+        return JsonResponse({"status": "error", "message": "Invalid JSON."}, status=400)
+
+    transactions = body.get("transactions", [])
+    if not transactions:
+        return JsonResponse({"status": "error", "message": "No transactions provided."}, status=400)
+
+    # Build a lookup of per-transaction form data
+    txn_data_map = {t["id"]: t for t in transactions if isinstance(t, dict) and "id" in t}
+    txn_ids = list(txn_data_map.keys())
+
+    pending = PendingTransaction.objects.filter(
+        pk__in=txn_ids,
+        job__entity=fy.entity,
+        is_confirmed=False,
+    )
+
+    count = 0
+    tb_count = 0
+    approved_ids = []
+    from datetime import datetime as dt
+
+    for txn in pending:
+        td = txn_data_map.get(str(txn.pk), {})
+
+        txn.confirmed_code = td.get("confirmed_code", txn.ai_suggested_code)
+        txn.confirmed_name = td.get("confirmed_name", txn.ai_suggested_name)
+        txn.confirmed_tax_type = td.get("confirmed_tax_type", txn.ai_suggested_tax_type)
+
+        has_gst = td.get("has_gst", "0") == "1"
+        if has_gst:
+            abs_amount = abs(txn.amount)
+            cred_pct = Decimal(str(td.get("creditable_percentage", "100")))
+            full_gst = (abs_amount / Decimal("11")).quantize(Decimal("0.01"))
+            gst_amount = (full_gst * cred_pct / Decimal("100")).quantize(Decimal("0.01"))
+            net_amount = abs_amount - gst_amount
+            txn.gst_amount = gst_amount
+            txn.net_amount = net_amount
+            txn.confirmed_gst_amount = gst_amount
+            txn.creditable_percentage = cred_pct
+            if not txn.confirmed_tax_type or 'Free' in (txn.confirmed_tax_type or '') or txn.confirmed_tax_type in ('BAS Excluded', 'N-T', ''):
+                txn.confirmed_tax_type = 'GST on Expenses' if txn.amount < 0 else 'GST on Income'
+        else:
+            txn.gst_amount = Decimal("0.00")
+            txn.net_amount = abs(txn.amount)
+            txn.confirmed_gst_amount = Decimal("0.00")
+            if txn.confirmed_tax_type in ('GST on Income', 'GST on Expenses'):
+                txn.confirmed_tax_type = 'GST Free Expenses' if txn.amount < 0 else 'GST Free Income'
+
+        txn.is_confirmed = True
+        txn.save()
+        count += 1
+        approved_ids.append(str(txn.pk))
+
+        # Auto-push to trial balance
+        amount = txn.amount
+        code = txn.confirmed_code
+        name = txn.confirmed_name
+        tax_type = txn.confirmed_tax_type or ''
+
+        if code and amount != 0:
+            net_for_tb = txn.net_amount if has_gst else abs(amount)
+            tb_line, created = _get_or_create_tb_line(
+                financial_year=fy,
+                account_code=code,
+                defaults={
+                    "account_name": name,
+                    "debit": net_for_tb if amount > 0 else Decimal("0"),
+                    "credit": net_for_tb if amount < 0 else Decimal("0"),
+                    "closing_balance": net_for_tb if amount > 0 else -net_for_tb,
+                    "tax_type": tax_type,
+                    "source": "bank_statement",
+                },
+            )
+            if not created:
+                if amount > 0:
+                    tb_line.debit += net_for_tb
+                    tb_line.closing_balance += net_for_tb
+                else:
+                    tb_line.credit += net_for_tb
+                    tb_line.closing_balance -= net_for_tb
+                if not tb_line.tax_type:
+                    tb_line.tax_type = tax_type
+                if not tb_line.source:
+                    tb_line.source = 'bank_statement'
+                tb_line.save()
+            tb_count += 1
+
+            # GST clearing account
+            if has_gst and txn.confirmed_gst_amount > 0:
+                gst_amt = txn.confirmed_gst_amount
+                if amount > 0:
+                    gst_line, gst_created = _get_or_create_tb_line(
+                        financial_year=fy,
+                        account_code='9100',
+                        defaults={
+                            "account_name": 'GST Collected',
+                            "debit": Decimal("0"),
+                            "credit": gst_amt,
+                            "closing_balance": -gst_amt,
+                            "tax_type": 'GST on Income',
+                            "source": "bank_statement",
+                        },
+                    )
+                    if not gst_created:
+                        gst_line.credit += gst_amt
+                        gst_line.closing_balance -= gst_amt
+                        gst_line.save()
+                else:
+                    gst_line, gst_created = _get_or_create_tb_line(
+                        financial_year=fy,
+                        account_code='9110',
+                        defaults={
+                            "account_name": 'GST Paid',
+                            "debit": gst_amt,
+                            "credit": Decimal("0"),
+                            "closing_balance": gst_amt,
+                            "tax_type": 'GST on Expenses',
+                            "source": "bank_statement",
+                        },
+                    )
+                    if not gst_created:
+                        gst_line.debit += gst_amt
+                        gst_line.closing_balance += gst_amt
+                        gst_line.save()
+
+    # Auto-trigger risk engine after bulk approve
+    from core.signals import trigger_risk_recalc
+    trigger_risk_recalc(fy, "review_approve_selected")
+
+    remaining_pending = PendingTransaction.objects.filter(
+        job__entity=fy.entity, is_confirmed=False
+    ).count()
+    remaining_confirmed = PendingTransaction.objects.filter(
+        job__entity=fy.entity, is_confirmed=True
+    ).count()
+
+    return JsonResponse({
+        "status": "ok",
+        "approved_count": count,
+        "tb_count": tb_count,
+        "approved_ids": approved_ids,
+        "remaining_pending": remaining_pending,
+        "remaining_confirmed": remaining_confirmed,
+        "message": f"Approved {count} transactions. {tb_count} lines pushed to trial balance.",
+    })
+
+
 # ---------------------------------------------------------------------------
 # Delete Transactions
-# ---------------------------------------------------------------------------
+# ----------------------------------------------------------------------------
 @login_required
 @require_POST
 def review_delete_transaction(request, pk, txn_pk):

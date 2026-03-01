@@ -213,6 +213,7 @@ urlpatterns = [
     path("years/<uuid:pk>/review/classify-ai/", views.review_classify_ai, name="review_classify_ai"),
     path("years/<uuid:pk>/review/classify-status/", views.review_classify_status, name="review_classify_status"),
     path("years/<uuid:pk>/review/bulk-approve-group/", views.review_bulk_approve_group, name="review_bulk_approve_group"),
+    path("years/<uuid:pk>/review/approve-selected/", views.review_approve_selected, name="review_approve_selected"),
 
     # Bulk Edit Transactions
     path("years/<uuid:pk>/review/bulk-edit/", views.review_bulk_edit_transactions, name="review_bulk_edit_transactions"),
