@@ -22,6 +22,11 @@ class ClientForm(forms.ModelForm):
 
 
 class EntityForm(forms.ModelForm):
+    industry = forms.ChoiceField(
+        required=True,
+        help_text="ATO Business Industry Code (NAT 1827).",
+    )
+
     class Meta:
         model = Entity
         fields = (
@@ -36,17 +41,43 @@ class EntityForm(forms.ModelForm):
 
     def __init__(self, *args, user=None, **kwargs):
         super().__init__(*args, **kwargs)
+        from core.industry_codes import INDUSTRY_CHOICES
+        # Set up industry choices with grouped optgroups
+        self.fields["industry"].choices = [("", "— Select industry —")] + INDUSTRY_CHOICES
+
         for name, field in self.fields.items():
             if isinstance(field.widget, forms.CheckboxInput):
                 field.widget.attrs["class"] = "form-check-input"
             else:
                 field.widget.attrs["class"] = "form-control"
-        # Industry is required
-        self.fields["industry"].required = True
-        self.fields["industry"].widget.attrs["class"] = "form-select"
+
+        # Searchable select for industry
+        self.fields["industry"].widget.attrs.update({
+            "class": "form-select",
+            "id": "id_industry",
+        })
+
+        # ── Compulsory fields ─────────────────────────────────────────
+        self.fields["abn"].required = True
+        self.fields["tfn"].required = True
+        self.fields["contact_email"].required = True
+        self.fields["address_line_1"].required = True
+        self.fields["suburb"].required = True
+        self.fields["state"].required = True
+        self.fields["postcode"].required = True
+
         # Only senior users can change assigned_accountant
         if user and not user.is_senior:
             self.fields.pop("assigned_accountant", None)
+
+    def clean(self):
+        cleaned = super().clean()
+        entity_type = cleaned.get("entity_type", "")
+        acn = cleaned.get("acn", "")
+        # ACN is compulsory for companies
+        if entity_type == "company" and not acn:
+            self.add_error("acn", "ACN is required for companies.")
+        return cleaned
 
     def save(self, commit=True):
         entity = super().save(commit=False)
