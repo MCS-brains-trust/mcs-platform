@@ -461,3 +461,255 @@ def payment_plans_list(request):
         "page_title": "Payment Plans",
     }
     return render(request, "office_admin/payment_plans.html", context)
+
+
+# ---------------------------------------------------------------------------
+# Legal Documents & ASIC Compliance Hub
+# ---------------------------------------------------------------------------
+@login_required
+def legal_documents_hub(request):
+    """
+    Central hub for legal document generation, tracking, and ASIC compliance.
+    Accessible from Eliza's sidebar under 'Legal Documents'.
+    """
+    from .models import (
+        Entity, GoverningDocument, LegalDocument, LegalDocumentTemplate,
+    )
+
+    # ── Stats ──
+    total_documents = LegalDocument.objects.count()
+    pending_signature = LegalDocument.objects.filter(fusesign_status="sent").count()
+    executed_documents = LegalDocument.objects.filter(status="executed").count()
+
+    # Entities missing primary governing docs (trusts + companies only)
+    entity_types_needing_docs = [
+        "company", "trust", "trust_discretionary", "trust_unit", "trust_hybrid",
+    ]
+    entities_with_docs = set(
+        GoverningDocument.objects.filter(
+            is_primary=True, status="active"
+        ).values_list("entity_id", flat=True)
+    )
+    missing_doc_entities_qs = Entity.objects.filter(
+        entity_type__in=entity_types_needing_docs,
+        is_archived=False,
+    ).exclude(pk__in=entities_with_docs).order_by("entity_name")[:20]
+
+    missing_doc_entities = []
+    for e in missing_doc_entities_qs:
+        if "trust" in e.entity_type:
+            missing_doc = "Trust Deed"
+        else:
+            missing_doc = "Constitution"
+        missing_doc_entities.append({
+            "pk": e.pk,
+            "entity_name": e.entity_name,
+            "entity_type": e.entity_type,
+            "entity_type_display": e.get_entity_type_display(),
+            "missing_doc": missing_doc,
+        })
+
+    entities_missing_docs = Entity.objects.filter(
+        entity_type__in=entity_types_needing_docs,
+        is_archived=False,
+    ).exclude(pk__in=entities_with_docs).count()
+
+    # ── Recent documents ──
+    recent_documents = LegalDocument.objects.select_related(
+        "entity", "template", "generated_by"
+    ).order_by("-generated_at")[:15]
+
+    # ── Pending FuseSign ──
+    pending_docs = LegalDocument.objects.select_related(
+        "entity"
+    ).filter(fusesign_status="sent").order_by("-generated_at")[:10]
+
+    context = {
+        "total_documents": total_documents,
+        "pending_signature": pending_signature,
+        "executed_documents": executed_documents,
+        "entities_missing_docs": entities_missing_docs,
+        "missing_doc_entities": missing_doc_entities,
+        "recent_documents": recent_documents,
+        "pending_docs": pending_docs,
+        "active_nav": "legal_documents",
+    }
+    return render(request, "office_admin/legal_documents.html", context)
+
+
+@login_required
+def legal_doc_select_entity(request, doc_type):
+    """
+    Entity selection page for generating a legal document from the office admin hub.
+    Shows a searchable list of entities filtered by the appropriate type.
+    """
+    from .models import Entity, GoverningDocument, LegalDocumentTemplate
+
+    # Map doc_type to suggested entity type filter
+    DOC_TYPE_ENTITY_MAP = {
+        "div7a_loan_agreement": "company",
+        "trust_deed_change_trustee": "",  # All trust types
+        "unit_trust_deed": "trust_unit",
+        "unit_transfer": "trust_unit",
+    }
+
+    DOC_TYPE_DISPLAY = {
+        "div7a_loan_agreement": "Division 7A Loan Agreement",
+        "trust_deed_change_trustee": "Change of Trustee",
+        "unit_trust_deed": "Fixed Unit Trust Deed + Ancillaries",
+        "unit_transfer": "Unit Transfer Package",
+    }
+
+    suggested_type = DOC_TYPE_ENTITY_MAP.get(doc_type, "")
+
+    # Get entities
+    qs = Entity.objects.filter(is_archived=False)
+    if suggested_type:
+        qs = qs.filter(entity_type=suggested_type)
+    elif doc_type in ("trust_deed_change_trustee",):
+        qs = qs.filter(entity_type__startswith="trust")
+
+    entities = qs.order_by("entity_name")[:100]
+
+    # Check which entities have governing docs
+    entities_with_docs = set(
+        GoverningDocument.objects.filter(
+            is_primary=True, status="active"
+        ).values_list("entity_id", flat=True)
+    )
+    for e in entities:
+        e.has_governing_doc = e.pk in entities_with_docs
+
+    # Entity type choices for filter
+    entity_type_choices = Entity._meta.get_field("entity_type").choices
+
+    context = {
+        "doc_type": doc_type,
+        "doc_type_display": DOC_TYPE_DISPLAY.get(doc_type, doc_type),
+        "suggested_type": suggested_type,
+        "entities": entities,
+        "entity_type_choices": entity_type_choices,
+        "active_nav": "legal_documents",
+    }
+    return render(request, "office_admin/legal_doc_select_entity.html", context)
+
+
+@login_required
+def legal_doc_redirect_wizard(request, doc_type, entity_pk):
+    """
+    Redirect from the office admin entity selection to the core legal doc wizard.
+    Finds the entity's current FY and redirects to the wizard URL.
+    """
+    from .models import Entity, FinancialYear
+
+    entity = get_object_or_404(Entity, pk=entity_pk)
+
+    # Find the most recent financial year for this entity
+    fy = FinancialYear.objects.filter(entity=entity).order_by("-year_end").first()
+
+    if not fy:
+        messages.error(
+            request,
+            f"No financial year found for {entity.entity_name}. "
+            f"Please create a financial year first.",
+        )
+        return redirect("office_admin:legal_doc_select_entity", doc_type=doc_type)
+
+    from django.urls import reverse
+    wizard_url = reverse("core:legal_doc_wizard", kwargs={
+        "pk": fy.pk,
+        "doc_type": doc_type,
+    })
+
+    return redirect(wizard_url)
+
+
+@login_required
+def legal_doc_entity_search_api(request):
+    """
+    AJAX entity search API for the office admin entity selection page.
+    Returns JSON with entity data and wizard URLs.
+    """
+    from .models import Entity, FinancialYear, GoverningDocument
+
+    q = request.GET.get("q", "").strip()
+    entity_type = request.GET.get("entity_type", "")
+    doc_type = request.GET.get("doc_type", "")
+
+    qs = Entity.objects.filter(is_archived=False)
+    if q:
+        qs = qs.filter(
+            Q(entity_name__icontains=q) | Q(acn__icontains=q) | Q(abn__icontains=q)
+        )
+    if entity_type:
+        qs = qs.filter(entity_type=entity_type)
+    elif doc_type in ("trust_deed_change_trustee",):
+        qs = qs.filter(entity_type__startswith="trust")
+
+    entities = qs.order_by("entity_name")[:50]
+
+    # Check governing docs
+    entities_with_docs = set(
+        GoverningDocument.objects.filter(
+            is_primary=True, status="active"
+        ).values_list("entity_id", flat=True)
+    )
+
+    from django.urls import reverse
+    results = []
+    for e in entities:
+        wizard_url = reverse("office_admin:legal_doc_redirect_wizard", kwargs={
+            "doc_type": doc_type,
+            "entity_pk": e.pk,
+        })
+        results.append({
+            "id": str(e.pk),
+            "name": e.entity_name,
+            "entity_type": e.entity_type,
+            "entity_type_display": e.get_entity_type_display(),
+            "acn": e.acn or "",
+            "abn": e.abn or "",
+            "has_governing_doc": e.pk in entities_with_docs,
+            "wizard_url": wizard_url,
+        })
+
+    return JsonResponse({"results": results})
+
+
+@login_required
+def legal_doc_all(request):
+    """
+    Full list of all generated legal documents with filtering.
+    """
+    from .models import LegalDocument, LegalDocumentTemplate
+
+    query = request.GET.get("q", "")
+    doc_type_filter = request.GET.get("doc_type", "")
+    status_filter = request.GET.get("status", "")
+    fusesign_filter = request.GET.get("fusesign", "")
+
+    qs = LegalDocument.objects.select_related(
+        "entity", "template", "generated_by"
+    ).order_by("-generated_at")
+
+    if query:
+        qs = qs.filter(entity__entity_name__icontains=query)
+    if doc_type_filter:
+        qs = qs.filter(document_type=doc_type_filter)
+    if status_filter:
+        qs = qs.filter(status=status_filter)
+    if fusesign_filter:
+        qs = qs.filter(fusesign_status=fusesign_filter)
+
+    documents = qs[:200]
+
+    context = {
+        "documents": documents,
+        "query": query,
+        "doc_type_filter": doc_type_filter,
+        "status_filter": status_filter,
+        "fusesign_filter": fusesign_filter,
+        "doc_type_choices": LegalDocumentTemplate.DocumentType.choices,
+        "active_nav": "legal_documents",
+    }
+    return render(request, "office_admin/legal_doc_all.html", context)

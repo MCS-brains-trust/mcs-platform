@@ -22,6 +22,7 @@ def office_admin_context(request):
     from .models_office_admin import (
         Correspondence, ASICReturn, NOARecord, DebtorRecord,
     )
+    from .models import LegalDocument
 
     today = timezone.now().date()
     seven_days = today + timedelta(days=7)
@@ -40,12 +41,17 @@ def office_admin_context(request):
         ).count()
 
         overdue_count = DebtorRecord.objects.filter(status="overdue").count()
+
+        pending_signature = LegalDocument.objects.filter(
+            fusesign_status="sent"
+        ).count()
     except Exception:
         correspondence_new = 0
         correspondence_awaiting = 0
         documents_in = 0
         asic_burning = 0
         overdue_count = 0
+        pending_signature = 0
 
     # ── Active nav detection from URL path ──
     path = request.path
@@ -58,6 +64,7 @@ def office_admin_context(request):
         'sidebar_documents_in': documents_in,
         'sidebar_asic_burning': asic_burning,
         'sidebar_overdue_count': overdue_count,
+        'sidebar_pending_signature': pending_signature,
         'active_nav': active_nav,
     }
 
@@ -94,6 +101,8 @@ def _detect_active_nav(path):
         return 'payment_plans'
     if path.startswith('/office-admin/debtors'):
         return 'aged_receivables'
+    if path.startswith('/office-admin/legal-documents'):
+        return 'legal_documents'
     if path.startswith('/office-admin'):
         return 'dashboard'
 

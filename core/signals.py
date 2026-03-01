@@ -365,7 +365,7 @@ def handle_legal_document_created(sender, instance, created, **kwargs):
             ActivityLog.objects.create(
                 financial_year=instance.financial_year,
                 action_type="document_generated",
-                description=f"Generated: {instance.title}",
+                description=f"Generated: {instance.get_document_type_display()} for {instance.entity.entity_name}",
             )
     except Exception:
         logger.exception("Failed to log document creation activity")

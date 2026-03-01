@@ -27,6 +27,13 @@ urlpatterns = [
     path("asic/burning/", views.burning_list, name="burning_list"),
     path("asic/companies/", views.company_register, name="company_register"),
 
+    # ── Legal Documents & ASIC Compliance ──
+    path("legal-documents/", views.legal_documents_hub, name="legal_documents"),
+    path("legal-documents/all/", views.legal_doc_all, name="legal_doc_all"),
+    path("legal-documents/select-entity/<str:doc_type>/", views.legal_doc_select_entity, name="legal_doc_select_entity"),
+    path("legal-documents/redirect/<str:doc_type>/<uuid:entity_pk>/", views.legal_doc_redirect_wizard, name="legal_doc_redirect_wizard"),
+    path("api/legal-documents/entity-search/", views.legal_doc_entity_search_api, name="legal_doc_entity_search_api"),
+
     # ── Debtors ──
     path("debtors/", views.aged_receivables, name="aged_receivables"),
     path("debtors/statements-sent/", views.statements_sent, name="statements_sent"),

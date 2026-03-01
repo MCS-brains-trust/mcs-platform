@@ -1,0 +1,160 @@
+{% extends "office_admin/base.html" %}
+{% load humanize %}
+
+{% block title %}Select Entity — {{ doc_type_display }} — StatementHub{% endblock %}
+
+{% block content %}
+<div class="mb-4">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb" style="font-size: 13px;">
+            <li class="breadcrumb-item"><a href="{% url 'office_admin:dashboard' %}">Dashboard</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'office_admin:legal_documents' %}">Legal Documents</a></li>
+            <li class="breadcrumb-item active">Select Entity</li>
+        </ol>
+    </nav>
+    <h2 style="font-size: 22px; font-weight: 700;">
+        <i class="bi bi-building text-primary"></i> Select Entity for {{ doc_type_display }}
+    </h2>
+    <p style="font-size: 13.5px; color: #888; margin-top: 4px;">
+        Search and select the entity to generate the document for.
+    </p>
+</div>
+
+<!-- Search -->
+<div class="oa-section-card mb-4">
+    <div class="card-body p-3">
+        <div class="row g-3 align-items-end">
+            <div class="col-md-6">
+                <label class="form-label small fw-bold">Search Entity</label>
+                <input type="text" id="entitySearch" class="form-control"
+                       placeholder="Search by name, ABN, or ACN..."
+                       autofocus oninput="searchEntities()">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label small fw-bold">Entity Type</label>
+                <select id="entityTypeFilter" class="form-select" onchange="searchEntities()">
+                    <option value="">All Types</option>
+                    {% for type_val, type_label in entity_type_choices %}
+                    <option value="{{ type_val }}" {% if suggested_type == type_val %}selected{% endif %}>{{ type_label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <button class="btn btn-outline-secondary w-100" onclick="clearSearch()">
+                    <i class="bi bi-x-lg"></i> Clear
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Results -->
+<div class="oa-section-card">
+    <div class="oa-section-header">
+        <h3><i class="bi bi-list-ul"></i> Entities</h3>
+        <span id="resultCount" class="text-muted" style="font-size: 12px;">{{ entities|length }} results</span>
+    </div>
+    <div id="entityResults">
+        {% for entity in entities %}
+        <a href="{% url 'office_admin:legal_doc_redirect_wizard' doc_type=doc_type entity_pk=entity.pk %}"
+           class="oa-entity-select-row">
+            <div class="d-flex align-items-center gap-3 flex-grow-1">
+                <span class="oa-entity-badge badge-{{ entity.entity_type }}">{{ entity.get_entity_type_display }}</span>
+                <div>
+                    <div class="fw-bold" style="font-size: 13px;">{{ entity.entity_name }}</div>
+                    <div class="text-muted" style="font-size: 11px;">
+                        {% if entity.abn %}ABN: {{ entity.abn }}{% endif %}
+                        {% if entity.acn %} | ACN: {{ entity.acn }}{% endif %}
+                    </div>
+                </div>
+            </div>
+            <div class="d-flex align-items-center gap-2">
+                {% if entity.has_governing_doc %}
+                <span class="badge bg-success" style="font-size: 10px;"><i class="bi bi-check-circle"></i> Deed</span>
+                {% endif %}
+                <i class="bi bi-chevron-right text-muted"></i>
+            </div>
+        </a>
+        {% empty %}
+        <div class="oa-empty">
+            <i class="bi bi-building"></i>
+            <p>No entities found. Try adjusting your search.</p>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+{{ block.super }}
+<style>
+    .oa-entity-select-row {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 14px 20px; border-bottom: 1px solid #f5f6f8;
+        text-decoration: none; color: inherit; transition: background 0.1s;
+    }
+    .oa-entity-select-row:last-child { border-bottom: none; }
+    .oa-entity-select-row:hover { background: #f8f9ff; }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let searchTimeout;
+
+function searchEntities() {
+    clearTimeout(searchTimeout);
+    searchTimeout = setTimeout(() => {
+        const q = document.getElementById('entitySearch').value;
+        const entityType = document.getElementById('entityTypeFilter').value;
+
+        fetch(`{% url 'office_admin:legal_doc_entity_search_api' %}?q=${encodeURIComponent(q)}&entity_type=${entityType}&doc_type={{ doc_type }}`)
+            .then(r => r.json())
+            .then(data => {
+                const container = document.getElementById('entityResults');
+                document.getElementById('resultCount').textContent = `${data.results.length} results`;
+
+                if (data.results.length === 0) {
+                    container.innerHTML = `
+                        <div class="oa-empty">
+                            <i class="bi bi-building"></i>
+                            <p>No entities found. Try adjusting your search.</p>
+                        </div>`;
+                    return;
+                }
+
+                container.innerHTML = data.results.map(e => `
+                    <a href="${e.wizard_url}" class="oa-entity-select-row">
+                        <div class="d-flex align-items-center gap-3 flex-grow-1">
+                            <span class="oa-entity-badge badge-${e.entity_type}">${e.entity_type_display}</span>
+                            <div>
+                                <div class="fw-bold" style="font-size: 13px;">${e.name}</div>
+                                <div class="text-muted" style="font-size: 11px;">
+                                    ${e.abn ? 'ABN: ' + e.abn : ''}
+                                    ${e.acn ? ' | ACN: ' + e.acn : ''}
+                                </div>
+                            </div>
+                        </div>
+                        <div class="d-flex align-items-center gap-2">
+                            ${e.has_governing_doc ? '<span class="badge bg-success" style="font-size: 10px;"><i class="bi bi-check-circle"></i> Deed</span>' : ''}
+                            <i class="bi bi-chevron-right text-muted"></i>
+                        </div>
+                    </a>
+                `).join('');
+            })
+            .catch(err => console.error('Search error:', err));
+    }, 300);
+}
+
+function clearSearch() {
+    document.getElementById('entitySearch').value = '';
+    document.getElementById('entityTypeFilter').value = '';
+    searchEntities();
+}
+
+// Auto-search on load if a type filter is pre-set
+{% if suggested_type %}
+document.addEventListener('DOMContentLoaded', searchEntities);
+{% endif %}
+</script>
+{% endblock %}

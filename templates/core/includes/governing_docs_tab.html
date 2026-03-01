@@ -113,10 +113,50 @@
                 <i class="bi bi-files text-info"></i>
                 Amendments & Supplementary Documents
             </h6>
-            <button class="btn btn-sm btn-outline-primary" data-bs-toggle="collapse"
-                    data-bs-target="#amendment-upload-section">
-                <i class="bi bi-plus-lg"></i> Add Document
-            </button>
+            <div class="d-flex gap-2">
+                {# Generate Legal Document dropdown — contextual to entity type #}
+                {% if entity.entity_type == 'company' or entity.entity_type == 'trust' or entity.entity_type == 'trust_discretionary' or entity.entity_type == 'trust_unit' or entity.entity_type == 'trust_hybrid' %}
+                <div class="dropdown">
+                    <button class="btn btn-sm btn-primary dropdown-toggle" type="button" data-bs-toggle="dropdown">
+                        <i class="bi bi-file-earmark-ruled"></i> Generate Document
+                    </button>
+                    <ul class="dropdown-menu dropdown-menu-end">
+                        {% if entity.entity_type == 'company' %}
+                        <li><h6 class="dropdown-header">Company Documents</h6></li>
+                        <li>
+                            <a class="dropdown-item" href="{% url 'core:legal_doc_wizard' pk=entity.current_financial_year.pk doc_type='div7a_loan_agreement' %}">
+                                <i class="bi bi-bank text-danger"></i> Division 7A Loan Agreement
+                            </a>
+                        </li>
+                        {% endif %}
+                        {% if 'trust' in entity.entity_type %}
+                        <li><h6 class="dropdown-header">Trust Documents</h6></li>
+                        <li>
+                            <a class="dropdown-item" href="{% url 'core:legal_doc_wizard' pk=entity.current_financial_year.pk doc_type='trust_deed_change_trustee' %}">
+                                <i class="bi bi-arrow-left-right text-purple"></i> Change of Trustee
+                            </a>
+                        </li>
+                        {% if entity.entity_type == 'trust_unit' %}
+                        <li>
+                            <a class="dropdown-item" href="{% url 'core:legal_doc_wizard' pk=entity.current_financial_year.pk doc_type='unit_trust_deed' %}">
+                                <i class="bi bi-file-earmark-lock text-primary"></i> Fixed Unit Trust Deed
+                            </a>
+                        </li>
+                        <li>
+                            <a class="dropdown-item" href="{% url 'core:legal_doc_wizard' pk=entity.current_financial_year.pk doc_type='unit_transfer' %}">
+                                <i class="bi bi-arrow-repeat text-warning"></i> Unit Transfer Package
+                            </a>
+                        </li>
+                        {% endif %}
+                        {% endif %}
+                    </ul>
+                </div>
+                {% endif %}
+                <button class="btn btn-sm btn-outline-primary" data-bs-toggle="collapse"
+                        data-bs-target="#amendment-upload-section">
+                    <i class="bi bi-plus-lg"></i> Add Document
+                </button>
+            </div>
         </div>
         <div class="card-body">
             {# Upload section (collapsed) #}

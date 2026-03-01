@@ -290,6 +290,14 @@
             <i class="bi bi-building-fill-gear"></i> Company Register
         </a>
 
+        <!-- ── LEGAL DOCUMENTS (office admin only) ── -->
+        <div class="sh-nav-section">Legal Documents</div>
+        <a class="sh-nav-item {% if active_nav == 'legal_documents' %}active{% endif %}"
+           href="{% url 'office_admin:legal_documents' %}">
+            <i class="bi bi-file-earmark-ruled-fill"></i> Document Hub
+            {% if sidebar_pending_signature %}<span class="count-badge amber">{{ sidebar_pending_signature }}</span>{% endif %}
+        </a>
+
         <!-- ── DEBTORS (office admin only) ── -->
         <div class="sh-nav-section">Debtors</div>
         <a class="sh-nav-item {% if active_nav == 'aged_receivables' %}active{% endif %}"
