@@ -627,7 +627,10 @@ class FinancialYear(models.Model):
     @property
     def can_ask_eva(self):
         """Eva can be triggered once the file is Finished."""
-        return self.status in (self.Status.FINISHED, self.Status.PREPARED)
+        return self.status in (
+            self.Status.FINISHED, self.Status.PREPARED,
+            self.Status.PENDING_EVA, self.Status.EVA_ERROR,
+        )
 
     @property
     def is_eva_reviewable(self):

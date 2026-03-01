@@ -1052,6 +1052,10 @@ def _run_eva_review_background(fy_pk, user_pk):
         duration = time.time() - start_time
         if findings_created > 0:
             review.status = "findings_raised"
+            # Set FY back to FINISHED so the page shows findings panel
+            # (pending_eva would show the spinner again on reload)
+            fy.status = fy.Status.FINISHED
+            fy.save(update_fields=["status"])
         else:
             review.status = "cleared"
             fy.status = fy.Status.EVA_CLEARED
