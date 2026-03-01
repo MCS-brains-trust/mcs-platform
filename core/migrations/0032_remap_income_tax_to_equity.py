@@ -49,7 +49,7 @@ def reverse_remap(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("core", "0031_dailytask_asicreturn_correspondence_debtorrecord_and_more"),
+        ("core", "0027_entity_primary_accountant_entity_reviewer_and_more"),
     ]
 
     operations = [
