@@ -3739,7 +3739,7 @@ class BeneficiaryProfile(models.Model):
 
     class Meta:
         unique_together = ["trust_workspace", "beneficiary"]
-        ordering = ["beneficiary__name"]
+        ordering = ["beneficiary__full_name"]
 
     def __str__(self):
         return f"{self.beneficiary} profile in {self.trust_workspace}"
