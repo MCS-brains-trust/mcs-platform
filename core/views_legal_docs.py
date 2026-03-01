@@ -1,4 +1,12 @@
-"""Views for Legal Document Generation — wizard, rendering, FuseSign integration."""
+"""
+Views for Legal Document Generation — wizard, rendering, FuseSign integration.
+
+Document Types:
+  1. Division 7A Loan Agreement
+  2. Change of Trustee Set (3 documents)
+  3. Fixed Unit Trust Deed + Ancillaries (5 documents)
+  4. Unit Transfer Package (7 documents)
+"""
 import io
 import json
 import logging
@@ -8,7 +16,9 @@ import tempfile
 import uuid
 
 from django.conf import settings
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.db.models import Q
 from django.http import FileResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -17,10 +27,32 @@ from django.views.decorators.http import require_POST
 from core.models import (
     Entity,
     EntityOfficer,
+    EntityRelationship,
     FinancialYear,
     GoverningDocument,
     LegalDocument,
     LegalDocumentTemplate,
+    RiskFlag,
+)
+
+from core.legal_doc_contexts import (
+    build_change_of_trustee_context,
+    build_div7a_context,
+    build_fixed_unit_trust_context,
+    build_unit_transfer_context,
+    get_change_of_trustee_signatories,
+    get_div7a_signatories,
+    get_fixed_unit_trust_signatories,
+    get_unit_transfer_signatories,
+    validate_fixed_unit_trust,
+    _get_directors_for_entity,
+    _get_entity_address,
+)
+
+from core.legal_doc_service import (
+    log_fusesign_activity,
+    render_and_create_document,
+    render_multi_document_set,
 )
 
 logger = logging.getLogger(__name__)
@@ -93,19 +125,30 @@ def legal_template_upload(request):
 
 
 # ---------------------------------------------------------------------------
-# Document Generation Wizard
+# Generic Document Generation Wizard (fallback for non-specific types)
 # ---------------------------------------------------------------------------
 @login_required
 def legal_doc_wizard(request, pk, doc_type):
     """
-    Document generation wizard.
-    Step 1: Load entity context + template variables
-    Step 2: User fills in wizard form
-    Step 3: Generate document
+    Generic document generation wizard.
+    Routes to document-type-specific wizards when available.
     """
     fy = get_object_or_404(FinancialYear, pk=pk)
     entity = fy.entity
 
+    # Route to specific wizards
+    SPECIFIC_WIZARDS = {
+        "div7a_loan_agreement": div7a_wizard,
+        "trust_deed_change_trustee": change_of_trustee_wizard,
+        "unit_trust_deed": fixed_unit_trust_wizard,
+        "unit_transfer": unit_transfer_wizard,
+    }
+
+    specific_view = SPECIFIC_WIZARDS.get(doc_type)
+    if specific_view:
+        return specific_view(request, pk)
+
+    # Fall back to generic wizard
     template = LegalDocumentTemplate.objects.filter(
         document_type=doc_type, is_active=True
     ).first()
@@ -132,7 +175,7 @@ def legal_doc_wizard(request, pk, doc_type):
         "template": template,
         "doc_type": doc_type,
         "pre_populated": context,
-        "variable_schema": template.variable_schema,
+        "variable_schema": template.variable_schema or {"variables": [], "loops": []},
         "governing_doc": governing_doc,
         "disclaimer": STANDARD_DISCLAIMER,
     })
@@ -141,10 +184,26 @@ def legal_doc_wizard(request, pk, doc_type):
 @login_required
 @require_POST
 def legal_doc_generate(request, pk, doc_type):
-    """Generate a legal document from template + wizard inputs."""
+    """
+    Generate a legal document from template + wizard inputs.
+    Routes to document-type-specific generators when available.
+    """
     fy = get_object_or_404(FinancialYear, pk=pk)
     entity = fy.entity
 
+    # Route to specific generators
+    SPECIFIC_GENERATORS = {
+        "div7a_loan_agreement": div7a_generate,
+        "trust_deed_change_trustee": change_of_trustee_generate,
+        "unit_trust_deed": fixed_unit_trust_generate,
+        "unit_transfer": unit_transfer_generate,
+    }
+
+    specific_view = SPECIFIC_GENERATORS.get(doc_type)
+    if specific_view:
+        return specific_view(request, pk)
+
+    # Fall back to generic generation
     template = LegalDocumentTemplate.objects.filter(
         document_type=doc_type, is_active=True
     ).first()
@@ -162,44 +221,610 @@ def legal_doc_generate(request, pk, doc_type):
     entity_context["generation_date"] = timezone.now().strftime("%d %B %Y")
     entity_context["firm_name"] = "MC & S Chartered Accountants"
 
-    try:
-        # Step 1: Render docx from template
-        docx_bytes = _render_template(template, entity_context)
+    result = render_and_create_document(
+        entity=entity,
+        financial_year=fy,
+        template=template,
+        doc_type=doc_type,
+        context=entity_context,
+        params=parameters,
+        user=request.user,
+        disclaimer_acknowledged=parameters.get("disclaimer_acknowledged", False),
+    )
 
-        # Step 2: Convert to PDF via LibreOffice
-        pdf_bytes = _convert_to_pdf(docx_bytes)
+    if result["status"] == "ok":
+        return JsonResponse(result)
+    else:
+        return JsonResponse({"error": result.get("error", "Generation failed.")}, status=500)
 
-        # Step 3: Save to database
-        doc = LegalDocument.objects.create(
-            entity=entity,
-            financial_year=fy,
-            template=template,
-            document_type=doc_type,
-            parameters=parameters,
-            generated_by=request.user,
-            disclaimer_acknowledged=parameters.get("disclaimer_acknowledged", False),
-            disclaimer_acknowledged_at=timezone.now() if parameters.get("disclaimer_acknowledged") else None,
-        )
 
-        # Save files
-        from django.core.files.base import ContentFile
-        doc_filename = f"{entity.name}_{doc_type}_{fy.end_date.year}.docx"
-        doc.generated_file.save(doc_filename, ContentFile(docx_bytes))
+# ===========================================================================
+# DOCUMENT 1: Division 7A Loan Agreement
+# ===========================================================================
 
-        if pdf_bytes:
-            pdf_filename = f"{entity.name}_{doc_type}_{fy.end_date.year}.pdf"
-            doc.pdf_file.save(pdf_filename, ContentFile(pdf_bytes))
+@login_required
+def div7a_wizard(request, pk):
+    """
+    Division 7A Loan Agreement wizard.
 
-        return JsonResponse({
-            "status": "ok",
-            "document_id": str(doc.pk),
-            "docx_url": doc.generated_file.url if doc.generated_file else None,
-            "pdf_url": doc.pdf_file.url if doc.pdf_file else None,
+    Wizard fields:
+      1. Borrower type (individual / trust / company) — conditional branch
+      2. Borrower entity picker (for trust/company) or name (for individual)
+      3. Agreement date
+      4. Loan security type (secured / unsecured)
+
+    Pre-populated from Risk Engine flag (if navigated from risk flag):
+      - Loan amount (from debit balance)
+      - Account code and name
+    """
+    fy = get_object_or_404(FinancialYear, pk=pk)
+    entity = fy.entity
+
+    template = LegalDocumentTemplate.objects.filter(
+        document_type="div7a_loan_agreement", is_active=True
+    ).first()
+
+    if not template:
+        return render(request, "core/legal/div7a_wizard.html", {
+            "fy": fy,
+            "entity": entity,
+            "error": "No active Division 7A Loan Agreement template found. Upload one in Legal Templates.",
         })
 
-    except Exception as e:
-        logger.exception("Document generation failed: %s", e)
-        return JsonResponse({"error": str(e)}, status=500)
+    # Check for risk flag pre-population
+    risk_flag_id = request.GET.get("risk_flag")
+    risk_flag_data = {}
+    if risk_flag_id:
+        try:
+            flag = RiskFlag.objects.get(pk=risk_flag_id, financial_year=fy)
+            risk_flag_data = {
+                "loan_amount": flag.calculated_values.get("debit_balance", ""),
+                "account_code": flag.calculated_values.get("account_code", ""),
+                "account_name": flag.calculated_values.get("account_name", ""),
+                "risk_flag_id": str(flag.pk),
+            }
+        except RiskFlag.DoesNotExist:
+            pass
+
+    # Get related entities for borrower picker (same client group)
+    related_entities = Entity.objects.filter(
+        client=entity.client
+    ).exclude(pk=entity.pk).order_by("entity_name") if entity.client else Entity.objects.none()
+
+    # Also get entities linked via EntityRelationship
+    linked_entity_ids = EntityRelationship.objects.filter(
+        Q(from_entity=entity) | Q(to_entity=entity)
+    ).values_list("from_entity_id", "to_entity_id")
+    linked_ids = set()
+    for from_id, to_id in linked_entity_ids:
+        linked_ids.add(from_id)
+        linked_ids.add(to_id)
+    linked_ids.discard(entity.pk)
+
+    linked_entities = Entity.objects.filter(pk__in=linked_ids).order_by("entity_name")
+    # Combine and deduplicate
+    all_related = list(related_entities) + [e for e in linked_entities if e not in related_entities]
+
+    # Get officers for individual borrower picker
+    officers = EntityOfficer.objects.filter(
+        entity=entity,
+        date_ceased__isnull=True,
+    ).filter(
+        Q(role__in=["director", "shareholder", "director_shareholder"]) |
+        Q(roles__overlap=["director", "shareholder"])
+    ).order_by("full_name")
+
+    # Get governing document
+    governing_doc = entity.governing_documents.filter(
+        is_primary=True, status="active",
+        extraction_status__in=["completed", "completed_with_warnings"],
+    ).first()
+
+    return render(request, "core/legal/div7a_wizard.html", {
+        "fy": fy,
+        "entity": entity,
+        "template": template,
+        "risk_flag_data": risk_flag_data,
+        "related_entities": all_related,
+        "officers": officers,
+        "governing_doc": governing_doc,
+        "disclaimer": STANDARD_DISCLAIMER,
+    })
+
+
+@login_required
+@require_POST
+def div7a_generate(request, pk):
+    """Generate Division 7A Loan Agreement."""
+    fy = get_object_or_404(FinancialYear, pk=pk)
+    entity = fy.entity
+
+    template = LegalDocumentTemplate.objects.filter(
+        document_type="div7a_loan_agreement", is_active=True
+    ).first()
+    if not template:
+        return JsonResponse({"error": "No active Div 7A template found."}, status=404)
+
+    # Parse wizard parameters
+    if request.content_type == "application/json":
+        params = json.loads(request.body)
+    else:
+        params = request.POST.dict()
+
+    # Build context
+    context = build_div7a_context(entity, fy, params)
+
+    # Generate document
+    result = render_and_create_document(
+        entity=entity,
+        financial_year=fy,
+        template=template,
+        doc_type="div7a_loan_agreement",
+        context=context,
+        params=params,
+        user=request.user,
+        disclaimer_acknowledged=params.get("disclaimer_acknowledged", False),
+    )
+
+    # If generated from a risk flag, auto-resolve it
+    risk_flag_id = params.get("risk_flag_id")
+    if risk_flag_id and result.get("status") == "ok":
+        try:
+            flag = RiskFlag.objects.get(pk=risk_flag_id, financial_year=fy)
+            if flag.status in ("open", "reviewed"):
+                flag.status = "auto_resolved"
+                flag.resolution_notes = (
+                    f"Auto-resolved: Division 7A Loan Agreement generated "
+                    f"(Document ID: {result['document_id']})"
+                )
+                flag.resolved_by = request.user
+                flag.resolved_at = timezone.now()
+                flag.save()
+        except RiskFlag.DoesNotExist:
+            pass
+
+    if result["status"] == "ok":
+        return JsonResponse(result)
+    else:
+        return JsonResponse({"error": result.get("error", "Generation failed.")}, status=500)
+
+
+# ===========================================================================
+# DOCUMENT 2: Change of Trustee Set
+# ===========================================================================
+
+@login_required
+def change_of_trustee_wizard(request, pk):
+    """
+    Change of Trustee wizard — generates 3 documents:
+      1. Deed of Change of Trustee
+      2. Outgoing Trustee Director Resolution
+      3. New Trustee Director Resolution (Minutes)
+
+    Wizard fields:
+      1. Outgoing trustee entity picker (pre-populated from trust's current trustee)
+      2. New trustee entity picker
+      3. Effective date
+      4. Reason for change (optional)
+      5. Appointment/retirement clause refs (Eva pre-populated)
+    """
+    fy = get_object_or_404(FinancialYear, pk=pk)
+    entity = fy.entity
+
+    if entity.entity_type != "trust":
+        return render(request, "core/legal/change_trustee_wizard.html", {
+            "fy": fy,
+            "entity": entity,
+            "error": "Change of Trustee is only applicable to Trust entities.",
+        })
+
+    # Check for templates (need 3: deed, outgoing resolution, new trustee minutes)
+    deed_template = LegalDocumentTemplate.objects.filter(
+        document_type="trust_deed_change_trustee", is_active=True
+    ).first()
+
+    if not deed_template:
+        return render(request, "core/legal/change_trustee_wizard.html", {
+            "fy": fy,
+            "entity": entity,
+            "error": "No active Change of Trustee template found. Upload one in Legal Templates.",
+        })
+
+    # Pre-populate outgoing trustee from entity's current trustee
+    outgoing_trustee = None
+    if entity.trustee_name:
+        outgoing_trustee = Entity.objects.filter(
+            entity_name__iexact=entity.trustee_name,
+            entity_type="company",
+        ).first()
+
+    # Get all company entities for the new trustee picker
+    company_entities = Entity.objects.filter(
+        entity_type="company",
+    ).order_by("entity_name")
+
+    # Eva clause pre-population
+    clause_data = {"appointment_clause": "", "retirement_clause": ""}
+    governing_doc = entity.governing_documents.filter(
+        is_primary=True, status="active",
+        extraction_status__in=["completed", "completed_with_warnings"],
+    ).first()
+
+    return render(request, "core/legal/change_trustee_wizard.html", {
+        "fy": fy,
+        "entity": entity,
+        "deed_template": deed_template,
+        "outgoing_trustee": outgoing_trustee,
+        "company_entities": company_entities,
+        "clause_data": clause_data,
+        "governing_doc": governing_doc,
+        "disclaimer": STANDARD_DISCLAIMER,
+    })
+
+
+@login_required
+@require_POST
+def change_of_trustee_generate(request, pk):
+    """Generate Change of Trustee document set (3 documents)."""
+    fy = get_object_or_404(FinancialYear, pk=pk)
+    entity = fy.entity
+
+    if request.content_type == "application/json":
+        params = json.loads(request.body)
+    else:
+        params = request.POST.dict()
+
+    # Build context
+    context = build_change_of_trustee_context(entity, fy, params)
+
+    # Define the 3 sub-documents
+    template_configs = [
+        {
+            "template_type": "trust_deed_change_trustee",
+            "sub_label": "Deed of Change of Trustee",
+            "context_override": {"sub_document_type": "deed"},
+        },
+        {
+            "template_type": "change_trustee_outgoing_resolution",
+            "sub_label": "Outgoing Trustee Director Resolution",
+            "context_override": {"sub_document_type": "outgoing_resolution"},
+        },
+        {
+            "template_type": "change_trustee_new_minutes",
+            "sub_label": "New Trustee Director Resolution",
+            "context_override": {"sub_document_type": "new_trustee_minutes"},
+        },
+    ]
+
+    result = render_multi_document_set(
+        entity=entity,
+        financial_year=fy,
+        doc_type="trust_deed_change_trustee",
+        context=context,
+        params=params,
+        user=request.user,
+        template_configs=template_configs,
+        disclaimer_acknowledged=params.get("disclaimer_acknowledged", False),
+    )
+
+    # Post-execution: update entity trustee fields
+    if result["status"] == "ok":
+        new_trustee_id = params.get("new_trustee_entity_id")
+        if new_trustee_id:
+            try:
+                new_trustee = Entity.objects.get(pk=new_trustee_id)
+                entity.trustee_name = new_trustee.entity_name
+                entity.trustee_acn = new_trustee.acn or ""
+                entity.save(update_fields=["trustee_name", "trustee_acn"])
+            except Entity.DoesNotExist:
+                pass
+
+    return JsonResponse(result)
+
+
+# ===========================================================================
+# DOCUMENT 3: Fixed Unit Trust Deed + Ancillaries
+# ===========================================================================
+
+@login_required
+def fixed_unit_trust_wizard(request, pk):
+    """
+    Fixed Unit Trust Deed + Ancillaries wizard — generates 5 documents:
+      1. Unit Trust Deed
+      2. Director Resolution (Trustee)
+      3. Unit Applications (one per unitholder — looped)
+      4. Unit Certificates (one per unitholder — looped)
+      5. Register of Unitholders
+
+    Wizard fields:
+      1. Trust name (pre-populated)
+      2. Trustee entity picker
+      3. Governing state (dropdown)
+      4. Deed date
+      5. Unit class (default: "Ordinary")
+      6. Unitholders (dynamic rows: entity picker + units)
+    """
+    fy = get_object_or_404(FinancialYear, pk=pk)
+    entity = fy.entity
+
+    if entity.entity_type != "trust":
+        return render(request, "core/legal/unit_trust_wizard.html", {
+            "fy": fy,
+            "entity": entity,
+            "error": "Fixed Unit Trust Deed is only applicable to Trust entities.",
+        })
+
+    template = LegalDocumentTemplate.objects.filter(
+        document_type="unit_trust_deed", is_active=True
+    ).first()
+
+    if not template:
+        return render(request, "core/legal/unit_trust_wizard.html", {
+            "fy": fy,
+            "entity": entity,
+            "error": "No active Fixed Unit Trust Deed template found. Upload one in Legal Templates.",
+        })
+
+    # Pre-populate trustee
+    trustee_entity = None
+    if entity.trustee_name:
+        trustee_entity = Entity.objects.filter(
+            entity_name__iexact=entity.trustee_name,
+            entity_type="company",
+        ).first()
+
+    # Get all entities for unitholder picker
+    all_entities = Entity.objects.filter(
+        is_archived=False,
+    ).order_by("entity_name")
+
+    # States for governing state dropdown
+    states = [
+        ("NSW", "New South Wales"),
+        ("VIC", "Victoria"),
+        ("QLD", "Queensland"),
+        ("SA", "South Australia"),
+        ("WA", "Western Australia"),
+        ("TAS", "Tasmania"),
+        ("NT", "Northern Territory"),
+        ("ACT", "Australian Capital Territory"),
+    ]
+
+    governing_doc = entity.governing_documents.filter(
+        is_primary=True, status="active",
+        extraction_status__in=["completed", "completed_with_warnings"],
+    ).first()
+
+    return render(request, "core/legal/unit_trust_wizard.html", {
+        "fy": fy,
+        "entity": entity,
+        "template": template,
+        "trustee_entity": trustee_entity,
+        "all_entities": all_entities,
+        "states": states,
+        "governing_doc": governing_doc,
+        "disclaimer": STANDARD_DISCLAIMER,
+    })
+
+
+@login_required
+@require_POST
+def fixed_unit_trust_generate(request, pk):
+    """Generate Fixed Unit Trust Deed + Ancillaries (5 documents)."""
+    fy = get_object_or_404(FinancialYear, pk=pk)
+    entity = fy.entity
+
+    if request.content_type == "application/json":
+        params = json.loads(request.body)
+    else:
+        params = request.POST.dict()
+        # Parse unitholders from form data
+        params["unitholders"] = _parse_unitholders_from_form(request.POST)
+
+    # Pre-flight validation
+    errors = validate_fixed_unit_trust(entity, params)
+    if errors:
+        return JsonResponse({"status": "error", "errors": errors}, status=400)
+
+    # Build context
+    context = build_fixed_unit_trust_context(entity, fy, params)
+
+    # Define the 5 sub-documents
+    template_configs = [
+        {
+            "template_type": "unit_trust_deed",
+            "sub_label": "Unit Trust Deed",
+            "context_override": {"sub_document_type": "deed"},
+        },
+        {
+            "template_type": "unit_trust_director_resolution",
+            "sub_label": "Director Resolution (Trustee)",
+            "context_override": {"sub_document_type": "director_resolution"},
+        },
+        {
+            "template_type": "unit_trust_application",
+            "sub_label": "Unit Applications",
+            "context_override": {"sub_document_type": "unit_application"},
+        },
+        {
+            "template_type": "unit_trust_certificate",
+            "sub_label": "Unit Certificates",
+            "context_override": {"sub_document_type": "unit_certificate"},
+        },
+        {
+            "template_type": "unit_trust_register",
+            "sub_label": "Register of Unitholders",
+            "context_override": {"sub_document_type": "register"},
+        },
+    ]
+
+    result = render_multi_document_set(
+        entity=entity,
+        financial_year=fy,
+        doc_type="unit_trust_deed",
+        context=context,
+        params=params,
+        user=request.user,
+        template_configs=template_configs,
+        disclaimer_acknowledged=params.get("disclaimer_acknowledged", False),
+    )
+
+    return JsonResponse(result)
+
+
+# ===========================================================================
+# DOCUMENT 4: Unit Transfer Package
+# ===========================================================================
+
+@login_required
+def unit_transfer_wizard(request, pk):
+    """
+    Unit Transfer Package wizard — generates 7 documents:
+      1. Cover Page
+      2. Director Resolution (Trustee)
+      3. Unit Transfer Instrument(s) — one per transfer
+      4. Transferor Acknowledgements
+      5. Transferee Acknowledgements
+      6. Updated Unit Certificate(s)
+      7. Updated Register of Unitholders
+
+    Wizard fields:
+      1. Trust entity (pre-populated)
+      2. Unit class (pre-populated)
+      3. Dynamic transfer rows:
+         - Transferor (entity picker from current unitholders)
+         - Transferee (entity picker or new name)
+         - Units to transfer
+         - Consideration amount
+         - Transfer date
+    """
+    fy = get_object_or_404(FinancialYear, pk=pk)
+    entity = fy.entity
+
+    if entity.entity_type != "trust":
+        return render(request, "core/legal/unit_transfer_wizard.html", {
+            "fy": fy,
+            "entity": entity,
+            "error": "Unit Transfer is only applicable to Trust entities.",
+        })
+
+    template = LegalDocumentTemplate.objects.filter(
+        document_type="unit_transfer", is_active=True
+    ).first()
+
+    if not template:
+        return render(request, "core/legal/unit_transfer_wizard.html", {
+            "fy": fy,
+            "entity": entity,
+            "error": "No active Unit Transfer template found. Upload one in Legal Templates.",
+        })
+
+    # Get current unitholders (beneficiaries with shares_held)
+    current_unitholders = EntityOfficer.objects.filter(
+        entity=entity,
+        date_ceased__isnull=True,
+    ).filter(
+        Q(role="beneficiary") | Q(roles__contains=["beneficiary"])
+    ).filter(
+        shares_held__isnull=False,
+        shares_held__gt=0,
+    ).order_by("full_name")
+
+    # Get all entities for transferee picker
+    all_entities = Entity.objects.filter(
+        is_archived=False,
+    ).order_by("entity_name")
+
+    governing_doc = entity.governing_documents.filter(
+        is_primary=True, status="active",
+        extraction_status__in=["completed", "completed_with_warnings"],
+    ).first()
+
+    return render(request, "core/legal/unit_transfer_wizard.html", {
+        "fy": fy,
+        "entity": entity,
+        "template": template,
+        "current_unitholders": current_unitholders,
+        "all_entities": all_entities,
+        "governing_doc": governing_doc,
+        "disclaimer": STANDARD_DISCLAIMER,
+    })
+
+
+@login_required
+@require_POST
+def unit_transfer_generate(request, pk):
+    """Generate Unit Transfer Package (7 documents)."""
+    fy = get_object_or_404(FinancialYear, pk=pk)
+    entity = fy.entity
+
+    if request.content_type == "application/json":
+        params = json.loads(request.body)
+    else:
+        params = request.POST.dict()
+        params["transfers"] = _parse_transfers_from_form(request.POST)
+
+    # Build context
+    context = build_unit_transfer_context(entity, fy, params)
+
+    # Define the 7 sub-documents
+    template_configs = [
+        {
+            "template_type": "unit_transfer_cover",
+            "sub_label": "Cover Page",
+            "context_override": {"sub_document_type": "cover"},
+        },
+        {
+            "template_type": "unit_transfer_director_resolution",
+            "sub_label": "Director Resolution (Trustee)",
+            "context_override": {"sub_document_type": "director_resolution"},
+        },
+        {
+            "template_type": "unit_transfer_instrument",
+            "sub_label": "Unit Transfer Instrument(s)",
+            "context_override": {"sub_document_type": "transfer_instrument"},
+        },
+        {
+            "template_type": "unit_transfer_transferor_ack",
+            "sub_label": "Transferor Acknowledgements",
+            "context_override": {"sub_document_type": "transferor_acknowledgement"},
+        },
+        {
+            "template_type": "unit_transfer_transferee_ack",
+            "sub_label": "Transferee Acknowledgements",
+            "context_override": {"sub_document_type": "transferee_acknowledgement"},
+        },
+        {
+            "template_type": "unit_transfer_certificate",
+            "sub_label": "Updated Unit Certificates",
+            "context_override": {"sub_document_type": "certificate"},
+        },
+        {
+            "template_type": "unit_transfer_register",
+            "sub_label": "Updated Register of Unitholders",
+            "context_override": {"sub_document_type": "register"},
+        },
+    ]
+
+    result = render_multi_document_set(
+        entity=entity,
+        financial_year=fy,
+        doc_type="unit_transfer",
+        context=context,
+        params=params,
+        user=request.user,
+        template_configs=template_configs,
+        disclaimer_acknowledged=params.get("disclaimer_acknowledged", False),
+    )
+
+    # Post-execution: prompt accountant to update unitholder records
+    if result["status"] in ("ok", "partial"):
+        result["post_execution_prompt"] = (
+            "Unit transfer documents generated. Please update the entity's "
+            "unitholder records (Officers tab) to reflect the new ownership structure."
+        )
+
+    return JsonResponse(result)
 
 
 # ---------------------------------------------------------------------------
@@ -275,14 +900,16 @@ def legal_doc_send_fusesign(request, doc_pk):
     try:
         import requests as http_requests
 
-        # Get signatories from entity officers
-        signatories = _get_signatories(doc.entity)
+        # Get document-type-specific signatories
+        signatories = _get_signatories_for_doc(doc)
         if not signatories:
-            return JsonResponse({"error": "No signatories found for this entity."}, status=400)
+            return JsonResponse({"error": "No signatories found for this document."}, status=400)
+
+        entity_name = doc.entity.entity_name if doc.entity else "Unknown"
 
         # Create FuseSign envelope
         payload = {
-            "title": f"{doc.get_document_type_display()} — {doc.entity.name}",
+            "title": f"{doc.get_document_type_display()} — {entity_name}",
             "message": f"Please review and sign the attached {doc.get_document_type_display()}.",
             "signers": [
                 {
@@ -330,6 +957,9 @@ def legal_doc_send_fusesign(request, doc_pk):
         doc.fusesign_status = LegalDocument.FuseSignStatus.SENT
         doc.save(update_fields=["fusesign_envelope_id", "fusesign_status"])
 
+        # Log activity
+        log_fusesign_activity(doc, request.user, len(signatories), envelope_data["id"])
+
         return JsonResponse({
             "status": "ok",
             "envelope_id": envelope_data["id"],
@@ -342,25 +972,64 @@ def legal_doc_send_fusesign(request, doc_pk):
 
 
 # ---------------------------------------------------------------------------
+# Entity Search API (for wizard entity pickers)
+# ---------------------------------------------------------------------------
+@login_required
+def legal_doc_entity_search(request):
+    """
+    HTMX-compatible entity search for wizard entity pickers.
+    Returns JSON list of matching entities.
+    """
+    q = request.GET.get("q", "").strip()
+    entity_type = request.GET.get("entity_type", "")
+    limit = int(request.GET.get("limit", "20"))
+
+    qs = Entity.objects.filter(is_archived=False)
+    if q:
+        qs = qs.filter(
+            Q(entity_name__icontains=q) | Q(acn__icontains=q) | Q(abn__icontains=q)
+        )
+    if entity_type:
+        qs = qs.filter(entity_type=entity_type)
+
+    entities = qs.order_by("entity_name")[:limit]
+
+    return JsonResponse({
+        "results": [
+            {
+                "id": str(e.pk),
+                "name": e.entity_name,
+                "type": e.get_entity_type_display(),
+                "acn": e.acn or "",
+                "abn": e.abn or "",
+            }
+            for e in entities
+        ]
+    })
+
+
+# ---------------------------------------------------------------------------
 # Internal Helpers
 # ---------------------------------------------------------------------------
 def _build_entity_context(entity, fy):
     """Build a template context dict from entity and FY data."""
-    officers = EntityOfficer.objects.filter(entity=entity, is_active=True)
-    directors = officers.filter(role__in=["director", "sole_director"])
-    shareholders = officers.filter(role__in=["shareholder", "director"])
+    officers = EntityOfficer.objects.filter(entity=entity, date_ceased__isnull=True)
+    directors = officers.filter(
+        Q(role__in=["director", "sole_director"]) | Q(roles__overlap=["director"])
+    )
+    shareholders = officers.filter(
+        Q(role__in=["shareholder", "director_shareholder"]) | Q(roles__overlap=["shareholder"])
+    )
 
     context = {
         # Entity
-        "entity_name": entity.name,
+        "entity_name": entity.entity_name,
         "entity_type": entity.get_entity_type_display() if hasattr(entity, "get_entity_type_display") else entity.entity_type,
         "abn": entity.abn or "",
         "acn": entity.acn or "",
         "tfn": entity.tfn or "",
-        "registered_address": entity.registered_address or "",
-        "principal_place_of_business": entity.principal_place_of_business or "",
-        "state_of_registration": entity.state_of_registration or "",
-        "date_of_incorporation": entity.date_of_incorporation.strftime("%d %B %Y") if entity.date_of_incorporation else "",
+        "address": _get_entity_address(entity),
+        "state": entity.state or "",
         # Financial Year
         "fy_start_date": fy.start_date.strftime("%d %B %Y"),
         "fy_end_date": fy.end_date.strftime("%d %B %Y"),
@@ -369,8 +1038,8 @@ def _build_entity_context(entity, fy):
         # Officers
         "directors": [
             {
-                "name": o.name,
-                "role": o.get_role_display() if hasattr(o, "get_role_display") else o.role,
+                "name": o.full_name,
+                "role": o.roles_display if o.roles else o.get_role_display(),
                 "date_appointed": o.date_appointed.strftime("%d %B %Y") if o.date_appointed else "",
                 "shares_held": str(o.shares_held) if hasattr(o, "shares_held") and o.shares_held else "",
             }
@@ -378,21 +1047,22 @@ def _build_entity_context(entity, fy):
         ],
         "shareholders": [
             {
-                "name": o.name,
+                "name": o.full_name,
                 "shares_held": str(o.shares_held) if hasattr(o, "shares_held") and o.shares_held else "",
             }
             for o in shareholders
         ],
         "all_officers": [
-            {"name": o.name, "role": o.get_role_display() if hasattr(o, "get_role_display") else o.role}
+            {"name": o.full_name, "role": o.roles_display if o.roles else o.get_role_display()}
             for o in officers
         ],
         # Trust-specific
-        "trustee_name": entity.trustee_acn or "",
-        "deed_date": entity.deed_date.strftime("%d %B %Y") if hasattr(entity, "deed_date") and entity.deed_date else "",
-        "vesting_date": entity.vesting_date.strftime("%d %B %Y") if hasattr(entity, "vesting_date") and entity.vesting_date else "",
+        "trustee_name": entity.trustee_name or "",
+        "trustee_acn": entity.trustee_acn or "",
+        "deed_date": entity.deed_date.strftime("%d %B %Y") if entity.deed_date else "",
+        "vesting_date": entity.vesting_date.strftime("%d %B %Y") if entity.vesting_date else "",
         # Company-specific
-        "total_shares_on_issue": str(entity.total_shares_on_issue) if hasattr(entity, "total_shares_on_issue") and entity.total_shares_on_issue else "",
+        "total_shares_on_issue": str(entity.total_shares_on_issue) if entity.total_shares_on_issue else "",
         "is_large_proprietary": getattr(entity, "is_large_proprietary", False),
     }
 
@@ -422,63 +1092,100 @@ def _extract_template_variables(template):
         return {"variables": [], "loops": []}
 
 
-def _render_template(template, context):
-    """Render a docxtpl template with the given context and return bytes."""
-    from docxtpl import DocxTemplate
+def _get_signatories_for_doc(doc):
+    """
+    Get document-type-specific signatories for FuseSign.
+    Uses the stored parameters to determine the correct signatory list.
+    """
+    params = doc.parameters or {}
+    entity = doc.entity
 
-    tpl = DocxTemplate(template.template_file.path)
-    tpl.render(context)
+    SIGNATORY_BUILDERS = {
+        "div7a_loan_agreement": get_div7a_signatories,
+        "trust_deed_change_trustee": get_change_of_trustee_signatories,
+        "change_trustee_outgoing_resolution": get_change_of_trustee_signatories,
+        "change_trustee_new_minutes": get_change_of_trustee_signatories,
+        "unit_trust_deed": get_fixed_unit_trust_signatories,
+        "unit_trust_director_resolution": get_fixed_unit_trust_signatories,
+        "unit_trust_application": get_fixed_unit_trust_signatories,
+        "unit_trust_certificate": get_fixed_unit_trust_signatories,
+        "unit_trust_register": get_fixed_unit_trust_signatories,
+        "unit_transfer": get_unit_transfer_signatories,
+        "unit_transfer_cover": get_unit_transfer_signatories,
+        "unit_transfer_director_resolution": get_unit_transfer_signatories,
+        "unit_transfer_instrument": get_unit_transfer_signatories,
+        "unit_transfer_transferor_ack": get_unit_transfer_signatories,
+        "unit_transfer_transferee_ack": get_unit_transfer_signatories,
+        "unit_transfer_certificate": get_unit_transfer_signatories,
+        "unit_transfer_register": get_unit_transfer_signatories,
+    }
 
-    buffer = io.BytesIO()
-    tpl.save(buffer)
-    return buffer.getvalue()
+    builder = SIGNATORY_BUILDERS.get(doc.document_type)
+    if builder:
+        return builder(entity, params)
 
-
-def _convert_to_pdf(docx_bytes):
-    """Convert DOCX bytes to PDF using LibreOffice."""
-    try:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            docx_path = os.path.join(tmpdir, "document.docx")
-            with open(docx_path, "wb") as f:
-                f.write(docx_bytes)
-
-            result = subprocess.run(
-                [
-                    "libreoffice",
-                    "--headless",
-                    "--convert-to", "pdf",
-                    "--outdir", tmpdir,
-                    docx_path,
-                ],
-                capture_output=True,
-                timeout=60,
-            )
-
-            pdf_path = os.path.join(tmpdir, "document.pdf")
-            if os.path.exists(pdf_path):
-                with open(pdf_path, "rb") as f:
-                    return f.read()
-            else:
-                logger.warning("LibreOffice PDF conversion failed: %s", result.stderr.decode())
-                return None
-    except FileNotFoundError:
-        logger.warning("LibreOffice not installed — skipping PDF conversion")
-        return None
-    except Exception as e:
-        logger.warning("PDF conversion failed: %s", e)
-        return None
+    # Fallback: get directors with email
+    return _get_default_signatories(entity)
 
 
-def _get_signatories(entity):
-    """Get signatories for FuseSign from entity officers."""
-    officers = EntityOfficer.objects.filter(
-        entity=entity,
-        is_active=True,
-        role__in=["director", "sole_director", "trustee"],
-    )
+def _get_default_signatories(entity):
+    """Fallback signatory list: active directors with email addresses."""
+    directors = _get_directors_for_entity(entity)
     signatories = []
-    for o in officers:
-        email = getattr(o, "email", "") or ""
+    for d in directors:
+        email = d.email or ""
         if email:
-            signatories.append({"name": o.name, "email": email})
+            signatories.append({"name": d.full_name, "email": email})
     return signatories
+
+
+def _parse_unitholders_from_form(post_data):
+    """Parse unitholder rows from form POST data."""
+    unitholders = []
+    idx = 0
+    while True:
+        entity_id = post_data.get(f"unitholder_{idx}_entity_id")
+        entity_name = post_data.get(f"unitholder_{idx}_name", "")
+        units = post_data.get(f"unitholder_{idx}_units", "0")
+        is_trustee = post_data.get(f"unitholder_{idx}_is_trustee", "") == "true"
+
+        if not entity_id and not entity_name:
+            break
+
+        unitholders.append({
+            "entity_id": entity_id,
+            "entity_name": entity_name,
+            "units": units,
+            "is_trustee": is_trustee,
+        })
+        idx += 1
+
+    return unitholders
+
+
+def _parse_transfers_from_form(post_data):
+    """Parse transfer rows from form POST data."""
+    transfers = []
+    idx = 0
+    while True:
+        transferor_id = post_data.get(f"transfer_{idx}_transferor_entity_id")
+        transferee_id = post_data.get(f"transfer_{idx}_transferee_entity_id", "")
+        transferee_name = post_data.get(f"transfer_{idx}_transferee_name", "")
+        units = post_data.get(f"transfer_{idx}_units", "0")
+        consideration = post_data.get(f"transfer_{idx}_consideration", "0")
+        transfer_date = post_data.get(f"transfer_{idx}_date", "")
+
+        if not transferor_id:
+            break
+
+        transfers.append({
+            "transferor_entity_id": transferor_id,
+            "transferee_entity_id": transferee_id or None,
+            "transferee_name": transferee_name,
+            "units": units,
+            "consideration": consideration,
+            "transfer_date": transfer_date,
+        })
+        idx += 1
+
+    return transfers

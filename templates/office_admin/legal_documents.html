@@ -1,0 +1,369 @@
+{% extends "office_admin/base.html" %}
+{% load humanize %}
+
+{% block title %}Legal Documents & ASIC Compliance — StatementHub Office Admin{% endblock %}
+
+{% block content %}
+<!-- Page Header -->
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h2 style="font-size: 22px; font-weight: 700;">
+            <i class="bi bi-file-earmark-ruled text-primary"></i> Legal Documents & ASIC Compliance
+        </h2>
+        <p style="font-size: 13.5px; color: #888; margin-top: 4px;">
+            Generate, track, and manage all legal documents. Future Edge API integration will connect here.
+        </p>
+    </div>
+    <div class="d-flex gap-2">
+        <a href="{% url 'office_admin:dashboard' %}" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-arrow-left"></i> Back to Dashboard
+        </a>
+    </div>
+</div>
+
+<!-- ── STAT CARDS ── -->
+<div class="oa-stat-grid">
+    <!-- Total Documents -->
+    <div class="oa-stat-card">
+        <div class="oa-stat-header">
+            <div class="oa-stat-icon icon-blue"><i class="bi bi-file-earmark-ruled-fill"></i></div>
+        </div>
+        <div class="oa-stat-label">Total Generated</div>
+        <div class="oa-stat-value">{{ total_documents }}</div>
+        <div class="oa-stat-sub">All time</div>
+    </div>
+
+    <!-- Pending Signature -->
+    <div class="oa-stat-card">
+        <div class="oa-stat-header">
+            <div class="oa-stat-icon icon-amber"><i class="bi bi-pen-fill"></i></div>
+            {% if pending_signature > 0 %}
+            <span class="oa-stat-trend trend-amber">{{ pending_signature }} awaiting</span>
+            {% endif %}
+        </div>
+        <div class="oa-stat-label">Pending Signature</div>
+        <div class="oa-stat-value">{{ pending_signature }}</div>
+        <div class="oa-stat-sub">Sent to FuseSign</div>
+    </div>
+
+    <!-- Executed -->
+    <div class="oa-stat-card">
+        <div class="oa-stat-header">
+            <div class="oa-stat-icon icon-green"><i class="bi bi-check-circle-fill"></i></div>
+        </div>
+        <div class="oa-stat-label">Executed</div>
+        <div class="oa-stat-value">{{ executed_documents }}</div>
+        <div class="oa-stat-sub">Fully signed</div>
+    </div>
+
+    <!-- Entities Without Governing Docs -->
+    <div class="oa-stat-card">
+        <div class="oa-stat-header">
+            <div class="oa-stat-icon icon-red"><i class="bi bi-exclamation-triangle-fill"></i></div>
+            {% if entities_missing_docs > 0 %}
+            <span class="oa-stat-trend trend-red">{{ entities_missing_docs }} missing</span>
+            {% endif %}
+        </div>
+        <div class="oa-stat-label">Missing Governing Docs</div>
+        <div class="oa-stat-value">{{ entities_missing_docs }}</div>
+        <div class="oa-stat-sub">Trusts & companies without primary doc</div>
+    </div>
+</div>
+
+<!-- ── ROW 1: Generate New Document + Recent Documents ── -->
+<div class="oa-two-col">
+
+    <!-- Generate New Document -->
+    <div class="oa-section-card">
+        <div class="oa-section-header">
+            <h3><i class="bi bi-plus-circle-fill text-primary"></i> Generate New Document</h3>
+        </div>
+        <div class="p-3">
+            <p class="text-muted small mb-3">Select a document type to launch the generation wizard. You will need to choose the entity in the wizard.</p>
+
+            <!-- Legal Documents -->
+            <div class="mb-3">
+                <div style="font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #999; margin-bottom: 8px;">
+                    Legal Documents
+                </div>
+                <div class="d-flex flex-column gap-2">
+                    <a href="{% url 'office_admin:legal_doc_select_entity' doc_type='div7a_loan_agreement' %}"
+                       class="oa-generate-btn">
+                        <div class="d-flex align-items-center gap-3">
+                            <div class="oa-doc-icon icon-red"><i class="bi bi-bank"></i></div>
+                            <div>
+                                <div class="fw-bold" style="font-size: 13px;">Division 7A Loan Agreement</div>
+                                <div class="text-muted" style="font-size: 11px;">Company-to-shareholder/associate complying loan</div>
+                            </div>
+                        </div>
+                        <i class="bi bi-chevron-right text-muted"></i>
+                    </a>
+                    <a href="{% url 'office_admin:legal_doc_select_entity' doc_type='trust_deed_change_trustee' %}"
+                       class="oa-generate-btn">
+                        <div class="d-flex align-items-center gap-3">
+                            <div class="oa-doc-icon icon-purple"><i class="bi bi-arrow-left-right"></i></div>
+                            <div>
+                                <div class="fw-bold" style="font-size: 13px;">Change of Trustee</div>
+                                <div class="text-muted" style="font-size: 11px;">Deed + outgoing resolution + new trustee minutes (3 docs)</div>
+                            </div>
+                        </div>
+                        <i class="bi bi-chevron-right text-muted"></i>
+                    </a>
+                    <a href="{% url 'office_admin:legal_doc_select_entity' doc_type='unit_trust_deed' %}"
+                       class="oa-generate-btn">
+                        <div class="d-flex align-items-center gap-3">
+                            <div class="oa-doc-icon icon-blue"><i class="bi bi-file-earmark-lock"></i></div>
+                            <div>
+                                <div class="fw-bold" style="font-size: 13px;">Fixed Unit Trust Deed + Ancillaries</div>
+                                <div class="text-muted" style="font-size: 11px;">Deed, resolution, applications, certificates, register (5 docs)</div>
+                            </div>
+                        </div>
+                        <i class="bi bi-chevron-right text-muted"></i>
+                    </a>
+                    <a href="{% url 'office_admin:legal_doc_select_entity' doc_type='unit_transfer' %}"
+                       class="oa-generate-btn">
+                        <div class="d-flex align-items-center gap-3">
+                            <div class="oa-doc-icon icon-amber"><i class="bi bi-arrow-repeat"></i></div>
+                            <div>
+                                <div class="fw-bold" style="font-size: 13px;">Unit Transfer Package</div>
+                                <div class="text-muted" style="font-size: 11px;">Cover, resolution, instruments, acknowledgements, register (7 docs)</div>
+                            </div>
+                        </div>
+                        <i class="bi bi-chevron-right text-muted"></i>
+                    </a>
+                </div>
+            </div>
+
+            <!-- Future: Edge API / ASIC -->
+            <div>
+                <div style="font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #999; margin-bottom: 8px;">
+                    ASIC Compliance <span class="badge bg-secondary" style="font-size: 9px;">Coming Soon</span>
+                </div>
+                <div class="d-flex flex-column gap-2">
+                    <div class="oa-generate-btn disabled">
+                        <div class="d-flex align-items-center gap-3">
+                            <div class="oa-doc-icon" style="background: rgba(150,150,150,0.1); color: #999;"><i class="bi bi-building-fill-gear"></i></div>
+                            <div>
+                                <div class="fw-bold" style="font-size: 13px; color: #999;">ASIC Annual Review</div>
+                                <div class="text-muted" style="font-size: 11px;">Requires Edge API connection</div>
+                            </div>
+                        </div>
+                        <span class="badge bg-light text-muted" style="font-size: 10px;">Edge API</span>
+                    </div>
+                    <div class="oa-generate-btn disabled">
+                        <div class="d-flex align-items-center gap-3">
+                            <div class="oa-doc-icon" style="background: rgba(150,150,150,0.1); color: #999;"><i class="bi bi-person-badge"></i></div>
+                            <div>
+                                <div class="fw-bold" style="font-size: 13px; color: #999;">Change of Officeholder</div>
+                                <div class="text-muted" style="font-size: 11px;">Requires Edge API connection</div>
+                            </div>
+                        </div>
+                        <span class="badge bg-light text-muted" style="font-size: 10px;">Edge API</span>
+                    </div>
+                    <div class="oa-generate-btn disabled">
+                        <div class="d-flex align-items-center gap-3">
+                            <div class="oa-doc-icon" style="background: rgba(150,150,150,0.1); color: #999;"><i class="bi bi-geo-alt"></i></div>
+                            <div>
+                                <div class="fw-bold" style="font-size: 13px; color: #999;">Change of Registered Address</div>
+                                <div class="text-muted" style="font-size: 11px;">Requires Edge API connection</div>
+                            </div>
+                        </div>
+                        <span class="badge bg-light text-muted" style="font-size: 10px;">Edge API</span>
+                    </div>
+                    <div class="oa-generate-btn disabled">
+                        <div class="d-flex align-items-center gap-3">
+                            <div class="oa-doc-icon" style="background: rgba(150,150,150,0.1); color: #999;"><i class="bi bi-shop"></i></div>
+                            <div>
+                                <div class="fw-bold" style="font-size: 13px; color: #999;">Change of Company Name</div>
+                                <div class="text-muted" style="font-size: 11px;">Requires Edge API connection</div>
+                            </div>
+                        </div>
+                        <span class="badge bg-light text-muted" style="font-size: 10px;">Edge API</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Recent Documents -->
+    <div class="oa-section-card">
+        <div class="oa-section-header">
+            <h3><i class="bi bi-clock-history"></i> Recent Documents</h3>
+            <a class="view-all" href="{% url 'office_admin:legal_doc_all' %}">View All →</a>
+        </div>
+        {% if recent_documents %}
+        <div class="oa-table-header legal-grid">
+            <span>Date</span>
+            <span>Entity</span>
+            <span>Document</span>
+            <span>Status</span>
+            <span>FuseSign</span>
+        </div>
+        {% for doc in recent_documents %}
+        <div class="oa-table-row legal-grid">
+            <span class="oa-date">{{ doc.generated_at|date:"j M" }}</span>
+            <span class="oa-client">{{ doc.entity.entity_name|truncatewords:4 }}</span>
+            <span class="oa-type">{{ doc.get_document_type_display|truncatewords:4 }}</span>
+            <span>
+                <span class="oa-badge oa-badge-{{ doc.status }}">{{ doc.get_status_display }}</span>
+            </span>
+            <span>
+                {% if doc.fusesign_status == 'signed' %}
+                <span class="oa-badge oa-badge-completed"><i class="bi bi-check-circle"></i> Signed</span>
+                {% elif doc.fusesign_status == 'sent' %}
+                <span class="oa-badge oa-badge-awaiting"><i class="bi bi-pen"></i> Sent</span>
+                {% elif doc.fusesign_status == 'declined' %}
+                <span class="oa-badge oa-badge-burning"><i class="bi bi-x-circle"></i> Declined</span>
+                {% else %}
+                <span class="text-muted" style="font-size: 11px;">—</span>
+                {% endif %}
+            </span>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="oa-empty">
+            <i class="bi bi-file-earmark-ruled"></i>
+            <p>No documents generated yet. Use the panel on the left to generate your first document.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- ── ROW 2: Pending Signatures + Entities Missing Governing Docs ── -->
+<div class="oa-two-col">
+
+    <!-- Pending FuseSign -->
+    <div class="oa-section-card">
+        <div class="oa-section-header">
+            <h3><i class="bi bi-pen-fill text-warning"></i> Awaiting Signature</h3>
+            {% if pending_signature > 0 %}
+            <span class="header-badge" style="background: #fff3e0; color: #e65100;">{{ pending_signature }} pending</span>
+            {% endif %}
+        </div>
+        {% if pending_docs %}
+        <div class="oa-table-header pending-grid">
+            <span>Entity</span>
+            <span>Document</span>
+            <span>Sent</span>
+            <span>Actions</span>
+        </div>
+        {% for doc in pending_docs %}
+        <div class="oa-table-row pending-grid">
+            <span class="oa-client">{{ doc.entity.entity_name|truncatewords:3 }}</span>
+            <span class="oa-type">{{ doc.get_document_type_display|truncatewords:3 }}</span>
+            <span class="oa-date">{{ doc.generated_at|date:"j M Y" }}</span>
+            <span>
+                <div class="btn-group btn-group-sm">
+                    {% if doc.pdf_file %}
+                    <a href="{{ doc.pdf_file.url }}" class="btn btn-outline-primary" target="_blank" title="Download PDF">
+                        <i class="bi bi-file-pdf"></i>
+                    </a>
+                    {% endif %}
+                    {% if doc.generated_file %}
+                    <a href="{{ doc.generated_file.url }}" class="btn btn-outline-secondary" target="_blank" title="Download DOCX">
+                        <i class="bi bi-file-word"></i>
+                    </a>
+                    {% endif %}
+                </div>
+            </span>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="oa-empty">
+            <i class="bi bi-pen"></i>
+            <p>No documents awaiting signature.</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Entities Missing Governing Docs -->
+    <div class="oa-section-card">
+        <div class="oa-section-header">
+            <h3><i class="bi bi-exclamation-triangle text-danger"></i> Missing Governing Documents</h3>
+            {% if entities_missing_docs > 0 %}
+            <span class="header-badge">{{ entities_missing_docs }} entities</span>
+            {% endif %}
+        </div>
+        {% if missing_doc_entities %}
+        <div class="oa-table-header missing-grid">
+            <span>Entity</span>
+            <span>Type</span>
+            <span>Missing</span>
+            <span>Action</span>
+        </div>
+        {% for item in missing_doc_entities %}
+        <div class="oa-table-row missing-grid">
+            <span class="oa-client">{{ item.entity_name|truncatewords:3 }}</span>
+            <span>
+                <span class="oa-entity-badge badge-{{ item.entity_type }}">{{ item.entity_type_display }}</span>
+            </span>
+            <span class="oa-type">{{ item.missing_doc }}</span>
+            <span>
+                <a href="{% url 'core:entity_detail' pk=item.pk %}" class="btn btn-sm btn-outline-primary" title="Go to entity">
+                    <i class="bi bi-arrow-right"></i>
+                </a>
+            </span>
+        </div>
+        {% endfor %}
+        {% else %}
+        <div class="oa-empty">
+            <i class="bi bi-check-circle text-success"></i>
+            <p>All entities have their primary governing documents uploaded.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- ── ROW 3: Edge API Status (Future) ── -->
+<div class="oa-section-card" style="margin-bottom: 24px;">
+    <div class="oa-section-header">
+        <h3><i class="bi bi-plug-fill text-info"></i> Edge API Integration</h3>
+        <span class="badge bg-secondary">Not Connected</span>
+    </div>
+    <div class="p-4 text-center">
+        <i class="bi bi-plug" style="font-size: 48px; color: #ccc;"></i>
+        <h6 class="mt-3 text-muted">Edge API Connection Required</h6>
+        <p class="text-muted small" style="max-width: 500px; margin: 0 auto;">
+            Once connected to Edge API, this section will display real-time ASIC compliance status,
+            upcoming annual reviews, officeholder changes, and automated lodgement tracking.
+            All ASIC compliance workflows will be managed from this dashboard.
+        </p>
+        <button class="btn btn-outline-info btn-sm mt-3" disabled>
+            <i class="bi bi-gear"></i> Configure Edge API Connection
+        </button>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+{{ block.super }}
+<style>
+    /* Legal document grid */
+    .legal-grid { grid-template-columns: 80px 1fr 1fr 90px 90px; }
+    .pending-grid { grid-template-columns: 1fr 1fr 100px 80px; }
+    .missing-grid { grid-template-columns: 1fr 100px 140px 60px; }
+
+    /* Generate buttons */
+    .oa-generate-btn {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 12px 16px; border-radius: 10px; border: 1px solid #e8eaed;
+        text-decoration: none; color: inherit; transition: all 0.15s;
+    }
+    .oa-generate-btn:hover:not(.disabled) {
+        border-color: #6c8cff; background: #f8f9ff;
+        box-shadow: 0 2px 8px rgba(108,140,255,0.1);
+    }
+    .oa-generate-btn.disabled {
+        opacity: 0.6; cursor: not-allowed; pointer-events: none;
+    }
+    .oa-doc-icon {
+        width: 36px; height: 36px; border-radius: 8px;
+        display: flex; align-items: center; justify-content: center; font-size: 16px;
+    }
+
+    /* Additional status badges */
+    .oa-badge-draft { background: #e8eaf6; color: #283593; }
+    .oa-badge-final { background: #e8f5e9; color: #2e7d32; }
+    .oa-badge-executed { background: #e0f2f1; color: #00695c; }
+</style>
+{% endblock %}

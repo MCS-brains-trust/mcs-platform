@@ -132,4 +132,42 @@ class DocumentTemplateAdmin(admin.ModelAdmin):
     search_fields = ("name", "description")
     readonly_fields = ("created_at", "updated_at")
 
+from .models import LegalDocumentTemplate, LegalDocument, GoverningDocument
+
+@admin.register(LegalDocumentTemplate)
+class LegalDocumentTemplateAdmin(admin.ModelAdmin):
+    list_display = ("name", "document_type", "version", "is_active", "solicitor_approved", "created_at")
+    list_filter = ("document_type", "is_active", "solicitor_approved")
+    search_fields = ("name",)
+    readonly_fields = ("created_at",)
+    fieldsets = (
+        (None, {
+            "fields": ("name", "document_type", "entity_types", "template_file", "version"),
+        }),
+        ("Approval", {
+            "fields": ("is_active", "solicitor_approved"),
+        }),
+        ("Schema", {
+            "fields": ("variable_schema",),
+            "classes": ("collapse",),
+        }),
+    )
+
+
+@admin.register(LegalDocument)
+class LegalDocumentAdmin(admin.ModelAdmin):
+    list_display = ("entity", "document_type", "status", "version", "generated_at", "generated_by", "fusesign_status")
+    list_filter = ("document_type", "status", "fusesign_status")
+    search_fields = ("entity__entity_name",)
+    readonly_fields = ("generated_at",)
+
+
+@admin.register(GoverningDocument)
+class GoverningDocumentAdmin(admin.ModelAdmin):
+    list_display = ("entity", "document_type", "status", "is_primary", "extraction_status", "uploaded_at")
+    list_filter = ("document_type", "status", "extraction_status", "is_primary")
+    search_fields = ("entity__entity_name", "original_filename")
+    readonly_fields = ("uploaded_at",)
+
+
 from . import admin_office_admin  # noqa: F401

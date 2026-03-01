@@ -411,6 +411,13 @@
                     </button>
                 </form>
                 {% endif %}
+                {% if 'DIV7A' in flag.rule_id %}
+                <!-- Generate Div 7A Loan Agreement -->
+                <a href="{% url 'core:legal_doc_wizard' pk=financial_year.pk doc_type='div7a_loan_agreement' %}?risk_flag={{ flag.pk }}"
+                   class="btn btn-sm btn-outline-warning w-100" title="Generate Division 7A Loan Agreement">
+                    <i class="bi bi-file-earmark-ruled"></i> Loan Agmt
+                </a>
+                {% endif %}
             </div>
             {% endif %}
         </div>

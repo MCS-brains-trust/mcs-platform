@@ -1,0 +1,638 @@
+{% extends "core/base.html" %}
+{% load humanize %}
+
+{% block title %}Unit Transfer Package — {{ entity.entity_name }}{% endblock %}
+
+{% block content %}
+<div class="container-fluid py-3">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
+            {% if fy %}
+            <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy }}</a></li>
+            {% endif %}
+            <li class="breadcrumb-item active">Unit Transfer Package</li>
+        </ol>
+    </nav>
+
+    {% if error %}
+    <div class="alert alert-danger">
+        <i class="bi bi-exclamation-triangle"></i> {{ error }}
+    </div>
+    {% else %}
+
+    <div class="row">
+        {# Left: Wizard Form #}
+        <div class="col-lg-8">
+            <div class="card">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">
+                        <i class="bi bi-arrow-left-right"></i>
+                        Unit Transfer Package — 7 Documents
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info small mb-4">
+                        <i class="bi bi-info-circle"></i>
+                        This wizard generates <strong>seven documents</strong>:
+                        Cover Page, Director Resolution, Transfer Instrument(s),
+                        Transferor Acknowledgement(s), Transferee Acknowledgement(s),
+                        Updated Unit Certificate(s), and Updated Register of Unitholders.
+                    </div>
+
+                    {# Step indicator #}
+                    <div class="d-flex justify-content-between mb-4">
+                        <div class="text-center flex-fill" id="step-1-indicator">
+                            <span class="badge bg-primary rounded-pill">1</span>
+                            <small class="d-block mt-1">Trust Info</small>
+                        </div>
+                        <div class="text-center flex-fill" id="step-2-indicator">
+                            <span class="badge bg-secondary rounded-pill">2</span>
+                            <small class="d-block mt-1">Transfers</small>
+                        </div>
+                        <div class="text-center flex-fill" id="step-3-indicator">
+                            <span class="badge bg-secondary rounded-pill">3</span>
+                            <small class="d-block mt-1">Review</small>
+                        </div>
+                        <div class="text-center flex-fill" id="step-4-indicator">
+                            <span class="badge bg-secondary rounded-pill">4</span>
+                            <small class="d-block mt-1">Disclaimer</small>
+                        </div>
+                        <div class="text-center flex-fill" id="step-5-indicator">
+                            <span class="badge bg-secondary rounded-pill">5</span>
+                            <small class="d-block mt-1">Generate</small>
+                        </div>
+                    </div>
+
+                    {# ============================================================ #}
+                    {# Step 1: Trust Info                                           #}
+                    {# ============================================================ #}
+                    <div id="step-1">
+                        <h6 class="border-bottom pb-2 mb-3">Trust & Trustee Details</h6>
+
+                        <div class="bg-light rounded p-3 mb-3">
+                            <p class="small fw-bold text-muted mb-2">TRUST</p>
+                            <div class="row g-2">
+                                <div class="col-md-6">
+                                    <span class="small fw-bold">Trust Name:</span>
+                                    <span class="small">{{ entity.entity_name }}</span>
+                                </div>
+                                <div class="col-md-3">
+                                    <span class="small fw-bold">ABN:</span>
+                                    <span class="small">{{ entity.abn }}</span>
+                                </div>
+                                <div class="col-md-3">
+                                    <span class="small fw-bold">Trustee:</span>
+                                    <span class="small">{{ trustee_entity.entity_name|default:"Not set" }}</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        {# Current Unitholders #}
+                        <h6 class="small fw-bold">Current Unitholders</h6>
+                        <table class="table table-sm small">
+                            <thead class="table-light">
+                                <tr><th>Unitholder</th><th>Units Held</th><th>Unit Class</th></tr>
+                            </thead>
+                            <tbody>
+                                {% for uh in current_unitholders %}
+                                <tr>
+                                    <td>{{ uh.entity_name }}</td>
+                                    <td>{{ uh.units_held }}</td>
+                                    <td>{{ uh.unit_class }}</td>
+                                </tr>
+                                {% empty %}
+                                <tr><td colspan="3" class="text-muted text-center">No unitholders on record.</td></tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+
+                        {# Unit Class #}
+                        <div class="mb-3">
+                            <label class="form-label small fw-bold">Unit Class</label>
+                            <input type="text" class="form-control form-control-sm" name="unit_class"
+                                   value="{{ default_unit_class|default:'Ordinary' }}" style="max-width: 200px;">
+                        </div>
+
+                        <div class="d-flex justify-content-end mt-3">
+                            <button class="btn btn-primary" onclick="goToStep(2)">
+                                Next: Define Transfers <i class="bi bi-arrow-right"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    {# ============================================================ #}
+                    {# Step 2: Transfer Table (dynamic add/remove rows)             #}
+                    {# ============================================================ #}
+                    <div id="step-2" class="d-none">
+                        <h6 class="border-bottom pb-2 mb-3">Transfer Details</h6>
+                        <p class="text-muted small">Add one row per transfer. Each transfer generates a separate Transfer Instrument.</p>
+
+                        <div class="table-responsive">
+                            <table class="table table-sm small" id="transfers-table">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Transferor</th>
+                                        <th>Transferee</th>
+                                        <th style="width: 90px;">Units</th>
+                                        <th style="width: 120px;">Consideration</th>
+                                        <th style="width: 140px;">Purchase Date</th>
+                                        <th style="width: 40px;"></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="transfers-tbody">
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <button class="btn btn-sm btn-outline-primary" onclick="addTransferRow()">
+                            <i class="bi bi-plus-circle"></i> Add Transfer
+                        </button>
+
+                        <div id="transfer-errors" class="text-danger small mt-2 d-none"></div>
+
+                        <div class="d-flex justify-content-between mt-3">
+                            <button class="btn btn-outline-secondary" onclick="goToStep(1)">
+                                <i class="bi bi-arrow-left"></i> Back
+                            </button>
+                            <button class="btn btn-primary" onclick="goToStep(3)">
+                                Next: Review <i class="bi bi-arrow-right"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    {# ============================================================ #}
+                    {# Step 3: Review                                               #}
+                    {# ============================================================ #}
+                    <div id="step-3" class="d-none">
+                        <h6 class="border-bottom pb-2 mb-3">Review — 7 Documents Will Be Generated</h6>
+
+                        <h6 class="small fw-bold">Transfers</h6>
+                        <table class="table table-sm small">
+                            <thead class="table-light">
+                                <tr><th>#</th><th>From</th><th>To</th><th>Units</th><th>Consideration</th><th>Date</th></tr>
+                            </thead>
+                            <tbody id="review-transfers-tbody"></tbody>
+                        </table>
+
+                        <h6 class="small fw-bold mt-3">Post-Transfer Register</h6>
+                        <table class="table table-sm small">
+                            <thead class="table-light">
+                                <tr><th>Unitholder</th><th>Units Before</th><th>Units After</th></tr>
+                            </thead>
+                            <tbody id="review-register-tbody"></tbody>
+                        </table>
+
+                        <h6 class="small fw-bold mt-3">Documents to Generate</h6>
+                        <ol class="small">
+                            <li>Cover Page</li>
+                            <li>Director Resolution</li>
+                            <li id="review-transfer-count">Transfer Instrument(s)</li>
+                            <li>Transferor Acknowledgement(s)</li>
+                            <li>Transferee Acknowledgement(s)</li>
+                            <li>Updated Unit Certificate(s)</li>
+                            <li>Updated Register of Unitholders</li>
+                        </ol>
+
+                        <div class="d-flex justify-content-between mt-3">
+                            <button class="btn btn-outline-secondary" onclick="goToStep(2)">
+                                <i class="bi bi-arrow-left"></i> Back
+                            </button>
+                            <button class="btn btn-primary" onclick="goToStep(4)">
+                                Next: Disclaimer <i class="bi bi-arrow-right"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    {# ============================================================ #}
+                    {# Step 4: Disclaimer                                           #}
+                    {# ============================================================ #}
+                    <div id="step-4" class="d-none">
+                        <h6 class="border-bottom pb-2 mb-3">Disclaimer</h6>
+                        <div class="alert alert-warning">
+                            <i class="bi bi-exclamation-triangle"></i>
+                            <strong>Important Notice</strong>
+                            <p class="mt-2 mb-0">{{ disclaimer }}</p>
+                        </div>
+                        <div class="form-check mt-3">
+                            <input class="form-check-input" type="checkbox" id="disclaimer-check"
+                                   onchange="document.getElementById('generate-btn').disabled = !this.checked">
+                            <label class="form-check-label" for="disclaimer-check">
+                                I acknowledge and accept the above disclaimer.
+                            </label>
+                        </div>
+
+                        <div class="d-flex justify-content-between mt-3">
+                            <button class="btn btn-outline-secondary" onclick="goToStep(3)">
+                                <i class="bi bi-arrow-left"></i> Back
+                            </button>
+                            <button class="btn btn-success" id="generate-btn" disabled onclick="generateDocument()">
+                                <i class="bi bi-file-earmark-check"></i> Generate 7 Documents
+                            </button>
+                        </div>
+                    </div>
+
+                    {# ============================================================ #}
+                    {# Step 5: Result                                               #}
+                    {# ============================================================ #}
+                    <div id="step-5" class="d-none">
+                        <div class="text-center py-4" id="generating-spinner">
+                            <div class="spinner-border text-primary" role="status"></div>
+                            <p class="mt-2 text-muted">Generating Unit Transfer Package (7 documents)...</p>
+                        </div>
+                        <div class="d-none" id="generation-result">
+                            <div class="text-center py-4">
+                                <i class="bi bi-check-circle-fill text-success" style="font-size: 3rem;"></i>
+                                <h5 class="mt-2">Unit Transfer Package Generated</h5>
+                                <p class="text-muted small">Documents saved to Governing Documents tab.</p>
+                            </div>
+                            <div id="doc-download-list" class="mb-3"></div>
+                            <div class="d-flex justify-content-center gap-3">
+                                <button id="fusesign-btn" class="btn btn-outline-success" onclick="sendToFuseSign()">
+                                    <i class="bi bi-pen"></i> Send All to FuseSign
+                                </button>
+                            </div>
+                            <div class="alert alert-info small mt-3" id="post-execution-note">
+                                <i class="bi bi-info-circle"></i>
+                                <strong>After signing:</strong> Once all parties have signed via FuseSign,
+                                you will be prompted to update the unitholder records in StatementHub
+                                to reflect the completed transfers.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {# Right sidebar #}
+        <div class="col-lg-4">
+            {% if governing_doc %}
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-file-earmark-lock text-info"></i> Trust Deed</h6>
+                </div>
+                <div class="card-body">
+                    <p class="small"><strong>{{ governing_doc.original_filename }}</strong></p>
+                    {% if governing_doc.extracted_text %}
+                    <div class="bg-light p-2 rounded" style="max-height: 300px; overflow-y: auto; font-size: 0.75rem;">
+                        <pre class="mb-0" style="white-space: pre-wrap;">{{ governing_doc.extracted_text|truncatechars:2000 }}</pre>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="card mt-3">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-file-earmark-code"></i> Template Info</h6>
+                </div>
+                <div class="card-body small">
+                    <p><strong>Template:</strong> {{ template.name }}</p>
+                    <p><strong>Version:</strong> {{ template.version }}</p>
+                    {% if template.solicitor_approved %}
+                    <p><span class="badge bg-success">Solicitor Approved</span></p>
+                    {% else %}
+                    <p><span class="badge bg-warning text-dark">Not Yet Solicitor Approved</span></p>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {% endif %}
+</div>
+
+<script>
+const CSRF_TOKEN = '{{ csrf_token }}';
+const GENERATE_URL = '{% url "core:legal_doc_generate" pk=fy.pk doc_type="unit_transfer_package" %}';
+const ENTITY_SEARCH_URL = '{% url "core:legal_doc_entity_search" %}';
+const TOTAL_STEPS = 5;
+let transfers = [];
+let generatedDocIds = [];
+
+// Current unitholders from server
+const CURRENT_UNITHOLDERS = [
+    {% for uh in current_unitholders %}
+    {id: '{{ uh.entity_id }}', name: '{{ uh.entity_name|escapejs }}', units: {{ uh.units_held }}, unit_class: '{{ uh.unit_class|escapejs }}'},
+    {% endfor %}
+];
+
+let transferRowId = 0;
+
+function addTransferRow() {
+    transferRowId++;
+    const tbody = document.getElementById('transfers-tbody');
+
+    // Build transferor dropdown from current unitholders
+    let transferorOpts = '<option value="">— Select —</option>';
+    CURRENT_UNITHOLDERS.forEach(uh => {
+        transferorOpts += `<option value="${uh.id}" data-name="${uh.name}">${uh.name} (${uh.units} units)</option>`;
+    });
+
+    const today = new Date().toISOString().split('T')[0];
+    const row = document.createElement('tr');
+    row.id = `transfer-row-${transferRowId}`;
+    row.innerHTML = `
+        <td>
+            <select class="form-select form-select-sm" name="transferor_${transferRowId}">
+                ${transferorOpts}
+            </select>
+        </td>
+        <td>
+            <input type="text" class="form-control form-control-sm" name="transferee_name_${transferRowId}"
+                   placeholder="Search entity..." onfocus="showTransfereeSearch(this, ${transferRowId})">
+            <input type="hidden" name="transferee_id_${transferRowId}">
+            <div class="transferee-results list-group position-absolute" style="z-index: 100; max-height: 150px; overflow-y: auto; display: none;"></div>
+        </td>
+        <td><input type="number" class="form-control form-control-sm" name="units_${transferRowId}" min="1" value="1"></td>
+        <td>
+            <div class="input-group input-group-sm">
+                <span class="input-group-text">$</span>
+                <input type="number" class="form-control" name="consideration_${transferRowId}" step="0.01" min="0" value="0.00">
+            </div>
+        </td>
+        <td><input type="date" class="form-control form-control-sm" name="purchase_date_${transferRowId}" value="${today}"></td>
+        <td><button class="btn btn-sm btn-outline-danger" onclick="removeTransferRow(${transferRowId})"><i class="bi bi-x"></i></button></td>
+    `;
+    tbody.appendChild(row);
+}
+
+function removeTransferRow(id) {
+    const row = document.getElementById(`transfer-row-${id}`);
+    if (row) row.remove();
+}
+
+function showTransfereeSearch(input, rowId) {
+    let debounce = null;
+    input.addEventListener('input', function() {
+        clearTimeout(debounce);
+        debounce = setTimeout(() => {
+            const q = input.value.trim();
+            if (q.length < 2) return;
+
+            fetch(`${ENTITY_SEARCH_URL}?q=${encodeURIComponent(q)}&limit=8`)
+            .then(r => r.json())
+            .then(data => {
+                const container = input.parentElement.querySelector('.transferee-results');
+                container.style.display = 'block';
+                container.innerHTML = '';
+                data.results.forEach(e => {
+                    const item = document.createElement('button');
+                    item.type = 'button';
+                    item.className = 'list-group-item list-group-item-action small py-1';
+                    item.textContent = `${e.name} (${e.type})`;
+                    item.onclick = () => {
+                        input.value = e.name;
+                        input.parentElement.querySelector(`[name="transferee_id_${rowId}"]`).value = e.id;
+                        container.style.display = 'none';
+                    };
+                    container.appendChild(item);
+                });
+            });
+        }, 300);
+    });
+}
+
+function collectTransfers() {
+    const rows = document.querySelectorAll('#transfers-tbody tr');
+    const result = [];
+    rows.forEach(row => {
+        const id = row.id.replace('transfer-row-', '');
+        const transferor = row.querySelector(`[name="transferor_${id}"]`);
+        const transfereeId = row.querySelector(`[name="transferee_id_${id}"]`);
+        const transfereeName = row.querySelector(`[name="transferee_name_${id}"]`);
+        const units = row.querySelector(`[name="units_${id}"]`);
+        const consideration = row.querySelector(`[name="consideration_${id}"]`);
+        const purchaseDate = row.querySelector(`[name="purchase_date_${id}"]`);
+
+        if (transferor && transferor.value) {
+            result.push({
+                transferor_entity_id: transferor.value,
+                transferor_name: transferor.options[transferor.selectedIndex].dataset.name,
+                transferee_entity_id: transfereeId ? transfereeId.value : '',
+                transferee_name: transfereeName ? transfereeName.value : '',
+                units: parseInt(units.value) || 0,
+                consideration: parseFloat(consideration.value) || 0,
+                purchase_date: purchaseDate.value,
+            });
+        }
+    });
+    return result;
+}
+
+function goToStep(step) {
+    if (step === 2) {
+        // Add first row if empty
+        if (document.getElementById('transfers-tbody').children.length === 0) {
+            addTransferRow();
+        }
+    }
+    if (step === 3) {
+        transfers = collectTransfers();
+        if (!validateTransfers()) return;
+        populateReview();
+    }
+
+    for (let i = 1; i <= TOTAL_STEPS; i++) {
+        document.getElementById(`step-${i}`).classList.toggle('d-none', i !== step);
+        const indicator = document.getElementById(`step-${i}-indicator`);
+        const badge = indicator.querySelector('.badge');
+        badge.classList.remove('bg-primary', 'bg-secondary', 'bg-success');
+        badge.classList.add(i < step ? 'bg-success' : (i === step ? 'bg-primary' : 'bg-secondary'));
+    }
+}
+
+function validateTransfers() {
+    const errDiv = document.getElementById('transfer-errors');
+    const errs = [];
+
+    if (transfers.length === 0) {
+        errs.push('At least one transfer must be defined.');
+    }
+
+    // Build running balances
+    const balances = {};
+    CURRENT_UNITHOLDERS.forEach(uh => { balances[uh.id] = uh.units; });
+
+    transfers.forEach((t, i) => {
+        if (!t.transferor_entity_id) errs.push(`Transfer ${i+1}: select a transferor.`);
+        if (!t.transferee_entity_id && !t.transferee_name) errs.push(`Transfer ${i+1}: select or enter a transferee.`);
+        if (!t.units || t.units <= 0) errs.push(`Transfer ${i+1}: units must be greater than zero.`);
+        if (!t.purchase_date) errs.push(`Transfer ${i+1}: enter a purchase date.`);
+
+        // Check transferor has enough units
+        const bal = balances[t.transferor_entity_id] || 0;
+        if (t.units > bal) {
+            errs.push(`Transfer ${i+1}: ${t.transferor_name} only has ${bal} units available.`);
+        } else {
+            balances[t.transferor_entity_id] = bal - t.units;
+            balances[t.transferee_entity_id] = (balances[t.transferee_entity_id] || 0) + t.units;
+        }
+    });
+
+    if (errs.length > 0) {
+        errDiv.innerHTML = errs.map(e => `<div><i class="bi bi-x-circle"></i> ${e}</div>`).join('');
+        errDiv.classList.remove('d-none');
+        return false;
+    }
+    errDiv.classList.add('d-none');
+    return true;
+}
+
+function populateReview() {
+    // Transfers table
+    const tbody = document.getElementById('review-transfers-tbody');
+    tbody.innerHTML = '';
+    transfers.forEach((t, i) => {
+        const date = t.purchase_date ? new Date(t.purchase_date).toLocaleDateString('en-AU', {day: 'numeric', month: 'short', year: 'numeric'}) : '';
+        tbody.innerHTML += `
+            <tr>
+                <td>${i+1}</td>
+                <td>${t.transferor_name}</td>
+                <td>${t.transferee_name}</td>
+                <td>${t.units}</td>
+                <td>$${t.consideration.toFixed(2)}</td>
+                <td>${date}</td>
+            </tr>`;
+    });
+
+    document.getElementById('review-transfer-count').textContent =
+        `Transfer Instrument(s) — ${transfers.length} transfer${transfers.length > 1 ? 's' : ''}`;
+
+    // Post-transfer register
+    const regTbody = document.getElementById('review-register-tbody');
+    regTbody.innerHTML = '';
+    const before = {};
+    const after = {};
+    CURRENT_UNITHOLDERS.forEach(uh => { before[uh.id] = uh.units; after[uh.id] = uh.units; });
+
+    // Track names for new entities
+    const names = {};
+    CURRENT_UNITHOLDERS.forEach(uh => { names[uh.id] = uh.name; });
+    transfers.forEach(t => {
+        if (t.transferee_entity_id) names[t.transferee_entity_id] = t.transferee_name;
+        after[t.transferor_entity_id] = (after[t.transferor_entity_id] || 0) - t.units;
+        const teeId = t.transferee_entity_id || t.transferee_name;
+        after[teeId] = (after[teeId] || 0) + t.units;
+        if (!names[teeId]) names[teeId] = t.transferee_name;
+    });
+
+    Object.keys(after).forEach(id => {
+        if (after[id] > 0 || before[id]) {
+            regTbody.innerHTML += `
+                <tr>
+                    <td>${names[id] || id}</td>
+                    <td>${before[id] || 0}</td>
+                    <td>${after[id] || 0}</td>
+                </tr>`;
+        }
+    });
+}
+
+function generateDocument() {
+    // Move to step 5
+    for (let i = 1; i <= TOTAL_STEPS; i++) {
+        document.getElementById(`step-${i}`).classList.toggle('d-none', i !== 5);
+        const indicator = document.getElementById(`step-${i}-indicator`);
+        const badge = indicator.querySelector('.badge');
+        badge.classList.remove('bg-primary', 'bg-secondary', 'bg-success');
+        badge.classList.add(i < 5 ? 'bg-success' : (i === 5 ? 'bg-primary' : 'bg-secondary'));
+    }
+
+    const params = {
+        unit_class: document.querySelector('[name="unit_class"]').value,
+        transfers: transfers.map(t => ({
+            transferor_entity_id: t.transferor_entity_id,
+            transferee_entity_id: t.transferee_entity_id,
+            transferee_name: t.transferee_name,
+            units: t.units,
+            consideration: t.consideration,
+            purchase_date: t.purchase_date,
+        })),
+        disclaimer_acknowledged: true,
+    };
+
+    fetch(GENERATE_URL, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': CSRF_TOKEN,
+        },
+        body: JSON.stringify(params),
+    })
+    .then(r => r.json())
+    .then(data => {
+        document.getElementById('generating-spinner').classList.add('d-none');
+        document.getElementById('generation-result').classList.remove('d-none');
+        if (data.status === 'ok' || data.status === 'partial') {
+            generatedDocIds = data.document_ids || [];
+            const list = document.getElementById('doc-download-list');
+            list.innerHTML = '';
+            (data.documents || []).forEach((doc, i) => {
+                list.innerHTML += `
+                    <div class="d-flex justify-content-between align-items-center border-bottom py-2">
+                        <span class="small">${i+1}. ${doc.label}</span>
+                        <div>
+                            ${doc.docx_url ? `<a href="${doc.docx_url}" class="btn btn-sm btn-outline-primary"><i class="bi bi-file-earmark-word"></i> Word</a>` : ''}
+                            ${doc.pdf_url ? `<a href="${doc.pdf_url}" class="btn btn-sm btn-outline-danger ms-1"><i class="bi bi-file-earmark-pdf"></i> PDF</a>` : ''}
+                        </div>
+                    </div>`;
+            });
+        } else {
+            document.getElementById('generation-result').innerHTML = `
+                <div class="alert alert-danger"><i class="bi bi-x-circle"></i> ${data.error || 'Generation failed.'}</div>
+            `;
+        }
+    })
+    .catch(err => {
+        document.getElementById('generating-spinner').classList.add('d-none');
+        document.getElementById('generation-result').classList.remove('d-none');
+        document.getElementById('generation-result').innerHTML = `
+            <div class="alert alert-danger"><i class="bi bi-x-circle"></i> Error: ${err.message}</div>
+        `;
+    });
+}
+
+function sendToFuseSign() {
+    if (!generatedDocIds.length) return;
+    if (!confirm('Send all documents to FuseSign for electronic signing?')) return;
+
+    const btn = document.getElementById('fusesign-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Sending...';
+
+    Promise.all(generatedDocIds.map(id =>
+        fetch(`/legal-docs/${id}/fusesign/`, {
+            method: 'POST',
+            headers: { 'X-CSRFToken': CSRF_TOKEN },
+        }).then(r => r.json())
+    ))
+    .then(results => {
+        const allOk = results.every(r => r.status === 'ok');
+        if (allOk) {
+            btn.innerHTML = '<i class="bi bi-check-circle"></i> All Sent!';
+            btn.classList.remove('btn-outline-success');
+            btn.classList.add('btn-success');
+        } else {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-pen"></i> Send All to FuseSign';
+            alert('Some documents failed to send.');
+        }
+    })
+    .catch(err => {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-pen"></i> Send All to FuseSign';
+        alert('Error: ' + err.message);
+    });
+}
+
+// Initialize with one transfer row
+document.addEventListener('DOMContentLoaded', function() {
+    // Pre-populate first row if we have unitholders
+    if (CURRENT_UNITHOLDERS.length > 0) {
+        // Row will be added when user navigates to step 2
+    }
+});
+</script>
+{% endblock %}
