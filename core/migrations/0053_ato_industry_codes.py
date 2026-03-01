@@ -4,8 +4,9 @@ Codes (NAT 1827-12.2021).
 
 This migration:
   1. Adds a temporary ``industry_ato`` column (CharField max_length=5).
-  2. Runs a data migration to convert existing slug values to their nearest
-     ATO code using the mapping in ``core.industry_codes``.
+  2. Runs a data migration using raw SQL to convert existing slug values
+     to their nearest ATO code (avoids ORM SELECT * which may reference
+     columns not yet created by faked migrations).
   3. Removes the old ``industry`` column and renames ``industry_ato`` to
      ``industry``.
 """
@@ -13,8 +14,7 @@ This migration:
 from django.db import migrations, models
 
 
-# Inline copy of the mapping so the migration is self-contained and does not
-# depend on application code that may change in the future.
+# Inline copy of the mapping so the migration is self-contained.
 OLD_INDUSTRY_TO_ATO = {
     "accounting": "69320",
     "legal": "69310",
@@ -68,23 +68,29 @@ OLD_INDUSTRY_TO_ATO = {
 
 
 def migrate_industry_forward(apps, schema_editor):
-    Entity = apps.get_model("core", "Entity")
-    for entity in Entity.objects.all():
-        old_val = entity.industry or ""
-        new_val = OLD_INDUSTRY_TO_ATO.get(old_val, "")
-        entity.industry_ato = new_val
-        entity.save(update_fields=["industry_ato"])
+    """Use raw SQL to convert old slug values — avoids ORM SELECT *."""
+    cursor = schema_editor.connection.cursor()
+    for old_val, new_val in OLD_INDUSTRY_TO_ATO.items():
+        cursor.execute(
+            'UPDATE core_entity SET industry_ato = %s WHERE industry = %s',
+            [new_val, old_val],
+        )
+    # Set any remaining unmatched rows to empty string
+    cursor.execute(
+        "UPDATE core_entity SET industry_ato = '' "
+        "WHERE industry_ato IS NULL OR industry_ato = ''",
+    )
 
 
 def migrate_industry_reverse(apps, schema_editor):
-    """Best-effort reverse: map ATO codes back to old slugs."""
+    """Best-effort reverse using raw SQL."""
     ATO_TO_OLD = {v: k for k, v in OLD_INDUSTRY_TO_ATO.items() if v}
-    Entity = apps.get_model("core", "Entity")
-    for entity in Entity.objects.all():
-        ato_val = entity.industry or ""
-        old_val = ATO_TO_OLD.get(ato_val, "other")
-        entity.industry_old = old_val
-        entity.save(update_fields=["industry_old"])
+    cursor = schema_editor.connection.cursor()
+    for ato_val, old_val in ATO_TO_OLD.items():
+        cursor.execute(
+            'UPDATE core_entity SET industry = %s WHERE industry = %s',
+            [old_val, ato_val],
+        )
 
 
 class Migration(migrations.Migration):
@@ -105,7 +111,7 @@ class Migration(migrations.Migration):
                 help_text="ATO Business Industry Code (NAT 1827).",
             ),
         ),
-        # Step 2: Copy & convert data
+        # Step 2: Copy & convert data via raw SQL
         migrations.RunPython(
             migrate_industry_forward,
             migrate_industry_reverse,
