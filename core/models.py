@@ -3962,6 +3962,7 @@ class LegalDocumentTemplate(models.Model):
         TRUST_DEED_UPDATE_DISTRIBUTION = "trust_deed_update_distribution", "Trust Deed — Update Distribution"
         COMPANY_CONSTITUTION = "company_constitution", "Company Constitution"
         COMPANY_CONSTITUTION_SPECIAL = "company_constitution_special", "Company Constitution — Special Purpose"
+        COMPANY_ESTABLISHMENT = "company_establishment", "Company Establishment Package"
         DISCRETIONARY_TRUST_DEED = "discretionary_trust_deed", "Discretionary Trust Deed"
         UNIT_TRUST_DEED = "unit_trust_deed", "Unit Trust Deed"
         UNIT_TRUST_DEED_ANCILLARIES = "unit_trust_deed_ancillaries", "Unit Trust Deed \u2014 Ancillary Documents"
