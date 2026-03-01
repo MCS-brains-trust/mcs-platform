@@ -935,6 +935,9 @@ def _run_eva_review_background(fy_pk, user_pk):
             "current_check": "Running risk engine (deterministic checks)...",
             "findings_count": 0,
         }
+        # Persist progress to DB so all gunicorn workers can read it
+        review.raw_response = {"progress": _eva_review_tasks[task_key]}
+        review.save(update_fields=["raw_response"])
 
         check_flags, risk_results = _run_risk_engine_precheck(fy)
 
@@ -956,12 +959,17 @@ def _run_eva_review_background(fy_pk, user_pk):
             "total_checks": len(applicable_checks),
             "risk_flags_found": total_risk_flags,
         })
+        review.raw_response = {"progress": _eva_review_tasks[task_key]}
+        review.save(update_fields=["raw_response"])
 
         findings_created = 0
 
         for i, check_def in enumerate(applicable_checks):
             _eva_review_tasks[task_key]["current_check"] = check_def["name"]
             _eva_review_tasks[task_key]["completed_checks"] = i
+            # Persist progress to DB after each check starts
+            review.raw_response = {"progress": _eva_review_tasks[task_key]}
+            review.save(update_fields=["raw_response"])
             print(f"[Eva] Starting check {i+1}/{len(applicable_checks)}: {check_def['id']}", flush=True)
 
             # Get risk engine flags relevant to this check
@@ -1013,6 +1021,8 @@ def _run_eva_review_background(fy_pk, user_pk):
                     )
                     findings_created += 1
                     _eva_review_tasks[task_key]["findings_count"] = findings_created
+                    review.raw_response = {"progress": _eva_review_tasks[task_key]}
+                    review.save(update_fields=["raw_response"])
                     print(f"[Eva] Finding created for {check_def['id']}: {(result.get('title', '')[:60])}", flush=True)
                 except Exception as save_err:
                     print(f"[Eva] EXCEPTION saving finding for {check_def['id']}: {save_err}", flush=True)
@@ -1042,6 +1052,8 @@ def _run_eva_review_background(fy_pk, user_pk):
                         )
                         findings_created += 1
                         _eva_review_tasks[task_key]["findings_count"] = findings_created
+                        review.raw_response = {"progress": _eva_review_tasks[task_key]}
+                        review.save(update_fields=["raw_response"])
                     except Exception as save_err:
                         print(f"[Eva] EXCEPTION saving risk flag finding for {check_def['id']}: {save_err}", flush=True)
                         traceback.print_exc()
@@ -1221,6 +1233,19 @@ def eva_review_status(request, pk):
     if not review:
         return JsonResponse({"status": "not_started"})
 
+    # If the review is still pending (running), return progress from raw_response
+    if review.status == "pending":
+        progress = (review.raw_response or {}).get("progress", {})
+        return JsonResponse({
+            "status": "running",
+            "review_id": str(review.pk),
+            "total_checks": progress.get("total_checks", 0),
+            "completed_checks": progress.get("completed_checks", 0),
+            "current_check": progress.get("current_check", "Processing..."),
+            "findings_count": progress.get("findings_count", 0),
+        })
+
+    # Review is complete (cleared, findings_raised, or error)
     findings = list(review.findings.values(
         "id", "check_name", "severity", "title",
         "plain_english_explanation", "recommendation",
