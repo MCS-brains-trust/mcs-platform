@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load humanize %}
 {% block title %}Financial Statements - {{ fy.year_label }} - StatementHub{% endblock %}
 
 {% block content %}
@@ -42,9 +43,15 @@
                 {% for item in section.list %}
                 <tr>
                     <td class="ps-4">{{ item.label }}</td>
-                    <td class="text-end">{{ item.current|floatformat:2 }}</td>
+                    <td class="text-end">
+                        {% if item.current and item.current != 0 %}
+                        <a href="{% url 'core:line_item_breakdown' pk=fy.pk standard_code=item.code %}" target="_blank" class="text-decoration-none" title="View breakdown of {{ item.label }}">{{ item.current|floatformat:2|intcomma }}</a>
+                        {% else %}
+                        {{ item.current|floatformat:2|intcomma }}
+                        {% endif %}
+                    </td>
                     {% if fy.prior_year %}
-                    <td class="text-end text-muted">{{ item.prior|floatformat:2 }}</td>
+                    <td class="text-end text-muted">{{ item.prior|floatformat:2|intcomma }}</td>
                     {% endif %}
                 </tr>
                 {% endfor %}
@@ -79,9 +86,15 @@
                 {% for item in section.list %}
                 <tr>
                     <td class="ps-4">{{ item.label }}</td>
-                    <td class="text-end">{{ item.current|floatformat:2 }}</td>
+                    <td class="text-end">
+                        {% if item.current and item.current != 0 %}
+                        <a href="{% url 'core:line_item_breakdown' pk=fy.pk standard_code=item.code %}" target="_blank" class="text-decoration-none" title="View breakdown of {{ item.label }}">{{ item.current|floatformat:2|intcomma }}</a>
+                        {% else %}
+                        {{ item.current|floatformat:2|intcomma }}
+                        {% endif %}
+                    </td>
                     {% if fy.prior_year %}
-                    <td class="text-end text-muted">{{ item.prior|floatformat:2 }}</td>
+                    <td class="text-end text-muted">{{ item.prior|floatformat:2|intcomma }}</td>
                     {% endif %}
                 </tr>
                 {% endfor %}

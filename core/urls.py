@@ -119,6 +119,7 @@ urlpatterns = [
 
     # Financial Statements Preview
     path("years/<uuid:pk>/statements/", views.financial_statements_view, name="financial_statements_view"),
+    path("years/<uuid:pk>/statements/line-item/<str:standard_code>/", views.line_item_breakdown, name="line_item_breakdown"),
 
     # Document Generation
     path("years/<uuid:pk>/generate/", views.generate_document, name="generate_document"),

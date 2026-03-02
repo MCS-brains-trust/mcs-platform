@@ -3791,6 +3791,75 @@ def financial_statements_view(request, pk):
 
 
 # ---------------------------------------------------------------------------
+# Line Item Breakdown (drill-down from Financial Statements preview)
+# ---------------------------------------------------------------------------
+@login_required
+def line_item_breakdown(request, pk, standard_code):
+    """Show all account codes that contribute to a given financial statement
+    line item (identified by its AccountMapping standard_code).
+
+    This enables drill-down from the Financial Statements preview page,
+    where figures are aggregated by mapped line item.
+    """
+    fy = get_financial_year_for_user(request, pk)
+    mapping = get_object_or_404(AccountMapping, standard_code=standard_code)
+
+    # Get all TB lines mapped to this line item
+    lines = (
+        fy.trial_balance_lines
+        .filter(mapped_line_item=mapping)
+        .select_related('mapped_line_item')
+        .order_by('account_code')
+    )
+
+    # Compute display Dr/Cr for each line
+    total_dr = Decimal('0')
+    total_cr = Decimal('0')
+    for line in lines:
+        cb = line.closing_balance if line.closing_balance else Decimal('0')
+        if cb > 0:
+            line.display_dr = cb
+            line.display_cr = Decimal('0')
+        elif cb < 0:
+            line.display_dr = Decimal('0')
+            line.display_cr = abs(cb)
+        else:
+            line.display_dr = line.debit if line.debit else Decimal('0')
+            line.display_cr = line.credit if line.credit else Decimal('0')
+        total_dr += line.display_dr or Decimal('0')
+        total_cr += line.display_cr or Decimal('0')
+
+    # Net total for the line item
+    net_total = total_dr - total_cr
+
+    # Prior year data for this line item
+    prior_total = Decimal('0')
+    if fy.prior_year:
+        from django.db.models import Sum as DSum
+        prior_agg = (
+            fy.prior_year.trial_balance_lines
+            .filter(mapped_line_item=mapping)
+            .aggregate(total=DSum('closing_balance'))
+        )
+        prior_total = prior_agg['total'] or Decimal('0')
+
+    # Year label
+    current_year = str(fy.year_label)
+
+    return render(request, 'core/line_item_breakdown.html', {
+        'fy': fy,
+        'mapping': mapping,
+        'lines': lines,
+        'total_dr': total_dr,
+        'total_cr': total_cr,
+        'net_total': net_total,
+        'prior_total': prior_total,
+        'current_year': current_year,
+        'entry_count': lines.count(),
+    })
+
+
+# ---------------------------------------------------------------------------
 # Document Generation (placeholder for Phase 2)
 # ---------------------------------------------------------------------------
 @login_required
