@@ -121,19 +121,13 @@ def _log_auto_risk_run(financial_year, result, trigger_source):
     try:
         ActivityLog.objects.create(
             financial_year=financial_year,
-            action_type="audit_run",
+            event_type="audit_run",
+            title=f"Risk analysis ({trigger_source})",
             description=(
                 f"Automatic risk analysis ({trigger_source}): "
                 f"{result['flags_created']} flags raised, "
                 f"{result['flags_auto_resolved']} auto-resolved"
             ),
-            metadata={
-                "trigger": trigger_source,
-                "automatic": True,
-                "run_id": result.get("run_id", ""),
-                "flags_created": result["flags_created"],
-                "flags_auto_resolved": result["flags_auto_resolved"],
-            },
         )
     except Exception:
         logger.exception("Failed to log auto risk run for FY %s", financial_year.id)
@@ -294,7 +288,8 @@ def track_fy_status_change(sender, instance, created, **kwargs):
         from core.models import ActivityLog
         ActivityLog.objects.create(
             financial_year=instance,
-            action_type="status_change",
+            event_type="general",
+            title="Status change",
             description=f"Status changed from {old_status} to {new_status}",
         )
     except Exception:
@@ -364,7 +359,8 @@ def handle_legal_document_created(sender, instance, created, **kwargs):
         if instance.financial_year:
             ActivityLog.objects.create(
                 financial_year=instance.financial_year,
-                action_type="document_generated",
+                event_type="doc_generated",
+                title="Document generated",
                 description=f"Generated: {instance.get_document_type_display()} for {instance.entity.entity_name}",
             )
     except Exception:
@@ -412,7 +408,8 @@ def handle_dividend_event_created(sender, instance, created, **kwargs):
         if instance.financial_year:
             ActivityLog.objects.create(
                 financial_year=instance.financial_year,
-                action_type="dividend_declared",
+                event_type="general",
+                title="Dividend declared",
                 description=(
                     f"Dividend declared: {instance.get_dividend_type_display()} "
                     f"${instance.total_amount:,.2f} "
@@ -444,7 +441,8 @@ def handle_eva_message_created(sender, instance, created, **kwargs):
             ActivityLog.objects.create(
                 financial_year=conversation.financial_year,
                 user=conversation.user,
-                action_type="eva_chat",
+                event_type="general",
+                title="Eva chat",
                 description=f"Eva chat message ({conversation.interaction_type})",
             )
     except Exception:
