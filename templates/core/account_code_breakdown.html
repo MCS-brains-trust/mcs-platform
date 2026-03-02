@@ -177,6 +177,139 @@
 </div>
 {% endif %}
 
+<!-- GST Component Movements (only for account 3380) -->
+{% if gst_txns %}
+<div class="card mb-4">
+    <div class="card-header py-2 d-flex justify-content-between align-items-center">
+        <h6 class="mb-0"><i class="bi bi-receipt me-1"></i> GST Component Movements <span class="badge bg-success ms-2">{{ gst_txn_count }}</span></h6>
+        <small class="text-muted">Individual bank transactions with GST split to this control account</small>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0" style="font-size: 0.85rem;">
+                <thead class="table-light">
+                    <tr class="border-bottom border-2 border-dark">
+                        <th style="width: 40px;" class="text-center">#</th>
+                        <th style="width: 100px;">Date</th>
+                        <th>Description</th>
+                        <th class="text-center" style="width: 90px;">Coded To</th>
+                        <th class="text-center" style="width: 100px;">Tax Type</th>
+                        <th class="text-end" style="width: 120px;">Gross Amount</th>
+                        <th class="text-end" style="width: 110px;">GST Component</th>
+                        <th class="text-center" style="width: 90px;">Direction</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for gt in gst_txns %}
+                    <tr>
+                        <td class="text-center text-muted">{{ forloop.counter }}</td>
+                        <td class="text-muted">{{ gt.date }}</td>
+                        <td>{{ gt.description|truncatechars:60 }}</td>
+                        <td class="text-center"><code class="text-muted">{{ gt.confirmed_code }}</code></td>
+                        <td class="text-center">
+                            {% if gt.confirmed_tax_type %}
+                            <span class="badge bg-light text-dark" style="font-size: 0.7rem;">{{ gt.confirmed_tax_type }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end {% if gt.amount < 0 %}text-danger{% else %}text-success{% endif %}">
+                            {% if gt.amount < 0 %}-{% endif %}${{ gt.amount|floatformat:2|intcomma }}
+                        </td>
+                        <td class="text-end fw-bold">{{ gt.confirmed_gst_amount|floatformat:2|intcomma }}</td>
+                        <td class="text-center">
+                            {% if gt.amount > 0 %}
+                            <span class="badge bg-info text-dark" style="font-size: 0.7rem;">GST Collected</span>
+                            {% else %}
+                            <span class="badge bg-warning text-dark" style="font-size: 0.7rem;">GST Paid</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot>
+                    <tr class="border-top border-2 border-dark fw-bold" style="background-color: #e8f5e9;">
+                        <td></td>
+                        <td></td>
+                        <td>Total ({{ gst_txn_count }} transaction{{ gst_txn_count|pluralize }})</td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td class="text-end">${{ gst_txn_total|floatformat:2|intcomma }}</td>
+                        <td></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Journal Entry Movements -->
+{% if journal_lines %}
+<div class="card mb-4">
+    <div class="card-header py-2 d-flex justify-content-between align-items-center">
+        <h6 class="mb-0"><i class="bi bi-journal-text me-1"></i> Journal Entry Movements <span class="badge bg-info text-dark ms-2">{{ journal_line_count }}</span></h6>
+        <small class="text-muted">Individual journal lines posted to this account</small>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0" style="font-size: 0.85rem;">
+                <thead class="table-light">
+                    <tr class="border-bottom border-2 border-dark">
+                        <th style="width: 40px;" class="text-center">#</th>
+                        <th style="width: 90px;">Ref</th>
+                        <th style="width: 100px;">Date</th>
+                        <th>Description</th>
+                        <th style="width: 100px;">Type</th>
+                        <th class="text-end" style="width: 110px;">Debit</th>
+                        <th class="text-end" style="width: 110px;">Credit</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for jl in journal_lines %}
+                    <tr>
+                        <td class="text-center text-muted">{{ forloop.counter }}</td>
+                        <td><code class="text-primary">{{ jl.journal.reference_number }}</code></td>
+                        <td class="text-muted">{{ jl.journal.journal_date|date:"d/m/Y" }}</td>
+                        <td>
+                            {% if jl.description %}{{ jl.description }}{% else %}{{ jl.journal.description|truncatechars:80 }}{% endif %}
+                        </td>
+                        <td>
+                            {% if jl.journal.journal_type == 'general' %}
+                            <span class="badge bg-primary" style="font-size: 0.7rem;">General</span>
+                            {% elif jl.journal.journal_type == 'adjusting' %}
+                            <span class="badge bg-warning text-dark" style="font-size: 0.7rem;">Adjusting</span>
+                            {% elif jl.journal.journal_type == 'year_end' %}
+                            <span class="badge bg-dark" style="font-size: 0.7rem;">Year-End</span>
+                            {% elif jl.journal.journal_type == 'depreciation' %}
+                            <span class="badge bg-secondary" style="font-size: 0.7rem;">Depreciation</span>
+                            {% elif jl.journal.journal_type == 'tax' %}
+                            <span class="badge bg-danger" style="font-size: 0.7rem;">Tax</span>
+                            {% else %}
+                            <span class="badge bg-light text-dark" style="font-size: 0.7rem;">{{ jl.journal.get_journal_type_display }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end">{% if jl.debit and jl.debit != 0 %}{{ jl.debit|floatformat:2|intcomma }}{% endif %}</td>
+                        <td class="text-end">{% if jl.credit and jl.credit != 0 %}{{ jl.credit|floatformat:2|intcomma }}{% endif %}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot>
+                    <tr class="border-top border-2 border-dark fw-bold" style="background-color: #e8f4fd;">
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td>Total ({{ journal_line_count }} journal line{{ journal_line_count|pluralize }})</td>
+                        <td></td>
+                        <td class="text-end">{% if journal_total_dr and journal_total_dr != 0 %}{{ journal_total_dr|floatformat:2|intcomma }}{% endif %}</td>
+                        <td class="text-end">{% if journal_total_cr and journal_total_cr != 0 %}{{ journal_total_cr|floatformat:2|intcomma }}{% endif %}</td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 <div class="mt-3">
     <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-primary btn-sm">
         <i class="bi bi-arrow-left"></i> Back to Workspace

@@ -3255,8 +3255,6 @@ def account_code_breakdown(request, pk, account_code):
     fy = get_financial_year_for_user(request, pk)
     lines = fy.trial_balance_lines.filter(
         account_code=account_code
-    ).exclude(
-        source='rollover'
     ).select_related('mapped_line_item').order_by('account_name')
 
     if not lines.exists():
@@ -3307,6 +3305,39 @@ def account_code_breakdown(request, pk, account_code):
     for bt in bank_txns:
         bank_txn_total += bt.amount or Decimal('0')
 
+    # For the GST payable control account (3380), the individual bank
+    # transactions are coded to expense/income accounts — not to 3380
+    # itself.  The GST component is split out automatically.  So we
+    # query all confirmed transactions that had a GST component to show
+    # the individual GST movements.
+    gst_txns = []
+    gst_txn_total = Decimal('0')
+    if account_code == '3380':
+        from django.db.models import Q
+        gst_txns = list(
+            PendingTransaction.objects.filter(
+                job__entity=fy.entity,
+                is_confirmed=True,
+            ).filter(
+                Q(confirmed_gst_amount__gt=Decimal('0'))
+            ).order_by('date', 'description')
+        )
+        for gt in gst_txns:
+            gst_txn_total += gt.confirmed_gst_amount or Decimal('0')
+
+    # Fetch journal entry movements for this account code
+    journal_lines = JournalLine.objects.filter(
+        journal__financial_year=fy,
+        journal__status='posted',
+        account_code=account_code,
+    ).select_related('journal').order_by('journal__journal_date', 'journal__reference_number', 'line_number')
+
+    journal_total_dr = Decimal('0')
+    journal_total_cr = Decimal('0')
+    for jl in journal_lines:
+        journal_total_dr += jl.debit or Decimal('0')
+        journal_total_cr += jl.credit or Decimal('0')
+
     return render(request, 'core/account_code_breakdown.html', {
         'fy': fy,
         'account_code': account_code,
@@ -3321,6 +3352,13 @@ def account_code_breakdown(request, pk, account_code):
         'bank_txns': bank_txns,
         'bank_txn_count': bank_txns.count(),
         'bank_txn_total': bank_txn_total,
+        'gst_txns': gst_txns,
+        'gst_txn_count': len(gst_txns),
+        'gst_txn_total': gst_txn_total,
+        'journal_lines': journal_lines,
+        'journal_line_count': journal_lines.count(),
+        'journal_total_dr': journal_total_dr,
+        'journal_total_cr': journal_total_cr,
     })
 
 
