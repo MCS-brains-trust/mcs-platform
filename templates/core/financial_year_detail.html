@@ -1322,6 +1322,51 @@
                             <i class="bi bi-lock-fill"></i> Locked to financial year dates. Only transactions within this period will be imported.
                         </small>
                     </div>
+                    {# --- Bank Account Mapping (required before import) --- #}
+                    <div class="mb-3" id="bankMappingSection">
+                        <label class="form-label fw-semibold">Bank Account Mapping</label>
+                        {% if active_bank_mapping %}
+                        <div class="d-flex align-items-center p-2 rounded bg-success bg-opacity-10 border border-success" id="bankMappingDisplay">
+                            <i class="bi bi-check-circle-fill text-success me-2"></i>
+                            <span style="font-size:0.85rem;">
+                                <strong>{{ active_bank_mapping.tb_account_code }}</strong> &mdash; {{ active_bank_mapping.tb_account_name }}
+                            </span>
+                            <button type="button" class="btn btn-outline-secondary btn-sm ms-auto py-0 px-2" onclick="document.getElementById('bankMappingInlineForm').style.display='block'; this.style.display='none';" style="font-size:0.75rem;">
+                                <i class="bi bi-pencil"></i> Change
+                            </button>
+                        </div>
+                        <input type="hidden" id="wizardBankMapped" value="1">
+                        {% else %}
+                        <div class="p-2 rounded bg-warning bg-opacity-10 border border-warning mb-2" id="bankMappingWarning">
+                            <small><i class="bi bi-exclamation-triangle text-warning me-1"></i> No bank account mapped. Map an account to enable double-entry posting.</small>
+                        </div>
+                        <input type="hidden" id="wizardBankMapped" value="0">
+                        {% endif %}
+                        <div id="bankMappingInlineForm" style="{% if active_bank_mapping %}display:none;{% endif %}">
+                            <div class="row g-2 align-items-end">
+                                <div class="col-7">
+                                    <label class="form-label mb-0" style="font-size:0.75rem;">Account Code / Name</label>
+                                    <div class="position-relative">
+                                        <input type="text" class="form-control form-control-sm" id="wizardBankSearch" placeholder="Search chart of accounts..." autocomplete="off">
+                                        <div class="dropdown-menu w-100" id="wizardBankResults" style="max-height:200px;overflow-y:auto;"></div>
+                                    </div>
+                                </div>
+                                <div class="col-3">
+                                    <label class="form-label mb-0" style="font-size:0.75rem;">Selected</label>
+                                    <input type="text" class="form-control form-control-sm bg-light" id="wizardBankSelected" readonly placeholder="None">
+                                    <input type="hidden" id="wizardBankCode" value="">
+                                    <input type="hidden" id="wizardBankName" value="">
+                                </div>
+                                <div class="col-2">
+                                    <button type="button" class="btn btn-success btn-sm w-100" id="wizardBankSaveBtn" disabled onclick="saveWizardBankMapping()">
+                                        <i class="bi bi-check-lg"></i> Map
+                                    </button>
+                                </div>
+                            </div>
+                            <div id="wizardBankAlert" class="mt-1"></div>
+                        </div>
+                    </div>
+
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Bank Statement Files</label>
                         <div id="fyDropZone" style="border: 2px dashed #ccc; border-radius: 8px; padding: 30px; text-align: center; cursor: pointer; transition: all 0.2s;">
@@ -1593,6 +1638,11 @@
     const csrfToken = form.querySelector('[name=csrfmiddlewaretoken]').value;
     let selectedFiles = [];
 
+    function isBankMapped() {
+        const el = document.getElementById('wizardBankMapped');
+        return el && el.value === '1';
+    }
+
     function updateFileList() {
         fileList.innerHTML = '';
         if (selectedFiles.length === 0) {
@@ -1600,8 +1650,14 @@
             submitBtn.innerHTML = '<i class="bi bi-cloud-upload"></i> Parse &amp; Preview';
             return;
         }
-        submitBtn.disabled = false;
-        submitBtn.innerHTML = `<i class="bi bi-cloud-upload"></i> Parse &amp; Preview ${selectedFiles.length} Statement${selectedFiles.length > 1 ? 's' : ''}`;
+        // Enable only if bank account is mapped
+        const mapped = isBankMapped();
+        submitBtn.disabled = !mapped;
+        if (!mapped) {
+            submitBtn.innerHTML = '<i class="bi bi-cloud-upload"></i> Map bank account first';
+        } else {
+            submitBtn.innerHTML = `<i class="bi bi-cloud-upload"></i> Parse &amp; Preview ${selectedFiles.length} Statement${selectedFiles.length > 1 ? 's' : ''}`;
+        }
 
         selectedFiles.forEach((file, idx) => {
             const ext = file.name.split('.').pop().toUpperCase();
@@ -1839,7 +1895,115 @@
     });
 })();
 
+// ===== Wizard Bank Mapping: Search + Save =====
+(function() {
+    const searchInput = document.getElementById('wizardBankSearch');
+    const resultsDiv = document.getElementById('wizardBankResults');
+    const selectedDisplay = document.getElementById('wizardBankSelected');
+    const codeInput = document.getElementById('wizardBankCode');
+    const nameInput = document.getElementById('wizardBankName');
+    const saveBtn = document.getElementById('wizardBankSaveBtn');
+    if (!searchInput) return; // Modal not present
 
+    const COA_URL = '{% url "core:entity_coa_search_api" pk=fy.pk %}';
+    const MAPPING_URL = '{% url "core:review_bank_account_mapping" pk=fy.pk %}';
+    const CSRF = '{{ csrf_token }}';
+    let searchTimer = null;
+
+    searchInput.addEventListener('input', function() {
+        const q = this.value.trim();
+        if (q.length < 1) { resultsDiv.classList.remove('show'); return; }
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(() => {
+            fetch(COA_URL + '?q=' + encodeURIComponent(q))
+            .then(r => r.json())
+            .then(data => {
+                if (!data.items || data.items.length === 0) {
+                    resultsDiv.innerHTML = '<div class="px-3 py-2 text-muted small">No matching accounts</div>';
+                } else {
+                    resultsDiv.innerHTML = data.items.map(item =>
+                        `<a href="#" class="dropdown-item small py-1 wizard-bank-pick" data-code="${item.code}" data-name="${item.name}"><code>${item.code}</code> ${item.name}</a>`
+                    ).join('');
+                }
+                resultsDiv.classList.add('show');
+            });
+        }, 250);
+    });
+
+    resultsDiv.addEventListener('click', function(e) {
+        const pick = e.target.closest('.wizard-bank-pick');
+        if (!pick) return;
+        e.preventDefault();
+        codeInput.value = pick.dataset.code;
+        nameInput.value = pick.dataset.name;
+        selectedDisplay.value = pick.dataset.code + ' - ' + pick.dataset.name;
+        searchInput.value = '';
+        resultsDiv.classList.remove('show');
+        saveBtn.disabled = false;
+    });
+
+    document.addEventListener('click', function(e) {
+        if (!e.target.closest('#wizardBankResults') && e.target.id !== 'wizardBankSearch') {
+            resultsDiv.classList.remove('show');
+        }
+    });
+
+    window.saveWizardBankMapping = function() {
+        const code = codeInput.value;
+        const name = nameInput.value;
+        if (!code) return;
+        saveBtn.disabled = true;
+        saveBtn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+        const alertDiv = document.getElementById('wizardBankAlert');
+        fetch(MAPPING_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF, 'X-Requested-With': 'XMLHttpRequest' },
+            body: JSON.stringify({ tb_account_code: code, tb_account_name: name, is_default: true }),
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.status === 'ok') {
+                // Mark as mapped
+                document.getElementById('wizardBankMapped').value = '1';
+                // Update display
+                const warning = document.getElementById('bankMappingWarning');
+                if (warning) warning.style.display = 'none';
+                const display = document.getElementById('bankMappingDisplay');
+                if (display) {
+                    display.innerHTML = '<i class="bi bi-check-circle-fill text-success me-2"></i><span style="font-size:0.85rem;"><strong>' + code + '</strong> &mdash; ' + name + '</span>';
+                    display.style.display = 'flex';
+                } else {
+                    // Create display element
+                    const section = document.getElementById('bankMappingSection');
+                    const newDisplay = document.createElement('div');
+                    newDisplay.className = 'd-flex align-items-center p-2 rounded bg-success bg-opacity-10 border border-success mb-2';
+                    newDisplay.id = 'bankMappingDisplay';
+                    newDisplay.innerHTML = '<i class="bi bi-check-circle-fill text-success me-2"></i><span style="font-size:0.85rem;"><strong>' + code + '</strong> &mdash; ' + name + '</span>';
+                    section.insertBefore(newDisplay, document.getElementById('bankMappingInlineForm'));
+                }
+                document.getElementById('bankMappingInlineForm').style.display = 'none';
+                alertDiv.innerHTML = '<small class="text-success"><i class="bi bi-check-circle"></i> Mapped successfully</small>';
+                // Re-check submit button state
+                const submitBtn = document.getElementById('fyUploadSubmitBtn');
+                const fileList = document.getElementById('fyFileList');
+                if (fileList && fileList.children.length > 0) {
+                    submitBtn.disabled = false;
+                    const count = fileList.children.length;
+                    submitBtn.innerHTML = `<i class="bi bi-cloud-upload"></i> Parse &amp; Preview ${count} Statement${count > 1 ? 's' : ''}`;
+                }
+            } else {
+                alertDiv.innerHTML = '<small class="text-danger">' + (data.message || 'Error saving mapping') + '</small>';
+                saveBtn.disabled = false;
+            }
+            saveBtn.innerHTML = '<i class="bi bi-check-lg"></i> Map';
+        })
+        .catch(() => {
+            alertDiv.innerHTML = '<small class="text-danger">Network error</small>';
+            saveBtn.disabled = false;
+            saveBtn.innerHTML = '<i class="bi bi-check-lg"></i> Map';
+        });
+    };
+})();
 
 // ===== Review Tab: Searchable COA Dropdown =====
 (function() {
