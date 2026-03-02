@@ -4,8 +4,15 @@ StatementHub Risk Engine
 Three-tier risk analysis engine for financial year data.
 
 Tier 1: Automated Variance Analysis (mathematical)
-Tier 2: Rule-Based ATO Compliance (65 configurable rules)
+Tier 2a: Dedicated Detection Modules (Div 7A, Going Concern, S100A, RP, SGC, TPAR)
+Tier 2b: Individual Rule-Based ATO Compliance (remaining configurable rules)
 Tier 3: AI Contextual Risk Analysis (Claude API — see ai_service.py)
+
+Module Architecture:
+    Dedicated modules (core.risk_modules) handle complex multi-rule compliance
+    areas.  Each module produces a single consolidated assessment + EvaFinding.
+    Individual Tier 2 rules that are covered by a module are automatically
+    skipped via MODULE_COVERS in core.risk_modules.registry.
 
 Usage:
     from core.risk_engine import run_risk_engine
@@ -133,12 +140,47 @@ def run_risk_engine(financial_year, tiers=None):
             results["flags_created"] += 1
             new_rule_ids_by_tier[1].add(flag_data["rule_id"])
 
-    # --- TIER 2: Rule-Based Compliance ---
+    # --- TIER 2a: Dedicated Detection Modules ---
+    # Modules run first and produce consolidated assessment records +
+    # EvaFinding cards.  They replace individual rules listed in
+    # MODULE_COVERS (see core.risk_modules.registry).
+    module_results = []
     if 2 in tiers:
+        from core.risk_modules.registry import get_module_classes, is_covered_by_module
+
+        for ModuleClass in get_module_classes():
+            try:
+                module = ModuleClass(financial_year)
+                assessment = module.run()
+                if assessment is not None:
+                    module_results.append({
+                        "module_id": module.module_id,
+                        "severity": module.overall_severity,
+                        "rules_fired": module.rules_fired,
+                    })
+                    logger.info(
+                        "Module %s: %s — %s (rules: %s)",
+                        module.module_id, entity.entity_name,
+                        module.overall_severity, module.rules_fired,
+                    )
+            except Exception as e:
+                results["errors"].append(f"Module {ModuleClass.module_id}: {str(e)}")
+                logger.exception(f"Error running module {ModuleClass.module_id}")
+
+        results["module_results"] = module_results
+
+    # --- TIER 2b: Individual Rule-Based Compliance ---
+    # Skip rules that are now covered by dedicated modules.
+    if 2 in tiers:
+        from core.risk_modules.registry import is_covered_by_module
+
         active_rules = RiskRule.objects.filter(
             is_active=True, tier=2
         )
         for rule in active_rules:
+            # Skip rules covered by a dedicated module
+            if is_covered_by_module(rule.rule_id):
+                continue
             # Check if rule applies to this entity type
             if rule.applicable_entities and entity.entity_type not in rule.applicable_entities:
                 continue
