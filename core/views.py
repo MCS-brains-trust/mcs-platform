@@ -369,7 +369,11 @@ def _reverse_bank_contra_entry(txn, fy):
         else:
             tb_line.credit = max(Decimal("0"), tb_line.credit - gross_amount)
             tb_line.closing_balance += gross_amount
-        if tb_line.debit == 0 and tb_line.credit == 0:
+        # Only delete if zero movement AND no prior year data or opening/closing balance
+        has_prior = (tb_line.prior_debit or Decimal('0')) != 0 or (tb_line.prior_credit or Decimal('0')) != 0
+        has_opening = (tb_line.opening_balance or Decimal('0')) != 0
+        has_closing = (tb_line.closing_balance or Decimal('0')) != 0
+        if tb_line.debit == 0 and tb_line.credit == 0 and not has_prior and not has_opening and not has_closing:
             tb_line.delete()
         else:
             tb_line.save()
@@ -6221,24 +6225,28 @@ def review_approve_transaction(request, pk):
             tax_type = txn.confirmed_tax_type or ''
 
             # Push the net amount (ex-GST) to the expense/income account
+            # Payments (amount < 0) DEBIT the expense account
+            # Receipts (amount > 0) CREDIT the income account
             net_for_tb = txn.net_amount if has_gst else abs(amount)
             tb_line, created = _get_or_create_tb_line(
                 financial_year=target_fy,
                 account_code=code,
                 defaults={
                     "account_name": name,
-                    "debit": net_for_tb if amount > 0 else Decimal("0"),
-                    "credit": net_for_tb if amount < 0 else Decimal("0"),
-                    "closing_balance": net_for_tb if amount > 0 else -net_for_tb,
+                    "debit": net_for_tb if amount < 0 else Decimal("0"),
+                    "credit": net_for_tb if amount > 0 else Decimal("0"),
+                    "closing_balance": net_for_tb if amount < 0 else -net_for_tb,
                     "tax_type": tax_type,
                     "source": "bank_statement",
                 },
             )
             if not created:
-                if amount > 0:
+                if amount < 0:
+                    # Payment: debit the expense account
                     tb_line.debit += net_for_tb
                     tb_line.closing_balance += net_for_tb
                 else:
+                    # Receipt: credit the income account
                     tb_line.credit += net_for_tb
                     tb_line.closing_balance -= net_for_tb
                 if not tb_line.tax_type:
@@ -6382,13 +6390,21 @@ def review_unconfirm_transaction(request, pk):
                 has_gst = txn.confirmed_gst_amount and txn.confirmed_gst_amount > 0
                 net_for_tb = txn.net_amount if has_gst else abs(txn.amount)
 
-                if txn.amount > 0:
+                # Reverse: payments were DEBITED, receipts were CREDITED
+                if txn.amount < 0:
+                    # Was a payment debit — reverse by subtracting from debit
                     tb_line.debit = max(Decimal("0"), tb_line.debit - net_for_tb)
+                    tb_line.closing_balance -= net_for_tb
                 else:
+                    # Was a receipt credit — reverse by subtracting from credit
                     tb_line.credit = max(Decimal("0"), tb_line.credit - net_for_tb)
+                    tb_line.closing_balance += net_for_tb
 
-                # If both debit and credit are zero, delete the line
-                if tb_line.debit == 0 and tb_line.credit == 0:
+                # Only delete if zero movement AND no prior year data or opening balance
+                has_prior = (tb_line.prior_debit or Decimal('0')) != 0 or (tb_line.prior_credit or Decimal('0')) != 0
+                has_opening = (tb_line.opening_balance or Decimal('0')) != 0
+                has_closing = (tb_line.closing_balance or Decimal('0')) != 0
+                if tb_line.debit == 0 and tb_line.credit == 0 and not has_prior and not has_opening and not has_closing:
                     tb_line.delete()
                 else:
                     tb_line.save()
@@ -6409,11 +6425,19 @@ def review_unconfirm_transaction(request, pk):
                     ).first()
                 if gst_line:
                     if txn.amount > 0:
+                        # Was income GST credit — reverse
                         gst_line.credit = max(Decimal("0"), gst_line.credit - gst_amt)
+                        gst_line.closing_balance += gst_amt
                     else:
+                        # Was expense GST debit — reverse
                         gst_line.debit = max(Decimal("0"), gst_line.debit - gst_amt)
+                        gst_line.closing_balance -= gst_amt
 
-                    if gst_line.debit == 0 and gst_line.credit == 0:
+                    # Only delete if zero movement AND no prior year data or opening/closing balance
+                    has_prior_gst = (gst_line.prior_debit or Decimal('0')) != 0 or (gst_line.prior_credit or Decimal('0')) != 0
+                    has_opening_gst = (gst_line.opening_balance or Decimal('0')) != 0
+                    has_closing_gst = (gst_line.closing_balance or Decimal('0')) != 0
+                    if gst_line.debit == 0 and gst_line.credit == 0 and not has_prior_gst and not has_opening_gst and not has_closing_gst:
                         gst_line.delete()
                     else:
                         gst_line.save()
@@ -6501,23 +6525,27 @@ def review_approve_all(request, pk):
                 # Push the net amount (ex-GST) to the expense/income account
                 net_for_tb = txn.net_amount if has_gst else abs(amount)
 
+                # Payments (amount < 0) DEBIT the expense account
+                # Receipts (amount > 0) CREDIT the income account
                 tb_line, created = _get_or_create_tb_line(
                     financial_year=fy,
                     account_code=code,
                     defaults={
                         "account_name": name,
-                        "debit": net_for_tb if amount > 0 else Decimal("0"),
-                        "credit": net_for_tb if amount < 0 else Decimal("0"),
-                        "closing_balance": net_for_tb if amount > 0 else -net_for_tb,
+                        "debit": net_for_tb if amount < 0 else Decimal("0"),
+                        "credit": net_for_tb if amount > 0 else Decimal("0"),
+                        "closing_balance": net_for_tb if amount < 0 else -net_for_tb,
                         "tax_type": tax_type,
                         "source": "bank_statement",
                     },
                 )
                 if not created:
-                    if amount > 0:
+                    if amount < 0:
+                        # Payment: debit the expense account
                         tb_line.debit += net_for_tb
                         tb_line.closing_balance += net_for_tb
                     else:
+                        # Receipt: credit the income account
                         tb_line.credit += net_for_tb
                         tb_line.closing_balance -= net_for_tb
                     if not tb_line.tax_type:
@@ -6671,23 +6699,27 @@ def review_approve_selected(request, pk):
 
         if code and amount != 0:
             net_for_tb = txn.net_amount if has_gst else abs(amount)
+            # Payments (amount < 0) DEBIT the expense account
+            # Receipts (amount > 0) CREDIT the income account
             tb_line, created = _get_or_create_tb_line(
                 financial_year=fy,
                 account_code=code,
                 defaults={
                     "account_name": name,
-                    "debit": net_for_tb if amount > 0 else Decimal("0"),
-                    "credit": net_for_tb if amount < 0 else Decimal("0"),
-                    "closing_balance": net_for_tb if amount > 0 else -net_for_tb,
+                    "debit": net_for_tb if amount < 0 else Decimal("0"),
+                    "credit": net_for_tb if amount > 0 else Decimal("0"),
+                    "closing_balance": net_for_tb if amount < 0 else -net_for_tb,
                     "tax_type": tax_type,
                     "source": "bank_statement",
                 },
             )
             if not created:
-                if amount > 0:
+                if amount < 0:
+                    # Payment: debit the expense account
                     tb_line.debit += net_for_tb
                     tb_line.closing_balance += net_for_tb
                 else:
+                    # Receipt: credit the income account
                     tb_line.credit += net_for_tb
                     tb_line.closing_balance -= net_for_tb
                 if not tb_line.tax_type:
@@ -7120,12 +7152,19 @@ def _reverse_tb_for_transaction(txn, fy):
         has_gst = txn.confirmed_gst_amount and txn.confirmed_gst_amount > 0
         net_for_tb = txn.net_amount if has_gst else abs(txn.amount)
 
-        if txn.amount > 0:
+        # Reverse: payments were DEBITED, receipts were CREDITED
+        if txn.amount < 0:
             tb_line.debit = max(Decimal("0"), tb_line.debit - net_for_tb)
+            tb_line.closing_balance -= net_for_tb
         else:
             tb_line.credit = max(Decimal("0"), tb_line.credit - net_for_tb)
+            tb_line.closing_balance += net_for_tb
 
-        if tb_line.debit == 0 and tb_line.credit == 0:
+        # Only delete if zero movement AND no prior year data or opening/closing balance
+        has_prior = (tb_line.prior_debit or Decimal('0')) != 0 or (tb_line.prior_credit or Decimal('0')) != 0
+        has_opening = (tb_line.opening_balance or Decimal('0')) != 0
+        has_closing = (tb_line.closing_balance or Decimal('0')) != 0
+        if tb_line.debit == 0 and tb_line.credit == 0 and not has_prior and not has_opening and not has_closing:
             tb_line.delete()
         else:
             tb_line.save()
@@ -7147,10 +7186,15 @@ def _reverse_tb_for_transaction(txn, fy):
         if gst_line:
             if txn.amount > 0:
                 gst_line.credit = max(Decimal("0"), gst_line.credit - gst_amt)
+                gst_line.closing_balance += gst_amt
             else:
                 gst_line.debit = max(Decimal("0"), gst_line.debit - gst_amt)
+                gst_line.closing_balance -= gst_amt
 
-            if gst_line.debit == 0 and gst_line.credit == 0:
+            has_prior_gst = (gst_line.prior_debit or Decimal('0')) != 0 or (gst_line.prior_credit or Decimal('0')) != 0
+            has_opening_gst = (gst_line.opening_balance or Decimal('0')) != 0
+            has_closing_gst = (gst_line.closing_balance or Decimal('0')) != 0
+            if gst_line.debit == 0 and gst_line.credit == 0 and not has_prior_gst and not has_opening_gst and not has_closing_gst:
                 gst_line.delete()
             else:
                 gst_line.save()
@@ -7242,23 +7286,27 @@ def review_bulk_edit_transactions(request, pk):
             # Push to TB
             if account_code and txn.amount != 0:
                 net_for_tb = net_amount if has_gst else abs_amount
+                # Payments (amount < 0) DEBIT the expense account
+                # Receipts (amount > 0) CREDIT the income account
                 tb_line, created = _get_or_create_tb_line(
                     financial_year=fy,
                     account_code=account_code,
                     defaults={
                         "account_name": account_name,
-                        "debit": net_for_tb if txn.amount > 0 else Decimal("0"),
-                        "credit": net_for_tb if txn.amount < 0 else Decimal("0"),
-                        "closing_balance": net_for_tb if txn.amount > 0 else -net_for_tb,
+                        "debit": net_for_tb if txn.amount < 0 else Decimal("0"),
+                        "credit": net_for_tb if txn.amount > 0 else Decimal("0"),
+                        "closing_balance": net_for_tb if txn.amount < 0 else -net_for_tb,
                         "tax_type": tax_type,
                         "source": "bank_statement",
                     },
                 )
                 if not created:
-                    if txn.amount > 0:
+                    if txn.amount < 0:
+                        # Payment: debit the expense account
                         tb_line.debit += net_for_tb
                         tb_line.closing_balance += net_for_tb
                     else:
+                        # Receipt: credit the income account
                         tb_line.credit += net_for_tb
                         tb_line.closing_balance -= net_for_tb
                     if not tb_line.tax_type:
@@ -8962,23 +9010,27 @@ def review_bulk_approve_group(request, pk):
             # Push the net amount (ex-GST) to the expense/income account
             net_for_tb = txn.net_amount if has_gst else abs(amount)
 
+            # Payments (amount < 0) DEBIT the expense account
+            # Receipts (amount > 0) CREDIT the income account
             tb_line, created = _get_or_create_tb_line(
                 financial_year=fy,
                 account_code=code,
                 defaults={
                     "account_name": name,
-                    "debit": net_for_tb if amount > 0 else Decimal("0"),
-                    "credit": net_for_tb if amount < 0 else Decimal("0"),
-                    "closing_balance": net_for_tb if amount > 0 else -net_for_tb,
+                    "debit": net_for_tb if amount < 0 else Decimal("0"),
+                    "credit": net_for_tb if amount > 0 else Decimal("0"),
+                    "closing_balance": net_for_tb if amount < 0 else -net_for_tb,
                     "tax_type": tax_type,
                     "source": "bank_statement",
                 },
             )
             if not created:
-                if amount > 0:
+                if amount < 0:
+                    # Payment: debit the expense account
                     tb_line.debit += net_for_tb
                     tb_line.closing_balance += net_for_tb
                 else:
+                    # Receipt: credit the income account
                     tb_line.credit += net_for_tb
                     tb_line.closing_balance -= net_for_tb
                 if not tb_line.tax_type:
