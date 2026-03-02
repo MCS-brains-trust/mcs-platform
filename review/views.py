@@ -280,19 +280,6 @@ def review_dashboard(request):
         status="finalised",
     ).count()
 
-    # --- PENDING BANK STATEMENT REVIEWS ---
-    pending_jobs = ReviewJob.objects.filter(
-        status__in=["awaiting_review", "in_progress"]
-    ).order_by("-received_at")
-    if not user.is_admin:
-        pending_jobs = pending_jobs.filter(
-            Q(entity__primary_accountant=user) | Q(entity__reviewer=user)
-        )
-
-    completed_jobs = ReviewJob.objects.filter(
-        status="completed"
-    ).order_by("-completed_at")[:5]
-
     activities = ReviewActivity.objects.all().order_by("-created_at")[:10]
     total_patterns = TransactionPattern.objects.count()
 
@@ -307,9 +294,6 @@ def review_dashboard(request):
         from core.models import EvaReview
         total_eva_reviews = EvaReview.objects.filter(
             status__in=["cleared", "findings_raised"]
-        ).count()
-        total_pending_reviews = ReviewJob.objects.filter(
-            status__in=["awaiting_review", "in_progress"]
         ).count()
         unassigned_entities = Entity.objects.filter(
             is_archived=False, primary_accountant__isnull=True
@@ -337,7 +321,6 @@ def review_dashboard(request):
             "total_unfinalised": total_unfinalised,
             "total_finalised": total_finalised,
             "total_eva_reviews": total_eva_reviews,
-            "total_pending_reviews": total_pending_reviews,
             "unassigned_entities": unassigned_entities,
             "staff_workload": staff_workload,
         }
@@ -414,9 +397,6 @@ def review_dashboard(request):
         "my_review_count": my_review_count,
         "my_unfinalised_years": my_unfinalised_years,
         "my_finalised_count": my_finalised_count,
-        # Bank statement reviews
-        "pending_jobs": pending_jobs,
-        "completed_jobs": completed_jobs,
         "activities": activities,
         "total_patterns": total_patterns,
         # Unfinalised files

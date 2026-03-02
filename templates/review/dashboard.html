@@ -143,7 +143,7 @@
 
 <!-- MY WORKLOAD SUMMARY CARDS -->
 <div class="row g-3 mt-2 mb-4">
-    <div class="col-md-3">
+    <div class="col-md-4">
         <a href="{% url 'core:entity_list' %}" class="metric-card-link">
             <div class="metric-card border-start border-4 border-primary">
                 <div class="metric-value text-primary">{{ my_entity_count }}</div>
@@ -154,7 +154,7 @@
             </div>
         </a>
     </div>
-    <div class="col-md-3">
+    <div class="col-md-4">
         <a href="#unfinalised-files" class="metric-card-link">
             <div class="metric-card border-start border-4 border-warning">
                 <div class="metric-value text-warning">{{ my_unfinalised_years|length }}</div>
@@ -162,19 +162,11 @@
             </div>
         </a>
     </div>
-    <div class="col-md-3">
+    <div class="col-md-4">
         <a href="#unfinalised-files" class="metric-card-link">
             <div class="metric-card border-start border-4 border-success">
                 <div class="metric-value text-success">{{ my_finalised_count|default:"0" }}</div>
                 <div class="metric-label">Finalised This Year</div>
-            </div>
-        </a>
-    </div>
-    <div class="col-md-3">
-        <a href="#pending-reviews" class="metric-card-link">
-            <div class="metric-card border-start border-4 border-info">
-                <div class="metric-value text-info">{{ pending_jobs|length }}</div>
-                <div class="metric-label">Pending Bank Reviews</div>
             </div>
         </a>
     </div>
@@ -203,10 +195,6 @@
             <div class="col practice-metric">
                 <div class="pm-value" style="color: #6f42c1;">{{ practice_metrics.total_eva_reviews|default:"0" }}</div>
                 <div class="pm-label">Eva Reviews</div>
-            </div>
-            <div class="col practice-metric">
-                <div class="pm-value text-info">{{ practice_metrics.total_pending_reviews }}</div>
-                <div class="pm-label">Pending Reviews</div>
             </div>
             <div class="col practice-metric">
                 <div class="pm-value text-secondary">{{ practice_metrics.unassigned_entities }}</div>
@@ -322,49 +310,7 @@
         </div>
         {% endif %}
 
-        {% if pending_jobs %}
-        <!-- PENDING BANK STATEMENT REVIEWS -->
-        <div id="pending-reviews" class="section-header mt-4">
-            <i class="bi bi-bank text-info"></i> Pending Bank Statement Reviews
-            <span class="badge bg-info rounded-pill ms-1">{{ pending_jobs|length }}</span>
-        </div>
-        <div class="wip-table">
-            <table class="table table-hover mb-0">
-                <thead>
-                    <tr>
-                        <th class="ps-3">Entity</th>
-                        <th>Received</th>
-                        <th class="text-center">Transactions</th>
-                        <th class="text-center">Status</th>
-                        <th></th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for job in pending_jobs %}
-                    <tr>
-                        <td class="ps-3 fw-bold">{{ job.entity.entity_name|default:"Unknown" }}</td>
-                        <td><small class="text-muted">{{ job.received_at|timesince }} ago</small></td>
-                        <td class="text-center">
-                            <span class="badge bg-secondary rounded-pill">{{ job.transactions.count }}</span>
-                        </td>
-                        <td class="text-center">
-                            {% if job.status == 'awaiting_review' %}
-                            <span class="badge bg-warning text-dark rounded-pill px-2">Awaiting Review</span>
-                            {% else %}
-                            <span class="badge bg-info rounded-pill px-2">In Progress</span>
-                            {% endif %}
-                        </td>
-                        <td>
-                            <a href="{% url 'review:review_detail' pk=job.pk %}" class="btn btn-sm btn-outline-primary py-0 px-2">
-                                Review
-                            </a>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-        {% endif %}
+
 
     </div>
 
