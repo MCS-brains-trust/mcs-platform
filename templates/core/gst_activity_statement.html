@@ -260,6 +260,14 @@
         </button>
     </li>
     {% endif %}
+    {% if selected_period %}
+    <li class="nav-item">
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#commentaryTab" type="button" id="commentaryTabBtn">
+            <i class="bi bi-chat-square-text"></i> Commentary
+            <span class="badge bg-secondary ms-1 commentary-count-badge" style="display:none;"></span>
+        </button>
+    </li>
+    {% endif %}
 </ul>
 
 <div class="tab-content mt-3">
@@ -508,6 +516,136 @@
         </div>
     </div>
     {% endif %}
+
+    <!-- Commentary Tab -->
+    {% if selected_period %}
+    <div class="tab-pane fade" id="commentaryTab">
+        <div class="card">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <div>
+                    <strong><i class="bi bi-chat-square-text"></i> Period Commentary</strong>
+                    <span class="text-muted ms-2">{{ period_label }}</span>
+                </div>
+                <div class="d-flex gap-2">
+                    <select id="commentaryTone" class="form-select form-select-sm" style="width: auto;">
+                        <option value="professional" selected>Professional</option>
+                        <option value="conversational">Conversational</option>
+                        <option value="technical">Technical</option>
+                    </select>
+                    <button class="btn btn-primary btn-sm" id="generateCommentaryBtn" onclick="generateCommentary()">
+                        <i class="bi bi-stars"></i> Generate Commentary
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <!-- Generation Status -->
+                <div id="commentaryGenerating" style="display:none;">
+                    <div class="text-center py-5">
+                        <div class="spinner-border text-primary mb-3" role="status"></div>
+                        <p class="text-muted" id="commentaryStep">Generating commentary...</p>
+                    </div>
+                </div>
+
+                <!-- Empty State -->
+                <div id="commentaryEmpty">
+                    <div class="text-center py-5">
+                        <i class="bi bi-chat-square-text" style="font-size: 3rem; color: #ccc;"></i>
+                        <h5 class="text-muted mt-3">No Commentary Yet</h5>
+                        <p class="text-muted">Generate an AI-powered period commentary to share with your client.<br>
+                        The commentary transforms BAS data into plain-English business insights.</p>
+                        <button class="btn btn-primary" onclick="generateCommentary()">
+                            <i class="bi bi-stars"></i> Generate Period Commentary
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Commentary Content -->
+                <div id="commentaryContent" style="display:none;">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <div>
+                            <span class="badge bg-info" id="commentaryStatus"></span>
+                            <span class="text-muted small ms-2" id="commentaryMeta"></span>
+                        </div>
+                        <div class="d-flex gap-2">
+                            <button class="btn btn-outline-secondary btn-sm" onclick="downloadCommentary()" title="Download as Word">
+                                <i class="bi bi-file-earmark-word"></i> Download
+                            </button>
+                            <button class="btn btn-outline-primary btn-sm" onclick="regenerateCommentary()" title="Re-generate">
+                                <i class="bi bi-arrow-clockwise"></i> Regenerate
+                            </button>
+                            <button class="btn btn-success btn-sm" id="markReviewedBtn" onclick="markReviewed()" style="display:none;">
+                                <i class="bi bi-check-lg"></i> Mark Reviewed
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Section: Period Snapshot -->
+                    <div class="commentary-section mb-4" id="sectionSnapshot">
+                        <h6 class="text-primary"><i class="bi bi-camera"></i> Period Snapshot</h6>
+                        <div class="commentary-text" data-field="section_snapshot"></div>
+                        <button class="btn btn-link btn-sm text-muted p-0 mt-1 edit-section-btn" onclick="editSection('section_snapshot')">
+                            <i class="bi bi-pencil"></i> Edit
+                        </button>
+                    </div>
+
+                    <!-- Section: Revenue Analysis -->
+                    <div class="commentary-section mb-4" id="sectionRevenue">
+                        <h6 class="text-primary"><i class="bi bi-graph-up-arrow"></i> Revenue Analysis</h6>
+                        <div class="commentary-text" data-field="section_revenue"></div>
+                        <button class="btn btn-link btn-sm text-muted p-0 mt-1 edit-section-btn" onclick="editSection('section_revenue')">
+                            <i class="bi bi-pencil"></i> Edit
+                        </button>
+                    </div>
+
+                    <!-- Section: Cost & Margin Analysis -->
+                    <div class="commentary-section mb-4" id="sectionCosts">
+                        <h6 class="text-primary"><i class="bi bi-pie-chart"></i> Cost & Margin Analysis</h6>
+                        <div class="commentary-text" data-field="section_costs"></div>
+                        <button class="btn btn-link btn-sm text-muted p-0 mt-1 edit-section-btn" onclick="editSection('section_costs')">
+                            <i class="bi bi-pencil"></i> Edit
+                        </button>
+                    </div>
+
+                    <!-- Section: Items to Watch -->
+                    <div class="commentary-section mb-4" id="sectionWatch">
+                        <h6 class="text-warning"><i class="bi bi-eye"></i> Items to Watch</h6>
+                        <div class="commentary-text" data-field="section_watch_items"></div>
+                        <button class="btn btn-link btn-sm text-muted p-0 mt-1 edit-section-btn" onclick="editSection('section_watch_items')">
+                            <i class="bi bi-pencil"></i> Edit
+                        </button>
+                    </div>
+
+                    <!-- Section: Recommended Actions -->
+                    <div class="commentary-section mb-4" id="sectionActions">
+                        <h6 class="text-success"><i class="bi bi-lightning"></i> Recommended Actions</h6>
+                        <div class="commentary-text" data-field="section_actions"></div>
+                        <button class="btn btn-link btn-sm text-muted p-0 mt-1 edit-section-btn" onclick="editSection('section_actions')">
+                            <i class="bi bi-pencil"></i> Edit
+                        </button>
+                    </div>
+
+                    <!-- Version History -->
+                    <div id="commentaryVersions" class="mt-4" style="display:none;">
+                        <h6 class="text-muted"><i class="bi bi-clock-history"></i> Version History</h6>
+                        <div id="versionList"></div>
+                    </div>
+                </div>
+
+                <!-- Error State -->
+                <div id="commentaryError" style="display:none;">
+                    <div class="alert alert-danger">
+                        <i class="bi bi-exclamation-triangle"></i>
+                        <strong>Generation Failed</strong>
+                        <p class="mb-0 mt-1" id="commentaryErrorMsg"></p>
+                    </div>
+                    <button class="btn btn-primary btn-sm" onclick="generateCommentary()">
+                        <i class="bi bi-arrow-clockwise"></i> Try Again
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
 </div>
 
 
@@ -638,6 +776,324 @@
     </div>
 </div>
 {% endif %}
+{% endif %}
+
+{% if selected_period %}
+<!-- ═══ Commentary JavaScript ═══ -->
+<script>
+(function() {
+    const FY_PK = '{{ fy.pk }}';
+    const PERIOD_NUM = {{ selected_period.period.period_number }};
+    const CSRF = '{{ csrf_token }}';
+    let currentCommentaryId = null;
+    let pollInterval = null;
+
+    // ── Load existing commentaries on tab activation ──
+    document.getElementById('commentaryTabBtn')?.addEventListener('shown.bs.tab', function() {
+        loadCommentaries();
+    });
+
+    function loadCommentaries() {
+        fetch(`/entities/years/${FY_PK}/gst/commentary/list/?period_number=${PERIOD_NUM}`)
+            .then(r => r.json())
+            .then(data => {
+                const list = data.commentaries || [];
+                const badge = document.querySelector('.commentary-count-badge');
+                if (list.length > 0) {
+                    badge.textContent = list.length;
+                    badge.style.display = 'inline';
+                    // Show the latest
+                    const latest = list[0];
+                    currentCommentaryId = latest.id;
+                    if (latest.status === 'generating') {
+                        showGenerating();
+                        startPolling(latest.id);
+                    } else if (latest.status === 'error') {
+                        showError(latest.error_message || 'Generation failed.');
+                    } else {
+                        loadCommentaryDetail(latest.id);
+                    }
+                    // Show version history if multiple
+                    if (list.length > 1) {
+                        showVersionHistory(list);
+                    }
+                } else {
+                    showEmpty();
+                }
+            })
+            .catch(err => {
+                console.error('Failed to load commentaries:', err);
+                showEmpty();
+            });
+    }
+
+    function loadCommentaryDetail(id) {
+        fetch(`/entities/commentary/${id}/`)
+            .then(r => r.json())
+            .then(data => {
+                currentCommentaryId = data.id;
+                populateCommentary(data);
+                showContent();
+            })
+            .catch(err => {
+                console.error('Failed to load commentary:', err);
+                showError('Failed to load commentary.');
+            });
+    }
+
+    function populateCommentary(data) {
+        // Status badge
+        const statusBadge = document.getElementById('commentaryStatus');
+        const statusColors = { draft: 'bg-warning', reviewed: 'bg-info', sent: 'bg-success', error: 'bg-danger' };
+        statusBadge.className = `badge ${statusColors[data.status] || 'bg-secondary'}`;
+        statusBadge.textContent = data.status_display;
+
+        // Meta
+        const meta = document.getElementById('commentaryMeta');
+        let metaText = `v${data.version}`;
+        if (data.generated_by) metaText += ` · Generated by ${data.generated_by}`;
+        if (data.generated_at) metaText += ` · ${new Date(data.generated_at).toLocaleDateString('en-AU')}`;
+        meta.textContent = metaText;
+
+        // Sections
+        const fields = ['section_snapshot', 'section_revenue', 'section_costs', 'section_watch_items', 'section_actions'];
+        fields.forEach(field => {
+            const el = document.querySelector(`.commentary-text[data-field="${field}"]`);
+            if (el) {
+                el.innerHTML = (data[field] || '<em class="text-muted">No content generated for this section.</em>')
+                    .replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>');
+                if (data[field]) el.innerHTML = '<p>' + el.innerHTML + '</p>';
+            }
+        });
+
+        // Show/hide mark reviewed button
+        const reviewBtn = document.getElementById('markReviewedBtn');
+        if (data.status === 'draft') {
+            reviewBtn.style.display = 'inline-block';
+        } else {
+            reviewBtn.style.display = 'none';
+        }
+    }
+
+    // ── State management ──
+    function showEmpty() {
+        document.getElementById('commentaryEmpty').style.display = 'block';
+        document.getElementById('commentaryGenerating').style.display = 'none';
+        document.getElementById('commentaryContent').style.display = 'none';
+        document.getElementById('commentaryError').style.display = 'none';
+    }
+    function showGenerating() {
+        document.getElementById('commentaryEmpty').style.display = 'none';
+        document.getElementById('commentaryGenerating').style.display = 'block';
+        document.getElementById('commentaryContent').style.display = 'none';
+        document.getElementById('commentaryError').style.display = 'none';
+    }
+    function showContent() {
+        document.getElementById('commentaryEmpty').style.display = 'none';
+        document.getElementById('commentaryGenerating').style.display = 'none';
+        document.getElementById('commentaryContent').style.display = 'block';
+        document.getElementById('commentaryError').style.display = 'none';
+    }
+    function showError(msg) {
+        document.getElementById('commentaryEmpty').style.display = 'none';
+        document.getElementById('commentaryGenerating').style.display = 'none';
+        document.getElementById('commentaryContent').style.display = 'none';
+        document.getElementById('commentaryError').style.display = 'block';
+        document.getElementById('commentaryErrorMsg').textContent = msg;
+    }
+
+    // ── Polling ──
+    function startPolling(id) {
+        if (pollInterval) clearInterval(pollInterval);
+        pollInterval = setInterval(() => {
+            fetch(`/entities/commentary/${id}/status/`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.step) {
+                        document.getElementById('commentaryStep').textContent = data.step;
+                    }
+                    if (data.status === 'draft' || data.status === 'reviewed') {
+                        clearInterval(pollInterval);
+                        pollInterval = null;
+                        loadCommentaryDetail(id);
+                    } else if (data.status === 'error') {
+                        clearInterval(pollInterval);
+                        pollInterval = null;
+                        showError(data.error_message || 'Generation failed.');
+                    }
+                })
+                .catch(() => {});
+        }, 3000);
+    }
+
+    // ── Actions (exposed globally) ──
+    window.generateCommentary = function() {
+        const tone = document.getElementById('commentaryTone').value;
+        showGenerating();
+
+        fetch(`/entities/years/${FY_PK}/gst/commentary/generate/`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+            body: JSON.stringify({ period_number: PERIOD_NUM, tone: tone })
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) {
+                showError(data.error);
+                return;
+            }
+            currentCommentaryId = data.commentary_id;
+            startPolling(data.commentary_id);
+        })
+        .catch(err => {
+            showError('Failed to start generation: ' + err.message);
+        });
+    };
+
+    window.regenerateCommentary = function() {
+        if (!currentCommentaryId) return;
+        const tone = document.getElementById('commentaryTone').value;
+        showGenerating();
+
+        fetch(`/entities/commentary/${currentCommentaryId}/regenerate/`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+            body: JSON.stringify({ tone: tone })
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) {
+                showError(data.error);
+                return;
+            }
+            currentCommentaryId = data.commentary_id;
+            startPolling(data.commentary_id);
+        })
+        .catch(err => showError('Regeneration failed: ' + err.message));
+    };
+
+    window.downloadCommentary = function() {
+        if (!currentCommentaryId) return;
+        window.open(`/entities/commentary/${currentCommentaryId}/download/`, '_blank');
+    };
+
+    window.markReviewed = function() {
+        if (!currentCommentaryId) return;
+        fetch(`/entities/commentary/${currentCommentaryId}/update/`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+            body: JSON.stringify({ mark_reviewed: true })
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) { alert(data.error); return; }
+            loadCommentaryDetail(currentCommentaryId);
+        });
+    };
+
+    window.editSection = function(fieldName) {
+        const textEl = document.querySelector(`.commentary-text[data-field="${fieldName}"]`);
+        const currentText = textEl.innerText;
+
+        // Replace with textarea
+        const container = textEl.parentElement;
+        const editBtn = container.querySelector('.edit-section-btn');
+        editBtn.style.display = 'none';
+
+        const textarea = document.createElement('textarea');
+        textarea.className = 'form-control mb-2';
+        textarea.rows = 6;
+        textarea.value = currentText;
+        textEl.style.display = 'none';
+        textEl.after(textarea);
+
+        // Save/Cancel buttons
+        const btnGroup = document.createElement('div');
+        btnGroup.className = 'd-flex gap-2';
+        btnGroup.innerHTML = `
+            <button class="btn btn-primary btn-sm" onclick="saveSection('${fieldName}')">Save</button>
+            <button class="btn btn-outline-secondary btn-sm" onclick="cancelEdit('${fieldName}')">Cancel</button>
+        `;
+        textarea.after(btnGroup);
+    };
+
+    window.saveSection = function(fieldName) {
+        if (!currentCommentaryId) return;
+        const textEl = document.querySelector(`.commentary-text[data-field="${fieldName}"]`);
+        const container = textEl.parentElement;
+        const textarea = container.querySelector('textarea');
+        const newText = textarea.value;
+
+        fetch(`/entities/commentary/${currentCommentaryId}/update/`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+            body: JSON.stringify({ [fieldName]: newText })
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) { alert(data.error); return; }
+            // Clean up and refresh
+            container.querySelector('.d-flex.gap-2')?.remove();
+            textarea.remove();
+            textEl.style.display = 'block';
+            textEl.innerHTML = '<p>' + newText.replace(/\n\n/g, '</p><p>').replace(/\n/g, '<br>') + '</p>';
+            container.querySelector('.edit-section-btn').style.display = 'inline';
+        });
+    };
+
+    window.cancelEdit = function(fieldName) {
+        const textEl = document.querySelector(`.commentary-text[data-field="${fieldName}"]`);
+        const container = textEl.parentElement;
+        container.querySelector('textarea')?.remove();
+        container.querySelector('.d-flex.gap-2')?.remove();
+        textEl.style.display = 'block';
+        container.querySelector('.edit-section-btn').style.display = 'inline';
+    };
+
+    function showVersionHistory(list) {
+        const container = document.getElementById('commentaryVersions');
+        const versionList = document.getElementById('versionList');
+        container.style.display = 'block';
+        versionList.innerHTML = list.map(c => `
+            <div class="d-flex justify-content-between align-items-center border-bottom py-2 ${c.id === currentCommentaryId ? 'fw-bold' : ''}">
+                <div>
+                    <span class="badge ${c.status === 'draft' ? 'bg-warning' : c.status === 'reviewed' ? 'bg-info' : c.status === 'sent' ? 'bg-success' : 'bg-secondary'}">
+                        v${c.version}
+                    </span>
+                    <span class="ms-2">${c.status_display}</span>
+                    <span class="text-muted ms-2 small">${c.generated_at ? new Date(c.generated_at).toLocaleDateString('en-AU') : ''}</span>
+                </div>
+                <button class="btn btn-link btn-sm" onclick="loadCommentaryDetail('${c.id}')">
+                    ${c.id === currentCommentaryId ? 'Current' : 'View'}
+                </button>
+            </div>
+        `).join('');
+    }
+
+    // Make loadCommentaryDetail available globally for version history clicks
+    window.loadCommentaryDetail = loadCommentaryDetail;
+})();
+</script>
+
+<style>
+.commentary-section {
+    padding: 1rem;
+    border-left: 3px solid #e9ecef;
+    background: #fafbfc;
+    border-radius: 0 4px 4px 0;
+}
+.commentary-section:hover {
+    border-left-color: #0F6B74;
+    background: #f0f7f8;
+}
+.commentary-text p {
+    margin-bottom: 0.5rem;
+    line-height: 1.6;
+}
+.commentary-text p:last-child {
+    margin-bottom: 0;
+}
+</style>
 {% endif %}
 
 {% endblock %}

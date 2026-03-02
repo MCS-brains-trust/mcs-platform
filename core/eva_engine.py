@@ -632,8 +632,8 @@ CRITICAL RULES
    You CANNOT dismiss or contradict them. Set source to "risk_engine".
 
 2. KNOWLEDGE BRAIN: If a "KNOWLEDGE BRAIN REFERENCE" section is provided, you MUST
-   cite the specific document title. If no Knowledge Brain material is provided for
-   this check, include this disclosure in remediation_firm_procedure:
+   cite the specific document title in remediation_firm_procedure. If no Knowledge Brain
+   material is provided for this check, include this disclosure in remediation_firm_procedure:
    "No firm-specific procedure found in the Knowledge Brain."
 
 3. ADDITIONAL FINDINGS: You may raise additional findings if clearly supported by
@@ -643,36 +643,52 @@ CRITICAL RULES
 
 5. ONE FINDING PER CHECK: Each check produces at most ONE finding. If an account or
    issue is primarily covered by another compliance check, do NOT duplicate the full
-   analysis. Instead, include a brief cross-reference in your explanation:
-   "See [other check name] for detailed [topic] analysis. For this check, confirm [specific additional requirement]."
+   analysis. Instead, add the other check's ID to cross_references and write a single
+   sentence in your explanation: "See [other check name] for detailed analysis."
 
 ═══════════════════════════════════════════════════════
 SEVERITY CLASSIFICATION
 ═══════════════════════════════════════════════════════
 
-CRITICAL: A specific, identifiable compliance exposure that creates financial risk to
-the client, the practice, or both. Requires action before financial statements can be
-signed. Resolution note must describe what action was taken (not just "reviewed" or "noted").
+CRITICAL — use ONLY when ALL three conditions are met:
+  (a) A specific, identifiable compliance exposure exists (not a general concern).
+  (b) It creates quantifiable financial risk to the client OR the practice.
+  (c) It requires action BEFORE financial statements can be signed.
+  Resolution note must describe what action was taken (not just "reviewed" or "noted").
 
-ADVISORY: A matter requiring acknowledgement and documentation, but not blocking
-finalisation. May indicate a disclosure requirement, a best-practice gap, or a matter
-to monitor. Resolution note can be an acknowledgement with documented reasoning.
+ADVISORY — use for everything else:
+  A matter requiring acknowledgement and documentation, but not blocking finalisation.
+  Includes disclosure requirements, best-practice gaps, and matters to monitor.
+  Resolution note can be an acknowledgement with documented reasoning.
+
+Severity examples:
+  - Director loan debit balance $50,000 with no Div 7A agreement → CRITICAL
+  - Depreciation method change with immaterial impact → ADVISORY
+  - Missing TPAR lodgement where industry is unconfirmed → ADVISORY
+  - Trust distribution resolution not evidenced before 30 June → CRITICAL
+  - Year-on-year revenue variance of 30% → ADVISORY (not blocking)
 
 ═══════════════════════════════════════════════════════
 CONFIDENCE LEVELS
 ═══════════════════════════════════════════════════════
 
-HIGH: The factual basis is verified from trial balance data and entity records.
-The issue objectively exists. Example: director loan debit balance confirmed from TB.
+Confidence reflects DATA AVAILABILITY AND VERIFIABILITY, not issue severity.
+
+HIGH: The factual basis is fully verified from trial balance data, entity records,
+or risk engine hard facts. The issue objectively exists and can be confirmed from
+the data provided.
+  Examples: Director loan debit balance confirmed from TB; depreciation schedule
+  shows asset with $0 WDV still being depreciated; TB is out of balance by $X.
 
 MEDIUM: Indicators identified from available data, but the conclusion depends on
-information not in the platform. Example: thin capitalisation depends on whether
-entity has foreign dealings, which is not recorded.
+information not available in the platform (e.g. external records, client confirmation).
+  Examples: Thin capitalisation depends on foreign dealings status; super guarantee
+  compliance depends on employee headcount not in TB.
 
-LOW: Inferred from patterns; the issue may not exist. Example: contractor payments
-suggest TPAR obligation, but the entity's industry is unconfirmed.
-
-Confidence reflects DATA AVAILABILITY, not issue severity.
+LOW: Inferred from patterns or account names; the issue may not exist. The finding
+is speculative based on limited data.
+  Examples: Contractor payments suggest TPAR obligation but industry is unconfirmed;
+  account name suggests related party but no supporting evidence.
 
 ═══════════════════════════════════════════════════════
 OUTPUT FORMAT — JSON object only (no markdown, no code fences)
@@ -680,34 +696,76 @@ OUTPUT FORMAT — JSON object only (no markdown, no code fences)
 
 {
   "has_finding": true or false,
-  "title": "Max 12 words",
+  "title": "Max 12 words — be specific, name the account or issue",
   "severity": "CRITICAL" or "ADVISORY",
   "confidence": "HIGH" or "MEDIUM" or "LOW",
   "source": "risk_engine" or "eva_analysis",
-  "explanation": "2-3 sentences, max 60 words. Lead with the key number, state the issue, name the consequence.",
+  "explanation": "MAXIMUM 40-60 words. See brevity rules below.",
   "legislation_reference": "Short citation only, e.g. s.109D ITAA 1936",
-  "remediation_firm_procedure": "How MC&S handles this issue. Cite Knowledge Brain document title if available. If no firm procedure found, state: No firm-specific procedure found in the Knowledge Brain.",
-  "remediation_authority": "Legislative reference, ATO ruling, or professional body guidance that supports the recommended action.",
-  "remediation_fix": "Concrete steps specific to THIS entity: what needs to be done, in what order, by whom, and by when. Use the entity's actual account codes and balances.",
+  "remediation_firm_procedure": "How MC&S handles this issue. MUST cite Knowledge Brain document title if available. If none found: No firm-specific procedure found in the Knowledge Brain. Max 3 sentences.",
+  "remediation_authority": "The specific legislative section, ATO ruling number, or AASB standard that governs this issue. Max 2 sentences.",
+  "remediation_fix": "Concrete steps specific to THIS entity. What needs to be done, in what order, by whom. Reference the entity's actual account codes and balances. Max 4 sentences.",
   "cross_references": ["check_id_1", "check_id_2"]
 }
 
 ═══════════════════════════════════════════════════════
-BREVITY IS MANDATORY
+BREVITY IS MANDATORY — THIS IS THE MOST IMPORTANT RULE
 ═══════════════════════════════════════════════════════
 
-- "explanation" MUST be 2-3 sentences, MAXIMUM 60 words. Write like a senior
-  reviewer's margin note, not an audit memo.
-- Lead with the account and balance, state the issue, name the consequence.
-- Do NOT trace journal entries or calculate percentage movements in the explanation.
-- Do NOT comment on ATO enforcement posture.
+Your explanation MUST be 40-60 words. Not 80. Not 100. Count your words.
+
+GOOD example (47 words):
+"Director loan account 2-1200 shows $52,340 debit balance. No Division 7A
+compliant loan agreement on file. Without a conforming agreement, the full
+balance is deemed an unfranked dividend under s.109D ITAA 1936, creating
+immediate tax liability for the shareholder."
+
+BAD example (too long, 95 words):
+"Upon reviewing the trial balance, I note that account 2-1200 Director Loan
+has a debit balance of $52,340.00 which represents amounts owed by the
+director to the company. This is significant because under Division 7A of
+the Income Tax Assessment Act 1936, specifically section 109D, any loan
+made by a private company to a shareholder or associate that does not have
+a compliant loan agreement in place by the lodgement date of the company's
+tax return will be treated as an unfranked dividend..."
+
+Rules:
+- Lead with the account code and balance (the key number).
+- State the issue in one sentence.
+- Name the consequence in one sentence.
+- Do NOT trace journal entries or calculate percentage movements.
+- Do NOT comment on ATO enforcement posture or likelihood of audit.
 - Do NOT list every variance — summarise the pattern.
-- Do NOT reference more than 3 accounts in a single finding. If more accounts are
-  involved, summarise as "X accounts affected" and name only the top 2-3 by value.
-- Save supporting detail for the remediation sections.
-- Each remediation section should be 2-4 sentences max.
-- "cross_references" lists check IDs (e.g. "div7a", "super_guarantee") where the
-  same account or issue is also relevant. Use this instead of duplicating analysis.
+- Do NOT reference more than 3 accounts. If more are involved, write
+  "X accounts affected" and name only the top 2-3 by value.
+- Save all supporting detail for the three remediation sections.
+- Each remediation section: 2-4 sentences max.
+- cross_references: list check IDs (e.g. "div7a", "super_guarantee") where
+  the same account or issue is also relevant. Use this INSTEAD of duplicating.
+
+═══════════════════════════════════════════════════════
+COMPARATIVE CONSISTENCY — SPECIAL RULES
+═══════════════════════════════════════════════════════
+
+For the comparative_consistency check:
+- Do NOT create a roll-up finding listing all variances.
+- Only flag accounts NOT already covered by another specific compliance check.
+- If the only significant variances are in accounts covered by div7a,
+  related_party, depreciation_review, or super_guarantee, set has_finding to false
+  and let those specific checks handle the analysis.
+- If you do raise a finding, focus on the single most significant unexplained
+  variance and reference at most 2-3 accounts.
+
+═══════════════════════════════════════════════════════
+TRIAL BALANCE INTEGRITY — SPECIAL RULES
+═══════════════════════════════════════════════════════
+
+For the tb_integrity check:
+- Focus on structural issues: TB not balanced, orphan accounts, unmapped accounts.
+- Do NOT flag balance sign issues (e.g. negative asset) as CRITICAL unless the
+  amount is material (>5% of total assets or >$10,000).
+- If multiple structural issues exist, report the most severe one only and
+  mention the count of others: "Additionally, X other minor issues detected."
 
 ═══════════════════════════════════════════════════════
 ADDITIONAL RULES
@@ -716,10 +774,13 @@ ADDITIONAL RULES
 1. If confirmed hard facts exist, has_finding MUST be true.
 2. Use Australian tax law and accounting standards.
 3. If no confirmed hard facts AND no issues found, set has_finding to false.
-4. The comparative_consistency check should only flag accounts NOT already covered
-   by another specific compliance check. Do not create a roll-up of all variances.
-5. If a finding would reference more than 3 accounts, split the concern or
-   summarise — never list more than 3 specific accounts.
+4. If a finding would reference more than 3 accounts, summarise — never list
+   more than 3 specific accounts.
+5. The three remediation fields form a hierarchy:
+   remediation_firm_procedure = "What does MC&S's internal procedure say?"
+   remediation_authority = "What does the law/ATO/AASB say?"
+   remediation_fix = "What specific steps should be taken for THIS entity?"
+   All three MUST be populated for every finding. They are NOT optional.
 """
 
 
@@ -868,20 +929,36 @@ def _run_single_check(financial_year, check_def, risk_flags=None, prior_findings
             f"Set has_finding to true and source to 'risk_engine'."
         )
 
-    # If this is a re-run, inject prior findings context for deduplication
+    # If this is a re-run, inject prior findings context for CLOSED/RE-OPENED logic
     prior_findings_note = ""
     if prior_findings:
-        prior_list = "\n".join(
-            f"  - [{pf['severity']}] {pf['title']} (check: {pf['check_name']}, status: {pf['status']})"
-            for pf in prior_findings
+        relevant_priors = [
+            pf for pf in prior_findings
             if pf['check_name'] == check_def['id']
-        )
-        if prior_list:
+        ]
+        if relevant_priors:
+            prior_list = "\n".join(
+                f"  - [{pf['severity'].upper()}] {pf['title']} "
+                f"(status: {pf['status']}, explanation: {(pf.get('plain_english_explanation', '') or '')[:120]})"
+                for pf in relevant_priors
+            )
             prior_findings_note = (
-                f"\n\nPRIOR FINDINGS FOR THIS CHECK (from previous review):\n{prior_list}\n"
-                f"If the underlying data has NOT changed and the issue persists, you may "
-                f"re-raise it but keep the same title for continuity. If the issue has been "
-                f"resolved (e.g. journal posted, balance cleared), set has_finding to false."
+                f"\n\n"
+                f"╔══════════════════════════════════════════════════════════════╗\n"
+                f"║  RE-RUN: PRIOR FINDINGS FOR THIS CHECK                      ║\n"
+                f"╚══════════════════════════════════════════════════════════════╝\n"
+                f"{prior_list}\n\n"
+                f"RE-RUN RULES:\n"
+                f"1. If the prior finding was ADDRESSED but the underlying data still shows \n"
+                f"   the same issue (e.g. balance unchanged, no correcting journal), RE-OPEN \n"
+                f"   it: set has_finding=true and keep the SAME title for continuity.\n"
+                f"2. If the prior finding was ADDRESSED and the data confirms it is genuinely \n"
+                f"   resolved (e.g. balance cleared, agreement uploaded, journal posted), \n"
+                f"   mark it CLOSED: set has_finding=false.\n"
+                f"3. If the prior finding was still OPEN and the data is unchanged, re-raise \n"
+                f"   it with the same title. Do NOT create a new variant of the same finding.\n"
+                f"4. If new data reveals a DIFFERENT issue for this check (not the same as \n"
+                f"   the prior finding), you may raise a new finding with a new title."
             )
 
     user_prompt = f"""COMPLIANCE CHECK: {check_def["name"]}
@@ -1121,6 +1198,29 @@ def _run_eva_review_background(fy_pk, user_pk):
                 if remediation_fix and not recommendation_text:
                     recommendation_text = remediation_fix
 
+                # Determine source
+                raw_source = (result.get("source", "") or "").lower()
+                finding_source = raw_source if raw_source in ("risk_engine", "eva_analysis") else "eva_analysis"
+
+                # Link to prior finding if this is a re-run and same check
+                prior_finding_link = None
+                if prior_findings:
+                    matching_priors = [
+                        pf for pf in prior_findings
+                        if pf['check_name'] == check_def['id']
+                    ]
+                    if matching_priors:
+                        # Try to find the actual prior finding object
+                        try:
+                            prior_finding_link = EvaFinding.objects.filter(
+                                eva_review__financial_year=fy,
+                                check_name=check_def['id'],
+                            ).exclude(
+                                eva_review=review
+                            ).order_by('-created_at').first()
+                        except Exception:
+                            pass
+
                 try:
                     finding = EvaFinding.objects.create(
                         eva_review=review,
@@ -1135,7 +1235,9 @@ def _run_eva_review_background(fy_pk, user_pk):
                         legislation_reference=(result.get("legislation_reference", "") or "")[:255],
                         knowledge_brain_citation=(kb_citation or "")[:500],
                         confidence=raw_confidence,
-                        status="open",
+                        source=finding_source,
+                        prior_finding=prior_finding_link,
+                        status="reopened" if prior_finding_link else "open",
                     )
                     # Store cross-references for post-processing
                     cross_refs = result.get("cross_references", []) or []
@@ -1180,7 +1282,36 @@ def _run_eva_review_background(fy_pk, user_pk):
                         print(f"[Eva] EXCEPTION saving risk flag finding for {check_def['id']}: {save_err}", flush=True)
                         traceback.print_exc()
 
-        # ── STEP 3: Post-processing — link cross-references ─────
+        # ── STEP 3: Post-processing — mark prior findings as CLOSED ─────
+        if prior_findings:
+            print(f"[Eva] Post-processing: marking closed prior findings...", flush=True)
+            try:
+                # Get all check_names that raised findings in this review
+                new_finding_checks = set(
+                    review.findings.values_list('check_name', flat=True)
+                )
+                # Get the previous review
+                previous_reviews = EvaReview.objects.filter(
+                    financial_year=fy,
+                    status__in=["findings_raised", "cleared"],
+                ).exclude(pk=review.pk).order_by("-completed_at")[:1]
+                if previous_reviews:
+                    prev_review = previous_reviews[0]
+                    # Mark prior findings as CLOSED if they were NOT re-raised
+                    for prior_f in prev_review.findings.filter(status__in=["open", "reopened"]):
+                        if prior_f.check_name not in new_finding_checks:
+                            prior_f.status = "closed"
+                            prior_f.resolution_note = (
+                                f"Auto-closed by Eva re-run on {timezone.now().strftime('%d %b %Y %H:%M')}. "
+                                f"Issue no longer detected in current data."
+                            )
+                            prior_f.resolved_at = timezone.now()
+                            prior_f.save(update_fields=["status", "resolution_note", "resolved_at"])
+                            print(f"[Eva] CLOSED prior finding: {prior_f.check_name} — {prior_f.title}", flush=True)
+            except Exception as close_err:
+                print(f"[Eva] Prior finding closure error (non-fatal): {close_err}", flush=True)
+
+        # ── STEP 4: Post-processing — link cross-references ─────
         print(f"[Eva] Post-processing: linking cross-references...", flush=True)
         try:
             all_findings = list(review.findings.all())
