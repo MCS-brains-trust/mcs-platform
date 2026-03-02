@@ -165,11 +165,27 @@ def get_bank_coverage(fy, period_start, period_end):
         # month range. Also check PendingTransactions with dates in this month.
         has_bank_txns = False
 
-        # Check PendingTransactions (date field is a CharField like "2025-10-15")
+        # Check PendingTransactions (date field is a CharField in various
+        # formats: "2025-10-15", "15/10/2025", "1/08/2025", etc.)
+        # Try ISO prefix first, then fall back to parsing all dates.
         month_prefix = current.strftime("%Y-%m")
         txn_count = txns.filter(date__startswith=month_prefix).count()
         if txn_count > 0:
             has_bank_txns = True
+        else:
+            # Dates may be in d/m/Y format — parse and check in Python
+            from datetime import datetime as _dt
+            for txn in txns:
+                parsed = None
+                for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d %b %Y"):
+                    try:
+                        parsed = _dt.strptime(txn.date.strip(), fmt).date()
+                        break
+                    except (ValueError, AttributeError):
+                        continue
+                if parsed and month_start <= parsed <= month_end:
+                    has_bank_txns = True
+                    break
 
         # Also check if bank_statement TB lines were created in this month
         if not has_bank_txns:
@@ -512,21 +528,36 @@ def _calculate_gst_from_transactions(fy, entity, entity_type, coa_lookup, entity
     # ── 1. Bank statement transactions in this period ──
     jobs = ReviewJob.objects.filter(entity=entity)
     if jobs.exists():
-        # Get confirmed transactions with dates in the period range
-        # PendingTransaction.date is CharField like "2025-10-15" or "15/10/2025"
-        period_start_str = period_start.strftime("%Y-%m-%d")
-        period_end_str = period_end.strftime("%Y-%m-%d")
+        # Get confirmed transactions with dates in the period range.
+        # PendingTransaction.date is a CharField stored in various formats
+        # (e.g. "1/08/2025", "2025-08-01", "15/10/2025"). We cannot rely
+        # on lexicographic string comparison, so we fetch all confirmed
+        # transactions and filter in Python after parsing the date.
+        from datetime import datetime as _dt
 
-        txns = PendingTransaction.objects.filter(
+        all_confirmed = PendingTransaction.objects.filter(
             job__in=jobs,
             is_confirmed=True,
-            date__gte=period_start_str,
-            date__lte=period_end_str,
         )
 
-        # Group by confirmed account code
+        def _parse_txn_date(date_str):
+            """Parse a PendingTransaction date string into a date object."""
+            if not date_str:
+                return None
+            for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d %b %Y"):
+                try:
+                    return _dt.strptime(date_str.strip(), fmt).date()
+                except (ValueError, AttributeError):
+                    continue
+            return None
+
+        # Group by confirmed account code, filtering by parsed date
         account_totals = {}
-        for txn in txns:
+        for txn in all_confirmed:
+            txn_date = _parse_txn_date(txn.date)
+            if not txn_date or txn_date < period_start or txn_date > period_end:
+                continue
+
             code = txn.confirmed_code or txn.ai_suggested_code
             if not code:
                 continue
