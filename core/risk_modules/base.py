@@ -40,8 +40,16 @@ class BaseDetectionModule:
     assessment_model = None     # Django model class for persisting results
 
     # --- Subclass MAY override ---
-    finding_category = "COMPLIANCE"   # EvaFinding category
-    finding_source = "MODULE"         # EvaFinding source tag
+    # Maps module_id to the Eva compliance check_name used in COMPLIANCE_CHECKS
+    # (e.g. "div7a" → "div7a", "going_concern" → "going_concern")
+    check_name_mapping = {
+        "div7a": "div7a",
+        "going_concern": "going_concern",
+        "section100a": "trust_distribution",
+        "cluster_rp": "related_party",
+        "cluster_sgc": "super_guarantee",
+        "cluster_tpar": "tpar",
+    }
 
     def __init__(self, financial_year):
         self.fy = financial_year
@@ -50,6 +58,11 @@ class BaseDetectionModule:
         self.overall_severity = "CLEAR"
         self.finding_lines = []
         self._assessment_record = None
+
+    @property
+    def eva_check_name(self):
+        """Return the Eva compliance check_name for this module."""
+        return self.check_name_mapping.get(self.module_id, self.module_id)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -110,7 +123,19 @@ class BaseDetectionModule:
         """Create or update a single consolidated EvaFinding card.
 
         Uses build_finding_card() for content.  Links to the assessment
-        record via eva_finding FK.
+        record via eva_finding FK on the assessment model.
+
+        Field mapping to EvaFinding model:
+            eva_review      — ForeignKey to EvaReview
+            check_name      — matches COMPLIANCE_CHECKS id (e.g. "div7a")
+            severity        — "critical" or "advisory"
+            title           — max 255 chars
+            plain_english_explanation — TextField
+            recommendation  — TextField
+            legislation_reference — max 255 chars
+            confidence      — "high" / "medium" / "low"
+            source          — "risk_engine" or "eva_analysis"
+            status          — "open" / "addressed" / "closed" / "reopened"
         """
         from core.models import EvaFinding, EvaReview
 
@@ -118,34 +143,47 @@ class BaseDetectionModule:
         if not card:
             return None
 
-        # Find or create the latest EvaReview for this FY
+        # Find the latest EvaReview for this FY
         review = EvaReview.objects.filter(
             financial_year=self.fy,
-        ).order_by("-created_at").first()
+        ).order_by("-triggered_at").first()
 
         if not review:
             # Create a lightweight review record for module findings
             review = EvaReview.objects.create(
                 financial_year=self.fy,
-                status="completed",
-                review_type="module_assessment",
+                status="findings_raised",
             )
 
-        # Upsert finding by module_id tag
-        finding_tag = f"module:{self.module_id}"
+        # Map severity to lowercase (model choices are lowercase)
+        severity = (self.overall_severity or "advisory").lower()
+        if severity not in ("critical", "advisory"):
+            severity = "advisory"
+
+        # Determine the check_name for this module
+        check_name = self.eva_check_name
+
+        # Upsert finding by eva_review + check_name
         finding, created = EvaFinding.objects.update_or_create(
-            review=review,
-            source_rule_id=finding_tag,
+            eva_review=review,
+            check_name=check_name,
+            source="risk_engine",
             defaults={
-                "category": card.get("category", self.finding_category),
-                "severity": self.overall_severity,
-                "title": card["title"],
-                "description": card["description"],
-                "recommended_action": card.get("recommended_action", ""),
-                "legislation_ref": card.get("legislation_ref", ""),
-                "status": "open" if self.overall_severity != "CLEAR" else "auto_resolved",
-                "calculated_values": card.get("calculated_values", {}),
+                "severity": severity,
+                "title": (card.get("title", self.display_name) or "")[:255],
+                "plain_english_explanation": card.get("description", "") or "",
+                "recommendation": card.get("recommended_action", "") or "",
+                "legislation_reference": (card.get("legislation_ref", "") or "")[:255],
+                "confidence": "high",
+                "status": "open" if self.overall_severity != "CLEAR" else "closed",
             },
+        )
+
+        action = "Created" if created else "Updated"
+        logger.info(
+            "%s EvaFinding for %s [%s]: %s — %s",
+            action, self.entity.entity_name, check_name,
+            card.get("title", "")[:60], severity,
         )
 
         # Link assessment record to finding
@@ -159,8 +197,7 @@ class BaseDetectionModule:
         """Build the content dict for the consolidated EvaFinding card.
 
         MUST be overridden in subclass.  Returns a dict with keys:
-            title, description, recommended_action, legislation_ref,
-            category, calculated_values
+            title, description, recommended_action, legislation_ref
         """
         raise NotImplementedError(
             f"{self.__class__.__name__} must implement build_finding_card()"
@@ -172,20 +209,20 @@ class BaseDetectionModule:
 
         try:
             ActivityLog.objects.create(
+                entity=self.entity,
                 financial_year=self.fy,
-                action="risk_assessment",
+                event_type="audit_run",
+                title=f"{self.display_name}: {self.overall_severity}",
                 description=(
-                    f"{self.display_name}: {self.overall_severity} "
-                    f"({len(self.rules_fired)} rules fired)"
+                    f"{self.display_name} for {self.entity.entity_name}: "
+                    f"{self.overall_severity} "
+                    f"({len(self.rules_fired)} rules fired: "
+                    f"{', '.join(self.rules_fired)})"
                 ),
-                metadata={
-                    "module_id": self.module_id,
-                    "severity": self.overall_severity,
-                    "rules_fired": self.rules_fired,
-                },
+                url=f"/entities/years/{self.fy.pk}/",
             )
         except Exception:
-            # ActivityLog may not exist or may have different fields
+            # ActivityLog may have different fields across versions
             logger.debug("Could not log activity for %s", self.module_id)
 
     # ------------------------------------------------------------------
