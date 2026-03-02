@@ -3255,8 +3255,6 @@ def account_code_breakdown(request, pk, account_code):
     fy = get_financial_year_for_user(request, pk)
     lines = fy.trial_balance_lines.filter(
         account_code=account_code
-    ).exclude(
-        source='rollover'
     ).select_related('mapped_line_item').order_by('account_name')
 
     if not lines.exists():
