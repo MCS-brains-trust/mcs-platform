@@ -132,6 +132,9 @@ def _log_auto_risk_run(financial_year, result, trigger_source):
     except Exception:
         logger.exception("Failed to log auto risk run for FY %s", financial_year.id)
 
+    # Trigger Eva proactive suggestion if HIGH/CRITICAL flags were raised
+    _maybe_trigger_proactive_risk_suggestion(financial_year, result)
+
 
 def schedule_tier2_debounced(financial_year, trigger_source="auto"):
     """
@@ -423,6 +426,116 @@ def handle_dividend_event_created(sender, instance, created, **kwargs):
 # ============================================================================
 # EVA CONVERSATION ACTIVITY LOGGING (Phase 3)
 # ============================================================================
+
+# ============================================================================
+# EVA PROACTIVE SUGGESTION TRIGGERS
+# ============================================================================
+
+def _maybe_trigger_proactive_risk_suggestion(financial_year, result):
+    """
+    If the risk engine raised HIGH or CRITICAL flags, queue a proactive
+    Eva suggestion to alert the accountant.
+    """
+    flags_created = result.get("flags_created", 0)
+    if flags_created == 0:
+        return
+
+    # Check for HIGH/CRITICAL flags specifically
+    from core.models import RiskFlag
+    recent_flags = RiskFlag.objects.filter(
+        financial_year=financial_year,
+        status="open",
+        severity__in=["HIGH", "CRITICAL"],
+    ).order_by("-created_at")[:5]
+
+    if not recent_flags.exists():
+        return
+
+    critical_count = recent_flags.filter(severity="CRITICAL").count()
+    high_count = recent_flags.filter(severity="HIGH").count()
+    flag_details = "\n".join(
+        f"- [{f.severity}] {f.title}: {f.description[:120]}"
+        for f in recent_flags
+    )
+
+    try:
+        from core.tasks import eva_proactive_suggestion
+        eva_proactive_suggestion.delay(
+            str(financial_year.pk),
+            "risk_flags_raised",
+            {
+                "flag_count": critical_count + high_count,
+                "critical_count": critical_count,
+                "high_count": high_count,
+                "flag_details": flag_details,
+            },
+        )
+        logger.info(
+            "Queued proactive risk suggestion for FY %s (%d critical, %d high)",
+            financial_year.pk, critical_count, high_count,
+        )
+    except Exception:
+        # Celery not running — generate in thread as fallback
+        import threading
+        from core.eva_proactive import generate_proactive_suggestion
+        threading.Thread(
+            target=generate_proactive_suggestion,
+            args=(
+                str(financial_year.pk),
+                "risk_flags_raised",
+                {
+                    "flag_count": critical_count + high_count,
+                    "critical_count": critical_count,
+                    "high_count": high_count,
+                    "flag_details": flag_details,
+                },
+            ),
+            daemon=True,
+        ).start()
+
+
+def trigger_proactive_bank_classification(financial_year, classification_result):
+    """
+    Called after bank statement AI classification completes.
+    Queues a proactive Eva suggestion summarising the results.
+
+    Args:
+        financial_year: FinancialYear instance
+        classification_result: dict with total_transactions, auto_classified,
+                              needs_review, new_accounts
+    """
+    total = classification_result.get("total_transactions", 0)
+    if total == 0:
+        return
+
+    auto = classification_result.get("auto_classified", 0)
+    auto_pct = round((auto / total) * 100) if total > 0 else 0
+
+    context = {
+        "total_transactions": total,
+        "auto_classified": auto,
+        "auto_pct": auto_pct,
+        "needs_review": classification_result.get("needs_review", 0),
+        "new_accounts": classification_result.get("new_accounts", 0),
+    }
+
+    try:
+        from core.tasks import eva_proactive_suggestion
+        eva_proactive_suggestion.delay(
+            str(financial_year.pk),
+            "bank_classification_complete",
+            context,
+        )
+        logger.info("Queued proactive bank classification suggestion for FY %s", financial_year.pk)
+    except Exception:
+        import threading
+        from core.eva_proactive import generate_proactive_suggestion
+        threading.Thread(
+            target=generate_proactive_suggestion,
+            args=(str(financial_year.pk), "bank_classification_complete", context),
+            daemon=True,
+        ).start()
+
 
 @receiver(post_save, sender="core.EvaMessage")
 def handle_eva_message_created(sender, instance, created, **kwargs):

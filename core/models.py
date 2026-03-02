@@ -2312,6 +2312,11 @@ class ActivityLog(models.Model):
         AUDIT_RUN = "audit_run", "Audit Risk Analysis Run"
         REVIEW_APPROVED = "review_approved", "Transactions Approved"
         DOCUMENT_GENERATED = "doc_generated", "Document Generated"
+        BAS_COMMENTARY_GENERATED = "bas_commentary_generated", "BAS Commentary Generated"
+        BAS_COMMENTARY_EDITED = "bas_commentary_edited", "BAS Commentary Edited"
+        BAS_COMMENTARY_REGENERATED = "bas_commentary_regenerated", "BAS Commentary Regenerated"
+        BAS_COMMENTARY_SENT = "bas_commentary_sent", "BAS Commentary Sent"
+        BAS_COMMENTARY_DELETED = "bas_commentary_deleted", "BAS Commentary Deleted"
         GENERAL = "general", "General"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -4483,6 +4488,13 @@ class BASPeriodCommentary(models.Model):
     )
     # Error tracking
     error_message = models.TextField(blank=True, default="")
+
+    # Trend chaining — link to the prior period's commentary for comparison
+    prior_commentary = models.ForeignKey(
+        "self", on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="subsequent_commentaries",
+        help_text="Link to the prior period's commentary for trend chaining and comparison",
+    )
 
     # Link to generated document
     legal_document = models.ForeignKey(

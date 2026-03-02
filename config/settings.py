@@ -310,9 +310,9 @@ CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = "Australia/Melbourne"
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 CELERY_BEAT_SCHEDULE = {
-    "sync-knowledge-brain-nightly": {
+    "sync-knowledge-brain": {
         "task": "core.sync_knowledge_brain",
-        "schedule": 86400,  # Every 24 hours
+        "schedule": 7200,  # Every 2 hours (spec §2.3)
         "options": {"expires": 3600},
     },
 }
