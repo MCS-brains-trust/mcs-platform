@@ -1071,7 +1071,27 @@ def _parse_excel_bank_statement(content, filename):
 
         # Drop completely empty columns (e.g. NAB exports have an unnamed blank column)
         df = df.dropna(axis=1, how="all")
-        # Also drop columns whose header is empty / "Unnamed"
+
+        # ── Detect ANZ-style unnamed description column ───────────────
+        # ANZ exports use headers: Date | $ | (no header) | GST | Details
+        # The description column (C) has no header, so pandas names it
+        # "Unnamed: 2". We must detect this pattern and rename it before
+        # dropping truly empty unnamed columns.
+        unnamed_cols = [c for c in df.columns if str(c).startswith("Unnamed")]
+        for uc in unnamed_cols:
+            # If this unnamed column contains mostly non-null string data,
+            # it is likely a description column without a header.
+            non_null_ratio = df[uc].notna().mean()
+            if non_null_ratio > 0.5:
+                # Check that it contains text (not just numbers)
+                sample_vals = df[uc].dropna().head(10).astype(str)
+                has_text = any(not v.replace('.', '').replace('-', '').replace(',', '').isdigit() for v in sample_vals)
+                if has_text:
+                    df = df.rename(columns={uc: "_parsed_description"})
+                    logger.info(f"Renamed unnamed column '{uc}' to '_parsed_description' (likely description column)")
+                    break
+
+        # Drop remaining unnamed columns that are truly empty/irrelevant
         df = df.loc[:, ~df.columns.astype(str).str.startswith("Unnamed")]
 
         # ── Column identification ──────────────────────────────────────
@@ -1091,6 +1111,7 @@ def _parse_excel_bank_statement(content, filename):
                 or "narr" in col_lower
                 or "particular" in col_lower
                 or "detail" in col_lower
+                or col_lower == "_parsed_description"
             ) and "description" not in col_map:
                 col_map["description"] = col
 
@@ -1118,6 +1139,8 @@ def _parse_excel_bank_statement(content, filename):
                 col_map["merchant"] = col
             elif "type" in col_lower and "transaction_type" not in col_map:
                 col_map["transaction_type"] = col
+
+        logger.info(f"Excel/CSV column mapping for {filename}: {col_map}")
 
         # ── Extract transactions ───────────────────────────────────────
         transactions = []
