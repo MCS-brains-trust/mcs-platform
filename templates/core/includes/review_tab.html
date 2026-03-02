@@ -57,9 +57,14 @@
                 <i class="bi bi-arrow-right mx-1"></i>
                 <span class="badge bg-success">{{ active_bank_mapping.tb_account_code }} &mdash; {{ active_bank_mapping.tb_account_name }}</span>
             </div>
-            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="toggleBankMappingForm()">
-                <i class="bi bi-pencil"></i> Change
-            </button>
+            <div class="d-flex gap-1">
+                <button type="button" class="btn btn-outline-primary btn-sm" id="recalcBankContraBtn" onclick="recalcBankContra()" title="Recalculate missing bank contra entries to balance the TB">
+                    <i class="bi bi-arrow-repeat"></i> Recalc Contra
+                </button>
+                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="toggleBankMappingForm()">
+                    <i class="bi bi-pencil"></i> Change
+                </button>
+            </div>
         </div>
         {% else %}
         <div class="d-flex align-items-center justify-content-between">

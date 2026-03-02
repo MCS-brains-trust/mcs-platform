@@ -12,6 +12,7 @@ const DELETE_SELECTED_URL = '{% url "core:review_delete_selected_transactions" p
 const BULK_EDIT_URL = '{% url "core:review_bulk_edit_transactions" pk=fy.pk %}';
 const APPROVE_SELECTED_URL = '{% url "core:review_approve_selected" pk=fy.pk %}';
 const BANK_MAPPING_URL = '{% url "core:review_bank_account_mapping" pk=fy.pk %}';
+const RECALC_BANK_CONTRA_URL = '{% url "core:recalculate_bank_contra_entries" pk=fy.pk %}';
 const CSRF_TOKEN = '{{ csrf_token }}';
 const ENTITY_ID = '{{ fy.entity.pk }}';
 const FY_ID = '{{ fy.pk }}';
@@ -1776,5 +1777,46 @@ function saveBankMapping(e) {
         }
     })
     .catch(() => alert('Network error saving bank mapping.'));
+}
+
+function recalcBankContra() {
+    const btn = document.getElementById('recalcBankContraBtn');
+    if (!btn) return;
+    const origHTML = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span> Recalculating...';
+    fetch(RECALC_BANK_CONTRA_URL, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': CSRF_TOKEN,
+            'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: '{}',
+    })
+    .then(r => r.json())
+    .then(resp => {
+        btn.disabled = false;
+        btn.innerHTML = origHTML;
+        if (resp.status === 'ok') {
+            // Show success message
+            const card = document.getElementById('bankMappingCard');
+            if (card) {
+                const alert = document.createElement('div');
+                alert.className = 'alert alert-success alert-dismissible fade show mt-2 mb-0 py-1 px-2';
+                alert.style.fontSize = '0.85rem';
+                alert.innerHTML = '<i class="bi bi-check-circle-fill me-1"></i>' + resp.message +
+                    '<button type="button" class="btn-close btn-close-sm" data-bs-dismiss="alert"></button>';
+                card.querySelector('.card-body').appendChild(alert);
+            }
+        } else {
+            alert(resp.message || 'Error recalculating bank contra entries.');
+        }
+    })
+    .catch(() => {
+        btn.disabled = false;
+        btn.innerHTML = origHTML;
+        alert('Network error recalculating bank contra entries.');
+    });
 }
 </script>
