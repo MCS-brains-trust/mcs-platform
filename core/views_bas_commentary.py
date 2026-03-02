@@ -44,7 +44,7 @@ def generate_commentary(request, pk):
       - period_number: int (required)
       - tone: str (optional, default "professional")
     """
-    fy = get_financial_year_for_user(request.user, pk)
+    fy = get_financial_year_for_user(request, pk)
     if not fy:
         return JsonResponse({"error": "Financial year not found or access denied."}, status=404)
 
@@ -130,7 +130,7 @@ def list_commentaries(request, pk):
       - period_number: filter by period
       - status: filter by status
     """
-    fy = get_financial_year_for_user(request.user, pk)
+    fy = get_financial_year_for_user(request, pk)
     if not fy:
         return JsonResponse({"error": "Financial year not found or access denied."}, status=404)
 
@@ -173,7 +173,7 @@ def get_commentary(request, pk):
     commentary = get_object_or_404(BASPeriodCommentary, pk=pk)
 
     # Access check via financial year
-    fy = get_financial_year_for_user(request.user, commentary.financial_year.pk)
+    fy = get_financial_year_for_user(request, commentary.financial_year.pk)
     if not fy:
         return JsonResponse({"error": "Access denied."}, status=403)
 
@@ -219,7 +219,7 @@ def update_commentary(request, pk):
     """
     commentary = get_object_or_404(BASPeriodCommentary, pk=pk)
 
-    fy = get_financial_year_for_user(request.user, commentary.financial_year.pk)
+    fy = get_financial_year_for_user(request, commentary.financial_year.pk)
     if not fy:
         return JsonResponse({"error": "Access denied."}, status=403)
 
@@ -284,7 +284,7 @@ def regenerate_commentary(request, pk):
     """
     commentary = get_object_or_404(BASPeriodCommentary, pk=pk)
 
-    fy = get_financial_year_for_user(request.user, commentary.financial_year.pk)
+    fy = get_financial_year_for_user(request, commentary.financial_year.pk)
     if not fy:
         return JsonResponse({"error": "Access denied."}, status=403)
 
@@ -325,7 +325,7 @@ def download_commentary(request, pk):
     """Download commentary as a Word document."""
     commentary = get_object_or_404(BASPeriodCommentary, pk=pk)
 
-    fy = get_financial_year_for_user(request.user, commentary.financial_year.pk)
+    fy = get_financial_year_for_user(request, commentary.financial_year.pk)
     if not fy:
         return JsonResponse({"error": "Access denied."}, status=403)
 
@@ -386,7 +386,7 @@ def commentary_status(request, pk):
     """
     commentary = get_object_or_404(BASPeriodCommentary, pk=pk)
 
-    fy = get_financial_year_for_user(request.user, commentary.financial_year.pk)
+    fy = get_financial_year_for_user(request, commentary.financial_year.pk)
     if not fy:
         return JsonResponse({"error": "Access denied."}, status=403)
 
