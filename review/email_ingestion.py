@@ -157,11 +157,12 @@ def _get_chart_of_accounts_prompt(entity_type=None):
     lines.append("- Hardware (Bunnings, Total Tools) = Tools & equipment account, GST")
     lines.append("- Insurance = Insurance account, ITS")
     lines.append("- ATO payments = PAYG/Tax Payable account, ITS")
-    lines.append("- Bank fees = Bank charges account, ITS")
+    lines.append("- Bank fees = Bank charges account, ITS (but NOT interest — interest is GST-Free)")
     lines.append("- Telco (Telstra, Optus, Vodafone) = Telephone account, GST")
     lines.append("- Internal transfers = Loan/Drawing account, N-T")
     lines.append("- Customer payments/deposits = Sales account, GST")
-    lines.append("- Interest earned = Interest received account, ITS")
+    lines.append("- Interest earned/received = Interest received account, GST-Free (interest is ALWAYS GST-Free)")
+    lines.append("- Interest paid/charged = Interest paid account, GST-Free (interest is ALWAYS GST-Free)")
     lines.append("- Rent/lease = Rent account, GST")
     lines.append("- Utilities (AGL, Origin, Energy Australia) = Electricity/gas account, GST")
     lines.append("- Wages/salary = Wages account, ITS")
@@ -266,7 +267,45 @@ def classify_transactions(transactions, entity=None, is_gst_registered=True):
                     "from_learning": False,
                 }
 
+    # Step 3: Post-classification enforcement — interest is ALWAYS GST-Free
+    for i, result in enumerate(results):
+        if result is None:
+            continue
+        desc = (transactions[i].get("description", "") or "").upper()
+        amount = transactions[i].get("amount", 0)
+        is_income = float(amount) >= 0
+        if _is_interest_transaction(desc):
+            if is_gst_registered:
+                result["tax_type"] = "GST Free Income" if is_income else "GST Free Expenses"
+            else:
+                result["tax_type"] = "BAS Excluded"
+
     return results
+
+
+def _is_interest_transaction(desc_upper):
+    """
+    Detect whether a transaction description relates to interest paid or received.
+    Interest is ALWAYS GST-Free in Australia (not Input Taxed, not GST 10%).
+    """
+    interest_keywords = [
+        "INTEREST PAID", "INTEREST CHARGED", "INTEREST RECEIVED",
+        "INTEREST EARNED", "CREDIT INTEREST", "DEBIT INTEREST",
+        "LOAN INTEREST", "MORTGAGE INTEREST", "OVERDRAFT INTEREST",
+        "INTEREST ON", "INT PAID", "INT RECEIVED", "INT EARNED",
+        "INT CHARGED",
+    ]
+    for kw in interest_keywords:
+        if kw in desc_upper:
+            return True
+    # Also match standalone "INTEREST" when it's clearly about interest
+    # (but not compound words like "INTEREST-FREE" which relate to purchases)
+    if "INTEREST" in desc_upper and "INTEREST-FREE" not in desc_upper and "INTEREST FREE" not in desc_upper:
+        # Check it's a standalone interest reference
+        import re as _re
+        if _re.search(r'\bINTEREST\b', desc_upper):
+            return True
+    return False
 
 
 def _normalise_description(desc):

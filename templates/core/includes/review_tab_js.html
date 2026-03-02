@@ -325,7 +325,7 @@ function updateGstTreatment(select) {
     }
 
     // Persist to server
-    fetch('/review/api/review/transaction/' + txnId + '/gst-treatment/', {
+    fetch('/api/review/transaction/' + txnId + '/gst-treatment/', {
         method: 'POST',
         headers: { 'X-CSRFToken': CSRF_TOKEN, 'Content-Type': 'application/json' },
         body: JSON.stringify({ gst_treatment: treatment, is_manual: true })
@@ -412,7 +412,7 @@ function saveGstOverride(txnId) {
     }
 
     // Save creditable percentage first
-    fetch('/review/api/review/transaction/' + txnId + '/creditable-pct/', {
+    fetch('/api/review/transaction/' + txnId + '/creditable-pct/', {
         method: 'POST',
         headers: { 'X-CSRFToken': CSRF_TOKEN, 'Content-Type': 'application/json' },
         body: JSON.stringify({ creditable_percentage: pct })
@@ -421,7 +421,7 @@ function saveGstOverride(txnId) {
     .then(data => {
         if (data.status !== 'ok') throw new Error(data.message || 'Failed to save creditable %');
         // Then save GST amount override
-        return fetch('/review/api/review/transaction/' + txnId + '/gst-override/', {
+        return fetch('/api/review/transaction/' + txnId + '/gst-override/', {
             method: 'POST',
             headers: { 'X-CSRFToken': CSRF_TOKEN, 'Content-Type': 'application/json' },
             body: JSON.stringify({ gst_amount: overrideAmt, reason: reason })
@@ -668,7 +668,7 @@ function bulkApproveSelected() {
 
 // ===== Apportionment Detection (AC-APT-03/04/05/06) =====
 function detectApportionmentForRow(txnId) {
-    fetch('/review/api/review/transaction/' + txnId + '/detect-apportionment/', {
+    fetch('/api/review/transaction/' + txnId + '/detect-apportionment/', {
         method: 'POST',
         headers: { 'X-CSRFToken': CSRF_TOKEN, 'Content-Type': 'application/json' },
         body: '{}'
@@ -719,7 +719,7 @@ function detectApportionmentForRow(txnId) {
                     if (credPctHidden) credPctHidden.value = data.creditable_percentage;
                 }
                 // Persist to server
-                fetch('/review/api/review/transaction/' + txnId + '/creditable-pct/', {
+                fetch('/api/review/transaction/' + txnId + '/creditable-pct/', {
                     method: 'POST',
                     headers: { 'X-CSRFToken': CSRF_TOKEN, 'Content-Type': 'application/json' },
                     body: JSON.stringify({ creditable_percentage: parseFloat(data.creditable_percentage) })
@@ -798,7 +798,7 @@ function promptSaveEntityGstSetting(txnId, settingType, pctValue) {
 
 function confirmSaveEntityGstSetting() {
     if (!pendingEntityGstSettingData) return;
-    fetch('/review/api/review/entity-gst-setting/', {
+    fetch('/api/review/entity-gst-setting/', {
         method: 'POST',
         headers: { 'X-CSRFToken': CSRF_TOKEN, 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -986,7 +986,7 @@ function confirmSplit(txnId) {
         return;
     }
 
-    fetch('/review/api/review/transaction/' + txnId + '/split/', {
+    fetch('/api/review/transaction/' + txnId + '/split/', {
         method: 'POST',
         headers: { 'X-CSRFToken': CSRF_TOKEN, 'Content-Type': 'application/json' },
         body: JSON.stringify({ lines: lines })
@@ -1026,7 +1026,7 @@ function confirmSaveRule() {
     if (!pendingRuleData) return;
     const row = document.getElementById('pending-row-' + pendingRuleData.txn_id);
     const credPct = row?.dataset.creditablePct || '100';
-    fetch('/review/api/review/rules/create/', {
+    fetch('/api/review/rules/create/', {
         method: 'POST',
         headers: { 'X-CSRFToken': CSRF_TOKEN, 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -1057,7 +1057,7 @@ function dismissRulePrompt() {
 
 // ===== Classification Rules Management (AC-RUL-05) =====
 function toggleRule(ruleId) {
-    fetch('/review/api/review/rules/' + ruleId + '/toggle/', {
+    fetch('/api/review/rules/' + ruleId + '/toggle/', {
         method: 'POST',
         headers: { 'X-CSRFToken': CSRF_TOKEN }
     })
@@ -1071,7 +1071,7 @@ function toggleRule(ruleId) {
 
 function deleteRule(ruleId) {
     if (!confirm('Delete this classification rule? This will not affect previously approved transactions.')) return;
-    fetch('/review/api/review/rules/' + ruleId + '/delete/', {
+    fetch('/api/review/rules/' + ruleId + '/delete/', {
         method: 'POST',
         headers: { 'X-CSRFToken': CSRF_TOKEN }
     })

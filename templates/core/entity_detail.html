@@ -1040,7 +1040,7 @@ let rulesLoaded = false;
 
 function loadRules() {
     if (rulesLoaded) return;
-    fetch(`/review/api/review/rules/entity/${ENTITY_ID}/`)
+    fetch(`/api/review/rules/entity/${ENTITY_ID}/`)
     .then(r => r.json())
     .then(data => {
         rulesLoaded = true;
@@ -1129,7 +1129,7 @@ function saveRule() {
         creditable_percentage: document.getElementById('rule-creditable-pct').value,
     };
 
-    const url = editId ? `/review/api/review/rules/${editId}/update/` : '/review/api/review/rules/create/';
+    const url = editId ? `/api/review/rules/${editId}/update/` : '/api/review/rules/create/';
     fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
@@ -1148,7 +1148,7 @@ function saveRule() {
 }
 
 function toggleRule(ruleId) {
-    fetch(`/review/api/review/rules/${ruleId}/toggle/`, {
+    fetch(`/api/review/rules/${ruleId}/toggle/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
     })
@@ -1163,7 +1163,7 @@ function toggleRule(ruleId) {
 
 function deleteRule(ruleId) {
     if (!confirm('Delete this classification rule? This cannot be undone.')) return;
-    fetch(`/review/api/review/rules/${ruleId}/delete/`, {
+    fetch(`/api/review/rules/${ruleId}/delete/`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
     })

@@ -1371,6 +1371,17 @@ def classify_batch(request, pk):
         txn.ai_reasoning = cls.get("reasoning", "")
         txn.from_learning = cls.get("from_learning", False)
 
+        # Enforce: interest is ALWAYS GST-Free
+        from .email_ingestion import _is_interest_transaction
+        desc_upper = (txn.description or "").upper()
+        if _is_interest_transaction(desc_upper):
+            is_income = txn.amount >= 0
+            if is_gst:
+                cls["tax_type"] = "GST Free Income" if is_income else "GST Free Expenses"
+            else:
+                cls["tax_type"] = "BAS Excluded"
+            txn.ai_suggested_tax_type = cls["tax_type"]
+
         # Calculate GST
         tax_type = cls.get("tax_type", "")
         abs_amount = abs(txn.amount)

@@ -8762,6 +8762,16 @@ def _run_ai_classification_background(fy_pk, entity_pk, entity_type, user_pk):
                 tax_type = result.get("tax_type", "")
                 from_learning = result.get("from_learning", False)
 
+                # Enforce: interest is ALWAYS GST-Free
+                from review.email_ingestion import _is_interest_transaction
+                desc_upper = (txn.description or "").upper()
+                if _is_interest_transaction(desc_upper):
+                    is_income = txn.amount >= 0
+                    if is_gst:
+                        tax_type = "GST Free Income" if is_income else "GST Free Expenses"
+                    else:
+                        tax_type = "BAS Excluded"
+
                 if code:
                     txn.ai_suggested_code = code
                     txn.ai_suggested_name = name
