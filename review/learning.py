@@ -126,6 +126,51 @@ def get_pattern_stats(entity=None):
     }
 
 
+def find_similar_unconfirmed(transaction, job):
+    """
+    Find unconfirmed transactions in the same job whose normalised
+    description matches the given transaction's normalised description.
+
+    Uses the same normalisation logic that strips dates and long reference
+    numbers, so "PAYMENT TO GOCARDLESS JHAVTECHST-F2BV8MK" on two
+    different dates will match.
+
+    Returns a QuerySet of PendingTransaction objects (excluding the
+    source transaction itself and any already-confirmed rows).
+    """
+    from .models import PendingTransaction
+
+    source_norm = normalise_description(transaction.description)
+    if not source_norm:
+        return PendingTransaction.objects.none()
+
+    # Extract significant tokens (words with 3+ chars) for matching
+    tokens = [t for t in source_norm.split() if len(t) >= 3]
+    if not tokens:
+        return PendingTransaction.objects.none()
+
+    # Get all unconfirmed transactions in the same job (excl. source)
+    candidates = (
+        PendingTransaction.objects
+        .filter(job=job, is_confirmed=False)
+        .exclude(pk=transaction.pk)
+    )
+
+    matched_ids = []
+    for txn in candidates:
+        cand_norm = normalise_description(txn.description)
+        if not cand_norm:
+            continue
+        # Match if the normalised descriptions are identical, OR if
+        # the candidate contains all significant tokens from the source
+        if cand_norm == source_norm:
+            matched_ids.append(txn.pk)
+        elif all(token in cand_norm for token in tokens):
+            matched_ids.append(txn.pk)
+
+    return PendingTransaction.objects.filter(pk__in=matched_ids)
+
+
 def push_pattern_to_airtable(pattern):
     """
     Optionally push a confirmed pattern to the Airtable Learning Database
