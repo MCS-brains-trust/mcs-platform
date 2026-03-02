@@ -546,6 +546,41 @@ def confirm_transaction(request, pk):
         except Exception as e:
             logger.error(f"Failed to update Airtable: {e}")
 
+    # ── Live Learning: propagate coding to similar unconfirmed transactions ──
+    live_matches = []
+    try:
+        from .learning import find_similar_unconfirmed
+        similar_txns = find_similar_unconfirmed(txn, job)
+        for sim_txn in similar_txns:
+            # Update AI suggestion fields so the user sees the suggestion
+            sim_txn.ai_suggested_code = confirmed_code
+            sim_txn.ai_suggested_name = confirmed_name
+            sim_txn.ai_suggested_tax_type = confirmed_tax_type
+            sim_txn.ai_confidence = 5
+            sim_txn.ai_reasoning = f"Live match: same pattern as confirmed transaction"
+            sim_txn.from_learning = True
+            # Pre-fill the confirmed fields so the picker shows the value
+            sim_txn.confirmed_code = confirmed_code
+            sim_txn.confirmed_name = confirmed_name
+            sim_txn.confirmed_tax_type = confirmed_tax_type
+            # Recalculate GST
+            sim_txn.calculate_gst(
+                tax_type=confirmed_tax_type,
+                is_gst_registered=is_gst,
+            )
+            sim_txn.save()
+            live_matches.append({
+                "txn_id": str(sim_txn.pk),
+                "code": confirmed_code,
+                "name": confirmed_name,
+                "tax_type": confirmed_tax_type,
+                "gst_amount": str(sim_txn.gst_amount),
+                "net_amount": str(sim_txn.net_amount),
+                "description": sim_txn.description,
+            })
+    except Exception as e:
+        logger.warning(f"Live learning propagation error: {e}")
+
     return JsonResponse({
         "status": "ok",
         "confirmed_count": job.confirmed_count,
@@ -553,6 +588,7 @@ def confirm_transaction(request, pk):
         "progress_percent": job.progress_percent,
         "gst_amount": str(txn.gst_amount),
         "net_amount": str(txn.net_amount),
+        "live_matches": live_matches,
     })
 
 

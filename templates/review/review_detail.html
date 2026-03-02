@@ -78,6 +78,23 @@
     }
     .learning-badge { background: #e0f2f1; color: #00695c; }
     .rule-badge { background: #e3f2fd; color: #1565c0; }
+    .live-match-badge {
+        display: inline-flex; align-items: center; gap: 2px;
+        font-size: 0.7rem; padding: 1px 6px; border-radius: 10px; font-weight: 600;
+        background: #fce4ec; color: #c62828;
+        animation: livePulse 0.6s ease-in-out;
+    }
+    .txn-row-live-updated {
+        animation: liveHighlight 1.2s ease-out;
+    }
+    @keyframes liveHighlight {
+        0% { background-color: #ffcdd2; }
+        100% { background-color: #e8f5e9; }
+    }
+    @keyframes livePulse {
+        0% { transform: scale(1.3); opacity: 0.5; }
+        100% { transform: scale(1); opacity: 1; }
+    }
     .override-badge {
         display: inline-flex; align-items: center; gap: 2px;
         font-size: 0.68rem; padding: 1px 5px; border-radius: 8px;
@@ -920,8 +937,105 @@ function confirmTransaction(txnId, code, name, taxType) {
             if (ENTITY_ID && code !== aiCode && aiCode) {
                 showRulePrompt(txnId, row.cells[3].textContent.trim(), code, name);
             }
+
+            // ── Live Learning: propagate to similar unconfirmed transactions ──
+            if (data.live_matches && data.live_matches.length > 0) {
+                applyLiveMatches(data.live_matches, code, name, taxType);
+            }
         }
     });
+}
+
+function applyLiveMatches(matches, code, name, taxType) {
+    let count = 0;
+    matches.forEach(match => {
+        const matchRow = document.getElementById('row-' + match.txn_id);
+        if (!matchRow) return;
+        // Skip if already confirmed by the user
+        if (matchRow.dataset.confirmed === 'true') return;
+        count++;
+
+        // Update the AI suggestion cell
+        matchRow.dataset.aiCode = code;
+        matchRow.dataset.aiName = name;
+        const aiCellIdx = IS_GST_REGISTERED ? 7 : 5;
+        const aiCell = matchRow.cells[aiCellIdx];
+        if (aiCell) {
+            const stars = '<i class="bi bi-star-fill"></i>'.repeat(5);
+            aiCell.innerHTML = '<div><span style="font-weight:600;">' + code + '</span> <span class="text-muted">' + name + '</span></div>' +
+                '<span class="confidence-badge conf-5">' + stars + '</span>' +
+                '<span class="text-muted d-block" style="font-size:0.7rem;">Live match: same pattern as confirmed transaction</span>';
+        }
+
+        // Update the account picker input
+        const acctInput = document.getElementById('acct-' + match.txn_id);
+        if (acctInput) {
+            acctInput.value = code + ' \u2014 ' + name;
+            acctInput.dataset.code = code;
+            acctInput.dataset.name = name;
+            acctInput.classList.add('confirmed');
+        }
+
+        // Update the tax type dropdown
+        const taxSelect = document.getElementById('tax-' + match.txn_id);
+        if (taxSelect) {
+            taxSelect.value = taxType;
+            taxSelect.classList.add('confirmed');
+        }
+
+        // Update GST amounts
+        if (IS_GST_REGISTERED) {
+            const gstCell = matchRow.querySelector('.gst-amount');
+            const netCell = matchRow.querySelector('.net-amount');
+            if (gstCell && match.gst_amount) gstCell.textContent = '$' + parseFloat(match.gst_amount).toFixed(2);
+            if (netCell && match.net_amount) netCell.textContent = '$' + parseFloat(match.net_amount).toFixed(2);
+
+            // Auto-set GST treatment from the account's tax_code
+            const acct = ACCOUNTS.find(a => a.code === code);
+            if (acct && acct.tax) {
+                applyAccountGST(match.txn_id, acct.tax);
+            }
+        }
+
+        // Add "Live match" badge to the description cell
+        const descCell = matchRow.cells[3];
+        if (descCell && !descCell.querySelector('.live-match-badge')) {
+            const badge = document.createElement('span');
+            badge.className = 'live-match-badge';
+            badge.innerHTML = '<i class="bi bi-lightning-fill"></i> Live match';
+            descCell.appendChild(badge);
+        }
+
+        // Visual highlight: flash the row
+        matchRow.classList.remove('txn-row-pending', 'txn-row-unclassified');
+        matchRow.classList.add('txn-row-learning', 'txn-row-live-updated');
+
+        // Auto-confirm the match (since backend already pre-filled confirmed fields)
+        tryAutoConfirm(match.txn_id);
+    });
+
+    // Show a brief toast notification
+    if (count > 0) {
+        showLiveMatchToast(count);
+    }
+}
+
+function showLiveMatchToast(count) {
+    let toast = document.getElementById('live-match-toast');
+    if (!toast) {
+        toast = document.createElement('div');
+        toast.id = 'live-match-toast';
+        toast.style.cssText = 'position:fixed;bottom:24px;right:24px;background:#1b5e20;color:white;padding:12px 20px;border-radius:8px;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,0.3);font-size:0.88rem;display:flex;align-items:center;gap:8px;transition:opacity 0.3s;';
+        document.body.appendChild(toast);
+    }
+    toast.innerHTML = '<i class="bi bi-lightning-fill" style="font-size:1.1rem;"></i> <strong>' + count + '</strong> similar transaction' + (count > 1 ? 's' : '') + ' auto-coded';
+    toast.style.opacity = '1';
+    toast.style.display = 'flex';
+    clearTimeout(toast._hideTimer);
+    toast._hideTimer = setTimeout(() => {
+        toast.style.opacity = '0';
+        setTimeout(() => { toast.style.display = 'none'; }, 300);
+    }, 3000);
 }
 
 // ========================================================================
