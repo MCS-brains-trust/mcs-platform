@@ -44,6 +44,10 @@ urlpatterns = [
     path("api/review/<uuid:pk>/bulk-approve-group/",
          views.bulk_approve_group, name="bulk_approve_group"),
 
+    # PDF Export
+    path("api/review/<uuid:pk>/export-pdf/",
+         views.export_transactions_pdf, name="export_pdf"),
+
     # Webhook (n8n)
     path("api/notify/new-review-job/",
          views.notify_new_review_job, name="notify_new_job"),

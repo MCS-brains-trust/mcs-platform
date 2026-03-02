@@ -386,6 +386,17 @@
         </span>
     </div>
     <div class="d-flex gap-2">
+        <div class="dropdown">
+            <button class="btn btn-outline-secondary" style="font-size:0.85rem;" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="bi bi-file-earmark-pdf"></i> Export PDF <i class="bi bi-caret-down-fill" style="font-size:0.65rem;"></i>
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end">
+                <li><a class="dropdown-item" href="/api/review/{{ job.pk }}/export-pdf/?filter=pending" target="_blank"><i class="bi bi-clock text-warning me-2"></i>Pending Review</a></li>
+                <li><a class="dropdown-item" href="/api/review/{{ job.pk }}/export-pdf/?filter=confirmed" target="_blank"><i class="bi bi-check-circle text-success me-2"></i>Confirmed Transactions</a></li>
+                <li><hr class="dropdown-divider"></li>
+                <li><a class="dropdown-item" href="/api/review/{{ job.pk }}/export-pdf/?filter=all" target="_blank"><i class="bi bi-list-ul text-primary me-2"></i>All Transactions</a></li>
+            </ul>
+        </div>
         <button id="btn-classify" class="btn btn-classify" onclick="startClassification()">
             <i class="bi bi-robot"></i> Classify with AI
         </button>

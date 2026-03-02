@@ -2110,3 +2110,240 @@ def confirm_import(request):
         'redirect': redirect_url,
         'validation_warnings': validation_warnings,
     })
+
+
+# ---------------------------------------------------------------------------
+# PDF Export — Pending / Confirmed transaction lists
+# ---------------------------------------------------------------------------
+
+@login_required
+def export_transactions_pdf(request, pk):
+    """
+    Generate a PDF of transactions for a review job.
+    Query params:
+        filter=pending|confirmed|all  (default: all)
+    """
+    import weasyprint
+    from django.http import HttpResponse
+    from django.utils.html import escape as html_escape
+
+    job = get_review_job_for_user(request, pk)
+    filter_type = request.GET.get("filter", "all")
+
+    # Build queryset based on filter
+    txns = job.transactions.all().order_by("date", "description")
+    if filter_type == "pending":
+        txns = txns.filter(is_confirmed=False)
+        section_title = "Pending Review"
+    elif filter_type == "confirmed":
+        txns = txns.filter(is_confirmed=True)
+        section_title = "Confirmed Transactions"
+    else:
+        section_title = "All Transactions"
+
+    is_gst = job.is_gst_registered
+
+    # Build transaction rows
+    rows_html = ""
+    total_gross = Decimal("0.00")
+    total_gst = Decimal("0.00")
+    total_net = Decimal("0.00")
+
+    for txn in txns:
+        total_gross += txn.amount
+        total_gst += txn.gst_amount or Decimal("0.00")
+        total_net += txn.net_amount or Decimal("0.00")
+
+        amt_class = "debit" if txn.amount < 0 else "credit"
+
+        # Determine the account code/name to display
+        if txn.is_confirmed:
+            acct_display = html_escape(
+                f"{txn.confirmed_code} — {txn.confirmed_name}"
+                if txn.confirmed_code else "—"
+            )
+            tax_display = html_escape(txn.confirmed_tax_type or "—")
+        else:
+            acct_display = html_escape(
+                f"{txn.ai_suggested_code} — {txn.ai_suggested_name}"
+                if txn.ai_suggested_code else "Unclassified"
+            )
+            tax_display = html_escape(txn.ai_suggested_tax_type or "—")
+
+        status = "Confirmed" if txn.is_confirmed else "Pending"
+
+        gst_cols = ""
+        if is_gst:
+            gst_amt = f"${txn.gst_amount:,.2f}" if txn.gst_amount else "—"
+            net_amt = f"${txn.net_amount:,.2f}" if txn.net_amount else "—"
+            gst_treat = html_escape(
+                dict(txn.GST_TREATMENT_CHOICES).get(txn.gst_treatment, "—")
+            )
+            cred_pct = f"{txn.creditable_percentage:.0f}%"
+            gst_cols = f"""
+                <td class="r">{gst_amt}</td>
+                <td class="r">{net_amt}</td>
+                <td>{gst_treat}</td>
+                <td class="r">{cred_pct}</td>
+            """
+
+        rows_html += f"""<tr>
+            <td>{html_escape(txn.date)}</td>
+            <td>{html_escape(txn.description)}</td>
+            <td class="r {amt_class}">${txn.amount:,.2f}</td>
+            {gst_cols}
+            <td>{acct_display}</td>
+            <td>{tax_display}</td>
+            <td class="status-{status.lower()}">{status}</td>
+        </tr>"""
+
+    # Totals row
+    gst_total_cols = ""
+    if is_gst:
+        gst_total_cols = f"""
+            <td class="r bold">${total_gst:,.2f}</td>
+            <td class="r bold">${total_net:,.2f}</td>
+            <td></td>
+            <td></td>
+        """
+
+    # Metadata
+    period_str = ""
+    if job.period_start:
+        period_str = f"{job.period_start} — {job.period_end}"
+
+    bank_info = ""
+    if job.bank_account_name:
+        bank_info += f"Bank: {html_escape(job.bank_account_name)}"
+    if job.bsb:
+        bank_info += f" &nbsp;|&nbsp; BSB: {html_escape(job.bsb)}"
+    if job.account_number:
+        bank_info += f" &nbsp;|&nbsp; Acc: {html_escape(job.account_number)}"
+
+    gst_status = "GST Registered" if is_gst else "Not GST Registered"
+    now_str = timezone.now().strftime("%d/%m/%Y %H:%M")
+
+    # GST-specific columns in the header
+    gst_header_cols = ""
+    if is_gst:
+        gst_header_cols = """
+            <th class="r">GST</th>
+            <th class="r">Net</th>
+            <th>GST Treatment</th>
+            <th class="r">Cred.%</th>
+        """
+
+    # Balance summary (only for GST registered)
+    balance_html = ""
+    if is_gst and (job.opening_balance or job.closing_balance):
+        balance_html = f"""
+        <div class="balance-summary">
+            <table style="max-width:500px;">
+                <tr><td>Opening Balance</td><td class="r bold">${job.opening_balance:,.2f}</td></tr>
+                <tr><td>Closing Balance</td><td class="r bold">${job.closing_balance:,.2f}</td></tr>
+                <tr><td>Total GST</td><td class="r bold">${total_gst:,.2f}</td></tr>
+                <tr><td>Total Net</td><td class="r bold">${total_net:,.2f}</td></tr>
+            </table>
+        </div>
+        """
+
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+    @page {{
+        size: A4 landscape;
+        margin: 12mm 10mm;
+        @bottom-right {{ content: "Page " counter(page) " of " counter(pages); font-size: 7pt; color: #999; }}
+        @bottom-left {{ content: "Generated {now_str}"; font-size: 7pt; color: #999; }}
+    }}
+    body {{ font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-size: 8pt; color: #333; }}
+    .header {{ display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4mm; border-bottom: 2px solid #1565c0; padding-bottom: 3mm; }}
+    .header-left {{ display: flex; align-items: center; gap: 10px; }}
+    .header-right {{ text-align: right; font-size: 7pt; color: #666; }}
+    h1 {{ font-size: 14pt; margin: 0; color: #1a1a2e; }}
+    .subtitle {{ font-size: 9pt; color: #666; margin-top: 2px; }}
+    .meta {{ font-size: 7.5pt; color: #666; margin-bottom: 3mm; }}
+    .meta span {{ margin-right: 12px; }}
+    .badge {{ display: inline-block; padding: 1px 6px; border-radius: 3px; font-size: 7pt; font-weight: 600; }}
+    .badge-gst {{ background: #e8f5e9; color: #2e7d32; }}
+    .badge-no-gst {{ background: #fff3e0; color: #e65100; }}
+    .section-title {{ font-size: 10pt; font-weight: 700; color: #1565c0; margin: 4mm 0 2mm; border-bottom: 1px solid #e0e0e0; padding-bottom: 1mm; }}
+    table {{ width: 100%; border-collapse: collapse; margin-bottom: 3mm; }}
+    th {{ background: #f5f5f5; font-weight: 700; font-size: 7pt; text-transform: uppercase; letter-spacing: 0.3px; color: #555; padding: 3px 4px; border-bottom: 2px solid #ddd; text-align: left; white-space: nowrap; }}
+    td {{ padding: 2.5px 4px; font-size: 7.5pt; border-bottom: 1px solid #eee; vertical-align: top; }}
+    .r {{ text-align: right; }}
+    .bold {{ font-weight: 700; }}
+    .debit {{ color: #c62828; }}
+    .credit {{ color: #2e7d32; }}
+    .total-row {{ border-top: 2px solid #333; background: #f8f9fa; }}
+    .total-row td {{ font-weight: 700; padding: 4px; }}
+    .status-confirmed {{ color: #2e7d32; font-weight: 600; }}
+    .status-pending {{ color: #e65100; font-weight: 600; }}
+    .balance-summary {{ margin-top: 4mm; }}
+    .balance-summary table {{ max-width: 300px; }}
+    .balance-summary td {{ padding: 2px 8px; font-size: 8pt; }}
+    .count-summary {{ font-size: 8pt; color: #555; margin-bottom: 2mm; }}
+</style></head><body>
+
+<div class="header">
+    <div class="header-left">
+        <div>
+            <h1>{html_escape(job.client_name)}</h1>
+            <div class="subtitle">{section_title}</div>
+        </div>
+    </div>
+    <div class="header-right">
+        <span class="badge {'badge-gst' if is_gst else 'badge-no-gst'}">{gst_status}</span><br>
+        {html_escape(job.file_name)}<br>
+        Received: {job.received_at.strftime('%d/%m/%Y')}
+    </div>
+</div>
+
+<div class="meta">
+    {f'<span>{bank_info}</span>' if bank_info else ''}
+    {f'<span>Period: {html_escape(period_str)}</span>' if period_str else ''}
+</div>
+
+<div class="count-summary">
+    Showing <strong>{txns.count()}</strong> transactions
+    &nbsp;|&nbsp; Total: {job.total_transactions}
+    &nbsp;|&nbsp; Confirmed: {job.confirmed_count}
+    &nbsp;|&nbsp; Pending: {job.flagged_count - job.confirmed_count}
+</div>
+
+<table>
+    <thead>
+        <tr>
+            <th>Date</th>
+            <th>Description</th>
+            <th class="r">Amount</th>
+            {gst_header_cols}
+            <th>Account</th>
+            <th>Tax Type</th>
+            <th>Status</th>
+        </tr>
+    </thead>
+    <tbody>
+        {rows_html}
+        <tr class="total-row">
+            <td colspan="2" class="bold">TOTALS</td>
+            <td class="r bold {'debit' if total_gross < 0 else 'credit'}">${total_gross:,.2f}</td>
+            {gst_total_cols}
+            <td colspan="3"></td>
+        </tr>
+    </tbody>
+</table>
+
+{balance_html}
+
+</body></html>"""
+
+    pdf_bytes = weasyprint.HTML(string=html).write_pdf()
+
+    # Build filename
+    client_slug = job.client_name.replace(" ", "_").replace("/", "-")[:40]
+    filename = f"{client_slug}_{section_title.replace(' ', '_')}_{timezone.now().strftime('%Y%m%d')}.pdf"
+
+    response = HttpResponse(pdf_bytes, content_type="application/pdf")
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
