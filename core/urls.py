@@ -233,6 +233,7 @@ urlpatterns = [
 
     # Bank Account Mapping
     path("years/<uuid:pk>/review/bank-mapping/", views.review_bank_account_mapping, name="review_bank_account_mapping"),
+    path("years/<uuid:pk>/review/recalculate-bank-contra/", views.recalculate_bank_contra_entries, name="recalculate_bank_contra_entries"),
 
     # Opening Balance Validation API
     path("years/<uuid:pk>/review/validate-opening-balance/", views.review_validate_opening_balance, name="review_validate_opening_balance"),
