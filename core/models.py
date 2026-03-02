@@ -4740,5 +4740,100 @@ class Div7ACompliance(models.Model):
         )
 
 
+# ---------------------------------------------------------------------------
+# Going Concern Assessment
+# ---------------------------------------------------------------------------
+class GoingConcernAssessment(models.Model):
+    """
+    Consolidated going concern assessment per entity per financial year.
+    Produced by the Going Concern detection module (core.risk_modules.going_concern).
+    One record per entity per FY — mirrors the Div7AAssessment pattern.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    financial_year = models.OneToOneField(
+        FinancialYear, on_delete=models.CASCADE,
+        related_name="going_concern_assessment",
+    )
+    assessed_at = models.DateTimeField(auto_now=True)
+
+    # Financial position
+    net_assets = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Total assets minus total liabilities",
+    )
+    cash_position = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Net cash/bank balance (including overdraft)",
+    )
+    cy_revenue = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Current year total revenue",
+    )
+    py_revenue = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Prior year total revenue",
+    )
+    revenue_decline_pct = models.DecimalField(
+        max_digits=7, decimal_places=2, null=True, blank=True,
+        help_text="Percentage decline (null if PY revenue = 0)",
+    )
+    cy_net_result = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="CY profit/loss",
+    )
+    py_net_result = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="PY profit/loss",
+    )
+    working_capital_ratio = models.DecimalField(
+        max_digits=7, decimal_places=2, null=True, blank=True,
+        help_text="Current assets / current liabilities (null if uncomputable)",
+    )
+    director_loan_balance = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Net director loan debit (0 if credit)",
+    )
+    director_extraction_pct = models.DecimalField(
+        max_digits=7, decimal_places=2, null=True, blank=True,
+        help_text="Director loan / revenue percentage",
+    )
+    is_reliant_on_director = models.BooleanField(
+        default=False,
+        help_text="True if cash < 0 but director loan credit is funding operations",
+    )
+    is_startup = models.BooleanField(
+        default=False,
+        help_text="True if entity has < 2 years of financial data",
+    )
+
+    # Assessment results
+    rules_fired = models.JSONField(
+        default=list, blank=True,
+        help_text="Array of rule IDs that triggered (GC-01 through GC-06)",
+    )
+    overall_severity = models.CharField(
+        max_length=20, default="CLEAR",
+        help_text="CRITICAL / ADVISORY / CLEAR",
+    )
+    eva_finding = models.ForeignKey(
+        EvaFinding, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="going_concern_assessments",
+        help_text="Link to consolidated finding card",
+    )
+
+    class Meta:
+        verbose_name = "Going Concern Assessment"
+        verbose_name_plural = "Going Concern Assessments"
+        ordering = ["-assessed_at"]
+
+    def __str__(self):
+        return (
+            f"Going Concern — {self.financial_year.entity.entity_name} "
+            f"{self.financial_year.year_label}: {self.overall_severity}"
+        )
+
+
 from .models_office_admin import *  # noqa: F401, F403
 
