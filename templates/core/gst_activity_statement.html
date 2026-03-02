@@ -794,7 +794,7 @@
     });
 
     function loadCommentaries() {
-        fetch(`/entities/years/${FY_PK}/gst/commentary/list/?period_number=${PERIOD_NUM}`)
+        fetch(`/years/${FY_PK}/gst/commentary/list/?period_number=${PERIOD_NUM}`)
             .then(r => r.json())
             .then(data => {
                 const list = data.commentaries || [];
@@ -828,7 +828,7 @@
     }
 
     function loadCommentaryDetail(id) {
-        fetch(`/entities/commentary/${id}/`)
+        fetch(`/commentary/${id}/`)
             .then(r => r.json())
             .then(data => {
                 currentCommentaryId = data.id;
@@ -906,7 +906,7 @@
     function startPolling(id) {
         if (pollInterval) clearInterval(pollInterval);
         pollInterval = setInterval(() => {
-            fetch(`/entities/commentary/${id}/status/`)
+            fetch(`/commentary/${id}/status/`)
                 .then(r => r.json())
                 .then(data => {
                     if (data.step) {
@@ -931,7 +931,7 @@
         const tone = document.getElementById('commentaryTone').value;
         showGenerating();
 
-        fetch(`/entities/years/${FY_PK}/gst/commentary/generate/`, {
+        fetch(`/years/${FY_PK}/gst/commentary/generate/`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
             body: JSON.stringify({ period_number: PERIOD_NUM, tone: tone })
@@ -955,7 +955,7 @@
         const tone = document.getElementById('commentaryTone').value;
         showGenerating();
 
-        fetch(`/entities/commentary/${currentCommentaryId}/regenerate/`, {
+        fetch(`/commentary/${currentCommentaryId}/regenerate/`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
             body: JSON.stringify({ tone: tone })
@@ -974,12 +974,12 @@
 
     window.downloadCommentary = function() {
         if (!currentCommentaryId) return;
-        window.open(`/entities/commentary/${currentCommentaryId}/download/`, '_blank');
+        window.open(`/commentary/${currentCommentaryId}/download/`, '_blank');
     };
 
     window.markReviewed = function() {
         if (!currentCommentaryId) return;
-        fetch(`/entities/commentary/${currentCommentaryId}/update/`, {
+        fetch(`/commentary/${currentCommentaryId}/update/`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
             body: JSON.stringify({ mark_reviewed: true })
@@ -1024,7 +1024,7 @@
         const textarea = container.querySelector('textarea');
         const newText = textarea.value;
 
-        fetch(`/entities/commentary/${currentCommentaryId}/update/`, {
+        fetch(`/commentary/${currentCommentaryId}/update/`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
             body: JSON.stringify({ [fieldName]: newText })
