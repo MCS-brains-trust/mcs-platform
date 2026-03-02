@@ -831,17 +831,20 @@ def financial_year_detail(request, pk):
         'Equity': 'Equity', 'Income Tax': 'Equity',
     }
     # Annotate TB lines with display Dr/Cr values FIRST (before grouping/totals)
+    # Always use closing_balance for display — it includes opening + movements.
+    # Only fall back to debit/credit when closing_balance is zero AND there are movements.
     for line in tb_lines:
-        if line.debit == 0 and line.credit == 0 and line.closing_balance != 0:
-            if line.closing_balance > 0:
-                line.display_dr = line.closing_balance
-                line.display_cr = Decimal('0')
-            else:
-                line.display_dr = Decimal('0')
-                line.display_cr = abs(line.closing_balance)
+        cb = line.closing_balance if line.closing_balance else Decimal('0')
+        if cb > 0:
+            line.display_dr = cb
+            line.display_cr = Decimal('0')
+        elif cb < 0:
+            line.display_dr = Decimal('0')
+            line.display_cr = abs(cb)
         else:
-            line.display_dr = line.debit
-            line.display_cr = line.credit
+            # closing_balance is zero — show debit/credit movements (e.g. P&L items)
+            line.display_dr = line.debit if line.debit else Decimal('0')
+            line.display_cr = line.credit if line.credit else Decimal('0')
 
     # Calculate totals from display values (accounts for opening balances in rolled-forward years)
     total_debit = sum(line.display_dr for line in tb_lines)
@@ -3037,17 +3040,17 @@ def trial_balance_view(request, pk):
     grand_total_prior_cr = Decimal('0')
 
     for line in tb_lines:
-        # Display Dr/Cr: use closing_balance when no movements (rolled-forward BS items)
-        if line.debit == 0 and line.credit == 0 and line.closing_balance != 0:
-            if line.closing_balance > 0:
-                line.display_dr = line.closing_balance
-                line.display_cr = Decimal('0')
-            else:
-                line.display_dr = Decimal('0')
-                line.display_cr = abs(line.closing_balance)
+        # Display Dr/Cr: always use closing_balance (opening + movements)
+        cb = line.closing_balance if line.closing_balance else Decimal('0')
+        if cb > 0:
+            line.display_dr = cb
+            line.display_cr = Decimal('0')
+        elif cb < 0:
+            line.display_dr = Decimal('0')
+            line.display_cr = abs(cb)
         else:
-            line.display_dr = line.debit
-            line.display_cr = line.credit
+            line.display_dr = line.debit if line.debit else Decimal('0')
+            line.display_cr = line.credit if line.credit else Decimal('0')
 
         if line.mapped_line_item:
             raw_section = line.mapped_line_item.statement_section
@@ -3180,20 +3183,20 @@ def account_code_breakdown(request, pk, account_code):
         messages.error(request, f"No trial balance entries found for account code {account_code}.")
         return redirect('core:financial_year_detail', pk=pk)
 
-    # Compute display Dr/Cr for each line
+    # Compute display Dr/Cr for each line — always use closing_balance
     total_dr = Decimal('0')
     total_cr = Decimal('0')
     for line in lines:
-        if line.debit == 0 and line.credit == 0 and line.closing_balance != 0:
-            if line.closing_balance > 0:
-                line.display_dr = line.closing_balance
-                line.display_cr = Decimal('0')
-            else:
-                line.display_dr = Decimal('0')
-                line.display_cr = abs(line.closing_balance)
+        cb = line.closing_balance if line.closing_balance else Decimal('0')
+        if cb > 0:
+            line.display_dr = cb
+            line.display_cr = Decimal('0')
+        elif cb < 0:
+            line.display_dr = Decimal('0')
+            line.display_cr = abs(cb)
         else:
-            line.display_dr = line.debit
-            line.display_cr = line.credit
+            line.display_dr = line.debit if line.debit else Decimal('0')
+            line.display_cr = line.credit if line.credit else Decimal('0')
         total_dr += line.display_dr or Decimal('0')
         total_cr += line.display_cr or Decimal('0')
 
@@ -10000,17 +10003,17 @@ def net_profit_api(request, pk):
         else:
             display_section = _coa_lookup.get(line.account_code, 'Unmapped')
         if display_section in pl_sections:
-            # Compute display_dr / display_cr the same way as the main view
-            if line.debit == 0 and line.credit == 0 and line.closing_balance != 0:
-                if line.closing_balance > 0:
-                    dr = line.closing_balance
-                    cr = Decimal('0')
-                else:
-                    dr = Decimal('0')
-                    cr = abs(line.closing_balance)
+            # Compute display_dr / display_cr — always use closing_balance
+            cb = line.closing_balance if line.closing_balance else Decimal('0')
+            if cb > 0:
+                dr = cb
+                cr = Decimal('0')
+            elif cb < 0:
+                dr = Decimal('0')
+                cr = abs(cb)
             else:
-                dr = line.debit
-                cr = line.credit
+                dr = line.debit if line.debit else Decimal('0')
+                cr = line.credit if line.credit else Decimal('0')
             pl_dr += dr or Decimal('0')
             pl_cr += cr or Decimal('0')
 
@@ -10020,11 +10023,12 @@ def net_profit_api(request, pk):
     total_dr = Decimal('0')
     total_cr = Decimal('0')
     for line in tb_lines:
-        if line.debit == 0 and line.credit == 0 and line.closing_balance != 0:
-            if line.closing_balance > 0:
-                total_dr += line.closing_balance
-            else:
-                total_cr += abs(line.closing_balance)
+        # Always use closing_balance for display
+        cb = line.closing_balance if line.closing_balance else Decimal('0')
+        if cb > 0:
+            total_dr += cb
+        elif cb < 0:
+            total_cr += abs(cb)
         else:
             total_dr += line.debit or Decimal('0')
             total_cr += line.credit or Decimal('0')
