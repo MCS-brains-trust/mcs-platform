@@ -1052,7 +1052,11 @@ def upload_bank_statement(request):
 
 
 def _parse_excel_bank_statement(content, filename):
-    """Parse an Excel/CSV bank statement into the standard transaction format."""
+    """Parse an Excel/CSV bank statement into the standard transaction format.
+
+    Supports common Australian bank CSV exports including ANZ, NAB,
+    and generic formats with Date/Amount/Description or Debit/Credit columns.
+    """
     import io
     try:
         import pandas as pd
@@ -1065,41 +1069,111 @@ def _parse_excel_bank_statement(content, filename):
         else:
             df = pd.read_excel(io.BytesIO(content))
 
-        # Try to identify columns
+        # Drop completely empty columns (e.g. NAB exports have an unnamed blank column)
+        df = df.dropna(axis=1, how="all")
+        # Also drop columns whose header is empty / "Unnamed"
+        df = df.loc[:, ~df.columns.astype(str).str.startswith("Unnamed")]
+
+        # ── Column identification ──────────────────────────────────────
         col_map = {}
         for col in df.columns:
-            col_lower = str(col).lower()
-            if "date" in col_lower:
+            col_lower = str(col).lower().strip()
+
+            # Date
+            if "date" in col_lower and "date" not in col_map:
+                # Prefer the first date-like column (e.g. "Date" over "Processed On")
                 col_map["date"] = col
-            elif "desc" in col_lower or "narr" in col_lower or "particular" in col_lower:
+
+            # Description — match common header names across banks
+            # ANZ: "Details", NAB: "Transaction Details", generic: "Description", "Narrative", "Particulars"
+            elif (
+                "desc" in col_lower
+                or "narr" in col_lower
+                or "particular" in col_lower
+                or "detail" in col_lower
+            ) and "description" not in col_map:
                 col_map["description"] = col
-            elif "amount" in col_lower or "value" in col_lower:
+
+            # Amount — match "Amount", "Value", or bare currency symbols like "$"
+            elif (
+                "amount" in col_lower
+                or "value" in col_lower
+                or col_lower in ("$", "aud", "total")
+            ):
                 col_map["amount"] = col
+
             elif "debit" in col_lower:
                 col_map["debit"] = col
-            elif "credit" in col_lower:
+            elif "credit" in col_lower and "credit" not in col_map:
                 col_map["credit"] = col
 
-        transactions = []
-        for _, row in df.iterrows():
-            date = str(row.get(col_map.get("date", ""), ""))
-            desc = str(row.get(col_map.get("description", ""), ""))
+            # Supplementary columns
+            elif "account" in col_lower and "number" in col_lower:
+                col_map["account_number"] = col
+            elif col_lower == "gst":
+                col_map["gst"] = col
+            elif "category" in col_lower:
+                col_map["category"] = col
+            elif "merchant" in col_lower:
+                col_map["merchant"] = col
+            elif "type" in col_lower and "transaction_type" not in col_map:
+                col_map["transaction_type"] = col
 
+        # ── Extract transactions ───────────────────────────────────────
+        transactions = []
+        account_number = ""
+
+        for _, row in df.iterrows():
+            date = str(row.get(col_map.get("date", ""), "")).strip()
+
+            # Build description: primary description column, optionally
+            # enriched with transaction type or merchant from NAB exports
+            desc = str(row.get(col_map.get("description", ""), "")).strip()
+
+            # Determine amount
             if "amount" in col_map:
-                amount = float(row.get(col_map["amount"], 0) or 0)
+                raw = row.get(col_map["amount"], 0)
+                try:
+                    amount = float(str(raw).replace(",", "").replace("$", "").strip() or 0)
+                except (ValueError, TypeError):
+                    amount = 0.0
             elif "debit" in col_map and "credit" in col_map:
-                debit = float(row.get(col_map["debit"], 0) or 0)
-                credit = float(row.get(col_map["credit"], 0) or 0)
+                try:
+                    debit = float(str(row.get(col_map["debit"], 0)).replace(",", "").replace("$", "").strip() or 0)
+                except (ValueError, TypeError):
+                    debit = 0.0
+                try:
+                    credit = float(str(row.get(col_map["credit"], 0)).replace(",", "").replace("$", "").strip() or 0)
+                except (ValueError, TypeError):
+                    credit = 0.0
                 amount = credit - debit
             else:
                 continue
 
-            if desc and desc != "nan":
-                transactions.append({
-                    "date": date,
-                    "description": desc,
-                    "amount": amount,
-                })
+            if not desc or desc == "nan":
+                continue
+
+            txn = {
+                "date": date,
+                "description": desc,
+                "amount": amount,
+            }
+
+            # Attach GST flag if present (ANZ exports)
+            if "gst" in col_map:
+                gst_val = str(row.get(col_map["gst"], "")).strip().lower()
+                if gst_val in ("yes", "y"):
+                    txn["gst"] = "Yes"
+                elif gst_val in ("no", "n"):
+                    txn["gst"] = "No"
+
+            transactions.append(txn)
+
+            # Capture account number from the first non-empty row
+            if not account_number and "account_number" in col_map:
+                acct = str(row.get(col_map["account_number"], "")).strip()
+                if acct and acct != "nan":
+                    account_number = acct
 
         return {
             "transactions": transactions,
@@ -1107,12 +1181,12 @@ def _parse_excel_bank_statement(content, filename):
             "closing_balance": 0,
             "account_name": "",
             "bsb": "",
-            "account_number": "",
+            "account_number": account_number,
             "period_start": "",
             "period_end": "",
         }
     except Exception as e:
-        logger.error(f"Excel parsing failed: {e}")
+        logger.error(f"Excel/CSV parsing failed for {filename}: {e}", exc_info=True)
         return None
 
 
