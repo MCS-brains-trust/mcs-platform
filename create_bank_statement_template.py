@@ -2,12 +2,12 @@
 Generate the bank statement upload template for StatementHub.
 Creates an Excel file with:
 - An Instructions sheet
-- A Bank Statement sheet with the required columns
-- Date column formatted as TEXT so any date format can be pasted in
-- 1500 pre-formatted rows for data entry
+- A Bank Statement sheet with metadata rows and column headers only
+- NO formatting on the Date column — completely plain so copy-paste works
+- NO sample data — just empty rows ready for paste
 """
 import openpyxl
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side, numbers
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
 wb = openpyxl.Workbook()
@@ -27,7 +27,6 @@ thin_border = Border(
     top=Side(style='thin', color='CCCCCC'),
     bottom=Side(style='thin', color='CCCCCC'),
 )
-sample_fill = PatternFill(start_color='F5F5F5', end_color='F5F5F5', fill_type='solid')
 
 # ── Instructions Sheet ──────────────────────────────────────────────────
 ws_instr = wb.active
@@ -46,13 +45,14 @@ instructions = [
     ('   - BSB: Your bank\'s BSB number (e.g. 063-123)', instruction_font, None),
     ('   - Account Number: Your bank account number', instruction_font, None),
     ('', None, None),
-    ('3. Enter your transactions starting from row 7 (below the column headers).', instruction_font, None),
-    ('4. Copy and paste your bank statement data directly — any date format is accepted.', instruction_font, None),
-    ('   - Date: Transaction date (any format — DD/MM/YYYY, MM/DD/YYYY, YYYY-MM-DD, etc.)', instruction_font, None),
-    ('   - Description: Transaction description/narration', instruction_font, None),
-    ('   - Debit: Money going OUT (withdrawals, payments)', instruction_font, None),
-    ('   - Credit: Money coming IN (deposits, receipts)', instruction_font, None),
-    ('   - Balance: Running balance after the transaction (optional)', instruction_font, None),
+    ('3. Copy and paste your bank transactions starting from row 7.', instruction_font, None),
+    ('   Any date format is accepted — just paste directly from your bank export.', instruction_font, None),
+    ('', None, None),
+    ('   Column A: Date (any format)', instruction_font, None),
+    ('   Column B: Description', instruction_font, None),
+    ('   Column C: Debit (money out)', instruction_font, None),
+    ('   Column D: Credit (money in)', instruction_font, None),
+    ('   Column E: Balance (optional)', instruction_font, None),
     ('', None, None),
     ('Important Notes', subtitle_font, None),
     ('', None, None),
@@ -61,7 +61,6 @@ instructions = [
     ('• Dates must fall within the financial year period selected during upload.', instruction_font, None),
     ('• Do not modify the column headers in row 6.', instruction_font, None),
     ('• Do not add extra columns or merge cells.', instruction_font, None),
-    ('• Delete the sample data rows before uploading your actual data.', instruction_font, None),
 ]
 
 for i, (text, font, fill) in enumerate(instructions, 1):
@@ -114,56 +113,15 @@ for j, (header, width) in enumerate(zip(headers, col_widths), 1):
     cell.alignment = Alignment(horizontal='center')
     ws.column_dimensions[get_column_letter(j)].width = width
 
-# Sample data rows (7-11) — dates as plain text strings
-sample_data = [
-    ('01/07/2024', 'Opening balance brought forward', None, None, 10000.00),
-    ('05/07/2024', 'BPAY - ATO Payment', 1500.00, None, 8500.00),
-    ('10/07/2024', 'Direct Credit - Client Payment', None, 3200.00, 11700.00),
-    ('15/07/2024', 'EFTPOS Purchase - Office Supplies', 245.50, None, 11454.50),
-    ('20/07/2024', 'Transfer from Savings', None, 5000.00, 16454.50),
-]
-
-for i, row_data in enumerate(sample_data, 7):
-    for j, value in enumerate(row_data, 1):
-        cell = ws.cell(row=i, column=j, value=value)
-        cell.border = thin_border
-        cell.fill = sample_fill
-        if j == 1:  # Date column — TEXT format so any date format is preserved
-            cell.number_format = '@'  # Text format
-            cell.alignment = Alignment(horizontal='left')
-        elif j == 2:  # Description
-            cell.number_format = '@'  # Text format
-        elif j >= 3:  # Numeric columns
-            if value is not None:
-                cell.number_format = '#,##0.00'
-            cell.alignment = Alignment(horizontal='right')
-
-# Pre-format 1500 empty rows below sample data so pasted data keeps text format
-# This is the key: the Date column (col 1) and Description column (col 2) are
-# pre-formatted as TEXT so Excel won't auto-convert pasted dates to serial numbers.
-for i in range(12, 1512):
-    # Date column — text format
-    date_cell = ws.cell(row=i, column=1)
-    date_cell.number_format = '@'
-    date_cell.alignment = Alignment(horizontal='left')
-    date_cell.border = thin_border
-
-    # Description column — text format
-    desc_cell = ws.cell(row=i, column=2)
-    desc_cell.number_format = '@'
-    desc_cell.border = thin_border
-
-    # Debit, Credit, Balance — number format
-    for j in range(3, 6):
-        num_cell = ws.cell(row=i, column=j)
-        num_cell.number_format = '#,##0.00'
-        num_cell.alignment = Alignment(horizontal='right')
-        num_cell.border = thin_border
-
-# Add a note below sample data
-note_cell = ws.cell(row=12, column=1, value='↑ Delete the sample data above and paste your transactions here')
-note_cell.font = Font(name='Calibri', italic=True, color='999999', size=10)
-note_cell.number_format = '@'
+# NO sample data, NO pre-formatted rows.
+# Rows 7+ are completely empty with default General formatting.
+# This means:
+#   - Date column: NO formatting applied — paste anything and it stays as-is
+#   - Description column: NO formatting — plain text
+#   - Numeric columns: NO formatting — Excel will auto-format numbers
+#
+# The parser handles any date format on the backend, so we don't need
+# to constrain or format the Date column at all.
 
 # Freeze panes at row 7 (below headers)
 ws.freeze_panes = 'A7'
