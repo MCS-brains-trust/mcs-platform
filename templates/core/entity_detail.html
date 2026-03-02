@@ -99,6 +99,34 @@
     <!-- ============ OVERVIEW TAB ============ -->
     <div class="tab-pane fade show active" id="overview" role="tabpanel">
 
+        <!-- Legal Document Prompt (Master Spec 4.6.3) -->
+        {% if legal_doc_prompt %}
+        <div class="alert alert-info alert-dismissible fade show d-flex align-items-center mb-3" role="alert" id="legalDocPrompt">
+            <i class="bi bi-file-earmark-text fs-4 me-3"></i>
+            <div class="flex-grow-1">
+                <strong>Would you like to generate the {{ legal_doc_prompt.doc_type_label }} for {{ entity.entity_name }}?</strong>
+                <p class="mb-0 mt-1 small text-muted">
+                    The wizard will be pre-populated with the entity details already in the system.
+                    {% if not legal_doc_prompt.has_fy %}You will need to create a financial year first.{% endif %}
+                </p>
+            </div>
+            <div class="d-flex gap-2 ms-3 flex-shrink-0">
+                {% if legal_doc_prompt.has_fy %}
+                <a href="{{ legal_doc_prompt.wizard_url }}" class="btn btn-primary btn-sm">
+                    <i class="bi bi-magic"></i> Generate
+                </a>
+                {% else %}
+                <a href="{% url 'core:financial_year_create' entity_pk=entity.pk %}" class="btn btn-outline-primary btn-sm">
+                    <i class="bi bi-plus-lg"></i> Create Financial Year First
+                </a>
+                {% endif %}
+                <button type="button" class="btn btn-outline-secondary btn-sm" onclick="dismissLegalPrompt()">
+                    Not Now
+                </button>
+            </div>
+        </div>
+        {% endif %}
+
         <!-- Action buttons row -->
         <div class="d-flex gap-2 mb-3">
             {% if user.can_do_accounting %}
@@ -1154,6 +1182,23 @@ if (window.location.hash === '#rules') {
         const rulesTab = document.getElementById('rules-tab');
         if (rulesTab) { new bootstrap.Tab(rulesTab).show(); loadRules(); }
     }, 100);
+}
+
+// ── Legal Document Prompt dismiss (Master Spec 4.6.3) ──────────────────
+function dismissLegalPrompt() {
+    fetch('{% url "core:dismiss_legal_doc_prompt" pk=entity.pk %}', {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': document.querySelector('[name=csrfmiddlewaretoken]')?.value
+                           || '{{ csrf_token }}',
+        },
+    }).then(() => {
+        const el = document.getElementById('legalDocPrompt');
+        if (el) {
+            el.classList.remove('show');
+            setTimeout(() => el.remove(), 300);
+        }
+    });
 }
 </script>
 {% endblock %}

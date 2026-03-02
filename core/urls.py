@@ -27,6 +27,7 @@ urlpatterns = [
     path("entities/create/", views.entity_create, name="entity_create"),
     path("entities/<uuid:pk>/", views.entity_detail, name="entity_detail"),
     path("entities/<uuid:pk>/edit/", views.entity_edit, name="entity_edit"),
+    path("entities/<uuid:pk>/dismiss-legal-prompt/", views.dismiss_legal_doc_prompt, name="dismiss_legal_doc_prompt"),
 
     # Governing Documents
     path("entities/<uuid:pk>/governing-docs/upload/", views_governing_docs.governing_doc_upload, name="governing_doc_upload"),

@@ -259,6 +259,10 @@ class Entity(models.Model):
         default=False,
         help_text="Archived entities are hidden from the default list but data is preserved.",
     )
+    legal_doc_prompt_dismissed = models.BooleanField(
+        default=False,
+        help_text="Set to True when the user dismisses the post-creation legal document prompt.",
+    )
     metadata = models.JSONField(
         default=dict, blank=True,
         help_text="Flexible storage: directors, trustees, partners, registered address, etc.",

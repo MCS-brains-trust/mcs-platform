@@ -480,6 +480,35 @@ def entity_detail(request, pk):
         follow_up_completed=False, follow_up_date__isnull=False
     ).order_by("follow_up_date")
     has_financial_years = financial_years.exists()
+
+    # ── Legal document prompt (Master Spec 4.6.3) ──────────────────────
+    # Surface a one-time prompt after entity creation for companies/trusts
+    # so the user can consciously initiate the establishment package.
+    legal_doc_prompt = None
+    if not entity.legal_doc_prompt_dismissed and entity.entity_type in ("company", "trust"):
+        from core.models import LegalDocument
+        doc_type_map = {
+            "company": ("company_establishment", "Company Establishment Package"),
+            "trust": ("discretionary_trust_deed", "Discretionary Trust Deed"),
+        }
+        doc_type_key, doc_type_label = doc_type_map[entity.entity_type]
+        # Only show if no document of this type has been generated yet
+        already_generated = LegalDocument.objects.filter(
+            entity=entity, document_type=doc_type_key,
+        ).exists()
+        if not already_generated:
+            # Build the wizard URL — requires a financial year; fall back to None
+            latest_fy = financial_years.order_by("-end_date").first()
+            legal_doc_prompt = {
+                "doc_type": doc_type_key,
+                "doc_type_label": doc_type_label,
+                "has_fy": latest_fy is not None,
+                "wizard_url": (
+                    reverse("core:legal_doc_wizard", kwargs={"pk": latest_fy.pk, "doc_type": doc_type_key})
+                    if latest_fy else None
+                ),
+            }
+
     context = {
         "entity": entity,
         "financial_years": financial_years,
@@ -494,6 +523,7 @@ def entity_detail(request, pk):
         "software_configs": software_configs,
         "meeting_notes": meeting_notes,
         "pending_followups": pending_followups,
+        "legal_doc_prompt": legal_doc_prompt,
         # Governing Documents tab
         "primary_governing_doc": entity.governing_documents.filter(
             is_primary=True, status="active"
@@ -523,6 +553,16 @@ def entity_edit(request, pk):
     return render(request, "core/entity_form.html", {
         "form": form, "title": f"Edit: {entity.entity_name}"
     })
+
+
+@login_required
+@require_POST
+def dismiss_legal_doc_prompt(request, pk):
+    """Dismiss the post-creation legal document prompt (Master Spec 4.6.3)."""
+    entity = get_entity_for_user(request, pk)
+    entity.legal_doc_prompt_dismissed = True
+    entity.save(update_fields=["legal_doc_prompt_dismissed"])
+    return JsonResponse({"ok": True})
 
 
 # ---------------------------------------------------------------------------
