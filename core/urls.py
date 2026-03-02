@@ -203,6 +203,9 @@ urlpatterns = [
     path("commentary/<uuid:pk>/regenerate/", views_bas_commentary.regenerate_commentary, name="bas_commentary_regenerate"),
     path("commentary/<uuid:pk>/download/", views_bas_commentary.download_commentary, name="bas_commentary_download"),
     path("commentary/<uuid:pk>/status/", views_bas_commentary.commentary_status, name="bas_commentary_status"),
+    path("commentary/<uuid:pk>/mark-sent/", views_bas_commentary.mark_commentary_sent, name="bas_commentary_mark_sent"),
+    path("commentary/<uuid:pk>/delete/", views_bas_commentary.delete_commentary, name="bas_commentary_delete"),
+    path("years/<uuid:pk>/gst/commentary/compare/", views_bas_commentary.compare_commentaries, name="bas_commentary_compare"),
 
     # Depreciation
     path("years/<uuid:pk>/depreciation/add/", views.depreciation_add, name="depreciation_add"),

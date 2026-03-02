@@ -12,6 +12,9 @@ Endpoints:
   - regenerate_commentary: POST — Re-generate an existing commentary
   - download_commentary: GET — Download commentary as Word document
   - commentary_status: GET — Poll generation status
+  - mark_commentary_sent: POST — Mark commentary as sent to client
+  - delete_commentary: POST — Delete a commentary
+  - compare_commentaries: GET — Side-by-side comparison of two commentaries
 """
 import json
 import logging
@@ -30,6 +33,58 @@ from .models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ── Helper: Activity Logging ─────────────────────────────────────────────────
+
+def _log_commentary_activity(user, event_type, commentary, description=""):
+    """Log a BAS commentary event to the ActivityLog."""
+    try:
+        entity = commentary.financial_year.entity
+        ActivityLog.objects.create(
+            user=user,
+            event_type=event_type,
+            title=f"BAS Commentary — {entity.entity_name}",
+            description=description or f"{commentary.period_label} v{commentary.version}",
+            entity=entity,
+            financial_year=commentary.financial_year,
+        )
+    except Exception:
+        logger.exception("Failed to log commentary activity: %s", event_type)
+
+
+# ── Helper: Find Prior Commentary ────────────────────────────────────────────
+
+def _find_prior_commentary(bas_period):
+    """
+    Find the most recent completed commentary from the immediately preceding
+    BAS period for trend chaining.
+    """
+    if not bas_period:
+        return None
+
+    prior_period = BASPeriod.objects.filter(
+        financial_year=bas_period.financial_year,
+        period_type=bas_period.period_type,
+        period_number=bas_period.period_number - 1,
+    ).first()
+
+    if not prior_period:
+        # Check the prior financial year's last period
+        fy = bas_period.financial_year
+        if fy.prior_year:
+            prior_period = BASPeriod.objects.filter(
+                financial_year=fy.prior_year,
+                period_type=bas_period.period_type,
+            ).order_by("-period_number").first()
+
+    if not prior_period:
+        return None
+
+    return BASPeriodCommentary.objects.filter(
+        bas_period=prior_period,
+        status__in=["draft", "reviewed", "sent"],
+    ).order_by("-version").first()
 
 
 # ── Generate Commentary ────────────────────────────────────────────────────
@@ -94,6 +149,9 @@ def generate_commentary(request, pk):
     ).order_by("-version").first()
     version = (latest.version + 1) if latest else 1
 
+    # Find prior period commentary for trend chaining
+    prior_commentary = _find_prior_commentary(bas_period)
+
     # Create the commentary record
     commentary = BASPeriodCommentary.objects.create(
         financial_year=fy,
@@ -105,10 +163,19 @@ def generate_commentary(request, pk):
         version=version,
         generated_by=request.user,
         status="generating",
+        prior_commentary=prior_commentary,
     )
 
     # Queue generation in background thread (or Celery if available)
     _queue_commentary_generation(str(commentary.pk), str(request.user.pk))
+
+    # Log activity
+    _log_commentary_activity(
+        request.user,
+        "bas_commentary_generated",
+        commentary,
+        f"Generated {commentary.period_label} v{version} ({tone} tone)",
+    )
 
     return JsonResponse({
         "commentary_id": str(commentary.pk),
@@ -196,8 +263,11 @@ def get_commentary(request, pk):
         "generated_at": commentary.generated_at.isoformat() if commentary.generated_at else None,
         "reviewed_by": commentary.reviewed_by.get_full_name() if commentary.reviewed_by else "",
         "reviewed_at": commentary.reviewed_at.isoformat() if commentary.reviewed_at else None,
+        "sent_at": commentary.sent_at.isoformat() if commentary.sent_at else None,
+        "sent_to_email": commentary.sent_to_email,
         "is_editable": commentary.is_editable,
         "error_message": commentary.error_message,
+        "prior_commentary_id": str(commentary.prior_commentary_id) if commentary.prior_commentary_id else None,
     })
 
 
@@ -266,6 +336,15 @@ def update_commentary(request, pk):
 
     commentary.save()
 
+    # Log activity for edits
+    if updated_fields:
+        _log_commentary_activity(
+            request.user,
+            "bas_commentary_edited",
+            commentary,
+            f"Edited {commentary.period_label} v{commentary.version}: {', '.join(updated_fields)}",
+        )
+
     return JsonResponse({
         "id": str(commentary.pk),
         "status": commentary.status,
@@ -295,6 +374,9 @@ def regenerate_commentary(request, pk):
 
     tone = data.get("tone", commentary.tone)
 
+    # Find prior period commentary for trend chaining
+    prior_commentary = _find_prior_commentary(commentary.bas_period)
+
     # Create a new version
     new_commentary = BASPeriodCommentary.objects.create(
         financial_year=commentary.financial_year,
@@ -306,9 +388,18 @@ def regenerate_commentary(request, pk):
         version=commentary.version + 1,
         generated_by=request.user,
         status="generating",
+        prior_commentary=prior_commentary,
     )
 
     _queue_commentary_generation(str(new_commentary.pk), str(request.user.pk))
+
+    # Log activity
+    _log_commentary_activity(
+        request.user,
+        "bas_commentary_regenerated",
+        new_commentary,
+        f"Regenerated {new_commentary.period_label} v{new_commentary.version} (from v{commentary.version})",
+    )
 
     return JsonResponse({
         "commentary_id": str(new_commentary.pk),
@@ -351,17 +442,12 @@ def download_commentary(request, pk):
         response["Content-Disposition"] = f'attachment; filename="{filename}"'
 
         # Log the download
-        try:
-            ActivityLog.objects.create(
-                user=request.user,
-                event_type="bas_commentary_downloaded",
-                title=f"BAS Commentary Downloaded — {entity.entity_name}",
-                description=f"Downloaded {commentary.period_label} v{commentary.version}",
-                entity=entity,
-                financial_year=fy,
-            )
-        except Exception:
-            pass
+        _log_commentary_activity(
+            request.user,
+            "doc_generated",
+            commentary,
+            f"Downloaded {commentary.period_label} v{commentary.version} as Word document",
+        )
 
         return response
 
@@ -408,6 +494,204 @@ def commentary_status(request, pk):
         response["section_count"] = commentary.section_count
 
     return JsonResponse(response)
+
+
+# ── Mark as Sent ───────────────────────────────────────────────────────────
+
+@login_required
+@require_POST
+def mark_commentary_sent(request, pk):
+    """
+    Mark a commentary as sent to the client.
+
+    POST body (JSON):
+      - sent_to_email: str (optional — email address the commentary was sent to)
+    """
+    commentary = get_object_or_404(BASPeriodCommentary, pk=pk)
+
+    fy = get_financial_year_for_user(request, commentary.financial_year.pk)
+    if not fy:
+        return JsonResponse({"error": "Access denied."}, status=403)
+
+    if commentary.status not in ("draft", "reviewed"):
+        return JsonResponse(
+            {"error": f"Cannot mark as sent — commentary is '{commentary.get_status_display()}'."},
+            status=400,
+        )
+
+    try:
+        data = json.loads(request.body)
+    except (json.JSONDecodeError, ValueError):
+        data = {}
+
+    commentary.status = "sent"
+    commentary.sent_at = timezone.now()
+    commentary.sent_to_email = data.get("sent_to_email", "")
+    commentary.save(update_fields=["status", "sent_at", "sent_to_email"])
+
+    # Log activity
+    sent_to = f" to {commentary.sent_to_email}" if commentary.sent_to_email else ""
+    _log_commentary_activity(
+        request.user,
+        "bas_commentary_sent",
+        commentary,
+        f"Sent {commentary.period_label} v{commentary.version}{sent_to}",
+    )
+
+    return JsonResponse({
+        "id": str(commentary.pk),
+        "status": "sent",
+        "status_display": "Sent to Client",
+        "sent_at": commentary.sent_at.isoformat(),
+    })
+
+
+# ── Delete Commentary ──────────────────────────────────────────────────────
+
+@login_required
+@require_POST
+def delete_commentary(request, pk):
+    """
+    Delete a commentary. Only draft/reviewed/error commentaries can be deleted.
+    Sent commentaries are preserved for audit trail.
+    """
+    commentary = get_object_or_404(BASPeriodCommentary, pk=pk)
+
+    fy = get_financial_year_for_user(request, commentary.financial_year.pk)
+    if not fy:
+        return JsonResponse({"error": "Access denied."}, status=403)
+
+    if commentary.status == "sent":
+        return JsonResponse(
+            {"error": "Sent commentaries cannot be deleted (audit trail)."},
+            status=400,
+        )
+
+    if commentary.status == "generating":
+        return JsonResponse(
+            {"error": "Cannot delete a commentary that is still being generated."},
+            status=400,
+        )
+
+    # Capture info before deletion for logging
+    period_label = commentary.period_label
+    version = commentary.version
+    entity = fy.entity
+
+    # Log activity before deletion
+    _log_commentary_activity(
+        request.user,
+        "bas_commentary_deleted",
+        commentary,
+        f"Deleted {period_label} v{version}",
+    )
+
+    commentary.delete()
+
+    return JsonResponse({
+        "status": "deleted",
+        "message": f"Commentary {period_label} v{version} deleted.",
+    })
+
+
+# ── Compare Commentaries (Side-by-Side) ───────────────────────────────────
+
+@login_required
+@require_GET
+def compare_commentaries(request, pk):
+    """
+    Compare two commentaries side-by-side.
+
+    Query params:
+      - left: UUID of the left (older) commentary
+      - right: UUID of the right (newer) commentary
+
+    If only one ID is provided via 'right', the system will automatically
+    use its prior_commentary as the left side.
+    """
+    fy = get_financial_year_for_user(request, pk)
+    if not fy:
+        return JsonResponse({"error": "Financial year not found or access denied."}, status=404)
+
+    left_id = request.GET.get("left")
+    right_id = request.GET.get("right")
+
+    if not right_id and not left_id:
+        return JsonResponse({"error": "At least one commentary ID is required."}, status=400)
+
+    # If only right is provided, auto-detect left from prior_commentary
+    if right_id and not left_id:
+        right = get_object_or_404(BASPeriodCommentary, pk=right_id, financial_year=fy)
+        if right.prior_commentary:
+            left = right.prior_commentary
+        else:
+            # Try to find the previous period's latest commentary
+            left = _find_prior_commentary(right.bas_period)
+            if not left:
+                return JsonResponse({
+                    "error": "No prior period commentary found for comparison.",
+                    "right": _serialize_commentary_for_compare(right),
+                    "left": None,
+                })
+    elif left_id and not right_id:
+        left = get_object_or_404(BASPeriodCommentary, pk=left_id, financial_year=fy)
+        # Find the next period's commentary
+        if left.bas_period:
+            next_period = BASPeriod.objects.filter(
+                financial_year=fy,
+                period_type=left.bas_period.period_type,
+                period_number=left.bas_period.period_number + 1,
+            ).first()
+            if next_period:
+                right = BASPeriodCommentary.objects.filter(
+                    bas_period=next_period,
+                    status__in=["draft", "reviewed", "sent"],
+                ).order_by("-version").first()
+            else:
+                right = None
+        else:
+            right = None
+
+        if not right:
+            return JsonResponse({
+                "error": "No subsequent period commentary found for comparison.",
+                "left": _serialize_commentary_for_compare(left),
+                "right": None,
+            })
+    else:
+        left = get_object_or_404(BASPeriodCommentary, pk=left_id)
+        right = get_object_or_404(BASPeriodCommentary, pk=right_id)
+
+    # Verify both belong to the same entity (may span financial years)
+    if left.financial_year.entity_id != right.financial_year.entity_id:
+        return JsonResponse({"error": "Commentaries must belong to the same entity."}, status=400)
+
+    return JsonResponse({
+        "left": _serialize_commentary_for_compare(left),
+        "right": _serialize_commentary_for_compare(right),
+    })
+
+
+def _serialize_commentary_for_compare(commentary):
+    """Serialize a commentary for the comparison view."""
+    return {
+        "id": str(commentary.pk),
+        "period_label": commentary.period_label,
+        "period_start": str(commentary.period_start),
+        "period_end": str(commentary.period_end),
+        "status": commentary.status,
+        "status_display": commentary.get_status_display(),
+        "tone": commentary.tone,
+        "version": commentary.version,
+        "section_snapshot": commentary.section_snapshot,
+        "section_revenue": commentary.section_revenue,
+        "section_costs": commentary.section_costs,
+        "section_watch_items": commentary.section_watch_items,
+        "section_actions": commentary.section_actions,
+        "generated_by": commentary.generated_by.get_full_name() if commentary.generated_by else "",
+        "generated_at": commentary.generated_at.isoformat() if commentary.generated_at else None,
+        "sent_at": commentary.sent_at.isoformat() if commentary.sent_at else None,
+    }
 
 
 # ── Helper: Queue Generation ──────────────────────────────────────────────

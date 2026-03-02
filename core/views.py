@@ -16,7 +16,7 @@ from .models import (
     JournalLine, GeneratedDocument, AuditLog, EntityOfficer,
     ClientAssociate, AccountingSoftware, MeetingNote,
     DepreciationAsset, RiskFlag, StockItem, ActivityLog, EntityChartOfAccount,
-    BulkJournalUpload, BASPeriod, BankAccountMapping,
+    BulkJournalUpload, BASPeriod, BankAccountMapping, BASPeriodCommentary,
 )
 from .forms import (
     ClientForm, EntityForm, FinancialYearForm,
@@ -1389,6 +1389,11 @@ def financial_year_detail(request, pk):
         "subsequent_finalised_years": _get_subsequent_finalised_years(fy),
         # Eva Amber Indicators
         "amber_indicators": _compute_amber_indicators(fy),
+        # BAS Period Commentaries for Documents tab (Client Communications)
+        "bas_commentaries": BASPeriodCommentary.objects.filter(
+            financial_year=fy,
+            status__in=["draft", "reviewed", "sent"],
+        ).select_related("generated_by", "bas_period").order_by("-generated_at"),
     }
     return render(request, "core/financial_year_detail.html", context)
 

@@ -198,3 +198,36 @@ def eva_bas_commentary(self, commentary_id, user_id):
     except Exception as exc:
         logger.exception("BAS commentary generation failed for %s", commentary_id)
         raise self.retry(exc=exc, countdown=30)
+
+
+# ---------------------------------------------------------------------------
+# Eva Proactive Suggestions
+# ---------------------------------------------------------------------------
+@shared_task(name="core.eva_proactive_suggestion", bind=True, max_retries=1)
+def eva_proactive_suggestion(self, financial_year_id, trigger_type, trigger_context=None):
+    """
+    Generate a proactive Eva suggestion based on a system event.
+
+    Trigger types:
+      - risk_flags_raised: HIGH/CRITICAL risk flags detected
+      - bank_classification_complete: Bank statement AI classification finished
+      - significant_variance: Large variance detected during TB import
+
+    The suggestion is stored as an EvaMessage with is_proactive=True.
+    """
+    from core.eva_proactive import generate_proactive_suggestion
+    try:
+        result = generate_proactive_suggestion(
+            financial_year_id, trigger_type, trigger_context or {}
+        )
+        logger.info(
+            "Proactive suggestion generated for FY %s (trigger: %s)",
+            financial_year_id, trigger_type,
+        )
+        return result
+    except Exception as exc:
+        logger.exception(
+            "Proactive suggestion failed for FY %s (trigger: %s)",
+            financial_year_id, trigger_type,
+        )
+        raise self.retry(exc=exc, countdown=30)
