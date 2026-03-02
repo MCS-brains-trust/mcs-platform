@@ -13,7 +13,7 @@ Usage
     industry = models.CharField(max_length=5, choices=INDUSTRY_CHOICES, ...)
 
     # Programmatic lookup
-    label = get_industry_label("69320")  # "Accountant"
+    label = get_industry_label("69320")  # "Accounting Services"
 """
 
 import json
@@ -134,8 +134,8 @@ OLD_INDUSTRY_TO_ATO = {
     "veterinary": "69700",
     "healthcare_other": "85399",
     "construction": "30190",
-    "electrical": "32310",
-    "plumbing": "32320",
+    "electrical": "32320",
+    "plumbing": "32310",
     "trades_other": "32410",
     "restaurant": "45110",
     "hotel": "44000",
