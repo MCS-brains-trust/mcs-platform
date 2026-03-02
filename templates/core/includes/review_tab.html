@@ -150,6 +150,23 @@
         <span class="badge bg-success" id="confirmedBadge" style="cursor:pointer;" onclick="showReviewView('confirmed')" title="Click to view confirmed transactions">{{ confirmed_review.count }} confirmed</span>
     </h6>
     <div class="d-flex gap-2">
+        {% if pending_review.count > 0 or confirmed_review.count > 0 %}
+        <div class="dropdown d-inline">
+            <button class="btn btn-outline-secondary btn-sm" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                <i class="bi bi-file-earmark-pdf"></i> Export PDF <i class="bi bi-caret-down-fill" style="font-size:0.6rem;"></i>
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end">
+                {% if pending_review.count > 0 %}
+                <li><a class="dropdown-item" href="{% url 'core:review_export_pdf' pk=fy.pk %}?filter=pending" target="_blank"><i class="bi bi-clock text-warning me-2"></i>Pending Review ({{ pending_review.count }})</a></li>
+                {% endif %}
+                {% if confirmed_review.count > 0 %}
+                <li><a class="dropdown-item" href="{% url 'core:review_export_pdf' pk=fy.pk %}?filter=confirmed" target="_blank"><i class="bi bi-check-circle text-success me-2"></i>Confirmed ({{ confirmed_review.count }})</a></li>
+                {% endif %}
+                <li><hr class="dropdown-divider"></li>
+                <li><a class="dropdown-item" href="{% url 'core:review_export_pdf' pk=fy.pk %}?filter=all" target="_blank"><i class="bi bi-list-ul text-primary me-2"></i>All Transactions</a></li>
+            </ul>
+        </div>
+        {% endif %}
         {% if pending_review.count > 0 %}
         <button type="button" class="btn btn-primary btn-sm" id="classifyAiBtn" onclick="startAiClassification()">
             <i class="bi bi-robot"></i> Classify with AI

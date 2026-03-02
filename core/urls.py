@@ -215,6 +215,7 @@ urlpatterns = [
     path("years/<uuid:pk>/review/classify-status/", views.review_classify_status, name="review_classify_status"),
     path("years/<uuid:pk>/review/bulk-approve-group/", views.review_bulk_approve_group, name="review_bulk_approve_group"),
     path("years/<uuid:pk>/review/approve-selected/", views.review_approve_selected, name="review_approve_selected"),
+    path("years/<uuid:pk>/review/export-pdf/", views.review_export_pdf, name="review_export_pdf"),
 
     # Bank Statement Template Download
     path("bank-statement/template/", views.bank_statement_template_download, name="bank_statement_template_download"),

@@ -10369,3 +10369,173 @@ def bulk_journal_reallocate(request, pk):
         messages.info(request, "No changes were made.")
 
     return redirect("core:bulk_journal_detail", pk=pk)
+
+
+# ---------------------------------------------------------------------------
+# PDF Export — Bank Statement Review (Pending / Confirmed) from FY detail
+# ---------------------------------------------------------------------------
+
+@login_required
+def review_export_pdf(request, pk):
+    """
+    Generate a PDF of bank statement review transactions for a financial year.
+    Query params:
+        filter=pending|confirmed|all  (default: all)
+    """
+    import weasyprint
+    from django.utils.html import escape as html_escape
+    from review.models import PendingTransaction
+
+    fy = get_financial_year_for_user(request, pk)
+    entity = fy.entity
+    filter_type = request.GET.get("filter", "all")
+
+    # Get all transactions for this entity
+    base_qs = PendingTransaction.objects.filter(
+        job__entity=entity,
+    ).order_by("date", "description")
+
+    if filter_type == "pending":
+        txns = base_qs.filter(is_confirmed=False)
+        section_title = "Pending Review"
+    elif filter_type == "confirmed":
+        txns = base_qs.filter(is_confirmed=True)
+        section_title = "Confirmed Transactions"
+    else:
+        txns = base_qs
+        section_title = "All Transactions"
+
+    total_count = base_qs.count()
+    confirmed_count = base_qs.filter(is_confirmed=True).count()
+    pending_count = total_count - confirmed_count
+
+    # Build transaction rows
+    rows_html = ""
+    total_gross = Decimal("0.00")
+    total_gst = Decimal("0.00")
+    total_net = Decimal("0.00")
+
+    for txn in txns:
+        total_gross += txn.amount
+        total_gst += txn.gst_amount or Decimal("0.00")
+        total_net += txn.net_amount or Decimal("0.00")
+
+        amt_class = "debit" if txn.amount < 0 else "credit"
+
+        if txn.is_confirmed:
+            acct_display = html_escape(
+                f"{txn.confirmed_code} — {txn.confirmed_name}"
+                if txn.confirmed_code else "—"
+            )
+            tax_display = html_escape(txn.confirmed_tax_type or "—")
+        else:
+            acct_display = html_escape(
+                f"{txn.ai_suggested_code} — {txn.ai_suggested_name}"
+                if txn.ai_suggested_code else "Unclassified"
+            )
+            tax_display = html_escape(txn.ai_suggested_tax_type or "—")
+
+        status = "Confirmed" if txn.is_confirmed else "Pending"
+
+        gst_amt = f"${txn.gst_amount:,.2f}" if txn.gst_amount else "—"
+        net_amt = f"${txn.net_amount:,.2f}" if txn.net_amount else "—"
+        cred_pct = f"{txn.creditable_percentage:.0f}%" if txn.creditable_percentage else "—"
+
+        rows_html += f"""<tr>
+            <td>{html_escape(str(txn.date))}</td>
+            <td>{html_escape(txn.description)}</td>
+            <td class="r {amt_class}">${txn.amount:,.2f}</td>
+            <td class="r">{gst_amt}</td>
+            <td class="r">{net_amt}</td>
+            <td class="r">{cred_pct}</td>
+            <td>{acct_display}</td>
+            <td>{tax_display}</td>
+            <td class="status-{status.lower()}">{status}</td>
+        </tr>"""
+
+    now_str = timezone.now().strftime("%d/%m/%Y %H:%M")
+    entity_name = html_escape(entity.entity_name)
+    fy_label = html_escape(f"{fy.start_date.strftime('%d/%m/%Y')} — {fy.end_date.strftime('%d/%m/%Y')}")
+
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+    @page {{
+        size: A4 landscape;
+        margin: 12mm 10mm;
+        @bottom-right {{ content: "Page " counter(page) " of " counter(pages); font-size: 7pt; color: #999; }}
+        @bottom-left {{ content: "Generated {now_str}"; font-size: 7pt; color: #999; }}
+    }}
+    body {{ font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-size: 8pt; color: #333; }}
+    .header {{ display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 4mm; border-bottom: 2px solid #1565c0; padding-bottom: 3mm; }}
+    .header-left {{ }}
+    .header-right {{ text-align: right; font-size: 7pt; color: #666; }}
+    h1 {{ font-size: 14pt; margin: 0; color: #1a1a2e; }}
+    .subtitle {{ font-size: 9pt; color: #666; margin-top: 2px; }}
+    .count-summary {{ font-size: 8pt; color: #555; margin-bottom: 3mm; }}
+    table {{ width: 100%; border-collapse: collapse; margin-bottom: 3mm; }}
+    th {{ background: #f5f5f5; font-weight: 700; font-size: 7pt; text-transform: uppercase; letter-spacing: 0.3px; color: #555; padding: 3px 4px; border-bottom: 2px solid #ddd; text-align: left; white-space: nowrap; }}
+    td {{ padding: 2.5px 4px; font-size: 7.5pt; border-bottom: 1px solid #eee; vertical-align: top; }}
+    .r {{ text-align: right; }}
+    .bold {{ font-weight: 700; }}
+    .debit {{ color: #c62828; }}
+    .credit {{ color: #2e7d32; }}
+    .total-row {{ border-top: 2px solid #333; background: #f8f9fa; }}
+    .total-row td {{ font-weight: 700; padding: 4px; }}
+    .status-confirmed {{ color: #2e7d32; font-weight: 600; }}
+    .status-pending {{ color: #e65100; font-weight: 600; }}
+</style></head><body>
+
+<div class="header">
+    <div class="header-left">
+        <h1>{entity_name}</h1>
+        <div class="subtitle">{section_title}</div>
+    </div>
+    <div class="header-right">
+        Financial Year: {fy_label}
+    </div>
+</div>
+
+<div class="count-summary">
+    Showing <strong>{txns.count()}</strong> transactions
+    &nbsp;|&nbsp; Total: {total_count}
+    &nbsp;|&nbsp; Confirmed: {confirmed_count}
+    &nbsp;|&nbsp; Pending: {pending_count}
+</div>
+
+<table>
+    <thead>
+        <tr>
+            <th>Date</th>
+            <th>Description</th>
+            <th class="r">Amount</th>
+            <th class="r">GST</th>
+            <th class="r">Net</th>
+            <th class="r">Cred.%</th>
+            <th>Account</th>
+            <th>Tax Type</th>
+            <th>Status</th>
+        </tr>
+    </thead>
+    <tbody>
+        {rows_html}
+        <tr class="total-row">
+            <td colspan="2" class="bold">TOTALS</td>
+            <td class="r bold {'debit' if total_gross < 0 else 'credit'}">${total_gross:,.2f}</td>
+            <td class="r bold">${total_gst:,.2f}</td>
+            <td class="r bold">${total_net:,.2f}</td>
+            <td colspan="4"></td>
+        </tr>
+    </tbody>
+</table>
+
+</body></html>"""
+
+    pdf_bytes = weasyprint.HTML(string=html).write_pdf()
+
+    entity_slug = entity.entity_name.replace(" ", "_").replace("/", "-")[:40]
+    filename = f"{entity_slug}_{section_title.replace(' ', '_')}_{timezone.now().strftime('%Y%m%d')}.pdf"
+
+    response = HttpResponse(pdf_bytes, content_type="application/pdf")
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
