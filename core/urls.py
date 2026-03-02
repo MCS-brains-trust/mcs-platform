@@ -18,6 +18,7 @@ from . import views_partnership_docs
 from . import views_package_assembly
 from . import views_bulk_operations
 from . import views_bas_commentary
+from . import views_div7a
 
 app_name = "core"
 
@@ -367,6 +368,14 @@ urlpatterns = [
     path("api/knowledge/status/", eva_engine.knowledge_status, name="knowledge_status"),
     path("eva/knowledge-brain/", views_eva.knowledge_brain_admin, name="knowledge_brain_admin"),
     path("eva/knowledge-brain/sync/", views_eva.trigger_knowledge_sync, name="trigger_knowledge_sync"),
+
+    # ===== DIVISION 7A DETECTION MODULE =====
+    path("years/<uuid:pk>/div7a/", views_div7a.div7a_dashboard, name="div7a_dashboard"),
+    path("years/<uuid:pk>/div7a/run/", views_div7a.div7a_run_assessment, name="div7a_run_assessment"),
+    path("years/<uuid:pk>/div7a/api/", views_div7a.div7a_assessment_api, name="div7a_assessment_api"),
+    path("years/<uuid:pk>/div7a/compliance/create/", views_div7a.div7a_compliance_create, name="div7a_compliance_create"),
+    path("entities/<uuid:pk>/div7a/compliance/", views_div7a.div7a_compliance_list, name="div7a_compliance_list"),
+    path("div7a/compliance/<uuid:pk>/edit/", views_div7a.div7a_compliance_edit, name="div7a_compliance_edit"),
 
     # ===== TRUST DISTRIBUTION TAB =====
     path("api/years/<uuid:pk>/trust-workspace/", views_trust.trust_workspace_api, name="trust_workspace_api"),

@@ -75,9 +75,40 @@ REFERENCE_DATA = [
     ("sg_rate_fy2026", "12.0", "Superannuation Guarantee rate for FY2026", "FY2026"),
     ("sg_max_earnings_base", "65070", "Maximum super contribution base per quarter FY2025", "FY2025"),
 
-    # Division 7A
-    ("div7a_benchmark_rate", "8.27", "Division 7A benchmark interest rate FY2025", "FY2025"),
-    ("div7a_benchmark_rate_fy2024", "8.27", "Division 7A benchmark interest rate FY2024", "FY2024"),
+    # Division 7A — Benchmark Interest Rates (ATO QC 17928)
+    # Source: https://www.ato.gov.au/tax-rates-and-codes/division-7a-benchmark-interest-rate
+    # Rates stored as percentages (e.g. 8.37 = 8.37%). The engine divides by 100.
+    # New rates can be added here or via Django admin — the engine checks DB first.
+    ("div7a_benchmark_rate_fy2026", "8.37", "Division 7A benchmark interest rate FY2026 — RBA rate published 6 Jun 2025", "FY2026"),
+    ("div7a_benchmark_rate_fy2025", "8.77", "Division 7A benchmark interest rate FY2025 — RBA rate published 7 Jun 2024", "FY2025"),
+    ("div7a_benchmark_rate_fy2024", "8.27", "Division 7A benchmark interest rate FY2024 — RBA rate published 7 Jun 2023", "FY2024"),
+    ("div7a_benchmark_rate_fy2023", "4.77", "Division 7A benchmark interest rate FY2023 — RBA rate published 2 Jun 2022", "FY2023"),
+    ("div7a_benchmark_rate_fy2022", "4.52", "Division 7A benchmark interest rate FY2022 — RBA rate published 2 Jun 2021", "FY2022"),
+    ("div7a_benchmark_rate_fy2021", "4.52", "Division 7A benchmark interest rate FY2021 — RBA rate published 2 Jun 2020", "FY2021"),
+    ("div7a_benchmark_rate_fy2020", "5.37", "Division 7A benchmark interest rate FY2020 — RBA rate published May 2019", "FY2020"),
+    ("div7a_benchmark_rate_fy2019", "5.20", "Division 7A benchmark interest rate FY2019 — TD 2018/14", "FY2019"),
+    ("div7a_benchmark_rate_fy2018", "5.30", "Division 7A benchmark interest rate FY2018 — TD 2017/17", "FY2018"),
+    ("div7a_benchmark_rate_fy2017", "5.40", "Division 7A benchmark interest rate FY2017 — TD 2016/11", "FY2017"),
+    ("div7a_benchmark_rate_fy2016", "5.45", "Division 7A benchmark interest rate FY2016 — TD 2015/15", "FY2016"),
+    ("div7a_benchmark_rate_fy2015", "5.95", "Division 7A benchmark interest rate FY2015 — TD 2014/20", "FY2015"),
+    ("div7a_benchmark_rate_fy2014", "6.20", "Division 7A benchmark interest rate FY2014 — TD 2013/17", "FY2014"),
+    ("div7a_benchmark_rate_fy2013", "7.05", "Division 7A benchmark interest rate FY2013 — TD 2012/15", "FY2013"),
+    ("div7a_benchmark_rate_fy2012", "7.80", "Division 7A benchmark interest rate FY2012 — TD 2011/20", "FY2012"),
+    ("div7a_benchmark_rate_fy2011", "7.40", "Division 7A benchmark interest rate FY2011 — TD 2010/18", "FY2011"),
+    ("div7a_benchmark_rate_fy2010", "5.75", "Division 7A benchmark interest rate FY2010 — TD 2009/16", "FY2010"),
+    ("div7a_benchmark_rate_fy2009", "9.45", "Division 7A benchmark interest rate FY2009 — TD 2008/19", "FY2009"),
+    ("div7a_benchmark_rate_fy2008", "8.05", "Division 7A benchmark interest rate FY2008 — TD 2007/23", "FY2008"),
+    ("div7a_benchmark_rate_fy2007", "7.55", "Division 7A benchmark interest rate FY2007 — TD 2006/45", "FY2007"),
+    ("div7a_benchmark_rate_fy2006", "7.30", "Division 7A benchmark interest rate FY2006 — TD 2005/31", "FY2006"),
+    ("div7a_benchmark_rate_fy2005", "7.05", "Division 7A benchmark interest rate FY2005 — TD 2004/28", "FY2005"),
+    ("div7a_benchmark_rate_fy2004", "6.55", "Division 7A benchmark interest rate FY2004 — TD 2003/19", "FY2004"),
+    ("div7a_benchmark_rate_fy2003", "6.30", "Division 7A benchmark interest rate FY2003 — TD 2002/15", "FY2003"),
+    ("div7a_benchmark_rate_fy2002", "6.80", "Division 7A benchmark interest rate FY2002 — TD 2001/20", "FY2002"),
+    ("div7a_benchmark_rate_fy2001", "7.80", "Division 7A benchmark interest rate FY2001 — TD 2001/1", "FY2001"),
+    ("div7a_benchmark_rate_fy2000", "6.50", "Division 7A benchmark interest rate FY2000 — TD 1999/39", "FY2000"),
+    ("div7a_benchmark_rate_fy1999", "6.70", "Division 7A benchmark interest rate FY1999 — TD 98/21", "FY1999"),
+    # Legacy alias for backward compat (points to FY2025)
+    ("div7a_benchmark_rate", "8.77", "Division 7A benchmark interest rate (current default — FY2025)", "FY2025"),
     ("div7a_min_repayment_pct", "5.0", "Minimum annual repayment % for Div 7A 7-year loan", ""),
     ("div7a_loan_threshold", "0", "Minimum loan balance to trigger Div 7A check", ""),
 
@@ -1703,5 +1734,583 @@ RISK_RULES = [
             "liquidity, risk, return, and the ability to meet member benefit obligations."
         ),
         "legislation_ref": "SIS Act 1993 s52(2)(f), SIS Reg 4.09",
+    },
+
+    # -----------------------------------------------------------------------
+    # DIVISION 7A — UPGRADED MODULE (Rules T2-D7A-01 to T2-D7A-08)
+    # Coordinated 8-rule detection engine replacing D7A-01–D7A-06.
+    # These rules are executed by core.eva_div7a, not the generic risk_engine.
+    # -----------------------------------------------------------------------
+    {
+        "rule_id": "T2-D7A-01",
+        "category": "division_7a",
+        "title": "Shareholder/Director Loan Debit Balance",
+        "description": (
+            "Director/shareholder loan account(s) for {entity_name} show a net debit "
+            "balance of {total} at year end. This constitutes a loan under ss 109C–109D "
+            "ITAA 1936 and is assessable as an unfranked deemed dividend unless a complying "
+            "loan agreement is in place."
+        ),
+        "severity": "CRITICAL",
+        "tier": 2,
+        "applicable_entities": ["company"],
+        "trigger_config": {
+            "type": "div7a_module",
+            "rule_category": "position_detection",
+            "check_type": "debit_balance",
+            "fires_on": "position",
+        },
+        "recommended_action": (
+            "1. Execute a Div 7A complying loan agreement covering the full balance. "
+            "2. Ensure agreement specifies benchmark interest rate. "
+            "3. Calculate and verify minimum yearly repayment. "
+            "4. Document the purpose of each drawdown in workpapers."
+        ),
+        "legislation_ref": "ITAA 1936 ss 109C–109D, s 109F, s 109N",
+    },
+    {
+        "rule_id": "T2-D7A-02",
+        "category": "division_7a",
+        "title": "Loan Balance Increase (Escalation Modifier)",
+        "description": (
+            "Director/shareholder loan balance for {entity_name} has increased by {increase} "
+            "from prior year. The complying agreement must cover the full current year balance."
+        ),
+        "severity": "HIGH",
+        "tier": 2,
+        "applicable_entities": ["company"],
+        "trigger_config": {
+            "type": "div7a_module",
+            "rule_category": "position_detection",
+            "check_type": "balance_increase",
+            "fires_on": "movement",
+            "enriches": "T2-D7A-01",
+        },
+        "recommended_action": (
+            "Update the complying loan agreement to cover the increased balance. "
+            "If increase exceeds $200,000, escalate to Elio per firm policy."
+        ),
+        "legislation_ref": "ITAA 1936 ss 109C–109D",
+    },
+    {
+        "rule_id": "T2-D7A-03",
+        "category": "division_7a",
+        "title": "Payments to/for Shareholders (s 109E)",
+        "description": (
+            "Payments of a personal nature totalling {total} detected for {entity_name}. "
+            "These may constitute deemed dividends under s 109E ITAA 1936 if paid to or on "
+            "behalf of a shareholder/associate."
+        ),
+        "severity": "HIGH",
+        "tier": 2,
+        "applicable_entities": ["company"],
+        "trigger_config": {
+            "type": "div7a_module",
+            "rule_category": "position_detection",
+            "check_type": "s109e_payments",
+            "fires_on": "position",
+            "threshold": 5000,
+        },
+        "recommended_action": (
+            "Review each personal expense account. Determine if amounts should be treated as "
+            "Div 7A loans, deemed dividends, or FBT-reportable benefits. Aggregate per-shareholder."
+        ),
+        "legislation_ref": "ITAA 1936 s 109E",
+    },
+    {
+        "rule_id": "T2-D7A-04",
+        "category": "division_7a",
+        "title": "Missing Complying Loan Agreement",
+        "description": (
+            "No complying Division 7A loan agreement on file for {entity_name} covering "
+            "the {total} debit balance. Without an executed agreement, the full balance is "
+            "treated as an unfranked deemed dividend."
+        ),
+        "severity": "CRITICAL",
+        "tier": 2,
+        "applicable_entities": ["company"],
+        "trigger_config": {
+            "type": "div7a_module",
+            "rule_category": "compliance_verification",
+            "check_type": "missing_agreement",
+            "depends_on": "T2-D7A-01",
+        },
+        "recommended_action": (
+            "Execute a Div 7A complying loan agreement before lodgement day. "
+            "Use the Legal Document Wizard to generate the agreement."
+        ),
+        "legislation_ref": "ITAA 1936 s 109N",
+    },
+    {
+        "rule_id": "T2-D7A-05",
+        "category": "division_7a",
+        "title": "Missing Benchmark Interest Income",
+        "description": (
+            "Benchmark interest shortfall for {entity_name}. Expected: {expected_interest} "
+            "(opening balance × {benchmark_rate}%). Recorded: {recorded_interest}. Without "
+            "benchmark interest, the loan agreement is non-compliant."
+        ),
+        "severity": "CRITICAL",
+        "tier": 2,
+        "applicable_entities": ["company"],
+        "trigger_config": {
+            "type": "div7a_module",
+            "rule_category": "compliance_verification",
+            "check_type": "interest_shortfall",
+            "depends_on": "T2-D7A-01",
+            "tolerance": 0.05,
+        },
+        "recommended_action": (
+            "Record benchmark interest as assessable income (Item 8N). "
+            "Ensure the interest rate matches the ATO benchmark rate for the relevant FY."
+        ),
+        "legislation_ref": "ITAA 1936 s 109F, s 109N, QC 17928",
+    },
+    {
+        "rule_id": "T2-D7A-06",
+        "category": "division_7a",
+        "title": "Minimum Yearly Repayment Shortfall",
+        "description": (
+            "MYR shortfall for {entity_name}. Required: {expected_myr}. Actual: {actual_repayments}. "
+            "Shortfall: {shortfall}. The shortfall amount is treated as a deemed unfranked dividend."
+        ),
+        "severity": "CRITICAL",
+        "tier": 2,
+        "applicable_entities": ["company"],
+        "trigger_config": {
+            "type": "div7a_module",
+            "rule_category": "compliance_verification",
+            "check_type": "myr_shortfall",
+            "depends_on": "T2-D7A-01",
+        },
+        "recommended_action": (
+            "Calculate MYR using s 109R formula. Confirm repayment made or will be made "
+            "before 30 June. The shortfall is treated as a deemed dividend."
+        ),
+        "legislation_ref": "ITAA 1936 s 109R",
+    },
+    {
+        "rule_id": "T2-D7A-07",
+        "category": "division_7a",
+        "title": "Unpaid Present Entitlements (Trust → Company)",
+        "description": (
+            "Unpaid present entitlement of {upe_amount} from {trust_name} to {entity_name}. "
+            "Post-2022 UPEs are treated as Div 7A loans under TD 2022/11."
+        ),
+        "severity": "CRITICAL",
+        "tier": 2,
+        "applicable_entities": ["company"],
+        "trigger_config": {
+            "type": "div7a_module",
+            "rule_category": "cross_entity",
+            "check_type": "upe_detection",
+            "cross_entity": True,
+        },
+        "recommended_action": (
+            "For post-2022 UPEs: execute complying 7-year loan agreement or repay before "
+            "lodgement day. For pre-2022 UPEs: confirm sub-trust arrangement per PS LA 2010/4."
+        ),
+        "legislation_ref": "ITAA 1936 s 109XA–109XB, TD 2022/11, PS LA 2010/4",
+    },
+    {
+        "rule_id": "T2-D7A-08",
+        "category": "division_7a",
+        "title": "Interposed Entity Loans (ss 109T–109V)",
+        "description": (
+            "Potential interposed entity arrangement: {entity_name} has a receivable from "
+            "{intermediary_name} which has a relationship with {shareholder_name}. Division 7A "
+            "may apply under ss 109T–109V."
+        ),
+        "severity": "HIGH",
+        "tier": 2,
+        "applicable_entities": ["company"],
+        "trigger_config": {
+            "type": "div7a_module",
+            "rule_category": "cross_entity",
+            "check_type": "interposed_entity",
+            "cross_entity": True,
+        },
+        "recommended_action": (
+            "Review the interposed entity provisions. Determine if the ultimate beneficiary "
+            "is a shareholder or associate. This requires manual review — the detection is advisory."
+        ),
+        "legislation_ref": "ITAA 1936 ss 109T–109V",
+    },
+
+    # -----------------------------------------------------------------------
+    # GOING CONCERN MODULE (Rules GC-01 to GC-06)
+    # These rules are executed by core.risk_modules.going_concern, not the
+    # generic risk_engine.  They are registered here for documentation and
+    # admin visibility.
+    # -----------------------------------------------------------------------
+    {
+        "rule_id": "GC-01",
+        "category": "going_concern",
+        "title": "Net Liability Position",
+        "description": (
+            "Net liability position of {amount}. Total assets {assets} are exceeded by "
+            "total liabilities {liabilities}. Going concern disclosure required under AASB 101.25."
+        ),
+        "severity": "CRITICAL",
+        "tier": 2,
+        "applicable_entities": [],
+        "trigger_config": {"type": "going_concern_module", "rule": "gc_01"},
+        "recommended_action": (
+            "Discuss going concern position with the director. Obtain written "
+            "confirmation of director's intention to support. Include going concern "
+            "note in financial statements."
+        ),
+        "legislation_ref": "AASB 101.25-26, Corporations Act s 588G",
+    },
+    {
+        "rule_id": "GC-02",
+        "category": "going_concern",
+        "title": "Cash Position Assessment",
+        "description": (
+            "Cash position of {amount} is critically low. Entity may be unable to "
+            "meet obligations without external support."
+        ),
+        "severity": "CRITICAL",
+        "tier": 2,
+        "applicable_entities": [],
+        "trigger_config": {"type": "going_concern_module", "rule": "gc_02"},
+        "recommended_action": (
+            "Assess cash flow projections. Determine if director or external funding "
+            "is committed. Consider whether going concern disclosure is required."
+        ),
+        "legislation_ref": "AASB 101.25-26, APES 205",
+    },
+    {
+        "rule_id": "GC-03",
+        "category": "going_concern",
+        "title": "Revenue Decline Trajectory",
+        "description": (
+            "Revenue declined {pct}% year-on-year (PY: {py_revenue} \u2192 CY: {cy_revenue}). "
+            "Significant decline may indicate going concern risk."
+        ),
+        "severity": "ADVISORY",
+        "tier": 2,
+        "applicable_entities": [],
+        "trigger_config": {"type": "going_concern_module", "rule": "gc_03", "threshold_pct": 30},
+        "recommended_action": (
+            "Investigate the cause of revenue decline. Assess whether the trend is "
+            "expected to continue. Consider impact on going concern assessment."
+        ),
+        "legislation_ref": "AASB 101.25-26",
+    },
+    {
+        "rule_id": "GC-04",
+        "category": "going_concern",
+        "title": "Consecutive Losses",
+        "description": (
+            "Net loss in both current year ({cy_loss}) and prior year ({py_loss}). "
+            "Consecutive losses may indicate going concern risk."
+        ),
+        "severity": "ADVISORY",
+        "tier": 2,
+        "applicable_entities": [],
+        "trigger_config": {"type": "going_concern_module", "rule": "gc_04"},
+        "recommended_action": (
+            "Assess whether losses are expected to continue. For startup entities, "
+            "early losses may be expected. Consider cash reserves and funding sources."
+        ),
+        "legislation_ref": "AASB 101.25-26",
+    },
+    {
+        "rule_id": "GC-05",
+        "category": "going_concern",
+        "title": "Working Capital Ratio",
+        "description": (
+            "Working capital ratio of {ratio} (current assets {current_assets} / "
+            "current liabilities {current_liabilities}). Entity may be unable to "
+            "meet short-term obligations."
+        ),
+        "severity": "ADVISORY",
+        "tier": 2,
+        "applicable_entities": [],
+        "trigger_config": {"type": "going_concern_module", "rule": "gc_05", "threshold": 1.0},
+        "recommended_action": (
+            "Review current asset composition and liability maturity profile. "
+            "Assess whether short-term funding is available."
+        ),
+        "legislation_ref": "AASB 101.25-26",
+    },
+    {
+        "rule_id": "GC-06",
+        "category": "going_concern",
+        "title": "Director Loan Extraction Relative to Operations",
+        "description": (
+            "Director loan debit balance of {amount} represents {pct}% of revenue. "
+            "Extraction rate relative to operations is unsustainable."
+        ),
+        "severity": "ADVISORY",
+        "tier": 2,
+        "applicable_entities": ["company"],
+        "trigger_config": {"type": "going_concern_module", "rule": "gc_06", "threshold_pct": 50},
+        "recommended_action": (
+            "Discuss director extraction strategy. Cross-reference with Division 7A "
+            "assessment. Consider whether the entity can sustain current extraction levels."
+        ),
+        "legislation_ref": "AASB 101.25-26, Corporations Act s 588G",
+    },
+
+    # -----------------------------------------------------------------------
+    # SECTION 100A MODULE (Rules S100A-01 to S100A-05)
+    # These rules are executed by core.risk_modules.section100a.
+    # -----------------------------------------------------------------------
+    {
+        "rule_id": "S100A-01",
+        "category": "section_100a",
+        "title": "Distribution to Low-Tax Beneficiary",
+        "description": (
+            "Trust has distributed income to a beneficiary whose marginal tax rate is "
+            "significantly lower than the trust controller's rate. Pattern consistent "
+            "with Section 100A risk."
+        ),
+        "severity": "ADVISORY",
+        "tier": 2,
+        "applicable_entities": ["trust"],
+        "trigger_config": {"type": "section100a_module", "rule": "s100a_01"},
+        "recommended_action": (
+            "Review the distribution pattern. Confirm commercial rationale for "
+            "distributing to lower-rate beneficiaries. Document the arrangement."
+        ),
+        "legislation_ref": "ITAA 1936 s 100A, TD 2022/11",
+    },
+    {
+        "rule_id": "S100A-02",
+        "category": "section_100a",
+        "title": "Circular Money Flow",
+        "description": (
+            "Circular money flow detected: funds distributed to a beneficiary appear "
+            "to flow back to the trust controller or related entities. This is the "
+            "primary 'reimbursement agreement' pattern targeted by the ATO."
+        ),
+        "severity": "CRITICAL",
+        "tier": 2,
+        "applicable_entities": ["trust"],
+        "trigger_config": {"type": "section100a_module", "rule": "s100a_02"},
+        "recommended_action": (
+            "Urgently review the arrangement. Document the commercial purpose of "
+            "the return flow. Consider obtaining a private ruling. This pattern "
+            "is the ATO's primary Section 100A enforcement target."
+        ),
+        "legislation_ref": "ITAA 1936 s 100A",
+    },
+    {
+        "rule_id": "S100A-03",
+        "category": "section_100a",
+        "title": "UPE to Related Entity",
+        "description": (
+            "Trust has distributed to a beneficiary entity but the distribution "
+            "remains unpaid (UPE). The beneficiary has not received economic benefit."
+        ),
+        "severity": "ADVISORY",
+        "tier": 2,
+        "applicable_entities": ["trust"],
+        "trigger_config": {"type": "section100a_module", "rule": "s100a_03"},
+        "recommended_action": (
+            "Review the UPE position. If the beneficiary is a company, check "
+            "Division 7A compliance. Consider whether the UPE should be paid out "
+            "or formally documented."
+        ),
+        "legislation_ref": "ITAA 1936 s 100A, PCG 2017/13",
+    },
+    {
+        "rule_id": "S100A-04",
+        "category": "section_100a",
+        "title": "Resolution Date Compliance",
+        "description": (
+            "Trust distribution resolution was not confirmed as made on or before "
+            "30 June of the income year. Late resolution may result in income being "
+            "assessed to the trustee at the top marginal rate under s 99A."
+        ),
+        "severity": "CRITICAL",
+        "tier": 2,
+        "applicable_entities": ["trust"],
+        "trigger_config": {"type": "section100a_module", "rule": "s100a_04"},
+        "recommended_action": (
+            "Confirm the resolution date. If resolution was late, assess the "
+            "consequences under s 99A. Consider whether a valid resolution can "
+            "be established."
+        ),
+        "legislation_ref": "ITAA 1936 s 99A, s 100A",
+    },
+    {
+        "rule_id": "S100A-05",
+        "category": "section_100a",
+        "title": "Four-Factor Summary Assessment",
+        "description": (
+            "Section 100A four-factor test summary. Pulls data from S100A-01 through "
+            "S100A-04 and presents the structured assessment for manual review."
+        ),
+        "severity": "ADVISORY",
+        "tier": 2,
+        "applicable_entities": ["trust"],
+        "trigger_config": {"type": "section100a_module", "rule": "s100a_05"},
+        "recommended_action": (
+            "Complete the four-factor test for each flagged beneficiary. If 3 or more "
+            "factors are confirmed, severity escalates to CRITICAL."
+        ),
+        "legislation_ref": "ITAA 1936 s 100A, TD 2022/11",
+    },
+
+    # -----------------------------------------------------------------------
+    # RELATED PARTY CLUSTER (Rules RP-C01 to RP-C03)
+    # These rules are executed by core.risk_modules.cluster_rp.
+    # Note: old RP-01 to RP-05 are superseded by the cluster.
+    # -----------------------------------------------------------------------
+    {
+        "rule_id": "RP-C01",
+        "category": "related_party",
+        "title": "Inter-Entity Balance Detection (AASB 124)",
+        "description": (
+            "Inter-entity balances detected that require AASB 124 disclosure. "
+            "Cross-reference against entity relationship graph."
+        ),
+        "severity": "ADVISORY",
+        "tier": 2,
+        "applicable_entities": [],
+        "trigger_config": {"type": "rp_cluster", "rule": "rp_01"},
+        "recommended_action": (
+            "Verify all related party balances are disclosed in the notes per AASB 124."
+        ),
+        "legislation_ref": "AASB 124 Related Party Disclosures",
+    },
+    {
+        "rule_id": "RP-C02",
+        "category": "related_party",
+        "title": "KMP Transaction Detection",
+        "description": (
+            "Key management personnel transactions exceeding $5,000 aggregate detected. "
+            "AASB 124 disclosure required."
+        ),
+        "severity": "ADVISORY",
+        "tier": 2,
+        "applicable_entities": [],
+        "trigger_config": {"type": "rp_cluster", "rule": "rp_02"},
+        "recommended_action": (
+            "Document KMP compensation disclosures per AASB 124. Confirm arm's length terms."
+        ),
+        "legislation_ref": "AASB 124 Related Party Disclosures",
+    },
+    {
+        "rule_id": "RP-C03",
+        "category": "related_party",
+        "title": "Arm's Length Assessment",
+        "description": (
+            "Material related party transaction exceeding $50,000 detected. "
+            "Arm's length confirmation and documentation required."
+        ),
+        "severity": "ADVISORY",
+        "tier": 2,
+        "applicable_entities": [],
+        "trigger_config": {"type": "rp_cluster", "rule": "rp_03"},
+        "recommended_action": (
+            "Obtain arm's length confirmation for material related party transactions. "
+            "Document pricing basis and commercial rationale."
+        ),
+        "legislation_ref": "AASB 124 Related Party Disclosures",
+    },
+
+    # -----------------------------------------------------------------------
+    # SGC CLUSTER (Rules SGC-01 to SGC-03)
+    # These rules are executed by core.risk_modules.cluster_sgc.
+    # Note: old SG-01 to SG-05 are superseded by the cluster.
+    # -----------------------------------------------------------------------
+    {
+        "rule_id": "SGC-01",
+        "category": "superannuation",
+        "title": "SG Rate Shortfall",
+        "description": (
+            "Superannuation expense appears below the expected SG rate applied to "
+            "total wages. Shortfall of {shortfall} detected (after 5% timing tolerance)."
+        ),
+        "severity": "ADVISORY",
+        "tier": 2,
+        "applicable_entities": [],
+        "trigger_config": {"type": "sgc_cluster", "rule": "sgc_01"},
+        "recommended_action": (
+            "Reconcile superannuation payments against payroll records. Verify all "
+            "eligible employees received correct SG contributions."
+        ),
+        "legislation_ref": "SG Act 1992, SG (Administration) Act 1992",
+    },
+    {
+        "rule_id": "SGC-02",
+        "category": "superannuation",
+        "title": "Contractor SG Exposure",
+        "description": (
+            "Contractor payments exceeding $20,000 detected where payment pattern "
+            "may suggest an employment-like arrangement. SG obligations may apply."
+        ),
+        "severity": "ADVISORY",
+        "tier": 2,
+        "applicable_entities": [],
+        "trigger_config": {"type": "sgc_cluster", "rule": "sgc_02"},
+        "recommended_action": (
+            "Review contractor arrangements for employment-like characteristics. "
+            "Consider the ATO's employee/contractor decision tool."
+        ),
+        "legislation_ref": "SG Act 1992 s 12",
+    },
+    {
+        "rule_id": "SGC-03",
+        "category": "superannuation",
+        "title": "SG Charge Risk",
+        "description": (
+            "SG shortfall exceeds $5,000. Estimated SG charge exposure (including "
+            "nominal interest component): {charge}."
+        ),
+        "severity": "CRITICAL",
+        "tier": 2,
+        "applicable_entities": [],
+        "trigger_config": {"type": "sgc_cluster", "rule": "sgc_03"},
+        "recommended_action": (
+            "Lodge SG charge statement to avoid additional penalties. Reconcile "
+            "and pay the shortfall as soon as possible."
+        ),
+        "legislation_ref": "SG (Administration) Act 1992 Part 3",
+    },
+
+    # -----------------------------------------------------------------------
+    # TPAR CLUSTER (Rules TPAR-01 to TPAR-02)
+    # These rules are executed by core.risk_modules.cluster_tpar.
+    # -----------------------------------------------------------------------
+    {
+        "rule_id": "TPAR-01",
+        "category": "tpar",
+        "title": "TPAR Industry Detection",
+        "description": (
+            "Entity's industry code indicates it is in a TPAR-reportable industry. "
+            "Taxable Payments Annual Report must be lodged by 28 August."
+        ),
+        "severity": "ADVISORY",
+        "tier": 2,
+        "applicable_entities": [],
+        "trigger_config": {"type": "tpar_cluster", "rule": "tpar_01"},
+        "recommended_action": (
+            "Confirm entity is in a TPAR-reportable industry. Collate contractor "
+            "payment details and lodge TPAR by 28 August."
+        ),
+        "legislation_ref": "TAA 1953 Sch 1 Div 396",
+    },
+    {
+        "rule_id": "TPAR-02",
+        "category": "tpar",
+        "title": "Contractor Payment Threshold",
+        "description": (
+            "Total contractor payments of {amount} detected in a TPAR-reportable "
+            "industry. All payees must be reported in the TPAR."
+        ),
+        "severity": "ADVISORY",
+        "tier": 2,
+        "applicable_entities": [],
+        "trigger_config": {"type": "tpar_cluster", "rule": "tpar_02"},
+        "recommended_action": (
+            "Ensure all contractor payees with ABN are included in the TPAR. "
+            "Lodge via Online Services for Business by 28 August."
+        ),
+        "legislation_ref": "TAA 1953 Sch 1 Div 396",
     },
 ]

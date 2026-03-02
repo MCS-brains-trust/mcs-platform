@@ -11,6 +11,8 @@ Task registry (Master Implementation Spec §7.10):
     - generate_legal_document: docxtpl render, LibreOffice PDF
     - assemble_client_package: Combine all PDFs, cover letter
     - bulk_package_generation: Iterate entities, check readiness
+    - div7a_assessment: Coordinated 8-rule Div 7A detection per FY
+    - div7a_batch_assessment: Batch Div 7A across multiple entities
 """
 import logging
 from celery import shared_task
@@ -198,6 +200,42 @@ def eva_bas_commentary(self, commentary_id, user_id):
     except Exception as exc:
         logger.exception("BAS commentary generation failed for %s", commentary_id)
         raise self.retry(exc=exc, countdown=30)
+
+
+# ---------------------------------------------------------------------------
+# Division 7A Assessment
+# ---------------------------------------------------------------------------
+@shared_task(name="core.div7a_assessment", bind=True, max_retries=1)
+def div7a_assessment(self, financial_year_id, triggered_by=None):
+    """
+    Run the coordinated 8-rule Division 7A assessment for a financial year.
+
+    Produces one Div7AAssessment record per entity per FY and one
+    consolidated EvaFinding card.  Only runs on company entities.
+    """
+    from core.eva_div7a import run_div7a_assessment
+    try:
+        result = run_div7a_assessment(financial_year_id, triggered_by)
+        logger.info("Div 7A assessment complete for FY %s: %s", financial_year_id, result)
+        return result
+    except Exception as exc:
+        logger.exception("Div 7A assessment failed for FY %s", financial_year_id)
+        raise self.retry(exc=exc, countdown=30)
+
+
+@shared_task(name="core.div7a_batch_assessment", bind=True)
+def div7a_batch_assessment(self, entity_ids=None, year_label=None):
+    """
+    Run Div 7A assessment across multiple company entities.
+    """
+    from core.eva_div7a import run_batch_div7a_assessment
+    try:
+        result = run_batch_div7a_assessment(entity_ids, year_label)
+        logger.info("Batch Div 7A assessment complete: %s", result)
+        return result
+    except Exception as exc:
+        logger.exception("Batch Div 7A assessment failed")
+        raise
 
 
 # ---------------------------------------------------------------------------

@@ -135,6 +135,39 @@ def _log_auto_risk_run(financial_year, result, trigger_source):
     # Trigger Eva proactive suggestion if HIGH/CRITICAL flags were raised
     _maybe_trigger_proactive_risk_suggestion(financial_year, result)
 
+    # Trigger Div 7A assessment for company entities after Tier 2 completes
+    _maybe_trigger_div7a_assessment(financial_year, trigger_source)
+
+
+def _maybe_trigger_div7a_assessment(financial_year, trigger_source):
+    """
+    Queue a Div 7A assessment if the entity is a company.
+    Runs asynchronously via Celery after each Tier 2 risk engine run.
+    """
+    if financial_year.entity.entity_type != "company":
+        return
+
+    try:
+        from core.tasks import div7a_assessment
+        div7a_assessment.delay(str(financial_year.pk), trigger_source)
+        logger.info(
+            "Queued Div 7A assessment for FY %s (%s)",
+            financial_year.pk, trigger_source,
+        )
+    except Exception:
+        # Celery not running — run in background thread as fallback
+        import threading
+        from core.eva_div7a import run_div7a_assessment
+        threading.Thread(
+            target=run_div7a_assessment,
+            args=(str(financial_year.pk), trigger_source),
+            daemon=True,
+        ).start()
+        logger.warning(
+            "Div 7A assessment queued in thread (Celery may not be running) for FY %s",
+            financial_year.pk,
+        )
+
 
 def schedule_tier2_debounced(financial_year, trigger_source="auto"):
     """

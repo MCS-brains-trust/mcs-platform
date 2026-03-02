@@ -369,7 +369,45 @@ def _build_check_context(financial_year, check_id, risk_flags=None):
     extra = []
 
     if check_id == "div7a":
-        # Defect 1+2 fix: Use expanded keywords AND effective balances
+        # Upgraded: inject Div7AAssessment data as confirmed hard facts
+        from core.models import Div7AAssessment
+        try:
+            assessment = Div7AAssessment.objects.get(financial_year=fy)
+            extra.append("=== DIV 7A ASSESSMENT (CONFIRMED — DETERMINISTIC) ===")
+            extra.append(f"  Overall Severity: {assessment.overall_severity}")
+            extra.append(f"  Total Exposure: ${assessment.total_exposure:,.2f}")
+            extra.append(f"  Direct Loan Balance: ${assessment.direct_loan_balance:,.2f}")
+            extra.append(f"  UPE Exposure: ${assessment.upe_exposure:,.2f}")
+            extra.append(f"  s 109E Payments: ${assessment.s109e_payments:,.2f}")
+            extra.append(f"  Complying Agreement: {'Yes' if assessment.has_complying_agreement else 'No'}")
+            extra.append(f"  Agreement Covers Balance: {'Yes' if assessment.agreement_covers_balance else 'No'}")
+            extra.append(f"  Interest Compliant: {'Yes' if assessment.interest_compliant else 'No'}")
+            extra.append(f"  Expected Interest: ${assessment.expected_interest:,.2f}")
+            extra.append(f"  Recorded Interest: ${assessment.recorded_interest:,.2f}")
+            if assessment.expected_myr > ZERO:
+                extra.append(f"  Expected MYR: ${assessment.expected_myr:,.2f}")
+                if assessment.actual_repayments is not None:
+                    extra.append(f"  Actual Repayments: ${assessment.actual_repayments:,.2f}")
+                    extra.append(f"  MYR Compliant: {'Yes' if assessment.myr_compliant else 'No'}")
+            extra.append(f"  Escalation Required: {'Yes' if assessment.escalation_required else 'No'}")
+            extra.append(f"  Rules Fired: {', '.join(assessment.rules_fired)}")
+            if assessment.direct_loan_accounts:
+                extra.append("  --- Loan Accounts ---")
+                for acct in assessment.direct_loan_accounts:
+                    extra.append(
+                        f"    {acct['account_code']} {acct['account_name']}: "
+                        f"${Decimal(acct['balance']):,.2f} (PY: ${Decimal(acct.get('py_balance', '0')):,.2f})"
+                    )
+            if assessment.upe_details:
+                extra.append("  --- UPE Details ---")
+                for upe in assessment.upe_details:
+                    extra.append(
+                        f"    {upe['trust_name']}: ${Decimal(upe['upe_amount']):,.2f} ({upe['regime']})"
+                    )
+        except Div7AAssessment.DoesNotExist:
+            pass
+
+        # Also include raw loan account data for LLM context
         extra.append("=== LOAN & RELATED PARTY ACCOUNTS (EFFECTIVE BALANCES) ===")
         found_any = False
         for line in tb_data["lines"]:

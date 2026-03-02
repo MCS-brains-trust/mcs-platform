@@ -414,4 +414,48 @@ class BankAccountMappingAdmin(admin.ModelAdmin):
     readonly_fields = ("created_at", "updated_at")
 
 
+# ---------------------------------------------------------------------------
+# Division 7A Detection Module
+# ---------------------------------------------------------------------------
+from .models import Div7AAssessment, Div7ACompliance
+
+
+@admin.register(Div7AAssessment)
+class Div7AAssessmentAdmin(admin.ModelAdmin):
+    list_display = ("financial_year", "overall_severity", "total_exposure", "direct_loan_balance",
+                    "upe_exposure", "escalation_required", "assessed_at")
+    list_filter = ("overall_severity", "escalation_required")
+    search_fields = ("financial_year__entity__entity_name",)
+    readonly_fields = ("assessed_at",)
+    fieldsets = (
+        (None, {
+            "fields": ("financial_year", "overall_severity", "assessed_at"),
+        }),
+        ("Position Detection", {
+            "fields": ("direct_loan_balance", "direct_loan_accounts", "upe_exposure",
+                       "upe_details", "s109e_payments", "s109e_details", "total_exposure"),
+        }),
+        ("Compliance Verification", {
+            "fields": ("has_complying_agreement", "agreement_covers_balance",
+                       "expected_interest", "recorded_interest", "interest_compliant",
+                       "expected_myr", "actual_repayments", "myr_compliant"),
+        }),
+        ("Escalation", {
+            "fields": ("escalation_required", "rules_fired"),
+        }),
+        ("Linked Finding", {
+            "fields": ("eva_finding",),
+        }),
+    )
+
+
+@admin.register(Div7ACompliance)
+class Div7AComplianceAdmin(admin.ModelAdmin):
+    list_display = ("entity", "borrower_name", "loan_amount", "loan_start_date",
+                    "loan_term", "is_secured", "status", "last_reviewed")
+    list_filter = ("status", "is_secured")
+    search_fields = ("entity__entity_name", "borrower_name")
+    readonly_fields = ("last_reviewed",)
+
+
 from . import admin_office_admin  # noqa: F401
