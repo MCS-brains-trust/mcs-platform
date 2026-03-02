@@ -231,17 +231,228 @@ def run_preflight_checks(financial_year):
 # ---------------------------------------------------------------------------
 # Risk Engine Pre-Run — Deterministic Hard Facts
 # ---------------------------------------------------------------------------
+class _SyntheticFlag:
+    """Lightweight adapter that mimics RiskFlag attributes for the LLM pipeline.
+
+    Detection modules produce EvaFinding / assessment model records, not
+    RiskFlag rows.  This adapter lets the existing
+    ``_format_risk_flags_as_hard_facts`` and the fallback safety-net in
+    ``_run_eva_review_background`` consume module results without changing
+    the downstream contract.
+    """
+
+    def __init__(self, *, rule_id, severity, title, description,
+                 recommended_action="", legislation_ref=""):
+        self.rule_id = rule_id
+        self.severity = severity
+        self.title = title
+        self.description = description
+        self.recommended_action = recommended_action
+        self.legislation_ref = legislation_ref
+
+
+def _collect_module_flags(financial_year):
+    """Query detection-module assessment models and convert their results
+    into ``_SyntheticFlag`` objects keyed by Eva compliance-check ID.
+
+    Returns a dict of check_id -> list[_SyntheticFlag].
+    """
+    from core.models import Div7AAssessment, GoingConcernAssessment
+    from decimal import Decimal
+
+    ZERO = Decimal("0.00")
+    flags = {}
+
+    # ── Division 7A ──────────────────────────────────────────────────
+    try:
+        d7a = Div7AAssessment.objects.get(financial_year=financial_year)
+        if d7a.overall_severity != "CLEAR":
+            acct_lines = []
+            for a in (d7a.direct_loan_accounts or []):
+                acct_lines.append(
+                    f"{a['account_code']} {a['account_name']}: "
+                    f"${Decimal(a['balance']):,.2f} "
+                    f"(PY: ${Decimal(a.get('py_balance', '0')):,.2f})"
+                )
+            acct_str = "; ".join(acct_lines) if acct_lines else "See assessment"
+
+            desc_parts = [
+                f"Total Div 7A exposure: ${d7a.total_exposure:,.2f}.",
+            ]
+            if d7a.direct_loan_balance > ZERO:
+                desc_parts.append(f"Direct loans: ${d7a.direct_loan_balance:,.2f}.")
+            if d7a.upe_exposure > ZERO:
+                desc_parts.append(f"UPE exposure: ${d7a.upe_exposure:,.2f}.")
+            if d7a.s109e_payments > ZERO:
+                desc_parts.append(f"s 109E payments: ${d7a.s109e_payments:,.2f}.")
+            desc_parts.append(f"Accounts: {acct_str}.")
+            desc_parts.append(f"Complying agreement: {'Yes' if d7a.has_complying_agreement else 'No'}.")
+            desc_parts.append(f"Interest compliant: {'Yes' if d7a.interest_compliant else 'No'}.")
+            desc_parts.append(f"Rules fired: {', '.join(d7a.rules_fired)}.")
+
+            remediation = []
+            if not d7a.has_complying_agreement:
+                remediation.append(
+                    f"Execute a Div 7A complying loan agreement covering "
+                    f"${d7a.total_exposure:,.2f} before lodgement day."
+                )
+            if not d7a.interest_compliant and d7a.expected_interest > ZERO:
+                remediation.append(
+                    f"Record benchmark interest of ${d7a.expected_interest:,.2f} "
+                    f"as assessable income."
+                )
+            if d7a.expected_myr > ZERO and not d7a.myr_compliant:
+                remediation.append(
+                    f"Ensure MYR of ${d7a.expected_myr:,.2f} is paid before 30 June."
+                )
+
+            flags.setdefault("div7a", []).append(_SyntheticFlag(
+                rule_id="MODULE:div7a",
+                severity=d7a.overall_severity,
+                title=f"Division 7A Exposure — ${d7a.total_exposure:,.2f}",
+                description=" ".join(desc_parts),
+                recommended_action=" ".join(remediation) if remediation else "Review Div 7A compliance.",
+                legislation_ref="Division 7A ITAA 1936 (ss 109C-109Q)",
+            ))
+    except Div7AAssessment.DoesNotExist:
+        pass
+    except Exception as e:
+        logger.warning("Failed to collect Div 7A module flags: %s", e)
+
+    # ── Going Concern ────────────────────────────────────────────────
+    try:
+        gc = GoingConcernAssessment.objects.get(financial_year=financial_year)
+        if gc.overall_severity != "CLEAR":
+            desc_parts = []
+            if gc.net_assets < ZERO:
+                desc_parts.append(f"Net assets negative: ${gc.net_assets:,.2f}.")
+            if gc.cash_position < ZERO:
+                desc_parts.append(f"Cash position negative: ${gc.cash_position:,.2f}.")
+            if gc.revenue_decline_pct and gc.revenue_decline_pct >= 20:
+                desc_parts.append(
+                    f"Revenue declined {gc.revenue_decline_pct:.1f}% "
+                    f"(${gc.py_revenue:,.2f} → ${gc.cy_revenue:,.2f})."
+                )
+            if gc.cy_net_result < ZERO:
+                desc_parts.append(f"Current year loss: ${gc.cy_net_result:,.2f}.")
+            if gc.working_capital_ratio is not None and gc.working_capital_ratio < 1:
+                desc_parts.append(f"Working capital ratio: {gc.working_capital_ratio:.2f}.")
+            if gc.is_reliant_on_director:
+                desc_parts.append("Entity reliant on director funding.")
+            desc_parts.append(f"Rules fired: {', '.join(gc.rules_fired)}.")
+
+            flags.setdefault("going_concern", []).append(_SyntheticFlag(
+                rule_id="MODULE:going_concern",
+                severity=gc.overall_severity,
+                title=f"Going Concern Indicators — {gc.overall_severity}",
+                description=" ".join(desc_parts) if desc_parts else "Going concern indicators detected.",
+                recommended_action="Assess going concern and document conclusion in workpapers.",
+                legislation_ref="AASB 101, ASA 570",
+            ))
+    except GoingConcernAssessment.DoesNotExist:
+        pass
+    except Exception as e:
+        logger.warning("Failed to collect Going Concern module flags: %s", e)
+
+    # ── Section 100A (from EvaFinding created by module) ─────────────
+    try:
+        from core.models import EvaFinding
+        s100a_findings = EvaFinding.objects.filter(
+            eva_review__financial_year=financial_year,
+            check_name="trust_distribution",
+            source="risk_engine",
+            status__in=["open", "reopened"],
+        ).order_by("-created_at")[:1]
+        for f in s100a_findings:
+            flags.setdefault("trust_distribution", []).append(_SyntheticFlag(
+                rule_id="MODULE:section100a",
+                severity=f.severity.upper() if f.severity else "ADVISORY",
+                title=f.title or "Section 100A Risk",
+                description=f.plain_english_explanation or "",
+                recommended_action=f.recommendation or "",
+                legislation_ref=f.legislation_reference or "s 100A ITAA 1936",
+            ))
+    except Exception as e:
+        logger.warning("Failed to collect Section 100A module flags: %s", e)
+
+    # ── SGC / Super Guarantee (from EvaFinding created by module) ────
+    try:
+        from core.models import EvaFinding
+        sgc_findings = EvaFinding.objects.filter(
+            eva_review__financial_year=financial_year,
+            check_name="super_guarantee",
+            source="risk_engine",
+            status__in=["open", "reopened"],
+        ).order_by("-created_at")[:1]
+        for f in sgc_findings:
+            flags.setdefault("super_guarantee", []).append(_SyntheticFlag(
+                rule_id="MODULE:cluster_sgc",
+                severity=f.severity.upper() if f.severity else "ADVISORY",
+                title=f.title or "Superannuation Guarantee Shortfall",
+                description=f.plain_english_explanation or "",
+                recommended_action=f.recommendation or "",
+                legislation_ref=f.legislation_reference or "SG Act 1992",
+            ))
+    except Exception as e:
+        logger.warning("Failed to collect SGC module flags: %s", e)
+
+    # ── TPAR (from EvaFinding created by module) ─────────────────────
+    try:
+        from core.models import EvaFinding
+        tpar_findings = EvaFinding.objects.filter(
+            eva_review__financial_year=financial_year,
+            check_name="tpar",
+            source="risk_engine",
+            status__in=["open", "reopened"],
+        ).order_by("-created_at")[:1]
+        for f in tpar_findings:
+            flags.setdefault("tpar", []).append(_SyntheticFlag(
+                rule_id="MODULE:cluster_tpar",
+                severity=f.severity.upper() if f.severity else "ADVISORY",
+                title=f.title or "TPAR Obligation",
+                description=f.plain_english_explanation or "",
+                recommended_action=f.recommendation or "",
+                legislation_ref=f.legislation_reference or "TAA 1953 Sch 1 s 396-55",
+            ))
+    except Exception as e:
+        logger.warning("Failed to collect TPAR module flags: %s", e)
+
+    # ── Related Party (from EvaFinding created by module) ────────────
+    try:
+        from core.models import EvaFinding
+        rp_findings = EvaFinding.objects.filter(
+            eva_review__financial_year=financial_year,
+            check_name="related_party",
+            source="risk_engine",
+            status__in=["open", "reopened"],
+        ).order_by("-created_at")[:1]
+        for f in rp_findings:
+            flags.setdefault("related_party", []).append(_SyntheticFlag(
+                rule_id="MODULE:cluster_rp",
+                severity=f.severity.upper() if f.severity else "ADVISORY",
+                title=f.title or "Related Party Transactions",
+                description=f.plain_english_explanation or "",
+                recommended_action=f.recommendation or "",
+                legislation_ref=f.legislation_reference or "AASB 124",
+            ))
+    except Exception as e:
+        logger.warning("Failed to collect Related Party module flags: %s", e)
+
+    return flags
+
+
 def _run_risk_engine_precheck(financial_year):
     """
     Run the risk engine's deterministic Tier 1 + Tier 2 checks BEFORE
-    the LLM review. Returns a dict of check_id -> list of risk flags.
+    the LLM review. Returns a dict of check_id -> list of risk flags
+    (real RiskFlag objects + synthetic flags from detection modules).
 
     These findings are CONFIRMED HARD FACTS that the LLM cannot override.
     """
     from core.risk_engine import run_risk_engine, _load_trial_balance, _check_div7a_loans
     from core.models import RiskFlag
 
-    # Run the full risk engine (Tier 1 + Tier 2)
+    # Run the full risk engine (Tier 1 + Tier 2 + detection modules)
     try:
         risk_results = run_risk_engine(financial_year, tiers=[1, 2])
         logger.info(
@@ -258,7 +469,7 @@ def _run_risk_engine_precheck(financial_year):
         status__in=["open", "reviewed"],
     ).order_by("tier", "severity")
 
-    # Map risk flags to Eva compliance check IDs
+    # Initialise check_flags with ALL Eva compliance check IDs
     check_flags = {
         "div7a": [],
         "gst_reconciliation": [],
@@ -268,6 +479,11 @@ def _run_risk_engine_precheck(financial_year):
         "depreciation_review": [],
         "tb_integrity": [],
         "comparative_consistency": [],
+        "super_guarantee": [],
+        "ato_benchmarks": [],
+        "going_concern": [],
+        "tpar": [],
+        "thin_capitalisation": [],
     }
 
     for flag in open_flags:
@@ -278,7 +494,6 @@ def _run_risk_engine_precheck(financial_year):
         # Division 7A flags
         if "div7a" in rule_id.lower() or "division 7a" in title_lower or "division 7a" in desc_lower:
             check_flags["div7a"].append(flag)
-        # Loan-related flags that aren't explicitly Div 7A
         elif any(kw in title_lower for kw in ("loan", "director", "shareholder", "advance")):
             check_flags["div7a"].append(flag)
 
@@ -290,11 +505,19 @@ def _run_risk_engine_precheck(financial_year):
         if any(kw in title_lower for kw in ("related party", "management fee", "intercompany")):
             check_flags["related_party"].append(flag)
 
-        # Superannuation flags
+        # Superannuation flags → super_guarantee (fixed: was going to related_party)
         if any(kw in title_lower for kw in ("super", "sgc", "sg rate")):
-            check_flags["related_party"].append(flag)  # Grouped with related party for now
+            check_flags["super_guarantee"].append(flag)
 
-        # Variance flags — relevant to comparative consistency and TB integrity
+        # Going concern / solvency flags
+        if "solvency" in rule_id.lower() or any(kw in title_lower for kw in ("going concern", "solvency", "negative net")):
+            check_flags["going_concern"].append(flag)
+
+        # TPAR / contractor flags
+        if any(kw in title_lower for kw in ("tpar", "contractor", "subcontractor")):
+            check_flags["tpar"].append(flag)
+
+        # Variance flags — relevant to comparative consistency
         if "variance" in rule_id.lower() or "variance" in title_lower:
             check_flags["comparative_consistency"].append(flag)
 
@@ -302,9 +525,24 @@ def _run_risk_engine_precheck(financial_year):
         if "benchmark" in rule_id.lower() or "benchmark" in title_lower:
             check_flags["comparative_consistency"].append(flag)
 
-        # Solvency / balance sign flags
-        if "solvency" in rule_id.lower() or "balance sign" in title_lower:
+        # Balance sign / TB integrity flags
+        if "balance sign" in title_lower:
             check_flags["tb_integrity"].append(flag)
+
+    # ── Collect detection module assessment results as synthetic flags ──
+    # Modules create EvaFinding/assessment records, not RiskFlag rows.
+    # This bridge converts them into flag-like objects so the existing
+    # LLM pipeline gets hard facts injected and the fallback safety net works.
+    try:
+        module_flags = _collect_module_flags(financial_year)
+        for check_id, synth_flags in module_flags.items():
+            check_flags.setdefault(check_id, []).extend(synth_flags)
+            logger.info(
+                "Module flags for %s: %d synthetic flag(s) injected",
+                check_id, len(synth_flags),
+            )
+    except Exception as e:
+        logger.error("Failed to collect module flags: %s", e)
 
     return check_flags, risk_results
 
