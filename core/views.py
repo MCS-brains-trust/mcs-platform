@@ -6907,6 +6907,119 @@ def review_bank_account_mapping(request, pk):
 
 
 @login_required
+def bank_statement_template_download(request):
+    """Serve the bank statement import template .xlsx file."""
+    import os
+    from django.conf import settings as _settings
+    template_path = os.path.join(_settings.BASE_DIR, "static", "bank_statement_template.xlsx")
+    if not os.path.exists(template_path):
+        from django.http import Http404
+        raise Http404("Template file not found.")
+    with open(template_path, "rb") as f:
+        response = HttpResponse(
+            f.read(),
+            content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+        response["Content-Disposition"] = 'attachment; filename="StatementHub_Bank_Statement_Template.xlsx"'
+        return response
+
+
+@login_required
+@require_POST
+def review_validate_opening_balance(request, pk):
+    """Validate that the opening balance from a bank statement import matches
+    the current trial balance closing balance for the mapped bank account.
+
+    Returns JSON with:
+    - tb_balance: the current netted balance in the TB for this account
+    - import_opening: the opening balance from the import
+    - matches: whether they match (within $0.01 tolerance)
+    - account_exists: whether the account exists in the TB at all
+    """
+    import json as _json
+    fy = get_financial_year_for_user(request, pk)
+
+    try:
+        body = _json.loads(request.body)
+    except (ValueError, _json.JSONDecodeError):
+        return JsonResponse({"status": "error", "message": "Invalid JSON."}, status=400)
+
+    tb_account_code = str(body.get('tb_account_code', '')).strip()
+    import_opening_balance = body.get('opening_balance', 0)
+
+    if not tb_account_code:
+        return JsonResponse({"status": "error", "message": "No account code provided."}, status=400)
+
+    try:
+        import_opening = Decimal(str(import_opening_balance)).quantize(Decimal('0.01'))
+    except Exception:
+        import_opening = Decimal('0')
+
+    # Find all TB lines for this account code in this financial year
+    tb_lines = TrialBalanceLine.objects.filter(
+        financial_year=fy,
+        account_code=tb_account_code,
+    )
+
+    if not tb_lines.exists():
+        # Account doesn't exist in TB yet
+        return JsonResponse({
+            "status": "ok",
+            "account_exists": False,
+            "tb_balance": "0.00",
+            "import_opening": str(import_opening),
+            "matches": True,
+            "message": f"Account {tb_account_code} does not exist in the trial balance yet. "
+                       f"It will be created when transactions are posted.",
+        })
+
+    # Calculate the netted balance: sum of (opening_balance + debit - credit) across all lines
+    # For bank accounts (assets), the balance = sum of debits - sum of credits + opening
+    from django.db.models import Sum
+    agg = tb_lines.aggregate(
+        total_opening=Sum('opening_balance'),
+        total_debit=Sum('debit'),
+        total_credit=Sum('credit'),
+    )
+    total_opening = agg['total_opening'] or Decimal('0')
+    total_debit = agg['total_debit'] or Decimal('0')
+    total_credit = agg['total_credit'] or Decimal('0')
+
+    # The current TB closing balance for this account
+    tb_closing = (total_opening + total_debit - total_credit).quantize(Decimal('0.01'))
+
+    # Check if the import's opening balance matches the TB closing balance
+    # The import opening balance should match the TB's current closing balance
+    # because the import adds new movements on top of the existing balance
+    difference = abs(tb_closing - import_opening)
+    matches = difference <= Decimal('0.01')
+
+    response_data = {
+        "status": "ok",
+        "account_exists": True,
+        "tb_balance": str(tb_closing),
+        "import_opening": str(import_opening),
+        "difference": str(difference),
+        "matches": matches,
+    }
+
+    if not matches:
+        response_data["message"] = (
+            f"Opening balance mismatch: The trial balance shows a closing balance of "
+            f"${tb_closing:,.2f} for account {tb_account_code}, but the bank statement "
+            f"opening balance is ${import_opening:,.2f}. Difference: ${difference:,.2f}. "
+            f"Please check for missing bank statements or adjust the trial balance."
+        )
+    else:
+        response_data["message"] = (
+            f"Opening balance matches. TB balance: ${tb_closing:,.2f}, "
+            f"Import opening: ${import_opening:,.2f}."
+        )
+
+    return JsonResponse(response_data)
+
+
+@login_required
 @require_POST
 def review_post_opening_balance(request, pk):
     """Create and auto-post an opening balance journal entry.

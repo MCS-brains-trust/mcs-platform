@@ -216,8 +216,14 @@ urlpatterns = [
     path("years/<uuid:pk>/review/bulk-approve-group/", views.review_bulk_approve_group, name="review_bulk_approve_group"),
     path("years/<uuid:pk>/review/approve-selected/", views.review_approve_selected, name="review_approve_selected"),
 
+    # Bank Statement Template Download
+    path("bank-statement/template/", views.bank_statement_template_download, name="bank_statement_template_download"),
+
     # Bank Account Mapping
     path("years/<uuid:pk>/review/bank-mapping/", views.review_bank_account_mapping, name="review_bank_account_mapping"),
+
+    # Opening Balance Validation API
+    path("years/<uuid:pk>/review/validate-opening-balance/", views.review_validate_opening_balance, name="review_validate_opening_balance"),
 
     # Opening Balance Journal
     path("years/<uuid:pk>/review/opening-balance/", views.review_post_opening_balance, name="review_post_opening_balance"),

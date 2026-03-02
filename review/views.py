@@ -1054,8 +1054,10 @@ def upload_bank_statement(request):
 def _parse_excel_bank_statement(content, filename):
     """Parse an Excel/CSV bank statement into the standard transaction format.
 
-    Supports common Australian bank CSV exports including ANZ, NAB,
-    and generic formats with Date/Amount/Description or Debit/Credit columns.
+    Supports:
+    1. StatementHub template format (metadata in rows 1-4, headers in row 6)
+    2. Common Australian bank CSV exports including ANZ, NAB
+    3. Generic formats with Date/Amount/Description or Debit/Credit columns
     """
     import io
     try:
@@ -1064,10 +1066,72 @@ def _parse_excel_bank_statement(content, filename):
         return None
 
     try:
-        if filename.lower().endswith(".csv"):
-            df = pd.read_csv(io.BytesIO(content))
+        # ── First, try to detect StatementHub template format ─────────
+        # Template has metadata in rows 1-4 (Opening Balance, Closing Balance, BSB, Account Number)
+        # and column headers in row 6 (Date, Description, Debit, Credit, Balance)
+        is_template_format = False
+        meta_opening = 0
+        meta_closing = 0
+        meta_bsb = ""
+        meta_account_number = ""
+
+        try:
+            if filename.lower().endswith(".csv"):
+                # Read first few rows to check for template metadata
+                # Use on_bad_lines='skip' because metadata rows have 2 cols but data rows have 5
+                meta_df = pd.read_csv(io.BytesIO(content), header=None, nrows=4, on_bad_lines='skip')
+            else:
+                # For Excel, try reading the 'Bank Statement' sheet first
+                try:
+                    meta_df = pd.read_excel(io.BytesIO(content), sheet_name='Bank Statement', header=None, nrows=6)
+                except Exception:
+                    meta_df = pd.read_excel(io.BytesIO(content), header=None, nrows=6)
+
+            # Check if row 0 col 0 contains "Opening Balance" (template format)
+            first_cell = str(meta_df.iloc[0, 0]).strip().lower() if len(meta_df) > 0 else ""
+            if first_cell in ('opening balance', 'opening_balance', 'opening bal'):
+                is_template_format = True
+                logger.info(f"Detected StatementHub template format for {filename}")
+
+                # Extract metadata
+                for i in range(min(4, len(meta_df))):
+                    label = str(meta_df.iloc[i, 0]).strip().lower()
+                    value = meta_df.iloc[i, 1] if len(meta_df.columns) > 1 else ""
+                    value_str = str(value).strip() if pd.notna(value) else ""
+
+                    if 'opening' in label and 'balance' in label:
+                        try:
+                            meta_opening = float(str(value_str).replace(',', '').replace('$', '') or 0)
+                        except (ValueError, TypeError):
+                            meta_opening = 0
+                    elif 'closing' in label and 'balance' in label:
+                        try:
+                            meta_closing = float(str(value_str).replace(',', '').replace('$', '') or 0)
+                        except (ValueError, TypeError):
+                            meta_closing = 0
+                    elif label == 'bsb':
+                        meta_bsb = value_str
+                    elif 'account' in label and 'number' in label:
+                        meta_account_number = value_str
+        except Exception as meta_err:
+            logger.debug(f"Template metadata detection failed for {filename}: {meta_err}")
+
+        # ── Read the data portion ─────────────────────────────────────
+        if is_template_format:
+            # Skip metadata rows (0-4) and read from row 5 (header row)
+            if filename.lower().endswith(".csv"):
+                df = pd.read_csv(io.BytesIO(content), skiprows=5)
+            else:
+                try:
+                    df = pd.read_excel(io.BytesIO(content), sheet_name='Bank Statement', skiprows=5)
+                except Exception:
+                    df = pd.read_excel(io.BytesIO(content), skiprows=5)
         else:
-            df = pd.read_excel(io.BytesIO(content))
+            # Standard format: headers in first row
+            if filename.lower().endswith(".csv"):
+                df = pd.read_csv(io.BytesIO(content))
+            else:
+                df = pd.read_excel(io.BytesIO(content))
 
         # Drop completely empty columns (e.g. NAB exports have an unnamed blank column)
         df = df.dropna(axis=1, how="all")
@@ -1128,6 +1192,10 @@ def _parse_excel_bank_statement(content, filename):
             elif "credit" in col_lower and "credit" not in col_map:
                 col_map["credit"] = col
 
+            # Balance column (from template or bank export)
+            elif "balance" in col_lower and "balance" not in col_map:
+                col_map["balance"] = col
+
             # Supplementary columns
             elif "account" in col_lower and "number" in col_lower:
                 col_map["account_number"] = col
@@ -1142,12 +1210,37 @@ def _parse_excel_bank_statement(content, filename):
 
         logger.info(f"Excel/CSV column mapping for {filename}: {col_map}")
 
+        # ── Validate minimum required columns ─────────────────────────
+        has_date = "date" in col_map
+        has_desc = "description" in col_map
+        has_amount = "amount" in col_map or ("debit" in col_map and "credit" in col_map)
+
+        if not has_date or not has_desc or not has_amount:
+            missing = []
+            if not has_date:
+                missing.append("Date")
+            if not has_desc:
+                missing.append("Description")
+            if not has_amount:
+                missing.append("Amount (or Debit/Credit)")
+            logger.warning(
+                f"CSV/Excel {filename}: Missing required columns: {', '.join(missing)}. "
+                f"Found columns: {list(df.columns)}. "
+                f"Please use the StatementHub bank statement template for CSV/Excel uploads."
+            )
+            # Return None so the caller can show a helpful error
+            return None
+
         # ── Extract transactions ───────────────────────────────────────
         transactions = []
-        account_number = ""
+        account_number = meta_account_number
 
         for _, row in df.iterrows():
             date = str(row.get(col_map.get("date", ""), "")).strip()
+
+            # Skip rows where date is empty or NaN (e.g. template instruction rows)
+            if not date or date.lower() == 'nan' or date == 'NaT':
+                continue
 
             # Build description: primary description column, optionally
             # enriched with transaction type or merchant from NAB exports
@@ -1162,11 +1255,13 @@ def _parse_excel_bank_statement(content, filename):
                     amount = 0.0
             elif "debit" in col_map and "credit" in col_map:
                 try:
-                    debit = float(str(row.get(col_map["debit"], 0)).replace(",", "").replace("$", "").strip() or 0)
+                    debit_raw = str(row.get(col_map["debit"], "")).replace(",", "").replace("$", "").strip()
+                    debit = float(debit_raw) if debit_raw and debit_raw.lower() != 'nan' else 0.0
                 except (ValueError, TypeError):
                     debit = 0.0
                 try:
-                    credit = float(str(row.get(col_map["credit"], 0)).replace(",", "").replace("$", "").strip() or 0)
+                    credit_raw = str(row.get(col_map["credit"], "")).replace(",", "").replace("$", "").strip()
+                    credit = float(credit_raw) if credit_raw and credit_raw.lower() != 'nan' else 0.0
                 except (ValueError, TypeError):
                     credit = 0.0
                 amount = credit - debit
@@ -1181,6 +1276,15 @@ def _parse_excel_bank_statement(content, filename):
                 "description": desc,
                 "amount": amount,
             }
+
+            # Attach balance if present
+            if "balance" in col_map:
+                try:
+                    bal_raw = str(row.get(col_map["balance"], "")).replace(",", "").replace("$", "").strip()
+                    if bal_raw and bal_raw.lower() != 'nan':
+                        txn["balance"] = float(bal_raw)
+                except (ValueError, TypeError):
+                    pass
 
             # Attach GST flag if present (ANZ exports)
             if "gst" in col_map:
@@ -1198,12 +1302,26 @@ def _parse_excel_bank_statement(content, filename):
                 if acct and acct != "nan":
                     account_number = acct
 
+        # ── Determine opening/closing balance ─────────────────────────
+        opening_balance = meta_opening
+        closing_balance = meta_closing
+
+        # If no metadata balances but we have a balance column, infer from data
+        if opening_balance == 0 and closing_balance == 0 and "balance" in col_map and transactions:
+            first_txn = transactions[0]
+            last_txn = transactions[-1]
+            if 'balance' in first_txn:
+                # Opening = first balance - first amount
+                opening_balance = first_txn['balance'] - first_txn['amount']
+            if 'balance' in last_txn:
+                closing_balance = last_txn['balance']
+
         return {
             "transactions": transactions,
-            "opening_balance": 0,
-            "closing_balance": 0,
+            "opening_balance": opening_balance,
+            "closing_balance": closing_balance,
             "account_name": "",
-            "bsb": "",
+            "bsb": meta_bsb,
             "account_number": account_number,
             "period_start": "",
             "period_end": "",
@@ -1543,7 +1661,16 @@ def parse_statement(request):
         return JsonResponse({'status': 'error', 'message': f'Extraction error: {exc}'}, status=400)
 
     if not extracted or not extracted.get('transactions'):
-        return JsonResponse({'status': 'error', 'message': f'No transactions could be extracted from {filename}'}, status=400)
+        file_ext = _os.path.splitext(filename)[1].lower()
+        hint = ''
+        if file_ext in ('.csv', '.xlsx', '.xls'):
+            hint = (' Please download the StatementHub bank statement template '
+                    'and re-upload your data in the required format. '
+                    'The template requires columns: Date, Description, Debit, Credit, Balance.')
+        return JsonResponse({
+            'status': 'error',
+            'message': f'No transactions could be extracted from {filename}.{hint}'
+        }, status=400)
 
     transactions = extracted['transactions']
     total_before_filter = len(transactions)

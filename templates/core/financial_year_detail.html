@@ -1338,14 +1338,14 @@
                         <input type="hidden" id="wizardBankMapped" value="1">
                         {% else %}
                         <div class="p-2 rounded bg-warning bg-opacity-10 border border-warning mb-2" id="bankMappingWarning">
-                            <small><i class="bi bi-exclamation-triangle text-warning me-1"></i> No bank account mapped. Map an account to enable double-entry posting.</small>
+                            <small><i class="bi bi-exclamation-triangle text-warning me-1"></i> No bank account mapped. You must map the bank account (debit side) and select the contra account (credit side) for double-entry posting.</small>
                         </div>
                         <input type="hidden" id="wizardBankMapped" value="0">
                         {% endif %}
                         <div id="bankMappingInlineForm" style="{% if active_bank_mapping %}display:none;{% endif %}">
                             <div class="row g-2 align-items-end">
                                 <div class="col-7">
-                                    <label class="form-label mb-0" style="font-size:0.75rem;">Account Code / Name</label>
+                                    <label class="form-label mb-0" style="font-size:0.75rem;"><i class="bi bi-bank me-1"></i>Bank Account (Debit Side)</label>
                                     <div class="position-relative">
                                         <input type="text" class="form-control form-control-sm" id="wizardBankSearch" placeholder="Search chart of accounts..." autocomplete="off">
                                         <div class="dropdown-menu w-100" id="wizardBankResults" style="max-height:200px;overflow-y:auto;"></div>
@@ -1367,6 +1367,11 @@
                         </div>
                     </div>
 
+                    {# --- Opening Balance Validation (shown after parsing) --- #}
+                    <div class="mb-3" id="openingBalanceValidation" style="display:none;">
+                        <div id="obValidationResult"></div>
+                    </div>
+
                     <div class="mb-3">
                         <label class="form-label fw-semibold">Bank Statement Files</label>
                         <div id="fyDropZone" style="border: 2px dashed #ccc; border-radius: 8px; padding: 30px; text-align: center; cursor: pointer; transition: all 0.2s;">
@@ -1377,6 +1382,12 @@
                                 <input type="file" name="files" id="fyFileInput" class="d-none" accept=".pdf,.csv,.xlsx,.xls" multiple>
                             </label>
                             <p class="text-muted small mt-2 mb-0">Accepts multiple PDF, CSV, or Excel files</p>
+                        </div>
+                        <div class="mt-2 d-flex align-items-center">
+                            <a href="{% url 'core:bank_statement_template_download' %}" class="btn btn-outline-success btn-sm">
+                                <i class="bi bi-download me-1"></i> Download CSV/Excel Template
+                            </a>
+                            <small class="text-muted ms-2">Use this template for CSV or Excel uploads to ensure correct formatting.</small>
                         </div>
                         <div id="fyFileList" class="mt-2"></div>
                     </div>
@@ -1876,7 +1887,60 @@
         });
         orderHtml += '</ol></div>';
 
-        overallStatus.innerHTML = `<span class="text-success"><i class="bi bi-check-circle"></i> ${parsedStatements.length} statement(s) parsed — ${totalTxns} transactions. Sorted chronologically. Redirecting to preview...</span>` + orderHtml;
+        overallStatus.innerHTML = `<span class="text-success"><i class="bi bi-check-circle"></i> ${parsedStatements.length} statement(s) parsed — ${totalTxns} transactions. Sorted chronologically.</span>` + orderHtml;
+
+        // ===== Opening Balance Validation =====
+        // Check if the first statement's opening balance matches the TB
+        const obValidationSection = document.getElementById('openingBalanceValidation');
+        const obValidationResult = document.getElementById('obValidationResult');
+        const bankCode = document.getElementById('wizardBankCode').value || '{{ active_bank_mapping.tb_account_code|default:"" }}';
+        const firstStmtOpening = parsedStatements[0] ? parsedStatements[0].opening_balance : 0;
+
+        if (bankCode && firstStmtOpening !== undefined) {
+            try {
+                const obResp = await fetch('{% url "core:review_validate_opening_balance" pk=fy.pk %}', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRFToken': csrfToken,
+                        'X-Requested-With': 'XMLHttpRequest',
+                    },
+                    body: JSON.stringify({
+                        tb_account_code: bankCode,
+                        opening_balance: firstStmtOpening,
+                    }),
+                });
+                const obData = await obResp.json();
+                if (obData.status === 'ok') {
+                    obValidationSection.style.display = 'block';
+                    if (!obData.account_exists) {
+                        obValidationResult.innerHTML = `
+                            <div class="alert alert-info py-2 mb-0 small">
+                                <i class="bi bi-info-circle me-1"></i>
+                                <strong>New Account:</strong> ${obData.message}
+                            </div>`;
+                    } else if (obData.matches) {
+                        obValidationResult.innerHTML = `
+                            <div class="alert alert-success py-2 mb-0 small">
+                                <i class="bi bi-check-circle me-1"></i>
+                                <strong>Balance Verified:</strong> Opening balance ($${parseFloat(firstStmtOpening).toLocaleString('en-AU', {minimumFractionDigits: 2})}) matches the trial balance closing balance ($${parseFloat(obData.tb_balance).toLocaleString('en-AU', {minimumFractionDigits: 2})}).
+                            </div>`;
+                    } else {
+                        obValidationResult.innerHTML = `
+                            <div class="alert alert-warning py-2 mb-0 small">
+                                <i class="bi bi-exclamation-triangle me-1"></i>
+                                <strong>Balance Mismatch:</strong> ${obData.message}
+                                <br><small class="text-muted">You can still proceed, but movements and closing balances may not reconcile correctly.</small>
+                            </div>`;
+                    }
+                }
+            } catch (obErr) {
+                console.error('Opening balance validation error:', obErr);
+            }
+        }
+
+        // Short delay to show validation result before redirect
+        overallStatus.innerHTML += ' <span class="text-muted">Redirecting to preview...</span>';
 
         try {
             sessionStorage.setItem('mcs_preview_statements', JSON.stringify(parsedStatements));
@@ -1888,10 +1952,10 @@
             return;
         }
 
-        // Redirect to preview page
+        // Redirect to preview page (with slight delay to show OB validation)
         const fyId = form.querySelector('[name=financial_year_id]').value;
         const previewUrl = `/upload-preview/?fy=${fyId}&entity=${entityId}`;
-        setTimeout(() => { window.location.href = previewUrl; }, 500);
+        setTimeout(() => { window.location.href = previewUrl; }, 1500);
     });
 })();
 
