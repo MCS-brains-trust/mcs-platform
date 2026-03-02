@@ -4984,9 +4984,9 @@ def gst_activity_statement(request, pk):
 
         if not coa and not ecoa:
             # Not in any COA — check if we can infer from tax_type
-            # GST clearing accounts (9100/9110) are excluded from BAS
+            # GST control/clearing accounts are excluded from BAS
             # (GST is calculated from the revenue/expense gross amounts)
-            if line.account_code in ('9100', '9110'):
+            if line.account_code in ('3380', '9100', '9110'):
                 excluded_lines.append({
                     "code": line.account_code,
                     "name": line.account_name,
@@ -5052,7 +5052,7 @@ def gst_activity_statement(request, pk):
             amount = max(line.debit, line.credit)
 
         # BAS requires GROSS amounts (including GST).
-        # Bank statement TB lines store NET amounts (ex-GST) with GST in 9110/9100.
+        # Bank statement TB lines store NET amounts (ex-GST) with GST in 3380 (GST payable control account).
         # For GST-coded lines, gross up: net * 11/10
         if tax_code in ('INP', 'GST') and line.source == 'bank_statement':
             amount = (amount * Decimal('11') / Decimal('10')).quantize(Decimal('0.01'))
@@ -5219,8 +5219,8 @@ def gst_activity_statement_download(request, pk):
         line_tax = (getattr(line, 'tax_type', '') or '').strip()
 
         if not coa and not ecoa:
-            # Skip GST clearing accounts
-            if line.account_code in ('9100', '9110'):
+            # Skip GST control/clearing accounts
+            if line.account_code in ('3380', '9100', '9110'):
                 continue
             # Infer from tax_type
             tax_type_map = {
@@ -5263,7 +5263,7 @@ def gst_activity_statement_download(request, pk):
             amount = max(line.debit, line.credit)
 
         # BAS requires GROSS amounts (including GST).
-        # Bank statement TB lines store NET amounts (ex-GST) with GST in 9110/9100.
+        # Bank statement TB lines store NET amounts (ex-GST) with GST in 3380 (GST payable control account).
         if tax_code in ('INP', 'GST') and line.source == 'bank_statement':
             amount = (amount * Decimal('11') / Decimal('10')).quantize(Decimal('0.01'))
 
@@ -6229,13 +6229,13 @@ def review_approve_transaction(request, pk):
                 tb_line.save()
             tb_updated = True
 
-            # If GST applies, also post the GST component to the GST Collected/Paid account
+            # If GST applies, post the GST component to 3380 GST payable control account
             if has_gst and txn.confirmed_gst_amount > 0:
                 gst_amt = txn.confirmed_gst_amount
+                gst_code = '3380'
+                gst_name = 'GST payable control account'
                 if amount > 0:
-                    # Income: GST Collected (liability) - code 9100
-                    gst_code = '9100'
-                    gst_name = 'GST Collected'
+                    # Income: GST Collected — credit 3380 (increases liability)
                     gst_line, gst_created = _get_or_create_tb_line(
                         financial_year=target_fy,
                         account_code=gst_code,
@@ -6253,9 +6253,7 @@ def review_approve_transaction(request, pk):
                         gst_line.closing_balance -= gst_amt
                         gst_line.save()
                 else:
-                    # Expense: GST Paid (asset) - code 9110
-                    gst_code = '9110'
-                    gst_name = 'GST Paid'
+                    # Expense: GST Paid — debit 3380 (reduces liability / creates asset)
                     gst_line, gst_created = _get_or_create_tb_line(
                         financial_year=target_fy,
                         account_code=gst_code,
@@ -6379,7 +6377,7 @@ def review_unconfirm_transaction(request, pk):
             # Reverse the GST clearing account line
             if txn.confirmed_gst_amount and txn.confirmed_gst_amount > 0:
                 gst_amt = txn.confirmed_gst_amount
-                gst_code = '9100' if txn.amount > 0 else '9110'
+                gst_code = '3380'
                 gst_line = TrialBalanceLine.objects.filter(
                     financial_year=target_fy,
                     account_code=gst_code,
@@ -6510,15 +6508,15 @@ def review_approve_all(request, pk):
                     tb_line.save()
                 tb_count += 1
 
-                # If GST applies, also post the GST component to the GST clearing account
+                # If GST applies, post the GST component to 3380 GST payable control account
                 if has_gst:
                     gst_amt = txn.confirmed_gst_amount
                     if amount > 0:
                         gst_line, gst_created = _get_or_create_tb_line(
                             financial_year=fy,
-                            account_code='9100',
+                            account_code='3380',
                             defaults={
-                                "account_name": 'GST Collected',
+                                "account_name": 'GST payable control account',
                                 "debit": Decimal("0"),
                                 "credit": gst_amt,
                                 "closing_balance": -gst_amt,
@@ -6533,9 +6531,9 @@ def review_approve_all(request, pk):
                     else:
                         gst_line, gst_created = _get_or_create_tb_line(
                             financial_year=fy,
-                            account_code='9110',
+                            account_code='3380',
                             defaults={
-                                "account_name": 'GST Paid',
+                                "account_name": 'GST payable control account',
                                 "debit": gst_amt,
                                 "credit": Decimal("0"),
                                 "closing_balance": gst_amt,
@@ -6680,15 +6678,15 @@ def review_approve_selected(request, pk):
                 tb_line.save()
             tb_count += 1
 
-            # GST clearing account
+            # GST clearing account — all GST posts to 3380
             if has_gst and txn.confirmed_gst_amount > 0:
                 gst_amt = txn.confirmed_gst_amount
                 if amount > 0:
                     gst_line, gst_created = _get_or_create_tb_line(
                         financial_year=fy,
-                        account_code='9100',
+                        account_code='3380',
                         defaults={
-                            "account_name": 'GST Collected',
+                            "account_name": 'GST payable control account',
                             "debit": Decimal("0"),
                             "credit": gst_amt,
                             "closing_balance": -gst_amt,
@@ -6703,9 +6701,9 @@ def review_approve_selected(request, pk):
                 else:
                     gst_line, gst_created = _get_or_create_tb_line(
                         financial_year=fy,
-                        account_code='9110',
+                        account_code='3380',
                         defaults={
-                            "account_name": 'GST Paid',
+                            "account_name": 'GST payable control account',
                             "debit": gst_amt,
                             "credit": Decimal("0"),
                             "closing_balance": gst_amt,
@@ -7116,7 +7114,7 @@ def _reverse_tb_for_transaction(txn, fy):
     # Reverse the GST clearing account line
     if txn.confirmed_gst_amount and txn.confirmed_gst_amount > 0:
         gst_amt = txn.confirmed_gst_amount
-        gst_code = '9100' if txn.amount > 0 else '9110'
+        gst_code = '3380'
         gst_line = TrialBalanceLine.objects.filter(
             financial_year=fy,
             account_code=gst_code,
@@ -7251,14 +7249,14 @@ def review_bulk_edit_transactions(request, pk):
                     tb_line.save()
                 tb_count += 1
 
-                # GST clearing account
+                # GST clearing account — all GST posts to 3380
                 if has_gst and gst_amount > 0:
                     if txn.amount > 0:
                         gst_line, gst_created = _get_or_create_tb_line(
                             financial_year=fy,
-                            account_code='9100',
+                            account_code='3380',
                             defaults={
-                                "account_name": 'GST Collected',
+                                "account_name": 'GST payable control account',
                                 "debit": Decimal("0"),
                                 "credit": gst_amount,
                                 "closing_balance": -gst_amount,
@@ -7273,9 +7271,9 @@ def review_bulk_edit_transactions(request, pk):
                     else:
                         gst_line, gst_created = _get_or_create_tb_line(
                             financial_year=fy,
-                            account_code='9110',
+                            account_code='3380',
                             defaults={
-                                "account_name": 'GST Paid',
+                                "account_name": 'GST payable control account',
                                 "debit": gst_amount,
                                 "credit": Decimal("0"),
                                 "closing_balance": gst_amount,
@@ -8971,16 +8969,16 @@ def review_bulk_approve_group(request, pk):
                 tb_line.save()
             tb_count += 1
 
-            # If GST applies, also post the GST component to the GST clearing account
+            # If GST applies, post the GST component to 3380 GST payable control account
             if has_gst:
                 gst_amt = txn.confirmed_gst_amount
                 if amount > 0:
-                    # Income: GST Collected (liability) - code 9100
+                    # Income: GST Collected — credit 3380 (increases liability)
                     gst_line, gst_created = _get_or_create_tb_line(
                         financial_year=fy,
-                        account_code='9100',
+                        account_code='3380',
                         defaults={
-                            "account_name": 'GST Collected',
+                            "account_name": 'GST payable control account',
                             "debit": Decimal("0"),
                             "credit": gst_amt,
                             "closing_balance": -gst_amt,
@@ -8993,12 +8991,12 @@ def review_bulk_approve_group(request, pk):
                         gst_line.closing_balance -= gst_amt
                         gst_line.save()
                 else:
-                    # Expense: GST Paid (asset) - code 9110
+                    # Expense: GST Paid — debit 3380 (reduces liability / creates asset)
                     gst_line, gst_created = _get_or_create_tb_line(
                         financial_year=fy,
-                        account_code='9110',
+                        account_code='3380',
                         defaults={
-                            "account_name": 'GST Paid',
+                            "account_name": 'GST payable control account',
                             "debit": gst_amt,
                             "credit": Decimal("0"),
                             "closing_balance": gst_amt,

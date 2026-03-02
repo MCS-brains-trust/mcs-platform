@@ -298,7 +298,7 @@ def _classify_line(account_code, tax_code, section, amount, coa_lookup, entity_c
     of label -> amount to add.
     """
     # BAS requires GROSS amounts (including GST).
-    # Bank statement TB lines store NET amounts (ex-GST) with GST in 9110/9100.
+    # Bank statement TB lines store NET amounts (ex-GST) with GST in 3380 (GST payable control account).
     if tax_code in ('INP', 'GST') and source == 'bank_statement':
         amount = (amount * Decimal('11') / Decimal('10')).quantize(Decimal('0.01'))
 
@@ -370,7 +370,7 @@ def _resolve_section_and_tax(account_code, coa_lookup, entity_coa_lookup, line_t
     }
 
     if not coa and not ecoa:
-        if account_code in ('9100', '9110'):
+        if account_code in ('3380', '9100', '9110'):
             return None, None, "gst_clearing"
 
         mapped = tax_type_map.get(line_tax)
