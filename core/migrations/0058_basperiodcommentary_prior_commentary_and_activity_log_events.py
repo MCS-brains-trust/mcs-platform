@@ -9,7 +9,7 @@ import django.db.models.deletion
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("core", "0057_reclassify_3565_and_2950"),
+        ("core", "0058_asicreturn_basperiodcommentary_correspondence_and_more"),
     ]
 
     operations = [
