@@ -2,7 +2,17 @@
 Eva AI Practice Intelligence — Chat Panel
 Floating chat bubble + expandable panel for the FY workspace.
 Included at the bottom of financial_year_detail.html.
+
+Issues addressed:
+  #8  — Response speed (haiku default, concise prompt)
+  #9  — Markdown rendering via marked.js
+  #10 — Copy/export buttons per message
+  #11 — Conversation persistence (load history on open)
+  #12 — Proactive flagging UI (amber dot, proactive message styling)
 {% endcomment %}
+
+<!-- marked.js CDN for proper markdown rendering (Issue 9) -->
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 
 <!-- Eva Chat Bubble -->
 <div id="eva-chat-bubble" onclick="toggleEvaChat()" title="Ask Eva">
@@ -26,6 +36,9 @@ Included at the bottom of financial_year_detail.html.
                 <input class="form-check-input" type="checkbox" id="evaOpusToggle" style="cursor:pointer;">
                 <label class="form-check-label" for="evaOpusToggle" style="font-size: 0.7rem; cursor:pointer;">Opus</label>
             </div>
+            <button type="button" class="btn btn-sm btn-link text-white p-0" onclick="evaExportChat()" title="Export conversation">
+                <i class="bi bi-download"></i>
+            </button>
             <button type="button" class="btn btn-sm btn-link text-white p-0" onclick="toggleEvaChat()">
                 <i class="bi bi-dash-lg"></i>
             </button>
@@ -98,6 +111,7 @@ Included at the bottom of financial_year_detail.html.
 }
 @keyframes evaPulse {
     0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.6; transform: scale(0.85); }
 }
 
 /* ── Streaming cursor ── */
@@ -116,8 +130,8 @@ Included at the bottom of financial_year_detail.html.
     position: fixed;
     bottom: 90px;
     right: 24px;
-    width: 380px;
-    height: 520px;
+    width: 420px;
+    height: 560px;
     background: white;
     border-radius: 12px;
     box-shadow: 0 8px 32px rgba(0,0,0,0.15);
@@ -169,7 +183,8 @@ Included at the bottom of financial_year_detail.html.
 }
 
 .eva-msg {
-    max-width: 90%;
+    max-width: 92%;
+    position: relative;
 }
 .eva-msg-user {
     align-self: flex-end;
@@ -193,7 +208,7 @@ Included at the bottom of financial_year_detail.html.
     color: #1f2937;
     border-bottom-left-radius: 4px;
 }
-.eva-msg-assistant .eva-msg-content strong {
+.eva-msg-assistant .eva-msg-content > strong:first-child {
     color: #0F6B74;
     font-size: 0.75rem;
     display: block;
@@ -205,8 +220,37 @@ Included at the bottom of financial_year_detail.html.
 .eva-msg-assistant .eva-msg-content p:last-child {
     margin-bottom: 0;
 }
+/* Proactive message styling (Issue 12) */
 .eva-msg-proactive .eva-msg-content {
     border-left: 3px solid #F59E0B;
+    background: #fffbeb;
+}
+
+/* ── Copy button on hover (Issue 10) ── */
+.eva-msg-actions {
+    display: none;
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    gap: 2px;
+}
+.eva-msg:hover .eva-msg-actions {
+    display: flex;
+}
+.eva-msg-actions button {
+    background: rgba(255,255,255,0.9);
+    border: 1px solid #e5e7eb;
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 0.7rem;
+    cursor: pointer;
+    color: #6b7280;
+    transition: all 0.15s;
+}
+.eva-msg-actions button:hover {
+    background: #0F6B74;
+    color: white;
+    border-color: #0F6B74;
 }
 
 /* ── Input ── */
@@ -239,12 +283,27 @@ Included at the bottom of financial_year_detail.html.
     50% { opacity: 1; transform: translateY(-3px); }
 }
 
-/* ── Markdown in Eva messages ── */
+/* ── Markdown in Eva messages (Issue 9) ── */
 .eva-msg-content code {
     background: rgba(0,0,0,0.06);
     padding: 1px 4px;
     border-radius: 3px;
     font-size: 0.82rem;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+}
+.eva-msg-content pre {
+    background: #1f2937;
+    color: #e5e7eb;
+    padding: 10px 12px;
+    border-radius: 6px;
+    overflow-x: auto;
+    font-size: 0.78rem;
+    margin: 8px 0;
+}
+.eva-msg-content pre code {
+    background: none;
+    padding: 0;
+    color: inherit;
 }
 .eva-msg-content ul, .eva-msg-content ol {
     padding-left: 20px;
@@ -253,14 +312,55 @@ Included at the bottom of financial_year_detail.html.
 .eva-msg-content li {
     margin-bottom: 2px;
 }
+.eva-msg-content table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.78rem;
+    margin: 8px 0;
+}
+.eva-msg-content table th,
+.eva-msg-content table td {
+    border: 1px solid #e5e7eb;
+    padding: 4px 8px;
+    text-align: left;
+}
+.eva-msg-content table th {
+    background: #f9fafb;
+    font-weight: 600;
+}
+.eva-msg-content blockquote {
+    border-left: 3px solid #0F6B74;
+    margin: 8px 0;
+    padding: 4px 12px;
+    color: #4b5563;
+    font-style: italic;
+    background: #f9fafb;
+    border-radius: 0 4px 4px 0;
+}
+.eva-msg-content h4, .eva-msg-content h5, .eva-msg-content h6 {
+    margin: 8px 0 4px 0;
+    font-size: 0.88rem;
+    color: #0F6B74;
+}
 </style>
 
 <script>
 (function() {
     var evaPanelOpen = false;
     var evaLoading = false;
+    var evaHistoryLoaded = false;
     var csrfToken = '{{ csrf_token }}';
     var fyPk = '{{ fy.pk }}';
+
+    // Configure marked.js for safe rendering (Issue 9)
+    if (typeof marked !== 'undefined') {
+        marked.setOptions({
+            breaks: true,
+            gfm: true,
+            headerIds: false,
+            mangle: false,
+        });
+    }
 
     window.toggleEvaChat = function() {
         var panel = document.getElementById('eva-chat-panel');
@@ -270,8 +370,8 @@ Included at the bottom of financial_year_detail.html.
         bubble.style.display = evaPanelOpen ? 'none' : 'flex';
 
         if (evaPanelOpen) {
-            // Load conversation history on first open
-            if (document.querySelectorAll('#eva-messages .eva-msg').length <= 1) {
+            // Load conversation history on first open (Issue 11)
+            if (!evaHistoryLoaded) {
                 loadEvaHistory();
             }
             document.getElementById('eva-input').focus();
@@ -286,15 +386,16 @@ Included at the bottom of financial_year_detail.html.
         .then(function(data) {
             if (data.messages && data.messages.length > 0) {
                 var container = document.getElementById('eva-messages');
-                // Keep the welcome message, add history after
                 data.messages.forEach(function(msg) {
                     appendMessage(msg.role, msg.content, msg.is_proactive);
                 });
                 scrollToBottom();
             }
+            evaHistoryLoaded = true;
         })
         .catch(function(err) {
             console.error('Eva history load failed:', err);
+            evaHistoryLoaded = true;
         });
     }
 
@@ -325,14 +426,12 @@ Included at the bottom of financial_year_detail.html.
             },
             body: JSON.stringify({
                 message: text,
-                opus_override: useOpus,
+                model_override: useOpus ? 'opus' : '',
             }),
         })
         .then(function(r) {
-            // Check if this is a streaming response
             var ct = r.headers.get('content-type') || '';
             if (ct.indexOf('text/event-stream') !== -1) {
-                // Streaming SSE response — read tokens as they arrive
                 hideTypingIndicator();
                 var streamDiv = appendStreamingMessage();
                 var rawText = '';
@@ -342,18 +441,16 @@ Included at the bottom of financial_year_detail.html.
                 function readChunk() {
                     reader.read().then(function(result) {
                         if (result.done) {
-                            // Stream finished — finalise
                             evaLoading = false;
                             setEvaStatus('ready', 'Ready');
-                            // Re-render with full markdown
                             if (streamDiv) {
-                                streamDiv.innerHTML = '<strong>Eva</strong>' + formatMarkdown(rawText);
+                                streamDiv.innerHTML = '<strong>Eva</strong>' + renderMarkdown(rawText);
+                                addCopyButton(streamDiv.parentElement, rawText);
                             }
                             scrollToBottom();
                             return;
                         }
                         var text = decoder.decode(result.value, {stream: true});
-                        // Parse SSE lines: "data: {...}\n\n"
                         var lines = text.split('\n');
                         for (var i = 0; i < lines.length; i++) {
                             var line = lines[i].trim();
@@ -364,7 +461,7 @@ Included at the bottom of financial_year_detail.html.
                                         rawText += payload.token;
                                         setEvaStatus('thinking', 'Eva is writing...');
                                         if (streamDiv) {
-                                            streamDiv.innerHTML = '<strong>Eva</strong>' + formatMarkdown(rawText);
+                                            streamDiv.innerHTML = '<strong>Eva</strong>' + renderMarkdown(rawText) + '<span class="eva-cursor">|</span>';
                                         }
                                         scrollToBottom();
                                     }
@@ -372,7 +469,8 @@ Included at the bottom of financial_year_detail.html.
                                         evaLoading = false;
                                         setEvaStatus('ready', 'Ready');
                                         if (streamDiv) {
-                                            streamDiv.innerHTML = '<strong>Eva</strong>' + formatMarkdown(rawText);
+                                            streamDiv.innerHTML = '<strong>Eva</strong>' + renderMarkdown(rawText);
+                                            addCopyButton(streamDiv.parentElement, rawText);
                                         }
                                         scrollToBottom();
                                     }
@@ -388,7 +486,6 @@ Included at the bottom of financial_year_detail.html.
                 }
                 readChunk();
             } else {
-                // Non-streaming fallback (JSON response)
                 return r.json().then(function(data) {
                     hideTypingIndicator();
                     evaLoading = false;
@@ -414,7 +511,6 @@ Included at the bottom of financial_year_detail.html.
     };
 
     function appendStreamingMessage() {
-        // Create an empty assistant message div for streaming tokens into
         var container = document.getElementById('eva-messages');
         var div = document.createElement('div');
         div.className = 'eva-msg eva-msg-assistant';
@@ -437,17 +533,55 @@ Included at the bottom of financial_year_detail.html.
         inner.className = 'eva-msg-content';
 
         if (role === 'assistant') {
-            inner.innerHTML = '<strong>Eva</strong>' + formatMarkdown(content);
+            inner.innerHTML = '<strong>Eva</strong>' + renderMarkdown(content);
+            div.appendChild(inner);
+            // Add copy button for assistant messages (Issue 10)
+            addCopyButton(div, content);
         } else {
             inner.textContent = content;
+            div.appendChild(inner);
         }
 
-        div.appendChild(inner);
         container.appendChild(div);
     }
 
-    function formatMarkdown(text) {
-        // Simple markdown formatting
+    // Issue 10: Add copy button to assistant messages
+    function addCopyButton(msgDiv, rawContent) {
+        var actions = document.createElement('div');
+        actions.className = 'eva-msg-actions';
+
+        var copyBtn = document.createElement('button');
+        copyBtn.innerHTML = '<i class="bi bi-clipboard"></i>';
+        copyBtn.title = 'Copy to clipboard';
+        copyBtn.onclick = function(e) {
+            e.stopPropagation();
+            navigator.clipboard.writeText(rawContent).then(function() {
+                copyBtn.innerHTML = '<i class="bi bi-check2"></i>';
+                setTimeout(function() {
+                    copyBtn.innerHTML = '<i class="bi bi-clipboard"></i>';
+                }, 1500);
+            });
+        };
+        actions.appendChild(copyBtn);
+
+        msgDiv.appendChild(actions);
+    }
+
+    // Issue 9: Use marked.js for proper markdown rendering
+    function renderMarkdown(text) {
+        if (typeof marked !== 'undefined' && marked.parse) {
+            try {
+                return marked.parse(text);
+            } catch(e) {
+                console.warn('marked.js parse error, falling back:', e);
+                return fallbackMarkdown(text);
+            }
+        }
+        return fallbackMarkdown(text);
+    }
+
+    // Fallback if marked.js fails to load
+    function fallbackMarkdown(text) {
         var html = text
             .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
             .replace(/\*(.*?)\*/g, '<em>$1</em>')
@@ -461,6 +595,30 @@ Included at the bottom of financial_year_detail.html.
             .replace(/\n/g, '<br>');
         return '<p>' + html + '</p>';
     }
+
+    // Issue 10: Export full conversation as markdown
+    window.evaExportChat = function() {
+        var msgs = document.querySelectorAll('#eva-messages .eva-msg');
+        var lines = ['# Eva Chat — {{ entity.entity_name }} — {{ fy.year_label }}', ''];
+        msgs.forEach(function(msg) {
+            var isUser = msg.classList.contains('eva-msg-user');
+            var content = msg.querySelector('.eva-msg-content');
+            if (!content) return;
+            var text = content.innerText || content.textContent || '';
+            // Remove the "Eva" label from assistant messages
+            if (!isUser && text.startsWith('Eva')) {
+                text = text.substring(3).trim();
+            }
+            lines.push(isUser ? '**You:** ' + text : '**Eva:** ' + text);
+            lines.push('');
+        });
+        var blob = new Blob([lines.join('\n')], {type: 'text/markdown'});
+        var a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'eva-chat-{{ entity.entity_name|slugify }}-{{ fy.year_label|slugify }}.md';
+        a.click();
+        URL.revokeObjectURL(a.href);
+    };
 
     function showTypingIndicator() {
         var container = document.getElementById('eva-messages');
@@ -490,5 +648,27 @@ Included at the bottom of financial_year_detail.html.
             container.scrollTop = container.scrollHeight;
         }, 50);
     }
+
+    // Issue 12: Check for proactive alerts on page load
+    // If Eva has unread proactive messages, pulse the chat bubble
+    {% if fy.pk %}
+    setTimeout(function() {
+        fetch('/api/financial-years/' + fyPk + '/eva-chat/', {
+            headers: {'X-Requested-With': 'XMLHttpRequest'},
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.messages) {
+                var hasUnread = data.messages.some(function(m) {
+                    return m.is_proactive && m.role === 'assistant';
+                });
+                if (hasUnread) {
+                    document.getElementById('eva-pulse-dot').style.display = 'block';
+                }
+            }
+        })
+        .catch(function() {});
+    }, 2000);
+    {% endif %}
 })();
 </script>

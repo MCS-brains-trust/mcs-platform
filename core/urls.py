@@ -17,6 +17,7 @@ from . import views_compliance_docs
 from . import views_partnership_docs
 from . import views_package_assembly
 from . import views_bulk_operations
+from . import views_bas_commentary
 
 app_name = "core"
 
@@ -192,6 +193,15 @@ urlpatterns = [
     path("years/<uuid:pk>/gst/lodge/<int:period_number>/", views_bas.bas_lodge_period, name="bas_lodge_period"),
     path("years/<uuid:pk>/gst/unlodge/<int:period_number>/", views_bas.bas_unlodge_period, name="bas_unlodge_period"),
     path("years/<uuid:pk>/gst/coverage/<int:period_number>/", views_bas.bas_coverage_check, name="bas_coverage_check"),
+
+    # BAS Period Commentary
+    path("years/<uuid:pk>/gst/commentary/generate/", views_bas_commentary.generate_commentary, name="bas_commentary_generate"),
+    path("years/<uuid:pk>/gst/commentary/list/", views_bas_commentary.list_commentaries, name="bas_commentary_list"),
+    path("commentary/<uuid:pk>/", views_bas_commentary.get_commentary, name="bas_commentary_detail"),
+    path("commentary/<uuid:pk>/update/", views_bas_commentary.update_commentary, name="bas_commentary_update"),
+    path("commentary/<uuid:pk>/regenerate/", views_bas_commentary.regenerate_commentary, name="bas_commentary_regenerate"),
+    path("commentary/<uuid:pk>/download/", views_bas_commentary.download_commentary, name="bas_commentary_download"),
+    path("commentary/<uuid:pk>/status/", views_bas_commentary.commentary_status, name="bas_commentary_status"),
 
     # Depreciation
     path("years/<uuid:pk>/depreciation/add/", views.depreciation_add, name="depreciation_add"),

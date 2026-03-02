@@ -31,15 +31,46 @@ Your role:
 - Flag potential compliance risks and suggest next steps
 - Be concise, professional, and practical
 
-Important rules:
-1. Always ground your answers in the provided financial data and Knowledge Brain context
-2. When citing Knowledge Brain sources, reference them as [Source N]
-3. If you don't have enough information, say so clearly
-4. Never fabricate financial figures — only reference what's in the context
-5. For complex tax questions, recommend the accountant verify with the managing director
-6. Use Australian English spelling and conventions
-7. Format monetary values as $X,XXX with AUD assumed
-8. When discussing legislation, cite the specific section (e.g. s.109D ITAA 1936)
+═══════════════════════════════════════════════════════
+RESPONSE SPEED — CRITICAL
+═══════════════════════════════════════════════════════
+
+You are in a real-time chat. The accountant is waiting. Respond FAST.
+- Lead with the answer, then provide supporting detail.
+- Do NOT write preambles like "Great question!" or "Let me look into that."
+- Do NOT repeat the question back.
+- Target 150-300 words for most responses. Only exceed for complex multi-part questions.
+- Use markdown formatting: **bold** for key figures, `code` for account codes,
+  tables for comparisons, and bullet points for lists.
+
+═══════════════════════════════════════════════════════
+FORMATTING RULES
+═══════════════════════════════════════════════════════
+
+You MUST use proper Markdown formatting in your responses:
+- Use **bold** for monetary amounts and key terms
+- Use `backticks` for account codes (e.g. `2-1200`)
+- Use markdown tables when comparing figures:
+  | Account | Current Year | Prior Year | Variance |
+  |---------|-------------|-----------|----------|
+  | `2-1200` | $52,340 | $48,100 | +$4,240 |
+- Use ### headings for multi-section responses
+- Use > blockquotes for legislative references
+- Use numbered lists for step-by-step procedures
+- Use bullet points for general lists
+
+═══════════════════════════════════════════════════════
+CORE RULES
+═══════════════════════════════════════════════════════
+
+1. Always ground your answers in the provided financial data and Knowledge Brain context.
+2. When citing Knowledge Brain sources, reference them as [Source N].
+3. If you don't have enough information, say so clearly — do NOT guess.
+4. Never fabricate financial figures — only reference what's in the context.
+5. For complex tax questions, recommend the accountant verify with the managing director.
+6. Use Australian English spelling and conventions.
+7. Format monetary values as **$X,XXX** with AUD assumed.
+8. When discussing legislation, cite the specific section (e.g. s.109D ITAA 1936).
 
 Entity context and financial data will be provided with each message.
 """
@@ -216,10 +247,12 @@ def eva_chat_send(request, pk):
 
     model_override = body.get("model_override", "")
 
-    # Determine model tier
-    tier = "sonnet"
+    # Determine model tier — default to haiku for speed (Issue 8)
+    tier = "haiku"
     if model_override == "opus":
         tier = "opus"
+    elif model_override == "sonnet":
+        tier = "sonnet"
 
     # Get or create conversation for this FY + user
     conversation, created = EvaConversation.objects.get_or_create(
@@ -289,7 +322,7 @@ def eva_chat_send(request, pk):
                 user_prompt=user_prompt,
                 tier=_tier,
                 temperature=0.3,
-                max_tokens=2000,
+                max_tokens=1500,
             ):
                 full_text.append(chunk)
                 # SSE format: data: <json>\n\n
@@ -374,7 +407,7 @@ def eva_chat_history(request, pk):
         return JsonResponse({"messages": [], "message_count": 0})
 
     messages = conversation.messages.order_by("created_at").values(
-        "id", "role", "content", "model_used", "created_at"
+        "id", "role", "content", "model_used", "is_proactive", "created_at"
     )
 
     return JsonResponse({
@@ -384,11 +417,13 @@ def eva_chat_history(request, pk):
                 "role": m["role"],
                 "content": m["content"],
                 "model_used": m["model_used"],
+                "is_proactive": m["is_proactive"],
                 "created_at": m["created_at"].isoformat(),
             }
             for m in messages
         ],
         "message_count": conversation.message_count,
+        "conversation_id": str(conversation.pk),
     })
 
 

@@ -178,3 +178,23 @@ def bulk_package_generation(self, entity_ids, triggered_by_id=None):
     except Exception as exc:
         logger.exception("Bulk package generation failed")
         raise
+
+
+# ---------------------------------------------------------------------------
+# BAS Period Commentary
+# ---------------------------------------------------------------------------
+@shared_task(name="core.eva_bas_commentary", bind=True, max_retries=1)
+def eva_bas_commentary(self, commentary_id, user_id):
+    """
+    Generate AI-powered BAS period commentary.
+    Transforms raw BAS/GST compliance data into client-ready advisory insights
+    with a five-section structure.
+    """
+    from core.eva_bas_commentary import generate_bas_commentary
+    try:
+        result = generate_bas_commentary(commentary_id, user_id)
+        logger.info("BAS commentary generated for %s", commentary_id)
+        return result
+    except Exception as exc:
+        logger.exception("BAS commentary generation failed for %s", commentary_id)
+        raise self.retry(exc=exc, countdown=30)
