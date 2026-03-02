@@ -2123,7 +2123,6 @@ def export_transactions_pdf(request, pk):
     Query params:
         filter=pending|confirmed|all  (default: all)
     """
-    import os
     import weasyprint
     from django.http import HttpResponse
     from django.utils.html import escape as html_escape
@@ -2143,15 +2142,6 @@ def export_transactions_pdf(request, pk):
         section_title = "All Transactions"
 
     is_gst = job.is_gst_registered
-
-    # Logo as base64 data URI for embedding in the PDF
-    logo_html = ""
-    logo_path = os.path.join(settings.BASE_DIR, "static", "img", "mcs_logo.png")
-    if os.path.exists(logo_path):
-        import base64
-        with open(logo_path, "rb") as f:
-            logo_b64 = base64.b64encode(f.read()).decode()
-        logo_html = f'<img src="data:image/png;base64,{logo_b64}" style="height:40px;" alt="MC&amp;S">'
 
     # Build transaction rows
     rows_html = ""
@@ -2297,7 +2287,6 @@ def export_transactions_pdf(request, pk):
 
 <div class="header">
     <div class="header-left">
-        {logo_html}
         <div>
             <h1>{html_escape(job.client_name)}</h1>
             <div class="subtitle">{section_title}</div>
