@@ -255,9 +255,11 @@ def _get_bank_mapping_for_txn(txn):
     """
     Resolve the BankAccountMapping for a given PendingTransaction.
     Lookup order:
-      1. BankAccountMapping by (entity, bsb, account_number)
-      2. BankAccountMapping default for entity
-      3. BankAccount model by (entity, bsb, account_number) if it has tb_account_code
+      1. BankAccountMapping by exact (entity, bsb, account_number) match
+      2. BankAccountMapping marked as default for entity
+      3. BankAccountMapping with empty bsb/account_number (catch-all for CSV/Excel uploads)
+      4. If only one BankAccountMapping exists for the entity, use it
+      5. BankAccount model by (entity, bsb, account_number) if it has tb_account_code
     Returns a duck-typed object with .tb_account_code and .tb_account_name, or None.
     """
     if not txn.job or not txn.job.entity:
@@ -265,15 +267,32 @@ def _get_bank_mapping_for_txn(txn):
     entity = txn.job.entity
     job = txn.job
     mapping = None
+
+    # 1. Exact match by BSB + account number (when available from PDF parsing)
     if job.bsb or job.account_number:
         mapping = BankAccountMapping.objects.filter(
             entity=entity, bsb=job.bsb or '', account_number=job.account_number or '',
         ).first()
+
+    # 2. Default mapping for the entity
     if not mapping:
         mapping = BankAccountMapping.objects.filter(
             entity=entity, is_default=True,
         ).first()
-    # Fallback: check the BankAccount model (has tb_account_code field)
+
+    # 3. Catch-all: mapping with empty bsb/account_number (created from CSV/Excel uploads)
+    if not mapping:
+        mapping = BankAccountMapping.objects.filter(
+            entity=entity, bsb='', account_number='',
+        ).first()
+
+    # 4. If only one mapping exists for the entity, use it regardless
+    if not mapping:
+        entity_mappings = BankAccountMapping.objects.filter(entity=entity)
+        if entity_mappings.count() == 1:
+            mapping = entity_mappings.first()
+
+    # 5. Fallback: check the BankAccount model (has tb_account_code field)
     if not mapping and (job.bsb or job.account_number):
         from core.models import BankAccount
         ba = BankAccount.objects.filter(
