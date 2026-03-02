@@ -2460,7 +2460,12 @@ def _process_trial_balance_upload(fy, file):
 
         try:
             account_code = col0
-            account_name = _resolve_account_name(entity, col0, col1)
+            # Strip leading zero from revenue accounts (HandiLedger 0575 -> 575)
+            if account_code.startswith('0') and account_code.replace('.', '').isdigit() and len(account_code.split('.')[0]) > 1:
+                parts = account_code.split('.', 1)
+                parts[0] = parts[0].lstrip('0') or '0'
+                account_code = '.'.join(parts)
+            account_name = _resolve_account_name(entity, account_code, col1)
             if is_comparative:
                 # Columns: [code, name, CY_dr, CY_cr, PY_dr, PY_cr]
                 opening_balance = Decimal("0")
@@ -2672,12 +2677,16 @@ def _parse_tb_excel(fy, file):
 
             try:
                 account_code = col0
-                account_name = _resolve_account_name(fy.entity, col0, col1)
+                # Strip leading zero from revenue accounts (HandiLedger 0575 -> 575)
+                if account_code.startswith('0') and account_code.replace('.', '').isdigit() and len(account_code.split('.')[0]) > 1:
+                    parts = account_code.split('.', 1)
+                    parts[0] = parts[0].lstrip('0') or '0'
+                    account_code = '.'.join(parts)
+                account_name = _resolve_account_name(fy.entity, account_code, col1)
                 cy_dr = float(row[2]) if len(row) > 2 and row[2] is not None else 0.0
                 cy_cr = float(row[3]) if len(row) > 3 and row[3] is not None else 0.0
                 py_dr = float(row[4]) if len(row) > 4 and row[4] is not None else 0.0
                 py_cr = float(row[5]) if len(row) > 5 and row[5] is not None else 0.0
-
                 raw_lines.append({
                     "account_code": account_code,
                     "account_name": account_name,
@@ -2697,6 +2706,11 @@ def _parse_tb_excel(fy, file):
                 continue
             try:
                 account_code = str(row[0]).strip()
+                # Strip leading zero from revenue accounts (HandiLedger 0575 -> 575)
+                if account_code.startswith('0') and account_code.replace('.', '').isdigit() and len(account_code.split('.')[0]) > 1:
+                    parts = account_code.split('.', 1)
+                    parts[0] = parts[0].lstrip('0') or '0'
+                    account_code = '.'.join(parts)
                 raw_name = str(row[1]).strip() if len(row) > 1 and row[1] else ""
                 account_name = _resolve_account_name(fy.entity, account_code, raw_name)
                 if len(row) >= 5 and row[4] is not None:

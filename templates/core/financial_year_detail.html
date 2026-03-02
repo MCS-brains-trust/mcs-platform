@@ -325,28 +325,28 @@
 <!-- ===== TABS ===== -->
 <ul class="nav nav-tabs" id="workspaceTabs" role="tablist">
     <li class="nav-item">
-        <button class="nav-link{% if active_tab != 'journals' %} active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-tb" type="button">
+        <button class="nav-link{% if active_tab == 'tb' or active_tab == '' and active_tab != 'journals' %} active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-tb" data-tab-name="tb" type="button">
             <i class="bi bi-table"></i> Trial Balance ({{ tb_lines.count }})
         </button>
     </li>
     <li class="nav-item">
-        <button class="nav-link{% if active_tab == 'journals' %} active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-journals" type="button">
+        <button class="nav-link{% if active_tab == 'journals' %} active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-journals" data-tab-name="journals" type="button">
             <i class="bi bi-journal-text"></i> Journals ({{ adjustments.count|add:bulk_journal_uploads.count }})
         </button>
     </li>
 
     <li class="nav-item">
-        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-depreciation" type="button">
+        <button class="nav-link{% if active_tab == 'depreciation' %} active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-depreciation" data-tab-name="depreciation" type="button">
             <i class="bi bi-graph-down-arrow"></i> Depreciation ({{ depreciation_assets.count }})
         </button>
     </li>
     <li class="nav-item">
-        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-stock" type="button">
+        <button class="nav-link{% if active_tab == 'stock' %} active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-stock" data-tab-name="stock" type="button">
             <i class="bi bi-box-seam"></i> Stock ({{ stock_items.count }})
         </button>
     </li>
     <li class="nav-item">
-        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-review" type="button">
+        <button class="nav-link{% if active_tab == 'review' %} active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-review" data-tab-name="review" type="button">
             <i class="bi bi-clipboard-check"></i> Review
             {% if pending_review.count > 0 %}
             <span class="badge bg-warning text-dark">{{ pending_review.count }}</span>
@@ -361,18 +361,18 @@
     </li>
     -->
     <li class="nav-item">
-        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-docs" type="button">
+        <button class="nav-link{% if active_tab == 'docs' %} active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-docs" data-tab-name="docs" type="button">
             <i class="bi bi-file-earmark"></i> Documents ({{ documents.count }})
         </button>
     </li>
     <li class="nav-item">
-        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-coa" type="button">
+        <button class="nav-link{% if active_tab == 'coa' %} active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-coa" data-tab-name="coa" type="button">
             <i class="bi bi-diagram-3"></i> Chart of Accounts ({{ entity_accounts_count }})
         </button>
     </li>
     {% if entity.entity_type == 'trust' or entity.entity_type == 'trust_discretionary' or entity.entity_type == 'trust_unit' or entity.entity_type == 'trust_hybrid' %}
     <li class="nav-item">
-        <button class="nav-link{% if active_tab == 'trust' %} active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-trust" type="button">
+        <button class="nav-link{% if active_tab == 'trust' %} active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-trust" data-tab-name="trust" type="button">
             <i class="bi bi-diagram-2"></i> Trust Distribution
         </button>
     </li>
@@ -383,7 +383,7 @@
     </li>
     {% endif %}
     <li class="nav-item">
-        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-activity" type="button">
+        <button class="nav-link{% if active_tab == 'activity' %} active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-activity" data-tab-name="activity" type="button">
             <i class="bi bi-clock-history"></i> Activity ({{ activity_logs.count }})
         </button>
     </li>
@@ -392,7 +392,7 @@
 <div class="tab-content border border-top-0 rounded-bottom bg-white">
 
     <!-- ===== TRIAL BALANCE TAB ===== -->
-    <div class="tab-pane fade{% if active_tab != 'journals' %} show active{% endif %} p-3" id="tab-tb">
+    <div class="tab-pane fade{% if active_tab == 'tb' or active_tab == '' and active_tab != 'journals' %} show active{% endif %} p-3" id="tab-tb">
         {% if tb_lines %}
         <div class="d-flex justify-content-between align-items-center mb-3">
             <div>
@@ -614,7 +614,7 @@
     </div>
 
     <!-- ===== DEPRECIATION TAB ===== -->
-    <div class="tab-pane fade p-3" id="tab-depreciation">
+    <div class="tab-pane fade{% if active_tab == 'depreciation' %} show active{% endif %} p-3" id="tab-depreciation">
         <div class="d-flex justify-content-between align-items-center mb-3">
             <h6 class="mb-0"><i class="bi bi-graph-down-arrow"></i> Depreciation Schedule</h6>
             <div class="d-flex gap-2">
@@ -712,7 +712,7 @@
     </div>
 
     <!-- ===== STOCK TAB ===== -->
-    <div class="tab-pane fade p-3" id="tab-stock">
+    <div class="tab-pane fade{% if active_tab == 'stock' %} show active{% endif %} p-3" id="tab-stock">
         <div class="d-flex justify-content-between align-items-center mb-3">
             <h6 class="mb-0"><i class="bi bi-box-seam"></i> Opening &amp; Closing Stock</h6>
             <div class="d-flex gap-2">
@@ -797,7 +797,7 @@
     </div>
 
     <!-- ===== REVIEW TAB ===== -->
-    <div class="tab-pane fade p-3" id="tab-review">
+    <div class="tab-pane fade{% if active_tab == 'review' %} show active{% endif %} p-3" id="tab-review">
         {% include "core/includes/review_tab.html" %}
     </div>
 
@@ -870,7 +870,7 @@
     {% endcomment %}
 
     <!-- ===== DOCUMENTS TAB (Version Controlled) ===== -->
-    <div class="tab-pane fade p-3" id="tab-docs">
+    <div class="tab-pane fade{% if active_tab == 'docs' %} show active{% endif %} p-3" id="tab-docs">
         <div class="d-flex justify-content-between align-items-center mb-3">
             <h6 class="mb-0"><i class="bi bi-file-earmark-ruled"></i> Documents &amp; Versions</h6>
             <div class="d-flex gap-2">
@@ -950,7 +950,7 @@
     </div>
 
     <!-- ===== CHART OF ACCOUNTS TAB ===== -->
-    <div class="tab-pane fade p-3" id="tab-coa">
+    <div class="tab-pane fade{% if active_tab == 'coa' %} show active{% endif %} p-3" id="tab-coa">
         <div class="d-flex justify-content-between align-items-center mb-3">
             <div>
                 <h6 class="mb-0"><i class="bi bi-diagram-3"></i> Chart of Accounts</h6>
@@ -1050,7 +1050,7 @@
     {% endif %}
 
     <!-- ===== ACTIVITY TAB ===== -->
-    <div class="tab-pane fade p-3" id="tab-activity">
+    <div class="tab-pane fade{% if active_tab == 'activity' %} show active{% endif %} p-3" id="tab-activity">
         <div class="d-flex justify-content-between align-items-center mb-3">
             <h6 class="mb-0"><i class="bi bi-clock-history"></i> Activity &amp; Audit Trail</h6>
             <small class="text-muted">All journal activity is permanently logged for audit purposes</small>
@@ -2955,6 +2955,33 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 });
+</script>
+
+<script>
+/* ===== Auto-refresh on tab switch ===== */
+(function() {
+    const tabButtons = document.querySelectorAll('#workspaceTabs button[data-tab-name]');
+    const currentTab = '{{ active_tab|default:"tb" }}';
+    let initialLoad = true;
+
+    tabButtons.forEach(function(btn) {
+        btn.addEventListener('click', function(e) {
+            const tabName = this.getAttribute('data-tab-name');
+            if (tabName && tabName !== currentTab && !initialLoad) {
+                e.preventDefault();
+                e.stopPropagation();
+                const url = new URL(window.location.href);
+                url.searchParams.set('tab', tabName);
+                // Remove highlight params on tab switch
+                url.searchParams.delete('highlight');
+                window.location.href = url.toString();
+            }
+        });
+    });
+
+    // After initial page load, enable refresh behaviour
+    setTimeout(function() { initialLoad = false; }, 500);
+})();
 </script>
 
 <!-- ===== EVA CHAT PANEL ===== -->

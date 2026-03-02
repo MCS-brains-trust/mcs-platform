@@ -285,6 +285,26 @@ def _parse_entity_info(reader):
 # Chart of Accounts Parser
 # =============================================================================
 
+def _strip_revenue_leading_zero(formatted_code):
+    """
+    Strip the leading zero from HandiLedger revenue account codes.
+    HandiLedger uses 4-digit codes like 0575 for revenue (0-999),
+    but StatementHub uses 575 (no leading zero).
+    Handles sub-accounts too: '0575.01' -> '575.01'
+    Only strips if the base code part starts with '0' and is all digits.
+    """
+    if not formatted_code:
+        return formatted_code
+    # Split on '.' to handle sub-accounts like '0575.01'
+    parts = formatted_code.split('.', 1)
+    base = parts[0]
+    # Only strip if base starts with '0', is all digits, and has more than 1 digit
+    if base.startswith('0') and base.isdigit() and len(base) > 1:
+        base = base.lstrip('0') or '0'  # Keep at least '0' for code 0000
+        parts[0] = base
+    return '.'.join(parts)
+
+
 def _parse_chart(reader, year):
     """
     Parse Chart.txt to build account code -> name mapping.
@@ -302,6 +322,8 @@ def _parse_chart(reader, year):
         name = _safe_str(row[3])
         acc_type = _safe_str(row[6])  # "C" or "D"
         formatted = _safe_str(row[13]) if len(row) > 13 else f"{code:04d}"
+        # Strip leading zero from revenue accounts (HandiLedger 0575 -> 575)
+        formatted = _strip_revenue_leading_zero(formatted)
         if name and name != "********** SUSPENSE **********":
             chart[(code, sub)] = {
                 "name": name,

@@ -352,7 +352,7 @@
 <div id="pendingSection">
 {% if pending_review %}
 <h6 class="text-muted mt-3 mb-2" style="font-size: 0.85rem;">PENDING REVIEW</h6>
-<div class="table-responsive">
+<div class="table-responsive" style="overflow: visible;">
     <table class="table table-sm table-hover" style="font-size: 0.82rem;" id="pendingTable">
         <thead class="table-warning">
             <tr>
@@ -460,10 +460,11 @@
                     <div class="dropdown d-inline">
                         <button class="btn btn-sm btn-outline-info dropdown-toggle py-0 review-coa-btn" type="button"
                                 data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false"
+                                data-bs-display="dynamic"
                                 style="font-size: 0.78rem;" data-txn-id="{{ txn.pk }}">
                             {{ txn.ai_suggested_name|default:"Unclassified" }}
                         </button>
-                        <div class="dropdown-menu p-2" style="width: 380px; max-height: 350px;">
+                        <div class="dropdown-menu p-2" style="width: 380px; max-height: 350px;" data-bs-popper="static">
                             <input type="text" class="form-control form-control-sm mb-2 review-coa-search"
                                    placeholder="Search by code, name, or BAS label..." data-txn-id="{{ txn.pk }}">
                             <div class="review-coa-results overflow-auto" style="max-height: 280px;" data-txn-id="{{ txn.pk }}">
