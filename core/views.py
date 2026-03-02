@@ -3305,6 +3305,19 @@ def account_code_breakdown(request, pk, account_code):
     for bt in bank_txns:
         bank_txn_total += bt.amount or Decimal('0')
 
+    # Fetch journal entry movements for this account code
+    journal_lines = JournalLine.objects.filter(
+        journal__financial_year=fy,
+        journal__status='posted',
+        account_code=account_code,
+    ).select_related('journal').order_by('journal__journal_date', 'journal__reference_number', 'line_number')
+
+    journal_total_dr = Decimal('0')
+    journal_total_cr = Decimal('0')
+    for jl in journal_lines:
+        journal_total_dr += jl.debit or Decimal('0')
+        journal_total_cr += jl.credit or Decimal('0')
+
     return render(request, 'core/account_code_breakdown.html', {
         'fy': fy,
         'account_code': account_code,
@@ -3319,6 +3332,10 @@ def account_code_breakdown(request, pk, account_code):
         'bank_txns': bank_txns,
         'bank_txn_count': bank_txns.count(),
         'bank_txn_total': bank_txn_total,
+        'journal_lines': journal_lines,
+        'journal_line_count': journal_lines.count(),
+        'journal_total_dr': journal_total_dr,
+        'journal_total_cr': journal_total_cr,
     })
 
 
