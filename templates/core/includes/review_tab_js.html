@@ -1638,14 +1638,19 @@ function bulkUnconfirmSelected() {
     checked.forEach(cb => {
         const url = cb.dataset.unconfirmUrl;
         if (url) {
-            fetch(url, { method: 'POST', headers: { 'X-CSRFToken': CSRF_TOKEN } })
+            fetch(url, { method: 'POST', headers: { 'X-CSRFToken': CSRF_TOKEN, 'X-Requested-With': 'XMLHttpRequest' } })
             .then(r => r.json())
             .then(data => {
-                if (data.status === 'ok') {
+                if (data.status === 'success') {
                     const row = document.getElementById('confirmed-row-' + cb.value);
                     if (row) row.remove();
                     _addRowToPendingTable(data);
+                } else {
+                    alert(data.error || 'Failed to unconfirm transaction.');
                 }
+            })
+            .catch(err => {
+                alert('Error: ' + err.message + '. Please refresh the page and try again.');
             });
         }
     });

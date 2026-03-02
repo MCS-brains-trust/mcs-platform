@@ -147,6 +147,7 @@ CSRF_TRUSTED_ORIGINS = [
     if origin.strip()
 ]
 CSRF_COOKIE_SAMESITE = "Lax"
+CSRF_FAILURE_VIEW = "config.middleware.csrf_failure_view"
 
 # Email configuration
 # Production: uses Resend HTTP API (bypasses SMTP port blocking)

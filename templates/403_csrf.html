@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Forbidden — CSRF Error{% endblock %}
+{% block content %}
+<div class="container py-5 text-center">
+    <h1 class="display-4 text-danger"><i class="bi bi-shield-exclamation"></i></h1>
+    <h2>CSRF Verification Failed</h2>
+    <p class="lead text-muted">Your session may have expired. Please refresh the page and try again.</p>
+    <a href="javascript:location.reload()" class="btn btn-primary mt-3"><i class="bi bi-arrow-clockwise me-1"></i> Refresh Page</a>
+</div>
+{% endblock %}

@@ -6344,146 +6344,168 @@ def review_unconfirm_transaction(request, pk):
     """Unconfirm a previously approved transaction (AJAX).
     Reverses the TB line amounts and resets the transaction to unclassified.
     """
+    import traceback
+    from django.urls import reverse
     from review.models import PendingTransaction
-    txn = get_object_or_404(PendingTransaction, pk=pk)
 
-    # IDOR check
-    if txn.job and txn.job.entity:
-        get_entity_for_user(request, txn.job.entity.pk)
+    try:
+        txn = get_object_or_404(PendingTransaction, pk=pk)
 
-    if not request.user.can_do_accounting:
-        return JsonResponse({"error": "Permission denied"}, status=403)
+        # IDOR check
+        if txn.job and txn.job.entity:
+            get_entity_for_user(request, txn.job.entity.pk)
 
-    if not txn.is_confirmed:
-        return JsonResponse({"error": "Transaction is not confirmed"}, status=400)
+        if not request.user.can_do_accounting:
+            return JsonResponse({"error": "Permission denied"}, status=403)
 
-    # Reverse the TB line amounts
-    if txn.job and txn.job.entity and txn.confirmed_code:
-        from datetime import datetime as dt
-        entity = txn.job.entity
-        fys = FinancialYear.objects.filter(entity=entity, status__in=['draft', 'in_review', 'finished'])
-        target_fy = None
-        for fy_candidate in fys:
-            txn_date = None
-            for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d %b %Y"):
-                try:
-                    txn_date = dt.strptime(txn.date.strip(), fmt).date()
+        if not txn.is_confirmed:
+            return JsonResponse({"error": "Transaction is not confirmed"}, status=400)
+
+        # Reverse the TB line amounts
+        if txn.job and txn.job.entity and txn.confirmed_code:
+            from datetime import datetime as dt
+            entity = txn.job.entity
+            fys = FinancialYear.objects.filter(entity=entity, status__in=['draft', 'in_review', 'finished'])
+            target_fy = None
+            for fy_candidate in fys:
+                txn_date = None
+                for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d %b %Y"):
+                    try:
+                        txn_date = dt.strptime(txn.date.strip(), fmt).date()
+                        break
+                    except (ValueError, AttributeError):
+                        continue
+                if txn_date and fy_candidate.start_date <= txn_date <= fy_candidate.end_date:
+                    target_fy = fy_candidate
                     break
-                except (ValueError, AttributeError):
-                    continue
-            if txn_date and fy_candidate.start_date <= txn_date <= fy_candidate.end_date:
-                target_fy = fy_candidate
-                break
-        if not target_fy and fys.exists():
-            target_fy = fys.order_by('-end_date').first()
+            if not target_fy and fys.exists():
+                target_fy = fys.order_by('-end_date').first()
 
-        if target_fy:
-            # Reverse the main account TB line
-            tb_line = TrialBalanceLine.objects.filter(
-                financial_year=target_fy,
-                account_code=txn.confirmed_code,
-                is_adjustment=False,
-            ).first()
-            if not tb_line:
+            if target_fy:
+                # Reverse the main account TB line
                 tb_line = TrialBalanceLine.objects.filter(
                     financial_year=target_fy,
                     account_code=txn.confirmed_code,
-                ).first()
-            if tb_line:
-                has_gst = txn.confirmed_gst_amount and txn.confirmed_gst_amount > 0
-                net_for_tb = txn.net_amount if has_gst else abs(txn.amount)
-
-                # Reverse: payments were DEBITED, receipts were CREDITED
-                if txn.amount < 0:
-                    # Was a payment debit — reverse by subtracting from debit
-                    tb_line.debit = max(Decimal("0"), tb_line.debit - net_for_tb)
-                    tb_line.closing_balance -= net_for_tb
-                else:
-                    # Was a receipt credit — reverse by subtracting from credit
-                    tb_line.credit = max(Decimal("0"), tb_line.credit - net_for_tb)
-                    tb_line.closing_balance += net_for_tb
-
-                # Only delete if zero movement AND no prior year data or opening balance
-                has_prior = (tb_line.prior_debit or Decimal('0')) != 0 or (tb_line.prior_credit or Decimal('0')) != 0
-                has_opening = (tb_line.opening_balance or Decimal('0')) != 0
-                has_closing = (tb_line.closing_balance or Decimal('0')) != 0
-                if tb_line.debit == 0 and tb_line.credit == 0 and not has_prior and not has_opening and not has_closing:
-                    tb_line.delete()
-                else:
-                    tb_line.save()
-
-            # Reverse the GST clearing account line
-            if txn.confirmed_gst_amount and txn.confirmed_gst_amount > 0:
-                gst_amt = txn.confirmed_gst_amount
-                gst_code = '3380'
-                gst_line = TrialBalanceLine.objects.filter(
-                    financial_year=target_fy,
-                    account_code=gst_code,
                     is_adjustment=False,
                 ).first()
-                if not gst_line:
+                if not tb_line:
+                    tb_line = TrialBalanceLine.objects.filter(
+                        financial_year=target_fy,
+                        account_code=txn.confirmed_code,
+                    ).first()
+                if tb_line:
+                    has_gst = txn.confirmed_gst_amount and txn.confirmed_gst_amount > 0
+                    net_for_tb = txn.net_amount if has_gst else abs(txn.amount)
+
+                    # Reverse: payments were DEBITED, receipts were CREDITED
+                    if txn.amount < 0:
+                        # Was a payment debit — reverse by subtracting from debit
+                        tb_line.debit = max(Decimal("0"), tb_line.debit - net_for_tb)
+                        tb_line.closing_balance -= net_for_tb
+                    else:
+                        # Was a receipt credit — reverse by subtracting from credit
+                        tb_line.credit = max(Decimal("0"), tb_line.credit - net_for_tb)
+                        tb_line.closing_balance += net_for_tb
+
+                    # Only delete if zero movement AND no prior year data or opening balance
+                    has_prior = (tb_line.prior_debit or Decimal('0')) != 0 or (tb_line.prior_credit or Decimal('0')) != 0
+                    has_opening = (tb_line.opening_balance or Decimal('0')) != 0
+                    has_closing = (tb_line.closing_balance or Decimal('0')) != 0
+                    if tb_line.debit == 0 and tb_line.credit == 0 and not has_prior and not has_opening and not has_closing:
+                        tb_line.delete()
+                    else:
+                        tb_line.save()
+
+                # Reverse the GST clearing account line
+                if txn.confirmed_gst_amount and txn.confirmed_gst_amount > 0:
+                    gst_amt = txn.confirmed_gst_amount
+                    gst_code = '3380'
                     gst_line = TrialBalanceLine.objects.filter(
                         financial_year=target_fy,
                         account_code=gst_code,
+                        is_adjustment=False,
                     ).first()
-                if gst_line:
-                    if txn.amount > 0:
-                        # Was income GST credit — reverse
-                        gst_line.credit = max(Decimal("0"), gst_line.credit - gst_amt)
-                        gst_line.closing_balance += gst_amt
-                    else:
-                        # Was expense GST debit — reverse
-                        gst_line.debit = max(Decimal("0"), gst_line.debit - gst_amt)
-                        gst_line.closing_balance -= gst_amt
+                    if not gst_line:
+                        gst_line = TrialBalanceLine.objects.filter(
+                            financial_year=target_fy,
+                            account_code=gst_code,
+                        ).first()
+                    if gst_line:
+                        if txn.amount > 0:
+                            # Was income GST credit — reverse
+                            gst_line.credit = max(Decimal("0"), gst_line.credit - gst_amt)
+                            gst_line.closing_balance += gst_amt
+                        else:
+                            # Was expense GST debit — reverse
+                            gst_line.debit = max(Decimal("0"), gst_line.debit - gst_amt)
+                            gst_line.closing_balance -= gst_amt
 
-                    # Only delete if zero movement AND no prior year data or opening/closing balance
-                    has_prior_gst = (gst_line.prior_debit or Decimal('0')) != 0 or (gst_line.prior_credit or Decimal('0')) != 0
-                    has_opening_gst = (gst_line.opening_balance or Decimal('0')) != 0
-                    has_closing_gst = (gst_line.closing_balance or Decimal('0')) != 0
-                    if gst_line.debit == 0 and gst_line.credit == 0 and not has_prior_gst and not has_opening_gst and not has_closing_gst:
-                        gst_line.delete()
-                    else:
-                        gst_line.save()
+                        # Only delete if zero movement AND no prior year data or opening/closing balance
+                        has_prior_gst = (gst_line.prior_debit or Decimal('0')) != 0 or (gst_line.prior_credit or Decimal('0')) != 0
+                        has_opening_gst = (gst_line.opening_balance or Decimal('0')) != 0
+                        has_closing_gst = (gst_line.closing_balance or Decimal('0')) != 0
+                        if gst_line.debit == 0 and gst_line.credit == 0 and not has_prior_gst and not has_opening_gst and not has_closing_gst:
+                            gst_line.delete()
+                        else:
+                            gst_line.save()
 
-            # Reverse the bank contra-entry
-            _reverse_bank_contra_entry(txn, target_fy)
+                # Reverse the bank contra-entry
+                _reverse_bank_contra_entry(txn, target_fy)
 
-    # Reset the transaction
-    txn.is_confirmed = False
-    txn.confirmed_code = ''
-    txn.confirmed_name = ''
-    txn.confirmed_tax_type = ''
-    txn.confirmed_gst_amount = Decimal("0.00")
-    txn.save()
+        # Reset the transaction
+        txn.is_confirmed = False
+        txn.confirmed_code = ''
+        txn.confirmed_name = ''
+        txn.confirmed_tax_type = ''
+        txn.confirmed_gst_amount = Decimal("0.00")
+        txn.save()
 
-    # Return remaining counts
-    remaining_pending = 0
-    remaining_confirmed = 0
-    if txn.job and txn.job.entity:
-        from review.models import PendingTransaction as PT
-        remaining_pending = PT.objects.filter(
-            job__entity=txn.job.entity, is_confirmed=False
-        ).count()
-        remaining_confirmed = PT.objects.filter(
-            job__entity=txn.job.entity, is_confirmed=True
-        ).count()
+        # Return remaining counts
+        remaining_pending = 0
+        remaining_confirmed = 0
+        if txn.job and txn.job.entity:
+            from review.models import PendingTransaction as PT
+            remaining_pending = PT.objects.filter(
+                job__entity=txn.job.entity, is_confirmed=False
+            ).count()
+            remaining_confirmed = PT.objects.filter(
+                job__entity=txn.job.entity, is_confirmed=True
+            ).count()
 
-    return JsonResponse({
-        "status": "success",
-        "id": str(txn.pk),
-        "pending_count": remaining_pending,
-        "confirmed_count": remaining_confirmed,
-        "message": f"Transaction unconfirmed: {txn.description[:50]}",
-        "date": txn.date,
-        "description": txn.description,
-        "amount": str(txn.amount),
-        "ai_suggested_code": txn.ai_suggested_code or '',
-        "ai_suggested_name": txn.ai_suggested_name or '',
-        "ai_suggested_tax_type": txn.ai_suggested_tax_type or '',
-        "gst_amount": str(txn.gst_amount or Decimal('0.00')),
-        "net_amount": str(txn.net_amount or abs(txn.amount)),
-        "ai_confidence": txn.ai_confidence or 0,
-    })
+        # Build URLs for the pending row re-creation
+        approve_url = reverse("core:review_approve_transaction", kwargs={"pk": txn.pk})
+        unconfirm_url = reverse("core:review_unconfirm_transaction", kwargs={"pk": txn.pk})
+
+        return JsonResponse({
+            "status": "success",
+            "id": str(txn.pk),
+            "pending_count": remaining_pending,
+            "confirmed_count": remaining_confirmed,
+            "message": f"Transaction unconfirmed: {txn.description[:50]}",
+            "date": txn.date,
+            "description": txn.description,
+            "amount": str(txn.amount),
+            "ai_suggested_code": txn.ai_suggested_code or '',
+            "ai_suggested_name": txn.ai_suggested_name or '',
+            "ai_suggested_tax_type": txn.ai_suggested_tax_type or '',
+            "ai_code": txn.ai_suggested_code or '',
+            "ai_name": txn.ai_suggested_name or '',
+            "ai_tax": txn.ai_suggested_tax_type or '',
+            "gst_amount": str(txn.gst_amount or Decimal('0.00')),
+            "net_amount": str(txn.net_amount or abs(txn.amount)),
+            "ai_confidence": txn.ai_confidence or 0,
+            "approve_url": approve_url,
+            "unconfirm_url": unconfirm_url,
+        })
+
+    except Exception as exc:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error("Unconfirm transaction %s failed: %s\n%s", pk, exc, traceback.format_exc())
+        return JsonResponse(
+            {"status": "error", "error": str(exc)},
+            status=500,
+        )
 @login_required
 def review_approve_all(request, pk):
     """Approve all pending transactions for a financial year's entity.
