@@ -1,0 +1,494 @@
+{% extends "base.html" %}
+{% load humanize %}
+{% block title %}Division 7A Assessment — {{ entity.entity_name }} — StatementHub{% endblock %}
+{% block content %}
+<div class="container-fluid py-3">
+    {# Breadcrumb #}
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=financial_year.pk %}">{{ financial_year }}</a></li>
+            <li class="breadcrumb-item active">Division 7A Assessment</li>
+        </ol>
+    </nav>
+
+    {# Header #}
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+            <h4 class="fw-bold mb-1">
+                <i class="bi bi-bank text-primary"></i> Division 7A Assessment
+            </h4>
+            <p class="text-muted mb-0">
+                {{ entity.entity_name }} &middot; {{ financial_year.year_label }}
+            </p>
+        </div>
+        <div class="d-flex gap-2">
+            {% if not financial_year.is_locked %}
+            <button type="button" class="btn btn-primary btn-sm" id="btn-run-assessment">
+                <i class="bi bi-cpu"></i> Run Assessment
+            </button>
+            {% endif %}
+            <a href="{% url 'core:div7a_compliance_create' pk=financial_year.pk %}" class="btn btn-outline-primary btn-sm">
+                <i class="bi bi-plus-circle"></i> Add Compliance Record
+            </a>
+            <a href="{% url 'core:legal_doc_wizard' pk=financial_year.pk doc_type='div7a_loan_agreement' %}" class="btn btn-outline-secondary btn-sm">
+                <i class="bi bi-file-earmark-text"></i> Generate Loan Agreement
+            </a>
+        </div>
+    </div>
+
+    {% if not has_assessment %}
+    {# No assessment yet #}
+    <div class="card border-0 shadow-sm">
+        <div class="card-body text-center py-5">
+            <i class="bi bi-shield-check display-4 text-muted"></i>
+            <h5 class="mt-3">No Division 7A Assessment Yet</h5>
+            <p class="text-muted">
+                Click <strong>Run Assessment</strong> to analyse this entity for Division 7A exposure.
+                The assessment runs automatically when the risk engine completes.
+            </p>
+            <button type="button" class="btn btn-primary" id="btn-run-first">
+                <i class="bi bi-cpu"></i> Run Division 7A Assessment
+            </button>
+        </div>
+    </div>
+    {% else %}
+    {# Assessment exists — show consolidated card #}
+    <div class="row g-3 mb-4">
+        {# Severity Badge #}
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body text-center">
+                    <i class="bi {{ severity_icon }} display-4 text-{{ severity_class }}"></i>
+                    <h5 class="mt-2 text-{{ severity_class }}">{{ assessment.get_overall_severity_display }}</h5>
+                    <small class="text-muted">
+                        Last assessed: {{ assessment.assessed_at|timesince }} ago
+                    </small>
+                </div>
+            </div>
+        </div>
+
+        {# Exposure Summary #}
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body">
+                    <h6 class="text-muted mb-2">Total Exposure</h6>
+                    <h3 class="fw-bold text-{{ severity_class }}">
+                        ${{ assessment.total_exposure|floatformat:2|intcomma }}
+                    </h3>
+                    <div class="small text-muted mt-2">
+                        {% if assessment.direct_loan_balance %}
+                        <div>Direct Loans: ${{ assessment.direct_loan_balance|floatformat:2|intcomma }}</div>
+                        {% endif %}
+                        {% if assessment.upe_exposure %}
+                        <div>UPE: ${{ assessment.upe_exposure|floatformat:2|intcomma }}</div>
+                        {% endif %}
+                        {% if assessment.s109e_payments %}
+                        <div>s 109E: ${{ assessment.s109e_payments|floatformat:2|intcomma }}</div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {# Compliance Status #}
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body">
+                    <h6 class="text-muted mb-2">Compliance Status</h6>
+                    <div class="mb-2">
+                        {% if assessment.has_complying_agreement %}
+                        <span class="badge bg-success"><i class="bi bi-check-circle"></i> Agreement on File</span>
+                        {% else %}
+                        <span class="badge bg-danger"><i class="bi bi-x-circle"></i> No Agreement</span>
+                        {% endif %}
+                    </div>
+                    <div class="mb-2">
+                        {% if assessment.interest_compliant %}
+                        <span class="badge bg-success"><i class="bi bi-check-circle"></i> Interest Compliant</span>
+                        {% elif assessment.expected_interest %}
+                        <span class="badge bg-danger"><i class="bi bi-x-circle"></i> Interest Shortfall</span>
+                        {% else %}
+                        <span class="badge bg-secondary"><i class="bi bi-dash-circle"></i> N/A</span>
+                        {% endif %}
+                    </div>
+                    <div>
+                        {% if assessment.myr_compliant %}
+                        <span class="badge bg-success"><i class="bi bi-check-circle"></i> MYR Met</span>
+                        {% elif assessment.myr_compliant == False %}
+                        <span class="badge bg-danger"><i class="bi bi-x-circle"></i> MYR Shortfall</span>
+                        {% else %}
+                        <span class="badge bg-secondary"><i class="bi bi-dash-circle"></i> MYR Pending</span>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {# Rules Fired #}
+        <div class="col-md-3">
+            <div class="card border-0 shadow-sm h-100">
+                <div class="card-body">
+                    <h6 class="text-muted mb-2">Rules Fired</h6>
+                    {% for rule_id in assessment.rules_fired %}
+                    <span class="badge bg-{{ severity_class }} me-1 mb-1">{{ rule_id }}</span>
+                    {% empty %}
+                    <span class="badge bg-success">No issues detected</span>
+                    {% endfor %}
+                    {% if assessment.escalation_required %}
+                    <div class="mt-2">
+                        <span class="badge bg-danger">
+                            <i class="bi bi-exclamation-triangle-fill"></i> ESCALATION REQUIRED
+                        </span>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    {# Consolidated Finding Card #}
+    {% if finding_explanation %}
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-header bg-{{ severity_class }} bg-opacity-10 border-0">
+            <h5 class="mb-0">
+                <i class="bi bi-file-earmark-medical text-{{ severity_class }}"></i>
+                Division 7A Finding — Consolidated Assessment
+            </h5>
+        </div>
+        <div class="card-body">
+            {# Explanation #}
+            <div class="mb-4">
+                <h6 class="fw-bold">Assessment Details</h6>
+                <div class="bg-light rounded p-3" style="white-space: pre-line;">{{ finding_explanation }}</div>
+            </div>
+
+            {# Remediation Steps #}
+            {% if finding_recommendation %}
+            <div class="mb-4">
+                <h6 class="fw-bold">Remediation Steps</h6>
+                <div class="bg-light rounded p-3" style="white-space: pre-line;">{{ finding_recommendation }}</div>
+            </div>
+            {% endif %}
+
+            {# Compliance Checklist #}
+            {% if finding_checklist %}
+            <div class="mb-3">
+                <h6 class="fw-bold">Compliance Checklist</h6>
+                <div class="bg-light rounded p-3" style="white-space: pre-line; font-family: monospace;">{{ finding_checklist }}</div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    {# Loan Account Details #}
+    {% if assessment.direct_loan_accounts %}
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-header bg-white border-0">
+            <h5 class="mb-0">
+                <i class="bi bi-journal-text text-primary"></i> Loan Account Details
+            </h5>
+        </div>
+        <div class="card-body p-0">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Account Code</th>
+                        <th>Account Name</th>
+                        <th class="text-end">Current Year Balance</th>
+                        <th class="text-end">Prior Year Balance</th>
+                        <th class="text-end">Movement</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for acct in assessment.direct_loan_accounts %}
+                    <tr>
+                        <td><code>{{ acct.account_code }}</code></td>
+                        <td>{{ acct.account_name }}</td>
+                        <td class="text-end fw-bold">${{ acct.balance|floatformat:2 }}</td>
+                        <td class="text-end">${{ acct.py_balance|floatformat:2 }}</td>
+                        <td class="text-end">
+                            {% widthratio acct.balance 1 1 as cy_val %}
+                            {% widthratio acct.py_balance 1 1 as py_val %}
+                            <span class="text-muted">—</span>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot class="table-light">
+                    <tr>
+                        <td colspan="2" class="fw-bold">Total Direct Loan Balance</td>
+                        <td class="text-end fw-bold">${{ assessment.direct_loan_balance|floatformat:2|intcomma }}</td>
+                        <td colspan="2"></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    {# UPE Details #}
+    {% if assessment.upe_details %}
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-header bg-white border-0">
+            <h5 class="mb-0">
+                <i class="bi bi-diagram-3 text-warning"></i> Unpaid Present Entitlements
+            </h5>
+        </div>
+        <div class="card-body p-0">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Trust</th>
+                        <th class="text-end">UPE Amount</th>
+                        <th>Distribution Date</th>
+                        <th>Regime</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for upe in assessment.upe_details %}
+                    <tr>
+                        <td>{{ upe.trust_name }}</td>
+                        <td class="text-end fw-bold">${{ upe.upe_amount|floatformat:2 }}</td>
+                        <td>{{ upe.distribution_date }}</td>
+                        <td>
+                            {% if upe.regime == "post_2022" %}
+                            <span class="badge bg-danger">Post-2022 (Div 7A)</span>
+                            {% else %}
+                            <span class="badge bg-warning text-dark">Pre-2022 (Sub-trust)</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot class="table-light">
+                    <tr>
+                        <td class="fw-bold">Total UPE Exposure</td>
+                        <td class="text-end fw-bold">${{ assessment.upe_exposure|floatformat:2|intcomma }}</td>
+                        <td colspan="2"></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    {# Interest & MYR Calculations #}
+    {% if assessment.expected_interest or assessment.expected_myr %}
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-header bg-white border-0">
+            <h5 class="mb-0">
+                <i class="bi bi-calculator text-info"></i> Interest & Repayment Calculations
+            </h5>
+        </div>
+        <div class="card-body">
+            <div class="row">
+                {% if assessment.expected_interest %}
+                <div class="col-md-6">
+                    <h6 class="fw-bold">Benchmark Interest</h6>
+                    <table class="table table-sm">
+                        <tr>
+                            <td>Expected Interest</td>
+                            <td class="text-end fw-bold">${{ assessment.expected_interest|floatformat:2|intcomma }}</td>
+                        </tr>
+                        <tr>
+                            <td>Recorded Interest</td>
+                            <td class="text-end">${{ assessment.recorded_interest|floatformat:2|intcomma }}</td>
+                        </tr>
+                        <tr>
+                            <td>Status</td>
+                            <td class="text-end">
+                                {% if assessment.interest_compliant %}
+                                <span class="badge bg-success">Compliant</span>
+                                {% else %}
+                                <span class="badge bg-danger">Shortfall</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                    </table>
+                </div>
+                {% endif %}
+                {% if assessment.expected_myr %}
+                <div class="col-md-6">
+                    <h6 class="fw-bold">Minimum Yearly Repayment</h6>
+                    <table class="table table-sm">
+                        <tr>
+                            <td>Expected MYR</td>
+                            <td class="text-end fw-bold">${{ assessment.expected_myr|floatformat:2|intcomma }}</td>
+                        </tr>
+                        {% if assessment.actual_repayments != None %}
+                        <tr>
+                            <td>Actual Repayments</td>
+                            <td class="text-end">${{ assessment.actual_repayments|floatformat:2|intcomma }}</td>
+                        </tr>
+                        <tr>
+                            <td>Status</td>
+                            <td class="text-end">
+                                {% if assessment.myr_compliant %}
+                                <span class="badge bg-success">Met</span>
+                                {% else %}
+                                <span class="badge bg-danger">Shortfall</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="2" class="text-muted small">
+                                Transaction-level data required to verify repayments.
+                            </td>
+                        </tr>
+                        {% endif %}
+                    </table>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+    {% endif %}
+
+    {# Compliance Records #}
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-header bg-white border-0 d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">
+                <i class="bi bi-clipboard-check text-success"></i> Compliance Records
+            </h5>
+            <a href="{% url 'core:div7a_compliance_create' pk=financial_year.pk %}" class="btn btn-sm btn-outline-primary">
+                <i class="bi bi-plus"></i> Add Record
+            </a>
+        </div>
+        <div class="card-body p-0">
+            {% if compliance_records %}
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Borrower</th>
+                        <th class="text-end">Loan Amount</th>
+                        <th>Start Date</th>
+                        <th>Term</th>
+                        <th>Secured</th>
+                        <th>Status</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for record in compliance_records %}
+                    <tr>
+                        <td>{{ record.borrower_name }}</td>
+                        <td class="text-end">${{ record.loan_amount|floatformat:2|intcomma }}</td>
+                        <td>{{ record.loan_start_date|date:"d M Y" }}</td>
+                        <td>{{ record.loan_term }} years</td>
+                        <td>
+                            {% if record.is_secured %}
+                            <span class="badge bg-info">Secured</span>
+                            {% else %}
+                            <span class="badge bg-secondary">Unsecured</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <span class="badge bg-{% if record.status == 'COMPLIANT' %}success{% elif record.status == 'NON_COMPLIANT' %}danger{% elif record.status == 'EXPIRED' %}dark{% else %}warning text-dark{% endif %}">
+                                {{ record.get_status_display }}
+                            </span>
+                        </td>
+                        <td>
+                            <a href="{% url 'core:div7a_compliance_edit' pk=record.pk %}" class="btn btn-sm btn-outline-secondary">
+                                <i class="bi bi-pencil"></i>
+                            </a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            {% else %}
+            <div class="text-center py-4 text-muted">
+                <i class="bi bi-clipboard display-6"></i>
+                <p class="mt-2">No compliance records yet. Add a record when a Div 7A loan agreement is executed.</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    {# Existing Loan Agreements #}
+    {% if agreements %}
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-header bg-white border-0">
+            <h5 class="mb-0">
+                <i class="bi bi-file-earmark-text text-primary"></i> Loan Agreements on File
+            </h5>
+        </div>
+        <div class="card-body p-0">
+            <table class="table table-hover mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Document</th>
+                        <th>Status</th>
+                        <th>Generated</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for doc in agreements %}
+                    <tr>
+                        <td>{{ doc.get_document_type_display }}</td>
+                        <td>
+                            <span class="badge bg-{% if doc.status == 'executed' %}success{% elif doc.status == 'draft' %}warning text-dark{% else %}secondary{% endif %}">
+                                {{ doc.get_status_display }}
+                            </span>
+                        </td>
+                        <td>{{ doc.generated_at|date:"d M Y" }}</td>
+                        <td>
+                            {% if doc.docx_file %}
+                            <a href="{% url 'core:legal_doc_download' doc_pk=doc.pk fmt='docx' %}" class="btn btn-sm btn-outline-primary">
+                                <i class="bi bi-download"></i> DOCX
+                            </a>
+                            {% endif %}
+                            {% if doc.pdf_file %}
+                            <a href="{% url 'core:legal_doc_download' doc_pk=doc.pk fmt='pdf' %}" class="btn btn-sm btn-outline-danger">
+                                <i class="bi bi-file-pdf"></i> PDF
+                            </a>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+</div>
+
+{# JavaScript for Run Assessment button #}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const runBtns = document.querySelectorAll('#btn-run-assessment, #btn-run-first');
+    runBtns.forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Running...';
+
+            fetch("{% url 'core:div7a_run_assessment' pk=financial_year.pk %}", {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': '{{ csrf_token }}',
+                    'X-Requested-With': 'XMLHttpRequest',
+                },
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'complete' || data.status === 'queued') {
+                    // Reload after a short delay to show results
+                    setTimeout(() => window.location.reload(), data.status === 'queued' ? 3000 : 500);
+                }
+            })
+            .catch(err => {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-cpu"></i> Run Assessment';
+                alert('Assessment failed. Please try again.');
+            });
+        });
+    });
+});
+</script>
+{% endblock %}

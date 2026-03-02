@@ -78,6 +78,7 @@ REFERENCE_DATA = [
     # Division 7A
     ("div7a_benchmark_rate", "8.27", "Division 7A benchmark interest rate FY2025", "FY2025"),
     ("div7a_benchmark_rate_fy2024", "8.27", "Division 7A benchmark interest rate FY2024", "FY2024"),
+    ("div7a_benchmark_rate_fy2026", "8.37", "Division 7A benchmark interest rate FY2026 (QC 17928)", "FY2026"),
     ("div7a_min_repayment_pct", "5.0", "Minimum annual repayment % for Div 7A 7-year loan", ""),
     ("div7a_loan_threshold", "0", "Minimum loan balance to trigger Div 7A check", ""),
 
@@ -1703,5 +1704,206 @@ RISK_RULES = [
             "liquidity, risk, return, and the ability to meet member benefit obligations."
         ),
         "legislation_ref": "SIS Act 1993 s52(2)(f), SIS Reg 4.09",
+    },
+
+    # -----------------------------------------------------------------------
+    # DIVISION 7A — UPGRADED MODULE (Rules T2-D7A-01 to T2-D7A-08)
+    # Coordinated 8-rule detection engine replacing D7A-01–D7A-06.
+    # These rules are executed by core.eva_div7a, not the generic risk_engine.
+    # -----------------------------------------------------------------------
+    {
+        "rule_id": "T2-D7A-01",
+        "category": "division_7a",
+        "title": "Shareholder/Director Loan Debit Balance",
+        "description": (
+            "Director/shareholder loan account(s) for {entity_name} show a net debit "
+            "balance of {total} at year end. This constitutes a loan under ss 109C–109D "
+            "ITAA 1936 and is assessable as an unfranked deemed dividend unless a complying "
+            "loan agreement is in place."
+        ),
+        "severity": "CRITICAL",
+        "tier": 2,
+        "applicable_entities": ["company"],
+        "trigger_config": {
+            "type": "div7a_module",
+            "rule_category": "position_detection",
+            "check_type": "debit_balance",
+            "fires_on": "position",
+        },
+        "recommended_action": (
+            "1. Execute a Div 7A complying loan agreement covering the full balance. "
+            "2. Ensure agreement specifies benchmark interest rate. "
+            "3. Calculate and verify minimum yearly repayment. "
+            "4. Document the purpose of each drawdown in workpapers."
+        ),
+        "legislation_ref": "ITAA 1936 ss 109C–109D, s 109F, s 109N",
+    },
+    {
+        "rule_id": "T2-D7A-02",
+        "category": "division_7a",
+        "title": "Loan Balance Increase (Escalation Modifier)",
+        "description": (
+            "Director/shareholder loan balance for {entity_name} has increased by {increase} "
+            "from prior year. The complying agreement must cover the full current year balance."
+        ),
+        "severity": "HIGH",
+        "tier": 2,
+        "applicable_entities": ["company"],
+        "trigger_config": {
+            "type": "div7a_module",
+            "rule_category": "position_detection",
+            "check_type": "balance_increase",
+            "fires_on": "movement",
+            "enriches": "T2-D7A-01",
+        },
+        "recommended_action": (
+            "Update the complying loan agreement to cover the increased balance. "
+            "If increase exceeds $200,000, escalate to Elio per firm policy."
+        ),
+        "legislation_ref": "ITAA 1936 ss 109C–109D",
+    },
+    {
+        "rule_id": "T2-D7A-03",
+        "category": "division_7a",
+        "title": "Payments to/for Shareholders (s 109E)",
+        "description": (
+            "Payments of a personal nature totalling {total} detected for {entity_name}. "
+            "These may constitute deemed dividends under s 109E ITAA 1936 if paid to or on "
+            "behalf of a shareholder/associate."
+        ),
+        "severity": "HIGH",
+        "tier": 2,
+        "applicable_entities": ["company"],
+        "trigger_config": {
+            "type": "div7a_module",
+            "rule_category": "position_detection",
+            "check_type": "s109e_payments",
+            "fires_on": "position",
+            "threshold": 5000,
+        },
+        "recommended_action": (
+            "Review each personal expense account. Determine if amounts should be treated as "
+            "Div 7A loans, deemed dividends, or FBT-reportable benefits. Aggregate per-shareholder."
+        ),
+        "legislation_ref": "ITAA 1936 s 109E",
+    },
+    {
+        "rule_id": "T2-D7A-04",
+        "category": "division_7a",
+        "title": "Missing Complying Loan Agreement",
+        "description": (
+            "No complying Division 7A loan agreement on file for {entity_name} covering "
+            "the {total} debit balance. Without an executed agreement, the full balance is "
+            "treated as an unfranked deemed dividend."
+        ),
+        "severity": "CRITICAL",
+        "tier": 2,
+        "applicable_entities": ["company"],
+        "trigger_config": {
+            "type": "div7a_module",
+            "rule_category": "compliance_verification",
+            "check_type": "missing_agreement",
+            "depends_on": "T2-D7A-01",
+        },
+        "recommended_action": (
+            "Execute a Div 7A complying loan agreement before lodgement day. "
+            "Use the Legal Document Wizard to generate the agreement."
+        ),
+        "legislation_ref": "ITAA 1936 s 109N",
+    },
+    {
+        "rule_id": "T2-D7A-05",
+        "category": "division_7a",
+        "title": "Missing Benchmark Interest Income",
+        "description": (
+            "Benchmark interest shortfall for {entity_name}. Expected: {expected_interest} "
+            "(opening balance × {benchmark_rate}%). Recorded: {recorded_interest}. Without "
+            "benchmark interest, the loan agreement is non-compliant."
+        ),
+        "severity": "CRITICAL",
+        "tier": 2,
+        "applicable_entities": ["company"],
+        "trigger_config": {
+            "type": "div7a_module",
+            "rule_category": "compliance_verification",
+            "check_type": "interest_shortfall",
+            "depends_on": "T2-D7A-01",
+            "tolerance": 0.05,
+        },
+        "recommended_action": (
+            "Record benchmark interest as assessable income (Item 8N). "
+            "Ensure the interest rate matches the ATO benchmark rate for the relevant FY."
+        ),
+        "legislation_ref": "ITAA 1936 s 109F, s 109N, QC 17928",
+    },
+    {
+        "rule_id": "T2-D7A-06",
+        "category": "division_7a",
+        "title": "Minimum Yearly Repayment Shortfall",
+        "description": (
+            "MYR shortfall for {entity_name}. Required: {expected_myr}. Actual: {actual_repayments}. "
+            "Shortfall: {shortfall}. The shortfall amount is treated as a deemed unfranked dividend."
+        ),
+        "severity": "CRITICAL",
+        "tier": 2,
+        "applicable_entities": ["company"],
+        "trigger_config": {
+            "type": "div7a_module",
+            "rule_category": "compliance_verification",
+            "check_type": "myr_shortfall",
+            "depends_on": "T2-D7A-01",
+        },
+        "recommended_action": (
+            "Calculate MYR using s 109R formula. Confirm repayment made or will be made "
+            "before 30 June. The shortfall is treated as a deemed dividend."
+        ),
+        "legislation_ref": "ITAA 1936 s 109R",
+    },
+    {
+        "rule_id": "T2-D7A-07",
+        "category": "division_7a",
+        "title": "Unpaid Present Entitlements (Trust → Company)",
+        "description": (
+            "Unpaid present entitlement of {upe_amount} from {trust_name} to {entity_name}. "
+            "Post-2022 UPEs are treated as Div 7A loans under TD 2022/11."
+        ),
+        "severity": "CRITICAL",
+        "tier": 2,
+        "applicable_entities": ["company"],
+        "trigger_config": {
+            "type": "div7a_module",
+            "rule_category": "cross_entity",
+            "check_type": "upe_detection",
+            "cross_entity": True,
+        },
+        "recommended_action": (
+            "For post-2022 UPEs: execute complying 7-year loan agreement or repay before "
+            "lodgement day. For pre-2022 UPEs: confirm sub-trust arrangement per PS LA 2010/4."
+        ),
+        "legislation_ref": "ITAA 1936 s 109XA–109XB, TD 2022/11, PS LA 2010/4",
+    },
+    {
+        "rule_id": "T2-D7A-08",
+        "category": "division_7a",
+        "title": "Interposed Entity Loans (ss 109T–109V)",
+        "description": (
+            "Potential interposed entity arrangement: {entity_name} has a receivable from "
+            "{intermediary_name} which has a relationship with {shareholder_name}. Division 7A "
+            "may apply under ss 109T–109V."
+        ),
+        "severity": "HIGH",
+        "tier": 2,
+        "applicable_entities": ["company"],
+        "trigger_config": {
+            "type": "div7a_module",
+            "rule_category": "cross_entity",
+            "check_type": "interposed_entity",
+            "cross_entity": True,
+        },
+        "recommended_action": (
+            "Review the interposed entity provisions. Determine if the ultimate beneficiary "
+            "is a shareholder or associate. This requires manual review — the detection is advisory."
+        ),
+        "legislation_ref": "ITAA 1936 ss 109T–109V",
     },
 ]

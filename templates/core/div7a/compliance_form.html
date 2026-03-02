@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% block title %}{% if is_edit %}Edit{% else %}Add{% endif %} Div 7A Compliance Record — StatementHub{% endblock %}
+{% block content %}
+<div class="container-fluid py-3">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
+            {% if financial_year %}
+            <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=financial_year.pk %}">{{ financial_year }}</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'core:div7a_dashboard' pk=financial_year.pk %}">Division 7A</a></li>
+            {% endif %}
+            <li class="breadcrumb-item active">{% if is_edit %}Edit{% else %}Add{% endif %} Compliance Record</li>
+        </ol>
+    </nav>
+
+    <h4 class="fw-bold mb-3">
+        <i class="bi bi-clipboard-check text-primary"></i>
+        {% if is_edit %}Edit{% else %}New{% endif %} Division 7A Compliance Record
+    </h4>
+
+    {% if error %}
+    <div class="alert alert-danger">{{ error }}</div>
+    {% endif %}
+
+    <div class="card border-0 shadow-sm">
+        <div class="card-body">
+            <form method="post">
+                {% csrf_token %}
+
+                <div class="row g-3">
+                    {# Borrower Name #}
+                    <div class="col-md-6">
+                        <label for="borrower_name" class="form-label fw-bold">Borrower Name <span class="text-danger">*</span></label>
+                        <input type="text" class="form-control" id="borrower_name" name="borrower_name"
+                               value="{{ record.borrower_name|default:'' }}" required>
+                        <small class="text-muted">Name of the shareholder/associate receiving the loan</small>
+                    </div>
+
+                    {# Borrower Entity (optional) #}
+                    <div class="col-md-6">
+                        <label for="borrower_entity" class="form-label fw-bold">Borrower Entity (optional)</label>
+                        <select class="form-select" id="borrower_entity" name="borrower_entity">
+                            <option value="">— Select related entity —</option>
+                            {% for re in related_entities %}
+                            <option value="{{ re.pk }}" {% if record.borrower_entity_id == re.pk %}selected{% endif %}>
+                                {{ re.entity_name }} ({{ re.get_entity_type_display }})
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    {# Loan Amount #}
+                    <div class="col-md-4">
+                        <label for="loan_amount" class="form-label fw-bold">Loan Amount <span class="text-danger">*</span></label>
+                        <div class="input-group">
+                            <span class="input-group-text">$</span>
+                            <input type="number" class="form-control" id="loan_amount" name="loan_amount"
+                                   step="0.01" min="0" value="{{ record.loan_amount|default:'0.00' }}" required>
+                        </div>
+                    </div>
+
+                    {# Loan Start Date #}
+                    <div class="col-md-4">
+                        <label for="loan_start_date" class="form-label fw-bold">Loan Start Date</label>
+                        <input type="date" class="form-control" id="loan_start_date" name="loan_start_date"
+                               value="{{ record.loan_start_date|date:'Y-m-d'|default:'' }}">
+                    </div>
+
+                    {# Loan Start Year #}
+                    <div class="col-md-4">
+                        <label for="loan_start_year" class="form-label fw-bold">Loan Start FY</label>
+                        <input type="number" class="form-control" id="loan_start_year" name="loan_start_year"
+                               min="1990" max="2050" value="{{ record.loan_start_year|default:'2025' }}">
+                        <small class="text-muted">Financial year the loan was first made</small>
+                    </div>
+
+                    {# Loan Term #}
+                    <div class="col-md-4">
+                        <label for="loan_term" class="form-label fw-bold">Loan Term (years)</label>
+                        <select class="form-select" id="loan_term" name="loan_term">
+                            <option value="7" {% if record.loan_term == 7 or not record %}selected{% endif %}>7 years (unsecured)</option>
+                            <option value="25" {% if record.loan_term == 25 %}selected{% endif %}>25 years (secured)</option>
+                        </select>
+                    </div>
+
+                    {# Is Secured #}
+                    <div class="col-md-4">
+                        <label class="form-label fw-bold">Security</label>
+                        <div class="form-check mt-2">
+                            <input class="form-check-input" type="checkbox" id="is_secured" name="is_secured"
+                                   {% if record.is_secured %}checked{% endif %}>
+                            <label class="form-check-label" for="is_secured">
+                                Loan is secured by real property
+                            </label>
+                        </div>
+                    </div>
+
+                    {# Status #}
+                    <div class="col-md-4">
+                        <label for="status" class="form-label fw-bold">Status</label>
+                        <select class="form-select" id="status" name="status">
+                            <option value="PENDING" {% if record.status == 'PENDING' or not record %}selected{% endif %}>Pending</option>
+                            <option value="COMPLIANT" {% if record.status == 'COMPLIANT' %}selected{% endif %}>Compliant</option>
+                            <option value="NON_COMPLIANT" {% if record.status == 'NON_COMPLIANT' %}selected{% endif %}>Non-Compliant</option>
+                            <option value="EXPIRED" {% if record.status == 'EXPIRED' %}selected{% endif %}>Expired</option>
+                        </select>
+                    </div>
+
+                    {# Agreement Document #}
+                    <div class="col-md-6">
+                        <label for="agreement_document" class="form-label fw-bold">Linked Agreement</label>
+                        <select class="form-select" id="agreement_document" name="agreement_document">
+                            <option value="">— No agreement linked —</option>
+                            {% for doc in agreements %}
+                            <option value="{{ doc.pk }}" {% if record.agreement_document_id == doc.pk %}selected{% endif %}>
+                                {{ doc.get_document_type_display }} ({{ doc.generated_at|date:"d M Y" }})
+                            </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    {# Notes #}
+                    <div class="col-12">
+                        <label for="notes" class="form-label fw-bold">Notes</label>
+                        <textarea class="form-control" id="notes" name="notes" rows="3">{{ record.notes|default:'' }}</textarea>
+                    </div>
+                </div>
+
+                <hr>
+                <div class="d-flex gap-2">
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-check-circle"></i> {% if is_edit %}Save Changes{% else %}Create Record{% endif %}
+                    </button>
+                    {% if financial_year %}
+                    <a href="{% url 'core:div7a_dashboard' pk=financial_year.pk %}" class="btn btn-outline-secondary">Cancel</a>
+                    {% else %}
+                    <a href="{% url 'core:entity_detail' pk=entity.pk %}" class="btn btn-outline-secondary">Cancel</a>
+                    {% endif %}
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+// Auto-toggle loan term based on secured checkbox
+document.getElementById('is_secured').addEventListener('change', function() {
+    document.getElementById('loan_term').value = this.checked ? '25' : '7';
+});
+</script>
+{% endblock %}

@@ -4530,4 +4530,215 @@ class BASPeriodCommentary(models.Model):
         return count
 
 
+
+# ---------------------------------------------------------------------------
+# Division 7A Detection Module — Div7AAssessment
+# ---------------------------------------------------------------------------
+class Div7AAssessment(models.Model):
+    """
+    One record per entity per financial year, created by the div7a_assessment
+    Celery task. Stores the full Div 7A position: direct loan exposure, UPE
+    exposure, s 109E payments, compliance status, and links to the
+    consolidated EvaFinding card.
+    """
+
+    class OverallSeverity(models.TextChoices):
+        CRITICAL = "CRITICAL", "Critical"
+        ADVISORY = "ADVISORY", "Advisory"
+        CLEAR = "CLEAR", "Clear"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    financial_year = models.OneToOneField(
+        FinancialYear, on_delete=models.CASCADE,
+        related_name="div7a_assessment",
+        help_text="Unique per FY — one Div 7A assessment per entity per year",
+    )
+    assessed_at = models.DateTimeField(
+        auto_now=True,
+        help_text="When the assessment last ran",
+    )
+
+    # --- Position Detection (Category A) ---
+    direct_loan_balance = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Total debit balance across director/shareholder loan accounts",
+    )
+    direct_loan_accounts = models.JSONField(
+        default=list, blank=True,
+        help_text="Array of {account_code, account_name, balance, py_balance}",
+    )
+    upe_exposure = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Total UPE amount from related trusts",
+    )
+    upe_details = models.JSONField(
+        default=list, blank=True,
+        help_text="Array of {trust_entity_id, trust_name, upe_amount, distribution_date, regime}",
+    )
+    s109e_payments = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Total s 109E payments detected",
+    )
+    s109e_details = models.JSONField(
+        default=list, blank=True,
+        help_text="Array of {payee, amount, account_code, description}",
+    )
+    total_exposure = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="direct_loan_balance + upe_exposure + s109e_payments",
+    )
+
+    # --- Compliance Verification (Category B) ---
+    has_complying_agreement = models.BooleanField(
+        default=False,
+        help_text="True if valid LegalDocument exists covering balance",
+    )
+    agreement_covers_balance = models.BooleanField(
+        default=False,
+        help_text="True if agreement.loan_amount >= total direct balance",
+    )
+    expected_interest = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Calculated benchmark interest for the year",
+    )
+    recorded_interest = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Actual interest income found in P&L",
+    )
+    interest_compliant = models.BooleanField(
+        default=False,
+        help_text="recorded_interest >= expected_interest * 0.95",
+    )
+    expected_myr = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Calculated minimum yearly repayment",
+    )
+    actual_repayments = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True,
+        help_text="Credits on loan account during FY",
+    )
+    myr_compliant = models.BooleanField(
+        null=True, blank=True,
+        help_text="True if actual_repayments >= expected_myr",
+    )
+
+    # --- Escalation & Severity ---
+    escalation_required = models.BooleanField(
+        default=False,
+        help_text="True if total_exposure > 200000",
+    )
+    rules_fired = models.JSONField(
+        default=list, blank=True,
+        help_text="Array of triggered rule IDs e.g. ['T2-D7A-01', 'T2-D7A-04']",
+    )
+    overall_severity = models.CharField(
+        max_length=10, choices=OverallSeverity.choices,
+        default=OverallSeverity.CLEAR,
+    )
+
+    # --- Link to consolidated finding card ---
+    eva_finding = models.ForeignKey(
+        EvaFinding, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="div7a_assessments",
+        help_text="Link to consolidated finding card",
+    )
+
+    class Meta:
+        ordering = ["-assessed_at"]
+        verbose_name = "Div 7A Assessment"
+        verbose_name_plural = "Div 7A Assessments"
+        indexes = [
+            models.Index(fields=["financial_year", "overall_severity"]),
+        ]
+
+    def __str__(self):
+        return (
+            f"Div 7A Assessment — {self.financial_year} "
+            f"({self.get_overall_severity_display()})"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Division 7A Detection Module — Div7ACompliance
+# ---------------------------------------------------------------------------
+class Div7ACompliance(models.Model):
+    """
+    Tracks compliance status of each Div 7A loan arrangement.
+    One record per loan per entity.
+    """
+
+    class ComplianceStatus(models.TextChoices):
+        COMPLIANT = "COMPLIANT", "Compliant"
+        NON_COMPLIANT = "NON_COMPLIANT", "Non-Compliant"
+        EXPIRED = "EXPIRED", "Expired"
+        PENDING = "PENDING", "Pending"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entity = models.ForeignKey(
+        Entity, on_delete=models.CASCADE,
+        related_name="div7a_compliance_records",
+    )
+    borrower_name = models.CharField(
+        max_length=255,
+        help_text="Shareholder/associate/trust borrower name",
+    )
+    borrower_entity = models.ForeignKey(
+        Entity, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="div7a_as_borrower",
+        help_text="If borrower is another StatementHub entity",
+    )
+    loan_amount = models.DecimalField(
+        max_digits=15, decimal_places=2,
+        help_text="Original loan amount covered by agreement",
+    )
+    loan_start_date = models.DateField(
+        help_text="Commencement date of complying agreement",
+    )
+    loan_start_year = models.IntegerField(
+        help_text="FY loan commenced (e.g. 2024)",
+    )
+    loan_term = models.IntegerField(
+        default=7,
+        help_text="7 (unsecured) or 25 (secured)",
+    )
+    is_secured = models.BooleanField(
+        default=False,
+        help_text="True if secured over real property",
+    )
+    agreement_document = models.ForeignKey(
+        LegalDocument, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="div7a_compliance_records",
+    )
+    status = models.CharField(
+        max_length=15, choices=ComplianceStatus.choices,
+        default=ComplianceStatus.PENDING,
+    )
+    last_reviewed = models.DateTimeField(
+        auto_now=True,
+        help_text="Last review date",
+    )
+    notes = models.TextField(
+        blank=True, default="",
+        help_text="Accountant notes",
+    )
+
+    class Meta:
+        ordering = ["entity", "-loan_start_date"]
+        verbose_name = "Div 7A Compliance Record"
+        verbose_name_plural = "Div 7A Compliance Records"
+        indexes = [
+            models.Index(fields=["entity", "status"]),
+        ]
+
+    def __str__(self):
+        return (
+            f"Div 7A Loan — {self.borrower_name} "
+            f"(${self.loan_amount:,.2f}, {self.get_status_display()})"
+        )
+
+
 from .models_office_admin import *  # noqa: F401, F403
+
