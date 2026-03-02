@@ -75,10 +75,40 @@ REFERENCE_DATA = [
     ("sg_rate_fy2026", "12.0", "Superannuation Guarantee rate for FY2026", "FY2026"),
     ("sg_max_earnings_base", "65070", "Maximum super contribution base per quarter FY2025", "FY2025"),
 
-    # Division 7A
-    ("div7a_benchmark_rate", "8.27", "Division 7A benchmark interest rate FY2025", "FY2025"),
-    ("div7a_benchmark_rate_fy2024", "8.27", "Division 7A benchmark interest rate FY2024", "FY2024"),
-    ("div7a_benchmark_rate_fy2026", "8.37", "Division 7A benchmark interest rate FY2026 (QC 17928)", "FY2026"),
+    # Division 7A — Benchmark Interest Rates (ATO QC 17928)
+    # Source: https://www.ato.gov.au/tax-rates-and-codes/division-7a-benchmark-interest-rate
+    # Rates stored as percentages (e.g. 8.37 = 8.37%). The engine divides by 100.
+    # New rates can be added here or via Django admin — the engine checks DB first.
+    ("div7a_benchmark_rate_fy2026", "8.37", "Division 7A benchmark interest rate FY2026 — RBA rate published 6 Jun 2025", "FY2026"),
+    ("div7a_benchmark_rate_fy2025", "8.77", "Division 7A benchmark interest rate FY2025 — RBA rate published 7 Jun 2024", "FY2025"),
+    ("div7a_benchmark_rate_fy2024", "8.27", "Division 7A benchmark interest rate FY2024 — RBA rate published 7 Jun 2023", "FY2024"),
+    ("div7a_benchmark_rate_fy2023", "4.77", "Division 7A benchmark interest rate FY2023 — RBA rate published 2 Jun 2022", "FY2023"),
+    ("div7a_benchmark_rate_fy2022", "4.52", "Division 7A benchmark interest rate FY2022 — RBA rate published 2 Jun 2021", "FY2022"),
+    ("div7a_benchmark_rate_fy2021", "4.52", "Division 7A benchmark interest rate FY2021 — RBA rate published 2 Jun 2020", "FY2021"),
+    ("div7a_benchmark_rate_fy2020", "5.37", "Division 7A benchmark interest rate FY2020 — RBA rate published May 2019", "FY2020"),
+    ("div7a_benchmark_rate_fy2019", "5.20", "Division 7A benchmark interest rate FY2019 — TD 2018/14", "FY2019"),
+    ("div7a_benchmark_rate_fy2018", "5.30", "Division 7A benchmark interest rate FY2018 — TD 2017/17", "FY2018"),
+    ("div7a_benchmark_rate_fy2017", "5.40", "Division 7A benchmark interest rate FY2017 — TD 2016/11", "FY2017"),
+    ("div7a_benchmark_rate_fy2016", "5.45", "Division 7A benchmark interest rate FY2016 — TD 2015/15", "FY2016"),
+    ("div7a_benchmark_rate_fy2015", "5.95", "Division 7A benchmark interest rate FY2015 — TD 2014/20", "FY2015"),
+    ("div7a_benchmark_rate_fy2014", "6.20", "Division 7A benchmark interest rate FY2014 — TD 2013/17", "FY2014"),
+    ("div7a_benchmark_rate_fy2013", "7.05", "Division 7A benchmark interest rate FY2013 — TD 2012/15", "FY2013"),
+    ("div7a_benchmark_rate_fy2012", "7.80", "Division 7A benchmark interest rate FY2012 — TD 2011/20", "FY2012"),
+    ("div7a_benchmark_rate_fy2011", "7.40", "Division 7A benchmark interest rate FY2011 — TD 2010/18", "FY2011"),
+    ("div7a_benchmark_rate_fy2010", "5.75", "Division 7A benchmark interest rate FY2010 — TD 2009/16", "FY2010"),
+    ("div7a_benchmark_rate_fy2009", "9.45", "Division 7A benchmark interest rate FY2009 — TD 2008/19", "FY2009"),
+    ("div7a_benchmark_rate_fy2008", "8.05", "Division 7A benchmark interest rate FY2008 — TD 2007/23", "FY2008"),
+    ("div7a_benchmark_rate_fy2007", "7.55", "Division 7A benchmark interest rate FY2007 — TD 2006/45", "FY2007"),
+    ("div7a_benchmark_rate_fy2006", "7.30", "Division 7A benchmark interest rate FY2006 — TD 2005/31", "FY2006"),
+    ("div7a_benchmark_rate_fy2005", "7.05", "Division 7A benchmark interest rate FY2005 — TD 2004/28", "FY2005"),
+    ("div7a_benchmark_rate_fy2004", "6.55", "Division 7A benchmark interest rate FY2004 — TD 2003/19", "FY2004"),
+    ("div7a_benchmark_rate_fy2003", "6.30", "Division 7A benchmark interest rate FY2003 — TD 2002/15", "FY2003"),
+    ("div7a_benchmark_rate_fy2002", "6.80", "Division 7A benchmark interest rate FY2002 — TD 2001/20", "FY2002"),
+    ("div7a_benchmark_rate_fy2001", "7.80", "Division 7A benchmark interest rate FY2001 — TD 2001/1", "FY2001"),
+    ("div7a_benchmark_rate_fy2000", "6.50", "Division 7A benchmark interest rate FY2000 — TD 1999/39", "FY2000"),
+    ("div7a_benchmark_rate_fy1999", "6.70", "Division 7A benchmark interest rate FY1999 — TD 98/21", "FY1999"),
+    # Legacy alias for backward compat (points to FY2025)
+    ("div7a_benchmark_rate", "8.77", "Division 7A benchmark interest rate (current default — FY2025)", "FY2025"),
     ("div7a_min_repayment_pct", "5.0", "Minimum annual repayment % for Div 7A 7-year loan", ""),
     ("div7a_loan_threshold", "0", "Minimum loan balance to trigger Div 7A check", ""),
 

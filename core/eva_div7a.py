@@ -56,13 +56,45 @@ _UPE_KEYWORDS = {
     "payable to beneficiary",
 }
 
-# Benchmark interest rates by FY (QC 17928)
-BENCHMARK_RATES = {
-    "FY2026": Decimal("0.0837"),
-    "FY2025": Decimal("0.0877"),
-    "FY2024": Decimal("0.0827"),
-    "FY2023": Decimal("0.0477"),
-    "FY2022": Decimal("0.0452"),
+# ---------------------------------------------------------------------------
+# ATO Division 7A Benchmark Interest Rates — Complete Historical Table
+# Source: https://www.ato.gov.au/tax-rates-and-codes/division-7a-benchmark-interest-rate
+# and https://atotaxrates.info/businesses/division-7a-benchmark-interest-rates/
+#
+# These are fallback values.  The engine first checks RiskReferenceData (DB)
+# so new rates can be added via admin without a code deploy.
+# ---------------------------------------------------------------------------
+_HISTORICAL_BENCHMARK_RATES = {
+    # FY label  →  rate as decimal (e.g. 8.37% = 0.0837)
+    # --- Current & recent ---
+    2026: Decimal("0.0837"),   # RBA rate published 6 Jun 2025
+    2025: Decimal("0.0877"),   # RBA rate published 7 Jun 2024
+    2024: Decimal("0.0827"),   # RBA rate published 7 Jun 2023
+    2023: Decimal("0.0477"),   # RBA rate published 2 Jun 2022
+    2022: Decimal("0.0452"),   # RBA rate published 2 Jun 2021
+    2021: Decimal("0.0452"),   # RBA rate published 2 Jun 2020
+    2020: Decimal("0.0537"),   # RBA rate published May 2019
+    2019: Decimal("0.0520"),   # TD 2018/14
+    2018: Decimal("0.0530"),   # TD 2017/17
+    2017: Decimal("0.0540"),   # TD 2016/11
+    2016: Decimal("0.0545"),   # TD 2015/15
+    2015: Decimal("0.0595"),   # TD 2014/20
+    2014: Decimal("0.0620"),   # TD 2013/17
+    2013: Decimal("0.0705"),   # TD 2012/15
+    2012: Decimal("0.0780"),   # TD 2011/20
+    2011: Decimal("0.0740"),   # TD 2010/18
+    2010: Decimal("0.0575"),   # TD 2009/16
+    2009: Decimal("0.0945"),   # TD 2008/19
+    2008: Decimal("0.0805"),   # TD 2007/23
+    2007: Decimal("0.0755"),   # TD 2006/45
+    2006: Decimal("0.0730"),   # TD 2005/31
+    2005: Decimal("0.0705"),   # TD 2004/28
+    2004: Decimal("0.0655"),   # TD 2003/19
+    2003: Decimal("0.0630"),   # TD 2002/15
+    2002: Decimal("0.0680"),   # TD 2001/20
+    2001: Decimal("0.0780"),   # TD 2001/1
+    2000: Decimal("0.0650"),   # TD 1999/39
+    1999: Decimal("0.0670"),   # TD 98/21
 }
 
 
@@ -215,26 +247,129 @@ class _AssessmentContext:
 # HELPER FUNCTIONS
 # ============================================================================
 
+def _extract_fy_year(year_label):
+    """
+    Extract the numeric year from a year_label like 'FY2026', '2026', '2025-26', etc.
+
+    Returns an int (e.g. 2026) or None.
+    """
+    import re
+    if not year_label:
+        return None
+    s = str(year_label).strip()
+
+    # "FY2026" or "FY 2026"
+    m = re.match(r"FY\s*(\d{4})", s, re.IGNORECASE)
+    if m:
+        return int(m.group(1))
+
+    # "2025-26" or "2025/26" → ending year is 2026
+    m = re.match(r"(\d{4})[\-/](\d{2,4})", s)
+    if m:
+        start = int(m.group(1))
+        end_part = m.group(2)
+        if len(end_part) == 2:
+            return start + 1  # "2025-26" → 2026
+        return int(end_part)  # "2025-2026" → 2026
+
+    # Plain "2026"
+    m = re.match(r"(\d{4})$", s)
+    if m:
+        return int(m.group(1))
+
+    return None
+
+
 def _get_benchmark_rate(year_label):
-    """Get the benchmark interest rate for the given FY."""
-    rate = BENCHMARK_RATES.get(year_label)
-    if rate:
+    """
+    Resolve the ATO Division 7A benchmark interest rate for the given FY.
+
+    Lookup priority:
+      1. RiskReferenceData table (DB) — allows admin to add/override rates
+         without a code deploy.  Searches for key matching the specific FY.
+      2. Built-in historical table (_HISTORICAL_BENCHMARK_RATES) — covers
+         all years from 1998-99 to 2025-26.
+      3. Most recent known rate as a last-resort fallback.
+
+    Returns a Decimal (e.g. Decimal('0.0837') for 8.37%).
+    """
+    from core.models import RiskReferenceData
+
+    fy_year = _extract_fy_year(year_label)
+
+    # --- Priority 1: Database lookup (exact FY match) ---
+    if fy_year:
+        # Try FY-specific key first, e.g. "div7a_benchmark_rate_fy2026"
+        db_keys = [
+            f"div7a_benchmark_rate_fy{fy_year}",
+            f"div7a_benchmark_rate_FY{fy_year}",
+        ]
+        # Also try the generic key if it has matching applicable_fy
+        for key in db_keys:
+            try:
+                ref = RiskReferenceData.objects.filter(key=key).first()
+                if ref:
+                    rate = Decimal(ref.value) / Decimal("100")
+                    logger.debug(
+                        "Div 7A benchmark rate for %s resolved from DB key '%s': %s%%",
+                        year_label, key, ref.value,
+                    )
+                    return rate
+            except (InvalidOperation, ValueError):
+                continue
+
+        # Try generic key with applicable_fy filter
+        try:
+            fy_label = f"FY{fy_year}"
+            ref = RiskReferenceData.objects.filter(
+                key="div7a_benchmark_rate",
+                applicable_fy=fy_label,
+            ).first()
+            if ref:
+                rate = Decimal(ref.value) / Decimal("100")
+                logger.debug(
+                    "Div 7A benchmark rate for %s resolved from DB (applicable_fy=%s): %s%%",
+                    year_label, fy_label, ref.value,
+                )
+                return rate
+        except (InvalidOperation, ValueError):
+            pass
+
+    # --- Priority 2: Built-in historical table ---
+    if fy_year and fy_year in _HISTORICAL_BENCHMARK_RATES:
+        rate = _HISTORICAL_BENCHMARK_RATES[fy_year]
+        logger.debug(
+            "Div 7A benchmark rate for %s resolved from historical table: %s",
+            year_label, rate,
+        )
         return rate
 
-    # Try from ReferenceData table
-    from core.models import RiskReferenceData
+    # --- Priority 3: Most recent known rate (fallback) ---
+    # Check DB for the most recent rate by key pattern
     try:
         ref = RiskReferenceData.objects.filter(
             key__startswith="div7a_benchmark_rate",
-        ).first()
+        ).order_by("-applicable_fy").first()
         if ref:
-            return Decimal(ref.value) / Decimal("100")
+            rate = Decimal(ref.value) / Decimal("100")
+            logger.warning(
+                "Div 7A benchmark rate for %s not found for exact year; "
+                "using most recent DB rate (%s from %s): %s%%",
+                year_label, ref.key, ref.applicable_fy, ref.value,
+            )
+            return rate
     except (InvalidOperation, ValueError):
         pass
 
-    # Default to current year rate
-    logger.warning("Benchmark rate not found for %s, defaulting to 8.37%%", year_label)
-    return Decimal("0.0837")
+    # Absolute last resort: highest year in historical table
+    max_year = max(_HISTORICAL_BENCHMARK_RATES.keys())
+    fallback = _HISTORICAL_BENCHMARK_RATES[max_year]
+    logger.warning(
+        "Div 7A benchmark rate for %s: no DB or historical match found. "
+        "Falling back to most recent historical rate (FY%d = %s)",
+        year_label, max_year, fallback,
+    )
+    return fallback
 
 
 def _is_loan_account(line):
