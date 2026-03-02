@@ -3,6 +3,8 @@ Generate the bank statement upload template for StatementHub.
 Creates an Excel file with:
 - An Instructions sheet
 - A Bank Statement sheet with the required columns
+- Date column formatted as TEXT so any date format can be pasted in
+- 1500 pre-formatted rows for data entry
 """
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side, numbers
@@ -45,8 +47,8 @@ instructions = [
     ('   - Account Number: Your bank account number', instruction_font, None),
     ('', None, None),
     ('3. Enter your transactions starting from row 7 (below the column headers).', instruction_font, None),
-    ('4. For each transaction, fill in:', instruction_font, None),
-    ('   - Date: Transaction date in DD/MM/YYYY format', instruction_font, None),
+    ('4. Copy and paste your bank statement data directly — any date format is accepted.', instruction_font, None),
+    ('   - Date: Transaction date (any format — DD/MM/YYYY, MM/DD/YYYY, YYYY-MM-DD, etc.)', instruction_font, None),
     ('   - Description: Transaction description/narration', instruction_font, None),
     ('   - Debit: Money going OUT (withdrawals, payments)', instruction_font, None),
     ('   - Credit: Money coming IN (deposits, receipts)', instruction_font, None),
@@ -102,7 +104,7 @@ ws.cell(row=5, column=1, value='')
 
 # Row 6: Column headers
 headers = ['Date', 'Description', 'Debit', 'Credit', 'Balance']
-col_widths = [15, 50, 15, 15, 15]
+col_widths = [18, 50, 15, 15, 15]
 
 for j, (header, width) in enumerate(zip(headers, col_widths), 1):
     cell = ws.cell(row=6, column=j, value=header)
@@ -112,30 +114,56 @@ for j, (header, width) in enumerate(zip(headers, col_widths), 1):
     cell.alignment = Alignment(horizontal='center')
     ws.column_dimensions[get_column_letter(j)].width = width
 
-# Sample data rows (7-9)
+# Sample data rows (7-11) — dates as plain text strings
 sample_data = [
-    ('01/07/2024', 'Opening balance brought forward', '', '', 10000.00),
-    ('05/07/2024', 'BPAY - ATO Payment', 1500.00, '', 8500.00),
-    ('10/07/2024', 'Direct Credit - Client Payment', '', 3200.00, 11700.00),
-    ('15/07/2024', 'EFTPOS Purchase - Office Supplies', 245.50, '', 11454.50),
-    ('20/07/2024', 'Transfer from Savings', '', 5000.00, 16454.50),
+    ('01/07/2024', 'Opening balance brought forward', None, None, 10000.00),
+    ('05/07/2024', 'BPAY - ATO Payment', 1500.00, None, 8500.00),
+    ('10/07/2024', 'Direct Credit - Client Payment', None, 3200.00, 11700.00),
+    ('15/07/2024', 'EFTPOS Purchase - Office Supplies', 245.50, None, 11454.50),
+    ('20/07/2024', 'Transfer from Savings', None, 5000.00, 16454.50),
 ]
 
 for i, row_data in enumerate(sample_data, 7):
     for j, value in enumerate(row_data, 1):
-        cell = ws.cell(row=i, column=j, value=value if value != '' else None)
+        cell = ws.cell(row=i, column=j, value=value)
         cell.border = thin_border
         cell.fill = sample_fill
-        if j == 1:  # Date column
-            cell.number_format = 'DD/MM/YYYY'
-            cell.alignment = Alignment(horizontal='center')
+        if j == 1:  # Date column — TEXT format so any date format is preserved
+            cell.number_format = '@'  # Text format
+            cell.alignment = Alignment(horizontal='left')
+        elif j == 2:  # Description
+            cell.number_format = '@'  # Text format
         elif j >= 3:  # Numeric columns
-            cell.number_format = '#,##0.00'
+            if value is not None:
+                cell.number_format = '#,##0.00'
             cell.alignment = Alignment(horizontal='right')
 
+# Pre-format 1500 empty rows below sample data so pasted data keeps text format
+# This is the key: the Date column (col 1) and Description column (col 2) are
+# pre-formatted as TEXT so Excel won't auto-convert pasted dates to serial numbers.
+for i in range(12, 1512):
+    # Date column — text format
+    date_cell = ws.cell(row=i, column=1)
+    date_cell.number_format = '@'
+    date_cell.alignment = Alignment(horizontal='left')
+    date_cell.border = thin_border
+
+    # Description column — text format
+    desc_cell = ws.cell(row=i, column=2)
+    desc_cell.number_format = '@'
+    desc_cell.border = thin_border
+
+    # Debit, Credit, Balance — number format
+    for j in range(3, 6):
+        num_cell = ws.cell(row=i, column=j)
+        num_cell.number_format = '#,##0.00'
+        num_cell.alignment = Alignment(horizontal='right')
+        num_cell.border = thin_border
+
 # Add a note below sample data
-note_cell = ws.cell(row=13, column=1, value='↑ Delete the sample data above and enter your transactions here')
+note_cell = ws.cell(row=12, column=1, value='↑ Delete the sample data above and paste your transactions here')
 note_cell.font = Font(name='Calibri', italic=True, color='999999', size=10)
+note_cell.number_format = '@'
 
 # Freeze panes at row 7 (below headers)
 ws.freeze_panes = 'A7'

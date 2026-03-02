@@ -875,12 +875,32 @@ def upload_bank_statement(request):
             for txn in transactions:
                 txn_date_str = txn.get("date", "")
                 txn_date = None
-                for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d %b %Y", "%d %B %Y", "%m/%d/%Y"):
-                    try:
-                        txn_date = dt.strptime(txn_date_str.strip(), fmt).date()
-                        break
-                    except (ValueError, AttributeError):
-                        continue
+                # Handle Excel serial date numbers (e.g. 45838 = 2025-06-30)
+                date_str_clean = txn_date_str.strip()
+                try:
+                    serial = float(date_str_clean)
+                    if 30000 < serial < 60000:  # Plausible Excel date serial range
+                        from datetime import timedelta
+                        excel_epoch = dt(1899, 12, 30).date()
+                        txn_date = excel_epoch + timedelta(days=int(serial))
+                except (ValueError, TypeError):
+                    pass
+
+                # Try common date string formats (flexible for copy-paste)
+                if not txn_date:
+                    for fmt in (
+                        "%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d.%m.%Y",
+                        "%d %b %Y", "%d %B %Y", "%d-%b-%Y", "%d-%b-%y",
+                        "%m/%d/%Y", "%m-%d-%Y",
+                        "%Y/%m/%d", "%Y.%m.%d",
+                        "%d/%m/%y", "%m/%d/%y",
+                        "%Y-%m-%d %H:%M:%S", "%d/%m/%Y %H:%M:%S",
+                    ):
+                        try:
+                            txn_date = dt.strptime(date_str_clean, fmt).date()
+                            break
+                        except (ValueError, AttributeError):
+                            continue
 
                 if txn_date:
                     if period_start_date and txn_date < period_start_date:
@@ -1272,10 +1292,37 @@ def _parse_excel_bank_statement(content, filename):
         account_number = meta_account_number
 
         for _, row in df.iterrows():
-            date = str(row.get(col_map.get("date", ""), "")).strip()
+            raw_date = row.get(col_map.get("date", ""), "")
+
+            # Normalise date to a string — handle datetime objects, Excel serial
+            # numbers, and arbitrary string formats from copy-paste
+            date = ""
+            if isinstance(raw_date, (pd.Timestamp,)):
+                date = raw_date.strftime("%d/%m/%Y")
+            elif hasattr(raw_date, 'strftime'):  # datetime.datetime / datetime.date
+                date = raw_date.strftime("%d/%m/%Y")
+            else:
+                date = str(raw_date).strip()
+                # Handle Excel serial date numbers (e.g. 45838 = 2025-06-30)
+                try:
+                    serial = float(date)
+                    if 30000 < serial < 60000:
+                        from datetime import timedelta
+                        excel_epoch = dt(1899, 12, 30).date()
+                        parsed = excel_epoch + timedelta(days=int(serial))
+                        date = parsed.strftime("%d/%m/%Y")
+                except (ValueError, TypeError):
+                    pass
+                # Handle "YYYY-MM-DD HH:MM:SS" timestamps from pandas
+                if ' ' in date and len(date) > 10:
+                    try:
+                        parsed = dt.strptime(date, "%Y-%m-%d %H:%M:%S")
+                        date = parsed.strftime("%d/%m/%Y")
+                    except (ValueError, AttributeError):
+                        pass
 
             # Skip rows where date is empty or NaN (e.g. template instruction rows)
-            if not date or date.lower() == 'nan' or date == 'NaT':
+            if not date or date.lower() == 'nan' or date == 'NaT' or date == 'nat':
                 continue
 
             # Build description: primary description column, optionally
@@ -1717,12 +1764,30 @@ def parse_statement(request):
         for txn in transactions:
             txn_date_str = txn.get('date', '')
             txn_date = None
-            for fmt in ('%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y', '%d %b %Y', '%d %B %Y', '%m/%d/%Y'):
-                try:
-                    txn_date = dt.strptime(txn_date_str.strip(), fmt).date()
-                    break
-                except (ValueError, AttributeError):
-                    continue
+            # Handle Excel serial date numbers
+            date_str_clean = txn_date_str.strip()
+            try:
+                serial = float(date_str_clean)
+                if 30000 < serial < 60000:
+                    from datetime import timedelta
+                    excel_epoch = dt(1899, 12, 30).date()
+                    txn_date = excel_epoch + timedelta(days=int(serial))
+            except (ValueError, TypeError):
+                pass
+            if not txn_date:
+                for fmt in (
+                    '%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y', '%d.%m.%Y',
+                    '%d %b %Y', '%d %B %Y', '%d-%b-%Y', '%d-%b-%y',
+                    '%m/%d/%Y', '%m-%d-%Y',
+                    '%Y/%m/%d', '%Y.%m.%d',
+                    '%d/%m/%y', '%m/%d/%y',
+                    '%Y-%m-%d %H:%M:%S', '%d/%m/%Y %H:%M:%S',
+                ):
+                    try:
+                        txn_date = dt.strptime(date_str_clean, fmt).date()
+                        break
+                    except (ValueError, AttributeError):
+                        continue
             if txn_date:
                 if period_start_date and txn_date < period_start_date:
                     continue
@@ -1855,9 +1920,25 @@ def upload_preview(request):
         for date_str in [stmt.get('period_start', ''), (stmt.get('transactions') or [{}])[0].get('date', '') if stmt.get('transactions') else '']:
             if not date_str:
                 continue
-            for fmt in ('%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y', '%d %b %Y', '%d %B %Y'):
+            # Handle Excel serial date numbers
+            date_clean = date_str.strip()
+            try:
+                serial = float(date_clean)
+                if 30000 < serial < 60000:
+                    from datetime import timedelta
+                    return (_dt(1899, 12, 30) + timedelta(days=int(serial))).date()
+            except (ValueError, TypeError):
+                pass
+            for fmt in (
+                '%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y', '%d.%m.%Y',
+                '%d %b %Y', '%d %B %Y', '%d-%b-%Y', '%d-%b-%y',
+                '%m/%d/%Y', '%m-%d-%Y',
+                '%Y/%m/%d', '%Y.%m.%d',
+                '%d/%m/%y', '%m/%d/%y',
+                '%Y-%m-%d %H:%M:%S', '%d/%m/%Y %H:%M:%S',
+            ):
                 try:
-                    return _dt.strptime(date_str.strip(), fmt).date()
+                    return _dt.strptime(date_clean, fmt).date()
                 except (ValueError, AttributeError):
                     continue
         return _dt.max.date()  # Unknown dates go last
@@ -1953,12 +2034,30 @@ def confirm_import(request):
 
             # Validate date format (must be parseable)
             parsed_date = None
-            for fmt in ('%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y', '%d %b %Y', '%d %B %Y'):
-                try:
-                    parsed_date = dt.strptime(txn_date, fmt).date()
-                    break
-                except (ValueError, AttributeError):
-                    continue
+            # Handle Excel serial date numbers
+            date_clean = txn_date.strip()
+            try:
+                serial = float(date_clean)
+                if 30000 < serial < 60000:
+                    from datetime import timedelta
+                    excel_epoch = dt(1899, 12, 30).date()
+                    parsed_date = excel_epoch + timedelta(days=int(serial))
+            except (ValueError, TypeError):
+                pass
+            if not parsed_date:
+                for fmt in (
+                    '%Y-%m-%d', '%d/%m/%Y', '%d-%m-%Y', '%d.%m.%Y',
+                    '%d %b %Y', '%d %B %Y', '%d-%b-%Y', '%d-%b-%y',
+                    '%m/%d/%Y', '%m-%d-%Y',
+                    '%Y/%m/%d', '%Y.%m.%d',
+                    '%d/%m/%y', '%m/%d/%y',
+                    '%Y-%m-%d %H:%M:%S', '%d/%m/%Y %H:%M:%S',
+                ):
+                    try:
+                        parsed_date = dt.strptime(date_clean, fmt).date()
+                        break
+                    except (ValueError, AttributeError):
+                        continue
 
             if not parsed_date:
                 continue
