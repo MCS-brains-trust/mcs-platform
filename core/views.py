@@ -16,7 +16,7 @@ from .models import (
     JournalLine, GeneratedDocument, AuditLog, EntityOfficer,
     ClientAssociate, AccountingSoftware, MeetingNote,
     DepreciationAsset, RiskFlag, StockItem, ActivityLog, EntityChartOfAccount,
-    BulkJournalUpload, BASPeriod,
+    BulkJournalUpload, BASPeriod, BankAccountMapping,
 )
 from .forms import (
     ClientForm, EntityForm, FinancialYearForm,
@@ -84,6 +84,79 @@ def _resolve_account_name(entity, account_code, raw_name):
 
     # No match found — return whatever we have (code as last resort)
     return raw_name or account_code
+
+
+# Mapping from EntityChartOfAccount / ChartOfAccount section values to
+# the display section names used in the trial balance UI.
+_COA_SECTION_TO_DISPLAY = {
+    'revenue': 'Income',
+    'cost_of_sales': 'Cost of Sales',
+    'expenses': 'Expenses',
+    'assets': 'Current Assets',
+    'liabilities': 'Current Liabilities',
+    'equity': 'Equity',
+    'capital_accounts': 'Equity',
+    'pl_appropriation': 'Equity',
+    'suspense': 'Unmapped',
+}
+
+# Which CoA sections are P&L (used for Net Profit on unmapped lines)
+_PL_COA_SECTIONS = {'revenue', 'cost_of_sales', 'expenses'}
+
+
+def _build_coa_section_lookup(entity):
+    """Build a dict mapping account_code -> display_section for an entity.
+
+    Uses the entity's chart of accounts first, then falls back to the master
+    template.  Returns a dict that can be used to look up the display section
+    for any account code without hitting the database per-line.
+    """
+    lookup = {}
+
+    # Priority 2 first (lower priority — will be overwritten by Priority 1)
+    for code, section in ChartOfAccount.objects.filter(
+        entity_type=entity.entity_type, is_active=True,
+    ).values_list('account_code', 'section'):
+        ds = _COA_SECTION_TO_DISPLAY.get(section, 'Unmapped')
+        if ds != 'Unmapped':
+            lookup[code] = ds
+
+    # Priority 1: entity-level chart of accounts (overwrites template)
+    for code, section in EntityChartOfAccount.objects.filter(
+        entity=entity, is_active=True,
+    ).values_list('account_code', 'section'):
+        ds = _COA_SECTION_TO_DISPLAY.get(section, 'Unmapped')
+        if ds != 'Unmapped':
+            lookup[code] = ds
+
+    return lookup
+
+
+def _infer_section_for_unmapped(entity, account_code):
+    """Infer the display section for an unmapped TB line by looking up the
+    account code in the entity's chart of accounts (or the master template).
+
+    Returns a display section string (e.g. 'Income', 'Expenses', 'Current Assets')
+    or 'Unmapped' if no match is found.
+
+    NOTE: For batch processing, prefer _build_coa_section_lookup() to avoid
+    N+1 queries.
+    """
+    # Priority 1: entity-level chart of accounts
+    ecoa = EntityChartOfAccount.objects.filter(
+        entity=entity, account_code=account_code, is_active=True,
+    ).first()
+    if ecoa and ecoa.section:
+        return _COA_SECTION_TO_DISPLAY.get(ecoa.section, 'Unmapped')
+
+    # Priority 2: master chart of accounts template
+    coa = ChartOfAccount.objects.filter(
+        entity_type=entity.entity_type, account_code=account_code, is_active=True,
+    ).first()
+    if coa and coa.section:
+        return _COA_SECTION_TO_DISPLAY.get(coa.section, 'Unmapped')
+
+    return 'Unmapped'
 
 
 def _apply_journal_line_to_tb(fy, account_code, account_name, jnl_debit, jnl_credit, source='manual_journal', bulk_upload=None, description=''):
@@ -176,6 +249,111 @@ def _get_or_create_tb_line(financial_year=None, account_code=None, defaults=None
         **(defaults or {}),
     )
     return tb_line, True
+
+
+def _get_bank_mapping_for_txn(txn):
+    """
+    Resolve the BankAccountMapping for a given PendingTransaction.
+    Lookup order:
+      1. BankAccountMapping by (entity, bsb, account_number)
+      2. BankAccountMapping default for entity
+      3. BankAccount model by (entity, bsb, account_number) if it has tb_account_code
+    Returns a duck-typed object with .tb_account_code and .tb_account_name, or None.
+    """
+    if not txn.job or not txn.job.entity:
+        return None
+    entity = txn.job.entity
+    job = txn.job
+    mapping = None
+    if job.bsb or job.account_number:
+        mapping = BankAccountMapping.objects.filter(
+            entity=entity, bsb=job.bsb or '', account_number=job.account_number or '',
+        ).first()
+    if not mapping:
+        mapping = BankAccountMapping.objects.filter(
+            entity=entity, is_default=True,
+        ).first()
+    # Fallback: check the BankAccount model (has tb_account_code field)
+    if not mapping and (job.bsb or job.account_number):
+        from core.models import BankAccount
+        ba = BankAccount.objects.filter(
+            entity=entity, bsb=job.bsb or '', account_number=job.account_number or '',
+        ).first()
+        if ba and ba.tb_account_code:
+            mapping = ba  # BankAccount has .tb_account_code and .tb_account_name
+    return mapping
+
+
+def _post_bank_contra_entry(txn, fy, bank_mapping, has_gst):
+    """
+    Post the bank-side (contra) entry for a transaction.
+
+    For a payment (amount < 0): the bank account is CREDITED (money leaving).
+    For a receipt (amount > 0): the bank account is DEBITED (money arriving).
+
+    The gross amount (inclusive of GST) hits the bank account, because the
+    bank statement shows the full amount that moved.
+    """
+    if not bank_mapping:
+        return
+    gross_amount = abs(txn.amount)
+    bank_code = bank_mapping.tb_account_code
+    bank_name = bank_mapping.tb_account_name
+
+    tb_line, created = _get_or_create_tb_line(
+        financial_year=fy,
+        account_code=bank_code,
+        defaults={
+            "account_name": bank_name,
+            "debit": gross_amount if txn.amount > 0 else Decimal("0"),
+            "credit": gross_amount if txn.amount < 0 else Decimal("0"),
+            "closing_balance": gross_amount if txn.amount > 0 else -gross_amount,
+            "tax_type": "",
+            "source": "bank_statement",
+        },
+    )
+    if not created:
+        if txn.amount > 0:
+            tb_line.debit += gross_amount
+            tb_line.closing_balance += gross_amount
+        else:
+            tb_line.credit += gross_amount
+            tb_line.closing_balance -= gross_amount
+        if not tb_line.source:
+            tb_line.source = 'bank_statement'
+        tb_line.save()
+
+
+def _reverse_bank_contra_entry(txn, fy):
+    """
+    Reverse the bank-side (contra) entry for a transaction.
+    Called when unconfirming or deleting a confirmed transaction.
+    """
+    if not txn.job or not txn.job.entity:
+        return
+    bank_mapping = _get_bank_mapping_for_txn(txn)
+    if not bank_mapping:
+        return
+    gross_amount = abs(txn.amount)
+    bank_code = bank_mapping.tb_account_code
+    tb_line = TrialBalanceLine.objects.filter(
+        financial_year=fy, account_code=bank_code, is_adjustment=False,
+    ).first()
+    if not tb_line:
+        tb_line = TrialBalanceLine.objects.filter(
+            financial_year=fy, account_code=bank_code,
+        ).first()
+    if tb_line:
+        if txn.amount > 0:
+            tb_line.debit = max(Decimal("0"), tb_line.debit - gross_amount)
+            tb_line.closing_balance -= gross_amount
+        else:
+            tb_line.credit = max(Decimal("0"), tb_line.credit - gross_amount)
+            tb_line.closing_balance += gross_amount
+        if tb_line.debit == 0 and tb_line.credit == 0:
+            tb_line.delete()
+        else:
+            tb_line.save()
 
 
 def _log_action(request, action, description, obj=None):
@@ -607,6 +785,8 @@ def financial_year_detail(request, pk):
     tb_lines = fy.trial_balance_lines.select_related("mapped_line_item").all()
     adjustments = fy.adjusting_journals.all().order_by('-posted_at', '-created_at')
     unmapped_count = tb_lines.filter(mapped_line_item__isnull=True).values('account_code').distinct().count()
+    # Pre-load CoA section lookup for inferring sections of unmapped lines
+    _coa_lookup = _build_coa_section_lookup(fy.entity)
     documents = fy.generated_documents.all().order_by('-version', '-generated_at')
 
     total_prior_debit = tb_lines.aggregate(total=Sum("prior_debit"))["total"] or Decimal("0")
@@ -650,7 +830,7 @@ def financial_year_detail(request, pk):
             raw_section = line.mapped_line_item.statement_section
             display_section = SECTION_DISPLAY.get(raw_section, raw_section)
         else:
-            display_section = 'Unmapped'
+            display_section = _coa_lookup.get(line.account_code, 'Unmapped')
         if display_section not in sections:
             sections[display_section] = []
         sections[display_section].append(line)
@@ -901,6 +1081,53 @@ def financial_year_detail(request, pk):
         or review_jobs.exists()
     )
 
+    # Bank account mapping for double-entry posting
+    bank_account_mappings = BankAccountMapping.objects.filter(entity=fy.entity)
+    # Try to find the mapping for the current review jobs
+    active_bank_mapping = None
+    if review_jobs.exists():
+        latest_job = review_jobs.order_by('-received_at').first()
+        if latest_job:
+            active_bank_mapping = bank_account_mappings.filter(
+                bsb=latest_job.bsb or '',
+                account_number=latest_job.account_number or '',
+            ).first()
+            if not active_bank_mapping:
+                active_bank_mapping = bank_account_mappings.filter(is_default=True).first()
+    # Get bank/cash accounts from entity CoA for the mapping dropdown
+    bank_coa_accounts = EntityChartOfAccount.objects.filter(
+        entity=fy.entity, is_active=True, section='assets',
+    ).filter(
+        Q(account_name__icontains='bank') | Q(account_name__icontains='cash') |
+        Q(classification__icontains='bank') | Q(classification__icontains='cash')
+    ).order_by('account_code')
+
+    # Opening balance detection: check if entity has no balance sheet balances
+    needs_opening_balance = False
+    opening_balance_bank_code = ''
+    opening_balance_bank_name = ''
+    if has_bank_statements and active_bank_mapping:
+        bank_code = active_bank_mapping.tb_account_code
+        opening_balance_bank_code = bank_code
+        opening_balance_bank_name = active_bank_mapping.tb_account_name
+        # Check if the bank account has any TB line that is NOT from bank_statement source
+        # (i.e. an imported or manually entered opening balance)
+        existing_bank_tb = TrialBalanceLine.objects.filter(
+            financial_year=fy, account_code=bank_code,
+        )
+        has_non_bs_bank_line = existing_bank_tb.exclude(source='bank_statement').exists()
+        # Also check if there's a prior year
+        has_prior_year = FinancialYear.objects.filter(
+            entity=fy.entity, end_date__lt=fy.start_date,
+        ).exists()
+        # Check if balance sheet has any lines at all (excluding bank_statement source)
+        bs_sections = ['assets', 'liabilities', 'equity', 'capital_accounts']
+        has_balance_sheet = TrialBalanceLine.objects.filter(
+            financial_year=fy,
+        ).exclude(source='bank_statement').exists()
+        if not has_non_bs_bank_line and not has_prior_year and not has_balance_sheet:
+            needs_opening_balance = True
+
     context = {
         "fy": fy,
         "entity": fy.entity,
@@ -947,6 +1174,14 @@ def financial_year_detail(request, pk):
         "entity_gst_registration_date": entity_gst_registration_date,
         "entity_gst_settings": entity_gst_settings,
         "entity_classification_rules": entity_classification_rules,
+        # Bank Account Mapping
+        "bank_account_mappings": bank_account_mappings,
+        "active_bank_mapping": active_bank_mapping,
+        "bank_coa_accounts": bank_coa_accounts,
+        # Opening Balance Detection
+        "needs_opening_balance": needs_opening_balance,
+        "opening_balance_bank_code": opening_balance_bank_code,
+        "opening_balance_bank_name": opening_balance_bank_name,
         # Activity
         "activity_logs": activity_logs,
         # Chart of Accounts (entity-level)
@@ -2758,7 +2993,7 @@ def trial_balance_view(request, pk):
     from collections import OrderedDict
     fy = get_financial_year_for_user(request, pk)
     tb_lines = fy.trial_balance_lines.select_related("mapped_line_item").order_by("account_code")
-
+    _coa_lookup = _build_coa_section_lookup(fy.entity)
     SECTION_ORDER = [
         'Revenue', 'Income', 'Cost of Sales', 'Expenses',
         'Current Assets', 'Non-Current Assets',
@@ -2772,7 +3007,6 @@ def trial_balance_view(request, pk):
         'Current Liabilities': 'Current Liabilities', 'Non-Current Liabilities': 'Non Current Liabilities',
         'Equity': 'Equity', 'Income Tax': 'Equity',
     }
-
     sections = OrderedDict()
     grand_total_dr = Decimal('0')
     grand_total_cr = Decimal('0')
@@ -2796,7 +3030,7 @@ def trial_balance_view(request, pk):
             raw_section = line.mapped_line_item.statement_section
             display_section = SECTION_DISPLAY.get(raw_section, raw_section)
         else:
-            display_section = 'Unmapped'
+            display_section = _coa_lookup.get(line.account_code, 'Unmapped')
         if display_section not in sections:
             sections[display_section] = []
         sections[display_section].append(line)
@@ -3939,8 +4173,8 @@ def trial_balance_pdf(request, pk):
     fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
     tb_lines = TrialBalanceLine.objects.filter(financial_year=fy).select_related('mapped_line_item').order_by('account_code')
-
-    # Determine section ordering and grouping
+    _coa_lookup = _build_coa_section_lookup(entity)
+    # Determine section ordering and groupingg
     SECTION_ORDER = [
         'Revenue', 'Income', 'Cost of Sales', 'Expenses',
         'Current Assets', 'Non-Current Assets',
@@ -3963,12 +4197,11 @@ def trial_balance_pdf(request, pk):
             raw_section = line.mapped_line_item.statement_section
             display_section = SECTION_DISPLAY.get(raw_section, raw_section)
         else:
-            display_section = 'Unmapped'
+            display_section = _coa_lookup.get(line.account_code, 'Unmapped')
         if display_section not in sections:
             sections[display_section] = []
         sections[display_section].append(line)
-
-    # Sort sections by defined order
+    # Sort sections by defined orderr
     ordered_sections = OrderedDict()
     section_keys_ordered = []
     for s in SECTION_ORDER:
@@ -6040,6 +6273,10 @@ def review_approve_transaction(request, pk):
                         gst_line.closing_balance += gst_amt
                         gst_line.save()
 
+            # Post the bank contra-entry (gross amount to the bank account)
+            bank_mapping = _get_bank_mapping_for_txn(txn)
+            _post_bank_contra_entry(txn, target_fy, bank_mapping, has_gst)
+
     if request.headers.get("X-Requested-With") == "XMLHttpRequest":
         # Return rich response for live UI updates
         remaining_pending = 0
@@ -6163,6 +6400,9 @@ def review_unconfirm_transaction(request, pk):
                         gst_line.delete()
                     else:
                         gst_line.save()
+
+            # Reverse the bank contra-entry
+            _reverse_bank_contra_entry(txn, target_fy)
 
     # Reset the transaction
     txn.is_confirmed = False
@@ -6307,6 +6547,10 @@ def review_approve_all(request, pk):
                             gst_line.debit += gst_amt
                             gst_line.closing_balance += gst_amt
                             gst_line.save()
+
+                # Post the bank contra-entry (gross amount to the bank account)
+                bank_mapping = _get_bank_mapping_for_txn(txn)
+                _post_bank_contra_entry(txn, fy, bank_mapping, has_gst)
 
     # Auto-trigger risk engine after bulk approve
     from core.signals import trigger_risk_recalc
@@ -6474,6 +6718,10 @@ def review_approve_selected(request, pk):
                         gst_line.closing_balance += gst_amt
                         gst_line.save()
 
+            # Post the bank contra-entry (gross amount to the bank account)
+            bank_mapping = _get_bank_mapping_for_txn(txn)
+            _post_bank_contra_entry(txn, fy, bank_mapping, has_gst)
+
     # Auto-trigger risk engine after bulk approve
     from core.signals import trigger_risk_recalc
     trigger_risk_recalc(fy, "review_approve_selected")
@@ -6493,6 +6741,198 @@ def review_approve_selected(request, pk):
         "remaining_pending": remaining_pending,
         "remaining_confirmed": remaining_confirmed,
         "message": f"Approved {count} transactions. {tb_count} lines pushed to trial balance.",
+    })
+
+
+# ---------------------------------------------------------------------------
+# Bank Account Mapping
+# ---------------------------------------------------------------------------
+@login_required
+@require_POST
+def review_bank_account_mapping(request, pk):
+    """Create or update a bank account mapping for the entity (AJAX).
+    Links a physical bank account (BSB + account number) to a TB account code
+    so that double-entry contra-entries can be generated.
+    """
+    import json
+    fy = get_financial_year_for_user(request, pk)
+    if not request.user.can_do_accounting:
+        return JsonResponse({"status": "error", "message": "Permission denied."}, status=403)
+
+    try:
+        body = json.loads(request.body)
+    except (json.JSONDecodeError, ValueError):
+        body = request.POST
+
+    bsb = str(body.get('bsb', '')).strip()
+    account_number = str(body.get('account_number', '')).strip()
+    bank_account_name = str(body.get('bank_account_name', '')).strip()
+    tb_account_code = str(body.get('tb_account_code', '')).strip()
+    tb_account_name = str(body.get('tb_account_name', '')).strip()
+    is_default = body.get('is_default', False)
+
+    if not tb_account_code:
+        return JsonResponse({"status": "error", "message": "TB account code is required."}, status=400)
+
+    # Resolve mapped_line_item from the entity CoA
+    mapped_item = None
+    ecoa = EntityChartOfAccount.objects.filter(
+        entity=fy.entity, account_code=tb_account_code, is_active=True,
+    ).select_related('maps_to').first()
+    if ecoa and ecoa.maps_to:
+        mapped_item = ecoa.maps_to
+    else:
+        # Try master CoA
+        coa = ChartOfAccount.objects.filter(
+            entity_type=fy.entity.entity_type, account_code=tb_account_code, is_active=True,
+        ).select_related('maps_to').first()
+        if coa and coa.maps_to:
+            mapped_item = coa.maps_to
+
+    # If setting as default, clear other defaults
+    if is_default:
+        BankAccountMapping.objects.filter(
+            entity=fy.entity, is_default=True,
+        ).update(is_default=False)
+
+    mapping, created = BankAccountMapping.objects.update_or_create(
+        entity=fy.entity,
+        bsb=bsb,
+        account_number=account_number,
+        defaults={
+            'bank_account_name': bank_account_name,
+            'tb_account_code': tb_account_code,
+            'tb_account_name': tb_account_name,
+            'mapped_line_item': mapped_item,
+            'is_default': is_default,
+        },
+    )
+
+    return JsonResponse({
+        "status": "ok",
+        "created": created,
+        "mapping_id": str(mapping.pk),
+        "tb_account_code": mapping.tb_account_code,
+        "tb_account_name": mapping.tb_account_name,
+        "message": f"Bank account mapped to {mapping.tb_account_code} — {mapping.tb_account_name}",
+    })
+
+
+@login_required
+@require_POST
+def review_post_opening_balance(request, pk):
+    """Create and auto-post an opening balance journal entry.
+    Accepts a list of balance lines (account_code, account_name, debit, credit).
+    Creates an AdjustingJournal with type 'general', auto-posts it, and
+    applies the lines to the Trial Balance.
+    """
+    import json as _json
+    fy = get_financial_year_for_user(request, pk)
+    if not request.user.can_do_accounting:
+        return JsonResponse({"status": "error", "message": "Permission denied."}, status=403)
+    if fy.is_locked:
+        return JsonResponse({"status": "error", "message": "Financial year is locked."}, status=400)
+
+    try:
+        body = _json.loads(request.body)
+    except (ValueError, _json.JSONDecodeError):
+        return JsonResponse({"status": "error", "message": "Invalid JSON."}, status=400)
+
+    lines_data = body.get('lines', [])
+    if not lines_data:
+        return JsonResponse({"status": "error", "message": "No lines provided."}, status=400)
+
+    # Validate lines and calculate totals
+    total_debit = Decimal('0')
+    total_credit = Decimal('0')
+    validated_lines = []
+    for i, line in enumerate(lines_data):
+        code = str(line.get('account_code', '')).strip()
+        name = str(line.get('account_name', '')).strip()
+        try:
+            dr = Decimal(str(line.get('debit', 0) or 0)).quantize(Decimal('0.01'))
+            cr = Decimal(str(line.get('credit', 0) or 0)).quantize(Decimal('0.01'))
+        except Exception:
+            return JsonResponse({"status": "error", "message": f"Invalid amount on line {i+1}."}, status=400)
+        if not code:
+            return JsonResponse({"status": "error", "message": f"Account code missing on line {i+1}."}, status=400)
+        if dr == 0 and cr == 0:
+            continue  # skip zero lines
+        total_debit += dr
+        total_credit += cr
+        validated_lines.append({
+            'account_code': code,
+            'account_name': name,
+            'debit': dr,
+            'credit': cr,
+        })
+
+    if not validated_lines:
+        return JsonResponse({"status": "error", "message": "All lines are zero."}, status=400)
+
+    if total_debit != total_credit:
+        diff = abs(total_debit - total_credit)
+        return JsonResponse({
+            "status": "error",
+            "message": f"Journal does not balance. Debit: {total_debit}, Credit: {total_credit}, Difference: {diff}",
+        }, status=400)
+
+    # Create the journal
+    journal = AdjustingJournal(
+        financial_year=fy,
+        journal_type=AdjustingJournal.JournalType.GENERAL,
+        journal_date=fy.start_date,
+        description='Opening balance — brought forward from prior records',
+        narration='Auto-generated opening balance journal from bank statement review.',
+        total_debit=total_debit,
+        total_credit=total_credit,
+        created_by=request.user,
+    )
+    journal.save()
+
+    # Create journal lines
+    journal_lines = []
+    for i, line in enumerate(validated_lines):
+        journal_lines.append(JournalLine(
+            journal=journal,
+            line_number=i + 1,
+            account_code=line['account_code'],
+            account_name=line['account_name'],
+            debit=line['debit'],
+            credit=line['credit'],
+        ))
+    JournalLine.objects.bulk_create(journal_lines)
+
+    # Auto-post: apply to Trial Balance
+    for line in validated_lines:
+        _apply_journal_line_to_tb(
+            fy, line['account_code'], line['account_name'],
+            line['debit'], line['credit'],
+            source='manual_journal',
+            description=journal.description,
+        )
+
+    journal.status = AdjustingJournal.JournalStatus.POSTED
+    journal.posted_by = request.user
+    journal.posted_at = timezone.now()
+    journal.save(update_fields=['status', 'posted_by', 'posted_at'])
+
+    _log_action(request, 'adjustment', f'Posted opening balance journal {journal.reference_number}', journal)
+
+    # Trigger risk recalc
+    try:
+        from core.signals import trigger_risk_recalc
+        trigger_risk_recalc(fy, 'journal_posted')
+    except Exception:
+        pass
+
+    return JsonResponse({
+        "status": "ok",
+        "journal_id": str(journal.pk),
+        "reference": journal.reference_number,
+        "total_debit": str(total_debit),
+        "total_credit": str(total_credit),
+        "message": f"Opening balance journal {journal.reference_number} posted successfully.",
     })
 
 
@@ -6697,6 +7137,9 @@ def _reverse_tb_for_transaction(txn, fy):
                 gst_line.delete()
             else:
                 gst_line.save()
+
+    # Reverse the bank contra-entry
+    _reverse_bank_contra_entry(txn, fy)
 
 
 # ---------------------------------------------------------------------------
@@ -7622,7 +8065,7 @@ def trial_balance_download(request, pk):
     tb_lines = TrialBalanceLine.objects.filter(
         financial_year=fy
     ).select_related('mapped_line_item').order_by('account_code')
-
+    _coa_lookup = _build_coa_section_lookup(entity)
     # Section ordering
     SECTION_ORDER = [
         'Revenue', 'Income', 'Cost of Sales', 'Expenses',
@@ -7649,7 +8092,7 @@ def trial_balance_download(request, pk):
             raw_section = line.mapped_line_item.statement_section
             display_section = SECTION_DISPLAY.get(raw_section, raw_section)
         else:
-            display_section = 'Unmapped'
+            display_section = _coa_lookup.get(line.account_code, 'Unmapped')
         sections.setdefault(display_section, []).append(line)
         # Use closing_balance split into Dr/Cr for current year totals
         cb = line.closing_balance or Decimal('0')
@@ -9469,7 +9912,7 @@ def net_profit_api(request, pk):
     """
     fy = get_financial_year_for_user(request, pk)
     tb_lines = fy.trial_balance_lines.select_related("mapped_line_item").all()
-
+    _coa_lookup = _build_coa_section_lookup(fy.entity)
     SECTION_DISPLAY = {
         'Revenue': 'Income', 'Income': 'Income',
         'Cost of Sales': 'Cost of Sales', 'Expenses': 'Expenses',
@@ -9486,8 +9929,7 @@ def net_profit_api(request, pk):
             raw_section = line.mapped_line_item.statement_section
             display_section = SECTION_DISPLAY.get(raw_section, raw_section)
         else:
-            display_section = 'Unmapped'
-
+            display_section = _coa_lookup.get(line.account_code, 'Unmapped')
         if display_section in pl_sections:
             # Compute display_dr / display_cr the same way as the main view
             if line.debit == 0 and line.credit == 0 and line.closing_balance != 0:

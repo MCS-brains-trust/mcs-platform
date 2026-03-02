@@ -914,6 +914,70 @@ class ClientAccountMapping(models.Model):
 
 
 # ---------------------------------------------------------------------------
+# Bank Account Mapping (links physical bank accounts to TB account codes)
+# ---------------------------------------------------------------------------
+class BankAccountMapping(models.Model):
+    """
+    Maps a physical bank account (identified by BSB + account number, or
+    bank name) to a trial balance account code for the entity.
+
+    When bank statement transactions are posted to the TB, this mapping
+    determines which balance sheet bank account receives the contra-entry.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entity = models.ForeignKey(
+        Entity, on_delete=models.CASCADE, related_name="bank_account_mappings",
+    )
+    # Bank identification fields (from the bank statement PDF)
+    bank_account_name = models.CharField(
+        max_length=255, blank=True, default="",
+        help_text="Bank account name from the statement (e.g. 'CBA Business Account')",
+    )
+    bsb = models.CharField(
+        max_length=20, blank=True, default="",
+        help_text="BSB number (e.g. '062-000')",
+    )
+    account_number = models.CharField(
+        max_length=50, blank=True, default="",
+        help_text="Account number (e.g. '12345678')",
+    )
+    # TB mapping
+    tb_account_code = models.CharField(
+        max_length=20,
+        help_text="Trial balance account code for this bank (e.g. '1100')",
+    )
+    tb_account_name = models.CharField(
+        max_length=255,
+        help_text="Trial balance account name (e.g. 'Cash at Bank - CBA')",
+    )
+    mapped_line_item = models.ForeignKey(
+        AccountMapping,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="bank_account_mappings",
+        help_text="Financial statement line item this bank account maps to",
+    )
+    is_default = models.BooleanField(
+        default=False,
+        help_text="If True, this is the default bank account for the entity",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["entity", "tb_account_code"]
+        unique_together = ["entity", "bsb", "account_number"]
+        indexes = [
+            models.Index(fields=["entity", "bsb", "account_number"]),
+        ]
+
+    def __str__(self):
+        bank_id = f"{self.bsb} {self.account_number}".strip() or self.bank_account_name
+        return f"{bank_id} → {self.tb_account_code} ({self.tb_account_name})"
+
+
+# ---------------------------------------------------------------------------
 # Trial Balance Line
 # ---------------------------------------------------------------------------
 class TrialBalanceLine(models.Model):

@@ -19,6 +19,129 @@
 </div>
 {% endif %}
 
+{# --- Opening Balance Alert --- #}
+{% if needs_opening_balance %}
+<div class="alert alert-warning mb-3 border-warning" id="openingBalanceAlert">
+    <div class="d-flex align-items-start">
+        <i class="bi bi-exclamation-triangle-fill text-warning me-2 mt-1" style="font-size:1.2rem;"></i>
+        <div>
+            <strong>No opening balance exists for this entity.</strong>
+            <p class="mb-2" style="font-size:0.85rem;">
+                This appears to be the first financial year on StatementHub and no prior year balances exist.
+                Bank statement transactions will not reconcile without an opening balance.
+            </p>
+            <div class="d-flex gap-2">
+                <button type="button" class="btn btn-warning btn-sm" data-bs-toggle="modal" data-bs-target="#openingBalanceModal">
+                    <i class="bi bi-pencil-square"></i> Enter Opening Balance
+                </button>
+                <a href="{% url 'core:financial_year_detail' pk=fy.pk %}#tab-tb" class="btn btn-outline-secondary btn-sm">
+                    <i class="bi bi-file-earmark-arrow-up"></i> Import Full Opening Balance Sheet
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+{# --- Bank Account Mapping Banner --- #}
+{% if pending_review.count > 0 or confirmed_review.count > 0 %}
+<div class="card mb-3 border-{% if active_bank_mapping %}success{% else %}warning{% endif %}" id="bankMappingCard">
+    <div class="card-body py-2 px-3">
+        {% if active_bank_mapping %}
+        <div class="d-flex align-items-center justify-content-between">
+            <div style="font-size:0.85rem;">
+                <i class="bi bi-bank me-1 text-success"></i>
+                <strong>Bank Account:</strong>
+                {{ active_bank_mapping.bank_account_name|default:"Bank" }}
+                {% if active_bank_mapping.bsb %}(BSB: {{ active_bank_mapping.bsb }}{% if active_bank_mapping.account_number %}, Acc: {{ active_bank_mapping.account_number }}{% endif %}){% endif %}
+                <i class="bi bi-arrow-right mx-1"></i>
+                <span class="badge bg-success">{{ active_bank_mapping.tb_account_code }} &mdash; {{ active_bank_mapping.tb_account_name }}</span>
+            </div>
+            <button type="button" class="btn btn-outline-secondary btn-sm" onclick="toggleBankMappingForm()">
+                <i class="bi bi-pencil"></i> Change
+            </button>
+        </div>
+        {% else %}
+        <div class="d-flex align-items-center justify-content-between">
+            <div style="font-size:0.85rem;">
+                <i class="bi bi-exclamation-triangle me-1 text-warning"></i>
+                <strong>No bank account mapped.</strong>
+                Transactions will post as single-sided entries. Map a bank account to enable complete double-entry journals.
+            </div>
+            <button type="button" class="btn btn-warning btn-sm" onclick="toggleBankMappingForm()">
+                <i class="bi bi-plus-circle"></i> Map Bank Account
+            </button>
+        </div>
+        {% endif %}
+        {# --- Inline mapping form (hidden by default) --- #}
+        <div id="bankMappingForm" style="display:none;" class="mt-2 pt-2 border-top">
+            <form onsubmit="saveBankMapping(event)" class="row g-2 align-items-end">
+                <div class="col-md-2">
+                    <label class="form-label mb-0" style="font-size:0.75rem;">Bank Name</label>
+                    <input type="text" class="form-control form-control-sm" name="bank_account_name"
+                           value="{{ active_bank_mapping.bank_account_name|default:'' }}"
+                           placeholder="e.g. CBA Business">
+                </div>
+                <div class="col-md-1">
+                    <label class="form-label mb-0" style="font-size:0.75rem;">BSB</label>
+                    <input type="text" class="form-control form-control-sm" name="bsb"
+                           value="{{ active_bank_mapping.bsb|default:'' }}"
+                           placeholder="062-000">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label mb-0" style="font-size:0.75rem;">Account No.</label>
+                    <input type="text" class="form-control form-control-sm" name="account_number"
+                           value="{{ active_bank_mapping.account_number|default:'' }}"
+                           placeholder="12345678">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label mb-0" style="font-size:0.75rem;">TB Account Code</label>
+                    <input type="text" class="form-control form-control-sm" name="tb_account_code"
+                           value="{{ active_bank_mapping.tb_account_code|default:'' }}"
+                           placeholder="e.g. 1100" required
+                           list="bankCoaList">
+                    <datalist id="bankCoaList">
+                        {% for acct in bank_coa_accounts %}
+                        <option value="{{ acct.account_code }}" label="{{ acct.account_code }} - {{ acct.account_name }}">
+                        {% endfor %}
+                        {% for mapping in bank_account_mappings %}
+                        <option value="{{ mapping.tb_account_code }}" label="{{ mapping.tb_account_code }} - {{ mapping.tb_account_name }}">
+                        {% endfor %}
+                    </datalist>
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label mb-0" style="font-size:0.75rem;">TB Account Name</label>
+                    <input type="text" class="form-control form-control-sm" name="tb_account_name"
+                           value="{{ active_bank_mapping.tb_account_name|default:'' }}"
+                           placeholder="e.g. Cash at Bank - CBA" required>
+                </div>
+                <div class="col-md-1">
+                    <div class="form-check mt-3">
+                        <input class="form-check-input" type="checkbox" name="is_default" id="bankMappingDefault"
+                               {% if active_bank_mapping.is_default %}checked{% endif %}>
+                        <label class="form-check-label" for="bankMappingDefault" style="font-size:0.75rem;">Default</label>
+                    </div>
+                </div>
+                <div class="col-md-2 d-flex gap-1">
+                    <button type="submit" class="btn btn-success btn-sm"><i class="bi bi-check-lg"></i> Save</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" onclick="toggleBankMappingForm()">Cancel</button>
+                </div>
+            </form>
+            {% if bank_account_mappings.count > 1 %}
+            <div class="mt-2" style="font-size:0.75rem;">
+                <strong>Other mapped accounts:</strong>
+                {% for m in bank_account_mappings %}
+                {% if m.pk != active_bank_mapping.pk %}
+                <span class="badge bg-light text-dark border me-1">{{ m.tb_account_code }} &mdash; {{ m.tb_account_name }}{% if m.bsb %} ({{ m.bsb }}){% endif %}</span>
+                {% endif %}
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endif %}
+
 {# --- Header Bar --- #}
 <div class="d-flex justify-content-between align-items-center mb-3">
     <h6 class="mb-0">

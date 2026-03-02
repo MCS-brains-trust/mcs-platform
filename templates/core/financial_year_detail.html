@@ -1351,8 +1351,234 @@
                 </div>
             </form>
         </div>
+        </div>
     </div>
 </div>
+
+{# --- Opening Balance Journal Modal --- #}
+{% if needs_opening_balance %}
+<div class="modal fade" id="openingBalanceModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-warning bg-opacity-10">
+                <h5 class="modal-title"><i class="bi bi-journal-plus"></i> Enter Opening Balance</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-muted small mb-3">
+                    Enter the opening balances for this entity as at <strong>{{ fy.start_date|date:"d/m/Y" }}</strong>.
+                    This will create a journal entry (JE) that is automatically posted to the Trial Balance.
+                    The journal must balance (total debits = total credits).
+                </p>
+                <div class="table-responsive">
+                    <table class="table table-sm table-bordered" id="obTable">
+                        <thead class="table-light">
+                            <tr>
+                                <th style="width:150px;">Account Code</th>
+                                <th>Account Name</th>
+                                <th style="width:140px;" class="text-end">Debit ($)</th>
+                                <th style="width:140px;" class="text-end">Credit ($)</th>
+                                <th style="width:40px;"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="obTableBody">
+                            {% if opening_balance_bank_code %}
+                            <tr data-ob-row>
+                                <td><input type="text" class="form-control form-control-sm ob-code" value="{{ opening_balance_bank_code }}" readonly></td>
+                                <td><input type="text" class="form-control form-control-sm ob-name" value="{{ opening_balance_bank_name }}" readonly></td>
+                                <td><input type="number" step="0.01" min="0" class="form-control form-control-sm text-end ob-debit" value="" placeholder="0.00"></td>
+                                <td><input type="number" step="0.01" min="0" class="form-control form-control-sm text-end ob-credit" value="" placeholder="0.00"></td>
+                                <td></td>
+                            </tr>
+                            {% endif %}
+                            <tr data-ob-row>
+                                <td>
+                                    <input type="text" class="form-control form-control-sm ob-code ob-code-search" placeholder="Search..." autocomplete="off">
+                                    <div class="dropdown-menu ob-code-results" style="max-height:200px;overflow-y:auto;"></div>
+                                </td>
+                                <td><input type="text" class="form-control form-control-sm ob-name" placeholder="Account name" readonly></td>
+                                <td><input type="number" step="0.01" min="0" class="form-control form-control-sm text-end ob-debit" value="" placeholder="0.00"></td>
+                                <td><input type="number" step="0.01" min="0" class="form-control form-control-sm text-end ob-credit" value="" placeholder="0.00"></td>
+                                <td><button type="button" class="btn btn-sm btn-outline-danger border-0 ob-remove-row" title="Remove"><i class="bi bi-x-lg"></i></button></td>
+                            </tr>
+                        </tbody>
+                        <tfoot>
+                            <tr>
+                                <td colspan="2" class="text-end fw-bold">Totals:</td>
+                                <td class="text-end fw-bold" id="obTotalDebit">0.00</td>
+                                <td class="text-end fw-bold" id="obTotalCredit">0.00</td>
+                                <td></td>
+                            </tr>
+                            <tr id="obDiffRow" style="display:none;">
+                                <td colspan="2" class="text-end text-danger fw-bold">Difference:</td>
+                                <td colspan="2" class="text-center text-danger fw-bold" id="obDiffAmount">0.00</td>
+                                <td></td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+                <button type="button" class="btn btn-outline-primary btn-sm" id="obAddRow">
+                    <i class="bi bi-plus-circle"></i> Add Line
+                </button>
+                <div id="obAlertArea" class="mt-2"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-warning" id="obPostBtn" disabled>
+                    <i class="bi bi-journal-check"></i> Post Opening Balance
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+(function() {
+    const OB_URL = '{% url "core:review_post_opening_balance" pk=fy.pk %}';
+    const COA_SEARCH_URL = '{% url "core:entity_coa_search_api" pk=fy.pk %}';
+    const CSRF = '{{ csrf_token }}';
+    const tbody = document.getElementById('obTableBody');
+    const postBtn = document.getElementById('obPostBtn');
+    const totalDebitEl = document.getElementById('obTotalDebit');
+    const totalCreditEl = document.getElementById('obTotalCredit');
+    const diffRow = document.getElementById('obDiffRow');
+    const diffAmountEl = document.getElementById('obDiffAmount');
+    const alertArea = document.getElementById('obAlertArea');
+
+    function recalcTotals() {
+        let dr = 0, cr = 0;
+        tbody.querySelectorAll('[data-ob-row]').forEach(row => {
+            dr += parseFloat(row.querySelector('.ob-debit').value) || 0;
+            cr += parseFloat(row.querySelector('.ob-credit').value) || 0;
+        });
+        totalDebitEl.textContent = dr.toFixed(2);
+        totalCreditEl.textContent = cr.toFixed(2);
+        const diff = Math.abs(dr - cr);
+        if (diff > 0.005) {
+            diffRow.style.display = '';
+            diffAmountEl.textContent = diff.toFixed(2);
+            postBtn.disabled = true;
+        } else {
+            diffRow.style.display = 'none';
+            postBtn.disabled = (dr === 0 && cr === 0);
+        }
+    }
+
+    function addRow() {
+        const tr = document.createElement('tr');
+        tr.setAttribute('data-ob-row', '');
+        tr.innerHTML = `
+            <td>
+                <input type="text" class="form-control form-control-sm ob-code ob-code-search" placeholder="Search..." autocomplete="off">
+                <div class="dropdown-menu ob-code-results" style="max-height:200px;overflow-y:auto;"></div>
+            </td>
+            <td><input type="text" class="form-control form-control-sm ob-name" placeholder="Account name" readonly></td>
+            <td><input type="number" step="0.01" min="0" class="form-control form-control-sm text-end ob-debit" value="" placeholder="0.00"></td>
+            <td><input type="number" step="0.01" min="0" class="form-control form-control-sm text-end ob-credit" value="" placeholder="0.00"></td>
+            <td><button type="button" class="btn btn-sm btn-outline-danger border-0 ob-remove-row" title="Remove"><i class="bi bi-x-lg"></i></button></td>
+        `;
+        tbody.appendChild(tr);
+    }
+
+    document.getElementById('obAddRow').addEventListener('click', addRow);
+
+    // Delegate events
+    tbody.addEventListener('input', function(e) {
+        if (e.target.classList.contains('ob-debit') || e.target.classList.contains('ob-credit')) {
+            recalcTotals();
+        }
+        if (e.target.classList.contains('ob-code-search')) {
+            const q = e.target.value.trim();
+            const resultsDiv = e.target.closest('td').querySelector('.ob-code-results');
+            if (q.length < 1) { resultsDiv.classList.remove('show'); return; }
+            clearTimeout(e.target._searchTimer);
+            e.target._searchTimer = setTimeout(() => {
+                fetch(COA_SEARCH_URL + '?q=' + encodeURIComponent(q))
+                .then(r => r.json())
+                .then(data => {
+                    if (!data.items || data.items.length === 0) {
+                        resultsDiv.innerHTML = '<div class="px-3 py-2 text-muted small">No results</div>';
+                    } else {
+                        resultsDiv.innerHTML = data.items.map(item =>
+                            `<a href="#" class="dropdown-item small py-1 ob-coa-pick" data-code="${item.code}" data-name="${item.name}"><code>${item.code}</code> ${item.name}</a>`
+                        ).join('');
+                    }
+                    resultsDiv.classList.add('show');
+                });
+            }, 250);
+        }
+    });
+
+    tbody.addEventListener('click', function(e) {
+        // COA pick
+        const pick = e.target.closest('.ob-coa-pick');
+        if (pick) {
+            e.preventDefault();
+            const row = pick.closest('[data-ob-row]');
+            row.querySelector('.ob-code').value = pick.dataset.code;
+            row.querySelector('.ob-name').value = pick.dataset.name;
+            pick.closest('.ob-code-results').classList.remove('show');
+        }
+        // Remove row
+        const removeBtn = e.target.closest('.ob-remove-row');
+        if (removeBtn) {
+            removeBtn.closest('[data-ob-row]').remove();
+            recalcTotals();
+        }
+    });
+
+    // Close dropdown when clicking outside
+    document.addEventListener('click', function(e) {
+        if (!e.target.closest('.ob-code-results') && !e.target.classList.contains('ob-code-search')) {
+            document.querySelectorAll('.ob-code-results.show').forEach(d => d.classList.remove('show'));
+        }
+    });
+
+    postBtn.addEventListener('click', async function() {
+        alertArea.innerHTML = '';
+        const lines = [];
+        let hasError = false;
+        tbody.querySelectorAll('[data-ob-row]').forEach(row => {
+            const code = row.querySelector('.ob-code').value.trim();
+            const name = row.querySelector('.ob-name').value.trim();
+            const dr = parseFloat(row.querySelector('.ob-debit').value) || 0;
+            const cr = parseFloat(row.querySelector('.ob-credit').value) || 0;
+            if (dr === 0 && cr === 0) return;
+            if (!code) { hasError = true; return; }
+            lines.push({ account_code: code, account_name: name, debit: dr, credit: cr });
+        });
+        if (hasError || lines.length === 0) {
+            alertArea.innerHTML = '<div class="alert alert-danger py-1 small">Please fill in all account codes and at least one amount.</div>';
+            return;
+        }
+        postBtn.disabled = true;
+        postBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Posting...';
+        try {
+            const resp = await fetch(OB_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF, 'X-Requested-With': 'XMLHttpRequest' },
+                body: JSON.stringify({ lines: lines }),
+            });
+            const data = await resp.json();
+            if (data.status === 'ok') {
+                alertArea.innerHTML = `<div class="alert alert-success py-1 small"><i class="bi bi-check-circle"></i> ${data.message}</div>`;
+                // Hide the opening balance alert banner
+                const alertBanner = document.getElementById('openingBalanceAlert');
+                if (alertBanner) alertBanner.style.display = 'none';
+                setTimeout(() => { location.reload(); }, 1500);
+            } else {
+                alertArea.innerHTML = `<div class="alert alert-danger py-1 small">${data.message || 'Error posting journal.'}</div>`;
+                postBtn.disabled = false;
+                postBtn.innerHTML = '<i class="bi bi-journal-check"></i> Post Opening Balance';
+            }
+        } catch (err) {
+            alertArea.innerHTML = '<div class="alert alert-danger py-1 small">Network error. Please try again.</div>';
+            postBtn.disabled = false;
+            postBtn.innerHTML = '<i class="bi bi-journal-check"></i> Post Opening Balance';
+        }
+    });
+})();
+</script>
+{% endif %}
 
 <script>
 (function() {

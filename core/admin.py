@@ -4,6 +4,7 @@ from .models import (
     AccountMapping, ClientAccountMapping, NoteTemplate,
     AdjustingJournal, JournalLine, FinancialStatementTemplate,
     GeneratedDocument, AuditLog, EntityOfficer, DepreciationAsset,
+    BankAccountMapping,
 )
 
 
@@ -403,6 +404,14 @@ class EngagementLetterConfigAdmin(admin.ModelAdmin):
     list_filter = ("fee_basis",)
     search_fields = ("entity__entity_name",)
     readonly_fields = ("updated_at",)
+
+
+@admin.register(BankAccountMapping)
+class BankAccountMappingAdmin(admin.ModelAdmin):
+    list_display = ("entity", "bank_account_name", "bsb", "account_number", "tb_account_code", "tb_account_name", "is_default")
+    list_filter = ("is_default",)
+    search_fields = ("entity__entity_name", "bank_account_name", "bsb", "account_number", "tb_account_code")
+    readonly_fields = ("created_at", "updated_at")
 
 
 from . import admin_office_admin  # noqa: F401

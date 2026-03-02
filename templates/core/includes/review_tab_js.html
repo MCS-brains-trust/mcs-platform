@@ -11,6 +11,7 @@ const DELETE_ALL_URL = '{% url "core:review_delete_all_transactions" pk=fy.pk %}
 const DELETE_SELECTED_URL = '{% url "core:review_delete_selected_transactions" pk=fy.pk %}';
 const BULK_EDIT_URL = '{% url "core:review_bulk_edit_transactions" pk=fy.pk %}';
 const APPROVE_SELECTED_URL = '{% url "core:review_approve_selected" pk=fy.pk %}';
+const BANK_MAPPING_URL = '{% url "core:review_bank_account_mapping" pk=fy.pk %}';
 const CSRF_TOKEN = '{{ csrf_token }}';
 const ENTITY_ID = '{{ fy.entity.pk }}';
 const FY_ID = '{{ fy.pk }}';
@@ -1728,4 +1729,47 @@ function bulkUnconfirmSelected() {
         if (IS_GST_REGISTERED) detectApportionmentForRow(txnId);
     });
 })();
+
+// ===== Bank Account Mapping Functions =====
+function toggleBankMappingForm() {
+    const form = document.getElementById('bankMappingForm');
+    if (form) form.style.display = form.style.display === 'none' ? 'block' : 'none';
+}
+
+function saveBankMapping(e) {
+    e.preventDefault();
+    const form = e.target;
+    const data = {
+        bank_account_name: form.bank_account_name.value,
+        bsb: form.bsb.value,
+        account_number: form.account_number.value,
+        tb_account_code: form.tb_account_code.value,
+        tb_account_name: form.tb_account_name.value,
+        is_default: form.is_default.checked,
+    };
+    fetch(BANK_MAPPING_URL, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': CSRF_TOKEN,
+            'X-Requested-With': 'XMLHttpRequest',
+        },
+        body: JSON.stringify(data),
+    })
+    .then(r => r.json())
+    .then(resp => {
+        if (resp.status === 'ok') {
+            // Update the banner to show the saved mapping
+            const card = document.getElementById('bankMappingCard');
+            if (card) {
+                card.className = card.className.replace('border-warning', 'border-success');
+                // Reload to reflect the new mapping
+                location.reload();
+            }
+        } else {
+            alert(resp.message || 'Error saving bank mapping.');
+        }
+    })
+    .catch(() => alert('Network error saving bank mapping.'));
+}
 </script>
