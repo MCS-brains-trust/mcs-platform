@@ -2,12 +2,12 @@
 Generate the bank statement upload template for StatementHub.
 Creates an Excel file with:
 - An Instructions sheet
-- A Bank Statement sheet with metadata rows and column headers only
-- NO formatting on the Date column — completely plain so copy-paste works
-- NO sample data — just empty rows ready for paste
+- A Bank Statement sheet with metadata rows and column headers
+- Column A (Date) from row 7 onwards formatted as DD/MM/YY so pasted
+  dates display uniformly regardless of source format
 """
 import openpyxl
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side, NamedStyle
 from openpyxl.utils import get_column_letter
 
 wb = openpyxl.Workbook()
@@ -46,9 +46,9 @@ instructions = [
     ('   - Account Number: Your bank account number', instruction_font, None),
     ('', None, None),
     ('3. Copy and paste your bank transactions starting from row 7.', instruction_font, None),
-    ('   Any date format is accepted — just paste directly from your bank export.', instruction_font, None),
+    ('   Dates will automatically display as DD/MM/YY.', instruction_font, None),
     ('', None, None),
-    ('   Column A: Date (any format)', instruction_font, None),
+    ('   Column A: Date', instruction_font, None),
     ('   Column B: Description', instruction_font, None),
     ('   Column C: Debit (money out)', instruction_font, None),
     ('   Column D: Credit (money in)', instruction_font, None),
@@ -103,7 +103,7 @@ ws.cell(row=5, column=1, value='')
 
 # Row 6: Column headers
 headers = ['Date', 'Description', 'Debit', 'Credit', 'Balance']
-col_widths = [18, 50, 15, 15, 15]
+col_widths = [14, 50, 15, 15, 15]
 
 for j, (header, width) in enumerate(zip(headers, col_widths), 1):
     cell = ws.cell(row=6, column=j, value=header)
@@ -113,15 +113,19 @@ for j, (header, width) in enumerate(zip(headers, col_widths), 1):
     cell.alignment = Alignment(horizontal='center')
     ws.column_dimensions[get_column_letter(j)].width = width
 
-# NO sample data, NO pre-formatted rows.
-# Rows 7+ are completely empty with default General formatting.
-# This means:
-#   - Date column: NO formatting applied — paste anything and it stays as-is
-#   - Description column: NO formatting — plain text
-#   - Numeric columns: NO formatting — Excel will auto-format numbers
-#
-# The parser handles any date format on the backend, so we don't need
-# to constrain or format the Date column at all.
+# ── Pre-format data rows (7 to 5006) ──────────────────────────────────
+# Column A: DD/MM/YY date format — when a date value (or Excel serial
+# number) is pasted, Excel will display it as DD/MM/YY.
+# Columns C-E: Number format for currency amounts.
+for i in range(7, 5007):
+    # Date column — DD/MM/YY display format
+    date_cell = ws.cell(row=i, column=1)
+    date_cell.number_format = 'DD/MM/YY'
+
+    # Debit, Credit, Balance — number format
+    for j in range(3, 6):
+        num_cell = ws.cell(row=i, column=j)
+        num_cell.number_format = '#,##0.00'
 
 # Freeze panes at row 7 (below headers)
 ws.freeze_panes = 'A7'
