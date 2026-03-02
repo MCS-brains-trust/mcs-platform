@@ -125,8 +125,10 @@ ASSET_RULES = [
      "shares in subsidiary", "options in other", "other investments"], "BS-CA-004"),
     # Prepayments
     (["prepayments", "prepaid borrowing", "prepaid wages",
-     "share issue expenses", "debenture issue", "formation costs",
-     "preliminary expenses"], "BS-CA-006"),
+     "share issue expenses", "debenture issue"], "BS-CA-006"),
+    # Formation / preliminary expenses — always non-current
+    (["formation costs", "formation expenses",
+     "preliminary expenses"], "BS-NCA-007"),
     # Loans to related parties
     (["loans to directors", "loans to holding", "loans to shareholders",
      "loans to other persons", "loans other related", "loan -",
@@ -157,11 +159,13 @@ LIABILITY_RULES = [
     # Borrowings (current)
     (["bank overdrafts", "bank loans", "bills of exchange",
      "hire purchase", "debentures", "other loans",
-     "loan - on deck", "loan - director",
+     "loan - on deck",
      "cba - lal", "cba better", "capital finance",
      "toyota finance", "macquarie porsche", "ondeck",
      "less: unexpired interest", "less deferred interest",
      "henneken"], "BS-CL-002"),
+    # Director loan — always non-current
+    (["loan - director"], "BS-NCL-001"),
     # Current tax
     (["taxation", "creditors - ato", "creditors - bas",
      "abn withholding", "tfn withholding", "payg withholding",

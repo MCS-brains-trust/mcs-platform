@@ -803,6 +803,8 @@ _KEYWORD_MAP_RULES = [
     (["deposit received", "advance payment", "unearned"], "BS-CL-005"),
     (["dividend payable", "dividend provided", "dividend declared"], "BS-CL-005"),
     # --- Non-Current Liabilities ---
+    # Director loan — always non-current borrowings
+    (["loan - director"], "BS-NCL-001"),
     (["deferred tax liab", "provision for deferred"], "BS-NCL-002"),
     (["loan to", "loan -", "loans to", "loan from", "loans from", "director loan", "shareholder loan", "related party loan"], "BS-NCL-004"),
     (["mortgage", "bank loan"], "BS-NCL-001"),
