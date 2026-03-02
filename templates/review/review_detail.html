@@ -790,6 +790,73 @@ function showDropdown(txnId, query) {
 function highlightOption(dropdown, index) { dropdown.querySelectorAll('.account-option').forEach((opt, i) => { opt.classList.toggle('active', i === index); if (i === index) opt.scrollIntoView({ block: 'nearest' }); }); }
 function hideAllDropdowns() { document.querySelectorAll('.account-dropdown').forEach(d => d.classList.remove('show')); activeDropdown = null; activeIndex = -1; }
 
+// Map a chart-of-accounts tax_code (e.g. "GST", "FRE", "ITS") to the
+// legacy tax-type dropdown value and the GST treatment dropdown value.
+// `amount` determines income vs expense direction.
+function taxCodeToTaxType(taxCode, amount) {
+    const tc = (taxCode || '').toUpperCase().trim();
+    const isIncome = parseFloat(amount) >= 0;
+    const map = {
+        'GST':          { tax: isIncome ? 'GST on Income' : 'GST on Expenses', treat: 'taxable' },
+        'ADS':          { tax: isIncome ? 'GST on Income' : 'GST on Expenses', treat: 'taxable' },
+        'FRE':          { tax: isIncome ? 'GST Free Income' : 'GST Free Expenses', treat: 'gst_free' },
+        'GST-FREE':     { tax: isIncome ? 'GST Free Income' : 'GST Free Expenses', treat: 'gst_free' },
+        'GST FREE':     { tax: isIncome ? 'GST Free Income' : 'GST Free Expenses', treat: 'gst_free' },
+        'ITS':          { tax: 'Input Taxed', treat: 'input_taxed' },
+        'INP':          { tax: 'Input Taxed', treat: 'input_taxed' },
+        'INPUT TAXED':  { tax: 'Input Taxed', treat: 'input_taxed' },
+        'N-T':          { tax: 'N-T', treat: 'out_of_scope' },
+        'NT':           { tax: 'N-T', treat: 'out_of_scope' },
+        'CAP':          { tax: 'BAS Excluded', treat: 'out_of_scope' },
+        'BAS':          { tax: 'BAS Excluded', treat: 'out_of_scope' },
+        'BAS EXCLUDED': { tax: 'BAS Excluded', treat: 'out_of_scope' },
+    };
+    return map[tc] || null;
+}
+
+// Apply the account's default GST/tax type to the dropdowns for a transaction.
+// Called when an account is selected (manually or via AI).
+function applyAccountGST(txnId, taxCode) {
+    const row = document.getElementById('row-' + txnId);
+    if (!row) return;
+    const amount = row.dataset.amount || '0';
+    const mapped = taxCodeToTaxType(taxCode, amount);
+    if (!mapped) return;
+
+    // Set the tax-type (legacy) dropdown
+    const taxSelect = document.getElementById('tax-' + txnId);
+    if (taxSelect) {
+        taxSelect.value = mapped.tax;
+        taxSelect.classList.add('confirmed');
+    }
+
+    // Set the GST treatment dropdown (if GST registered)
+    if (IS_GST_REGISTERED) {
+        const gstSelect = document.getElementById('gst-treat-' + txnId);
+        if (gstSelect) {
+            gstSelect.value = mapped.treat;
+            // Show/hide creditable percentage field
+            const credWrap = document.getElementById('cred-pct-wrap-' + txnId);
+            if (credWrap) credWrap.style.display = (mapped.treat === 'taxable') ? '' : 'none';
+            // Fire the server-side GST treatment update
+            fetch(`/api/review/transaction/${txnId}/gst-treatment/`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN },
+                body: JSON.stringify({ gst_treatment: mapped.treat, is_manual: false }),
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'ok' && IS_GST_REGISTERED) {
+                    const gstCell = row.querySelector('.gst-amount');
+                    const netCell = row.querySelector('.net-amount');
+                    if (gstCell) gstCell.textContent = '$' + parseFloat(data.gst_amount).toFixed(2);
+                    if (netCell) netCell.textContent = '$' + parseFloat(data.net_amount).toFixed(2);
+                }
+            });
+        }
+    }
+}
+
 function selectAccount(txnId, code, name) {
     const input = document.getElementById('acct-' + txnId);
     input.value = code + ' \u2014 ' + name;
@@ -797,6 +864,13 @@ function selectAccount(txnId, code, name) {
     input.dataset.name = name;
     input.classList.add('confirmed');
     hideAllDropdowns();
+
+    // Auto-set GST from the account's tax_code in the chart of accounts
+    const acct = ACCOUNTS.find(a => a.code === code);
+    if (acct && acct.tax) {
+        applyAccountGST(txnId, acct.tax);
+    }
+
     tryAutoConfirm(txnId);
 }
 
@@ -1553,6 +1627,30 @@ function updateTransactionRow(c) {
     const taxSelect = document.getElementById('tax-' + c.txn_id);
     if (acctInput && !acctInput.dataset.code) { acctInput.value = c.code + ' \u2014 ' + c.name; acctInput.dataset.code = c.code; acctInput.dataset.name = c.name; }
     if (taxSelect && !taxSelect.value && c.tax_type) taxSelect.value = c.tax_type;
+
+    // Auto-set GST treatment from the classified account's tax_code
+    const classifiedAcct = ACCOUNTS.find(a => a.code === c.code);
+    if (classifiedAcct && classifiedAcct.tax) {
+        const amount = row.dataset.amount || '0';
+        const mapped = taxCodeToTaxType(classifiedAcct.tax, amount);
+        if (mapped) {
+            // Set tax type dropdown if not already set
+            if (taxSelect && !taxSelect.value) {
+                taxSelect.value = mapped.tax;
+                taxSelect.classList.add('confirmed');
+            }
+            // Set GST treatment dropdown
+            if (IS_GST_REGISTERED) {
+                const gstSelect = document.getElementById('gst-treat-' + c.txn_id);
+                if (gstSelect && !gstSelect.value) {
+                    gstSelect.value = mapped.treat;
+                    const credWrap = document.getElementById('cred-pct-wrap-' + c.txn_id);
+                    if (credWrap) credWrap.style.display = (mapped.treat === 'taxable') ? '' : 'none';
+                }
+            }
+        }
+    }
+
     row.dataset.aiCode = c.code;
     row.dataset.aiName = c.name;
     row.dataset.confirmed = c.is_confirmed ? 'true' : 'false';
