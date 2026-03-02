@@ -233,6 +233,9 @@ def _get_or_create_tb_line(financial_year=None, account_code=None, defaults=None
     is normal because journal adjustments create separate rows.  We pick
     the *first non-adjustment* row, or the first row overall, to accumulate
     bank-statement amounts into.
+
+    When creating a new line, automatically applies any existing
+    ClientAccountMapping so the line is pre-mapped.
     """
     fy_resolved = financial_year or fy
     qs = TrialBalanceLine.objects.filter(
@@ -242,11 +245,21 @@ def _get_or_create_tb_line(financial_year=None, account_code=None, defaults=None
     tb_line = qs.filter(is_adjustment=False).first() or qs.first()
     if tb_line:
         return tb_line, False
-    # No row exists — create one
+    # No row exists — create one.
+    # Apply existing ClientAccountMapping if available.
+    defaults = defaults or {}
+    if 'mapped_line_item' not in defaults or defaults.get('mapped_line_item') is None:
+        cam = ClientAccountMapping.objects.filter(
+            entity=fy_resolved.entity,
+            client_account_code=account_code,
+            mapped_line_item__isnull=False,
+        ).select_related('mapped_line_item').first()
+        if cam:
+            defaults['mapped_line_item'] = cam.mapped_line_item
     tb_line = TrialBalanceLine.objects.create(
         financial_year=fy_resolved,
         account_code=account_code,
-        **(defaults or {}),
+        **(defaults),
     )
     return tb_line, True
 
@@ -807,7 +820,36 @@ def financial_year_detail(request, pk):
     _log_action(request, "view", f"Viewed financial year: {fy.year_label} for {fy.entity.entity_name}", fy)
     tb_lines = fy.trial_balance_lines.select_related("mapped_line_item").all()
     adjustments = fy.adjusting_journals.all().order_by('-posted_at', '-created_at')
-    unmapped_count = tb_lines.filter(mapped_line_item__isnull=True).values('account_code').distinct().count()
+    # Count unmapped accounts, excluding system/clearing accounts that don't
+    # need mapping (GST clearing, bank contra accounts, etc.)
+    _system_codes = {'3380', '9100', '9110'}  # GST payable / clearing accounts
+    unmapped_codes = (
+        tb_lines.filter(mapped_line_item__isnull=True)
+        .exclude(account_code__in=_system_codes)
+        .values_list('account_code', flat=True)
+        .distinct()
+    )
+    # Also exclude codes that already have a ClientAccountMapping with a
+    # mapped_line_item (the TB line just hasn't been updated yet)
+    _already_mapped_codes = set(
+        ClientAccountMapping.objects.filter(
+            entity=fy.entity,
+            client_account_code__in=unmapped_codes,
+            mapped_line_item__isnull=False,
+        ).values_list('client_account_code', flat=True)
+    )
+    # Auto-fix: apply the mapping to any TB lines that are missing it
+    if _already_mapped_codes:
+        for _cam in ClientAccountMapping.objects.filter(
+            entity=fy.entity,
+            client_account_code__in=_already_mapped_codes,
+            mapped_line_item__isnull=False,
+        ).select_related('mapped_line_item'):
+            tb_lines.filter(
+                account_code=_cam.client_account_code,
+                mapped_line_item__isnull=True,
+            ).update(mapped_line_item=_cam.mapped_line_item)
+    unmapped_count = len(set(unmapped_codes) - _already_mapped_codes)
     # Pre-load CoA section lookup for inferring sections of unmapped lines
     _coa_lookup = _build_coa_section_lookup(fy.entity)
     documents = fy.generated_documents.all().order_by('-version', '-generated_at')
