@@ -2325,7 +2325,7 @@ class ActivityLog(models.Model):
     event_type = models.CharField(
         max_length=30, choices=EventType.choices, default=EventType.GENERAL
     )
-    title = models.CharField(max_length=255)
+    title = models.CharField(max_length=255, default="")
     description = models.TextField(blank=True, default="")
     entity = models.ForeignKey(
         Entity,
