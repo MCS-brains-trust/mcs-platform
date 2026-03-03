@@ -1604,6 +1604,7 @@ class GeneratedDocument(models.Model):
         TAX_PLANNING_SUMMARY = "tax_planning_summary", "Tax Planning Summary"
         WORKPAPER_NOTES = "workpaper_notes", "Working Paper Notes"
         BAS_COMMENTARY = "bas_commentary", "BAS Period Commentary"
+        MANAGEMENT_ACCOUNTS = "management_accounts", "Management Accounts"
         OTHER = "other", "Other"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -2312,6 +2313,7 @@ class ActivityLog(models.Model):
         AUDIT_RUN = "audit_run", "Audit Risk Analysis Run"
         REVIEW_APPROVED = "review_approved", "Transactions Approved"
         DOCUMENT_GENERATED = "doc_generated", "Document Generated"
+        MGMT_ACCOUNTS_GENERATED = "mgmt_accts_gen", "Management Accounts Generated"
         BAS_COMMENTARY_GENERATED = "bas_commentary_generated", "BAS Commentary Generated"
         BAS_COMMENTARY_EDITED = "bas_commentary_edited", "BAS Commentary Edited"
         BAS_COMMENTARY_REGENERATED = "bas_commentary_regenerated", "BAS Commentary Regenerated"

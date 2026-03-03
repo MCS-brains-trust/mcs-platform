@@ -147,19 +147,19 @@
                     <div class="vr d-none d-md-block"></div>
 
                     <!-- Financial Statement Download Buttons -->
-                    {% if fy.status == 'finalised' %}
+                    {% if fy.status == 'eva_cleared' or fy.status == 'locked' or fy.status == 'finalised' %}
+                    <!-- Final statements — direct download, no modal -->
                     <button type="button" class="btn btn-sm btn-dark" onclick="showPeriodModal('docx')">
-                        <i class="bi bi-file-earmark-word"></i> Download Word
+                        <i class="bi bi-file-earmark-word"></i> Download Financial Statements
                     </button>
                     <button type="button" class="btn btn-sm btn-danger" onclick="showPeriodModal('pdf')">
-                        <i class="bi bi-file-earmark-pdf"></i> Download PDF
+                        <i class="bi bi-file-earmark-pdf"></i> Download Financial Statements
                     </button>
-                    {% else %}
-                    <button type="button" class="btn btn-sm btn-dark" disabled title="Finalise this financial year to download statements">
-                        <i class="bi bi-file-earmark-word"></i> Download Word
-                    </button>
-                    <button type="button" class="btn btn-sm btn-danger" disabled title="Finalise this financial year to download statements">
-                        <i class="bi bi-file-earmark-pdf"></i> Download PDF
+                    {% elif fy.status == 'draft' or fy.status == 'in_review' or fy.status == 'finished' or fy.status == 'prepared' or fy.status == 'pending_eva' or fy.status == 'eva_error' %}
+                    <!-- Management Accounts — opens period selection modal -->
+                    <button type="button" class="btn btn-sm btn-outline-dark" onclick="openMgmtAccountsModal()" title="Watermarked management accounts. Complete Eva review to generate final financials.">
+                        <i class="bi bi-file-earmark-text"></i> Download Management Accounts
+                        <span class="badge bg-warning text-dark ms-1" style="font-size: 0.65rem;">DRAFT</span>
                     </button>
                     {% endif %}
                     {% if entity.entity_type == 'trust' %}
@@ -313,6 +313,86 @@
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
                 <button type="button" class="btn btn-primary" id="downloadStatementsBtn" onclick="downloadStatements()">
                     <i class="bi bi-download"></i> Download
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- ===== Management Accounts Period Selection Modal ===== -->
+<div class="modal fade" id="mgmtAccountsModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-light">
+                <h5 class="modal-title">
+                    <i class="bi bi-file-earmark-text"></i> Download Management Accounts
+                    <span class="badge bg-warning text-dark ms-2" style="font-size: 0.7rem;">DRAFT</span>
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                {% if tb_source == 'MANUAL' %}
+                <div class="alert alert-info mb-3">
+                    <i class="bi bi-info-circle"></i>
+                    <strong>Manual TB detected.</strong> The date picker is disabled because this entity's trial balance was uploaded manually.
+                    Upload a trial balance as at your interim date to enable period-scoped accounts.
+                </div>
+                {% endif %}
+
+                <form id="mgmtAccountsForm">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label for="mgmt_period_start" class="form-label fw-semibold">Period start</label>
+                            <input type="date" class="form-control" id="mgmt_period_start"
+                                   value="{{ fy_start_iso }}"
+                                   min="{{ fy_start_iso }}" max="{{ fy_end_iso }}"
+                                   {% if tb_source == 'MANUAL' %}disabled{% endif %}>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="mgmt_period_end" class="form-label fw-semibold">Period end</label>
+                            <input type="date" class="form-control" id="mgmt_period_end"
+                                   value="{{ default_period_end }}"
+                                   min="{{ fy_start_iso }}" max="{{ fy_end_iso }}"
+                                   {% if tb_source == 'MANUAL' %}disabled{% endif %}>
+                        </div>
+                    </div>
+
+                    <div class="mt-3">
+                        <label class="form-label fw-semibold">Output</label>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="mgmt_output" id="mgmt_output_bs_pnl" value="bs_pnl" checked>
+                            <label class="form-check-label" for="mgmt_output_bs_pnl">Balance Sheet + P&amp;L</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="mgmt_output" id="mgmt_output_pnl" value="pnl_only">
+                            <label class="form-check-label" for="mgmt_output_pnl">P&amp;L only</label>
+                        </div>
+                    </div>
+
+                    <div class="mt-3">
+                        <label class="form-label fw-semibold">Format</label>
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input" type="radio" name="mgmt_format" id="mgmt_format_pdf" value="pdf" checked>
+                            <label class="form-check-label" for="mgmt_format_pdf"><i class="bi bi-file-earmark-pdf text-danger"></i> PDF</label>
+                        </div>
+                        <div class="form-check form-check-inline">
+                            <input class="form-check-input" type="radio" name="mgmt_format" id="mgmt_format_docx" value="docx">
+                            <label class="form-check-label" for="mgmt_format_docx"><i class="bi bi-file-earmark-word text-primary"></i> Word</label>
+                        </div>
+                    </div>
+
+                    {% if tb_source == 'BANK_DERIVED' %}
+                    <div class="alert alert-warning mt-3 mb-0" style="font-size: 0.85rem;">
+                        <i class="bi bi-exclamation-triangle"></i>
+                        <strong>Bank-derived data.</strong> These accounts will include a disclaimer noting that balance sheet items not transacted through the bank are excluded.
+                    </div>
+                    {% endif %}
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-dark" id="mgmtGenerateBtn" onclick="generateMgmtAccounts()">
+                    <i class="bi bi-download"></i> Generate
                 </button>
             </div>
         </div>
@@ -2346,6 +2426,68 @@ document.querySelectorAll('.period-option').forEach(opt => {
         this.classList.add('active');
     });
 });
+
+// ===== Management Accounts Modal =====
+function openMgmtAccountsModal() {
+    new bootstrap.Modal(document.getElementById('mgmtAccountsModal')).show();
+    validateMgmtDates();
+}
+
+function validateMgmtDates() {
+    const startEl = document.getElementById('mgmt_period_start');
+    const endEl = document.getElementById('mgmt_period_end');
+    const btn = document.getElementById('mgmtGenerateBtn');
+    if (!startEl || !endEl || !btn) return;
+
+    const start = startEl.value;
+    const end = endEl.value;
+    const fyStart = '{{ fy_start_iso }}';
+    const fyEnd = '{{ fy_end_iso }}';
+
+    const valid = start && end && end >= start && end >= fyStart && end <= fyEnd && start >= fyStart && start <= fyEnd;
+    btn.disabled = !valid;
+    if (!valid) {
+        btn.title = 'Period end must be within the financial year and after period start.';
+    } else {
+        btn.title = '';
+    }
+}
+
+// Attach date validation listeners
+document.addEventListener('DOMContentLoaded', function() {
+    const startEl = document.getElementById('mgmt_period_start');
+    const endEl = document.getElementById('mgmt_period_end');
+    if (startEl) startEl.addEventListener('change', validateMgmtDates);
+    if (endEl) endEl.addEventListener('change', validateMgmtDates);
+});
+
+function generateMgmtAccounts() {
+    const periodStart = document.getElementById('mgmt_period_start').value;
+    const periodEnd = document.getElementById('mgmt_period_end').value;
+    const outputType = document.querySelector('input[name="mgmt_output"]:checked').value;
+    const fmt = document.querySelector('input[name="mgmt_format"]:checked').value;
+
+    const btn = document.getElementById('mgmtGenerateBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status"></span> Generating...';
+
+    const params = new URLSearchParams({
+        period_start: periodStart,
+        period_end: periodEnd,
+        output_type: outputType,
+        format: fmt,
+    });
+
+    window.location.href = "{% url 'core:generate_management_accounts' pk=fy.pk %}" + '?' + params.toString();
+
+    // Re-enable button after a delay (download will have started)
+    setTimeout(function() {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-download"></i> Generate';
+        const modal = bootstrap.Modal.getInstance(document.getElementById('mgmtAccountsModal'));
+        if (modal) modal.hide();
+    }, 3000);
+}
 
 /* ===== WORKPAPER NOTES: Temporarily disabled =====
  * Uncomment when Workpapers tab is re-enabled.
