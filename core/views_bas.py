@@ -457,14 +457,14 @@ def _generate_pdf(fy, entity, period_label, bas, detail_rows, period_start=None,
     net_label = "Net GST Payable to ATO" if net_gst > 0 else "Net GST Refundable from ATO"
 
     def fmt(v):
-        return f"${v:,.2f}"
+        return f"${v:,.0f}"
 
     # Build detail rows HTML
     detail_html = ""
     for row in detail_rows:
         detail_html += f"""<tr>
             <td>{html_escape(str(row['code']))}</td><td>{html_escape(str(row['name']))}</td>
-            <td>{html_escape(str(row['tax_code']))}</td><td class="r">${row['amount']:,.2f}</td>
+            <td>{html_escape(str(row['tax_code']))}</td><td class="r">${row['amount']:,.0f}</td>
             <td>{html_escape(str(row['bas_label']))}</td>
         </tr>"""
 
@@ -622,7 +622,7 @@ def _all_periods_pdf(fy, entity, periods):
     abn = html_escape(entity.abn or 'N/A')
 
     def fmt(v):
-        return f"${v:,.2f}"
+        return f"${v:,.0f}"
 
     pages = []
 
@@ -762,7 +762,7 @@ def _write_bas_sheet(ws, fy, entity, period_label, bas, detail_rows, period_star
     for row in ws.iter_rows(min_row=7, max_col=3, max_row=ws.max_row):
         cell = row[2]
         if isinstance(cell.value, (int, float)):
-            cell.number_format = '#,##0.00'
+            cell.number_format = '#,##0'
 
 
 def _write_detail_sheet(ws, detail_rows):
@@ -781,7 +781,7 @@ def _write_detail_sheet(ws, detail_rows):
     for cell in ws[1]:
         cell.font = bold
     for row in ws.iter_rows(min_row=2, min_col=4, max_col=4, max_row=ws.max_row):
-        row[0].number_format = '#,##0.00'
+        row[0].number_format = '#,##0'
 
 
 def _build_pdf_page(entity, abn, period_label, period_str, bas, detail_rows, fmt, is_first=False):
@@ -795,7 +795,7 @@ def _build_pdf_page(entity, abn, period_label, period_str, bas, detail_rows, fmt
     for row in detail_rows:
         detail_html += f"""<tr>
             <td>{html_escape(str(row['code']))}</td><td>{html_escape(str(row['name']))}</td>
-            <td>{html_escape(str(row['tax_code']))}</td><td class="r">${row['amount']:,.2f}</td>
+            <td>{html_escape(str(row['tax_code']))}</td><td class="r">${row['amount']:,.0f}</td>
             <td>{html_escape(str(row['bas_label']))}</td>
         </tr>"""
 
