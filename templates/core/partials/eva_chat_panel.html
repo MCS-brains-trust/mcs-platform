@@ -183,14 +183,15 @@ Issues addressed:
 }
 
 .eva-msg {
-    max-width: 92%;
     position: relative;
 }
 .eva-msg-user {
     align-self: flex-end;
+    max-width: 70%;
 }
 .eva-msg-assistant {
     align-self: flex-start;
+    max-width: 85%;
 }
 .eva-msg-content {
     padding: 10px 14px;
@@ -328,6 +329,9 @@ Issues addressed:
     background: #f9fafb;
     font-weight: 600;
 }
+.eva-msg-content table tr:nth-child(even) td {
+    background: #f9fafb;
+}
 .eva-msg-content blockquote {
     border-left: 3px solid #0F6B74;
     margin: 8px 0;
@@ -337,10 +341,44 @@ Issues addressed:
     background: #f9fafb;
     border-radius: 0 4px 4px 0;
 }
+/* Convert markdown headers to bold paragraphs per chat formatting spec */
+.eva-msg-content h1, .eva-msg-content h2, .eva-msg-content h3,
 .eva-msg-content h4, .eva-msg-content h5, .eva-msg-content h6 {
     margin: 8px 0 4px 0;
-    font-size: 0.88rem;
+    font-size: 0.85rem;
+    font-weight: 700;
     color: #0F6B74;
+    display: block;
+}
+
+/* ── Suggestion Chips ── */
+.eva-suggestion-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+    padding-left: 0;
+}
+.eva-chip {
+    display: inline-block;
+    border: 1px solid #0F6B74;
+    background: white;
+    color: #0F6B74;
+    font-size: 0.78rem;
+    padding: 4px 12px;
+    border-radius: 16px;
+    cursor: pointer;
+    transition: all 0.15s;
+    line-height: 1.4;
+}
+.eva-chip:hover {
+    background: #0F6B74;
+    color: white;
+}
+@media (max-width: 375px) {
+    .eva-suggestion-chips {
+        flex-direction: column;
+    }
 }
 </style>
 
@@ -446,6 +484,7 @@ Issues addressed:
                             if (streamDiv) {
                                 streamDiv.innerHTML = '<strong>Eva</strong>' + renderMarkdown(rawText);
                                 addCopyButton(streamDiv.parentElement, rawText);
+                                renderSuggestionChips(streamDiv.parentElement, rawText);
                             }
                             scrollToBottom();
                             return;
@@ -471,6 +510,7 @@ Issues addressed:
                                         if (streamDiv) {
                                             streamDiv.innerHTML = '<strong>Eva</strong>' + renderMarkdown(rawText);
                                             addCopyButton(streamDiv.parentElement, rawText);
+                                            renderSuggestionChips(streamDiv.parentElement, rawText);
                                         }
                                         scrollToBottom();
                                     }
@@ -532,11 +572,13 @@ Issues addressed:
         var inner = document.createElement('div');
         inner.className = 'eva-msg-content';
 
-        if (role === 'assistant') {
+            if (role === 'assistant') {
             inner.innerHTML = '<strong>Eva</strong>' + renderMarkdown(content);
             div.appendChild(inner);
             // Add copy button for assistant messages (Issue 10)
             addCopyButton(div, content);
+            // Render suggestion chips for the latest assistant message
+            renderSuggestionChips(div, content);
         } else {
             inner.textContent = content;
             div.appendChild(inner);
@@ -578,6 +620,57 @@ Issues addressed:
             }
         }
         return fallbackMarkdown(text);
+    }
+
+    // Suggestion Chips — parse Eva's response for offers/questions and render as tappable pills
+    var CHIP_TRIGGERS = /\b(want|shall|should|can i|would you like|need me to|like me to)\b/i;
+
+    function extractSuggestionChips(text) {
+        // Split into sentences, look at the last 1-2 for question marks + trigger words
+        var sentences = text.replace(/\n/g, ' ').split(/(?<=[.?!])\s+/);
+        var chips = [];
+        // Check last 3 sentences for offers
+        var tail = sentences.slice(-3);
+        for (var i = 0; i < tail.length && chips.length < 2; i++) {
+            var s = tail[i].trim();
+            if (s.indexOf('?') !== -1 && CHIP_TRIGGERS.test(s)) {
+                // Clean up the chip text — remove leading connectors
+                var chipText = s.replace(/^(or |alternatively[,]?\s*)/i, '').trim();
+                if (chipText.length > 10 && chipText.length < 120) {
+                    chips.push(chipText);
+                }
+            }
+        }
+        return chips;
+    }
+
+    function renderSuggestionChips(parentDiv, rawText) {
+        var chips = extractSuggestionChips(rawText);
+        if (chips.length === 0) return;
+        var chipContainer = document.createElement('div');
+        chipContainer.className = 'eva-suggestion-chips';
+        chips.forEach(function(chipText) {
+            var chip = document.createElement('span');
+            chip.className = 'eva-chip';
+            // Display a shortened version if too long
+            var display = chipText.length > 60 ? chipText.substring(0, 57) + '...' : chipText;
+            chip.textContent = display;
+            chip.title = chipText;
+            chip.onclick = function() {
+                // Remove chips after click
+                chipContainer.remove();
+                // Send the chip text as a user message
+                var input = document.getElementById('eva-input');
+                input.value = chipText.replace(/\?$/, '').trim();
+                // Prefix with 'Yes, ' if it's an offer
+                if (/^(want|shall|should|can|would)/i.test(chipText)) {
+                    input.value = 'Yes, please ' + chipText.replace(/^(want|shall|should|can i|would you like to)\s*/i, '').replace(/\?$/, '').trim();
+                }
+                sendEvaMessage();
+            };
+            chipContainer.appendChild(chip);
+        });
+        parentDiv.appendChild(chipContainer);
     }
 
     // Fallback if marked.js fails to load
