@@ -532,10 +532,28 @@ def _calculate_gst_from_tb_lines(fy, entity, entity_type, coa_lookup, entity_coa
             if exclude_reason:
                 continue
 
-            has_gst = tax_code in ("GST", "INP")
+            # Use transaction-level tax_type for GST classification
+            gst_bearing_tax_types = ("GST on Income", "GST on Expenses")
+            non_gst_tax_types = ("GST Free Income", "GST Free Expenses", "BAS Excluded", "N-T", "Input Taxed")
+            if tax_type in gst_bearing_tax_types:
+                has_gst = True
+            elif tax_type in non_gst_tax_types:
+                has_gst = False
+            else:
+                has_gst = tax_code in ("GST", "INP")
+
             gross = abs(txn.amount)
             gst_amt = abs(txn.confirmed_gst_amount or txn.gst_amount or Decimal("0")) if has_gst else Decimal("0")
             taxable = gross - gst_amt if has_gst else gross
+
+            # Determine display tax code from transaction tax type
+            display_tax_code = tax_code or "N-T"
+            if tax_type in ("GST Free Income", "GST Free Expenses"):
+                display_tax_code = "FRE"
+            elif tax_type in ("BAS Excluded", "N-T"):
+                display_tax_code = "N-T"
+            elif tax_type == "Input Taxed":
+                display_tax_code = "ITS"
 
             txn_row = {
                 "date": txn_date or fy.start_date,
@@ -543,7 +561,7 @@ def _calculate_gst_from_tb_lines(fy, entity, entity_type, coa_lookup, entity_coa
                 "description": txn.description or "",
                 "account_code": code,
                 "account_name": name,
-                "tax_code": tax_code or "N-T",
+                "tax_code": display_tax_code,
                 "has_gst": has_gst,
                 "gst_rate": Decimal("10.00") if has_gst else Decimal("0"),
                 "taxable_amount": taxable,
@@ -554,8 +572,13 @@ def _calculate_gst_from_tb_lines(fy, entity, entity_type, coa_lookup, entity_coa
                 sales_transactions.append(txn_row)
             elif section in ("expenses", "Expenses", "cost_of_sales", "Cost of Sales"):
                 purchase_transactions.append(txn_row)
-            elif section in ("assets", "Assets") and tax_code in ("CAP", "FCA"):
+            elif section in ("assets", "Assets"):
                 purchase_transactions.append(txn_row)
+            elif section is None:
+                if txn.amount > 0:
+                    sales_transactions.append(txn_row)
+                else:
+                    purchase_transactions.append(txn_row)
 
     # Also include journal entries as transaction details
     from .models import AdjustingJournal
@@ -737,12 +760,39 @@ def _calculate_gst_from_transactions(fy, entity, entity_type, coa_lookup, entity
             if exclude_reason:
                 continue
 
-            # Determine if this is a GST-bearing transaction
-            has_gst = tax_code in ("GST", "INP")
+            # Use the transaction-level tax_type to determine GST status.
+            # The COA-derived tax_code is used for BAS label aggregation, but
+            # individual transactions should reflect their actual confirmed
+            # tax treatment (e.g. a transaction confirmed as "GST Free Expenses"
+            # should appear in the GST-free section even if the COA account
+            # defaults to GST).
+            txn_tax_type = txn_detail.get("tax_type", "")
+            gst_bearing_tax_types = ("GST on Income", "GST on Expenses")
+            non_gst_tax_types = ("GST Free Income", "GST Free Expenses", "BAS Excluded", "N-T", "Input Taxed")
+
+            if txn_tax_type in gst_bearing_tax_types:
+                has_gst = True
+            elif txn_tax_type in non_gst_tax_types:
+                has_gst = False
+            else:
+                # Fallback to COA-derived tax_code
+                has_gst = tax_code in ("GST", "INP")
+
             gst_rate = Decimal("10.00") if has_gst else Decimal("0")
             gross = txn_detail["gross_amount"]
             gst_amt = txn_detail["gst_amount"] if has_gst else Decimal("0")
             taxable = gross - gst_amt if has_gst else gross
+
+            # Determine display tax code from the transaction tax type
+            display_tax_code = tax_code or "N-T"
+            if txn_tax_type in ("GST Free Income", "GST Free Expenses"):
+                display_tax_code = "FRE"
+            elif txn_tax_type == "BAS Excluded":
+                display_tax_code = "N-T"
+            elif txn_tax_type == "N-T":
+                display_tax_code = "N-T"
+            elif txn_tax_type == "Input Taxed":
+                display_tax_code = "ITS"
 
             txn_row = {
                 "date": txn_detail["date"],
@@ -750,7 +800,7 @@ def _calculate_gst_from_transactions(fy, entity, entity_type, coa_lookup, entity
                 "description": txn_detail["description"],
                 "account_code": txn_detail["account_code"],
                 "account_name": txn_detail["account_name"],
-                "tax_code": tax_code or "N-T",
+                "tax_code": display_tax_code,
                 "has_gst": has_gst,
                 "gst_rate": gst_rate,
                 "taxable_amount": taxable,
@@ -758,12 +808,21 @@ def _calculate_gst_from_transactions(fy, entity, entity_type, coa_lookup, entity
                 "gross_amount": gross,
             }
 
+            # Route to sales or purchases based on section.
+            # If section is None (e.g. BAS Excluded), fall back to
+            # transaction type: Deposit → sales, Expense → purchases.
             if section in ("revenue", "Revenue"):
                 sales_transactions.append(txn_row)
             elif section in ("expenses", "Expenses", "cost_of_sales", "Cost of Sales"):
                 purchase_transactions.append(txn_row)
-            elif section in ("assets", "Assets") and tax_code in ("CAP", "FCA"):
+            elif section in ("assets", "Assets"):
                 purchase_transactions.append(txn_row)  # capital purchases in purchase detail
+            elif section is None:
+                # Fallback: use transaction direction
+                if txn_detail["txn_type"] == "Deposit":
+                    sales_transactions.append(txn_row)
+                else:
+                    purchase_transactions.append(txn_row)
 
     # ── 2. TB lines from bank_statement source (fallback if no PendingTransactions) ──
     # If no review jobs exist, fall back to TB lines with source=bank_statement
