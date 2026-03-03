@@ -65,6 +65,7 @@ class EntityForm(forms.ModelForm):
         self.fields["suburb"].required = True
         self.fields["state"].required = True
         self.fields["postcode"].required = True
+        self.fields["bas_frequency"].required = True
 
         # Only senior users can change assigned_accountant
         if user and not user.is_senior:

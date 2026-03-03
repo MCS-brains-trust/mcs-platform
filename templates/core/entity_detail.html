@@ -262,6 +262,12 @@
                                     <td class="text-muted">GST Registered</td>
                                     <td>{% if entity.is_gst_registered %}<span class="badge bg-success">Yes</span>{% else %}<span class="badge bg-secondary">No</span>{% endif %}</td>
                                 </tr>
+                                {% if entity.is_gst_registered %}
+                                <tr>
+                                    <td class="text-muted">BAS/GST Period</td>
+                                    <td><span class="badge bg-info text-dark">{{ entity.get_bas_frequency_display }}</span></td>
+                                </tr>
+                                {% endif %}
                                 <tr>
                                     <td class="text-muted">Framework</td>
                                     <td>{{ entity.get_reporting_framework_display }}</td>
