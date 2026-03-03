@@ -1395,6 +1395,22 @@ def financial_year_detail(request, pk):
             status__in=["draft", "reviewed", "sent"],
         ).select_related("generated_by", "bas_period").order_by("-generated_at"),
     }
+
+    # --- Management Accounts context ---
+    from .mgmt_accounts import detect_tb_source
+    context["tb_source"] = detect_tb_source(fy.entity)
+    # Default period_end for the modal: end of most recent completed BAS period, or today
+    last_bas = fy.bas_periods.filter(
+        status__in=['lodged', 'ready', 'partial']
+    ).order_by('-period_end').first()
+    if last_bas:
+        context["default_period_end"] = last_bas.period_end.isoformat()
+    else:
+        from datetime import date as _date
+        context["default_period_end"] = min(_date.today(), fy.end_date).isoformat()
+    context["fy_start_iso"] = fy.start_date.isoformat()
+    context["fy_end_iso"] = fy.end_date.isoformat()
+
     return render(request, "core/financial_year_detail.html", context)
 
 
@@ -4136,6 +4152,160 @@ def generate_document(request, pk):
         financial_year=fy,
         file_format=file_format,
         generated_by=request.user,
+    )
+    doc.file.save(filename, ContentFile(file_content), save=True)
+
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Management Accounts Generation (Period-Scoped Draft)
+# ---------------------------------------------------------------------------
+@login_required
+def generate_management_accounts_view(request, pk):
+    """Generate period-scoped, watermarked management accounts (Cover + B/S + P&L)."""
+    from datetime import date as _date
+    from .mgmt_accounts import generate_management_accounts
+
+    fy = get_financial_year_for_user(request, pk)
+
+    # Parse query parameters
+    period_start_str = request.GET.get('period_start', '')
+    period_end_str = request.GET.get('period_end', '')
+    output_type = request.GET.get('output_type', 'bs_pnl')
+    fmt = request.GET.get('format', 'docx').lower()
+
+    if fmt not in ('docx', 'pdf'):
+        fmt = 'docx'
+    if output_type not in ('bs_pnl', 'pnl_only'):
+        output_type = 'bs_pnl'
+
+    # Parse dates
+    try:
+        period_start = _date.fromisoformat(period_start_str) if period_start_str else fy.start_date
+        period_end = _date.fromisoformat(period_end_str) if period_end_str else fy.end_date
+    except ValueError:
+        messages.error(request, "Invalid date format. Use YYYY-MM-DD.")
+        return redirect('core:financial_year_detail', pk=pk)
+
+    # Generate
+    try:
+        buffer, tb_source = generate_management_accounts(
+            financial_year_id=fy.pk,
+            period_start=period_start,
+            period_end=period_end,
+            user=request.user,
+            output_type=output_type,
+        )
+    except ValueError as e:
+        messages.error(request, str(e))
+        return redirect('core:financial_year_detail', pk=pk)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Management accounts generation failed: {e}")
+        messages.error(request, f"Management accounts generation failed: {e}")
+        return redirect('core:financial_year_detail', pk=pk)
+
+    # Build filename
+    entity_name = fy.entity.entity_name.replace(' ', '_')
+    period_label = f"{period_start.strftime('%b%Y')}_to_{period_end.strftime('%b%Y')}"
+    base_filename = f"{entity_name}_Management_Accounts_{period_label}"
+
+    if fmt == 'pdf':
+        import subprocess, tempfile, os
+        try:
+            with tempfile.TemporaryDirectory() as tmpdir:
+                docx_path = os.path.join(tmpdir, f"{base_filename}.docx")
+                with open(docx_path, 'wb') as f:
+                    f.write(buffer.getvalue())
+
+                lo_bin = None
+                for candidate in ['soffice', 'libreoffice', '/usr/bin/soffice', '/usr/bin/libreoffice']:
+                    try:
+                        subprocess.run([candidate, '--version'], capture_output=True, timeout=5)
+                        lo_bin = candidate
+                        break
+                    except (FileNotFoundError, subprocess.TimeoutExpired):
+                        continue
+
+                if not lo_bin:
+                    raise RuntimeError(
+                        'LibreOffice is not installed. Install with: sudo apt-get install -y libreoffice-writer'
+                    )
+
+                result = subprocess.run(
+                    [lo_bin, '--headless', '--norestore', '--convert-to', 'pdf',
+                     '--outdir', tmpdir, docx_path],
+                    capture_output=True, timeout=120,
+                    env={**os.environ, 'HOME': tmpdir},
+                )
+                pdf_path = os.path.join(tmpdir, f"{base_filename}.pdf")
+                if not os.path.exists(pdf_path):
+                    stderr = result.stderr.decode('utf-8', errors='replace')
+                    raise RuntimeError(f'PDF conversion failed: {stderr[:500]}')
+                with open(pdf_path, 'rb') as f:
+                    pdf_bytes = f.read()
+
+            filename = f"{base_filename}.pdf"
+            response = HttpResponse(pdf_bytes, content_type='application/pdf')
+            response['Content-Disposition'] = f'attachment; filename="{filename}"'
+            file_content = pdf_bytes
+            file_format = 'pdf'
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f'PDF conversion failed for mgmt accounts: {e}')
+            messages.warning(request, f'PDF conversion failed: {e}. Falling back to DOCX.')
+            filename = f"{base_filename}.docx"
+            response = HttpResponse(
+                buffer.getvalue(),
+                content_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            )
+            response['Content-Disposition'] = f'attachment; filename="{filename}"'
+            file_content = buffer.getvalue()
+            file_format = 'docx'
+    else:
+        filename = f"{base_filename}.docx"
+        response = HttpResponse(
+            buffer.getvalue(),
+            content_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        )
+        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+        file_content = buffer.getvalue()
+        file_format = 'docx'
+
+    # Audit log
+    _log_action(
+        request, 'generate',
+        f'Generated management accounts ({file_format.upper()}, {tb_source}) '
+        f'for {period_start} to {period_end} — {fy}',
+        fy,
+    )
+
+    # Activity log
+    ActivityLog.objects.create(
+        user=request.user,
+        event_type=ActivityLog.EventType.MGMT_ACCOUNTS_GENERATED,
+        title=f'Management Accounts generated ({file_format.upper()})',
+        description=(
+            f'Period: {period_start.strftime("%d %b %Y")} to {period_end.strftime("%d %b %Y")}. '
+            f'Source: {tb_source}. Output: {output_type}.'
+        ),
+        entity=fy.entity,
+        financial_year=fy,
+        url=request.build_absolute_uri(
+            reverse('core:financial_year_detail', args=[fy.pk])
+        ),
+    )
+
+    # Save to GeneratedDocument (as management_accounts type)
+    from django.core.files.base import ContentFile
+    doc = GeneratedDocument(
+        financial_year=fy,
+        file_format=file_format,
+        document_type=GeneratedDocument.DocumentType.MANAGEMENT_ACCOUNTS,
+        status=GeneratedDocument.DocumentStatus.DRAFT,
+        generated_by=request.user,
+        change_summary=f'Period: {period_start} to {period_end}. Source: {tb_source}.',
     )
     doc.file.save(filename, ContentFile(file_content), save=True)
 
