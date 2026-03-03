@@ -169,6 +169,34 @@ def bas_dashboard(request, pk):
         "empty": "#999999",
     }
 
+    # ── Build grouped transaction detail for Sales/Purchases tabs ──
+    sales_txns = gst_result.get("sales_transactions", [])
+    purchase_txns = gst_result.get("purchase_transactions", [])
+
+    def _group_transactions(txns):
+        """Group transactions by GST status (GST vs GST-Free/BAS Excluded)."""
+        gst_txns = [t for t in txns if t.get("has_gst")]
+        non_gst_txns = [t for t in txns if not t.get("has_gst")]
+
+        gst_total_taxable = sum(t["taxable_amount"] for t in gst_txns)
+        gst_total_gst = sum(t["gst_amount"] for t in gst_txns)
+        gst_total_gross = sum(t["gross_amount"] for t in gst_txns)
+
+        non_gst_total = sum(t["gross_amount"] for t in non_gst_txns)
+
+        return {
+            "gst_txns": gst_txns,
+            "non_gst_txns": non_gst_txns,
+            "gst_total_taxable": gst_total_taxable,
+            "gst_total_gst": gst_total_gst,
+            "gst_total_gross": gst_total_gross,
+            "non_gst_total": non_gst_total,
+            "grand_total": gst_total_gross + non_gst_total,
+        }
+
+    sales_detail = _group_transactions(sales_txns)
+    purchase_detail = _group_transactions(purchase_txns)
+
     context = {
         "fy": fy,
         "entity": entity,
@@ -185,6 +213,8 @@ def bas_dashboard(request, pk):
         "excluded_lines": gst_result["excluded_lines"],
         "is_gst_registered": entity.is_gst_registered,
         "status_colours": status_colours,
+        "sales_detail": sales_detail,
+        "purchase_detail": purchase_detail,
     }
     return render(request, "core/gst_activity_statement.html", context)
 
