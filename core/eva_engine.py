@@ -1780,17 +1780,61 @@ def eva_review_status(request, pk):
     if not review:
         return JsonResponse({"status": "not_started"})
 
-    # If the review is still pending (running), return progress from raw_response
+    # If the review is still pending (running), check for staleness
     if review.status == "pending":
-        progress = (review.raw_response or {}).get("progress", {})
-        return JsonResponse({
-            "status": "running",
-            "review_id": str(review.pk),
-            "total_checks": progress.get("total_checks", 0),
-            "completed_checks": progress.get("completed_checks", 0),
-            "current_check": progress.get("current_check", "Processing..."),
-            "findings_count": progress.get("findings_count", 0),
-        })
+        from django.utils import timezone as tz
+        import datetime
+
+        age = tz.now() - review.triggered_at
+        stale_threshold = datetime.timedelta(minutes=10)
+
+        if age > stale_threshold:
+            # Auto-recover: the background thread likely died
+            findings_count = review.findings.count()
+            progress = (review.raw_response or {}).get("progress", {})
+            last_check = progress.get("current_check", "unknown")
+
+            if findings_count > 0:
+                # Partial results exist — save them
+                review.status = "findings_raised"
+                review.error_message = (
+                    f"Review thread terminated unexpectedly during '{last_check}' check "
+                    f"after {age.seconds // 60}m. {findings_count} partial finding(s) preserved."
+                )
+            else:
+                review.status = "error"
+                review.error_message = (
+                    f"Review thread terminated unexpectedly during '{last_check}' check "
+                    f"after {age.seconds // 60}m. No findings were created. Please re-run."
+                )
+            review.completed_at = tz.now()
+            review.save(update_fields=["status", "completed_at", "error_message"])
+
+            # Reset FY status so the page is usable
+            if fy.status == fy.Status.PENDING_EVA:
+                fy.status = fy.Status.FINISHED
+                fy.save(update_fields=["status"])
+
+            # Clean up in-memory task state if present
+            task_key_cleanup = str(pk)
+            _eva_review_tasks.pop(task_key_cleanup, None)
+
+            logger.warning(
+                f"Auto-recovered stale Eva review {review.pk} for {fy}. "
+                f"Was stuck on '{last_check}' for {age.seconds // 60}m. "
+                f"Findings preserved: {findings_count}."
+            )
+            # Fall through to the completed response below
+        else:
+            progress = (review.raw_response or {}).get("progress", {})
+            return JsonResponse({
+                "status": "running",
+                "review_id": str(review.pk),
+                "total_checks": progress.get("total_checks", 0),
+                "completed_checks": progress.get("completed_checks", 0),
+                "current_check": progress.get("current_check", "Processing..."),
+                "findings_count": progress.get("findings_count", 0),
+            })
 
     # Review is complete (cleared, findings_raised, or error)
     findings = list(review.findings.values(

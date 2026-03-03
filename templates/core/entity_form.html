@@ -75,6 +75,24 @@ document.addEventListener('DOMContentLoaded', function() {
         entityTypeEl.addEventListener('change', toggleAcn);
         toggleAcn();
     }
+
+    // Show/hide BAS frequency based on GST registration
+    const gstCheckbox = document.getElementById('id_is_gst_registered');
+    const basFreqRow = document.getElementById('div_id_bas_frequency') || document.querySelector('[id$="id_bas_frequency"]')?.closest('.mb-3');
+    function toggleBasFreq() {
+        if (!basFreqRow || !gstCheckbox) return;
+        const isGst = gstCheckbox.checked;
+        basFreqRow.style.display = isGst ? '' : 'none';
+        const basInput = document.getElementById('id_bas_frequency');
+        if (basInput) {
+            basInput.required = isGst;
+            if (!isGst) basInput.value = 'quarterly';  // default when not GST registered
+        }
+    }
+    if (gstCheckbox) {
+        gstCheckbox.addEventListener('change', toggleBasFreq);
+        toggleBasFreq();
+    }
 });
 </script>
 {% endblock %}
