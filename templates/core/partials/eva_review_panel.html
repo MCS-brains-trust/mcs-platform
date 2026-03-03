@@ -350,11 +350,27 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
                 crossRefHtml = '<div class="mt-2"><small class="text-muted"><i class="bi bi-link-45deg me-1"></i>Related: ' + refLinks + '</small></div>';
             }
 
+            // Action buttons — contextual actions based on check type
+            var actionButtonsHtml = '';
+            if (f.check_name === 'div7a' && f.status === 'open') {
+                actionButtonsHtml = '<div class="mt-3 mb-2 p-2 border rounded bg-white">'
+                    + '<div class="d-flex align-items-center gap-2">'
+                    + '<i class="bi bi-file-earmark-text text-primary" style="font-size: 1.2rem;"></i>'
+                    + '<div class="flex-grow-1">'
+                    + '<small class="fw-semibold d-block">Div 7A Loan Agreement</small>'
+                    + '<small class="text-muted">Generate a complying loan agreement to resolve this finding</small>'
+                    + '</div>'
+                    + '<a href="/years/' + fyPk + '/legal-docs/wizard/div7a_loan_agreement/" class="btn btn-sm btn-outline-primary">'
+                    + '<i class="bi bi-file-earmark-plus me-1"></i>Generate Agreement</a>'
+                    + '</div></div>';
+            }
+
             card.innerHTML = '<div class="card-body">'
                 + '<div class="d-flex justify-content-between align-items-start mb-2"><div class="d-flex gap-2">' + severityBadge + statusBadge + confidenceBadge + '</div><small class="text-muted">' + (f.check_display || f.check_name) + '</small></div>'
                 + '<h6 class="card-title">' + f.title + '</h6>'
                 + '<p class="card-text small">' + f.explanation + '</p>'
                 + '<div class="bg-light p-3 rounded mb-2">' + remediationHtml + '</div>'
+                + actionButtonsHtml
                 + (f.legislation_reference ? '<small class="text-muted"><i class="bi bi-book me-1"></i>' + f.legislation_reference + '</small><br>' : '')
                 + (f.knowledge_brain_citation ? '<small class="text-muted"><i class="bi bi-journal-text me-1"></i>' + f.knowledge_brain_citation + '</small>' : '')
                 + crossRefHtml
@@ -504,6 +520,9 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
                         title: f.title,
                         explanation: f.explanation,
                         recommendation: f.recommendation,
+                        remediation_firm_procedure: f.remediation_firm_procedure || '',
+                        remediation_authority: f.remediation_authority || '',
+                        remediation_synthesis: f.remediation_synthesis || '',
                         legislation_reference: f.legislation_reference || '',
                         knowledge_brain_citation: f.knowledge_brain_citation || '',
                         confidence: f.confidence,
@@ -511,6 +530,7 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
                         resolution_note: f.resolution_note || '',
                         resolved_by: f.resolved_by || null,
                         resolved_at: f.resolved_at || null,
+                        related_findings: f.related_findings || [],
                     };
                 }),
             };
