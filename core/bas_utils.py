@@ -257,6 +257,8 @@ def calculate_gst_for_period(fy, period_start=None, period_end=None):
         - purchase_lines: [...]
         - capital_lines: [...]
         - excluded_lines: [...]
+        - sales_transactions: [...]   (individual transaction details)
+        - purchase_transactions: [...] (individual transaction details)
     """
     from .models import (
         ChartOfAccount, EntityChartOfAccount, TrialBalanceLine,
@@ -419,6 +421,8 @@ def _resolve_section_and_tax(account_code, coa_lookup, entity_coa_lookup, line_t
 def _calculate_gst_from_tb_lines(fy, entity, entity_type, coa_lookup, entity_coa_lookup):
     """
     Full-year GST calculation using TB lines — identical to pre-redesign logic.
+    Also collects individual transaction details from PendingTransactions for
+    the GST Detail Report when available.
     """
     tb_lines = fy.trial_balance_lines.all()
 
@@ -427,6 +431,8 @@ def _calculate_gst_from_tb_lines(fy, entity, entity_type, coa_lookup, entity_coa
     purchase_lines = []
     capital_lines = []
     excluded_lines = []
+    sales_transactions = []
+    purchase_transactions = []
 
     for line in tb_lines:
         line_tax = (getattr(line, 'tax_type', '') or '').strip()
@@ -491,7 +497,106 @@ def _calculate_gst_from_tb_lines(fy, entity, entity_type, coa_lookup, entity_coa
                 "bas_label": bas_label,
             })
 
-    return _build_bas_result(g_totals, sales_lines, purchase_lines, capital_lines, excluded_lines)
+    # ── Collect individual transaction details from PendingTransactions ──
+    from review.models import PendingTransaction, ReviewJob
+    from datetime import datetime as _dt
+
+    jobs = ReviewJob.objects.filter(entity=entity)
+    if jobs.exists():
+        all_confirmed = PendingTransaction.objects.filter(
+            job__in=jobs,
+            is_confirmed=True,
+        )
+
+        def _parse_txn_date_fy(date_str):
+            if not date_str:
+                return None
+            for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d %b %Y"):
+                try:
+                    return _dt.strptime(date_str.strip(), fmt).date()
+                except (ValueError, AttributeError):
+                    continue
+            return None
+
+        for txn in all_confirmed:
+            txn_date = _parse_txn_date_fy(txn.date)
+            code = txn.confirmed_code or txn.ai_suggested_code
+            if not code:
+                continue
+            name = txn.confirmed_name or txn.ai_suggested_name or code
+            tax_type = txn.confirmed_tax_type or txn.ai_suggested_tax_type or ""
+
+            section, tax_code, exclude_reason = _resolve_section_and_tax(
+                code, coa_lookup, entity_coa_lookup, tax_type
+            )
+            if exclude_reason:
+                continue
+
+            has_gst = tax_code in ("GST", "INP")
+            gross = abs(txn.amount)
+            gst_amt = abs(txn.confirmed_gst_amount or txn.gst_amount or Decimal("0")) if has_gst else Decimal("0")
+            taxable = gross - gst_amt if has_gst else gross
+
+            txn_row = {
+                "date": txn_date or fy.start_date,
+                "txn_type": "Deposit" if txn.amount > 0 else "Expense",
+                "description": txn.description or "",
+                "account_code": code,
+                "account_name": name,
+                "tax_code": tax_code or "N-T",
+                "has_gst": has_gst,
+                "gst_rate": Decimal("10.00") if has_gst else Decimal("0"),
+                "taxable_amount": taxable,
+                "gst_amount": gst_amt,
+                "gross_amount": gross,
+            }
+            if section in ("revenue", "Revenue"):
+                sales_transactions.append(txn_row)
+            elif section in ("expenses", "Expenses", "cost_of_sales", "Cost of Sales"):
+                purchase_transactions.append(txn_row)
+            elif section in ("assets", "Assets") and tax_code in ("CAP", "FCA"):
+                purchase_transactions.append(txn_row)
+
+    # Also include journal entries as transaction details
+    from .models import AdjustingJournal
+    for journal in AdjustingJournal.objects.filter(financial_year=fy, status="posted"):
+        for jl in journal.lines.all():
+            section, tax_code, exclude_reason = _resolve_section_and_tax(
+                jl.account_code, coa_lookup, entity_coa_lookup, ""
+            )
+            if exclude_reason:
+                continue
+            amount = max(jl.debit, jl.credit)
+            if amount == 0:
+                continue
+
+            has_gst = tax_code in ("GST", "INP")
+            txn_row = {
+                "date": journal.journal_date,
+                "txn_type": "Journal",
+                "description": f"{journal.reference_number}: {jl.description or journal.description}",
+                "account_code": jl.account_code,
+                "account_name": jl.account_name,
+                "tax_code": tax_code or "N-T",
+                "has_gst": has_gst,
+                "gst_rate": Decimal("10.00") if has_gst else Decimal("0"),
+                "taxable_amount": amount,
+                "gst_amount": (amount / Decimal("11")).quantize(Decimal("0.01")) if has_gst else Decimal("0"),
+                "gross_amount": amount,
+            }
+            if section in ("revenue", "Revenue"):
+                sales_transactions.append(txn_row)
+            elif section in ("expenses", "Expenses", "cost_of_sales", "Cost of Sales"):
+                purchase_transactions.append(txn_row)
+
+    sales_transactions.sort(key=lambda x: x["date"])
+    purchase_transactions.sort(key=lambda x: x["date"])
+
+    return _build_bas_result(
+        g_totals, sales_lines, purchase_lines, capital_lines, excluded_lines,
+        sales_transactions=sales_transactions,
+        purchase_transactions=purchase_transactions,
+    )
 
 
 def _calculate_gst_from_transactions(fy, entity, entity_type, coa_lookup, entity_coa_lookup,
@@ -524,6 +629,9 @@ def _calculate_gst_from_transactions(fy, entity, entity_type, coa_lookup, entity
     purchase_lines = []
     capital_lines = []
     excluded_lines = []
+    # Individual transaction details for GST Detail Report
+    sales_transactions = []
+    purchase_transactions = []
 
     # ── 1. Bank statement transactions in this period ──
     jobs = ReviewJob.objects.filter(entity=entity)
@@ -551,8 +659,9 @@ def _calculate_gst_from_transactions(fy, entity, entity_type, coa_lookup, entity
                     continue
             return None
 
-        # Group by confirmed account code, filtering by parsed date
+        # ── Collect individual transactions AND aggregate by account ──
         account_totals = {}
+        period_txns = []  # individual transactions within period
         for txn in all_confirmed:
             txn_date = _parse_txn_date(txn.date)
             if not txn_date or txn_date < period_start or txn_date > period_end:
@@ -568,7 +677,22 @@ def _calculate_gst_from_transactions(fy, entity, entity_type, coa_lookup, entity
             if key not in account_totals:
                 account_totals[key] = Decimal("0")
             # Use net_amount (ex-GST) as that's what gets posted to TB
-            account_totals[key] += abs(txn.net_amount or txn.amount)
+            net = abs(txn.net_amount or txn.amount)
+            account_totals[key] += net
+
+            # Collect individual transaction detail
+            period_txns.append({
+                "date": txn_date,
+                "description": txn.description or "",
+                "gross_amount": abs(txn.amount),
+                "gst_amount": abs(txn.confirmed_gst_amount or txn.gst_amount or Decimal("0")),
+                "net_amount": net,
+                "account_code": code,
+                "account_name": name,
+                "tax_type": tax_type,
+                "txn_type": "Deposit" if txn.amount > 0 else "Expense",
+                "source": "bank_statement",
+            })
 
         for (code, name, tax_type), total in account_totals.items():
             section, tax_code, exclude_reason = _resolve_section_and_tax(
@@ -603,6 +727,43 @@ def _calculate_gst_from_transactions(fy, entity, entity_type, coa_lookup, entity
                 purchase_lines.append(line_data)
             elif section in ("assets", "Assets") and bas_label:
                 capital_lines.append(line_data)
+
+        # ── Classify individual transactions into sales/purchase detail ──
+        for txn_detail in period_txns:
+            section, tax_code, exclude_reason = _resolve_section_and_tax(
+                txn_detail["account_code"], coa_lookup, entity_coa_lookup,
+                txn_detail["tax_type"]
+            )
+            if exclude_reason:
+                continue
+
+            # Determine if this is a GST-bearing transaction
+            has_gst = tax_code in ("GST", "INP")
+            gst_rate = Decimal("10.00") if has_gst else Decimal("0")
+            gross = txn_detail["gross_amount"]
+            gst_amt = txn_detail["gst_amount"] if has_gst else Decimal("0")
+            taxable = gross - gst_amt if has_gst else gross
+
+            txn_row = {
+                "date": txn_detail["date"],
+                "txn_type": txn_detail["txn_type"],
+                "description": txn_detail["description"],
+                "account_code": txn_detail["account_code"],
+                "account_name": txn_detail["account_name"],
+                "tax_code": tax_code or "N-T",
+                "has_gst": has_gst,
+                "gst_rate": gst_rate,
+                "taxable_amount": taxable,
+                "gst_amount": gst_amt,
+                "gross_amount": gross,
+            }
+
+            if section in ("revenue", "Revenue"):
+                sales_transactions.append(txn_row)
+            elif section in ("expenses", "Expenses", "cost_of_sales", "Cost of Sales"):
+                purchase_transactions.append(txn_row)
+            elif section in ("assets", "Assets") and tax_code in ("CAP", "FCA"):
+                purchase_transactions.append(txn_row)  # capital purchases in purchase detail
 
     # ── 2. TB lines from bank_statement source (fallback if no PendingTransactions) ──
     # If no review jobs exist, fall back to TB lines with source=bank_statement
@@ -687,10 +848,39 @@ def _calculate_gst_from_transactions(fy, entity, entity_type, coa_lookup, entity
             elif section in ("assets", "Assets") and bas_label:
                 capital_lines.append(line_data)
 
-    return _build_bas_result(g_totals, sales_lines, purchase_lines, capital_lines, excluded_lines)
+            # Also add to transaction detail for journals
+            has_gst = tax_code in ("GST", "INP")
+            txn_row = {
+                "date": journal.journal_date,
+                "txn_type": "Journal",
+                "description": f"{journal.reference_number}: {jl.description or journal.description}",
+                "account_code": jl.account_code,
+                "account_name": jl.account_name,
+                "tax_code": tax_code or "N-T",
+                "has_gst": has_gst,
+                "gst_rate": Decimal("10.00") if has_gst else Decimal("0"),
+                "taxable_amount": amount,
+                "gst_amount": (amount / Decimal("11")).quantize(Decimal("0.01")) if has_gst else Decimal("0"),
+                "gross_amount": amount,
+            }
+            if section in ("revenue", "Revenue"):
+                sales_transactions.append(txn_row)
+            elif section in ("expenses", "Expenses", "cost_of_sales", "Cost of Sales"):
+                purchase_transactions.append(txn_row)
+
+    # Sort transactions by date
+    sales_transactions.sort(key=lambda x: x["date"])
+    purchase_transactions.sort(key=lambda x: x["date"])
+
+    return _build_bas_result(
+        g_totals, sales_lines, purchase_lines, capital_lines, excluded_lines,
+        sales_transactions=sales_transactions,
+        purchase_transactions=purchase_transactions,
+    )
 
 
-def _build_bas_result(g_totals, sales_lines, purchase_lines, capital_lines, excluded_lines):
+def _build_bas_result(g_totals, sales_lines, purchase_lines, capital_lines, excluded_lines,
+                      sales_transactions=None, purchase_transactions=None):
     """Build the final BAS result dict from G-label totals and line lists."""
     g = g_totals
 
@@ -726,4 +916,6 @@ def _build_bas_result(g_totals, sales_lines, purchase_lines, capital_lines, excl
         "purchase_lines": purchase_lines,
         "capital_lines": capital_lines,
         "excluded_lines": excluded_lines,
+        "sales_transactions": sales_transactions or [],
+        "purchase_transactions": purchase_transactions or [],
     }
