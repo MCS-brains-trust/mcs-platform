@@ -235,8 +235,31 @@ def eva_review_status(request, pk):
     if not review:
         return JsonResponse({"review": None})
 
+    # Order findings by severity (critical first), then status (open first)
+    from django.db.models import Case, When, Value, IntegerField
+    severity_order = Case(
+        When(severity="critical", then=Value(0)),
+        When(severity="advisory", then=Value(1)),
+        default=Value(2),
+        output_field=IntegerField(),
+    )
+    status_order = Case(
+        When(status="open", then=Value(0)),
+        When(status="reopened", then=Value(1)),
+        When(status="addressed", then=Value(2)),
+        When(status="closed", then=Value(3)),
+        default=Value(4),
+        output_field=IntegerField(),
+    )
+    ordered_findings = (
+        review.findings
+        .select_related("resolved_by")
+        .annotate(_sev_order=severity_order, _status_order=status_order)
+        .order_by("_sev_order", "_status_order", "check_name")
+    )
+
     findings = []
-    for f in review.findings.all():
+    for f in ordered_findings:
         findings.append({
             "id": str(f.pk),
             "check_name": f.check_name,

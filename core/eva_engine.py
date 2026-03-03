@@ -1841,7 +1841,30 @@ def eva_review_detail(request, pk):
         return JsonResponse({"status": "not_started", "findings": []})
 
     findings = []
-    for f in review.findings.select_related("resolved_by").prefetch_related("related_findings").all():
+    # Order findings by severity (critical first), then status (open first), then check_name
+    from django.db.models import Case, When, Value, IntegerField
+    severity_order = Case(
+        When(severity="critical", then=Value(0)),
+        When(severity="advisory", then=Value(1)),
+        default=Value(2),
+        output_field=IntegerField(),
+    )
+    status_order = Case(
+        When(status="open", then=Value(0)),
+        When(status="reopened", then=Value(1)),
+        When(status="addressed", then=Value(2)),
+        When(status="closed", then=Value(3)),
+        default=Value(4),
+        output_field=IntegerField(),
+    )
+    ordered_findings = (
+        review.findings
+        .select_related("resolved_by")
+        .prefetch_related("related_findings")
+        .annotate(_sev_order=severity_order, _status_order=status_order)
+        .order_by("_sev_order", "_status_order", "check_name")
+    )
+    for f in ordered_findings:
         # Build related findings list
         related = [
             {"id": str(rf.pk), "check_name": rf.check_name, "title": rf.title}
