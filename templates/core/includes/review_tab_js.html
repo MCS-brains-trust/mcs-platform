@@ -941,9 +941,10 @@ function searchSplitAccount(input) {
                 const tbBal = item.tb_balance !== null && item.tb_balance !== undefined
                     ? `<span class="badge bg-secondary bg-opacity-25 text-dark ms-1" style="font-size:0.65rem; font-weight:600; font-family:monospace;">TB: $${parseFloat(item.tb_balance).toLocaleString('en-AU', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>`
                     : `<span class="badge bg-light text-muted ms-1" style="font-size:0.65rem;">TB: \u2014</span>`;
+                const stmtType = item.stmt_type ? ` <span class="text-muted" style="font-size:0.65rem;">(${item.stmt_type})</span>` : '';
                 return `<a href="#" class="dropdown-item small py-1 split-coa-option"
                     data-code="${item.code}" data-name="${item.name}">
-                    <strong>${item.code}</strong> \u2014 ${item.name}
+                    <strong>${item.code}</strong> \u2014 ${item.name}${stmtType}
                     ${tbBal}
                 </a>`;
             }).join('');
@@ -1423,11 +1424,12 @@ document.addEventListener('input', function(e) {
                     const tbBal = item.tb_balance !== null && item.tb_balance !== undefined
                         ? ' <span class="badge bg-secondary bg-opacity-25 text-dark" style="font-size:0.65rem; font-weight:600; font-family:monospace;">TB: $' + parseFloat(item.tb_balance).toLocaleString('en-AU', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</span>'
                         : ' <span class="badge bg-light text-muted" style="font-size:0.65rem;">TB: \u2014</span>';
+                    const stmtType = item.stmt_type ? ' <span class="text-muted" style="font-size:0.65rem;">(' + item.stmt_type + ')</span>' : '';
                     return '<a href="#" class="dropdown-item small py-1 bulk-edit-coa-option" ' +
                     'data-code="' + item.code + '" ' +
                     'data-name="' + item.name + '" ' +
                     'data-tax="' + (item.tax_code || '') + '">' +
-                    '<strong>' + item.code + '</strong> \u2014 ' + item.name +
+                    '<strong>' + item.code + '</strong> \u2014 ' + item.name + stmtType +
                     tbBal +
                     '</a>';
                 }).join('');
@@ -1712,12 +1714,13 @@ function bulkUnconfirmSelected() {
                         const tbBal = item.tb_balance !== null && item.tb_balance !== undefined
                             ? ' <span class="badge bg-secondary bg-opacity-25 text-dark" style="font-size:0.65rem; font-weight:600; font-family:monospace;">TB: $' + parseFloat(item.tb_balance).toLocaleString('en-AU', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</span>'
                             : ' <span class="badge bg-light text-muted" style="font-size:0.65rem;">TB: \u2014</span>';
+                        const stmtType = item.stmt_type ? ' <span class="text-muted" style="font-size:0.65rem;">(' + item.stmt_type + ')</span>' : '';
                         return '<a href="#" class="dropdown-item small py-1 review-coa-option" ' +
                         'data-txn-id="' + txnId + '" ' +
                         'data-code="' + item.code + '" ' +
                         'data-name="' + item.name + '" ' +
                         'data-tax="' + (item.tax_code || '') + '">' +
-                        '<strong>' + item.code + '</strong> \u2014 ' + item.name +
+                        '<strong>' + item.code + '</strong> \u2014 ' + item.name + stmtType +
                         tbBal +
                         '</a>';
                     }).join('');
