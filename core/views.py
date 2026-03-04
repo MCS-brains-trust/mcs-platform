@@ -8055,6 +8055,9 @@ def entity_coa_search_api(request, pk):
     """JSON API for searching an entity's own chart of accounts.
     Used by the bank statement review Change Account dropdown.
     Searches EntityChartOfAccount by code or name.
+    Includes the netted trial balance amount for each account so
+    accountants can see current balances when choosing between
+    similar accounts.
     """
     fy = get_financial_year_for_user(request, pk)
     q = request.GET.get("q", "")
@@ -8068,8 +8071,24 @@ def entity_coa_search_api(request, pk):
             Q(account_code__icontains=q) | Q(account_name__icontains=q)
         )
 
+    # Build a lookup of netted TB balances per account_code.
+    # Multiple TrialBalanceLine rows may exist for the same code
+    # (original + adjustments), so we aggregate them.
+    tb_balances = {}
+    tb_lines = fy.trial_balance_lines.all()
+    for line in tb_lines:
+        code = line.account_code
+        cb = line.closing_balance if line.closing_balance else Decimal('0')
+        if cb != 0:
+            tb_balances[code] = tb_balances.get(code, Decimal('0')) + cb
+        else:
+            dr = line.debit if line.debit else Decimal('0')
+            cr = line.credit if line.credit else Decimal('0')
+            tb_balances[code] = tb_balances.get(code, Decimal('0')) + (dr - cr)
+
     items = []
     for a in qs[:200]:
+        balance = tb_balances.get(a.account_code)
         items.append({
             "id": str(a.pk),
             "code": a.account_code,
@@ -8080,6 +8099,7 @@ def entity_coa_search_api(request, pk):
             "tax_code": a.tax_code or "",
             "maps_to_id": str(a.maps_to.pk) if a.maps_to else "",
             "mapping_label": a.maps_to.line_item_label if a.maps_to else "Unmapped",
+            "tb_balance": str(balance.quantize(Decimal('0.01'))) if balance is not None else None,
         })
     return JsonResponse({"items": items})
 

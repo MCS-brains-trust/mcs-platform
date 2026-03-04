@@ -929,13 +929,17 @@ function searchSplitAccount(input) {
         if (data.items.length === 0) {
             resultsDiv.innerHTML = '<div class="p-2 text-muted small">No results</div>';
         } else {
-            resultsDiv.innerHTML = data.items.slice(0, 8).map(item =>
-                `<a href="#" class="dropdown-item small py-1 split-coa-option"
+            resultsDiv.innerHTML = data.items.slice(0, 8).map(item => {
+                const tbBal = item.tb_balance !== null && item.tb_balance !== undefined
+                    ? `<span class="badge bg-secondary bg-opacity-25 text-dark ms-1" style="font-size:0.65rem; font-weight:600; font-family:monospace;">TB: $${parseFloat(item.tb_balance).toLocaleString('en-AU', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>`
+                    : `<span class="badge bg-light text-muted ms-1" style="font-size:0.65rem;">TB: \u2014</span>`;
+                return `<a href="#" class="dropdown-item small py-1 split-coa-option"
                     data-code="${item.code}" data-name="${item.name}">
                     <strong>${item.code}</strong> — ${item.name}
                     ${item.mapping_label !== 'Unmapped' ? '<span class="badge bg-light text-dark ms-1" style="font-size:0.65rem;">' + item.mapping_label + '</span>' : ''}
-                </a>`
-            ).join('');
+                    ${tbBal}
+                </a>`;
+            }).join('');
         }
         resultsDiv.classList.remove('d-none');
         resultsDiv.querySelectorAll('.split-coa-option').forEach(opt => {
@@ -1400,15 +1404,19 @@ document.addEventListener('input', function(e) {
             if (data.items.length === 0) {
                 html = '<div class="text-center text-muted py-2"><small>No matching accounts.</small></div>';
             } else {
-                html = data.items.slice(0, 10).map(item =>
-                    '<a href="#" class="dropdown-item small py-1 bulk-edit-coa-option" ' +
+                html = data.items.slice(0, 10).map(item => {
+                    const tbBal = item.tb_balance !== null && item.tb_balance !== undefined
+                        ? ' <span class="badge bg-secondary bg-opacity-25 text-dark" style="font-size:0.65rem; font-weight:600; font-family:monospace;">TB: $' + parseFloat(item.tb_balance).toLocaleString('en-AU', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</span>'
+                        : ' <span class="badge bg-light text-muted" style="font-size:0.65rem;">TB: —</span>';
+                    return '<a href="#" class="dropdown-item small py-1 bulk-edit-coa-option" ' +
                     'data-code="' + item.code + '" ' +
                     'data-name="' + item.name + '" ' +
                     'data-tax="' + (item.tax_code || '') + '">' +
                     '<strong>' + item.code + '</strong> \u2014 ' + item.name +
                     (item.mapping_label !== 'Unmapped' ? ' <span class="badge bg-light text-dark" style="font-size:0.65rem;">' + item.mapping_label + '</span>' : '') +
-                    '</a>'
-                ).join('');
+                    tbBal +
+                    '</a>';
+                }).join('');
             }
             if (resultsDiv) resultsDiv.innerHTML = html;
         });
@@ -1678,16 +1686,20 @@ function bulkUnconfirmSelected() {
                 if (data.items.length === 0) {
                     html = '<div class="text-center text-muted py-2"><small>No matching accounts.</small></div>';
                 } else {
-                    html = data.items.slice(0, 8).map(item =>
-                        '<a href="#" class="dropdown-item small py-1 review-coa-option" ' +
+                    html = data.items.slice(0, 8).map(item => {
+                        const tbBal = item.tb_balance !== null && item.tb_balance !== undefined
+                            ? ' <span class="badge bg-secondary bg-opacity-25 text-dark" style="font-size:0.65rem; font-weight:600; font-family:monospace;">TB: $' + parseFloat(item.tb_balance).toLocaleString('en-AU', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</span>'
+                            : ' <span class="badge bg-light text-muted" style="font-size:0.65rem;">TB: \u2014</span>';
+                        return '<a href="#" class="dropdown-item small py-1 review-coa-option" ' +
                         'data-txn-id="' + txnId + '" ' +
                         'data-code="' + item.code + '" ' +
                         'data-name="' + item.name + '" ' +
                         'data-tax="' + (item.tax_code || '') + '">' +
                         '<strong>' + item.code + '</strong> \u2014 ' + item.name +
                         (item.mapping_label !== 'Unmapped' ? ' <span class="badge bg-light text-dark" style="font-size:0.65rem;">' + item.mapping_label + '</span>' : '') +
-                        '</a>'
-                    ).join('');
+                        tbBal +
+                        '</a>';
+                    }).join('');
                 }
                 if (resultsDiv) resultsDiv.innerHTML = html;
             });
