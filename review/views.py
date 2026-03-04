@@ -525,6 +525,21 @@ def confirm_transaction(request, pk):
     txn.confirmed_tax_type = confirmed_tax_type
     txn.is_confirmed = True
 
+    # Ensure gst_treatment is set from confirmed_tax_type if not already set
+    if not txn.gst_treatment or not txn.is_gst_manual:
+        TAX_TYPE_TO_TREATMENT = {
+            "GST on Income": "taxable",
+            "GST on Expenses": "taxable",
+            "GST Free Income": "gst_free",
+            "GST Free Expenses": "gst_free",
+            "Input Taxed": "input_taxed",
+            "BAS Excluded": "out_of_scope",
+            "N-T": "out_of_scope",
+        }
+        derived = TAX_TYPE_TO_TREATMENT.get(confirmed_tax_type, "")
+        if derived:
+            txn.gst_treatment = derived
+
     # Recalculate GST based on confirmed tax type
     is_gst = txn.job.is_gst_registered
     txn.calculate_gst(tax_type=txn.confirmed_tax_type, is_gst_registered=is_gst)
@@ -564,6 +579,21 @@ def confirm_transaction(request, pk):
     try:
         from .learning import find_similar_unconfirmed
         similar_txns = find_similar_unconfirmed(txn, job)
+
+        # Derive gst_treatment from confirmed_tax_type for propagation
+        TAX_TYPE_TO_TREATMENT = {
+            "GST on Income": "taxable",
+            "GST on Expenses": "taxable",
+            "GST Free Income": "gst_free",
+            "GST Free Expenses": "gst_free",
+            "Input Taxed": "input_taxed",
+            "BAS Excluded": "out_of_scope",
+            "N-T": "out_of_scope",
+        }
+        source_gst_treatment = txn.gst_treatment or TAX_TYPE_TO_TREATMENT.get(
+            confirmed_tax_type, ""
+        )
+
         for sim_txn in similar_txns:
             # Update AI suggestion fields so the user sees the suggestion
             sim_txn.ai_suggested_code = confirmed_code
@@ -576,6 +606,9 @@ def confirm_transaction(request, pk):
             sim_txn.confirmed_code = confirmed_code
             sim_txn.confirmed_name = confirmed_name
             sim_txn.confirmed_tax_type = confirmed_tax_type
+            # Propagate gst_treatment so the GST Treatment dropdown is updated
+            if source_gst_treatment:
+                sim_txn.gst_treatment = source_gst_treatment
             # Recalculate GST
             sim_txn.calculate_gst(
                 tax_type=confirmed_tax_type,
@@ -587,6 +620,7 @@ def confirm_transaction(request, pk):
                 "code": confirmed_code,
                 "name": confirmed_name,
                 "tax_type": confirmed_tax_type,
+                "gst_treatment": sim_txn.gst_treatment,
                 "gst_amount": str(sim_txn.gst_amount),
                 "net_amount": str(sim_txn.net_amount),
                 "description": sim_txn.description,
@@ -689,6 +723,17 @@ def accept_all_suggestions(request, pk):
     unconfirmed = job.transactions.filter(is_confirmed=False)
     is_gst = job.is_gst_registered
 
+    # Mapping for deriving gst_treatment from tax type
+    TAX_TYPE_TO_TREATMENT = {
+        "GST on Income": "taxable",
+        "GST on Expenses": "taxable",
+        "GST Free Income": "gst_free",
+        "GST Free Expenses": "gst_free",
+        "Input Taxed": "input_taxed",
+        "BAS Excluded": "out_of_scope",
+        "N-T": "out_of_scope",
+    }
+
     for txn in unconfirmed:
         txn.confirmed_code = txn.ai_suggested_code
         txn.confirmed_name = txn.ai_suggested_name
@@ -701,6 +746,12 @@ def accept_all_suggestions(request, pk):
             txn.confirmed_tax_type = "GST on Income"
         else:
             txn.confirmed_tax_type = "GST on Expenses"
+
+        # Ensure gst_treatment is set
+        if not txn.gst_treatment:
+            txn.gst_treatment = TAX_TYPE_TO_TREATMENT.get(
+                txn.confirmed_tax_type, ""
+            )
 
         # Recalculate GST
         txn.calculate_gst(tax_type=txn.confirmed_tax_type, is_gst_registered=is_gst)
@@ -759,6 +810,16 @@ def bulk_approve_group(request, pk):
     else:
         return JsonResponse({"status": "error", "message": "Provide account_code or transaction_ids"}, status=400)
 
+    TAX_TYPE_TO_TREATMENT = {
+        "GST on Income": "taxable",
+        "GST on Expenses": "taxable",
+        "GST Free Income": "gst_free",
+        "GST Free Expenses": "gst_free",
+        "Input Taxed": "input_taxed",
+        "BAS Excluded": "out_of_scope",
+        "N-T": "out_of_scope",
+    }
+
     approved_ids = []
     for txn in txns:
         txn.confirmed_code = txn.ai_suggested_code
@@ -771,6 +832,11 @@ def bulk_approve_group(request, pk):
             txn.confirmed_tax_type = "GST on Income"
         else:
             txn.confirmed_tax_type = "GST on Expenses"
+        # Ensure gst_treatment is set
+        if not txn.gst_treatment:
+            txn.gst_treatment = TAX_TYPE_TO_TREATMENT.get(
+                txn.confirmed_tax_type, ""
+            )
         txn.calculate_gst(tax_type=txn.confirmed_tax_type, is_gst_registered=is_gst)
         txn.is_confirmed = True
         txn.save()
@@ -1586,16 +1652,10 @@ def classify_batch(request, pk):
         txn.ai_reasoning = cls.get("reasoning", "")
         txn.from_learning = cls.get("from_learning", False)
 
-        # Enforce: interest is ALWAYS GST-Free
-        from .email_ingestion import _is_interest_transaction
-        desc_upper = (txn.description or "").upper()
-        if _is_interest_transaction(desc_upper):
-            is_income = txn.amount >= 0
-            if is_gst:
-                cls["tax_type"] = "GST Free Income" if is_income else "GST Free Expenses"
-            else:
-                cls["tax_type"] = "BAS Excluded"
-            txn.ai_suggested_tax_type = cls["tax_type"]
+        # Set gst_treatment from classification (enforced by account's tax_code)
+        gst_treatment = cls.get("gst_treatment", "")
+        if gst_treatment:
+            txn.gst_treatment = gst_treatment
 
         # Calculate GST
         tax_type = cls.get("tax_type", "")
@@ -1606,6 +1666,19 @@ def classify_batch(request, pk):
         else:
             txn.gst_amount = Decimal("0.00")
             txn.net_amount = abs_amount
+
+        # If gst_treatment was not set by account lookup, derive it from tax_type
+        if not txn.gst_treatment and tax_type:
+            TAX_TYPE_TO_TREATMENT = {
+                "GST on Income": "taxable",
+                "GST on Expenses": "taxable",
+                "GST Free Income": "gst_free",
+                "GST Free Expenses": "gst_free",
+                "Input Taxed": "input_taxed",
+                "BAS Excluded": "out_of_scope",
+                "N-T": "out_of_scope",
+            }
+            txn.gst_treatment = TAX_TYPE_TO_TREATMENT.get(tax_type, "")
 
         # Auto-confirm if from learning with high confidence
         is_auto_confirmed = (
@@ -1630,6 +1703,7 @@ def classify_batch(request, pk):
             "gst_amount": str(txn.gst_amount),
             "net_amount": str(txn.net_amount),
             "is_confirmed": txn.is_confirmed,
+            "gst_treatment": txn.gst_treatment,
         })
 
     # Update job counts
