@@ -198,6 +198,10 @@ class PendingTransaction(models.Model):
         null=True, blank=True,
         help_text="Line number within a split (1, 2, 3...)",
     )
+    posted_to_tb = models.BooleanField(
+        default=False,
+        help_text="True if this transaction has been pushed to the trial balance",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
