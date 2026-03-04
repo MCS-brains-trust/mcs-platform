@@ -6582,6 +6582,35 @@ def depreciation_post_to_tb(request, pk):
         )
         return redirect("core:financial_year_detail", pk=pk)
 
+    # ── Build a lookup of entity asset accounts for auto-pairing ──
+    entity_asset_accounts = list(
+        EntityChartOfAccount.objects.filter(
+            entity=fy.entity, is_active=True, section="assets",
+        ).order_by("account_code")
+    )
+
+    def _find_paired_accum_dep(asset_code):
+        """
+        Given an asset account code (e.g. '2870'), find the nearest
+        accumulated depreciation account that sits after it in the COA.
+        Returns (code, name) or (None, None).
+        """
+        if not asset_code:
+            return None, None
+        found_asset = False
+        for acct in entity_asset_accounts:
+            if acct.account_code == asset_code:
+                found_asset = True
+                continue
+            if found_asset:
+                acct_lower = acct.account_name.lower()
+                if "accum" in acct_lower or "amortis" in acct_lower:
+                    return acct.account_code, acct.account_name
+                # If we hit a non-accumulated account, stop looking
+                if "less:" not in acct_lower:
+                    break
+        return None, None
+
     # ── Group assets by their (dep_expense, accum_dep) account pair ──
     # Each group will become a pair of journal lines (Dr expense, Cr accum dep).
     from collections import defaultdict
@@ -6593,11 +6622,57 @@ def depreciation_post_to_tb(request, pk):
         if business_dep <= 0:
             continue
 
-        # Determine the accounts for this asset
-        a_dep_code = asset.dep_expense_code or fallback_dep_expense_code
-        a_dep_name = asset.dep_expense_name or fallback_dep_expense_name or "Depreciation"
-        a_accum_code = asset.accum_dep_code or fallback_accum_dep_code
-        a_accum_name = asset.accum_dep_name or fallback_accum_dep_name or "Less: Accumulated depreciation"
+        # Determine the accounts for this asset, with intelligent fallback:
+        # 1. Use explicit mapping on the asset (set via form)
+        # 2. Try to detect from the source_transaction's confirmed_code
+        # 3. Fall back to global auto-detected account
+
+        a_dep_code = asset.dep_expense_code
+        a_dep_name = asset.dep_expense_name
+        a_accum_code = asset.accum_dep_code
+        a_accum_name = asset.accum_dep_name
+
+        # If no explicit accum_dep mapping, try to detect from source transaction
+        if not a_accum_code and asset.source_transaction_id:
+            txn_code = getattr(asset.source_transaction, 'confirmed_code', '') if hasattr(asset, '_source_txn_cache') else ''
+            if not txn_code:
+                # Fetch the transaction's confirmed_code
+                from review.models import PendingTransaction
+                try:
+                    txn = PendingTransaction.objects.only('confirmed_code', 'confirmed_name').get(pk=asset.source_transaction_id)
+                    txn_code = txn.confirmed_code or ''
+                except PendingTransaction.DoesNotExist:
+                    txn_code = ''
+            if txn_code:
+                paired_code, paired_name = _find_paired_accum_dep(txn_code)
+                if paired_code:
+                    a_accum_code = paired_code
+                    a_accum_name = paired_name
+                    # Also back-fill the asset record so next time it's explicit
+                    asset.accum_dep_code = paired_code
+                    asset.accum_dep_name = paired_name
+                    if not asset.asset_account_code:
+                        asset.asset_account_code = txn_code
+                        asset.asset_account_name = getattr(txn, 'confirmed_name', '') if txn_code else ''
+                    asset.save(update_fields=[
+                        'accum_dep_code', 'accum_dep_name',
+                        'asset_account_code', 'asset_account_name',
+                    ])
+
+        # If still no explicit mapping, try to detect from asset_account_code
+        if not a_accum_code and asset.asset_account_code:
+            paired_code, paired_name = _find_paired_accum_dep(asset.asset_account_code)
+            if paired_code:
+                a_accum_code = paired_code
+                a_accum_name = paired_name
+
+        # Final fallback to global accounts
+        if not a_dep_code:
+            a_dep_code = fallback_dep_expense_code
+            a_dep_name = fallback_dep_expense_name or "Depreciation"
+        if not a_accum_code:
+            a_accum_code = fallback_accum_dep_code
+            a_accum_name = fallback_accum_dep_name or "Less: Accumulated depreciation"
 
         key = (a_dep_code, a_dep_name, a_accum_code, a_accum_name)
         account_groups[key] += business_dep
