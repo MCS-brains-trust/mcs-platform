@@ -1,5 +1,46 @@
 {% extends "base.html" %}
 {% block title %}{% if is_edit %}Edit{% else %}Add{% endif %} Account - Chart of Accounts - StatementHub{% endblock %}
+
+{% block extra_css %}
+<link href="https://cdn.jsdelivr.net/npm/tom-select@2.4.1/dist/css/tom-select.bootstrap5.min.css" rel="stylesheet">
+<style>
+    .ts-wrapper.form-select { padding: 0; border: none; }
+    .ts-wrapper .ts-control {
+        border: 1px solid #dee2e6;
+        border-radius: 0.375rem;
+        min-height: calc(1.5em + 0.75rem + 2px);
+        font-size: 0.875rem;
+    }
+    .ts-dropdown {
+        z-index: 9999 !important;
+        border: 2px solid #0d6efd !important;
+        border-radius: 0.5rem !important;
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.20) !important;
+        max-height: 350px !important;
+        background: #fff !important;
+    }
+    .ts-dropdown .ts-dropdown-content {
+        max-height: 320px !important;
+        overflow-y: auto !important;
+    }
+    .ts-dropdown .option {
+        font-size: 0.875rem;
+        padding: 8px 12px;
+        border-bottom: 1px solid #f0f0f0;
+    }
+    .ts-dropdown .option:last-child {
+        border-bottom: none;
+    }
+    .ts-dropdown .option.active {
+        background-color: #0d6efd !important;
+        color: #fff !important;
+    }
+    .ts-dropdown .option:hover {
+        background-color: #e7f1ff;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <nav aria-label="breadcrumb">
     <ol class="breadcrumb">
@@ -646,6 +687,22 @@ document.addEventListener('DOMContentLoaded', function() {
     // Trigger initial state if editing
     if (isEdit && sectionSelect.value) {
         highlightRange(sectionSelect.value);
+    }
+});
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/tom-select@2.4.1/dist/js/tom-select.complete.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    var mapsToEl = document.getElementById('maps_to');
+    if (mapsToEl) {
+        new TomSelect(mapsToEl, {
+            placeholder: 'Search by code or name…',
+            allowEmptyOption: true,
+            sortField: { field: 'text', direction: 'asc' },
+            maxOptions: 500,
+            dropdownParent: 'body',
+        });
     }
 });
 </script>
