@@ -394,6 +394,12 @@ def _resolve_section_and_tax(account_code, coa_lookup, entity_coa_lookup, line_t
         mapped = tax_type_map.get(line_tax)
         if mapped and mapped[0]:
             return mapped[0], mapped[1], None
+        elif mapped:
+            # N-T / BAS Excluded / Input Taxed — section is None but NOT an
+            # error.  Return section=None with no exclude_reason so the
+            # caller can still include the transaction in the detail tabs
+            # using a direction-based fallback.
+            return None, mapped[1], None
         else:
             return None, None, f"Not in chart of accounts" + (f" (tax: {line_tax})" if line_tax else "")
     else:
@@ -529,8 +535,11 @@ def _calculate_gst_from_tb_lines(fy, entity, entity_type, coa_lookup, entity_coa
             section, tax_code, exclude_reason = _resolve_section_and_tax(
                 code, coa_lookup, entity_coa_lookup, tax_type
             )
-            if exclude_reason:
+            if exclude_reason == "gst_clearing":
                 continue
+            # Even if exclude_reason is set (e.g. "Not in chart of accounts"),
+            # we still include the transaction in the detail tabs so the user
+            # can see and reallocate it.  It just won't contribute to G-totals.
 
             # Use transaction-level tax_type for GST classification
             gst_bearing_tax_types = ("GST on Income", "GST on Expenses")
@@ -567,6 +576,7 @@ def _calculate_gst_from_tb_lines(fy, entity, entity_type, coa_lookup, entity_coa
                 "taxable_amount": taxable,
                 "gst_amount": gst_amt,
                 "gross_amount": gross,
+                "txn_id": str(txn.id),
             }
             if section in ("revenue", "Revenue"):
                 sales_transactions.append(txn_row)
@@ -574,7 +584,9 @@ def _calculate_gst_from_tb_lines(fy, entity, entity_type, coa_lookup, entity_coa
                 purchase_transactions.append(txn_row)
             elif section in ("assets", "Assets"):
                 purchase_transactions.append(txn_row)
-            elif section is None:
+            else:
+                # section is None (N-T, BAS Excluded, not in COA, etc.)
+                # Use transaction direction as fallback
                 if txn.amount > 0:
                     sales_transactions.append(txn_row)
                 else:
@@ -715,6 +727,7 @@ def _calculate_gst_from_transactions(fy, entity, entity_type, coa_lookup, entity
                 "tax_type": tax_type,
                 "txn_type": "Deposit" if txn.amount > 0 else "Expense",
                 "source": "bank_statement",
+                "txn_id": str(txn.id),
             })
 
         for (code, name, tax_type), total in account_totals.items():
@@ -757,8 +770,11 @@ def _calculate_gst_from_transactions(fy, entity, entity_type, coa_lookup, entity
                 txn_detail["account_code"], coa_lookup, entity_coa_lookup,
                 txn_detail["tax_type"]
             )
-            if exclude_reason:
+            if exclude_reason == "gst_clearing":
                 continue
+            # Even if exclude_reason is set (e.g. "Not in chart of accounts"),
+            # we still include the transaction in the detail tabs so the user
+            # can see and reallocate it.  It just won't contribute to G-totals.
 
             # Use the transaction-level tax_type to determine GST status.
             # The COA-derived tax_code is used for BAS label aggregation, but
@@ -806,18 +822,19 @@ def _calculate_gst_from_transactions(fy, entity, entity_type, coa_lookup, entity
                 "taxable_amount": taxable,
                 "gst_amount": gst_amt,
                 "gross_amount": gross,
+                "txn_id": txn_detail.get("txn_id", ""),
             }
 
             # Route to sales or purchases based on section.
-            # If section is None (e.g. BAS Excluded), fall back to
-            # transaction type: Deposit → sales, Expense → purchases.
+            # If section is None (e.g. BAS Excluded, N-T, not in COA),
+            # fall back to transaction type: Deposit → sales, Expense → purchases.
             if section in ("revenue", "Revenue"):
                 sales_transactions.append(txn_row)
             elif section in ("expenses", "Expenses", "cost_of_sales", "Cost of Sales"):
                 purchase_transactions.append(txn_row)
             elif section in ("assets", "Assets"):
                 purchase_transactions.append(txn_row)  # capital purchases in purchase detail
-            elif section is None:
+            else:
                 # Fallback: use transaction direction
                 if txn_detail["txn_type"] == "Deposit":
                     sales_transactions.append(txn_row)

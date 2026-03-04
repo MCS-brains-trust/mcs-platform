@@ -197,6 +197,9 @@ urlpatterns = [
     path("years/<uuid:pk>/gst/lodge/<int:period_number>/", views_bas.bas_lodge_period, name="bas_lodge_period"),
     path("years/<uuid:pk>/gst/unlodge/<int:period_number>/", views_bas.bas_unlodge_period, name="bas_unlodge_period"),
     path("years/<uuid:pk>/gst/coverage/<int:period_number>/", views_bas.bas_coverage_check, name="bas_coverage_check"),
+    path("years/<uuid:pk>/gst/reallocate/", views_bas.bas_reallocate_transaction, name="bas_reallocate_transaction"),
+    path("years/<uuid:pk>/gst/bulk-reallocate/", views_bas.bas_bulk_reallocate, name="bas_bulk_reallocate"),
+    path("years/<uuid:pk>/gst/accounts/", views_bas.bas_entity_accounts_json, name="bas_entity_accounts_json"),
 
     # BAS Period Commentary
     path("years/<uuid:pk>/gst/commentary/generate/", views_bas_commentary.generate_commentary, name="bas_commentary_generate"),
