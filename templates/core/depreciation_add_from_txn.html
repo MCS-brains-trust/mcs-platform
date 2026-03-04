@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+{% load humanize %}
+{% block title %}Add to Depreciation Schedule - {{ fy.entity.entity_name }} - StatementHub{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=fy.entity.pk %}">{{ fy.entity.entity_name }}</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy.year_label }}</a></li>
+        <li class="breadcrumb-item active">Add to Depreciation Schedule</li>
+    </ol>
+</nav>
+
+<div class="mb-4">
+    <h5 class="mb-1">
+        <i class="bi bi-graph-down-arrow text-primary me-2"></i>
+        Add Asset to Depreciation Schedule
+    </h5>
+    <small class="text-muted">
+        Pre-filled from bank statement transaction &middot; {{ fy.entity.entity_name }} &middot; {{ fy.year_label }}
+    </small>
+</div>
+
+{% if messages %}
+<div class="mb-3">
+    {% for message in messages %}
+    <div class="alert alert-{{ message.tags }} alert-dismissible fade show" role="alert">
+        {{ message }}
+        <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}
+
+<!-- Source Transaction Info -->
+<div class="card mb-4 border-warning">
+    <div class="card-header py-2 bg-warning bg-opacity-10">
+        <h6 class="mb-0"><i class="bi bi-bank me-1"></i> Source Bank Transaction</h6>
+    </div>
+    <div class="card-body py-2">
+        <div class="row" style="font-size: 0.9rem;">
+            <div class="col-md-2"><strong>Date:</strong> {{ txn.date }}</div>
+            <div class="col-md-6"><strong>Description:</strong> {{ txn.description }}</div>
+            <div class="col-md-2"><strong>Net Amount:</strong> ${{ prefill.total_cost|floatformat:2|intcomma }}</div>
+            <div class="col-md-2"><strong>Gross:</strong>
+                <span class="{% if txn.amount < 0 %}text-danger{% else %}text-success{% endif %}">
+                    {% if txn.amount < 0 %}-{% endif %}${{ txn.amount|floatformat:2|intcomma }}
+                </span>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Depreciation Asset Form -->
+<div class="card mb-4">
+    <div class="card-header py-2">
+        <h6 class="mb-0"><i class="bi bi-plus-lg me-1"></i> Asset Details</h6>
+    </div>
+    <div class="card-body">
+        <form method="post" action="{% url 'core:depreciation_add_from_transaction' pk=txn.pk %}">
+            {% csrf_token %}
+            <div class="row g-3">
+                <div class="col-12">
+                    <label class="form-label fw-semibold">Asset Name <span class="text-danger">*</span></label>
+                    <input type="text" name="asset_name" class="form-control" required value="{{ prefill.asset_name }}">
+                    <small class="text-muted">Edit to give this asset a meaningful name (pre-filled from transaction description)</small>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Category</label>
+                    <select name="category" class="form-select" id="categorySelect">
+                        <option value="Furniture and Fixtures"{% if prefill.category == "Furniture and Fixtures" %} selected{% endif %}>Furniture and Fixtures</option>
+                        <option value="Plant and Equipment"{% if prefill.category == "Plant and Equipment" %} selected{% endif %}>Plant and Equipment</option>
+                        <option value="Motor Vehicles"{% if prefill.category == "Motor Vehicles" %} selected{% endif %}>Motor Vehicles</option>
+                        <option value="Computer Equipment"{% if prefill.category == "Computer Equipment" %} selected{% endif %}>Computer Equipment</option>
+                        <option value="Office Equipment"{% if prefill.category == "Office Equipment" %} selected{% endif %}>Office Equipment</option>
+                        <option value="Leasehold Improvements"{% if prefill.category == "Leasehold Improvements" %} selected{% endif %}>Leasehold Improvements</option>
+                        <option value="Low Value Pool"{% if prefill.category == "Low Value Pool" %} selected{% endif %}>Low Value Pool</option>
+                        <option value="Other"{% if prefill.category == "Other" %} selected{% endif %}>Other</option>
+                    </select>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Purchase Date</label>
+                    <input type="date" name="purchase_date" class="form-control" value="{{ prefill.purchase_date }}">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Total Cost ($)</label>
+                    <input type="number" name="total_cost" class="form-control" step="0.01" value="{{ prefill.total_cost }}">
+                    <small class="text-muted">Pre-filled with the net (ex-GST) amount from the transaction</small>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Opening WDV ($)</label>
+                    <input type="number" name="opening_wdv" class="form-control" step="0.01" value="0">
+                    <small class="text-muted">Leave as 0 for new purchases in this year</small>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label fw-semibold">Method</label>
+                    <select name="method" class="form-select">
+                        <option value="D" selected>Diminishing Value</option>
+                        <option value="P">Prime Cost</option>
+                        <option value="W">Written Off</option>
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label fw-semibold">Rate (%)</label>
+                    <input type="number" name="rate" class="form-control" step="0.01" value="0">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label fw-semibold">Private Use (%)</label>
+                    <input type="number" name="private_use_pct" class="form-control" step="0.01" value="0">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Addition Cost ($)</label>
+                    <input type="number" name="addition_cost" class="form-control" step="0.01" value="{{ prefill.addition_cost }}">
+                    <small class="text-muted">Pre-filled with the net (ex-GST) amount</small>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Addition Date</label>
+                    <input type="date" name="addition_date" class="form-control" value="{{ prefill.addition_date }}">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Disposal Date</label>
+                    <input type="date" name="disposal_date" class="form-control">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Disposal Consideration ($)</label>
+                    <input type="number" name="disposal_consideration" class="form-control" step="0.01" value="0">
+                </div>
+            </div>
+            <div class="mt-4 d-flex justify-content-between">
+                <button type="button" class="btn btn-outline-secondary" onclick="window.close();">
+                    <i class="bi bi-x-lg"></i> Cancel
+                </button>
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-graph-down-arrow me-1"></i> Add to Depreciation Schedule
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

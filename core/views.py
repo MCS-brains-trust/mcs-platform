@@ -1217,7 +1217,7 @@ def financial_year_detail(request, pk):
         annotate_tb_lines_with_amber(section_lines)
 
     # Depreciation assets
-    depreciation_assets = DepreciationAsset.objects.filter(financial_year=fy)
+    depreciation_assets = DepreciationAsset.objects.filter(financial_year=fy).select_related('source_transaction')
     dep_categories = OrderedDict()
     dep_total_opening = Decimal('0')
     dep_total_depreciation = Decimal('0')
@@ -3465,6 +3465,27 @@ def account_code_breakdown(request, pk, account_code):
         journal_total_dr += jl.debit or Decimal('0')
         journal_total_cr += jl.credit or Decimal('0')
 
+    # Determine if this is an asset account (show depreciation controls)
+    is_asset_account = False
+    entity_acct = EntityChartOfAccount.objects.filter(
+        entity=fy.entity, account_code=account_code, is_active=True,
+    ).first()
+    if entity_acct and entity_acct.section == EntityChartOfAccount.StatementSection.ASSETS:
+        is_asset_account = True
+
+    # Build a set of transaction IDs already linked to depreciation assets
+    txn_in_depreciation = set()
+    if is_asset_account and bank_txns:
+        bank_txn_ids = [bt.pk for bt in bank_txns]
+        txn_in_depreciation = set(
+            DepreciationAsset.objects.filter(
+                source_transaction_id__in=bank_txn_ids,
+            ).values_list('source_transaction_id', flat=True)
+        )
+    # Annotate each bank txn with a flag
+    for bt in bank_txns:
+        bt.in_depreciation = bt.pk in txn_in_depreciation
+
     return render(request, 'core/account_code_breakdown.html', {
         'fy': fy,
         'account_code': account_code,
@@ -3486,6 +3507,7 @@ def account_code_breakdown(request, pk, account_code):
         'journal_line_count': journal_lines.count(),
         'journal_total_dr': journal_total_dr,
         'journal_total_cr': journal_total_cr,
+        'is_asset_account': is_asset_account,
     })
 
 
@@ -6217,6 +6239,110 @@ def _calc_depreciation(asset):
         asset.private_depreciation = Decimal("0")
 
     asset.depreciable_value = depreciable
+
+
+# ---------------------------------------------------------------------------
+# Add Depreciation Asset from Bank Statement Transaction
+# ---------------------------------------------------------------------------
+@login_required
+def depreciation_add_from_transaction(request, pk):
+    """
+    Pre-populate the depreciation add form from a bank statement transaction.
+    GET:  Renders the depreciation schedule tab with the add-asset modal pre-filled.
+    POST: Creates the asset linked to the source transaction, then redirects back.
+    """
+    from review.models import PendingTransaction
+    txn = get_object_or_404(PendingTransaction, pk=pk)
+    fy_entity = txn.job.entity
+
+    # Find the financial year that covers this transaction
+    # Use the FY linked to the job's entity — pick the one whose year range covers the txn date
+    fy = None
+    if txn.date:
+        import datetime
+        try:
+            txn_date = datetime.datetime.strptime(txn.date, "%Y-%m-%d").date()
+        except (ValueError, TypeError):
+            txn_date = None
+        if txn_date:
+            fy = FinancialYear.objects.filter(
+                entity=fy_entity,
+                start_date__lte=txn_date,
+                end_date__gte=txn_date,
+            ).first()
+    # Fallback: most recent FY for the entity
+    if not fy:
+        fy = FinancialYear.objects.filter(entity=fy_entity).order_by('-end_date').first()
+    if not fy:
+        messages.error(request, "No financial year found for this entity.")
+        return redirect('core:entity_detail', pk=fy_entity.pk)
+
+    # IDOR check
+    get_financial_year_for_user(request, fy.pk)
+
+    if request.method == "POST":
+        if not request.user.can_do_accounting:
+            return JsonResponse({"error": "Permission denied"}, status=403)
+        try:
+            asset = DepreciationAsset.objects.create(
+                financial_year=fy,
+                category=request.POST.get("category", "Other"),
+                asset_name=request.POST.get("asset_name", ""),
+                purchase_date=request.POST.get("purchase_date") or None,
+                total_cost=Decimal(request.POST.get("total_cost", "0") or "0"),
+                private_use_pct=Decimal(request.POST.get("private_use_pct", "0") or "0"),
+                opening_wdv=Decimal(request.POST.get("opening_wdv", "0") or "0"),
+                method=request.POST.get("method", "D"),
+                rate=Decimal(request.POST.get("rate", "0") or "0"),
+                addition_cost=Decimal(request.POST.get("addition_cost", "0") or "0"),
+                addition_date=request.POST.get("addition_date") or None,
+                disposal_date=request.POST.get("disposal_date") or None,
+                disposal_consideration=Decimal(request.POST.get("disposal_consideration", "0") or "0"),
+                source_transaction=txn,
+            )
+        except (InvalidOperation, ValueError):
+            messages.error(request, "Invalid numeric value provided.")
+            return redirect("core:financial_year_detail", pk=fy.pk)
+        _calc_depreciation(asset)
+        asset.save()
+        _log_action(request, "create", f"Added depreciation asset from bank txn: {asset.asset_name}", asset)
+        messages.success(request, f"Asset '{asset.asset_name}' added to depreciation schedule from bank transaction.")
+        return redirect(reverse("core:financial_year_detail", args=[fy.pk]) + "?tab=depreciation")
+
+    # GET — render a standalone page with the pre-filled form
+    # Calculate net amount (use absolute value since expenses are negative)
+    net_amount = abs(txn.net_amount) if txn.net_amount else abs(txn.amount) if txn.amount else Decimal("0")
+
+    # Try to guess a category from the account name
+    account_name = txn.confirmed_name or ""
+    category_guess = "Other"
+    name_lower = account_name.lower()
+    if "motor" in name_lower or "vehicle" in name_lower:
+        category_guess = "Motor Vehicles"
+    elif "computer" in name_lower or "laptop" in name_lower or "apple" in name_lower:
+        category_guess = "Computer Equipment"
+    elif "furniture" in name_lower or "fixture" in name_lower:
+        category_guess = "Furniture and Fixtures"
+    elif "office" in name_lower:
+        category_guess = "Office Equipment"
+    elif "plant" in name_lower or "equipment" in name_lower:
+        category_guess = "Plant and Equipment"
+    elif "leasehold" in name_lower or "improvement" in name_lower:
+        category_guess = "Leasehold Improvements"
+
+    context = {
+        "fy": fy,
+        "txn": txn,
+        "prefill": {
+            "asset_name": txn.description or "",
+            "category": category_guess,
+            "purchase_date": txn.date or "",
+            "total_cost": net_amount,
+            "addition_cost": net_amount,
+            "addition_date": txn.date or "",
+        },
+    }
+    return render(request, "core/depreciation_add_from_txn.html", context)
 
 
 # ---------------------------------------------------------------------------

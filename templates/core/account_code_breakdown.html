@@ -121,6 +121,10 @@
                         <th class="text-end" style="width: 110px;">Net</th>
                         <th class="text-end" style="width: 120px;">Amount (Gross)</th>
                         <th class="text-center" style="width: 100px;">Source</th>
+                        {% if is_asset_account %}
+                        <th class="text-center" style="width: 50px;" title="In Depreciation Schedule"><i class="bi bi-graph-down-arrow"></i></th>
+                        <th class="text-center" style="width: 130px;">Depreciation</th>
+                        {% endif %}
                     </tr>
                 </thead>
                 <tbody>
@@ -133,7 +137,7 @@
                             {% if txn.confirmed_tax_type %}
                             <span class="badge bg-light text-dark" style="font-size: 0.7rem;">{{ txn.confirmed_tax_type }}</span>
                             {% else %}
-                            <span class="text-muted">—</span>
+                            <span class="text-muted">&mdash;</span>
                             {% endif %}
                         </td>
                         <td class="text-end">
@@ -154,6 +158,27 @@
                                 <i class="bi bi-bank me-1"></i>{{ txn.job.file_name|truncatechars:20 }}
                             </span>
                         </td>
+                        {% if is_asset_account %}
+                        <td class="text-center">
+                            {% if txn.in_depreciation %}
+                            <i class="bi bi-check-circle-fill text-success" style="font-size: 1.1rem;" title="In depreciation schedule"></i>
+                            {% else %}
+                            <i class="bi bi-x-circle-fill text-danger" style="font-size: 1.1rem;" title="Not in depreciation schedule"></i>
+                            {% endif %}
+                        </td>
+                        <td class="text-center">
+                            {% if txn.in_depreciation %}
+                            <span class="badge bg-success" style="font-size: 0.7rem;"><i class="bi bi-check-lg me-1"></i>Added</span>
+                            {% else %}
+                            <a href="{% url 'core:depreciation_add_from_transaction' pk=txn.pk %}"
+                               target="_blank"
+                               class="btn btn-outline-primary btn-sm" style="font-size: 0.7rem; padding: 2px 8px;"
+                               title="Add this transaction to the depreciation schedule">
+                                <i class="bi bi-graph-down-arrow me-1"></i>Post to Dep.
+                            </a>
+                            {% endif %}
+                        </td>
+                        {% endif %}
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -169,6 +194,7 @@
                             {% if bank_txn_total < 0 %}-{% endif %}${{ bank_txn_total|floatformat:2|intcomma }}
                         </td>
                         <td></td>
+                        {% if is_asset_account %}<td></td><td></td>{% endif %}
                     </tr>
                 </tfoot>
             </table>
