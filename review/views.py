@@ -429,20 +429,41 @@ def review_detail(request, pk):
     transactions = job.transactions.all().order_by("date", "description")
 
     # Get entity-type-specific chart of accounts for the picker
-    from core.models import ChartOfAccount
+    from core.models import ChartOfAccount, TrialBalanceLine, FinancialYear
+    from decimal import Decimal
     entity_type = job.entity.entity_type if job.entity else "company"
     coa_qs = ChartOfAccount.objects.filter(
         entity_type=entity_type, is_active=True
     ).order_by("section", "display_order")
-    accounts = [
-        {
+
+    # Build TB balance lookup if entity is linked
+    tb_balances = {}
+    if job.entity:
+        # Find the most recent financial year for this entity
+        latest_fy = FinancialYear.objects.filter(
+            entity=job.entity
+        ).order_by('-end_date').first()
+        if latest_fy:
+            for line in latest_fy.trial_balance_lines.all():
+                code = line.account_code
+                cb = line.closing_balance if line.closing_balance else Decimal('0')
+                if cb != 0:
+                    tb_balances[code] = tb_balances.get(code, Decimal('0')) + cb
+                else:
+                    dr = line.debit if line.debit else Decimal('0')
+                    cr = line.credit if line.credit else Decimal('0')
+                    tb_balances[code] = tb_balances.get(code, Decimal('0')) + (dr - cr)
+
+    accounts = []
+    for a in coa_qs:
+        balance = tb_balances.get(a.account_code)
+        accounts.append({
             "code": a.account_code,
             "name": a.account_name,
             "section": a.get_section_display(),
             "tax": a.tax_code,
-        }
-        for a in coa_qs
-    ]
+            "tb_balance": str(balance.quantize(Decimal('0.01'))) if balance is not None else None,
+        })
 
     # Count classification rules for this entity
     from .models import ClassificationRule
