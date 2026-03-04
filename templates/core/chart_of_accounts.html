@@ -6,9 +6,19 @@
         <h4 class="fw-bold mb-1"><i class="bi bi-diagram-3"></i> Chart of Accounts</h4>
         <p class="text-muted mb-0">MC&S entity-type-specific chart of accounts — {{ total_all }} accounts across all entity types</p>
     </div>
-    <a href="{% url 'core:coa_add' %}?entity_type={{ entity_type_filter }}" class="btn btn-primary">
-        <i class="bi bi-plus-circle"></i> Add Account
-    </a>
+    <div class="d-flex gap-2">
+        <form method="post" action="{% url 'core:coa_propagate_tax_codes' %}" class="d-inline"
+              onsubmit="return confirm('This will push all tax codes from the master template to every existing entity with matching account codes. Continue?')">
+            {% csrf_token %}
+            <input type="hidden" name="entity_type" value="{{ entity_type_filter }}">
+            <button type="submit" class="btn btn-outline-warning">
+                <i class="bi bi-broadcast"></i> Propagate Tax Codes to All Entities
+            </button>
+        </form>
+        <a href="{% url 'core:coa_add' %}?entity_type={{ entity_type_filter }}" class="btn btn-primary">
+            <i class="bi bi-plus-circle"></i> Add Account
+        </a>
+    </div>
 </div>
 
 <!-- Entity Type Tabs -->

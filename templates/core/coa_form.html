@@ -101,6 +101,23 @@
                         </select>
                     </div>
 
+                    {% if is_edit %}
+                    <!-- Propagate Tax Code to All Entities -->
+                    <div class="mb-3">
+                        <div class="form-check form-switch">
+                            <input class="form-check-input" type="checkbox" id="propagate_tax_code" name="propagate_tax_code">
+                            <label class="form-check-label" for="propagate_tax_code">
+                                <strong>Propagate tax code to all entities</strong>
+                            </label>
+                        </div>
+                        <div class="form-text text-muted">
+                            When checked, saving will also update the tax code on all existing entity-level accounts
+                            with the same account code ({{ account.account_code }}) across all
+                            {{ account.get_entity_type_display }} entities.
+                        </div>
+                    </div>
+                    {% endif %}
+
                     <!-- Maps To (AccountMapping) -->
                     <div class="mb-3">
                         <label for="maps_to" class="form-label fw-bold">Maps To (Financial Statement Line)</label>
