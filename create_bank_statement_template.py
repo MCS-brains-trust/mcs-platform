@@ -50,13 +50,13 @@ instructions = [
     ('', None, None),
     ('   Column A: Date', instruction_font, None),
     ('   Column B: Description', instruction_font, None),
-    ('   Column C: Debit (money out)', instruction_font, None),
-    ('   Column D: Credit (money in)', instruction_font, None),
-    ('   Column E: Balance (optional)', instruction_font, None),
+    ('   Column C: Amount (negative = withdrawal/debit, positive = deposit/credit)', instruction_font, None),
+    ('   Column D: Balance (optional)', instruction_font, None),
     ('', None, None),
     ('Important Notes', subtitle_font, None),
     ('', None, None),
-    ('• Use EITHER Debit/Credit columns OR a single Amount column (positive = credit, negative = debit).', instruction_font, None),
+    ('• Withdrawals (debits) should be negative values (e.g. -150.00).', instruction_font, None),
+    ('• Deposits (credits) should be positive values (e.g. 500.00).', instruction_font, None),
     ('• The Opening Balance must match the trial balance for this bank account.', instruction_font, None),
     ('• Dates must fall within the financial year period selected during upload.', instruction_font, None),
     ('• Do not modify the column headers in row 6.', instruction_font, None),
@@ -102,8 +102,8 @@ for i, (label, default) in enumerate(meta_labels, 1):
 ws.cell(row=5, column=1, value='')
 
 # Row 6: Column headers
-headers = ['Date', 'Description', 'Debit', 'Credit', 'Balance']
-col_widths = [14, 50, 15, 15, 15]
+headers = ['Date', 'Description', 'Amount', 'Balance (optional)']
+col_widths = [14, 50, 18, 15]
 
 for j, (header, width) in enumerate(zip(headers, col_widths), 1):
     cell = ws.cell(row=6, column=j, value=header)
@@ -116,14 +116,14 @@ for j, (header, width) in enumerate(zip(headers, col_widths), 1):
 # ── Pre-format data rows (7 to 5006) ──────────────────────────────────
 # Column A: DD/MM/YY date format — when a date value (or Excel serial
 # number) is pasted, Excel will display it as DD/MM/YY.
-# Columns C-E: Number format for currency amounts.
+# Columns C-D: Number format for currency amounts.
 for i in range(7, 5007):
     # Date column — DD/MM/YY display format
     date_cell = ws.cell(row=i, column=1)
     date_cell.number_format = 'DD/MM/YY'
 
-    # Debit, Credit, Balance — number format
-    for j in range(3, 6):
+    # Amount, Balance — number format
+    for j in range(3, 5):
         num_cell = ws.cell(row=i, column=j)
         num_cell.number_format = '#,##0.00'
 
