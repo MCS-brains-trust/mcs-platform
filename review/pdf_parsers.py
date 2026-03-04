@@ -250,6 +250,187 @@ def parse_cba_statement(pdf_content):
 
 
 # ---------------------------------------------------------------------------
+# CBA Transaction Listing Parser
+# ---------------------------------------------------------------------------
+# CBA issues two PDF formats:
+#   1. Standard bank statement: header "Date Transaction Debit Credit Balance"
+#   2. Transaction Listing (from NetBank): header "Date Transaction details Amount Balance"
+# The Transaction Listing uses a single signed-amount column (-$X for debits,
+# $X for credits) and includes the year in each date ("01 Jul 2025").
+
+CBA_TXN_LIST_DATE_RE = re.compile(
+    r"^(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec))\s+(\d{4})\s+(.+)"
+)
+CBA_TXN_LIST_AMT_RE = re.compile(
+    r"^(.*?)\s+(-?\$[\d,]+\.\d{2})\s+\$[\d,]+\.\d{2}$"
+)
+
+
+def _parse_signed_amt(s):
+    """Parse a signed amount like '-$5,667.00' or '$1,669.30' to float."""
+    try:
+        return float(s.replace("$", "").replace(",", ""))
+    except (ValueError, AttributeError):
+        return 0.0
+
+
+def parse_cba_transaction_listing(pdf_content):
+    """
+    Parse a CBA Transaction Listing PDF (NetBank export).
+
+    This format has:
+      - Header line: "Date Transaction details Amount Balance"
+      - Signed amounts: -$X,XXX.XX (debit) or $X,XXX.XX (credit)
+      - Dates with year: "01 Jul 2025"
+      - Multi-line descriptions
+      - Footer: "Created DD/MM/YY ..." and "Transaction Summary v..."
+    """
+    result = _empty_result()
+
+    with pdfplumber.open(io.BytesIO(pdf_content)) as pdf:
+        all_lines = []
+        header_parsed = False
+
+        for page_idx, page in enumerate(pdf.pages):
+            text = page.extract_text()
+            if not text:
+                continue
+            lines = text.split("\n")
+
+            # --- Header metadata (first page only) ---
+            if not header_parsed:
+                for line in lines:
+                    # "Account Number 063097 89502096"
+                    acct_match = re.search(
+                        r"Account\s+Number\s+(\d{2}\s*\d{4})\s+(\d+)", line
+                    )
+                    if acct_match:
+                        bsb_raw = acct_match.group(1).replace(" ", "")
+                        if len(bsb_raw) == 6:
+                            result["bsb"] = f"{bsb_raw[:3]}-{bsb_raw[3:]}"
+                        else:
+                            result["bsb"] = bsb_raw
+                        result["account_number"] = acct_match.group(2)
+
+                    # "Account name DANIEL HABTESLASSIE"
+                    name_match = re.search(r"Account\s+name\s+(.+)", line)
+                    if name_match:
+                        result["account_name"] = name_match.group(1).strip()
+
+                    # "BSB 063097"
+                    bsb_match = re.match(r"^BSB\s+(\d{6})$", line.strip())
+                    if bsb_match:
+                        bsb_raw = bsb_match.group(1)
+                        result["bsb"] = f"{bsb_raw[:3]}-{bsb_raw[3:]}"
+
+                    # "Account number 89502096"
+                    acctnum_match = re.match(
+                        r"^Account\s+number\s+(\d+)$", line.strip()
+                    )
+                    if acctnum_match:
+                        result["account_number"] = acctnum_match.group(1)
+
+                    # "from 01/07/25-02/03/26"
+                    period_match = re.search(
+                        r"from\s+(\d{2}/\d{2}/\d{2,4})\s*-\s*(\d{2}/\d{2}/\d{2,4})",
+                        line,
+                    )
+                    if period_match:
+                        result["period_start"] = period_match.group(1)
+                        result["period_end"] = period_match.group(2)
+
+                header_parsed = True
+
+            # --- Collect transaction lines ---
+            in_transactions = False
+            for line in lines:
+                if re.match(
+                    r"Date\s+Transaction\s+details\s+Amount\s+Balance", line
+                ):
+                    in_transactions = True
+                    continue
+                # Footer markers
+                if line.startswith("Created ") or "Transaction Summary" in line:
+                    in_transactions = False
+                    continue
+                if (
+                    "we\u2019re not responsible" in line.lower()
+                    or "we're not responsible" in line.lower()
+                    or "while this letter" in line.lower()
+                ):
+                    in_transactions = False
+                    continue
+                if in_transactions:
+                    all_lines.append(line.strip())
+
+    # --- Parse collected lines into transactions ---
+    transactions = []
+    current_txn = None
+
+    for line in all_lines:
+        if not line:
+            continue
+
+        date_match = CBA_TXN_LIST_DATE_RE.match(line)
+        if date_match:
+            # Flush previous transaction
+            if current_txn:
+                transactions.append(current_txn)
+                current_txn = None
+
+            date_str = date_match.group(1)
+            year = date_match.group(2)
+            rest = date_match.group(3)
+
+            # Build ISO date
+            parts = date_str.strip().split()
+            day = parts[0].zfill(2)
+            month = MONTH_MAP.get(parts[1], "01")
+            iso_date = f"{year}-{month}-{day}"
+
+            # Try to extract amount from the rest of the line
+            amt_match = CBA_TXN_LIST_AMT_RE.match(rest)
+            if amt_match:
+                desc = amt_match.group(1).strip()
+                amount = _parse_signed_amt(amt_match.group(2))
+                current_txn = {
+                    "date": iso_date,
+                    "description": desc,
+                    "amount": amount,
+                }
+            else:
+                # Amount may appear on a continuation line
+                current_txn = {
+                    "date": iso_date,
+                    "description": rest.strip(),
+                    "amount": 0,
+                }
+        else:
+            # Continuation line
+            if current_txn:
+                amt_match = CBA_TXN_LIST_AMT_RE.match(line)
+                if amt_match:
+                    desc_part = amt_match.group(1).strip()
+                    if desc_part:
+                        current_txn["description"] += " " + desc_part
+                    current_txn["amount"] = _parse_signed_amt(
+                        amt_match.group(2)
+                    )
+                else:
+                    current_txn["description"] += " " + line.strip()
+
+    if current_txn:
+        transactions.append(current_txn)
+
+    result["transactions"] = transactions
+    logger.info(
+        f"CBA Transaction Listing parser: {len(transactions)} txns, "
+        f"opening={result['opening_balance']}, closing={result['closing_balance']}"
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
 # ANZ Parser
 # ---------------------------------------------------------------------------
 
@@ -1499,7 +1680,20 @@ def detect_bank(pdf_content):
         text_lower = text.lower()
 
         # Check most specific first
-        if "commonwealth bank" in text_lower or "commbank" in text_lower:
+        # CBA Transaction Listing (NetBank export) uses a different table
+        # layout from the standard CBA bank statement — detect it first.
+        # Key discriminator: the table header is
+        #   "Date Transaction details Amount Balance"
+        # vs the standard statement header:
+        #   "Date Transaction Debit Credit Balance"
+        is_cba = "commonwealth bank" in text_lower or "commbank" in text_lower
+        has_txn_listing_header = bool(
+            re.search(r"date\s+transaction\s+details\s+amount\s+balance", text_lower)
+        )
+        has_txn_summary_footer = "transaction summary" in text_lower
+        if has_txn_listing_header and (is_cba or has_txn_summary_footer):
+            return "cba_txn_listing"
+        if is_cba:
             return "cba"
         # Bank of Melbourne must be checked before Westpac (it's a Westpac subsidiary)
         if "bank of melbourne" in text_lower or "bankofmelbourne" in text_lower:
@@ -1545,6 +1739,7 @@ def extract_transactions_from_pdf_direct(pdf_content, filename=""):
 
     parsers = {
         "cba": parse_cba_statement,
+        "cba_txn_listing": parse_cba_transaction_listing,
         "anz": parse_anz_statement,
         "westpac": parse_westpac_statement,
         "bankofmelb": parse_bankofmelb_statement,
