@@ -936,7 +936,6 @@ function searchSplitAccount(input) {
                 return `<a href="#" class="dropdown-item small py-1 split-coa-option"
                     data-code="${item.code}" data-name="${item.name}">
                     <strong>${item.code}</strong> — ${item.name}
-                    ${item.mapping_label !== 'Unmapped' ? '<span class="badge bg-light text-dark ms-1" style="font-size:0.65rem;">' + item.mapping_label + '</span>' : ''}
                     ${tbBal}
                 </a>`;
             }).join('');
@@ -1413,7 +1412,6 @@ document.addEventListener('input', function(e) {
                     'data-name="' + item.name + '" ' +
                     'data-tax="' + (item.tax_code || '') + '">' +
                     '<strong>' + item.code + '</strong> \u2014 ' + item.name +
-                    (item.mapping_label !== 'Unmapped' ? ' <span class="badge bg-light text-dark" style="font-size:0.65rem;">' + item.mapping_label + '</span>' : '') +
                     tbBal +
                     '</a>';
                 }).join('');
@@ -1696,7 +1694,6 @@ function bulkUnconfirmSelected() {
                         'data-name="' + item.name + '" ' +
                         'data-tax="' + (item.tax_code || '') + '">' +
                         '<strong>' + item.code + '</strong> \u2014 ' + item.name +
-                        (item.mapping_label !== 'Unmapped' ? ' <span class="badge bg-light text-dark" style="font-size:0.65rem;">' + item.mapping_label + '</span>' : '') +
                         tbBal +
                         '</a>';
                     }).join('');
