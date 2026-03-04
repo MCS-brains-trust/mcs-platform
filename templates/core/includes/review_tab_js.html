@@ -25,6 +25,8 @@ let pendingRuleData = null;
 let pendingEntityGstSettingData = null;
 let currentSortCol = null;
 let currentSortDir = 'asc';
+let confirmedSortCol = null;
+let confirmedSortDir = 'asc';
 
 // ===== Column Sorting (Spec Section 6.2) =====
 function sortPendingTable(column) {
@@ -94,6 +96,103 @@ function sortPendingTable(column) {
         tbody.appendChild(row);
         (associatedRows[txnId] || []).forEach(assocRow => tbody.appendChild(assocRow));
     });
+}
+
+// ===== Confirmed Table Sorting =====
+function sortConfirmedTable(column) {
+    const tbody = document.getElementById('confirmedTableBody');
+    if (!tbody) return;
+
+    if (confirmedSortCol === column) {
+        confirmedSortDir = confirmedSortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+        confirmedSortCol = column;
+        confirmedSortDir = 'asc';
+    }
+
+    ['date', 'description', 'amount', 'code', 'account'].forEach(col => {
+        const icon = document.getElementById('confirmed-sort-icon-' + col);
+        if (icon) {
+            if (col === column) {
+                icon.className = confirmedSortDir === 'asc'
+                    ? 'bi bi-sort-down-alt text-primary'
+                    : 'bi bi-sort-up text-primary';
+                icon.style.fontSize = '0.75rem';
+            } else {
+                icon.className = 'bi bi-arrow-down-up text-muted';
+                icon.style.fontSize = '0.7rem';
+            }
+        }
+    });
+
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    rows.sort((a, b) => {
+        let valA, valB;
+        if (column === 'date') {
+            valA = parseDateForSort(a.dataset.date);
+            valB = parseDateForSort(b.dataset.date);
+        } else if (column === 'description') {
+            valA = (a.dataset.description || '').toLowerCase();
+            valB = (b.dataset.description || '').toLowerCase();
+        } else if (column === 'amount') {
+            valA = parseFloat(a.dataset.amount || 0);
+            valB = parseFloat(b.dataset.amount || 0);
+        } else if (column === 'code') {
+            valA = (a.dataset.code || '').toLowerCase();
+            valB = (b.dataset.code || '').toLowerCase();
+        } else if (column === 'account') {
+            valA = (a.dataset.account || '').toLowerCase();
+            valB = (b.dataset.account || '').toLowerCase();
+        }
+        let cmp = 0;
+        if (valA < valB) cmp = -1;
+        else if (valA > valB) cmp = 1;
+        return confirmedSortDir === 'asc' ? cmp : -cmp;
+    });
+
+    rows.forEach(row => tbody.appendChild(row));
+    applyConfirmedSearch();
+}
+
+// ===== Confirmed Table Search =====
+function applyConfirmedSearch() {
+    const query = (document.getElementById('confirmedSearchBox') || {}).value || '';
+    const q = query.trim().toLowerCase();
+    const tbody = document.getElementById('confirmedTableBody');
+    if (!tbody) return;
+    const rows = tbody.querySelectorAll('tr');
+    let visible = 0;
+    rows.forEach(row => {
+        if (!q) {
+            row.style.display = '';
+            visible++;
+        } else {
+            const desc = (row.dataset.description || '').toLowerCase();
+            const code = (row.dataset.code || '').toLowerCase();
+            const account = (row.dataset.account || '').toLowerCase();
+            const amount = row.dataset.amount || '';
+            const date = (row.dataset.date || '').toLowerCase();
+            if (desc.includes(q) || code.includes(q) || account.includes(q) || amount.includes(q) || date.includes(q)) {
+                row.style.display = '';
+                visible++;
+            } else {
+                row.style.display = 'none';
+            }
+        }
+    });
+    const countEl = document.getElementById('confirmedFilterCount');
+    if (countEl) {
+        countEl.textContent = q ? visible + ' of ' + rows.length : '';
+    }
+    const clearBtn = document.getElementById('confirmedSearchClearBtn');
+    if (clearBtn) {
+        clearBtn.classList.toggle('d-none', !q);
+    }
+}
+function clearConfirmedSearch() {
+    const box = document.getElementById('confirmedSearchBox');
+    if (box) { box.value = ''; }
+    applyConfirmedSearch();
 }
 
 function parseDateForSort(dateStr) {
