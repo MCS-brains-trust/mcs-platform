@@ -801,6 +801,14 @@ function showDropdown(txnId, query) {
     activeIndex = -1;
     let filtered = ACCOUNTS;
     if (q) filtered = ACCOUNTS.filter(a => a.code.toLowerCase().includes(q) || a.name.toLowerCase().includes(q));
+    // Sort: accounts with TB balances first, then by absolute balance descending
+    filtered = filtered.slice().sort((a, b) => {
+        const aHas = a.tb_balance !== null && a.tb_balance !== undefined ? 1 : 0;
+        const bHas = b.tb_balance !== null && b.tb_balance !== undefined ? 1 : 0;
+        if (aHas !== bHas) return bHas - aHas;
+        if (aHas && bHas) return Math.abs(parseFloat(b.tb_balance)) - Math.abs(parseFloat(a.tb_balance));
+        return 0;
+    });
     if (filtered.length === 0) {
         dropdown.innerHTML = '<div class="p-2 text-muted" style="font-size:0.82rem;">No matching accounts</div>';
     } else {

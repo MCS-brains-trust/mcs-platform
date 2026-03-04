@@ -2205,16 +2205,27 @@
                 if (data.items.length === 0) {
                     html = '<div class="text-center text-muted py-2"><small>No matching accounts found.</small></div>';
                 } else {
-                    html = data.items.map(item =>
-                        `<a href="#" class="dropdown-item small py-1 review-coa-option"
+                    // Sort: accounts with TB balances first, then by absolute balance descending
+                    const sorted = data.items.slice().sort((a, b) => {
+                        const aHas = a.tb_balance !== null && a.tb_balance !== undefined ? 1 : 0;
+                        const bHas = b.tb_balance !== null && b.tb_balance !== undefined ? 1 : 0;
+                        if (aHas !== bHas) return bHas - aHas;
+                        if (aHas && bHas) return Math.abs(parseFloat(b.tb_balance)) - Math.abs(parseFloat(a.tb_balance));
+                        return 0;
+                    });
+                    html = sorted.map(item => {
+                        const tbBal = item.tb_balance !== null && item.tb_balance !== undefined
+                            ? `<span class="badge bg-secondary bg-opacity-25 text-dark" style="font-size:0.65rem; font-weight:600; font-family:monospace; float:right;">TB: $${parseFloat(item.tb_balance).toLocaleString('en-AU', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>`
+                            : '';
+                        return `<a href="#" class="dropdown-item small py-1 review-coa-option"
                             data-txn-id="${txnId}"
                             data-code="${item.code}"
                             data-name="${item.name}"
                             data-section="${item.section}">
-                            <code>${item.code}</code> ${item.name}
+                            <code>${item.code}</code> ${item.name} ${tbBal}
                             <small class="text-muted d-block">${item.section}</small>
-                        </a>`
-                    ).join('');
+                        </a>`;
+                    }).join('');
                 }
                 html += '<div class="dropdown-divider"></div>' +
                     '<a href="#" class="dropdown-item small py-1 text-primary fw-bold review-coa-create-new" data-txn-id="' + txnId + '" data-query="' + query.replace(/"/g, '&quot;') + '">' +

@@ -929,13 +929,21 @@ function searchSplitAccount(input) {
         if (data.items.length === 0) {
             resultsDiv.innerHTML = '<div class="p-2 text-muted small">No results</div>';
         } else {
-            resultsDiv.innerHTML = data.items.slice(0, 8).map(item => {
+            // Sort: accounts with TB balances first, then by absolute balance descending
+            const sorted = data.items.slice().sort((a, b) => {
+                const aHas = a.tb_balance !== null && a.tb_balance !== undefined ? 1 : 0;
+                const bHas = b.tb_balance !== null && b.tb_balance !== undefined ? 1 : 0;
+                if (aHas !== bHas) return bHas - aHas;
+                if (aHas && bHas) return Math.abs(parseFloat(b.tb_balance)) - Math.abs(parseFloat(a.tb_balance));
+                return 0;
+            });
+            resultsDiv.innerHTML = sorted.slice(0, 8).map(item => {
                 const tbBal = item.tb_balance !== null && item.tb_balance !== undefined
                     ? `<span class="badge bg-secondary bg-opacity-25 text-dark ms-1" style="font-size:0.65rem; font-weight:600; font-family:monospace;">TB: $${parseFloat(item.tb_balance).toLocaleString('en-AU', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>`
                     : `<span class="badge bg-light text-muted ms-1" style="font-size:0.65rem;">TB: \u2014</span>`;
                 return `<a href="#" class="dropdown-item small py-1 split-coa-option"
                     data-code="${item.code}" data-name="${item.name}">
-                    <strong>${item.code}</strong> — ${item.name}
+                    <strong>${item.code}</strong> \u2014 ${item.name}
                     ${tbBal}
                 </a>`;
             }).join('');
@@ -1403,10 +1411,18 @@ document.addEventListener('input', function(e) {
             if (data.items.length === 0) {
                 html = '<div class="text-center text-muted py-2"><small>No matching accounts.</small></div>';
             } else {
-                html = data.items.slice(0, 10).map(item => {
+                // Sort: accounts with TB balances first, then by absolute balance descending
+                var sorted = data.items.slice().sort(function(a, b) {
+                    var aHas = a.tb_balance !== null && a.tb_balance !== undefined ? 1 : 0;
+                    var bHas = b.tb_balance !== null && b.tb_balance !== undefined ? 1 : 0;
+                    if (aHas !== bHas) return bHas - aHas;
+                    if (aHas && bHas) return Math.abs(parseFloat(b.tb_balance)) - Math.abs(parseFloat(a.tb_balance));
+                    return 0;
+                });
+                html = sorted.slice(0, 10).map(item => {
                     const tbBal = item.tb_balance !== null && item.tb_balance !== undefined
                         ? ' <span class="badge bg-secondary bg-opacity-25 text-dark" style="font-size:0.65rem; font-weight:600; font-family:monospace;">TB: $' + parseFloat(item.tb_balance).toLocaleString('en-AU', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</span>'
-                        : ' <span class="badge bg-light text-muted" style="font-size:0.65rem;">TB: —</span>';
+                        : ' <span class="badge bg-light text-muted" style="font-size:0.65rem;">TB: \u2014</span>';
                     return '<a href="#" class="dropdown-item small py-1 bulk-edit-coa-option" ' +
                     'data-code="' + item.code + '" ' +
                     'data-name="' + item.name + '" ' +
@@ -1684,7 +1700,15 @@ function bulkUnconfirmSelected() {
                 if (data.items.length === 0) {
                     html = '<div class="text-center text-muted py-2"><small>No matching accounts.</small></div>';
                 } else {
-                    html = data.items.slice(0, 8).map(item => {
+                    // Sort: accounts with TB balances first, then by absolute balance descending
+                    var sorted = data.items.slice().sort(function(a, b) {
+                        var aHas = a.tb_balance !== null && a.tb_balance !== undefined ? 1 : 0;
+                        var bHas = b.tb_balance !== null && b.tb_balance !== undefined ? 1 : 0;
+                        if (aHas !== bHas) return bHas - aHas;
+                        if (aHas && bHas) return Math.abs(parseFloat(b.tb_balance)) - Math.abs(parseFloat(a.tb_balance));
+                        return 0;
+                    });
+                    html = sorted.slice(0, 8).map(item => {
                         const tbBal = item.tb_balance !== null && item.tb_balance !== undefined
                             ? ' <span class="badge bg-secondary bg-opacity-25 text-dark" style="font-size:0.65rem; font-weight:600; font-family:monospace;">TB: $' + parseFloat(item.tb_balance).toLocaleString('en-AU', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</span>'
                             : ' <span class="badge bg-light text-muted" style="font-size:0.65rem;">TB: \u2014</span>';
