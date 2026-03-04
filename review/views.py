@@ -53,6 +53,65 @@ def _airtable_configured():
 
 
 # ---------------------------------------------------------------------------
+# TB posting helper — post confirmed transactions to the trial balance
+# ---------------------------------------------------------------------------
+
+def _post_confirmed_txn_to_tb(txn):
+    """
+    Post a single confirmed bank-statement transaction to the trial balance.
+    Finds the correct FinancialYear for the transaction's entity and date,
+    determines GST applicability, and delegates to the centralised
+    core.views._post_txn_to_tb helper.
+
+    This MUST be called whenever a transaction is confirmed (is_confirmed=True)
+    so that the bank contra entry is always posted alongside the
+    expense/income and GST entries.
+
+    Returns True if the TB was updated, False otherwise.
+    """
+    if not txn.is_confirmed or not txn.confirmed_code:
+        return False
+
+    # Avoid circular import at module level
+    from core.models import FinancialYear
+    from core.views import _post_txn_to_tb
+    from datetime import datetime as dt
+
+    entity = txn.job.entity if txn.job else None
+    if not entity:
+        return False
+
+    # Find the financial year that covers this transaction's date
+    fys = FinancialYear.objects.filter(
+        entity=entity, status__in=['draft', 'in_review', 'finished']
+    )
+    target_fy = None
+    txn_date = None
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d %b %Y"):
+        try:
+            txn_date = dt.strptime(txn.date.strip(), fmt).date()
+            break
+        except (ValueError, AttributeError):
+            continue
+
+    if txn_date:
+        for fy_candidate in fys:
+            if fy_candidate.start_date <= txn_date <= fy_candidate.end_date:
+                target_fy = fy_candidate
+                break
+
+    # Fallback: use the most recent FY for this entity
+    if not target_fy and fys.exists():
+        target_fy = fys.order_by('-end_date').first()
+
+    if not target_fy:
+        return False
+
+    has_gst = bool(txn.confirmed_gst_amount and txn.confirmed_gst_amount > 0)
+    return _post_txn_to_tb(txn, target_fy, has_gst)
+
+
+# ---------------------------------------------------------------------------
 # Airtable sync — pull Pending Review records, group into jobs
 # ---------------------------------------------------------------------------
 
@@ -543,7 +602,15 @@ def confirm_transaction(request, pk):
     # Recalculate GST based on confirmed tax type
     is_gst = txn.job.is_gst_registered
     txn.calculate_gst(tax_type=txn.confirmed_tax_type, is_gst_registered=is_gst)
+    # Set confirmed_gst_amount for TB posting
+    if txn.confirmed_tax_type in ('GST on Income', 'GST on Expenses'):
+        txn.confirmed_gst_amount = txn.gst_amount
+    else:
+        txn.confirmed_gst_amount = Decimal('0.00')
     txn.save()
+
+    # Post to trial balance (expense/income + GST + bank contra)
+    _post_confirmed_txn_to_tb(txn)
 
     # Update job confirmed count
     job = txn.job
@@ -755,8 +822,16 @@ def accept_all_suggestions(request, pk):
 
         # Recalculate GST
         txn.calculate_gst(tax_type=txn.confirmed_tax_type, is_gst_registered=is_gst)
+        # Set confirmed_gst_amount for TB posting
+        if txn.confirmed_tax_type in ('GST on Income', 'GST on Expenses'):
+            txn.confirmed_gst_amount = txn.gst_amount
+        else:
+            txn.confirmed_gst_amount = Decimal('0.00')
         txn.is_confirmed = True
         txn.save()
+
+        # Post to trial balance (expense/income + GST + bank contra)
+        _post_confirmed_txn_to_tb(txn)
 
     job.confirmed_count = job.transactions.filter(is_confirmed=True).count()
     if job.status == "awaiting_review":
@@ -838,9 +913,17 @@ def bulk_approve_group(request, pk):
                 txn.confirmed_tax_type, ""
             )
         txn.calculate_gst(tax_type=txn.confirmed_tax_type, is_gst_registered=is_gst)
+        # Set confirmed_gst_amount for TB posting
+        if txn.confirmed_tax_type in ('GST on Income', 'GST on Expenses'):
+            txn.confirmed_gst_amount = txn.gst_amount
+        else:
+            txn.confirmed_gst_amount = Decimal('0.00')
         txn.is_confirmed = True
         txn.save()
         approved_ids.append(str(txn.pk))
+
+        # Post to trial balance (expense/income + GST + bank contra)
+        _post_confirmed_txn_to_tb(txn)
 
     job.confirmed_count = job.transactions.filter(is_confirmed=True).count()
     if job.status == "awaiting_review":
@@ -1689,8 +1772,17 @@ def classify_batch(request, pk):
             txn.confirmed_code = txn.ai_suggested_code
             txn.confirmed_name = txn.ai_suggested_name
             txn.confirmed_tax_type = tax_type
+            # Set confirmed_gst_amount for TB posting
+            if tax_type in ('GST on Income', 'GST on Expenses'):
+                txn.confirmed_gst_amount = txn.gst_amount
+            else:
+                txn.confirmed_gst_amount = Decimal('0.00')
 
         txn.save()
+
+        # Post auto-confirmed transactions to trial balance immediately
+        if is_auto_confirmed:
+            _post_confirmed_txn_to_tb(txn)
 
         classified_results.append({
             "txn_id": str(txn.pk),
