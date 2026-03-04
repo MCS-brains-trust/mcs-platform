@@ -109,6 +109,7 @@ def parse_cba_statement(pdf_content):
         all_lines = []
         header_parsed = False
         year = str(date.today().year)
+        end_year = None  # Track the end-of-period year for rollover
 
         for page_idx, page in enumerate(pdf.pages):
             text = page.extract_text()
@@ -130,15 +131,14 @@ def parse_cba_statement(pdf_content):
                         result["account_number"] = acct_match.group(2)
 
                     period_match = re.search(
-                        r"Period\s+(\d{1,2}\s+\w+\s+\d{4})\s*-\s*(\d{1,2}\s+\w+\s+\d{4})",
+                        r"Period\s+(\d{1,2}\s+\w+\s+(\d{4}))\s*-\s*(\d{1,2}\s+\w+\s+(\d{4}))",
                         line,
                     )
                     if period_match:
                         result["period_start"] = period_match.group(1)
-                        result["period_end"] = period_match.group(2)
-                        m = re.search(r"(\d{4})", line)
-                        if m:
-                            year = m.group(1)
+                        result["period_end"] = period_match.group(3)
+                        year = period_match.group(2)       # start year
+                        end_year = period_match.group(4)   # end year
 
                     cb_match = re.search(
                         r"Closing\s+Balance\s+\$([\d,]+\.\d{2})\s*(?:CR|DR)?", line
@@ -168,6 +168,7 @@ def parse_cba_statement(pdf_content):
 
         transactions = []
         current_txn = None
+        prev_month = None  # Track month to detect year rollover
 
         def _try_amt(text):
             dm = CBA_DEBIT_RE.match(text)
@@ -177,6 +178,21 @@ def parse_cba_statement(pdf_content):
             if cm:
                 return _amt(cm.group(2)), cm.group(1).strip()
             return None
+
+        def _resolve_year(date_str):
+            """Determine the correct year, handling Dec→Jan rollover."""
+            nonlocal year, prev_month
+            parts = date_str.strip().split()
+            if len(parts) < 2:
+                return year
+            month_num = int(MONTH_MAP.get(parts[1], "01"))
+            # Detect year rollover: previous month was Dec (12) and
+            # current month is Jan (1) — advance to end_year.
+            if prev_month is not None and prev_month >= 12 and month_num <= 1:
+                if end_year and int(end_year) > int(year):
+                    year = end_year
+            prev_month = month_num
+            return year
 
         for line in all_lines:
             if not line:
@@ -194,6 +210,7 @@ def parse_cba_statement(pdf_content):
             if date_match:
                 date_str = date_match.group(1)
                 rest = date_match.group(2)
+                resolved_year = _resolve_year(date_str)
                 ar = _try_amt(rest)
                 if ar is not None:
                     amount, desc = ar
@@ -207,7 +224,7 @@ def parse_cba_statement(pdf_content):
                         if current_txn:
                             transactions.append(current_txn)
                         transactions.append({
-                            "date": _cba_date_to_iso(date_str, year),
+                            "date": _cba_date_to_iso(date_str, resolved_year),
                             "description": desc,
                             "amount": amount,
                         })
@@ -221,7 +238,7 @@ def parse_cba_statement(pdf_content):
                                 f"Dropping zero-amount txn: {current_txn['description'][:60]}"
                             )
                     current_txn = {
-                        "date": _cba_date_to_iso(date_str, year),
+                        "date": _cba_date_to_iso(date_str, resolved_year),
                         "description": rest.strip(),
                         "amount": 0,
                     }
