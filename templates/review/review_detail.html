@@ -816,10 +816,11 @@ function showDropdown(txnId, query) {
         filtered.slice(0, 40).forEach(a => {
             if (a.section && a.section !== lastSection) { html += `<div class="px-2 py-1 bg-light border-bottom" style="font-size:0.7rem;font-weight:600;color:#666;">${a.section}</div>`; lastSection = a.section; }
             const taxBadge = a.tax ? `<span class="badge bg-secondary bg-opacity-25 text-dark" style="font-size:0.65rem;margin-left:4px;">${a.tax}</span>` : '';
+            const stmtType = a.stmt_type ? `<span class="text-muted" style="font-size:0.65rem;margin-left:4px;">(${a.stmt_type})</span>` : '';
             const tbBal = a.tb_balance !== null && a.tb_balance !== undefined
                 ? `<span class="badge bg-secondary bg-opacity-25 text-dark" style="font-size:0.65rem;margin-left:4px;font-weight:600;font-family:monospace;">TB: $${parseFloat(a.tb_balance).toLocaleString('en-AU', {minimumFractionDigits: 2, maximumFractionDigits: 2})}</span>`
                 : '';
-            html += `<div class="account-option" data-code="${a.code}" data-name="${a.name}" onclick="selectAccount('${txnId}', '${a.code}', '${a.name.replace(/'/g, "\\'")}')"><span class="code">${a.code}</span><span class="name">${a.name}${taxBadge}${tbBal}</span></div>`;
+            html += `<div class="account-option" data-code="${a.code}" data-name="${a.name}" onclick="selectAccount('${txnId}', '${a.code}', '${a.name.replace(/'/g, "\\'")}')"><span class="code">${a.code}</span><span class="name">${a.name}${stmtType}${taxBadge}${tbBal}</span></div>`;
         });
         dropdown.innerHTML = html;
     }

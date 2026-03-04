@@ -8086,15 +8086,26 @@ def entity_coa_search_api(request, pk):
             cr = line.credit if line.credit else Decimal('0')
             tb_balances[code] = tb_balances.get(code, Decimal('0')) + (dr - cr)
 
+    # Map sections to P&L or B/S for the frontend
+    _PL_SECTIONS = {'revenue', 'cost_of_sales', 'expenses'}
+    _BS_SECTIONS = {'assets', 'liabilities', 'equity', 'capital_accounts'}
+
     items = []
     for a in qs[:200]:
         balance = tb_balances.get(a.account_code)
+        if a.section in _PL_SECTIONS:
+            stmt_type = 'P&L'
+        elif a.section in _BS_SECTIONS:
+            stmt_type = 'B/S'
+        else:
+            stmt_type = ''
         items.append({
             "id": str(a.pk),
             "code": a.account_code,
             "name": a.account_name,
             "section": a.get_section_display(),
             "section_value": a.section,
+            "stmt_type": stmt_type,
             "classification": a.classification or "",
             "tax_code": a.tax_code or "",
             "maps_to_id": str(a.maps_to.pk) if a.maps_to else "",

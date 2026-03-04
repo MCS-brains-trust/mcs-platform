@@ -454,14 +454,26 @@ def review_detail(request, pk):
                     cr = line.credit if line.credit else Decimal('0')
                     tb_balances[code] = tb_balances.get(code, Decimal('0')) + (dr - cr)
 
+    # Map sections to P&L or B/S
+    _PL_SECTIONS = {'Revenue', 'Cost of Sales', 'Expenses'}
+    _BS_SECTIONS = {'Assets', 'Liabilities', 'Equity', 'Capital Accounts'}
+
     accounts = []
     for a in coa_qs:
         balance = tb_balances.get(a.account_code)
+        section_display = a.get_section_display()
+        if section_display in _PL_SECTIONS:
+            stmt_type = 'P&L'
+        elif section_display in _BS_SECTIONS:
+            stmt_type = 'B/S'
+        else:
+            stmt_type = ''
         accounts.append({
             "code": a.account_code,
             "name": a.account_name,
-            "section": a.get_section_display(),
+            "section": section_display,
             "tax": a.tax_code,
+            "stmt_type": stmt_type,
             "tb_balance": str(balance.quantize(Decimal('0.01'))) if balance is not None else None,
         })
 
