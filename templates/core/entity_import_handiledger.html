@@ -6,7 +6,6 @@
     <ol class="breadcrumb">
         <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
         <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
-        <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
         <li class="breadcrumb-item active">Import HandiLedger</li>
     </ol>
 </nav>
@@ -37,6 +36,17 @@
                         <label class="form-label fw-semibold">HandiLedger ZIP File</label>
                         <input type="file" name="zip_file" class="form-control" accept=".zip" required>
                         <div class="form-text">Select the .zip file exported from HandiLedger / Access Ledger.</div>
+                    </div>
+                    <div class="mb-3 form-check">
+                        <input type="checkbox" class="form-check-input" name="import_as_finalised" value="1" id="finalisedCheck" checked>
+                        <label class="form-check-label fw-semibold" for="finalisedCheck">
+                            Import as full financial year (already finalised)
+                        </label>
+                        <div class="form-text">
+                            <i class="bi bi-info-circle"></i>
+                            When checked, all imported years will be marked as <strong>Finalised</strong> and ready to roll over immediately.
+                            Eva review will not be required. Use this for completed files being transferred from HandiLedger.
+                        </div>
                     </div>
                     <div class="mb-3 form-check">
                         <input type="checkbox" class="form-check-input" name="replace_existing" value="1" id="replaceCheck">

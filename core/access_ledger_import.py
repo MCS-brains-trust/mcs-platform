@@ -1040,7 +1040,7 @@ def _apply_auto_mappings(entity, chart_by_year):
 # =============================================================================
 
 @transaction.atomic
-def import_access_ledger_zip(zip_file, client=None, entity=None, replace_existing=False):
+def import_access_ledger_zip(zip_file, client=None, entity=None, replace_existing=False, import_as_finalised=False):
     """
     Import an Access Ledger ZIP export into StatementHub.
     Args:
@@ -1049,6 +1049,11 @@ def import_access_ledger_zip(zip_file, client=None, entity=None, replace_existin
         entity: Optional Entity instance to import data into directly.
         replace_existing: If True, delete existing data for this entity
                          before importing. If False, skip if entity exists.
+        import_as_finalised: If True, all imported years are set to
+                            'finalised' status with finalised_at timestamp,
+                            bypassing the Eva review pipeline. Use when
+                            importing completed files from HandiLedger that
+                            are already finalised and ready to roll over.
 
     Returns:
         dict with import results:
@@ -1201,9 +1206,18 @@ def import_access_ledger_zip(zip_file, client=None, entity=None, replace_existin
         # Unfinalised years are imported as "draft" so that partially-
         # completed clients being transferred from HandiLedger can be
         # continued in StatementHub.
-        is_finalised = (
+        is_finalised_in_hl = (
             len(year_row) > 4 and _safe_str(year_row[4]) == "Y"
         )
+
+        # If import_as_finalised is set, treat ALL years as finalised
+        # (bypasses Eva review — file is already complete and ready to
+        # roll over).
+        if import_as_finalised:
+            is_finalised = True
+        else:
+            is_finalised = is_finalised_in_hl
+
         fy_status = "finalised" if is_finalised else "draft"
         if not is_finalised:
             result["warnings"].append(
@@ -1211,16 +1225,24 @@ def import_access_ledger_zip(zip_file, client=None, entity=None, replace_existin
                 f"importing as Draft."
             )
 
+        # Build defaults for FinancialYear creation
+        fy_defaults = {
+            "start_date": start_date,
+            "end_date": end_date,
+            "prior_year": prior_fy,
+            "status": fy_status,
+        }
+        # Set finalised_at for years imported as finalised so they are
+        # immediately ready for roll-forward (no Eva review required).
+        if is_finalised:
+            from django.utils import timezone as _tz
+            fy_defaults["finalised_at"] = _tz.now()
+
         # Create FinancialYear
         fy, fy_created = FinancialYear.objects.get_or_create(
             entity=entity,
             year_label=str(year),
-            defaults={
-                "start_date": start_date,
-                "end_date": end_date,
-                "prior_year": prior_fy,
-                "status": fy_status,
-            },
+            defaults=fy_defaults,
         )
 
         if not fy_created:
@@ -1300,6 +1322,11 @@ def import_access_ledger_zip(zip_file, client=None, entity=None, replace_existin
             result["total_dep_assets"] += len(dep_objects)
             logger.info(f"  Year {year}: {len(dep_objects)} depreciation assets imported")
 
+        # Lock comparatives on finalised years (matches normal finalisation
+        # behaviour) so the year is immediately ready for roll-forward.
+        if is_finalised and tb_objects:
+            fy.trial_balance_lines.update(comparatives_locked=True)
+
         # --- Create account mappings ---
         for line_data in tb_lines:
             mapped_item = coa_mapping_cache.get(line_data["account_code"])
@@ -1328,6 +1355,10 @@ def import_access_ledger_zip(zip_file, client=None, entity=None, replace_existin
             result["warnings"].append(f"Auto-mapping failed: {str(e)}")
             result["auto_mapped"] = False
             logger.exception("Auto-mapping failed")
+
+    # Include the list of imported FinancialYear instances in the result
+    # so callers (e.g. views) can trigger risk recalc or other post-processing.
+    result["financial_years"] = list(fy_map.values())
 
     logger.info(
         f"Import complete: {result['years_imported']} years, "
