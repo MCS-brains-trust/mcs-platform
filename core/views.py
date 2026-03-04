@@ -9183,13 +9183,31 @@ def _run_ai_classification_background(fy_pk, entity_pk, entity_type, user_pk):
                     txn.ai_confidence = 5 if from_learning else confidence
                     txn.ai_suggested_tax_type = tax_type
 
+                    # Set gst_treatment from classification (enforced by account's tax_code)
+                    gst_treatment = result.get("gst_treatment", "")
+                    if gst_treatment:
+                        txn.gst_treatment = gst_treatment
+                    elif tax_type:
+                        # Derive gst_treatment from tax_type
+                        _TAX_TYPE_TO_TREATMENT = {
+                            "GST on Income": "taxable",
+                            "GST on Expenses": "taxable",
+                            "GST Free Income": "gst_free",
+                            "GST Free Expenses": "gst_free",
+                            "Input Taxed": "input_taxed",
+                            "BAS Excluded": "out_of_scope",
+                            "N-T": "out_of_scope",
+                        }
+                        txn.gst_treatment = _TAX_TYPE_TO_TREATMENT.get(tax_type, "")
+
                     # Calculate GST amounts
+                    abs_amount = abs(txn.amount)
                     if tax_type in ("GST on Income", "GST on Expenses"):
-                        txn.gst_amount = (txn.amount / Decimal("11")).quantize(Decimal("0.01"))
-                        txn.net_amount = txn.amount - txn.gst_amount
+                        txn.gst_amount = (abs_amount / Decimal("11")).quantize(Decimal("0.01"))
+                        txn.net_amount = (abs_amount - txn.gst_amount).quantize(Decimal("0.01"))
                     else:
                         txn.gst_amount = Decimal("0.00")
-                        txn.net_amount = txn.amount
+                        txn.net_amount = abs_amount
 
                     txn.save()
                     batch_classified += 1

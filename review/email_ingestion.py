@@ -156,8 +156,8 @@ def _get_chart_of_accounts_prompt(entity_type=None):
     lines.append("- Fuel (BP, Shell, Ampol, EG Group, 7-Eleven, United, Caltex) = Fuel & oil account, GST")
     lines.append("- Hardware (Bunnings, Total Tools) = Tools & equipment account, GST")
     lines.append("- Insurance = Insurance account, ITS")
-    lines.append("- ATO payments = PAYG/Tax Payable account, ITS")
-    lines.append("- Bank fees = Bank charges account, ITS (but NOT interest — interest is GST-Free)")
+    lines.append("- ATO/tax payments (PAYG, BAS, income tax) = Tax Payable account, N-T (balance sheet, no GST)")
+    lines.append("- Bank fees/charges = Bank charges account, GST-Free (bank fees are ALWAYS GST-Free)")
     lines.append("- Telco (Telstra, Optus, Vodafone) = Telephone account, GST")
     lines.append("- Internal transfers = Loan/Drawing account, N-T")
     lines.append("- Customer payments/deposits = Sales account, GST")
@@ -165,9 +165,12 @@ def _get_chart_of_accounts_prompt(entity_type=None):
     lines.append("- Interest paid/charged = Interest paid account, GST-Free (interest is ALWAYS GST-Free)")
     lines.append("- Rent/lease = Rent account, GST")
     lines.append("- Utilities (AGL, Origin, Energy Australia) = Electricity/gas account, GST")
-    lines.append("- Wages/salary = Wages account, ITS")
-    lines.append("- Super = Superannuation account, ITS")
+    lines.append("- Wages/salary = Wages account, N-T (no GST on wages)")
+    lines.append("- Super = Superannuation account, N-T (no GST on super)")
     lines.append("- Software (Microsoft, Google, Xero, MYOB) = Computer/IT account, GST")
+    lines.append("")
+    lines.append("CRITICAL: The tax code shown in parentheses after each account name in the chart above")
+    lines.append("is the CORRECT default GST treatment for that account. You MUST use it. Do NOT guess.")
     lines.append("")
     lines.append("TAX TYPE CODES:")
     lines.append("- GST = GST on Income (for income) or GST on Expenses (for expenses)")
@@ -267,7 +270,18 @@ def classify_transactions(transactions, entity=None, is_gst_registered=True):
                     "from_learning": False,
                 }
 
-    # Step 3: Post-classification enforcement — interest is ALWAYS GST-Free
+    # Step 3: Post-classification enforcement — override AI tax types with
+    # the account's programmed tax_code from ChartOfAccount.
+    # This ensures bank charges (FOA), tax payments (N-T), etc. are correct.
+    try:
+        _enforce_account_gst(
+            results, transactions, entity_type, is_gst_registered,
+            entity=entity,
+        )
+    except Exception as e:
+        logger.warning(f"Account GST enforcement error: {e}")
+
+    # Step 4: Post-classification enforcement — interest is ALWAYS GST-Free
     for i, result in enumerate(results):
         if result is None:
             continue
@@ -277,8 +291,10 @@ def classify_transactions(transactions, entity=None, is_gst_registered=True):
         if _is_interest_transaction(desc):
             if is_gst_registered:
                 result["tax_type"] = "GST Free Income" if is_income else "GST Free Expenses"
+                result["gst_treatment"] = "gst_free"
             else:
                 result["tax_type"] = "BAS Excluded"
+                result["gst_treatment"] = "out_of_scope"
 
     return results
 
@@ -306,6 +322,132 @@ def _is_interest_transaction(desc_upper):
         if _re.search(r'\bINTEREST\b', desc_upper):
             return True
     return False
+
+
+def _tax_code_to_tax_type(tax_code, amount, is_gst_registered):
+    """
+    Map a chart-of-accounts tax_code (e.g. GST, FRE, ITS, FOA, N-T)
+    to the legacy tax_type label used in PendingTransaction.
+
+    This is the authoritative mapping — it uses the account's programmed
+    GST treatment rather than the AI's guess.
+    """
+    if not is_gst_registered:
+        return "BAS Excluded"
+
+    tc = (tax_code or "").upper().strip()
+    is_income = float(amount) >= 0
+
+    mapping = {
+        "GST": "GST on Income" if is_income else "GST on Expenses",
+        "INP": "GST on Expenses",  # Input tax credits (expenses)
+        "CAP": "GST on Expenses",  # Capital acquisitions
+        "GNR": "GST on Income" if is_income else "GST on Expenses",
+        "ADS": "GST on Income" if is_income else "GST on Expenses",
+        "FRE": "GST Free Income" if is_income else "GST Free Expenses",
+        "FOA": "GST Free Expenses",  # GST-Free acquisitions
+        "FCA": "GST Free Expenses",  # GST-Free capital acquisitions
+        "ITS": "Input Taxed",
+        "IOA": "Input Taxed",
+        "N-T": "N-T",
+        "NT": "N-T",
+    }
+    return mapping.get(tc, None)  # None means no override
+
+
+def _tax_code_to_gst_treatment(tax_code):
+    """
+    Map a chart-of-accounts tax_code to the gst_treatment field value
+    used in PendingTransaction.GST_TREATMENT_CHOICES.
+    """
+    tc = (tax_code or "").upper().strip()
+    mapping = {
+        "GST": "taxable",
+        "INP": "taxable",
+        "CAP": "taxable",
+        "GNR": "taxable",
+        "ADS": "taxable",
+        "FRE": "gst_free",
+        "FOA": "gst_free",
+        "FCA": "gst_free",
+        "ITS": "input_taxed",
+        "IOA": "input_taxed",
+        "N-T": "out_of_scope",
+        "NT": "out_of_scope",
+    }
+    return mapping.get(tc, "")  # empty means no known treatment
+
+
+def _enforce_account_gst(results, transactions, entity_type, is_gst_registered,
+                         entity=None):
+    """
+    Post-classification enforcement: look up each classified account's
+    tax_code from ChartOfAccount and override the AI's tax type with
+    the account's programmed default.
+
+    This ensures that accounts like 'Bank fees & charges' (FOA = GST-Free)
+    and 'Tax Payable' (N-T) always get the correct GST treatment, regardless
+    of what the AI guessed.
+
+    Checks entity-specific EntityChartOfAccount first (if entity provided),
+    then falls back to the master ChartOfAccount template.
+    """
+    from core.models import ChartOfAccount
+
+    coa_tax_codes = {}
+
+    # First: check entity-specific chart (accountant may have customised tax codes)
+    if entity:
+        try:
+            from core.models import EntityChartOfAccount
+            for acct in EntityChartOfAccount.objects.filter(
+                entity=entity, is_active=True
+            ):
+                if acct.tax_code:
+                    coa_tax_codes[acct.account_code] = acct.tax_code
+        except Exception:
+            pass
+
+    # Second: fill gaps from master ChartOfAccount template
+    et = entity_type or "company"
+    for acct in ChartOfAccount.objects.filter(entity_type=et, is_active=True):
+        if acct.tax_code and acct.account_code not in coa_tax_codes:
+            coa_tax_codes[acct.account_code] = acct.tax_code
+
+    # If no entity-type-specific accounts found, try all
+    if not coa_tax_codes:
+        for acct in ChartOfAccount.objects.filter(is_active=True):
+            if acct.tax_code and acct.account_code not in coa_tax_codes:
+                coa_tax_codes[acct.account_code] = acct.tax_code
+
+    for i, result in enumerate(results):
+        if result is None:
+            continue
+
+        account_code = result.get("account_code", "")
+        if not account_code or account_code == "0000":
+            continue
+
+        # Look up the account's tax_code
+        tax_code = coa_tax_codes.get(account_code, "")
+        if not tax_code:
+            continue
+
+        amount = transactions[i].get("amount", 0)
+
+        # Override the AI's tax type with the account's programmed default
+        correct_tax_type = _tax_code_to_tax_type(
+            tax_code, amount, is_gst_registered
+        )
+        if correct_tax_type:
+            result["tax_type"] = correct_tax_type
+
+        # Also set gst_treatment for the PendingTransaction field
+        gst_treatment = _tax_code_to_gst_treatment(tax_code)
+        if gst_treatment:
+            result["gst_treatment"] = gst_treatment
+
+    return results
 
 
 def _normalise_description(desc):

@@ -1006,17 +1006,28 @@ function applyLiveMatches(matches, code, name, taxType) {
             taxSelect.classList.add('confirmed');
         }
 
-        // Update GST amounts
+        // Update GST amounts and treatment
         if (IS_GST_REGISTERED) {
             const gstCell = matchRow.querySelector('.gst-amount');
             const netCell = matchRow.querySelector('.net-amount');
             if (gstCell && match.gst_amount) gstCell.textContent = '$' + parseFloat(match.gst_amount).toFixed(2);
             if (netCell && match.net_amount) netCell.textContent = '$' + parseFloat(match.net_amount).toFixed(2);
 
-            // Auto-set GST treatment from the account's tax_code
-            const acct = ACCOUNTS.find(a => a.code === code);
-            if (acct && acct.tax) {
-                applyAccountGST(match.txn_id, acct.tax);
+            // Set GST treatment from the server response (already persisted)
+            if (match.gst_treatment) {
+                const gstSelect = document.getElementById('gst-treat-' + match.txn_id);
+                if (gstSelect) {
+                    gstSelect.value = match.gst_treatment;
+                    const credWrap = document.getElementById('cred-pct-wrap-' + match.txn_id);
+                    if (credWrap) credWrap.style.display = (match.gst_treatment === 'taxable') ? '' : 'none';
+                }
+                matchRow.dataset.gstTreatment = match.gst_treatment;
+            } else {
+                // Fallback: derive from account's tax_code
+                const acct = ACCOUNTS.find(a => a.code === code);
+                if (acct && acct.tax) {
+                    applyAccountGST(match.txn_id, acct.tax);
+                }
             }
         }
 
@@ -1765,24 +1776,45 @@ function updateTransactionRow(c) {
     if (acctInput && !acctInput.dataset.code) { acctInput.value = c.code + ' \u2014 ' + c.name; acctInput.dataset.code = c.code; acctInput.dataset.name = c.name; }
     if (taxSelect && !taxSelect.value && c.tax_type) taxSelect.value = c.tax_type;
 
-    // Auto-set GST treatment from the classified account's tax_code
-    const classifiedAcct = ACCOUNTS.find(a => a.code === c.code);
-    if (classifiedAcct && classifiedAcct.tax) {
-        const amount = row.dataset.amount || '0';
-        const mapped = taxCodeToTaxType(classifiedAcct.tax, amount);
-        if (mapped) {
-            // Set tax type dropdown if not already set
-            if (taxSelect && !taxSelect.value) {
-                taxSelect.value = mapped.tax;
-                taxSelect.classList.add('confirmed');
-            }
-            // Set GST treatment dropdown
-            if (IS_GST_REGISTERED) {
-                const gstSelect = document.getElementById('gst-treat-' + c.txn_id);
-                if (gstSelect && !gstSelect.value) {
-                    gstSelect.value = mapped.treat;
-                    const credWrap = document.getElementById('cred-pct-wrap-' + c.txn_id);
-                    if (credWrap) credWrap.style.display = (mapped.treat === 'taxable') ? '' : 'none';
+    // Set GST treatment from server-side classification (already enforced by account's tax_code)
+    if (c.gst_treatment && IS_GST_REGISTERED) {
+        const gstSelect = document.getElementById('gst-treat-' + c.txn_id);
+        if (gstSelect) {
+            gstSelect.value = c.gst_treatment;
+            const credWrap = document.getElementById('cred-pct-wrap-' + c.txn_id);
+            if (credWrap) credWrap.style.display = (c.gst_treatment === 'taxable') ? '' : 'none';
+        }
+        row.dataset.gstTreatment = c.gst_treatment;
+        // Set tax type dropdown from treatment if not already set
+        if (taxSelect && !taxSelect.value) {
+            const amount = row.dataset.amount || '0';
+            const treatmentToTaxType = {
+                'taxable': parseFloat(amount) >= 0 ? 'GST on Income' : 'GST on Expenses',
+                'gst_free': parseFloat(amount) >= 0 ? 'GST Free Income' : 'GST Free Expenses',
+                'input_taxed': 'Input Taxed',
+                'out_of_scope': 'BAS Excluded',
+            };
+            const derivedTax = treatmentToTaxType[c.gst_treatment];
+            if (derivedTax) { taxSelect.value = derivedTax; taxSelect.classList.add('confirmed'); }
+        }
+    } else {
+        // Fallback: derive from account's tax_code in chart of accounts
+        const classifiedAcct = ACCOUNTS.find(a => a.code === c.code);
+        if (classifiedAcct && classifiedAcct.tax) {
+            const amount = row.dataset.amount || '0';
+            const mapped = taxCodeToTaxType(classifiedAcct.tax, amount);
+            if (mapped) {
+                if (taxSelect && !taxSelect.value) {
+                    taxSelect.value = mapped.tax;
+                    taxSelect.classList.add('confirmed');
+                }
+                if (IS_GST_REGISTERED) {
+                    const gstSelect = document.getElementById('gst-treat-' + c.txn_id);
+                    if (gstSelect && !gstSelect.value) {
+                        gstSelect.value = mapped.treat;
+                        const credWrap = document.getElementById('cred-pct-wrap-' + c.txn_id);
+                        if (credWrap) credWrap.style.display = (mapped.treat === 'taxable') ? '' : 'none';
+                    }
                 }
             }
         }
