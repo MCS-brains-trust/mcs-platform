@@ -2222,6 +2222,7 @@
                             data-txn-id="${txnId}"
                             data-code="${item.code}"
                             data-name="${item.name}"
+                            data-tax="${item.tax_code || ''}"
                             data-section="${item.section}">
                             <code>${item.code}</code> ${item.name}${stmtType} ${tbBal}
                             <small class="text-muted d-block">${item.section}</small>
@@ -2244,6 +2245,7 @@
         const txnId = option.dataset.txnId;
         const code = option.dataset.code;
         const name = option.dataset.name;
+        const tax = option.dataset.tax || '';
 
         // Update the dropdown button text
         const btn = document.querySelector(`.review-coa-btn[data-txn-id="${txnId}"]`);
@@ -2254,6 +2256,23 @@
         if (form) {
             form.querySelector('.review-code-input').value = code;
             form.querySelector('.review-name-input').value = name;
+        }
+
+        // Auto-set GST treatment based on the account's tax code
+        if (tax) {
+            const _taxMap = {
+                'GST': true, 'INP': true, 'CAP': true, 'GNR': true, 'ADS': true,
+                'FRE': false, 'FOA': false, 'ITS': false, 'IOA': false, 'N-T': false,
+            };
+            const upperTax = tax.toUpperCase().trim();
+            const hasGst = _taxMap[upperTax];
+            if (hasGst !== undefined) {
+                const gstToggle = document.querySelector(`.gst-toggle[data-txn-id="${txnId}"]`);
+                if (gstToggle && gstToggle.checked !== hasGst) {
+                    gstToggle.checked = hasGst;
+                    gstToggle.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            }
         }
 
         // Close the dropdown
