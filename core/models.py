@@ -1199,6 +1199,13 @@ class DepreciationAsset(models.Model):
         max_digits=15, decimal_places=2, default=0,
     )
     display_order = models.IntegerField(default=0)
+    source_transaction = models.ForeignKey(
+        'review.PendingTransaction',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='depreciation_assets',
+        help_text="Bank statement transaction this asset was created from",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

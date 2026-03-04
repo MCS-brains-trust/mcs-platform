@@ -734,13 +734,14 @@
                         <th class="text-end" style="width: 100px;">Additions</th>
                         <th class="text-end" style="width: 110px;">Depreciation</th>
                         <th class="text-end" style="width: 110px;">Closing WDV</th>
+                        <th class="text-center" style="width: 60px;">Source</th>
                         <th style="width: 80px;"></th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for cat_name, assets in dep_categories.items %}
                     <tr>
-                        <td colspan="8" class="pt-3 pb-1 border-0">
+                        <td colspan="9" class="pt-3 pb-1 border-0">
                             <strong class="text-dark">{{ cat_name }}</strong>
                         </td>
                     </tr>
@@ -757,6 +758,15 @@
                         <td class="text-end">{% if asset.addition_cost > 0 %}${{ asset.addition_cost|floatformat:2|intcomma }}{% endif %}</td>
                         <td class="text-end">${{ asset.depreciation_amount|floatformat:2|intcomma }}</td>
                         <td class="text-end">${{ asset.closing_wdv|floatformat:2|intcomma }}</td>
+                        <td class="text-center">
+                            {% if asset.source_transaction %}
+                            <span class="badge bg-warning text-dark" style="font-size: 0.65rem;" title="From bank statement: {{ asset.source_transaction.description|truncatechars:50 }}">
+                                <i class="bi bi-bank"></i>
+                            </span>
+                            {% else %}
+                            <span class="text-muted" style="font-size: 0.7rem;">&mdash;</span>
+                            {% endif %}
+                        </td>
                         <td>
                             <form method="post" action="{% url 'core:depreciation_delete' pk=asset.pk %}" class="d-inline"
                                   onsubmit="return confirm('Delete asset {{ asset.asset_name }}?');">
@@ -777,6 +787,7 @@
                         <td></td>
                         <td class="text-end">${{ dep_total_depreciation|floatformat:2|intcomma }}</td>
                         <td class="text-end">${{ dep_total_closing|floatformat:2|intcomma }}</td>
+                        <td></td>
                         <td></td>
                     </tr>
                 </tfoot>
