@@ -846,3 +846,173 @@ def _build_pdf_page(entity, abn, period_label, period_str, bas, detail_rows, fmt
 
 {f'<h2>Detail Breakdown</h2><table><tr><th>Code</th><th>Account Name</th><th>Tax Code</th><th class="r">Amount</th><th>BAS Label</th></tr>{detail_html}</table>' if detail_rows else ''}
 </div>"""
+
+
+# ── BAS Transaction Reallocation ────────────────────────────────────────────
+
+@login_required
+@require_POST
+def bas_reallocate_transaction(request, pk):
+    """
+    Reallocate a single confirmed PendingTransaction to a different
+    account code and/or tax type.  Called via AJAX from the BAS detail tabs.
+
+    POST body (JSON):
+        txn_id:     UUID of the PendingTransaction
+        account_code: New account code
+        account_name: New account name
+        tax_type:   New tax type (e.g. "GST on Expenses", "N-T")
+    """
+    import json
+    from review.models import PendingTransaction
+
+    fy = get_financial_year_for_user(request, pk)
+    entity = fy.entity
+
+    if not request.user.can_do_accounting:
+        return JsonResponse({"ok": False, "error": "Permission denied."}, status=403)
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({"ok": False, "error": "Invalid JSON."}, status=400)
+
+    txn_id = data.get("txn_id")
+    new_code = (data.get("account_code") or "").strip()
+    new_name = (data.get("account_name") or "").strip()
+    new_tax = (data.get("tax_type") or "").strip()
+
+    if not txn_id:
+        return JsonResponse({"ok": False, "error": "txn_id is required."}, status=400)
+    if not new_code:
+        return JsonResponse({"ok": False, "error": "account_code is required."}, status=400)
+
+    try:
+        txn = PendingTransaction.objects.get(pk=txn_id, job__entity=entity)
+    except PendingTransaction.DoesNotExist:
+        return JsonResponse({"ok": False, "error": "Transaction not found."}, status=404)
+
+    old_code = txn.confirmed_code or txn.ai_suggested_code
+    old_name = txn.confirmed_name or txn.ai_suggested_name
+    old_tax = txn.confirmed_tax_type or txn.ai_suggested_tax_type
+
+    # Update the confirmed fields
+    txn.confirmed_code = new_code
+    txn.confirmed_name = new_name or new_code
+    if new_tax:
+        txn.confirmed_tax_type = new_tax
+        # Recalculate GST based on new tax type
+        txn.calculate_gst(tax_type=new_tax, is_gst_registered=entity.is_gst_registered)
+        txn.confirmed_gst_amount = txn.gst_amount
+    txn.is_confirmed = True
+    txn.save()
+
+    _log_action(
+        request, "bas_reallocate",
+        f"Reallocated transaction {txn.description[:60]} from "
+        f"{old_code}/{old_tax} to {new_code}/{new_tax} "
+        f"(entity: {entity.entity_name}, FY: {fy.year_label})",
+        txn,
+    )
+
+    return JsonResponse({
+        "ok": True,
+        "txn_id": str(txn.id),
+        "account_code": txn.confirmed_code,
+        "account_name": txn.confirmed_name,
+        "tax_type": txn.confirmed_tax_type,
+        "gst_amount": str(txn.gst_amount),
+        "net_amount": str(txn.net_amount),
+    })
+
+
+@login_required
+@require_POST
+def bas_bulk_reallocate(request, pk):
+    """
+    Bulk-reallocate multiple confirmed PendingTransactions to a new
+    account code and/or tax type.  Called via AJAX from the BAS detail tabs.
+
+    POST body (JSON):
+        txn_ids:      List of PendingTransaction UUIDs
+        account_code: New account code
+        account_name: New account name
+        tax_type:     New tax type
+    """
+    import json
+    from review.models import PendingTransaction
+
+    fy = get_financial_year_for_user(request, pk)
+    entity = fy.entity
+
+    if not request.user.can_do_accounting:
+        return JsonResponse({"ok": False, "error": "Permission denied."}, status=403)
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({"ok": False, "error": "Invalid JSON."}, status=400)
+
+    txn_ids = data.get("txn_ids", [])
+    new_code = (data.get("account_code") or "").strip()
+    new_name = (data.get("account_name") or "").strip()
+    new_tax = (data.get("tax_type") or "").strip()
+
+    if not txn_ids:
+        return JsonResponse({"ok": False, "error": "txn_ids is required."}, status=400)
+    if not new_code:
+        return JsonResponse({"ok": False, "error": "account_code is required."}, status=400)
+
+    txns = PendingTransaction.objects.filter(pk__in=txn_ids, job__entity=entity)
+    count = txns.count()
+    if count == 0:
+        return JsonResponse({"ok": False, "error": "No matching transactions found."}, status=404)
+
+    updated = []
+    for txn in txns:
+        txn.confirmed_code = new_code
+        txn.confirmed_name = new_name or new_code
+        if new_tax:
+            txn.confirmed_tax_type = new_tax
+            txn.calculate_gst(tax_type=new_tax, is_gst_registered=entity.is_gst_registered)
+            txn.confirmed_gst_amount = txn.gst_amount
+        txn.is_confirmed = True
+        txn.save()
+        updated.append(str(txn.id))
+
+    _log_action(
+        request, "bas_bulk_reallocate",
+        f"Bulk-reallocated {count} transactions to {new_code}/{new_tax} "
+        f"(entity: {entity.entity_name}, FY: {fy.year_label})",
+    )
+
+    return JsonResponse({
+        "ok": True,
+        "updated_count": count,
+        "updated_ids": updated,
+    })
+
+
+@login_required
+def bas_entity_accounts_json(request, pk):
+    """
+    Return the entity's chart of accounts as JSON for the account picker
+    in the BAS reallocation UI.
+    """
+    fy = get_financial_year_for_user(request, pk)
+    entity = fy.entity
+
+    accounts = EntityChartOfAccount.objects.filter(
+        entity=entity, is_active=True
+    ).order_by("section", "account_code")
+
+    data = [
+        {
+            "code": a.account_code,
+            "name": a.account_name,
+            "section": a.section,
+            "tax_code": a.tax_code or "",
+        }
+        for a in accounts
+    ]
+    return JsonResponse({"accounts": data})
