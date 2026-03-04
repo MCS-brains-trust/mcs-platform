@@ -7689,6 +7689,17 @@ def review_bulk_edit_transactions(request, pk):
             gst_amount = Decimal('0.00')
             net_amount = abs_amount
 
+        # Auto-set gst_treatment based on the account's tax_code
+        TAX_CODE_TO_GST_TREATMENT = {
+            'GST': 'gst', 'INP': 'gst', 'CAP': 'gst', 'GNR': 'gst', 'ADS': 'gst',
+            'FRE': 'gst_free', 'FOA': 'gst_free',
+            'ITS': 'input_taxed', 'IOA': 'input_taxed',
+            'N-T': 'out_of_scope',
+        }
+        gst_treatment = TAX_CODE_TO_GST_TREATMENT.get(tax_code.upper(), '') if tax_code else ''
+        if gst_treatment:
+            txn.gst_treatment = gst_treatment
+
         # Update the AI suggestion fields so the row displays correctly
         txn.ai_suggested_code = account_code
         txn.ai_suggested_name = account_name

@@ -1597,6 +1597,8 @@ function bulkEditAssign() {
                         const ni = form.querySelector('.review-name-input'); if (ni) ni.value = name;
                         const ti = form.querySelector('.review-tax-input'); if (ti) ti.value = tax;
                     }
+                    // Auto-set GST treatment based on the account's tax code
+                    if (IS_GST_REGISTERED && tax) _applyGstTreatmentForAccount(id, tax);
                 }
             });
             // Close dropdown
@@ -1866,10 +1868,37 @@ function bulkUnconfirmSelected() {
         const bsDropdown = bootstrap.Dropdown.getInstance(btn);
         if (bsDropdown) bsDropdown.hide();
 
+        // Auto-set GST treatment based on the account's tax code
+        if (IS_GST_REGISTERED && tax) _applyGstTreatmentForAccount(txnId, tax);
+
         // Re-run apportionment detection with new account code
         if (IS_GST_REGISTERED) detectApportionmentForRow(txnId);
     });
 })();
+
+// ===== Auto-set GST treatment from account tax code =====
+function _taxCodeToGstTreatment(taxCode) {
+    // Map EntityChartOfAccount.tax_code to the GST treatment select value
+    const code = (taxCode || '').toUpperCase().trim();
+    const map = {
+        'GST': 'gst', 'INP': 'gst', 'CAP': 'gst', 'GNR': 'gst', 'ADS': 'gst',
+        'FRE': 'gst_free', 'FOA': 'gst_free',
+        'ITS': 'input_taxed', 'IOA': 'input_taxed',
+        'N-T': 'out_of_scope',
+    };
+    return map[code] || '';
+}
+
+function _applyGstTreatmentForAccount(txnId, taxCode) {
+    // Auto-set the GST treatment dropdown when an account is assigned
+    const treatment = _taxCodeToGstTreatment(taxCode);
+    if (!treatment) return;
+    const select = document.querySelector('.gst-treatment-select[data-txn-id="' + txnId + '"]');
+    if (select && select.value !== treatment) {
+        select.value = treatment;
+        updateGstTreatment(select);
+    }
+}
 
 // ===== Bank Account Mapping Functions =====
 function toggleBankMappingForm() {
