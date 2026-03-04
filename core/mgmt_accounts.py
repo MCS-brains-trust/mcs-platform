@@ -73,7 +73,7 @@ def detect_tb_source(entity):
         from review.models import PendingTransaction
         has_bank_data = PendingTransaction.objects.filter(
             review_job__entity=entity,
-            status='approved',
+            is_confirmed=True,
         ).exists()
         if has_bank_data:
             return 'BANK_DERIVED'
