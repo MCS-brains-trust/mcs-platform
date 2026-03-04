@@ -4,7 +4,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('review', '0006_enhanced_review_workflow'),
+        ('review', '0007_merge_0006_0007_alter'),
     ]
 
     operations = [

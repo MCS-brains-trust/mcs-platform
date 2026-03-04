@@ -20,7 +20,7 @@ def reverse_backfill(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('review', '0007_pendingtransaction_posted_to_tb'),
+        ('review', '0008_pendingtransaction_posted_to_tb'),
     ]
 
     operations = [
