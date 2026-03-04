@@ -1092,6 +1092,7 @@ def _parse_excel_bank_statement(content, filename):
 
     Supports:
     1. StatementHub template format (metadata in rows 1-4, headers in row 6)
+       Uses a single Amount column (negative = withdrawal, positive = deposit)
     2. Common Australian bank CSV exports including ANZ, NAB
     3. Generic formats with Date/Amount/Description or Debit/Credit columns
     """
@@ -1104,7 +1105,7 @@ def _parse_excel_bank_statement(content, filename):
     try:
         # ── First, try to detect StatementHub template format ─────────
         # Template has metadata in rows 1-4 (Opening Balance, Closing Balance, BSB, Account Number)
-        # and column headers in row 6 (Date, Description, Debit, Credit, Balance)
+        # and column headers in row 6 (Date, Description, Amount, Balance)
         is_template_format = False
         meta_opening = 0
         meta_closing = 0
