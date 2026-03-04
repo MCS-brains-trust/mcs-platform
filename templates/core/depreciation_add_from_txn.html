@@ -127,6 +127,67 @@
                     <input type="number" name="disposal_consideration" class="form-control" step="0.01" value="0">
                 </div>
             </div>
+
+            <!-- Account Mapping Section -->
+            <hr class="my-4">
+            <h6 class="fw-semibold mb-3">
+                <i class="bi bi-journal-text me-1"></i> Journal Posting Accounts
+                <small class="text-muted fw-normal ms-2">Auto-detected &mdash; override if needed</small>
+            </h6>
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Asset Account (Balance Sheet)</label>
+                    <select name="asset_account_code" class="form-select" id="assetAccountSelect">
+                        <option value="">-- Not set --</option>
+                        {% for code, name in all_asset_accounts %}
+                        <option value="{{ code }}" data-name="{{ name }}"{% if code == prefill.asset_account_code %} selected{% endif %}>
+                            {{ code }} &mdash; {{ name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <input type="hidden" name="asset_account_name" id="assetAccountName" value="{{ prefill.asset_account_name }}">
+                    <small class="text-muted">The account where this asset sits on the balance sheet</small>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Accumulated Depreciation Account</label>
+                    <select name="accum_dep_code" class="form-select" id="accumDepSelect">
+                        <option value="">-- Not set --</option>
+                        {% for code, name in all_asset_accounts %}
+                        <option value="{{ code }}" data-name="{{ name }}"{% if code == prefill.accum_dep_code %} selected{% endif %}>
+                            {{ code }} &mdash; {{ name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <input type="hidden" name="accum_dep_name" id="accumDepName" value="{{ prefill.accum_dep_name }}">
+                    <small class="text-muted">
+                        The "Less: Accumulated depreciation" account paired with the asset
+                        {% if prefill.accum_dep_code %}
+                        &mdash; <span class="text-success">auto-detected: {{ prefill.accum_dep_code }}</span>
+                        {% else %}
+                        &mdash; <span class="text-warning">could not auto-detect, please select</span>
+                        {% endif %}
+                    </small>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Depreciation Expense Account</label>
+                    <select name="dep_expense_code" class="form-select" id="depExpenseSelect">
+                        <option value="">-- Not set --</option>
+                        {% for code, name in all_expense_accounts %}
+                        <option value="{{ code }}" data-name="{{ name }}"{% if code == prefill.dep_expense_code %} selected{% endif %}>
+                            {{ code }} &mdash; {{ name }}
+                        </option>
+                        {% endfor %}
+                    </select>
+                    <input type="hidden" name="dep_expense_name" id="depExpenseName" value="{{ prefill.dep_expense_name }}">
+                    <small class="text-muted">
+                        The P&L expense account to debit
+                        {% if prefill.dep_expense_code %}
+                        &mdash; <span class="text-success">auto-detected: {{ prefill.dep_expense_code }}</span>
+                        {% endif %}
+                    </small>
+                </div>
+            </div>
+
             <div class="mt-4 d-flex justify-content-between">
                 <button type="button" class="btn btn-outline-secondary" onclick="window.close();">
                     <i class="bi bi-x-lg"></i> Cancel
@@ -138,4 +199,20 @@
         </form>
     </div>
 </div>
+
+<script>
+// Sync hidden name fields when select changes
+document.getElementById('assetAccountSelect').addEventListener('change', function() {
+    const opt = this.options[this.selectedIndex];
+    document.getElementById('assetAccountName').value = opt.dataset.name || '';
+});
+document.getElementById('accumDepSelect').addEventListener('change', function() {
+    const opt = this.options[this.selectedIndex];
+    document.getElementById('accumDepName').value = opt.dataset.name || '';
+});
+document.getElementById('depExpenseSelect').addEventListener('change', function() {
+    const opt = this.options[this.selectedIndex];
+    document.getElementById('depExpenseName').value = opt.dataset.name || '';
+});
+</script>
 {% endblock %}

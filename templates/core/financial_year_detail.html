@@ -1346,6 +1346,42 @@
                             <label class="form-label fw-semibold">Disposal Consideration ($)</label>
                             <input type="number" name="disposal_consideration" class="form-control" step="0.01" value="0">
                         </div>
+
+                        <!-- Account Mapping -->
+                        <div class="col-12 mt-3">
+                            <hr class="my-2">
+                            <small class="text-muted fw-semibold"><i class="bi bi-journal-text me-1"></i> Journal Posting Accounts (optional &mdash; used when posting to TB)</small>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold" style="font-size:0.85rem;">Asset Account</label>
+                            <select name="asset_account_code" class="form-select form-select-sm" id="modalAssetAcctSelect">
+                                <option value="">-- Auto-detect --</option>
+                                {% for code, name in dep_asset_accounts %}
+                                <option value="{{ code }}" data-name="{{ name }}">{{ code }} &mdash; {{ name }}</option>
+                                {% endfor %}
+                            </select>
+                            <input type="hidden" name="asset_account_name" id="modalAssetAcctName" value="">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold" style="font-size:0.85rem;">Accum. Depreciation Account</label>
+                            <select name="accum_dep_code" class="form-select form-select-sm" id="modalAccumDepSelect">
+                                <option value="">-- Auto-detect --</option>
+                                {% for code, name in dep_asset_accounts %}
+                                <option value="{{ code }}" data-name="{{ name }}">{{ code }} &mdash; {{ name }}</option>
+                                {% endfor %}
+                            </select>
+                            <input type="hidden" name="accum_dep_name" id="modalAccumDepName" value="">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold" style="font-size:0.85rem;">Depreciation Expense Account</label>
+                            <select name="dep_expense_code" class="form-select form-select-sm" id="modalDepExpSelect">
+                                <option value="">-- Auto-detect --</option>
+                                {% for code, name in dep_expense_accounts %}
+                                <option value="{{ code }}" data-name="{{ name }}">{{ code }} &mdash; {{ name }}</option>
+                                {% endfor %}
+                            </select>
+                            <input type="hidden" name="dep_expense_name" id="modalDepExpName" value="">
+                        </div>
                     </div>
                 </div>
                 <div class="modal-footer">
@@ -1358,6 +1394,18 @@
         </div>
     </div>
 </div>
+<script>
+// Sync hidden name fields for Add Asset modal selects
+document.getElementById('modalAssetAcctSelect')?.addEventListener('change', function() {
+    document.getElementById('modalAssetAcctName').value = this.options[this.selectedIndex].dataset.name || '';
+});
+document.getElementById('modalAccumDepSelect')?.addEventListener('change', function() {
+    document.getElementById('modalAccumDepName').value = this.options[this.selectedIndex].dataset.name || '';
+});
+document.getElementById('modalDepExpSelect')?.addEventListener('change', function() {
+    document.getElementById('modalDepExpName').value = this.options[this.selectedIndex].dataset.name || '';
+});
+</script>
 
 <!-- ===== ADD STOCK MODAL ===== -->
 <div class="modal fade" id="addStockModal" tabindex="-1">
