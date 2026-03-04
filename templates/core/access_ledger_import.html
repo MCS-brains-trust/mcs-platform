@@ -109,6 +109,19 @@
                     </div>
                     <div class="mb-3">
                         <div class="form-check">
+                            <input type="checkbox" name="import_as_finalised" id="id_finalised" class="form-check-input" value="1" checked>
+                            <label for="id_finalised" class="form-check-label fw-semibold">
+                                Import as full financial year (already finalised)
+                            </label>
+                            <div class="form-text">
+                                <i class="bi bi-info-circle"></i>
+                                When checked, all imported years will be marked as <strong>Finalised</strong> and ready to roll over immediately.
+                                Eva review will not be required. Use this for completed files being transferred from HandiLedger.
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mb-3">
+                        <div class="form-check">
                             <input type="checkbox" name="replace_existing" id="id_replace" class="form-check-input" value="1">
                             <label for="id_replace" class="form-check-label">
                                 Replace existing data if entity already exists

@@ -4599,10 +4599,12 @@ def access_ledger_import(request):
             messages.error(request, "File must be a .zip file.")
         else:
             replace = request.POST.get("replace_existing") == "1"
+            import_finalised = request.POST.get("import_as_finalised") == "1"
             try:
                 result = import_access_ledger_zip(
                     zip_file,
                     replace_existing=replace,
+                    import_as_finalised=import_finalised,
                 )
                 if result["errors"]:
                     messages.warning(
@@ -4610,17 +4612,20 @@ def access_ledger_import(request):
                         f"Import completed with {len(result['errors'])} error(s)."
                     )
                 else:
+                    status_note = " (all years finalised — ready to roll over)" if import_finalised else ""
                     messages.success(
                         request,
                         f"Successfully imported {result['entity'].entity_name}: "
                         f"{result['years_imported']} years, "
                         f"{result['total_tb_lines']} TB lines, "
                         f"{result['total_dep_assets']} depreciation assets."
+                        f"{status_note}"
                     )
                 _log_action(
                     request, "import",
                     f"Imported Access Ledger ZIP: {zip_file.name} "
-                    f"({result['years_imported']} years)",
+                    f"({result['years_imported']} years)"
+                    f"{' (import as finalised)' if import_finalised else ''}",
                     result.get("entity"),
                 )
                 # Auto-trigger risk engine for all imported years
@@ -7893,12 +7898,14 @@ def entity_import_handiledger(request, pk):
             messages.error(request, "File must be a .zip file.")
         else:
             replace = request.POST.get("replace_existing") == "1"
+            import_finalised = request.POST.get("import_as_finalised") == "1"
             try:
                 result = import_access_ledger_zip(
                     zip_file,
                     client=entity.client if entity.client else None,
                     entity=entity,
                     replace_existing=replace,
+                    import_as_finalised=import_finalised,
                 )
                 if result["errors"]:
                     messages.warning(
@@ -7906,12 +7913,14 @@ def entity_import_handiledger(request, pk):
                         f"Import completed with {len(result['errors'])} error(s)."
                     )
                 else:
+                    status_note = " (all years finalised — ready to roll over)" if import_finalised else ""
                     messages.success(
                         request,
                         f"Successfully imported: "
                         f"{result['years_imported']} years, "
                         f"{result['total_tb_lines']} TB lines, "
                         f"{result['total_dep_assets']} depreciation assets."
+                        f"{status_note}"
                     )
                 if result.get("warnings"):
                     for w in result["warnings"]:
@@ -7919,7 +7928,8 @@ def entity_import_handiledger(request, pk):
                 _log_action(
                     request, "import",
                     f"Imported HandiLedger ZIP for {entity.entity_name}: "
-                    f"{result['years_imported']} years",
+                    f"{result['years_imported']} years"
+                    f"{' (import as finalised)' if import_finalised else ''}",
                     entity,
                 )
             except Exception as e:
