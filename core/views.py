@@ -430,6 +430,10 @@ def _post_txn_to_tb(txn, fy, has_gst):
 
     Returns True if the TB was updated, False otherwise.
     """
+    # Guard: skip if already posted to prevent double-posting
+    if getattr(txn, 'posted_to_tb', False):
+        return False
+
     amount = txn.amount
     code = txn.confirmed_code
     name = txn.confirmed_name
@@ -510,6 +514,10 @@ def _post_txn_to_tb(txn, fy, has_gst):
     # --- 3. ALWAYS post the bank contra-entry (gross amount) ---
     bank_mapping = _get_bank_mapping_for_txn(txn)
     _post_bank_contra_entry(txn, fy, bank_mapping, has_gst)
+
+    # Mark as posted to prevent double-posting
+    txn.posted_to_tb = True
+    txn.save(update_fields=['posted_to_tb'])
 
     return True
 
@@ -6749,6 +6757,7 @@ def review_unconfirm_transaction(request, pk):
         txn.confirmed_name = ''
         txn.confirmed_tax_type = ''
         txn.confirmed_gst_amount = Decimal("0.00")
+        txn.posted_to_tb = False
         txn.save()
 
         # Return remaining counts
@@ -7622,6 +7631,11 @@ def _reverse_tb_for_transaction(txn, fy):
 
     # Reverse the bank contra-entry
     _reverse_bank_contra_entry(txn, fy)
+
+    # Reset the posted_to_tb flag so the transaction can be re-posted
+    if hasattr(txn, 'posted_to_tb'):
+        txn.posted_to_tb = False
+        txn.save(update_fields=['posted_to_tb'])
 
 
 # ---------------------------------------------------------------------------
