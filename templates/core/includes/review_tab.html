@@ -632,27 +632,65 @@
         </div>
     </div>
 </div>
+{# --- Confirmed Search Toolbar --- #}
+{% if confirmed_review %}
+<div class="card border-0 bg-light mb-2">
+    <div class="card-body py-2 px-3">
+        <div class="row g-2 align-items-center">
+            <div class="col-md-8">
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+                    <input type="text" class="form-control" id="confirmedSearchBox"
+                           placeholder="Search descriptions, amounts, codes, accounts..."
+                           oninput="applyConfirmedSearch()">
+                    <button class="btn btn-outline-secondary d-none" type="button" id="confirmedSearchClearBtn" onclick="clearConfirmedSearch()">
+                        <i class="bi bi-x-lg"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="col-md-4 text-end">
+                <span id="confirmedFilterCount" class="text-muted" style="font-size: 0.78rem;"></span>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
 <div class="table-responsive">
     <table class="table table-sm" style="font-size: 0.85rem;" id="confirmedTable">
         <thead class="table-success">
             <tr>
                 <th style="width:35px;"><input type="checkbox" id="confirmedSelectAll" onclick="toggleConfirmedSelectAll(this)" title="Select all"></th>
-                <th style="width:90px;">Date</th>
-                <th>Description</th>
-                <th class="text-end" style="width:110px;">Amount</th>
+                <th style="width:90px; cursor:pointer; user-select:none;" onclick="sortConfirmedTable('date')">
+                    Date <i class="bi bi-arrow-down-up text-muted" style="font-size:0.7rem;" id="confirmed-sort-icon-date"></i>
+                </th>
+                <th style="cursor:pointer; user-select:none;" onclick="sortConfirmedTable('description')">
+                    Description <i class="bi bi-arrow-down-up text-muted" style="font-size:0.7rem;" id="confirmed-sort-icon-description"></i>
+                </th>
+                <th class="text-end" style="width:110px; cursor:pointer; user-select:none;" onclick="sortConfirmedTable('amount')">
+                    Amount <i class="bi bi-arrow-down-up text-muted" style="font-size:0.7rem;" id="confirmed-sort-icon-amount"></i>
+                </th>
                 <th class="text-center" style="width:55px;">GST</th>
                 <th class="text-end" style="width:60px;">Cred.%</th>
                 <th class="text-end" style="width:90px;">GST Amt</th>
                 <th class="text-end" style="width:90px;">Net Amt</th>
-                <th style="width:80px;">Code</th>
-                <th>Account</th>
+                <th style="width:80px; cursor:pointer; user-select:none;" onclick="sortConfirmedTable('code')">
+                    Code <i class="bi bi-arrow-down-up text-muted" style="font-size:0.7rem;" id="confirmed-sort-icon-code"></i>
+                </th>
+                <th style="cursor:pointer; user-select:none;" onclick="sortConfirmedTable('account')">
+                    Account <i class="bi bi-arrow-down-up text-muted" style="font-size:0.7rem;" id="confirmed-sort-icon-account"></i>
+                </th>
                 <th>Tax Type</th>
                 <th style="width:60px;">Action</th>
             </tr>
         </thead>
         <tbody id="confirmedTableBody">
             {% for txn in confirmed_review %}
-            <tr id="confirmed-row-{{ txn.pk }}">
+            <tr id="confirmed-row-{{ txn.pk }}"
+                data-description="{{ txn.description }}"
+                data-amount="{{ txn.amount }}"
+                data-date="{{ txn.date }}"
+                data-code="{{ txn.confirmed_code }}"
+                data-account="{{ txn.confirmed_name }}">
                 <td><input type="checkbox" class="confirmed-checkbox" value="{{ txn.pk }}" data-unconfirm-url="{% url 'core:review_unconfirm_transaction' pk=txn.pk %}" onclick="updateConfirmedSelection()"></td>
                 <td>{{ txn.date }}</td>
                 <td>{{ txn.description|truncatewords:8 }}</td>
