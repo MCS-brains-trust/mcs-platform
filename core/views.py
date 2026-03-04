@@ -1360,6 +1360,16 @@ def financial_year_detail(request, pk):
         "dep_total_opening": dep_total_opening,
         "dep_total_depreciation": dep_total_depreciation,
         "dep_total_closing": dep_total_closing,
+        "dep_asset_accounts": list(
+            EntityChartOfAccount.objects.filter(
+                entity=fy.entity, is_active=True, section="assets",
+            ).order_by("account_code").values_list("account_code", "account_name")
+        ),
+        "dep_expense_accounts": list(
+            EntityChartOfAccount.objects.filter(
+                entity=fy.entity, is_active=True, section="expenses",
+            ).order_by("account_code").values_list("account_code", "account_name")
+        ),
         # Stock
         "stock_items": stock_items,
         "stock_total_opening": stock_total_opening,
@@ -6093,6 +6103,12 @@ def depreciation_add(request, pk):
             addition_date=request.POST.get("addition_date") or None,
             disposal_date=request.POST.get("disposal_date") or None,
             disposal_consideration=Decimal(request.POST.get("disposal_consideration", "0") or "0"),
+            asset_account_code=request.POST.get("asset_account_code", "").strip(),
+            asset_account_name=request.POST.get("asset_account_name", "").strip(),
+            accum_dep_code=request.POST.get("accum_dep_code", "").strip(),
+            accum_dep_name=request.POST.get("accum_dep_name", "").strip(),
+            dep_expense_code=request.POST.get("dep_expense_code", "").strip(),
+            dep_expense_name=request.POST.get("dep_expense_name", "").strip(),
         )
     except (InvalidOperation, ValueError):
         messages.error(request, "Invalid numeric value provided.")
@@ -6130,6 +6146,16 @@ def depreciation_edit(request, pk):
         asset.addition_date = request.POST.get("addition_date") or None
         asset.disposal_date = request.POST.get("disposal_date") or None
         asset.disposal_consideration = Decimal(request.POST.get("disposal_consideration", "0") or "0")
+        # Account mapping fields
+        if request.POST.get("asset_account_code"):
+            asset.asset_account_code = request.POST.get("asset_account_code", "").strip()
+            asset.asset_account_name = request.POST.get("asset_account_name", "").strip()
+        if request.POST.get("accum_dep_code"):
+            asset.accum_dep_code = request.POST.get("accum_dep_code", "").strip()
+            asset.accum_dep_name = request.POST.get("accum_dep_name", "").strip()
+        if request.POST.get("dep_expense_code"):
+            asset.dep_expense_code = request.POST.get("dep_expense_code", "").strip()
+            asset.dep_expense_name = request.POST.get("dep_expense_name", "").strip()
     except (InvalidOperation, ValueError):
         messages.error(request, "Invalid numeric value provided.")
         return redirect("core:financial_year_detail", pk=fy_pk)
@@ -6299,6 +6325,12 @@ def depreciation_add_from_transaction(request, pk):
                 disposal_date=request.POST.get("disposal_date") or None,
                 disposal_consideration=Decimal(request.POST.get("disposal_consideration", "0") or "0"),
                 source_transaction=txn,
+                asset_account_code=request.POST.get("asset_account_code", "").strip(),
+                asset_account_name=request.POST.get("asset_account_name", "").strip(),
+                accum_dep_code=request.POST.get("accum_dep_code", "").strip(),
+                accum_dep_name=request.POST.get("accum_dep_name", "").strip(),
+                dep_expense_code=request.POST.get("dep_expense_code", "").strip(),
+                dep_expense_name=request.POST.get("dep_expense_name", "").strip(),
             )
         except (InvalidOperation, ValueError):
             messages.error(request, "Invalid numeric value provided.")
@@ -6330,6 +6362,72 @@ def depreciation_add_from_transaction(request, pk):
     elif "leasehold" in name_lower or "improvement" in name_lower:
         category_guess = "Leasehold Improvements"
 
+    # ── Auto-detect account codes from entity COA ──
+    asset_acct_code = txn.confirmed_code or ""
+    asset_acct_name = txn.confirmed_name or ""
+    accum_dep_code = ""
+    accum_dep_name = ""
+    dep_expense_code = ""
+    dep_expense_name = ""
+
+    # Find the paired accumulated depreciation account:
+    # Look for the nearest "accumulated depreciation/amortisation" account
+    # in the entity COA whose code is > the asset account code.
+    if asset_acct_code:
+        entity_asset_accounts = list(
+            EntityChartOfAccount.objects.filter(
+                entity=fy.entity, is_active=True, section="assets",
+            ).order_by("account_code")
+        )
+        # Find the accumulated dep account that sits after this asset account
+        found_asset = False
+        for acct in entity_asset_accounts:
+            if acct.account_code == asset_acct_code:
+                found_asset = True
+                continue
+            if found_asset:
+                acct_lower = acct.account_name.lower()
+                if "accum" in acct_lower or "amortis" in acct_lower:
+                    accum_dep_code = acct.account_code
+                    accum_dep_name = acct.account_name
+                    break
+                # If we hit another non-accumulated asset account, stop looking
+                if "less:" not in acct_lower and "accumulated" not in acct_lower:
+                    break
+
+        # If not found after the asset, try any accumulated dep account in assets section
+        if not accum_dep_code:
+            for acct in entity_asset_accounts:
+                acct_lower = acct.account_name.lower()
+                if ("accum" in acct_lower and "deprec" in acct_lower) or \
+                   ("accum" in acct_lower and "amortis" in acct_lower):
+                    accum_dep_code = acct.account_code
+                    accum_dep_name = acct.account_name
+                    break
+
+    # Auto-detect depreciation expense account
+    dep_expense_acct = EntityChartOfAccount.objects.filter(
+        entity=fy.entity, is_active=True, section="expenses",
+        account_name__icontains="depreciation",
+    ).exclude(
+        account_name__icontains="accum"
+    ).first()
+    if dep_expense_acct:
+        dep_expense_code = dep_expense_acct.account_code
+        dep_expense_name = dep_expense_acct.account_name
+
+    # Build list of all asset-section accounts for the override dropdowns
+    all_asset_accounts = list(
+        EntityChartOfAccount.objects.filter(
+            entity=fy.entity, is_active=True, section="assets",
+        ).order_by("account_code").values_list("account_code", "account_name")
+    )
+    all_expense_accounts = list(
+        EntityChartOfAccount.objects.filter(
+            entity=fy.entity, is_active=True, section="expenses",
+        ).order_by("account_code").values_list("account_code", "account_name")
+    )
+
     context = {
         "fy": fy,
         "txn": txn,
@@ -6340,7 +6438,15 @@ def depreciation_add_from_transaction(request, pk):
             "total_cost": net_amount,
             "addition_cost": net_amount,
             "addition_date": txn.date or "",
+            "asset_account_code": asset_acct_code,
+            "asset_account_name": asset_acct_name,
+            "accum_dep_code": accum_dep_code,
+            "accum_dep_name": accum_dep_name,
+            "dep_expense_code": dep_expense_code,
+            "dep_expense_name": dep_expense_name,
         },
+        "all_asset_accounts": all_asset_accounts,
+        "all_expense_accounts": all_expense_accounts,
     }
     return render(request, "core/depreciation_add_from_txn.html", context)
 
@@ -6353,9 +6459,11 @@ def depreciation_add_from_transaction(request, pk):
 def depreciation_post_to_tb(request, pk):
     """
     Post the depreciation schedule totals to the trial balance as a journal entry.
-    Creates:
-      - Dr  Depreciation Expense (per category, using entity or master COA codes)
-      - Cr  Accumulated Depreciation (per category)
+    Groups assets by their account mapping and creates per-account journal lines:
+      - Dr  Depreciation Expense account(s)
+      - Cr  Accumulated Depreciation account(s) (paired with each asset account)
+    Assets with explicit account mappings use those; assets without mappings
+    fall back to auto-detected global accounts.
     The journal is auto-posted immediately.
     """
     fy = get_financial_year_for_user(request, pk)
@@ -6367,12 +6475,12 @@ def depreciation_post_to_tb(request, pk):
         messages.error(request, "Cannot post to a finalised year.")
         return redirect("core:financial_year_detail", pk=pk)
 
-    assets = DepreciationAsset.objects.filter(financial_year=fy)
-    if not assets.exists():
+    assets = list(DepreciationAsset.objects.filter(financial_year=fy))
+    if not assets:
         messages.warning(request, "No depreciation assets to post.")
         return redirect("core:financial_year_detail", pk=pk)
 
-    # Calculate total business depreciation (total less private portion)
+    # Calculate total business depreciation
     total_depreciation = Decimal("0")
     for asset in assets:
         business_dep = asset.depreciation_amount - asset.private_depreciation
@@ -6381,94 +6489,6 @@ def depreciation_post_to_tb(request, pk):
     if total_depreciation <= 0:
         messages.warning(request, "Total business depreciation is zero. Nothing to post.")
         return redirect("core:financial_year_detail", pk=pk)
-
-    # Determine the account codes for depreciation expense and accumulated depreciation.
-    # Use the entity's COA first, fall back to request form fields, then defaults.
-    dep_expense_code = request.POST.get("dep_expense_code", "").strip()
-    dep_expense_name = request.POST.get("dep_expense_name", "").strip()
-    accum_dep_code = request.POST.get("accum_dep_code", "").strip()
-    accum_dep_name = request.POST.get("accum_dep_name", "").strip()
-
-    # Auto-detect from entity COA or client account mappings if not provided
-    if not dep_expense_code:
-        # Look for a depreciation expense account in entity COA
-        dep_coa = EntityChartOfAccount.objects.filter(
-            entity=fy.entity, is_active=True,
-            account_name__icontains="depreciation"
-        ).exclude(account_name__icontains="accumulated").exclude(
-            account_name__icontains="accum"
-        ).first()
-        if dep_coa:
-            dep_expense_code = dep_coa.account_code
-            dep_expense_name = dep_coa.account_name
-        else:
-            # Fall back to client account mapping
-            dep_mapping = ClientAccountMapping.objects.filter(
-                entity=fy.entity,
-                client_account_name__icontains="depreciation"
-            ).exclude(client_account_name__icontains="accumulated").exclude(
-                client_account_name__icontains="accum"
-            ).first()
-            if dep_mapping:
-                dep_expense_code = dep_mapping.client_account_code
-                dep_expense_name = dep_mapping.client_account_name
-            else:
-                # Look in TB lines
-                dep_tb = TrialBalanceLine.objects.filter(
-                    financial_year=fy,
-                    account_name__icontains="depreciation"
-                ).exclude(account_name__icontains="accumulated").exclude(
-                    account_name__icontains="accum"
-                ).first()
-                if dep_tb:
-                    dep_expense_code = dep_tb.account_code
-                    dep_expense_name = dep_tb.account_name
-
-    if not accum_dep_code:
-        # Look for accumulated depreciation account
-        accum_coa = EntityChartOfAccount.objects.filter(
-            entity=fy.entity, is_active=True,
-            account_name__icontains="accum"
-        ).filter(account_name__icontains="depreciation").first()
-        if accum_coa:
-            accum_dep_code = accum_coa.account_code
-            accum_dep_name = accum_coa.account_name
-        else:
-            accum_mapping = ClientAccountMapping.objects.filter(
-                entity=fy.entity,
-                client_account_name__icontains="accum"
-            ).filter(client_account_name__icontains="depreciation").first()
-            if accum_mapping:
-                accum_dep_code = accum_mapping.client_account_code
-                accum_dep_name = accum_mapping.client_account_name
-            else:
-                accum_tb = TrialBalanceLine.objects.filter(
-                    financial_year=fy,
-                    account_name__icontains="accum"
-                ).filter(account_name__icontains="depreciation").first()
-                if accum_tb:
-                    accum_dep_code = accum_tb.account_code
-                    accum_dep_name = accum_tb.account_name
-
-    # If we still don't have codes, show an error
-    if not dep_expense_code or not accum_dep_code:
-        missing = []
-        if not dep_expense_code:
-            missing.append("Depreciation Expense")
-        if not accum_dep_code:
-            missing.append("Accumulated Depreciation")
-        messages.error(
-            request,
-            f"Could not auto-detect account codes for: {', '.join(missing)}. "
-            f"Please ensure these accounts exist in the Chart of Accounts or Trial Balance."
-        )
-        return redirect("core:financial_year_detail", pk=pk)
-
-    # Default names if still blank
-    if not dep_expense_name:
-        dep_expense_name = "Depreciation"
-    if not accum_dep_name:
-        accum_dep_name = "Less: Accumulated depreciation"
 
     # Check for existing depreciation journal to avoid double-posting
     existing = AdjustingJournal.objects.filter(
@@ -6484,7 +6504,105 @@ def depreciation_post_to_tb(request, pk):
         )
         return redirect("core:financial_year_detail", pk=pk)
 
-    # Create the journal
+    # ── Auto-detect fallback accounts from entity COA ──
+    # These are used for assets that don't have explicit account mappings.
+    fallback_dep_expense_code = ""
+    fallback_dep_expense_name = ""
+    fallback_accum_dep_code = ""
+    fallback_accum_dep_name = ""
+
+    dep_coa = EntityChartOfAccount.objects.filter(
+        entity=fy.entity, is_active=True,
+        account_name__icontains="depreciation"
+    ).exclude(account_name__icontains="accumulated").exclude(
+        account_name__icontains="accum"
+    ).first()
+    if dep_coa:
+        fallback_dep_expense_code = dep_coa.account_code
+        fallback_dep_expense_name = dep_coa.account_name
+    else:
+        dep_mapping = ClientAccountMapping.objects.filter(
+            entity=fy.entity,
+            client_account_name__icontains="depreciation"
+        ).exclude(client_account_name__icontains="accumulated").exclude(
+            client_account_name__icontains="accum"
+        ).first()
+        if dep_mapping:
+            fallback_dep_expense_code = dep_mapping.client_account_code
+            fallback_dep_expense_name = dep_mapping.client_account_name
+        else:
+            dep_tb = TrialBalanceLine.objects.filter(
+                financial_year=fy,
+                account_name__icontains="depreciation"
+            ).exclude(account_name__icontains="accumulated").exclude(
+                account_name__icontains="accum"
+            ).first()
+            if dep_tb:
+                fallback_dep_expense_code = dep_tb.account_code
+                fallback_dep_expense_name = dep_tb.account_name
+
+    accum_coa = EntityChartOfAccount.objects.filter(
+        entity=fy.entity, is_active=True,
+        account_name__icontains="accum"
+    ).filter(
+        Q(account_name__icontains="depreciation") |
+        Q(account_name__icontains="amortis")
+    ).first()
+    if accum_coa:
+        fallback_accum_dep_code = accum_coa.account_code
+        fallback_accum_dep_name = accum_coa.account_name
+    else:
+        accum_mapping = ClientAccountMapping.objects.filter(
+            entity=fy.entity,
+            client_account_name__icontains="accum"
+        ).filter(client_account_name__icontains="depreciation").first()
+        if accum_mapping:
+            fallback_accum_dep_code = accum_mapping.client_account_code
+            fallback_accum_dep_name = accum_mapping.client_account_name
+        else:
+            accum_tb = TrialBalanceLine.objects.filter(
+                financial_year=fy,
+                account_name__icontains="accum"
+            ).filter(account_name__icontains="depreciation").first()
+            if accum_tb:
+                fallback_accum_dep_code = accum_tb.account_code
+                fallback_accum_dep_name = accum_tb.account_name
+
+    if not fallback_dep_expense_code or not fallback_accum_dep_code:
+        missing = []
+        if not fallback_dep_expense_code:
+            missing.append("Depreciation Expense")
+        if not fallback_accum_dep_code:
+            missing.append("Accumulated Depreciation")
+        messages.error(
+            request,
+            f"Could not auto-detect fallback account codes for: {', '.join(missing)}. "
+            f"Please ensure these accounts exist in the Chart of Accounts, or set "
+            f"account mappings on each asset in the depreciation schedule."
+        )
+        return redirect("core:financial_year_detail", pk=pk)
+
+    # ── Group assets by their (dep_expense, accum_dep) account pair ──
+    # Each group will become a pair of journal lines (Dr expense, Cr accum dep).
+    from collections import defaultdict
+    # Key: (dep_expense_code, dep_expense_name, accum_dep_code, accum_dep_name)
+    account_groups = defaultdict(Decimal)
+
+    for asset in assets:
+        business_dep = asset.depreciation_amount - asset.private_depreciation
+        if business_dep <= 0:
+            continue
+
+        # Determine the accounts for this asset
+        a_dep_code = asset.dep_expense_code or fallback_dep_expense_code
+        a_dep_name = asset.dep_expense_name or fallback_dep_expense_name or "Depreciation"
+        a_accum_code = asset.accum_dep_code or fallback_accum_dep_code
+        a_accum_name = asset.accum_dep_name or fallback_accum_dep_name or "Less: Accumulated depreciation"
+
+        key = (a_dep_code, a_dep_name, a_accum_code, a_accum_name)
+        account_groups[key] += business_dep
+
+    # ── Create the journal ──
     journal = AdjustingJournal(
         financial_year=fy,
         journal_type=AdjustingJournal.JournalType.DEPRECIATION,
@@ -6494,7 +6612,8 @@ def depreciation_post_to_tb(request, pk):
         narration=(
             f"Auto-generated from depreciation schedule. "
             f"Total depreciation: ${total_depreciation:,.2f} "
-            f"(business portion only, private use excluded)."
+            f"(business portion only, private use excluded). "
+            f"Grouped into {len(account_groups)} account pair(s)."
         ),
         total_debit=total_depreciation,
         total_credit=total_depreciation,
@@ -6502,27 +6621,35 @@ def depreciation_post_to_tb(request, pk):
     )
     journal.save()  # Auto-generates reference_number
 
-    # Create journal lines
-    JournalLine.objects.create(
-        journal=journal,
-        line_number=1,
-        account_code=dep_expense_code,
-        account_name=dep_expense_name,
-        description="Depreciation charge for the year",
-        debit=total_depreciation,
-        credit=Decimal("0"),
-    )
-    JournalLine.objects.create(
-        journal=journal,
-        line_number=2,
-        account_code=accum_dep_code,
-        account_name=accum_dep_name,
-        description="Accumulated depreciation",
-        debit=Decimal("0"),
-        credit=total_depreciation,
-    )
+    # ── Create journal lines per account group ──
+    line_number = 0
+    line_descriptions = []
+    for (dep_code, dep_name, accum_code, accum_name), amount in account_groups.items():
+        line_number += 1
+        JournalLine.objects.create(
+            journal=journal,
+            line_number=line_number,
+            account_code=dep_code,
+            account_name=dep_name,
+            description=f"Depreciation charge — {dep_name}",
+            debit=amount,
+            credit=Decimal("0"),
+        )
+        line_number += 1
+        JournalLine.objects.create(
+            journal=journal,
+            line_number=line_number,
+            account_code=accum_code,
+            account_name=accum_name,
+            description=f"Accumulated depreciation — {accum_name}",
+            debit=Decimal("0"),
+            credit=amount,
+        )
+        line_descriptions.append(
+            f"Dr {dep_code} {dep_name} ${amount:,.2f} / Cr {accum_code} {accum_name} ${amount:,.2f}"
+        )
 
-    # Auto-post: apply journal lines to Trial Balance (nets against existing balances)
+    # Auto-post: apply journal lines to Trial Balance
     for line in journal.lines.all():
         _apply_journal_line_to_tb(
             fy, line.account_code, line.account_name,
@@ -6538,20 +6665,32 @@ def depreciation_post_to_tb(request, pk):
 
     _log_action(
         request, "adjustment",
-        f"Posted depreciation journal {journal.reference_number}: "
-        f"Dr {dep_expense_code} ${total_depreciation:,.2f} / "
-        f"Cr {accum_dep_code} ${total_depreciation:,.2f}",
+        f"Posted depreciation journal {journal.reference_number} with "
+        f"{len(account_groups)} account group(s): " + "; ".join(line_descriptions),
         journal,
     )
     # Auto-trigger risk engine after depreciation post
     from core.signals import trigger_risk_recalc
     trigger_risk_recalc(fy, "depreciation_post")
-    messages.success(
-        request,
-        f"Depreciation journal {journal.reference_number} posted: "
-        f"Dr {dep_expense_name} ${total_depreciation:,.2f} / "
-        f"Cr {accum_dep_name} ${total_depreciation:,.2f}"
-    )
+
+    if len(account_groups) == 1:
+        # Simple message for single-group posting
+        (dep_code, dep_name, accum_code, accum_name) = list(account_groups.keys())[0]
+        messages.success(
+            request,
+            f"Depreciation journal {journal.reference_number} posted: "
+            f"Dr {dep_name} ${total_depreciation:,.2f} / "
+            f"Cr {accum_name} ${total_depreciation:,.2f}"
+        )
+    else:
+        # Detailed message for multi-group posting
+        messages.success(
+            request,
+            f"Depreciation journal {journal.reference_number} posted with "
+            f"{len(account_groups)} account groups, "
+            f"total ${total_depreciation:,.2f}. "
+            f"See journal details for per-account breakdown."
+        )
     return redirect("core:financial_year_detail", pk=pk)
 
 

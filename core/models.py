@@ -1206,6 +1206,31 @@ class DepreciationAsset(models.Model):
         related_name='depreciation_assets',
         help_text="Bank statement transaction this asset was created from",
     )
+    # Account mapping for journal posting
+    asset_account_code = models.CharField(
+        max_length=20, blank=True, default="",
+        help_text="Balance sheet account code where this asset sits (e.g. 2870)",
+    )
+    asset_account_name = models.CharField(
+        max_length=255, blank=True, default="",
+        help_text="Balance sheet account name (e.g. Office equipment)",
+    )
+    accum_dep_code = models.CharField(
+        max_length=20, blank=True, default="",
+        help_text="Accumulated depreciation account code paired with this asset (e.g. 2875)",
+    )
+    accum_dep_name = models.CharField(
+        max_length=255, blank=True, default="",
+        help_text="Accumulated depreciation account name (e.g. Less: Accumulated depreciation)",
+    )
+    dep_expense_code = models.CharField(
+        max_length=20, blank=True, default="",
+        help_text="Depreciation expense account code (e.g. 1615)",
+    )
+    dep_expense_name = models.CharField(
+        max_length=255, blank=True, default="",
+        help_text="Depreciation expense account name (e.g. Depreciation - Plant)",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
