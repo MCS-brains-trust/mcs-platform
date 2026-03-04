@@ -1,6 +1,36 @@
 {% extends "base.html" %}
 {% block title %}Map Accounts - StatementHub{% endblock %}
 
+{% block extra_css %}
+<link href="https://cdn.jsdelivr.net/npm/tom-select@2.4.1/dist/css/tom-select.bootstrap5.min.css" rel="stylesheet">
+<style>
+    .ts-wrapper.form-select { padding: 0; border: none; }
+    .ts-wrapper .ts-control {
+        border: 1px solid #dee2e6;
+        border-radius: 0.375rem;
+        min-height: calc(1.5em + 0.5rem + 2px);
+        font-size: 0.875rem;
+    }
+    .ts-wrapper.form-select-sm .ts-control {
+        min-height: calc(1.5em + 0.5rem + 2px);
+        padding: 0.25rem 0.5rem;
+        font-size: 0.875rem;
+    }
+    .ts-dropdown .option {
+        font-size: 0.875rem;
+        padding: 6px 10px;
+    }
+    .ts-dropdown .option .mapping-code {
+        font-weight: 600;
+        color: #495057;
+    }
+    .ts-dropdown .option .mapping-label {
+        color: #6c757d;
+        font-size: 0.8rem;
+    }
+</style>
+{% endblock %}
+
 {% block content %}
 <nav aria-label="breadcrumb">
     <ol class="breadcrumb">
@@ -36,7 +66,7 @@
                             <td><code>{{ cam.client_account_code }}</code></td>
                             <td>{{ cam.client_account_name }}</td>
                             <td>
-                                <select name="mapping_{{ cam.pk }}" class="form-select form-select-sm">
+                                <select name="mapping_{{ cam.pk }}" class="form-select form-select-sm mapping-select">
                                     <option value="">-- Select --</option>
                                     {% for sm in standard_mappings %}
                                     <option value="{{ sm.pk }}">{{ sm.standard_code }} - {{ sm.line_item_label }} ({{ sm.get_financial_statement_display }})</option>
@@ -62,4 +92,20 @@
         {% endif %}
     </div>
 </div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/tom-select@2.4.1/dist/js/tom-select.complete.min.js"></script>
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('.mapping-select').forEach(function(el) {
+        new TomSelect(el, {
+            placeholder: 'Search by code or name…',
+            allowEmptyOption: true,
+            sortField: { field: 'text', direction: 'asc' },
+            maxOptions: 500,
+        });
+    });
+});
+</script>
 {% endblock %}
