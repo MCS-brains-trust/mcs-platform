@@ -16,7 +16,8 @@ from django.views.decorators.http import require_POST
 from config.authorization import get_financial_year_for_user
 
 from .models import (
-    AccountMapping, ChartOfAccount, RiskRule, RiskReferenceData, RiskFlag,
+    AccountMapping, ChartOfAccount, EntityChartOfAccount,
+    RiskRule, RiskReferenceData, RiskFlag,
     FinancialYear, Entity, Client,
 )
 
@@ -368,7 +369,23 @@ def coa_edit(request, pk):
             account.tax_code = tax_code
             account.maps_to = maps_to
             account.save()
-            messages.success(request, f'Account {account_code} — {account_name} updated successfully.')
+
+            # Propagate tax_code to all existing entity accounts if requested
+            propagate = request.POST.get('propagate_tax_code') == 'on'
+            propagated_count = 0
+            if propagate and tax_code:
+                propagated_count = EntityChartOfAccount.objects.filter(
+                    entity__entity_type=entity_type,
+                    account_code=account_code,
+                    is_active=True,
+                ).exclude(tax_code=tax_code).update(tax_code=tax_code)
+
+            msg = f'Account {account_code} — {account_name} updated successfully.'
+            if propagate and propagated_count > 0:
+                msg += f' Tax code "{tax_code}" propagated to {propagated_count} entity account(s).'
+            elif propagate and propagated_count == 0:
+                msg += f' Tax code already up-to-date across all entities.'
+            messages.success(request, msg)
             if return_to_fy:
                 return redirect(f"/years/{return_to_fy}/trial-balance/")
             return redirect(f"/chart-of-accounts/?entity_type={entity_type}")
@@ -408,6 +425,38 @@ def coa_delete(request, pk):
         account.save()
         messages.success(request, f'Account {account.account_code} — {account.account_name} has been deactivated.')
     return redirect(f"/chart-of-accounts/?entity_type={entity_type}")
+
+
+@login_required
+@require_POST
+def coa_propagate_tax_codes(request):
+    """
+    Bulk-propagate tax codes from the master ChartOfAccount template
+    to all existing EntityChartOfAccount records for a given entity type.
+    Matches by entity_type + account_code.
+    """
+    entity_type = request.POST.get('entity_type', 'company')
+
+    master_accounts = ChartOfAccount.objects.filter(
+        entity_type=entity_type, is_active=True
+    ).exclude(tax_code='').values_list('account_code', 'tax_code')
+
+    total_updated = 0
+    for account_code, tax_code in master_accounts:
+        updated = EntityChartOfAccount.objects.filter(
+            entity__entity_type=entity_type,
+            account_code=account_code,
+            is_active=True,
+        ).exclude(tax_code=tax_code).update(tax_code=tax_code)
+        total_updated += updated
+
+    total_master = len(master_accounts)
+    messages.success(
+        request,
+        f'Tax codes propagated from {total_master} master accounts. '
+        f'{total_updated} entity account(s) updated across all entities.'
+    )
+    return redirect(f'/chart-of-accounts/?entity_type={entity_type}')
 
 
 @login_required
