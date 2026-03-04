@@ -102,7 +102,7 @@ for i, (label, default) in enumerate(meta_labels, 1):
 ws.cell(row=5, column=1, value='')
 
 # Row 6: Column headers
-headers = ['Date', 'Description', 'Amount', 'Balance']
+headers = ['Date', 'Description', 'Amount', 'Balance (optional)']
 col_widths = [14, 50, 18, 15]
 
 for j, (header, width) in enumerate(zip(headers, col_widths), 1):
