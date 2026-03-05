@@ -344,7 +344,7 @@ def build_manual_tb_sections(fy):
 # Cover Page — Management Accounts
 # =============================================================================
 
-def _add_mgmt_cover_page(doc, entity, period_start, period_end, generated_by_name):
+def _add_mgmt_cover_page(doc, entity, period_start, period_end, generated_by_name, tb_source='MANUAL'):
     """
     Add the management accounts cover page.
 
@@ -418,8 +418,20 @@ def _add_mgmt_cover_page(doc, entity, period_start, period_end, generated_by_nam
     _add_centered_heading(doc, "These accounts have not been finalised or reviewed.",
                           size=Pt(10), bold=False, space_after=0)
 
+    # Bank statement disclaimer — on cover page for bank-derived accounts
+    if tb_source == 'BANK_DERIVED':
+        p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(8)
+        p.paragraph_format.space_after = Pt(0)
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        disclaimer_text = " ".join(BANK_DISCLAIMER_LINES)
+        run = p.add_run(disclaimer_text)
+        _set_run_font(run, size=Pt(8), bold=False, italic=True)
+        run.font.color.rgb = RGBColor(0x99, 0x33, 0x00)
+
     # Push firm details to bottom — reduced spacing to fit on one page
-    for _ in range(6):
+    spacer_count = 3 if tb_source == 'BANK_DERIVED' else 6
+    for _ in range(spacer_count):
         p = doc.add_paragraph()
         p.paragraph_format.space_after = Pt(8)
 
@@ -624,11 +636,8 @@ def generate_management_accounts(
     has_trading = _has_cogs(sections)
 
     # ---- Cover Page ----
-    _add_mgmt_cover_page(doc, entity, period_start, period_end, generated_by_name)
-
-    # ---- Bank Statement Disclaimer (if applicable) ----
-    if tb_source == 'BANK_DERIVED' and output_type == 'bs_pnl':
-        _add_bank_disclaimer(doc)
+    _add_mgmt_cover_page(doc, entity, period_start, period_end, generated_by_name,
+                         tb_source=tb_source)
 
     # ---- Trading Account (if COGS exist) ----
     gross_profit = None
