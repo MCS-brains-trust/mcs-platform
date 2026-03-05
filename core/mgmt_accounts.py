@@ -352,9 +352,9 @@ def _add_mgmt_cover_page(doc, entity, period_start, period_end, generated_by_nam
         [MC&S Logo]
         [ENTITY NAME]
         ABN [ABN]
+        DRAFT
         MANAGEMENT ACCOUNTS
         For the period [start] to [end]
-        DRAFT
         Prepared: [datetime] by [name]
         These accounts have not been finalised or reviewed.
     """
@@ -391,6 +391,14 @@ def _add_mgmt_cover_page(doc, entity, period_start, period_end, generated_by_nam
     p = doc.add_paragraph()
     p.paragraph_format.space_after = Pt(16)
 
+    # DRAFT warning — red, bold, above Management Accounts
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.space_after = Pt(4)
+    run = p.add_run("DRAFT")
+    _set_run_font(run, size=Pt(12), bold=True)
+    run.font.color.rgb = RGBColor(0xCC, 0x00, 0x00)
+
     # "Management Accounts" title
     _add_centered_heading(doc, "Management Accounts",
                           size=Pt(14), bold=True, space_after=4)
@@ -400,14 +408,6 @@ def _add_mgmt_cover_page(doc, entity, period_start, period_end, generated_by_nam
     end_str = period_end.strftime('%-d %B %Y')
     _add_centered_heading(doc, f"For the period {start_str} to {end_str}",
                           size=Pt(11), bold=False, space_after=12)
-
-    # DRAFT warning — red, bold
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p.paragraph_format.space_after = Pt(6)
-    run = p.add_run("DRAFT")
-    _set_run_font(run, size=Pt(12), bold=True)
-    run.font.color.rgb = RGBColor(0xCC, 0x00, 0x00)
 
     # Prepared line
     prepared_str = now.strftime('%-d %B %Y %H:%M')
