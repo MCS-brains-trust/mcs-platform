@@ -277,23 +277,46 @@ def _render_docx(template, context):
 
 
 def _convert_to_pdf(docx_bytes):
-    """Convert DOCX bytes to PDF using LibreOffice headless mode."""
+    """Convert DOCX bytes to PDF using LibreOffice headless mode.
+
+    Tries multiple LibreOffice binary names/paths for cross-platform
+    compatibility. Returns PDF bytes on success, None on failure.
+    """
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             docx_path = os.path.join(tmpdir, "document.docx")
             with open(docx_path, "wb") as f:
                 f.write(docx_bytes)
 
+            # Try multiple LibreOffice binary names
+            lo_bin = None
+            for candidate in ["soffice", "libreoffice", "/usr/bin/soffice", "/usr/bin/libreoffice"]:
+                try:
+                    subprocess.run([candidate, "--version"], capture_output=True, timeout=5)
+                    lo_bin = candidate
+                    break
+                except (FileNotFoundError, subprocess.TimeoutExpired):
+                    continue
+
+            if not lo_bin:
+                logger.error(
+                    "LibreOffice not installed — PDF conversion unavailable. "
+                    "Install with: sudo apt-get install -y libreoffice-writer"
+                )
+                return None
+
             result = subprocess.run(
                 [
-                    "libreoffice",
+                    lo_bin,
                     "--headless",
+                    "--norestore",
                     "--convert-to", "pdf",
                     "--outdir", tmpdir,
                     docx_path,
                 ],
                 capture_output=True,
-                timeout=60,
+                timeout=120,
+                env={**os.environ, "HOME": tmpdir},
             )
 
             pdf_path = os.path.join(tmpdir, "document.pdf")
@@ -301,19 +324,17 @@ def _convert_to_pdf(docx_bytes):
                 with open(pdf_path, "rb") as f:
                     return f.read()
             else:
-                logger.warning(
-                    "LibreOffice PDF conversion failed: %s",
-                    result.stderr.decode() if result.stderr else "Unknown error",
+                stderr = result.stderr.decode("utf-8", errors="replace") if result.stderr else ""
+                logger.error(
+                    "LibreOffice PDF conversion failed (exit code %s): %s",
+                    result.returncode, stderr[:500],
                 )
                 return None
-    except FileNotFoundError:
-        logger.warning("LibreOffice not installed — skipping PDF conversion")
-        return None
     except subprocess.TimeoutExpired:
-        logger.warning("LibreOffice PDF conversion timed out")
+        logger.error("LibreOffice PDF conversion timed out after 120s")
         return None
     except Exception as e:
-        logger.warning("PDF conversion failed: %s", e)
+        logger.error("PDF conversion failed: %s", e)
         return None
 
 

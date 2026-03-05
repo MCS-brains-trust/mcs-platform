@@ -33,6 +33,25 @@ from .forms import (
 logger = logging.getLogger(__name__)
 
 
+def _log_2fa_event(user, action, request, admin_user=None):
+    """Log a 2FA-related event to the audit trail."""
+    try:
+        from core.models import AuditLog
+        description = f"2FA event: {action} for user {user.username}"
+        if admin_user:
+            description += f" (initiated by admin {admin_user.username})"
+        AuditLog.objects.create(
+            user=admin_user or user,
+            action=action,
+            description=description,
+            affected_object_type="User",
+            affected_object_id=str(user.pk),
+            ip_address=request.META.get("REMOTE_ADDR", ""),
+        )
+    except Exception as e:
+        logger.warning("Failed to log 2FA audit event: %s", e)
+
+
 # ---------------------------------------------------------------------------
 # Login with 2FA
 # ---------------------------------------------------------------------------
@@ -83,8 +102,12 @@ def totp_verify_view(request):
                 # Cycle session key to prevent session fixation
                 request.session.cycle_key()
                 auth_login(request, user)
+                logger.info("2FA verification successful for user %s (user_id=%s)", user.username, user.pk)
+                _log_2fa_event(user, "2fa_verify_success", request)
                 return redirect(next_url or settings.LOGIN_REDIRECT_URL)
             else:
+                logger.warning("2FA verification failed for user %s (user_id=%s)", user.username, user.pk)
+                _log_2fa_event(user, "2fa_verify_failed", request)
                 form.add_error("totp_code", "Invalid code. Please try again.")
     else:
         form = TOTPVerifyForm()
@@ -435,6 +458,8 @@ def user_reset_2fa(request, pk):
     user.totp_secret = ""
     user.totp_confirmed = False
     user.save(update_fields=["totp_secret", "totp_confirmed"])
+    logger.info("2FA reset by admin %s for user %s (user_id=%s)", request.user.username, user.username, user.pk)
+    _log_2fa_event(user, "2fa_reset_by_admin", request, admin_user=request.user)
     messages.success(request, f"2FA reset for {user.get_full_name() or user.username}. They will need to set up 2FA again.")
     return redirect("accounts:user_list")
 
@@ -472,6 +497,8 @@ def setup_2fa_view(request):
                 user.totp_confirmed = True
                 user.save(update_fields=["totp_secret", "totp_confirmed"])
                 del request.session["setup_totp_secret"]
+                logger.info("2FA setup completed for user %s (user_id=%s)", user.username, user.pk)
+                _log_2fa_event(user, "2fa_setup_completed", request)
                 messages.success(request, "Two-factor authentication has been enabled for your account.")
                 return redirect(settings.LOGIN_REDIRECT_URL)
             else:

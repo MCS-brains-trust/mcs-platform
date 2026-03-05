@@ -100,6 +100,8 @@ def sync_sharepoint_library(site_id=None, drive_id=None, folder_path=""):
 
     counts = {"synced": 0, "skipped": 0, "errors": 0}
     supported_extensions = {".docx", ".pdf", ".txt", ".xlsx", ".pptx"}
+    max_pages = 200  # Safety limit to prevent infinite pagination loops
+    seen_urls = set()
 
     while url:
         resp = requests.get(url, headers=headers, timeout=30)
@@ -193,8 +195,18 @@ def sync_sharepoint_library(site_id=None, drive_id=None, folder_path=""):
                     existing.sync_status = "error"
                     existing.save(update_fields=["sync_status"])
 
-        # Pagination
-        url = data.get("@odata.nextLink")
+        # Pagination — with infinite loop protection
+        next_url = data.get("@odata.nextLink")
+        if next_url and next_url in seen_urls:
+            logger.warning("SharePoint pagination loop detected — same nextLink URL returned twice. Stopping.")
+            break
+        if next_url:
+            seen_urls.add(next_url)
+        max_pages -= 1
+        if max_pages <= 0:
+            logger.warning("SharePoint pagination safety limit reached (200 pages). Stopping.")
+            break
+        url = next_url
 
     return counts
 

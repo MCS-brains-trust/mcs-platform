@@ -20,6 +20,7 @@ from . import views_bulk_operations
 from . import views_bas_commentary
 from . import views_div7a
 from . import views_workpapers
+from . import views_webhooks
 
 app_name = "core"
 
@@ -399,4 +400,8 @@ urlpatterns = [
     # ===== WORK PAPERS TAB =====
     path("years/<uuid:fy_pk>/workpapers/<uuid:template_pk>/download/", views_workpapers.workpaper_download, name="workpaper_download"),
     path("api/years/<uuid:fy_pk>/workpapers/", views_workpapers.workpaper_list_api, name="workpaper_list_api"),
+
+    # ===== WEBHOOKS (third-party callbacks) =====
+    path("webhooks/fusesign/", views_webhooks.fusesign_webhook, name="fusesign_webhook"),
+    path("webhooks/textract/", views_webhooks.textract_webhook, name="textract_webhook"),
 ]

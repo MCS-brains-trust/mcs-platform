@@ -166,7 +166,7 @@ def assemble_client_package(self, financial_year_id, assembled_by_id=None):
 # ---------------------------------------------------------------------------
 # Phase 14 — Bulk Package Generation
 # ---------------------------------------------------------------------------
-@shared_task(name="core.bulk_package_generation", bind=True)
+@shared_task(name="core.bulk_package_generation", bind=True, max_retries=1)
 def bulk_package_generation(self, entity_ids, triggered_by_id=None):
     """
     Generate packages for multiple entities. Iterates each entity's current FY,
@@ -178,8 +178,8 @@ def bulk_package_generation(self, entity_ids, triggered_by_id=None):
         logger.info("Bulk package generation complete: %s entities", len(entity_ids))
         return result
     except Exception as exc:
-        logger.exception("Bulk package generation failed")
-        raise
+        logger.exception("Bulk package generation failed for %s entities", len(entity_ids))
+        raise self.retry(exc=exc, countdown=60)
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +223,7 @@ def div7a_assessment(self, financial_year_id, triggered_by=None):
         raise self.retry(exc=exc, countdown=30)
 
 
-@shared_task(name="core.div7a_batch_assessment", bind=True)
+@shared_task(name="core.div7a_batch_assessment", bind=True, max_retries=1)
 def div7a_batch_assessment(self, entity_ids=None, year_label=None):
     """
     Run Div 7A assessment across multiple company entities.
@@ -235,7 +235,7 @@ def div7a_batch_assessment(self, entity_ids=None, year_label=None):
         return result
     except Exception as exc:
         logger.exception("Batch Div 7A assessment failed")
-        raise
+        raise self.retry(exc=exc, countdown=60)
 
 
 # ---------------------------------------------------------------------------

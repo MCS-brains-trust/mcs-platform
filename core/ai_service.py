@@ -84,8 +84,51 @@ def _call_llm(system_prompt, user_prompt, tier="sonnet", temperature=0.3, max_to
         return _call_openai_compat(system_prompt, user_prompt, model, temperature, max_tokens)
 
 
+def _call_with_retry(fn, max_retries=2, base_delay=2):
+    """
+    Call *fn* with exponential backoff retry on transient errors.
+    Retries on rate-limit (429), server errors (5xx), timeouts, and
+    connection errors. Raises immediately on auth/validation errors.
+    """
+    import time as _time
+
+    last_exc = None
+    for attempt in range(max_retries + 1):
+        try:
+            return fn()
+        except Exception as e:
+            last_exc = e
+            err_str = str(e).lower()
+            status = getattr(e, "status_code", None) or getattr(e, "status", None)
+
+            # Don't retry on auth errors (401/403) or validation errors (400/404)
+            if status in (400, 401, 403, 404):
+                raise
+
+            # Retry on rate limit, server errors, timeouts, connection issues
+            is_retryable = (
+                status in (429, 500, 502, 503, 529)
+                or "timeout" in err_str
+                or "connection" in err_str
+                or "rate" in err_str
+            )
+
+            if is_retryable and attempt < max_retries:
+                delay = base_delay * (2 ** attempt)
+                logger.warning(
+                    "LLM API call failed (attempt %d/%d), retrying in %ds: %s",
+                    attempt + 1, max_retries + 1, delay, e,
+                )
+                _time.sleep(delay)
+                continue
+
+            raise
+
+    raise last_exc
+
+
 def _call_anthropic(system_prompt, user_prompt, model, temperature, max_tokens):
-    """Call Anthropic API directly."""
+    """Call Anthropic API directly with timeout and retry."""
     try:
         import anthropic
     except ImportError:
@@ -93,39 +136,47 @@ def _call_anthropic(system_prompt, user_prompt, model, temperature, max_tokens):
 
     import os
     client = anthropic.Anthropic(
-        api_key=os.environ.get("ANTHROPIC_API_KEY", getattr(settings, "ANTHROPIC_API_KEY", ""))
+        api_key=os.environ.get("ANTHROPIC_API_KEY", getattr(settings, "ANTHROPIC_API_KEY", "")),
+        timeout=120.0,
     )
 
-    response = client.messages.create(
-        model=model,
-        max_tokens=max_tokens,
-        temperature=temperature,
-        system=system_prompt,
-        messages=[
-            {"role": "user", "content": user_prompt},
-        ],
-    )
-    return response.content[0].text.strip()
+    def _do_call():
+        response = client.messages.create(
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            system=system_prompt,
+            messages=[
+                {"role": "user", "content": user_prompt},
+            ],
+        )
+        return response.content[0].text.strip()
+
+    return _call_with_retry(_do_call)
 
 
 def _call_openai_compat(system_prompt, user_prompt, model, temperature, max_tokens):
-    """Call OpenAI-compatible API (default fallback)."""
+    """Call OpenAI-compatible API with timeout and retry."""
     try:
         from openai import OpenAI
     except ImportError:
         raise ImportError("openai package not installed. Run: pip install openai")
 
-    client = OpenAI()  # Uses OPENAI_API_KEY and base_url from env
-    response = client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
-    return response.choices[0].message.content.strip()
+    client = OpenAI(timeout=120.0)
+
+    def _do_call():
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
+        )
+        return response.choices[0].message.content.strip()
+
+    return _call_with_retry(_do_call)
 
 
 # ---------------------------------------------------------------------------

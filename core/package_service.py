@@ -152,14 +152,18 @@ def assemble_package(financial_year_id, assembled_by_id=None):
 
     # Step 3: Auto-generate missing Category A documents
     generated = []
+    generation_errors = []
     for doc_type, label in missing_auto:
         try:
             result = _auto_generate_document(fy, entity, doc_type, assembled_by)
             if result:
                 generated.append(doc_type)
                 existing_types.add(doc_type)
+            else:
+                generation_errors.append({"doc_type": doc_type, "label": label, "error": "Generator returned None"})
         except Exception as e:
             logger.warning("Auto-generation failed for %s on FY %s: %s", doc_type, fy.pk, e)
+            generation_errors.append({"doc_type": doc_type, "label": label, "error": str(e)})
 
     # Step 4: Combine PDFs
     combined_pdf_path = None
@@ -184,10 +188,15 @@ def assemble_package(financial_year_id, assembled_by_id=None):
         f"{len(generated)} auto-generated",
     )
 
+    status = "assembled"
+    if generation_errors:
+        status = "assembled_with_warnings"
+
     return {
-        "status": "assembled",
+        "status": status,
         "total_documents": len(existing_types),
         "auto_generated": generated,
+        "generation_errors": generation_errors,
         "combined_pdf": combined_pdf_path,
     }
 

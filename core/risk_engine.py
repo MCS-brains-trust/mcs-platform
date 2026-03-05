@@ -1228,14 +1228,26 @@ TIER2_EVALUATORS = {
 # FLAG CREATION
 # ============================================================================
 
+def _compute_flag_hash(financial_year_id, rule_id, description):
+    """Compute deduplication hash for a risk flag."""
+    import hashlib
+    key = f"{financial_year_id}:{rule_id}:{description}"
+    return hashlib.md5(key.encode()).hexdigest()
+
+
 def _create_flag(financial_year, run_id, flag_data):
-    """Create a RiskFlag record, or update if same rule_id already exists open."""
+    """Create a RiskFlag record, or update if same flag_hash already exists open."""
     from core.models import RiskFlag
 
-    # Check if an open flag with this rule_id already exists
+    # Compute deduplication hash from (FY, rule_id, description)
+    flag_hash = _compute_flag_hash(
+        str(financial_year.pk), flag_data["rule_id"], flag_data["description"]
+    )
+
+    # Check if an open flag with this hash already exists
     existing = RiskFlag.objects.filter(
         financial_year=financial_year,
-        rule_id=flag_data["rule_id"],
+        flag_hash=flag_hash,
         status__in=["open", "reviewed"],
     ).first()
 
@@ -1261,4 +1273,5 @@ def _create_flag(financial_year, run_id, flag_data):
         calculated_values=flag_data.get("calculated_values", {}),
         recommended_action=flag_data.get("recommended_action", ""),
         legislation_ref=flag_data.get("legislation_ref", ""),
+        flag_hash=flag_hash,
     )

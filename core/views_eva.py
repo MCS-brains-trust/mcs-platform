@@ -208,8 +208,19 @@ def ask_eva_review(request, pk):
     user = request.user
 
     def _run_review():
-        from core.eva_service import run_eva_review
-        run_eva_review(fy, user, opus_override=opus_override)
+        try:
+            from core.eva_service import run_eva_review
+            run_eva_review(fy, user, opus_override=opus_override)
+        except Exception:
+            import logging
+            logging.getLogger("core.views_eva").exception(
+                "Background Eva review failed for FY %s", fy.pk,
+            )
+            # Update review status so the UI doesn't hang
+            from core.models import EvaReview
+            EvaReview.objects.filter(
+                financial_year=fy, status="running",
+            ).update(status="error", error_message="Background review thread crashed")
 
     thread = threading.Thread(target=_run_review, daemon=True)
     thread.start()
@@ -342,10 +353,16 @@ def eva_resolve_finding(request, pk):
         user = request.user
 
         def _rerun():
-            from core.eva_service import run_eva_review
-            review = run_eva_review(fy, user)
-            review.is_rerun = True
-            review.save(update_fields=["is_rerun"])
+            try:
+                from core.eva_service import run_eva_review
+                review = run_eva_review(fy, user)
+                review.is_rerun = True
+                review.save(update_fields=["is_rerun"])
+            except Exception:
+                import logging
+                logging.getLogger("core.views_eva").exception(
+                    "Background Eva re-run failed for FY %s", fy.pk,
+                )
 
         thread = threading.Thread(target=_rerun, daemon=True)
         thread.start()
@@ -375,10 +392,16 @@ def eva_rerun_review(request, pk):
     user = request.user
 
     def _run_review():
-        from core.eva_service import run_eva_review
-        review = run_eva_review(fy, user)
-        review.is_rerun = True
-        review.save(update_fields=["is_rerun"])
+        try:
+            from core.eva_service import run_eva_review
+            review = run_eva_review(fy, user)
+            review.is_rerun = True
+            review.save(update_fields=["is_rerun"])
+        except Exception:
+            import logging
+            logging.getLogger("core.views_eva").exception(
+                "Background Eva rerun review failed for FY %s", fy.pk,
+            )
 
     thread = threading.Thread(target=_run_review, daemon=True)
     thread.start()
@@ -479,8 +502,14 @@ def trigger_knowledge_sync(request):
         return JsonResponse({"error": "Admin access required"}, status=403)
 
     def _sync():
-        from core.eva_service import sync_knowledge_brain
-        sync_knowledge_brain()
+        try:
+            from core.eva_service import sync_knowledge_brain
+            sync_knowledge_brain()
+        except Exception:
+            import logging
+            logging.getLogger("core.views_eva").exception(
+                "Background Knowledge Brain sync failed",
+            )
 
     thread = threading.Thread(target=_sync, daemon=True)
     thread.start()
