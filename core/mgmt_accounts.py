@@ -344,7 +344,7 @@ def build_manual_tb_sections(fy):
 # Cover Page — Management Accounts
 # =============================================================================
 
-def _add_mgmt_cover_page(doc, entity, period_start, period_end, generated_by_name, tb_source='MANUAL'):
+def _add_mgmt_cover_page(doc, entity, period_start, period_end, generated_by_name):
     """
     Add the management accounts cover page.
 
@@ -418,20 +418,8 @@ def _add_mgmt_cover_page(doc, entity, period_start, period_end, generated_by_nam
     _add_centered_heading(doc, "These accounts have not been finalised or reviewed.",
                           size=Pt(10), bold=False, space_after=0)
 
-    # Bank statement disclaimer — on cover page for bank-derived accounts
-    if tb_source == 'BANK_DERIVED':
-        p = doc.add_paragraph()
-        p.paragraph_format.space_before = Pt(8)
-        p.paragraph_format.space_after = Pt(0)
-        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        disclaimer_text = " ".join(BANK_DISCLAIMER_LINES)
-        run = p.add_run(disclaimer_text)
-        _set_run_font(run, size=Pt(8), bold=False, italic=True)
-        run.font.color.rgb = RGBColor(0x99, 0x33, 0x00)
-
-    # Push firm details to bottom — reduced spacing to fit on one page
-    spacer_count = 3 if tb_source == 'BANK_DERIVED' else 6
-    for _ in range(spacer_count):
+    # Push firm details to bottom
+    for _ in range(6):
         p = doc.add_paragraph()
         p.paragraph_format.space_after = Pt(8)
 
@@ -494,29 +482,7 @@ def _inject_mgmt_watermark(doc, generated_by_name):
         run.font.color.rgb = RGBColor(0xCC, 0x00, 0x00)
 
 
-# =============================================================================
-# Bank Statement Disclaimer
-# =============================================================================
-
-BANK_DISCLAIMER_LINES = [
-    "These management accounts represent income and expenditure derived from",
-    "bank statement data only. Balance sheet items not transacted through the",
-    "bank account are excluded. These accounts are prepared for management",
-    "purposes only and are not AASB-compliant.",
-]
-
-
-def _add_bank_disclaimer(doc):
-    """Add the bank-statement disclaimer paragraph above the Balance Sheet."""
-    p = doc.add_paragraph()
-    p.paragraph_format.space_before = Pt(12)
-    p.paragraph_format.space_after = Pt(12)
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-
-    disclaimer_text = " ".join(BANK_DISCLAIMER_LINES)
-    run = p.add_run(disclaimer_text)
-    _set_run_font(run, size=Pt(9), bold=True, italic=True)
-    run.font.color.rgb = RGBColor(0x99, 0x33, 0x00)
+# (Bank statement disclaimer removed per firm request)
 
 
 # =============================================================================
@@ -636,8 +602,7 @@ def generate_management_accounts(
     has_trading = _has_cogs(sections)
 
     # ---- Cover Page ----
-    _add_mgmt_cover_page(doc, entity, period_start, period_end, generated_by_name,
-                         tb_source=tb_source)
+    _add_mgmt_cover_page(doc, entity, period_start, period_end, generated_by_name)
 
     # ---- Trading Account (if COGS exist) ----
     gross_profit = None
@@ -654,8 +619,6 @@ def generate_management_accounts(
 
     # ---- Balance Sheet (unless P&L only) ----
     if output_type == 'bs_pnl':
-        if tb_source == 'BANK_DERIVED':
-            _add_bank_disclaimer(doc)
         _add_detailed_balance_sheet(
             doc, entity, fy_proxy, sections, show_cents=show_cents,
             net_profit=net_profit, net_profit_prior=net_profit_prior,
