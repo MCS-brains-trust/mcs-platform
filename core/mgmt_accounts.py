@@ -72,7 +72,7 @@ def detect_tb_source(entity):
     try:
         from review.models import PendingTransaction
         has_bank_data = PendingTransaction.objects.filter(
-            review_job__entity=entity,
+            job__entity=entity,
             is_confirmed=True,
         ).exists()
         if has_bank_data:
@@ -208,11 +208,11 @@ def build_bank_derived_tb(entity, fy, period_end):
 
     # 1. Gather all approved transactions up to period_end
     txns = PendingTransaction.objects.filter(
-        review_job__entity=entity,
-        status='approved',
+        job__entity=entity,
+        is_confirmed=True,
         date__lte=period_end,
         date__gte=fy.start_date,
-    ).select_related('review_job')
+    ).select_related('job')
 
     # Aggregate by account code
     account_totals = defaultdict(lambda: {"debit": Decimal("0"), "credit": Decimal("0"), "name": ""})
