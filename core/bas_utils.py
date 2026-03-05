@@ -408,16 +408,24 @@ def _resolve_section_and_tax(account_code, coa_lookup, entity_coa_lookup, line_t
         coa_tax = (coa.tax_code or "").upper().strip() if coa else ""
         base_tax = ecoa_tax or coa_tax
 
-        if not base_tax and line_tax:
-            tax_map = {
-                'GST on Income': 'GST',
-                'GST on Expenses': 'INP',
-                'GST Free Income': 'FRE',
-                'GST Free Expenses': 'FRE',
-                'BAS Excluded': 'N-T',
-                'N-T': 'N-T',
-            }
-            tax_code = tax_map.get(line_tax, base_tax)
+        # Transaction-level tax type (line_tax) takes precedence over the
+        # account-level default (base_tax).  The account default is only
+        # used as a fallback when no transaction-level type was supplied.
+        # This ensures that a transaction confirmed as e.g. "GST Free Income"
+        # is classified as FRE even when the account's default is GST.
+        tax_map = {
+            'GST on Income': 'GST',
+            'GST on Expenses': 'INP',
+            'GST Free Income': 'FRE',
+            'GST Free Expenses': 'FRE',
+            'BAS Excluded': 'N-T',
+            'N-T': 'N-T',
+            'Input Taxed': 'ITS',
+            'GST': 'GST',
+            'GST Free': 'FRE',
+        }
+        if line_tax and line_tax in tax_map:
+            tax_code = tax_map[line_tax]
         else:
             tax_code = base_tax
 
