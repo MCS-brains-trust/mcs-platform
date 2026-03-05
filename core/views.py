@@ -386,8 +386,8 @@ def _post_bank_contra_entry(txn, fy, bank_mapping, has_gst):
 
 def _reverse_bank_contra_entry(txn, fy):
     """
-    Reverse the bank-side (contra) entry for a transaction.
-    Called when unconfirming or deleting a confirmed transaction.
+    Reverse the bank-side (contra) entry for a transaction by creating
+    an adjustment line with opposite sign.  Never mutates existing lines.
     """
     if not txn.job or not txn.job.entity:
         return
@@ -396,28 +396,21 @@ def _reverse_bank_contra_entry(txn, fy):
         return
     gross_amount = abs(txn.amount)
     bank_code = bank_mapping.tb_account_code
-    tb_line = TrialBalanceLine.objects.filter(
-        financial_year=fy, account_code=bank_code, is_adjustment=False,
-    ).first()
-    if not tb_line:
-        tb_line = TrialBalanceLine.objects.filter(
-            financial_year=fy, account_code=bank_code,
-        ).first()
-    if tb_line:
-        if txn.amount > 0:
-            tb_line.debit = max(Decimal("0"), tb_line.debit - gross_amount)
-            tb_line.closing_balance -= gross_amount
-        else:
-            tb_line.credit = max(Decimal("0"), tb_line.credit - gross_amount)
-            tb_line.closing_balance += gross_amount
-        # Only delete if zero movement AND no prior year data or opening/closing balance
-        has_prior = (tb_line.prior_debit or Decimal('0')) != 0 or (tb_line.prior_credit or Decimal('0')) != 0
-        has_opening = (tb_line.opening_balance or Decimal('0')) != 0
-        has_closing = (tb_line.closing_balance or Decimal('0')) != 0
-        if tb_line.debit == 0 and tb_line.credit == 0 and not has_prior and not has_opening and not has_closing:
-            tb_line.delete()
-        else:
-            tb_line.save()
+    bank_name = bank_mapping.tb_account_name
+
+    # Original posting: receipt (amount>0) → debit bank; payment (amount<0) → credit bank
+    # Reversal: receipt → credit bank; payment → debit bank
+    TrialBalanceLine.objects.create(
+        financial_year=fy,
+        account_code=bank_code,
+        account_name=bank_name,
+        debit=gross_amount if txn.amount < 0 else Decimal("0"),
+        credit=gross_amount if txn.amount > 0 else Decimal("0"),
+        closing_balance=gross_amount if txn.amount < 0 else -gross_amount,
+        is_adjustment=True,
+        source="bank_statement",
+        description=f"Reversal of bank contra for transaction {txn.pk}",
+    )
 
 
 def _post_txn_to_tb(txn, fy, has_gst):
@@ -7939,81 +7932,58 @@ def review_delete_selected_transactions(request, pk):
 
 
 def _reverse_tb_for_transaction(txn, fy):
-    """Reverse the trial balance impact of a single confirmed transaction.
-    Used by delete operations to clean up TB lines before removing transactions.
+    """Reverse the trial balance impact of a single confirmed transaction
+    by creating adjustment lines with opposite sign values.
+    Never mutates existing TrialBalanceLine records.
     """
+    from django.db import transaction as db_transaction
+
     if not txn.confirmed_code:
         return
 
-    # Reverse the main account TB line
-    tb_line = TrialBalanceLine.objects.filter(
-        financial_year=fy,
-        account_code=txn.confirmed_code,
-        is_adjustment=False,
-    ).first()
-    if not tb_line:
-        tb_line = TrialBalanceLine.objects.filter(
-            financial_year=fy,
-            account_code=txn.confirmed_code,
-        ).first()
-    if tb_line:
+    with db_transaction.atomic():
+        # --- 1. Reverse the main account ---
         has_gst = txn.confirmed_gst_amount and txn.confirmed_gst_amount > 0
         net_for_tb = txn.net_amount if has_gst else abs(txn.amount)
 
-        # Reverse: payments were DEBITED, receipts were CREDITED
-        if txn.amount < 0:
-            tb_line.debit = max(Decimal("0"), tb_line.debit - net_for_tb)
-            tb_line.closing_balance -= net_for_tb
-        else:
-            tb_line.credit = max(Decimal("0"), tb_line.credit - net_for_tb)
-            tb_line.closing_balance += net_for_tb
-
-        # Only delete if zero movement AND no prior year data or opening/closing balance
-        has_prior = (tb_line.prior_debit or Decimal('0')) != 0 or (tb_line.prior_credit or Decimal('0')) != 0
-        has_opening = (tb_line.opening_balance or Decimal('0')) != 0
-        has_closing = (tb_line.closing_balance or Decimal('0')) != 0
-        if tb_line.debit == 0 and tb_line.credit == 0 and not has_prior and not has_opening and not has_closing:
-            tb_line.delete()
-        else:
-            tb_line.save()
-
-    # Reverse the GST clearing account line
-    if txn.confirmed_gst_amount and txn.confirmed_gst_amount > 0:
-        gst_amt = txn.confirmed_gst_amount
-        gst_code = '3380'
-        gst_line = TrialBalanceLine.objects.filter(
+        # Original: payment (amount<0) → debit expense; receipt (amount>0) → credit income
+        # Reversal: payment → credit; receipt → debit
+        TrialBalanceLine.objects.create(
             financial_year=fy,
-            account_code=gst_code,
-            is_adjustment=False,
-        ).first()
-        if not gst_line:
-            gst_line = TrialBalanceLine.objects.filter(
+            account_code=txn.confirmed_code,
+            account_name=txn.confirmed_name or txn.confirmed_code,
+            debit=net_for_tb if txn.amount > 0 else Decimal("0"),
+            credit=net_for_tb if txn.amount < 0 else Decimal("0"),
+            closing_balance=net_for_tb if txn.amount > 0 else -net_for_tb,
+            is_adjustment=True,
+            source="bank_statement",
+            description=f"Reversal of transaction {txn.pk}",
+        )
+
+        # --- 2. Reverse the GST clearing account ---
+        if has_gst:
+            gst_amt = txn.confirmed_gst_amount
+            # Original: receipt (amount>0) → credit 3380; payment (amount<0) → debit 3380
+            # Reversal: receipt → debit 3380; payment → credit 3380
+            TrialBalanceLine.objects.create(
                 financial_year=fy,
-                account_code=gst_code,
-            ).first()
-        if gst_line:
-            if txn.amount > 0:
-                gst_line.credit = max(Decimal("0"), gst_line.credit - gst_amt)
-                gst_line.closing_balance += gst_amt
-            else:
-                gst_line.debit = max(Decimal("0"), gst_line.debit - gst_amt)
-                gst_line.closing_balance -= gst_amt
+                account_code="3380",
+                account_name="GST payable control account",
+                debit=gst_amt if txn.amount > 0 else Decimal("0"),
+                credit=gst_amt if txn.amount < 0 else Decimal("0"),
+                closing_balance=gst_amt if txn.amount > 0 else -gst_amt,
+                is_adjustment=True,
+                source="bank_statement",
+                description=f"Reversal of GST for transaction {txn.pk}",
+            )
 
-            has_prior_gst = (gst_line.prior_debit or Decimal('0')) != 0 or (gst_line.prior_credit or Decimal('0')) != 0
-            has_opening_gst = (gst_line.opening_balance or Decimal('0')) != 0
-            has_closing_gst = (gst_line.closing_balance or Decimal('0')) != 0
-            if gst_line.debit == 0 and gst_line.credit == 0 and not has_prior_gst and not has_opening_gst and not has_closing_gst:
-                gst_line.delete()
-            else:
-                gst_line.save()
+        # --- 3. Reverse the bank contra-entry ---
+        _reverse_bank_contra_entry(txn, fy)
 
-    # Reverse the bank contra-entry
-    _reverse_bank_contra_entry(txn, fy)
-
-    # Reset the posted_to_tb flag so the transaction can be re-posted
-    if hasattr(txn, 'posted_to_tb'):
-        txn.posted_to_tb = False
-        txn.save(update_fields=['posted_to_tb'])
+        # Reset the posted_to_tb flag so the transaction can be re-posted
+        if hasattr(txn, 'posted_to_tb'):
+            txn.posted_to_tb = False
+            txn.save(update_fields=['posted_to_tb'])
 
 
 # ---------------------------------------------------------------------------
