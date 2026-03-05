@@ -1,0 +1,292 @@
+{% load static %}
+{# ===== WORK PAPERS TAB ===== #}
+{#
+   Template library launcher.
+   - Fetches available templates from the API on first open.
+   - Groups them by category.
+   - Each card has a Download button that triggers a pre-filled file download.
+   - Nothing is saved back to StatementHub.
+#}
+
+<div id="workpapers-root">
+
+    {# ── Header ── #}
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h5 class="mb-1"><i class="bi bi-pencil-square text-primary"></i> Work Papers</h5>
+            <p class="text-muted mb-0" style="font-size: 0.9rem;">
+                Download pre-filled in-house work paper templates for
+                <strong>{{ entity.entity_name }}</strong> &mdash; <strong>{{ fy.year_label }}</strong>.
+                Templates open locally; nothing is saved back to StatementHub.
+            </p>
+        </div>
+        <div class="text-end">
+            <span class="badge bg-light text-dark border" style="font-size: 0.8rem;">
+                <i class="bi bi-building"></i> {{ entity.entity_name }}
+            </span>
+            {% if entity.abn %}
+            <span class="badge bg-light text-dark border ms-1" style="font-size: 0.8rem;">
+                ABN {{ entity.abn|slice:":2" }} {{ entity.abn|slice:"2:5" }} {{ entity.abn|slice:"5:8" }} {{ entity.abn|slice:"8:11" }}
+            </span>
+            {% endif %}
+            <span class="badge bg-primary ms-1" style="font-size: 0.8rem;">{{ fy.year_label }}</span>
+        </div>
+    </div>
+
+    {# ── Loading state ── #}
+    <div id="wp-loading" class="text-center py-5">
+        <div class="spinner-border text-primary" role="status"></div>
+        <p class="text-muted mt-2 small">Loading work paper templates&hellip;</p>
+    </div>
+
+    {# ── Empty state ── #}
+    <div id="wp-empty" class="text-center py-5" style="display:none;">
+        <i class="bi bi-folder2-open" style="font-size: 3rem; color: #adb5bd;"></i>
+        <p class="text-muted mt-3">No work paper templates have been uploaded yet.</p>
+        <p class="text-muted small">
+            An administrator can upload templates via
+            <strong>Django Admin &rarr; Work Paper Templates</strong>.
+        </p>
+    </div>
+
+    {# ── Error state ── #}
+    <div id="wp-error" class="alert alert-danger" style="display:none;">
+        <i class="bi bi-exclamation-triangle-fill"></i>
+        <span id="wp-error-msg">Unable to load templates.</span>
+    </div>
+
+    {# ── Template grid (populated by JS) ── #}
+    <div id="wp-content" style="display:none;">
+
+        {# Search / filter bar #}
+        <div class="row g-2 mb-4">
+            <div class="col-md-5">
+                <div class="input-group input-group-sm">
+                    <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+                    <input type="text" class="form-control" id="wp-search"
+                           placeholder="Search templates&hellip;" oninput="wpFilterTemplates()">
+                </div>
+            </div>
+            <div class="col-md-4">
+                <select class="form-select form-select-sm" id="wp-category-filter" onchange="wpFilterTemplates()">
+                    <option value="">All categories</option>
+                </select>
+            </div>
+            <div class="col-md-3 text-end">
+                <span class="text-muted small" id="wp-count-label"></span>
+            </div>
+        </div>
+
+        {# Category sections — rendered by JS #}
+        <div id="wp-sections"></div>
+
+    </div>
+
+</div>
+
+{# ── Download progress toast ── #}
+<div class="position-fixed bottom-0 end-0 p-3" style="z-index: 1100;">
+    <div id="wp-toast" class="toast align-items-center text-bg-success border-0" role="alert" aria-live="assertive">
+        <div class="d-flex">
+            <div class="toast-body" id="wp-toast-msg">
+                <i class="bi bi-check-circle-fill me-1"></i> Template downloaded.
+            </div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+        </div>
+    </div>
+</div>
+
+<script>
+(function () {
+    "use strict";
+
+    // ── State ──────────────────────────────────────────────────────────────
+    const FY_PK = "{{ fy.pk }}";
+    const API_URL = "{% url 'core:workpaper_list_api' fy_pk=fy.pk %}";
+
+    let _allTemplates = [];
+    let _loaded = false;
+
+    // ── Category metadata (icon + colour) ─────────────────────────────────
+    const CATEGORY_META = {
+        bas_reconciliation:    { icon: "bi-receipt-cutoff",     colour: "text-warning"  },
+        journal_workpaper:     { icon: "bi-journal-text",       colour: "text-primary"  },
+        account_reconciliation:{ icon: "bi-table",              colour: "text-success"  },
+        division_7a:           { icon: "bi-bank2",              colour: "text-danger"   },
+        loan_account:          { icon: "bi-credit-card",        colour: "text-info"     },
+        depreciation:          { icon: "bi-graph-down-arrow",   colour: "text-secondary"},
+        stock_take:            { icon: "bi-box-seam",           colour: "text-warning"  },
+        payroll:               { icon: "bi-people",             colour: "text-primary"  },
+        trust_distribution:    { icon: "bi-diagram-2",          colour: "text-info"     },
+        general:               { icon: "bi-file-earmark-text",  colour: "text-muted"    },
+    };
+
+    // ── Load templates from API ────────────────────────────────────────────
+    function wpLoad() {
+        if (_loaded) return;
+        fetch(API_URL, { headers: { "X-Requested-With": "XMLHttpRequest" } })
+            .then(r => {
+                if (!r.ok) throw new Error("HTTP " + r.status);
+                return r.json();
+            })
+            .then(data => {
+                _allTemplates = data.templates || [];
+                _loaded = true;
+                wpRender(_allTemplates);
+            })
+            .catch(err => {
+                document.getElementById("wp-loading").style.display = "none";
+                const errEl = document.getElementById("wp-error");
+                document.getElementById("wp-error-msg").textContent =
+                    "Could not load work paper templates: " + err.message;
+                errEl.style.display = "";
+            });
+    }
+
+    // ── Render templates into the DOM ──────────────────────────────────────
+    function wpRender(templates) {
+        document.getElementById("wp-loading").style.display = "none";
+
+        if (!templates.length) {
+            document.getElementById("wp-empty").style.display = "";
+            return;
+        }
+
+        document.getElementById("wp-content").style.display = "";
+
+        // Populate category filter
+        const cats = [...new Set(templates.map(t => t.category))];
+        const sel = document.getElementById("wp-category-filter");
+        // Clear existing options except the first "All categories"
+        while (sel.options.length > 1) sel.remove(1);
+        cats.forEach(cat => {
+            const tpl = templates.find(t => t.category === cat);
+            const opt = document.createElement("option");
+            opt.value = cat;
+            opt.textContent = tpl ? tpl.category_display : cat;
+            sel.appendChild(opt);
+        });
+
+        wpRenderSections(templates);
+    }
+
+    function wpRenderSections(templates) {
+        const container = document.getElementById("wp-sections");
+        container.innerHTML = "";
+
+        if (!templates.length) {
+            container.innerHTML = '<p class="text-muted text-center py-4">No templates match your search.</p>';
+            document.getElementById("wp-count-label").textContent = "0 templates";
+            return;
+        }
+
+        document.getElementById("wp-count-label").textContent =
+            templates.length + " template" + (templates.length !== 1 ? "s" : "");
+
+        // Group by category
+        const groups = {};
+        templates.forEach(t => {
+            if (!groups[t.category]) groups[t.category] = { display: t.category_display, items: [] };
+            groups[t.category].items.push(t);
+        });
+
+        Object.entries(groups).forEach(([cat, group]) => {
+            const meta = CATEGORY_META[cat] || { icon: "bi-file-earmark", colour: "text-muted" };
+
+            const section = document.createElement("div");
+            section.className = "mb-4";
+            section.innerHTML = `
+                <h6 class="fw-semibold text-uppercase text-muted small mb-3 d-flex align-items-center gap-2">
+                    <i class="bi ${meta.icon} ${meta.colour}" style="font-size: 1rem;"></i>
+                    ${escHtml(group.display)}
+                    <span class="badge bg-light text-dark fw-normal">${group.items.length}</span>
+                </h6>
+                <div class="row g-3 wp-card-row" data-category="${escHtml(cat)}"></div>
+            `;
+
+            const row = section.querySelector(".wp-card-row");
+            group.items.forEach(tpl => {
+                const col = document.createElement("div");
+                col.className = "col-md-6 col-lg-4";
+                col.dataset.name = tpl.name.toLowerCase();
+                col.dataset.category = tpl.category;
+
+                const fmtBadge = tpl.file_format === "xlsx"
+                    ? '<span class="badge bg-success bg-opacity-10 text-success border border-success" style="font-size:0.7rem;"><i class="bi bi-file-earmark-excel"></i> Excel</span>'
+                    : '<span class="badge bg-primary bg-opacity-10 text-primary border border-primary" style="font-size:0.7rem;"><i class="bi bi-file-earmark-word"></i> Word</span>';
+
+                col.innerHTML = `
+                    <div class="card h-100 shadow-sm border-0" style="transition: box-shadow 0.15s;">
+                        <div class="card-body d-flex flex-column">
+                            <div class="d-flex align-items-start gap-2 mb-2">
+                                <i class="bi ${meta.icon} ${meta.colour} mt-1" style="font-size: 1.3rem; flex-shrink:0;"></i>
+                                <div class="flex-grow-1">
+                                    <div class="fw-semibold" style="font-size: 0.92rem; line-height: 1.3;">${escHtml(tpl.name)}</div>
+                                    <div class="mt-1">${fmtBadge}</div>
+                                </div>
+                            </div>
+                            ${tpl.description ? `<p class="text-muted small mb-3 flex-grow-1" style="font-size:0.82rem;">${escHtml(tpl.description)}</p>` : '<div class="flex-grow-1"></div>'}
+                            <div class="d-flex align-items-center gap-2 mt-auto pt-2 border-top">
+                                <a href="${escHtml(tpl.download_url)}"
+                                   class="btn btn-sm btn-primary flex-grow-1"
+                                   onclick="wpTrackDownload(this, '${escHtml(tpl.name)}')"
+                                   download>
+                                    <i class="bi bi-download me-1"></i> Download
+                                </a>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                row.appendChild(col);
+            });
+
+            container.appendChild(section);
+        });
+    }
+
+    // ── Filter ─────────────────────────────────────────────────────────────
+    window.wpFilterTemplates = function () {
+        const query = document.getElementById("wp-search").value.toLowerCase().trim();
+        const cat   = document.getElementById("wp-category-filter").value;
+
+        const filtered = _allTemplates.filter(t => {
+            const matchCat  = !cat || t.category === cat;
+            const matchName = !query || t.name.toLowerCase().includes(query)
+                                     || (t.description || "").toLowerCase().includes(query);
+            return matchCat && matchName;
+        });
+
+        wpRenderSections(filtered);
+    };
+
+    // ── Download tracking (toast) ──────────────────────────────────────────
+    window.wpTrackDownload = function (link, name) {
+        const toastEl = document.getElementById("wp-toast");
+        document.getElementById("wp-toast-msg").innerHTML =
+            '<i class="bi bi-download me-1"></i> Downloading <strong>' + escHtml(name) + '</strong>&hellip;';
+        const toast = new bootstrap.Toast(toastEl, { delay: 3000 });
+        toast.show();
+    };
+
+    // ── Utility ────────────────────────────────────────────────────────────
+    function escHtml(str) {
+        return String(str)
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;")
+            .replace(/"/g, "&quot;");
+    }
+
+    // ── Auto-load when tab becomes visible ────────────────────────────────
+    // Listen for Bootstrap tab show events on the workpapers tab button
+    document.addEventListener("DOMContentLoaded", function () {
+        const tabBtn = document.querySelector('[data-bs-target="#tab-workpapers"]');
+        if (tabBtn) {
+            tabBtn.addEventListener("shown.bs.tab", wpLoad);
+            // If the tab is already active on page load, load immediately
+            if (tabBtn.classList.contains("active")) wpLoad();
+        }
+    });
+
+})();
+</script>

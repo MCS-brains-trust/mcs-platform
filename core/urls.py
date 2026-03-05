@@ -19,6 +19,7 @@ from . import views_package_assembly
 from . import views_bulk_operations
 from . import views_bas_commentary
 from . import views_div7a
+from . import views_workpapers
 
 app_name = "core"
 
@@ -394,4 +395,8 @@ urlpatterns = [
     path("api/years/<uuid:pk>/trust-workspace/elections/", views_trust.trust_elections_api, name="trust_elections_api"),
     path("api/years/<uuid:pk>/trust-workspace/elections/<uuid:election_pk>/confirm/", views_trust.confirm_election, name="confirm_election"),
     path("api/years/<uuid:pk>/trust-workspace/eva-context/", views_trust.trust_eva_context, name="trust_eva_context"),
+
+    # ===== WORK PAPERS TAB =====
+    path("years/<uuid:fy_pk>/workpapers/<uuid:template_pk>/download/", views_workpapers.workpaper_download, name="workpaper_download"),
+    path("api/years/<uuid:fy_pk>/workpapers/", views_workpapers.workpaper_list_api, name="workpaper_list_api"),
 ]

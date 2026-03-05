@@ -433,13 +433,11 @@
             {% endif %}
         </button>
     </li>
-    <!-- Workpapers tab temporarily hidden
     <li class="nav-item">
-        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-workpapers" type="button">
-            <i class="bi bi-pencil-square"></i> Workpapers
+        <button class="nav-link{% if active_tab == 'workpapers' %} active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-workpapers" data-tab-name="workpapers" type="button">
+            <i class="bi bi-pencil-square"></i> Work Papers
         </button>
     </li>
-    -->
     <li class="nav-item">
         <button class="nav-link{% if active_tab == 'docs' %} active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-docs" data-tab-name="docs" type="button">
             <i class="bi bi-file-earmark"></i> Documents ({{ documents.count }})
@@ -892,73 +890,10 @@
         {% include "core/includes/review_tab.html" %}
     </div>
 
-    {% comment "Workpapers tab temporarily hidden" %}
-    <!-- ===== WORKPAPER NOTES TAB ===== -->
-    <div class="tab-pane fade p-3" id="tab-workpapers">
-        <div class="d-flex justify-content-between align-items-center mb-3">
-            <div>
-                <h6 class="mb-0"><i class="bi bi-pencil-square"></i> Working Paper Notes</h6>
-                <small class="text-muted" id="wp-summary">Loading...</small>
-            </div>
-            <div class="d-flex gap-2">
-                {% if fy.prior_year %}
-                <form method="post" action="{% url 'core:carry_forward_notes' pk=fy.pk %}" class="d-inline">
-                    {% csrf_token %}
-                    <button type="submit" class="btn btn-sm btn-outline-info">
-                        <i class="bi bi-arrow-repeat"></i> Carry Forward from {{ prior_year }}
-                    </button>
-                </form>
-                {% endif %}
-                <a href="{% url 'core:export_workpaper_notes' pk=fy.pk %}" class="btn btn-sm btn-outline-dark">
-                    <i class="bi bi-download"></i> Export All Notes
-                </a>
-            </div>
-        </div>
-
-        {% if tb_lines %}
-        <div class="table-responsive" style="max-height: 600px; overflow-y: auto;">
-            <table class="table table-sm table-hover align-middle" style="font-size: 0.88rem;">
-                <thead class="table-light sticky-top">
-                    <tr>
-                        <th style="width: 80px;">Code</th>
-                        <th>Account</th>
-                        <th class="text-end" style="width: 110px;">Balance</th>
-                        <th style="width: 80px;">Status</th>
-                        <th style="width: 350px;">Preparer Note</th>
-                        <th style="width: 250px;">Reviewer Note</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for line in tb_lines %}
-                    <tr data-account="{{ line.account_code }}">
-                        <td><code class="text-muted">{{ line.account_code }}</code></td>
-                        <td>{{ line.account_name }}</td>
-                        <td class="text-end">${{ line.closing_balance|floatformat:2|intcomma }}</td>
-                        <td>
-                            <select class="form-select form-select-sm wp-status" data-code="{{ line.account_code }}" data-type="preparer" style="font-size:0.78rem;">
-                                <option value="blank">Blank</option>
-                                <option value="in_progress">In Progress</option>
-                                <option value="completed">Completed</option>
-                            </select>
-                        </td>
-                        <td>
-                            <textarea class="form-control form-control-sm wp-note" data-code="{{ line.account_code }}" data-type="preparer" rows="1" placeholder="Preparer note..." style="font-size:0.82rem;"></textarea>
-                        </td>
-                        <td>
-                            <textarea class="form-control form-control-sm wp-note" data-code="{{ line.account_code }}" data-type="reviewer" rows="1" placeholder="Reviewer note..." style="font-size:0.82rem;"></textarea>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-        {% else %}
-        <div class="text-center py-4 text-muted">
-            <p>Import a trial balance first to enable working paper notes.</p>
-        </div>
-        {% endif %}
+    <!-- ===== WORK PAPERS TAB ===== -->
+    <div class="tab-pane fade{% if active_tab == 'workpapers' %} show active{% endif %} p-3" id="tab-workpapers">
+        {% include "core/includes/workpapers_tab.html" %}
     </div>
-    {% endcomment %}
 
     <!-- ===== DOCUMENTS TAB (Version Controlled) ===== -->
     <div class="tab-pane fade{% if active_tab == 'docs' %} show active{% endif %} p-3" id="tab-docs">
