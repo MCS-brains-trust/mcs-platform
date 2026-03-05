@@ -13,7 +13,7 @@ The output is a stripped version of the annual financial statements:
   ✗ Notes  ✗ Director's Declaration  ✗ Compilation Report
 
 Every page carries a red header watermark:
-  "DRAFT — NOT FOR EXTERNAL DISTRIBUTION | Generated DD MMM YYYY HH:MM by Name"
+  "DRAFT | Generated DD MMM YYYY HH:MM by Name"
 """
 import io
 import logging
@@ -354,29 +354,25 @@ def _add_mgmt_cover_page(doc, entity, period_start, period_end, generated_by_nam
         ABN [ABN]
         MANAGEMENT ACCOUNTS
         For the period [start] to [end]
-        DRAFT — NOT FOR EXTERNAL DISTRIBUTION
+        DRAFT
         Prepared: [datetime] by [name]
         These accounts have not been finalised or reviewed.
     """
     now = timezone.localtime(timezone.now())
-
-    # Small spacing before logo
-    p = doc.add_paragraph()
-    p.paragraph_format.space_after = Pt(12)
 
     # Add MC&S logo — centered
     logo_path = _get_logo_path()
     if logo_path:
         p = doc.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.space_before = Pt(6)
         p.paragraph_format.space_after = Pt(0)
         run = p.add_run()
-        run.add_picture(logo_path, width=Cm(7))
+        run.add_picture(logo_path, width=Cm(6))
 
     # Spacing after logo
     p = doc.add_paragraph()
-    p.paragraph_format.space_after = Pt(36)
+    p.paragraph_format.space_after = Pt(28)
 
     # Entity name
     _add_centered_heading(doc, entity.entity_name, size=Pt(16), bold=True, space_after=4)
@@ -389,11 +385,11 @@ def _add_mgmt_cover_page(doc, entity, period_start, period_end, generated_by_nam
     # ABN
     if entity.abn:
         _add_centered_heading(doc, f"ABN {entity.abn}",
-                              size=Pt(11), bold=False, space_after=12)
+                              size=Pt(11), bold=False, space_after=8)
 
     # Spacing
     p = doc.add_paragraph()
-    p.paragraph_format.space_after = Pt(24)
+    p.paragraph_format.space_after = Pt(16)
 
     # "Management Accounts" title
     _add_centered_heading(doc, "Management Accounts",
@@ -403,36 +399,36 @@ def _add_mgmt_cover_page(doc, entity, period_start, period_end, generated_by_nam
     start_str = period_start.strftime('%-d %B %Y')
     end_str = period_end.strftime('%-d %B %Y')
     _add_centered_heading(doc, f"For the period {start_str} to {end_str}",
-                          size=Pt(11), bold=False, space_after=16)
+                          size=Pt(11), bold=False, space_after=12)
 
     # DRAFT warning — red, bold
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p.paragraph_format.space_after = Pt(8)
-    run = p.add_run("DRAFT \u2014 NOT FOR EXTERNAL DISTRIBUTION")
+    p.paragraph_format.space_after = Pt(6)
+    run = p.add_run("DRAFT")
     _set_run_font(run, size=Pt(12), bold=True)
     run.font.color.rgb = RGBColor(0xCC, 0x00, 0x00)
 
     # Prepared line
     prepared_str = now.strftime('%-d %B %Y %H:%M')
     _add_centered_heading(doc, f"Prepared: {prepared_str} by {generated_by_name}",
-                          size=Pt(10), bold=False, space_after=4)
+                          size=Pt(10), bold=False, space_after=2)
 
     # Disclaimer
     _add_centered_heading(doc, "These accounts have not been finalised or reviewed.",
                           size=Pt(10), bold=False, space_after=0)
 
-    # Push firm details to bottom
-    for _ in range(4):
+    # Push firm details to bottom — reduced spacing to fit on one page
+    for _ in range(6):
         p = doc.add_paragraph()
-        p.paragraph_format.space_after = Pt(12)
+        p.paragraph_format.space_after = Pt(8)
 
+    # Firm details — consolidated into fewer lines
     _add_centered_heading(doc, FIRM_NAME, size=Pt(10), bold=False, space_after=0)
-    _add_centered_heading(doc, FIRM_ADDRESS_1, size=Pt(10), bold=False, space_after=0)
-    _add_centered_heading(doc, FIRM_ADDRESS_2, size=Pt(10), bold=False, space_after=4)
-    _add_centered_heading(doc, FIRM_PHONE, size=Pt(10), bold=False, space_after=0)
-    _add_centered_heading(doc, FIRM_EMAIL, size=Pt(10), bold=False, space_after=0)
-    _add_centered_heading(doc, FIRM_WEBSITE, size=Pt(10), bold=False, space_after=0)
+    _add_centered_heading(doc, f"{FIRM_ADDRESS_1}, {FIRM_ADDRESS_2}",
+                          size=Pt(9), bold=False, space_after=2)
+    _add_centered_heading(doc, f"{FIRM_PHONE}  |  {FIRM_EMAIL}  |  {FIRM_WEBSITE}",
+                          size=Pt(9), bold=False, space_after=0)
 
     doc.add_page_break()
 
@@ -446,12 +442,12 @@ def _inject_mgmt_watermark(doc, generated_by_name):
     Inject a red, bold, 9pt, right-aligned watermark into the page header
     of every section.  This survives LibreOffice PDF conversion.
 
-    Text: "DRAFT — NOT FOR EXTERNAL DISTRIBUTION | Generated DD MMM YYYY HH:MM by Name"
+    Text: "DRAFT | Generated DD MMM YYYY HH:MM by Name"
     """
     now = timezone.localtime(timezone.now())
     timestamp = now.strftime('%-d %b %Y %H:%M')
     watermark_text = (
-        f"DRAFT \u2014 NOT FOR EXTERNAL DISTRIBUTION | "
+        f"DRAFT | "
         f"Generated {timestamp} by {generated_by_name}"
     )
 
