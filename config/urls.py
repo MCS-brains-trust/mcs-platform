@@ -14,6 +14,9 @@ urlpatterns = [
 
     # Review app handles the dashboard (homepage) and review pages
     path("", include("review.urls")),
+    # Coworker desktop agent API (token-authenticated, read-only)
+    path("api/coworker/", include("core.urls_coworker_api")),
+
     # Core app handles clients, entities, financial years, etc.
     path("", include("core.urls")),
     # Integrations app handles Xero/MYOB/QB connections and cloud imports
