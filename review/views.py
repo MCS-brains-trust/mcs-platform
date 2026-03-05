@@ -1282,6 +1282,8 @@ def _parse_excel_bank_statement(content, filename):
     try:
         import pandas as pd
     except ImportError:
+        logger.error("pandas is not installed — cannot parse Excel/CSV bank statements. "
+                     "Install it with: pip install pandas")
         return None
 
     try:
@@ -1515,7 +1517,7 @@ def _parse_excel_bank_statement(content, filename):
                 continue
 
             if not desc or desc == "nan":
-                continue
+                desc = "(No description)"
 
             txn = {
                 "date": date,
@@ -1929,7 +1931,7 @@ def parse_statement(request):
         if file_ext in ('.csv', '.xlsx', '.xls'):
             hint = (' Please download the StatementHub bank statement template '
                     'and re-upload your data in the required format. '
-                    'The template requires columns: Date, Description, Debit, Credit, Balance.')
+                    'The template requires columns: Date, Description, Amount, Balance (optional).')
         return JsonResponse({
             'status': 'error',
             'message': f'No transactions could be extracted from {filename}.{hint}'
