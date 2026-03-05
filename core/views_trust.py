@@ -16,6 +16,7 @@ import logging
 from decimal import Decimal, InvalidOperation
 
 from django.contrib.auth.decorators import login_required
+from django.db import transaction
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -180,30 +181,32 @@ def distribution_scenarios_api(request, pk):
         data = json.loads(request.body)
         scenario_id = data.get("id")
 
-        if scenario_id:
-            scenario = get_object_or_404(DistributionScenario, pk=scenario_id, trust_workspace=workspace)
-        else:
-            # Check max 3 scenarios
-            if workspace.scenarios.count() >= 3:
-                return JsonResponse({"error": "Maximum 3 scenarios allowed"}, status=400)
-            scenario = DistributionScenario(trust_workspace=workspace)
+        with transaction.atomic():
+            if scenario_id:
+                scenario = get_object_or_404(DistributionScenario, pk=scenario_id, trust_workspace=workspace)
+            else:
+                # Lock workspace row to prevent race condition on count check
+                TrustWorkspace.objects.select_for_update().get(pk=workspace.pk)
+                if workspace.scenarios.count() >= 3:
+                    return JsonResponse({"error": "Maximum 3 scenarios allowed"}, status=400)
+                scenario = DistributionScenario(trust_workspace=workspace)
 
-        if "name" in data:
-            scenario.name = data["name"]
-        if "allocations" in data:
-            scenario.allocations = data["allocations"]
-        if "total_tax" in data:
-            try:
-                scenario.total_tax = Decimal(str(data["total_tax"]))
-            except (InvalidOperation, ValueError):
-                pass
-        if "tax_saved_vs_equal" in data:
-            try:
-                scenario.tax_saved_vs_equal = Decimal(str(data["tax_saved_vs_equal"]))
-            except (InvalidOperation, ValueError):
-                pass
+            if "name" in data:
+                scenario.name = data["name"]
+            if "allocations" in data:
+                scenario.allocations = data["allocations"]
+            if "total_tax" in data:
+                try:
+                    scenario.total_tax = Decimal(str(data["total_tax"]))
+                except (InvalidOperation, ValueError):
+                    pass
+            if "tax_saved_vs_equal" in data:
+                try:
+                    scenario.tax_saved_vs_equal = Decimal(str(data["tax_saved_vs_equal"]))
+                except (InvalidOperation, ValueError):
+                    pass
 
-        scenario.save()
+            scenario.save()
         return JsonResponse(_serialize_scenario(scenario))
 
 
@@ -212,16 +215,18 @@ def distribution_scenarios_api(request, pk):
 def confirm_scenario(request, pk, scenario_pk):
     """POST — Confirm a scenario as the final distribution."""
     fy = get_object_or_404(FinancialYear, pk=pk)
-    workspace = get_object_or_404(TrustWorkspace, financial_year=fy)
-    scenario = get_object_or_404(DistributionScenario, pk=scenario_pk, trust_workspace=workspace)
 
-    # Unconfirm all others
-    workspace.scenarios.update(is_confirmed=False)
-    scenario.is_confirmed = True
-    scenario.save(update_fields=["is_confirmed"])
+    with transaction.atomic():
+        workspace = TrustWorkspace.objects.select_for_update().get(financial_year=fy)
+        scenario = get_object_or_404(DistributionScenario, pk=scenario_pk, trust_workspace=workspace)
 
-    workspace.confirmed_scenario = scenario
-    workspace.save(update_fields=["confirmed_scenario"])
+        # Unconfirm all others
+        workspace.scenarios.select_for_update().update(is_confirmed=False)
+        scenario.is_confirmed = True
+        scenario.save(update_fields=["is_confirmed"])
+
+        workspace.confirmed_scenario = scenario
+        workspace.save(update_fields=["confirmed_scenario"])
 
     ActivityLog.objects.create(
         user=request.user,
@@ -274,28 +279,29 @@ def section_100a_api(request, pk):
         data = json.loads(request.body)
         assessment_id = data.get("id")
 
-        if assessment_id:
-            assessment = get_object_or_404(
-                Section100AAssessment, pk=assessment_id, trust_workspace=workspace
-            )
-        else:
-            beneficiary_id = data.get("beneficiary_id")
-            beneficiary = get_object_or_404(EntityOfficer, pk=beneficiary_id)
-            assessment, _ = Section100AAssessment.objects.get_or_create(
-                trust_workspace=workspace, beneficiary=beneficiary,
-            )
+        with transaction.atomic():
+            if assessment_id:
+                assessment = get_object_or_404(
+                    Section100AAssessment, pk=assessment_id, trust_workspace=workspace
+                )
+            else:
+                beneficiary_id = data.get("beneficiary_id")
+                beneficiary = get_object_or_404(EntityOfficer, pk=beneficiary_id)
+                assessment, _ = Section100AAssessment.objects.get_or_create(
+                    trust_workspace=workspace, beneficiary=beneficiary,
+                )
 
-        for q in ["q1", "q2", "q3", "q4", "q5", "q6", "q7", "q8"]:
-            if q in data:
-                setattr(assessment, q, data[q])
+            for q in ["q1", "q2", "q3", "q4", "q5", "q6", "q7", "q8"]:
+                if q in data:
+                    setattr(assessment, q, data[q])
 
-        if "resolution_strategy" in data:
-            assessment.resolution_strategy = data["resolution_strategy"]
+            if "resolution_strategy" in data:
+                assessment.resolution_strategy = data["resolution_strategy"]
 
-        assessment.save()  # risk_rating calculated in save()
+            assessment.save()  # risk_rating calculated in save()
 
-        # Update overall workspace risk
-        _update_overall_100a_risk(workspace)
+            # Update overall workspace risk (inside transaction for consistency)
+            _update_overall_100a_risk(workspace)
 
         return JsonResponse(_serialize_100a(assessment))
 

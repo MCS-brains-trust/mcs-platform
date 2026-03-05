@@ -1,19 +1,43 @@
 """
 Field-level encryption utilities for sensitive data.
 
-Uses Fernet symmetric encryption with a key derived from Django's SECRET_KEY.
+Uses Fernet symmetric encryption. Prefers a dedicated FIELD_ENCRYPTION_KEY
+environment variable; falls back to deriving from SECRET_KEY for backward
+compatibility during migration.
+
 All PII, OAuth tokens, and secrets are encrypted at rest in the database.
 """
 import base64
 import hashlib
+import logging
+import os
 
 from cryptography.fernet import Fernet, InvalidToken
 from django.conf import settings
 from django.db import models
 
+_encryption_logger = logging.getLogger(__name__)
+
 
 def _get_fernet():
-    """Derive a Fernet key from Django's SECRET_KEY."""
+    """
+    Get a Fernet cipher using a dedicated encryption key.
+    Uses FIELD_ENCRYPTION_KEY if set (preferred), otherwise falls back to
+    deriving from SECRET_KEY for backward compatibility.
+    """
+    explicit_key = os.environ.get("FIELD_ENCRYPTION_KEY", "") or getattr(
+        settings, "FIELD_ENCRYPTION_KEY", ""
+    )
+    if explicit_key:
+        return Fernet(
+            explicit_key.encode() if isinstance(explicit_key, str) else explicit_key
+        )
+
+    # Fallback: derive from SECRET_KEY (backward-compatible, not recommended)
+    _encryption_logger.warning(
+        "FIELD_ENCRYPTION_KEY not set — deriving encryption key from SECRET_KEY. "
+        "Set FIELD_ENCRYPTION_KEY in your environment for production use."
+    )
     key = hashlib.sha256(settings.SECRET_KEY.encode()).digest()
     return Fernet(base64.urlsafe_b64encode(key))
 

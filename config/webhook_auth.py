@@ -23,8 +23,11 @@ def verify_webhook(request):
     """
     webhook_secret = getattr(settings, "WEBHOOK_SECRET", "")
     if not webhook_secret:
-        logger.warning("WEBHOOK_SECRET not configured — webhook authentication disabled")
-        return True, None
+        logger.error("WEBHOOK_SECRET not configured — rejecting webhook request")
+        return False, JsonResponse(
+            {"status": "error", "message": "Webhook authentication not configured"},
+            status=403,
+        )
 
     # Method 1: HMAC-SHA256 signature (preferred)
     signature = request.headers.get("X-Webhook-Signature", "")

@@ -44,7 +44,6 @@ class Require2FAMiddleware:
         "/accounts/logout/",
         "/accounts/totp-verify/",
         "/accounts/setup-2fa/",
-        "/admin/",
         "/static/",
     ]
 

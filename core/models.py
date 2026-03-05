@@ -4869,5 +4869,99 @@ class GoingConcernAssessment(models.Model):
         )
 
 
+# ---------------------------------------------------------------------------
+# Work Paper Templates
+# ---------------------------------------------------------------------------
+class WorkPaperTemplate(models.Model):
+    """
+    An in-house work paper template (Excel or Word) that can be downloaded
+    with entity name, ABN, and financial year pre-filled.
+
+    Admins upload templates via the Django admin.  When an accountant clicks
+    "Download" from the Work Papers tab the system opens the file, substitutes
+    the merge fields, and streams the modified file — nothing is saved back to
+    the platform.
+
+    Supported merge fields (Excel named ranges or Word {{placeholders}}):
+      - entity_name
+      - abn
+      - financial_year   (e.g. "FY2025")
+      - fy_start_date    (e.g. "1 July 2024")
+      - fy_end_date      (e.g. "30 June 2025")
+    """
+
+    class Category(models.TextChoices):
+        BAS_RECONCILIATION = "bas_reconciliation", "BAS Reconciliation"
+        JOURNAL_WORKPAPER = "journal_workpaper", "Journal Work Paper"
+        ACCOUNT_RECONCILIATION = "account_reconciliation", "Account Reconciliation"
+        DIVISION_7A = "division_7a", "Division 7A"
+        LOAN_ACCOUNT = "loan_account", "Loan Account Schedule"
+        DEPRECIATION = "depreciation", "Depreciation Schedule"
+        STOCK_TAKE = "stock_take", "Stock Take / Inventory"
+        PAYROLL = "payroll", "Payroll Reconciliation"
+        TRUST_DISTRIBUTION = "trust_distribution", "Trust Distribution Work Paper"
+        GENERAL = "general", "General"
+
+    class FileFormat(models.TextChoices):
+        XLSX = "xlsx", "Excel (.xlsx)"
+        DOCX = "docx", "Word (.docx)"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(
+        max_length=255,
+        help_text="Human-readable name, e.g. \"BAS Reconciliation — Quarterly\"",
+    )
+    category = models.CharField(
+        max_length=30,
+        choices=Category.choices,
+        default=Category.GENERAL,
+    )
+    description = models.TextField(
+        blank=True,
+        help_text="Brief description of what this work paper is used for.",
+    )
+    template_file = models.FileField(
+        upload_to="workpaper_templates/",
+        help_text="Upload the Excel (.xlsx) or Word (.docx) template file.",
+    )
+    file_format = models.CharField(
+        max_length=4,
+        choices=FileFormat.choices,
+        default=FileFormat.XLSX,
+        help_text="File format of the uploaded template.",
+    )
+    # Optional: restrict to specific entity types (blank = all)
+    entity_types = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="List of entity types this template applies to (leave empty for all).",
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Only active templates are shown in the Work Papers tab.",
+    )
+    sort_order = models.PositiveIntegerField(
+        default=0,
+        help_text="Controls display order within a category (lower = first).",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_workpaper_templates",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["category", "sort_order", "name"]
+        verbose_name = "Work Paper Template"
+        verbose_name_plural = "Work Paper Templates"
+
+    def __str__(self):
+        return f"{self.get_category_display()} — {self.name}"
+
+
 from .models_office_admin import *  # noqa: F401, F403
 

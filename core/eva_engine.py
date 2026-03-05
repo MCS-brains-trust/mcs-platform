@@ -1403,6 +1403,7 @@ def _run_eva_review_background(fy_pk, user_pk):
         review.save(update_fields=["raw_response"])
 
         findings_created = 0
+        checks_with_errors = []  # Track checks where LLM/parse failed
 
         # Collect prior findings from previous reviews for deduplication (Issue 7)
         prior_findings = []
@@ -1527,10 +1528,20 @@ def _run_eva_review_background(fy_pk, user_pk):
                 except Exception as save_err:
                     print(f"[Eva] EXCEPTION saving finding for {check_def['id']}: {save_err}", flush=True)
                     traceback.print_exc()
+                    checks_with_errors.append({
+                        "check_id": check_def["id"],
+                        "error": f"Finding save failed: {save_err}",
+                    })
+
+            # Track checks that returned errors (LLM parse failure, API error, etc.)
+            elif result and result.get("error") and not result.get("has_finding"):
+                error_msg = result.get("error", "unknown")
+                checks_with_errors.append({"check_id": check_def["id"], "error": error_msg})
+                print(f"[Eva] CHECK ERROR for {check_def['id']}: {error_msg} (no risk flags to fall back on)", flush=True)
 
             # If the LLM didn't raise a finding but there ARE confirmed hard facts,
             # create findings directly from the risk engine flags
-            elif relevant_flags and not (result and result.get("has_finding")):
+            if relevant_flags and not (result and result.get("has_finding")):
                 print(f"[Eva] LLM missed hard facts for {check_def['id']}, creating from risk engine", flush=True)
                 for flag in relevant_flags:
                     # Normalise severity from risk engine flags
@@ -1557,6 +1568,10 @@ def _run_eva_review_background(fy_pk, user_pk):
                     except Exception as save_err:
                         print(f"[Eva] EXCEPTION saving risk flag finding for {check_def['id']}: {save_err}", flush=True)
                         traceback.print_exc()
+                        checks_with_errors.append({
+                            "check_id": check_def["id"],
+                            "error": f"Risk flag finding save failed: {save_err}",
+                        })
 
         # ── STEP 3: Post-processing — mark prior findings as CLOSED ─────
         if prior_findings:
@@ -1606,9 +1621,25 @@ def _run_eva_review_background(fy_pk, user_pk):
             print(f"[Eva] Cross-reference linking error (non-fatal): {link_err}", flush=True)
 
         # Update review status
-        print(f"[Eva] All checks complete. Findings created: {findings_created}. Saving review...", flush=True)
+        print(f"[Eva] All checks complete. Findings created: {findings_created}. Errors: {len(checks_with_errors)}. Saving review...", flush=True)
         duration = time.time() - start_time
-        if findings_created > 0:
+
+        # If checks had errors and no findings were created, the review is
+        # unreliable — mark as error so it isn't mistaken for a clean pass.
+        if checks_with_errors and findings_created == 0:
+            review.status = "error"
+            review.error_message = (
+                f"{len(checks_with_errors)} check(s) failed without producing findings: "
+                + "; ".join(e["check_id"] for e in checks_with_errors[:5])
+            )
+            fy.status = fy.Status.EVA_ERROR
+            fy.save(update_fields=["status"])
+            logger.warning(
+                "Eva review for FY %s completed with errors in %d check(s) and 0 findings — "
+                "marking as error to prevent false clearance.",
+                fy.pk, len(checks_with_errors),
+            )
+        elif findings_created > 0:
             review.status = "findings_raised"
             # Set FY back to FINISHED so the page shows findings panel
             # (pending_eva would show the spinner again on reload)

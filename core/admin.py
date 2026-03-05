@@ -458,4 +458,57 @@ class Div7AComplianceAdmin(admin.ModelAdmin):
     readonly_fields = ("last_reviewed",)
 
 
+# ---------------------------------------------------------------------------
+# Work Paper Templates
+# ---------------------------------------------------------------------------
+from .models import WorkPaperTemplate
+
+
+@admin.register(WorkPaperTemplate)
+class WorkPaperTemplateAdmin(admin.ModelAdmin):
+    list_display = (
+        "name", "category", "file_format", "is_active", "sort_order",
+        "entity_types_display", "created_at", "updated_at",
+    )
+    list_filter = ("category", "file_format", "is_active")
+    search_fields = ("name", "description")
+    readonly_fields = ("created_at", "updated_at", "created_by")
+    list_editable = ("sort_order", "is_active")
+    fieldsets = (
+        (None, {
+            "fields": ("name", "category", "description", "is_active", "sort_order"),
+        }),
+        ("Template File", {
+            "fields": ("template_file", "file_format"),
+            "description": (
+                "Upload an Excel (.xlsx) or Word (.docx) template. "
+                "Use {{entity_name}}, {{abn}}, {{financial_year}}, "
+                "{{fy_start_date}}, {{fy_end_date}} as merge fields."
+            ),
+        }),
+        ("Restrictions", {
+            "fields": ("entity_types",),
+            "description": (
+                "Leave entity_types empty to show this template for all entity types. "
+                'To restrict, enter a JSON list e.g. ["company", "trust_discretionary"].'
+            ),
+        }),
+        ("Audit", {
+            "fields": ("created_by", "created_at", "updated_at"),
+            "classes": ("collapse",),
+        }),
+    )
+
+    def entity_types_display(self, obj):
+        if not obj.entity_types:
+            return "All entity types"
+        return ", ".join(obj.entity_types)
+    entity_types_display.short_description = "Entity Types"
+
+    def save_model(self, request, obj, form, change):
+        if not change:
+            obj.created_by = request.user
+        super().save_model(request, obj, form, change)
+
+
 from . import admin_office_admin  # noqa: F401

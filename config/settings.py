@@ -281,8 +281,11 @@ QBO_CLIENT_SECRET = os.environ.get("QBO_CLIENT_SECRET", "")
 # AI Provider — Anthropic Claude (for bank statement extraction + transaction classification)
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
-# django-ratelimit: Use X-Forwarded-For header for IP detection behind reverse proxy (Nginx)
-RATELIMIT_IP_META_KEY = "HTTP_X_FORWARDED_FOR"
+# django-ratelimit: Use REMOTE_ADDR by default (safe against header spoofing).
+# In production behind a trusted reverse proxy (Nginx/HAProxy), the proxy should
+# set X-Real-IP or X-Forwarded-For. Configure NUM_PROXIES and use REMOTE_ADDR
+# which Django populates correctly when SECURE_PROXY_SSL_HEADER is set.
+RATELIMIT_IP_META_KEY = os.environ.get("RATELIMIT_IP_META_KEY", "REMOTE_ADDR")
 
 # Build version timestamp — updated with each deployment
 BUILD_TIMESTAMP = "2026-02-23 16:20 AEDT"

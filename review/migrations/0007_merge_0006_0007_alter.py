@@ -10,7 +10,6 @@ class Migration(migrations.Migration):
 
     dependencies = [
         ('review', '0006_enhanced_review_workflow'),
-        ('review', '0007_alter_entitygstsetting_financial_year'),
     ]
 
     operations = [

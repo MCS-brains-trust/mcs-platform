@@ -347,11 +347,15 @@ def _post_bank_contra_entry(txn, fy, bank_mapping, has_gst):
     if not bank_mapping:
         import logging
         logger = logging.getLogger('core.views')
-        logger.warning(
-            f"_post_bank_contra_entry: No bank_mapping provided for txn {txn.pk} "
-            f"(amount={txn.amount}). Contra entry skipped — TB may be out of balance."
+        logger.error(
+            "_post_bank_contra_entry: No bank_mapping for txn %s "
+            "(amount=%s). Contra entry cannot be posted — TB will be out of balance.",
+            txn.pk, txn.amount,
         )
-        return
+        raise ValueError(
+            f"No bank account mapping found for transaction {txn.pk}. "
+            f"Please configure bank account mappings before approving transactions."
+        )
     gross_amount = abs(txn.amount)
     bank_code = bank_mapping.tb_account_code
     bank_name = bank_mapping.tb_account_name
@@ -428,8 +432,13 @@ def _post_txn_to_tb(txn, fy, has_gst):
     Every approval code-path MUST call this function instead of inlining
     the posting logic, so the bank contra entry can never be skipped.
 
+    The entire operation is wrapped in a database transaction to prevent
+    partial postings (e.g. expense posted but contra skipped).
+
     Returns True if the TB was updated, False otherwise.
     """
+    from django.db import transaction as db_transaction
+
     # Guard: skip if already posted to prevent double-posting
     if getattr(txn, 'posted_to_tb', False):
         return False
@@ -442,82 +451,83 @@ def _post_txn_to_tb(txn, fy, has_gst):
     if not code or amount == 0:
         return False
 
-    # --- 1. Post net amount to expense/income account ---
-    net_for_tb = txn.net_amount if has_gst else abs(amount)
-    tb_line, created = _get_or_create_tb_line(
-        financial_year=fy,
-        account_code=code,
-        defaults={
-            "account_name": name,
-            "debit": net_for_tb if amount < 0 else Decimal("0"),
-            "credit": net_for_tb if amount > 0 else Decimal("0"),
-            "closing_balance": net_for_tb if amount < 0 else -net_for_tb,
-            "tax_type": tax_type,
-            "source": "bank_statement",
-        },
-    )
-    if not created:
-        if amount < 0:
-            tb_line.debit += net_for_tb
-            tb_line.closing_balance += net_for_tb
-        else:
-            tb_line.credit += net_for_tb
-            tb_line.closing_balance -= net_for_tb
-        if not tb_line.tax_type:
-            tb_line.tax_type = tax_type
-        if not tb_line.source:
-            tb_line.source = 'bank_statement'
-        tb_line.save()
+    with db_transaction.atomic():
+        # --- 1. Post net amount to expense/income account ---
+        net_for_tb = txn.net_amount if has_gst else abs(amount)
+        tb_line, created = _get_or_create_tb_line(
+            financial_year=fy,
+            account_code=code,
+            defaults={
+                "account_name": name,
+                "debit": net_for_tb if amount < 0 else Decimal("0"),
+                "credit": net_for_tb if amount > 0 else Decimal("0"),
+                "closing_balance": net_for_tb if amount < 0 else -net_for_tb,
+                "tax_type": tax_type,
+                "source": "bank_statement",
+            },
+        )
+        if not created:
+            if amount < 0:
+                tb_line.debit += net_for_tb
+                tb_line.closing_balance += net_for_tb
+            else:
+                tb_line.credit += net_for_tb
+                tb_line.closing_balance -= net_for_tb
+            if not tb_line.tax_type:
+                tb_line.tax_type = tax_type
+            if not tb_line.source:
+                tb_line.source = 'bank_statement'
+            tb_line.save()
 
-    # --- 2. Post GST to 3380 GST payable control account ---
-    gst_amt = txn.confirmed_gst_amount if txn.confirmed_gst_amount else Decimal('0')
-    if has_gst and gst_amt > 0:
-        gst_code = '3380'
-        gst_name = 'GST payable control account'
-        if amount > 0:
-            # Income: GST Collected — credit 3380 (increases liability)
-            gst_line, gst_created = _get_or_create_tb_line(
-                financial_year=fy,
-                account_code=gst_code,
-                defaults={
-                    "account_name": gst_name,
-                    "debit": Decimal("0"),
-                    "credit": gst_amt,
-                    "closing_balance": -gst_amt,
-                    "tax_type": "GST on Income",
-                    "source": "bank_statement",
-                },
-            )
-            if not gst_created:
-                gst_line.credit += gst_amt
-                gst_line.closing_balance -= gst_amt
-                gst_line.save()
-        else:
-            # Expense: GST Paid — debit 3380 (reduces liability / creates asset)
-            gst_line, gst_created = _get_or_create_tb_line(
-                financial_year=fy,
-                account_code=gst_code,
-                defaults={
-                    "account_name": gst_name,
-                    "debit": gst_amt,
-                    "credit": Decimal("0"),
-                    "closing_balance": gst_amt,
-                    "tax_type": "GST on Expenses",
-                    "source": "bank_statement",
-                },
-            )
-            if not gst_created:
-                gst_line.debit += gst_amt
-                gst_line.closing_balance += gst_amt
-                gst_line.save()
+        # --- 2. Post GST to 3380 GST payable control account ---
+        gst_amt = txn.confirmed_gst_amount if txn.confirmed_gst_amount else Decimal('0')
+        if has_gst and gst_amt > 0:
+            gst_code = '3380'
+            gst_name = 'GST payable control account'
+            if amount > 0:
+                # Income: GST Collected — credit 3380 (increases liability)
+                gst_line, gst_created = _get_or_create_tb_line(
+                    financial_year=fy,
+                    account_code=gst_code,
+                    defaults={
+                        "account_name": gst_name,
+                        "debit": Decimal("0"),
+                        "credit": gst_amt,
+                        "closing_balance": -gst_amt,
+                        "tax_type": "GST on Income",
+                        "source": "bank_statement",
+                    },
+                )
+                if not gst_created:
+                    gst_line.credit += gst_amt
+                    gst_line.closing_balance -= gst_amt
+                    gst_line.save()
+            else:
+                # Expense: GST Paid — debit 3380 (reduces liability / creates asset)
+                gst_line, gst_created = _get_or_create_tb_line(
+                    financial_year=fy,
+                    account_code=gst_code,
+                    defaults={
+                        "account_name": gst_name,
+                        "debit": gst_amt,
+                        "credit": Decimal("0"),
+                        "closing_balance": gst_amt,
+                        "tax_type": "GST on Expenses",
+                        "source": "bank_statement",
+                    },
+                )
+                if not gst_created:
+                    gst_line.debit += gst_amt
+                    gst_line.closing_balance += gst_amt
+                    gst_line.save()
 
-    # --- 3. ALWAYS post the bank contra-entry (gross amount) ---
-    bank_mapping = _get_bank_mapping_for_txn(txn)
-    _post_bank_contra_entry(txn, fy, bank_mapping, has_gst)
+        # --- 3. ALWAYS post the bank contra-entry (gross amount) ---
+        bank_mapping = _get_bank_mapping_for_txn(txn)
+        _post_bank_contra_entry(txn, fy, bank_mapping, has_gst)
 
-    # Mark as posted to prevent double-posting
-    txn.posted_to_tb = True
-    txn.save(update_fields=['posted_to_tb'])
+        # Mark as posted to prevent double-posting
+        txn.posted_to_tb = True
+        txn.save(update_fields=['posted_to_tb'])
 
     return True
 
@@ -1442,6 +1452,27 @@ def financial_year_status(request, pk):
         messages.error(request, "Invalid status.")
         return redirect("core:financial_year_detail", pk=pk)
 
+    # Validate status transition is allowed
+    ALLOWED_TRANSITIONS = {
+        "draft": ["in_review"],
+        "in_review": ["finished", "draft"],
+        "finished": ["prepared", "in_review"],
+        "prepared": ["pending_eva", "finished"],
+        "pending_eva": [],  # Managed by Eva engine only
+        "eva_cleared": ["finalised"],
+        "eva_error": ["finished"],  # Allow retry after error
+        "finalised": [],  # Use reopen_financial_year instead
+    }
+    allowed = ALLOWED_TRANSITIONS.get(fy.status, [])
+    # Eva-managed statuses (pending_eva, eva_cleared) are blocked below separately
+    if new_status not in allowed and new_status not in ["prepared", "eva_cleared", "pending_eva", "finalised"]:
+        messages.error(
+            request,
+            f"Cannot change status from '{fy.get_status_display()}' to '{new_status}'. "
+            f"Allowed transitions: {', '.join(allowed) if allowed else 'none (use reopen)'}."
+        )
+        return redirect("core:financial_year_detail", pk=pk)
+
     # Permission checks
     if new_status == "finalised" and not request.user.can_finalise:
         messages.error(request, "Only senior accountants can finalise.")
@@ -1774,6 +1805,13 @@ def reopen_financial_year(request, pk):
 
         # Unlock trial balance comparatives
         year.trial_balance_lines.update(comparatives_locked=False)
+
+        # Also unlock comparatives in the NEXT year (since this year's
+        # closing balances feed that year's comparatives, and they are
+        # now stale).
+        next_fy = year.next_year.first()
+        if next_fy:
+            next_fy.trial_balance_lines.update(comparatives_locked=False)
 
         # Unlock generated documents (set back to draft)
         year.generated_documents.update(is_locked=False, status="draft")
