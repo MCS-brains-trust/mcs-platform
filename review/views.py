@@ -1462,10 +1462,16 @@ def _parse_excel_bank_statement(content, filename):
             # Normalise date to a string — handle datetime objects, Excel serial
             # numbers, and arbitrary string formats from copy-paste
             date = ""
-            if isinstance(raw_date, (pd.Timestamp,)):
+            if isinstance(raw_date, pd.Timestamp):
+                if pd.isna(raw_date):
+                    continue  # skip NaT rows
                 date = raw_date.strftime("%d/%m/%Y")
-            elif hasattr(raw_date, 'strftime'):  # datetime.datetime / datetime.date
-                date = raw_date.strftime("%d/%m/%Y")
+            elif hasattr(raw_date, 'strftime'):
+                # datetime.datetime / datetime.date — guard against NaT-like objects
+                try:
+                    date = raw_date.strftime("%d/%m/%Y")
+                except (ValueError, AttributeError):
+                    continue
             else:
                 date = str(raw_date).strip()
                 # Handle Excel serial date numbers (e.g. 45838 = 2025-06-30)
