@@ -206,20 +206,39 @@ def build_bank_derived_tb(entity, fy, period_end):
     from review.models import PendingTransaction
     from collections import defaultdict
 
-    # 1. Gather all approved transactions up to period_end
-    txns = PendingTransaction.objects.filter(
+    # 1. Gather all confirmed transactions for this entity
+    #    NOTE: PendingTransaction.date is a CharField stored as "dd/mm/yyyy",
+    #    so we cannot use date__lte / date__gte at the DB level. Instead, we
+    #    fetch all confirmed txns and filter by parsed date in Python.
+    from datetime import datetime as _dt
+
+    all_txns = PendingTransaction.objects.filter(
         job__entity=entity,
         is_confirmed=True,
-        date__lte=period_end,
-        date__gte=fy.start_date,
     ).select_related('job')
+
+    def _parse_txn_date(date_str):
+        """Parse dd/mm/yyyy or yyyy-mm-dd date strings."""
+        for fmt in ("%d/%m/%Y", "%Y-%m-%d"):
+            try:
+                return _dt.strptime(date_str.strip(), fmt).date()
+            except (ValueError, AttributeError):
+                continue
+        return None
 
     # Aggregate by account code
     account_totals = defaultdict(lambda: {"debit": Decimal("0"), "credit": Decimal("0"), "name": ""})
 
-    for txn in txns:
-        code = txn.confirmed_account_code or txn.ai_suggested_account_code or ""
-        name = txn.confirmed_account_name or txn.ai_suggested_account_name or ""
+    for txn in all_txns:
+        # Filter by date in Python
+        txn_date = _parse_txn_date(txn.date)
+        if txn_date is None:
+            continue
+        if txn_date < fy.start_date or txn_date > period_end:
+            continue
+
+        code = txn.confirmed_code or txn.ai_suggested_code or ""
+        name = txn.confirmed_name or txn.ai_suggested_name or ""
         if not code:
             continue
 
