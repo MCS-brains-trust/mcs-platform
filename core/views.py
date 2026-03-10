@@ -7259,6 +7259,141 @@ def depreciation_post_to_tb(request, pk):
 
 
 # ---------------------------------------------------------------------------
+# Depreciation Schedule PDF Export
+# ---------------------------------------------------------------------------
+@login_required
+def depreciation_pdf(request, pk):
+    """
+    Generate and download a PDF of the depreciation schedule for a financial year.
+    Uses weasyprint to render an HTML template to PDF.
+    """
+    import weasyprint
+    from html import escape as html_escape
+    from collections import OrderedDict
+
+    fy = get_financial_year_for_user(request, pk)
+
+    # Gather assets grouped by category (same logic as the main view)
+    dep_assets = DepreciationAsset.objects.filter(
+        financial_year=fy
+    ).order_by('category', 'display_order', 'asset_name')
+
+    dep_categories = OrderedDict()
+    dep_total_opening = Decimal('0')
+    dep_total_depreciation = Decimal('0')
+    dep_total_closing = Decimal('0')
+    for asset in dep_assets:
+        if asset.category not in dep_categories:
+            dep_categories[asset.category] = []
+        dep_categories[asset.category].append(asset)
+        dep_total_opening += asset.opening_wdv
+        dep_total_depreciation += asset.depreciation_amount
+        dep_total_closing += asset.closing_wdv
+
+    # Build table rows HTML
+    rows_html = ""
+    for category, assets in dep_categories.items():
+        rows_html += f'<tr class="category-row"><td colspan="7"><strong>{html_escape(category)}</strong></td></tr>\n'
+        for asset in assets:
+            badges = ""
+            if asset.disposal_date:
+                badges += ' <span class="badge disposed">Disposed</span>'
+            if asset.addition_cost > 0:
+                badges += ' <span class="badge addition">Addition</span>'
+            addition_cell = f"${asset.addition_cost:,.2f}" if asset.addition_cost > 0 else ""
+            rows_html += f"""<tr>
+                <td>{html_escape(asset.asset_name)}{badges}</td>
+                <td>{html_escape(asset.get_method_display())}</td>
+                <td class="r">{asset.rate:.2f}%</td>
+                <td class="r">${asset.opening_wdv:,.2f}</td>
+                <td class="r">{addition_cell}</td>
+                <td class="r">${asset.depreciation_amount:,.2f}</td>
+                <td class="r">${asset.closing_wdv:,.2f}</td>
+            </tr>\n"""
+
+    now_str = timezone.now().strftime("%d/%m/%Y %H:%M")
+    entity_name = html_escape(fy.entity.entity_name)
+    fy_label = html_escape(fy.year_label)
+    period_label = html_escape(
+        f"{fy.start_date.strftime('%d/%m/%Y')} — {fy.end_date.strftime('%d/%m/%Y')}"
+    )
+
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+    @page {{
+        size: A4 landscape;
+        margin: 15mm 12mm;
+        @bottom-right {{ content: "Page " counter(page) " of " counter(pages); font-size: 7pt; color: #999; }}
+        @bottom-left {{ content: "Generated {now_str}"; font-size: 7pt; color: #999; }}
+    }}
+    body {{ font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-size: 9pt; color: #333; }}
+    .header {{ display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 5mm; border-bottom: 2px solid #1a6b3c; padding-bottom: 3mm; }}
+    .header-left h1 {{ font-size: 15pt; margin: 0 0 2px 0; color: #1a1a2e; }}
+    .header-left .subtitle {{ font-size: 10pt; color: #555; }}
+    .header-right {{ text-align: right; font-size: 8pt; color: #666; }}
+    table {{ width: 100%; border-collapse: collapse; margin-bottom: 5mm; }}
+    th {{ background: #f0f4f0; font-weight: 700; font-size: 8pt; text-transform: uppercase;
+          letter-spacing: 0.3px; color: #444; padding: 4px 6px; border-bottom: 2px solid #ccc;
+          text-align: left; white-space: nowrap; }}
+    th.r {{ text-align: right; }}
+    td {{ padding: 3px 6px; font-size: 8.5pt; border-bottom: 1px solid #eee; vertical-align: middle; }}
+    .r {{ text-align: right; }}
+    .category-row td {{ background: #f7f7f7; font-size: 9pt; padding: 5px 6px;
+                        border-top: 1px solid #ccc; border-bottom: 1px solid #ccc; }}
+    .total-row {{ border-top: 2px solid #333; }}
+    .total-row td {{ font-weight: 700; padding: 5px 6px; font-size: 9pt; }}
+    .badge {{ display: inline-block; font-size: 6.5pt; padding: 1px 4px; border-radius: 3px;
+              font-weight: 600; margin-left: 4px; vertical-align: middle; }}
+    .disposed {{ background: #fde8e8; color: #c62828; }}
+    .addition {{ background: #e3f2fd; color: #1565c0; }}
+    .firm {{ font-size: 7.5pt; color: #888; margin-top: 3mm; }}
+</style></head><body>
+<div class="header">
+    <div class="header-left">
+        <h1>{entity_name}</h1>
+        <div class="subtitle">Depreciation Schedule &mdash; {fy_label}</div>
+    </div>
+    <div class="header-right">
+        Period: {period_label}<br>
+        Prepared by: MC &amp; S Pty Ltd
+    </div>
+</div>
+<table>
+    <thead>
+        <tr>
+            <th>Asset</th>
+            <th>Method</th>
+            <th class="r">Rate %</th>
+            <th class="r">Opening WDV</th>
+            <th class="r">Additions</th>
+            <th class="r">Depreciation</th>
+            <th class="r">Closing WDV</th>
+        </tr>
+    </thead>
+    <tbody>
+        {rows_html}
+        <tr class="total-row">
+            <td colspan="3" class="r">Totals</td>
+            <td class="r">${dep_total_opening:,.2f}</td>
+            <td></td>
+            <td class="r">${dep_total_depreciation:,.2f}</td>
+            <td class="r">${dep_total_closing:,.2f}</td>
+        </tr>
+    </tbody>
+</table>
+<div class="firm">MC &amp; S Pty Ltd &mdash; Confidential &mdash; For client use only</div>
+</body></html>"""
+
+    pdf_bytes = weasyprint.HTML(string=html).write_pdf()
+    entity_slug = fy.entity.entity_name.replace(" ", "_").replace("/", "-")[:40]
+    filename = f"{entity_slug}_Depreciation_Schedule_{fy.year_label}.pdf"
+    response = HttpResponse(pdf_bytes, content_type="application/pdf")
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
+# ---------------------------------------------------------------------------
 # Stock Item AJAX endpoints
 # ---------------------------------------------------------------------------
 @login_required
