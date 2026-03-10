@@ -26,6 +26,7 @@ from django.db import transaction
 
 from core.models import (
     AdjustingJournal,
+    BulkJournalUpload,
     Entity,
     FinancialYear,
     JournalLine,
@@ -144,13 +145,145 @@ class Command(BaseCommand):
             f"{total_linked} TB line(s) {'would be ' if dry_run else ''}linked\n"
         )
 
+        # ── Phase 1b: Analyse journal_upload TB lines ─────────────────
+        # TB lines created by commit_journal_upload have source='journal_upload'
+        # and bulk_journal_upload FK set, but source_journal is always NULL
+        # (the bulk upload path doesn't create AdjustingJournal records).
+        # These are NOT orphans — they are correctly linked to their
+        # BulkJournalUpload parent.  This phase reports on them so we can
+        # distinguish them from genuinely orphaned lines in Phase 2.
+        self.stdout.write(self.style.HTTP_INFO(
+            "Phase 1b: Analyse journal_upload TB lines (bulk upload provenance)"
+        ))
+
+        bulk_upload_qs = TrialBalanceLine.objects.filter(
+            is_adjustment=True,
+            source="journal_upload",
+            source_journal__isnull=True,
+        ).select_related(
+            "financial_year", "financial_year__entity", "bulk_journal_upload",
+        )
+
+        if entity_filter:
+            bulk_upload_qs = bulk_upload_qs.filter(
+                financial_year__entity__entity_name__icontains=entity_filter
+            )
+
+        # Categorise: linked to a BulkJournalUpload vs truly unlinked
+        linked_to_bulk = 0
+        unlinked_bulk = 0
+        bulk_by_fy = {}
+
+        for line in bulk_upload_qs:
+            fy_key = (
+                line.financial_year.entity.entity_name,
+                line.financial_year.year_label,
+                line.financial_year_id,
+            )
+            if line.bulk_journal_upload_id is not None:
+                linked_to_bulk += 1
+                bulk_by_fy.setdefault(fy_key, {"linked": 0, "unlinked": 0, "uploads": set()})
+                bulk_by_fy[fy_key]["linked"] += 1
+                bulk_by_fy[fy_key]["uploads"].add(
+                    f"{line.bulk_journal_upload.reference_number} ({line.bulk_journal_upload_id})"
+                )
+            else:
+                unlinked_bulk += 1
+                bulk_by_fy.setdefault(fy_key, {"linked": 0, "unlinked": 0, "uploads": set()})
+                bulk_by_fy[fy_key]["unlinked"] += 1
+
+        for (entity_name, year_label, _fy_id), info in sorted(bulk_by_fy.items()):
+            parts = []
+            if info["linked"]:
+                parts.append(f"{info['linked']} linked to bulk upload")
+            if info["unlinked"]:
+                parts.append(f"{info['unlinked']} missing bulk_journal_upload FK")
+            self.stdout.write(f"  {entity_name} / {year_label}: {', '.join(parts)}")
+            for ref in sorted(info["uploads"]):
+                self.stdout.write(f"    ↳ {ref}")
+
+        # For unlinked journal_upload lines, attempt to match back to a
+        # BulkJournalUpload by financial_year + account_code + debit/credit.
+        if unlinked_bulk:
+            self.stdout.write(self.style.WARNING(
+                f"\n  {unlinked_bulk} journal_upload TB line(s) have no "
+                f"bulk_journal_upload FK — attempting to match:"
+            ))
+            unlinked_qs = TrialBalanceLine.objects.filter(
+                is_adjustment=True,
+                source="journal_upload",
+                source_journal__isnull=True,
+                bulk_journal_upload__isnull=True,
+            ).select_related("financial_year", "financial_year__entity")
+
+            if entity_filter:
+                unlinked_qs = unlinked_qs.filter(
+                    financial_year__entity__entity_name__icontains=entity_filter
+                )
+
+            match_found = 0
+            no_match = 0
+            for line in unlinked_qs:
+                # Find BulkJournalUploads for the same FY whose own TB lines
+                # share this account_code and debit/credit values.
+                candidate_uploads = BulkJournalUpload.objects.filter(
+                    financial_year=line.financial_year,
+                    trial_balance_lines__account_code=line.account_code,
+                    trial_balance_lines__debit=line.debit,
+                    trial_balance_lines__credit=line.credit,
+                ).distinct()
+
+                if candidate_uploads.exists():
+                    bulk = candidate_uploads.first()
+                    self.stdout.write(
+                        f"    {line.account_code} Dr {line.debit} Cr {line.credit} "
+                        f"→ matches {bulk.reference_number} ({bulk.pk})"
+                    )
+                    match_found += 1
+                else:
+                    # Broader: any bulk upload in the same FY?
+                    fy_uploads = BulkJournalUpload.objects.filter(
+                        financial_year=line.financial_year,
+                    )
+                    if fy_uploads.exists():
+                        refs = ", ".join(
+                            f"{u.reference_number}" for u in fy_uploads[:3]
+                        )
+                        self.stdout.write(
+                            f"    {line.account_code} Dr {line.debit} Cr {line.credit} "
+                            f"→ no exact match (FY has bulk uploads: {refs})"
+                        )
+                    else:
+                        self.stdout.write(
+                            f"    {line.account_code} Dr {line.debit} Cr {line.credit} "
+                            f"→ no match (no bulk uploads in this FY)"
+                        )
+                    no_match += 1
+
+            self.stdout.write(
+                f"\n  Unlinked analysis: {match_found} probable match(es), "
+                f"{no_match} unmatched"
+            )
+
+        self.stdout.write(
+            f"\n  Phase 1b summary: {linked_to_bulk + unlinked_bulk} journal_upload "
+            f"TB line(s) total — {linked_to_bulk} linked to bulk upload, "
+            f"{unlinked_bulk} missing FK\n"
+        )
+
         # ── Phase 2: Find truly orphaned TB lines ─────────────────────
         self.stdout.write(self.style.HTTP_INFO("Phase 2: Find orphaned adjustment TB lines"))
 
+        # Exclude journal_upload lines that have a bulk_journal_upload FK —
+        # those are correctly linked to their BulkJournalUpload parent and
+        # were already analysed in Phase 1b.
+        from django.db.models import Q
         orphan_qs = TrialBalanceLine.objects.filter(
             is_adjustment=True,
             source__in=("manual_journal", "journal_upload"),
             source_journal__isnull=True,
+        ).exclude(
+            source="journal_upload", bulk_journal_upload__isnull=False,
         ).select_related("financial_year", "financial_year__entity")
 
         if entity_filter:
