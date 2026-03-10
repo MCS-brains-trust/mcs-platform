@@ -1094,7 +1094,15 @@ def _eval_superannuation(rule, fy, tb, ref, ctx, config):
     if wages_total == ZERO:
         return None
 
-    sg_rate = ref.get("sg_rate", Decimal("11.5"))
+    # Use the ATO year-aware rate table; allow ref_data override
+    from core.risk_modules.cluster_sgc import _get_sg_rate_for_fy
+    sg_rate = _get_sg_rate_for_fy(fy) * Decimal("100")  # as percentage for this legacy path
+    sg_rate_override = ref.get("sg_rate")
+    if sg_rate_override:
+        try:
+            sg_rate = Decimal(str(sg_rate_override))
+        except Exception:
+            pass
     expected_super = (wages_total * sg_rate / Decimal("100")).quantize(Decimal("0.01"))
     shortfall = expected_super - super_total
 
