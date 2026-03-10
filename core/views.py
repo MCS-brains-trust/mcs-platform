@@ -1377,9 +1377,6 @@ def financial_year_detail(request, pk):
     _coa_lookup = _build_coa_section_lookup(fy.entity)
     documents = fy.generated_documents.all().order_by('-version', '-generated_at')
 
-    total_prior_debit = tb_lines.aggregate(total=Sum("prior_debit"))["total"] or Decimal("0")
-    total_prior_credit = tb_lines.aggregate(total=Sum("prior_credit"))["total"] or Decimal("0")
-
     # Group lines by section for comparative display
     from collections import OrderedDict
     SECTION_ORDER = [
@@ -1410,10 +1407,6 @@ def financial_year_detail(request, pk):
             # closing_balance is zero — show debit/credit movements (e.g. P&L items)
             line.display_dr = line.debit if line.debit else Decimal('0')
             line.display_cr = line.credit if line.credit else Decimal('0')
-
-    # Calculate totals from display values (accounts for opening balances in rolled-forward years)
-    total_debit = sum(line.display_dr for line in tb_lines)
-    total_credit = sum(line.display_cr for line in tb_lines)
 
     sections = OrderedDict()
     for line in tb_lines:
@@ -1523,20 +1516,35 @@ def financial_year_detail(request, pk):
 
         aggregated_sections[section_name] = agg_lines
 
-    # Calculate Net Profit: Income (Cr) - Expenses (Dr) for P&L sections
-    # (use original ordered_sections with raw lines for accurate totals)
+    # Recompute grand totals and net profit from AGGREGATED values so they
+    # match the visible rows.  Pre-aggregation totals double-count opposite-
+    # direction adjustments (e.g. a Cr adjustment on a normally-Dr account
+    # would inflate both total_debit and total_credit).
     pl_sections = {'Income', 'Cost of Sales', 'Expenses'}
+    total_debit = Decimal('0')
+    total_credit = Decimal('0')
+    total_prior_debit = Decimal('0')
+    total_prior_credit = Decimal('0')
     pl_dr = Decimal('0')
     pl_cr = Decimal('0')
     pl_prior_dr = Decimal('0')
     pl_prior_cr = Decimal('0')
-    for section_name, lines_list in ordered_sections.items():
-        if section_name in pl_sections:
-            for line in lines_list:
-                pl_dr += line.display_dr or Decimal('0')
-                pl_cr += line.display_cr or Decimal('0')
-                pl_prior_dr += line.prior_debit or Decimal('0')
-                pl_prior_cr += line.prior_credit or Decimal('0')
+    for section_name, agg_lines in aggregated_sections.items():
+        is_pl = section_name in pl_sections
+        for line in agg_lines:
+            dr = line.display_dr or Decimal('0')
+            cr = line.display_cr or Decimal('0')
+            pdr = line.prior_debit or Decimal('0')
+            pcr = line.prior_credit or Decimal('0')
+            total_debit += dr
+            total_credit += cr
+            total_prior_debit += pdr
+            total_prior_credit += pcr
+            if is_pl:
+                pl_dr += dr
+                pl_cr += cr
+                pl_prior_dr += pdr
+                pl_prior_cr += pcr
     net_profit = pl_cr - pl_dr
     prior_net_profit = pl_prior_cr - pl_prior_dr
 
@@ -4167,10 +4175,6 @@ def trial_balance_view(request, pk):
         'Equity': 'Equity', 'Income Tax': 'Equity',
     }
     sections = OrderedDict()
-    grand_total_dr = Decimal('0')
-    grand_total_cr = Decimal('0')
-    grand_total_prior_dr = Decimal('0')
-    grand_total_prior_cr = Decimal('0')
 
     for line in tb_lines:
         # Display Dr/Cr: always use closing_balance (opening + movements)
@@ -4196,10 +4200,6 @@ def trial_balance_view(request, pk):
         if display_section not in sections:
             sections[display_section] = []
         sections[display_section].append(line)
-        grand_total_dr += line.display_dr or Decimal('0')
-        grand_total_cr += line.display_cr or Decimal('0')
-        grand_total_prior_dr += line.prior_debit or Decimal('0')
-        grand_total_prior_cr += line.prior_credit or Decimal('0')
 
     # Sort sections by defined order
     ordered_sections = OrderedDict()
@@ -4270,19 +4270,33 @@ def trial_balance_view(request, pk):
                 agg_lines.append(agg)
         aggregated_sections[section_name] = agg_lines
 
-    # Calculate Net Profit: Income (Cr) - Expenses (Dr) for P&L sections
+    # Recompute grand totals and net profit from AGGREGATED values so they
+    # match the visible rows (adjustments netted per account code).
     pl_sections = {'Income', 'Cost of Sales', 'Expenses'}
+    grand_total_dr = Decimal('0')
+    grand_total_cr = Decimal('0')
+    grand_total_prior_dr = Decimal('0')
+    grand_total_prior_cr = Decimal('0')
     pl_dr = Decimal('0')
     pl_cr = Decimal('0')
     pl_prior_dr = Decimal('0')
     pl_prior_cr = Decimal('0')
-    for section_name, lines in ordered_sections.items():
-        if section_name in pl_sections:
-            for line in lines:
-                pl_dr += line.display_dr or Decimal('0')
-                pl_cr += line.display_cr or Decimal('0')
-                pl_prior_dr += line.prior_debit or Decimal('0')
-                pl_prior_cr += line.prior_credit or Decimal('0')
+    for section_name, agg_lines in aggregated_sections.items():
+        is_pl = section_name in pl_sections
+        for line in agg_lines:
+            dr = line.display_dr or Decimal('0')
+            cr = line.display_cr or Decimal('0')
+            pdr = line.prior_debit or Decimal('0')
+            pcr = line.prior_credit or Decimal('0')
+            grand_total_dr += dr
+            grand_total_cr += cr
+            grand_total_prior_dr += pdr
+            grand_total_prior_cr += pcr
+            if is_pl:
+                pl_dr += dr
+                pl_cr += cr
+                pl_prior_dr += pdr
+                pl_prior_cr += pcr
     net_profit = pl_cr - pl_dr
     prior_net_profit = pl_prior_cr - pl_prior_dr
 
