@@ -36,7 +36,7 @@ def _get_subsequent_finalised_years(fy):
     current = fy
     while True:
         nxt = current.next_year.first()
-        if nxt and nxt.status == "finalised":
+        if nxt and nxt.is_locked:
             result.append(nxt)
             current = nxt
         else:
@@ -1823,12 +1823,10 @@ def reopen_financial_year(request, pk):
     if not request.user.can_finalise:
         messages.error(request, "Only senior accountants or admins can reopen a finalised year.")
         return redirect("core:financial_year_detail", pk=pk)
-
     # ── Status check ─────────────────────────────────────────────────
-    if fy.status != "finalised":
+    if not fy.is_locked:
         messages.error(request, "This financial year is not finalised.")
         return redirect("core:financial_year_detail", pk=pk)
-
     # ── Collect inputs ───────────────────────────────────────────────
     reason = request.POST.get("reopen_reason", "").strip()
     if not reason:
@@ -1844,7 +1842,7 @@ def reopen_financial_year(request, pk):
         while True:
             # next_year is the related_name on prior_year FK (reverse)
             nxt = current.next_year.first()
-            if nxt and nxt.status == "finalised":
+            if nxt and nxt.is_locked:
                 years_to_reopen.append(nxt)
                 current = nxt
             else:
@@ -1917,7 +1915,7 @@ def reroll_forward(request, pk):
         messages.error(request, "You do not have permission.")
         return redirect("core:financial_year_detail", pk=pk)
 
-    if current_fy.status != "finalised":
+    if not current_fy.is_locked:
         messages.error(request, "This financial year must be finalised before re-rolling forward.")
         return redirect("core:financial_year_detail", pk=pk)
 
@@ -2267,8 +2265,8 @@ def roll_forward(request, pk):
         messages.error(request, "You do not have permission.")
         return redirect("core:financial_year_detail", pk=pk)
 
-    # Cannot roll forward unless the current FY is finalised
-    if current_fy.status != "finalised":
+    # Cannot roll forward unless the current FY is finalised (locked or finalised status)
+    if not current_fy.is_locked:
         messages.error(
             request,
             "Cannot roll forward: this financial year must be finalised before rolling forward."
