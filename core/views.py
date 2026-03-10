@@ -10545,8 +10545,11 @@ def _apply_journal_learned_mappings(entity, raw_lines):
         if ea:
             staged_line["entity_acct_code"] = ea.account_code
             staged_line["entity_acct_name"] = ea.account_name
-            # Update account_name if it's still just the raw code
-            if staged_line["account_name"] == code or not staged_line["account_name"]:
+            # Always use the COA name when a match exists — the Excel name
+            # is often inconsistent with the entity's standardised account
+            # names, which causes the posted TB line to differ from the
+            # original import lines for the same account code.
+            if ea.account_name:
                 staged_line["account_name"] = ea.account_name
             if staged_line["confidence"] == "new":
                 staged_line["confidence"] = "matched"
