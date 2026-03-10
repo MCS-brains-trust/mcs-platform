@@ -6391,6 +6391,94 @@ def depreciation_add(request, pk):
     return redirect("core:financial_year_detail", pk=pk)
 
 
+
+@login_required
+def depreciation_suggest_account_code(request, pk):
+    """
+    AJAX endpoint: suggest the next available account code for a new
+    depreciation asset account or accumulated depreciation account.
+    Delegates to the existing entity_coa_suggest_code logic so the
+    alphabetical-placement algorithm is reused exactly.
+    Expects GET params: account_name, section (assets|liabilities|expenses)
+    """
+    from django.http import QueryDict
+    fy = get_financial_year_for_user(request, pk)
+    entity = fy.entity
+    section = request.GET.get('section', 'assets').strip()
+    account_name = request.GET.get('account_name', '').strip()
+    if not account_name:
+        return JsonResponse({'suggested_code': '', 'position_info': 'Enter an account name.'})
+    # Reuse the existing suggest-code logic by forwarding to the same function
+    # but constructing a fake GET with the right params.
+    fake_get = QueryDict(mutable=True)
+    fake_get['section'] = section
+    fake_get['account_name'] = account_name
+    request.GET = fake_get
+    return entity_coa_suggest_code(request, pk)
+
+
+@login_required
+def depreciation_create_account(request, pk):
+    """
+    AJAX POST endpoint: create a new EntityChartOfAccount for an asset or
+    accumulated depreciation account directly from the Add Asset modal.
+    Returns JSON with the new account_code and account_name so the modal
+    can add the option to the dropdown and select it automatically.
+
+    POST params:
+      account_name  - required
+      account_code  - required (suggested code confirmed by user)
+      section       - 'assets' (default) or 'expenses'
+      account_type  - 'asset' | 'accum_dep' | 'dep_expense' (informational only)
+    """
+    fy = get_financial_year_for_user(request, pk)
+    entity = fy.entity
+    if not request.user.can_do_accounting:
+        return JsonResponse({'error': 'Permission denied'}, status=403)
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST required'}, status=405)
+
+    account_name = request.POST.get('account_name', '').strip()
+    account_code = request.POST.get('account_code', '').strip()
+    section = request.POST.get('section', 'assets').strip()
+
+    if not account_name or not account_code:
+        return JsonResponse({'error': 'account_name and account_code are required'}, status=400)
+
+    # Validate section
+    valid_sections = [s[0] for s in EntityChartOfAccount.StatementSection.choices]
+    if section not in valid_sections:
+        return JsonResponse({'error': f'Invalid section: {section}'}, status=400)
+
+    # Check for duplicate code
+    if EntityChartOfAccount.objects.filter(entity=entity, account_code=account_code).exists():
+        existing = EntityChartOfAccount.objects.get(entity=entity, account_code=account_code)
+        return JsonResponse({
+            'account_code': existing.account_code,
+            'account_name': existing.account_name,
+            'already_existed': True,
+        })
+
+    # Create the entity COA account
+    new_account = EntityChartOfAccount.objects.create(
+        entity=entity,
+        account_code=account_code,
+        account_name=account_name,
+        section=section,
+        is_active=True,
+        is_custom=True,
+    )
+    _log_action(
+        request, 'create',
+        f'Created new {section} account from depreciation modal: {account_code} — {account_name}',
+        fy,
+    )
+    return JsonResponse({
+        'account_code': new_account.account_code,
+        'account_name': new_account.account_name,
+        'already_existed': False,
+    })
+
 @login_required
 def depreciation_edit(request, pk):
     """Edit a depreciation asset."""
