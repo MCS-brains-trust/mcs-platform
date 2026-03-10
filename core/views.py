@@ -1929,7 +1929,27 @@ def reroll_forward(request, pk):
         from decimal import Decimal
 
         # ── Step 1: Delete old rollover data in the next year ────────
+        # Delete all previously rolled-forward lines (source='rollover').
         deleted_tb = next_fy.trial_balance_lines.filter(source="rollover").delete()[0]
+
+        # Also delete any tb_import lines in the next year whose account codes
+        # exist in the current year.  This handles the case where the next year
+        # was ALSO imported from Handiledger: those lines carry stale opening
+        # balances and prior-year figures that must be replaced by the
+        # re-rolled values.  We only remove non-adjustment lines so that
+        # user-entered journals in the next year are preserved.
+        current_fy_codes = set(
+            current_fy.trial_balance_lines
+            .filter(is_adjustment=False)
+            .values_list("account_code", flat=True)
+        )
+        deleted_tb_import = next_fy.trial_balance_lines.filter(
+            source="tb_import",
+            is_adjustment=False,
+            account_code__in=current_fy_codes,
+        ).delete()[0]
+        deleted_tb += deleted_tb_import
+
         deleted_stock = next_fy.stock_items.filter(
             notes__icontains="Rolled forward"
         ).delete()[0]
