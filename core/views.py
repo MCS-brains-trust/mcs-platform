@@ -1512,7 +1512,7 @@ def financial_year_status(request, pk):
 
     # Validate status transition is allowed
     ALLOWED_TRANSITIONS = {
-        "draft": ["in_review", "finished"],  # reopened years can go straight back to finished
+        "draft": ["in_review", "finished"],
         "in_review": ["finished", "draft"],
         "finished": ["prepared", "in_review"],
         "prepared": ["pending_eva", "finished"],
@@ -1520,6 +1520,7 @@ def financial_year_status(request, pk):
         "eva_cleared": ["finalised"],
         "eva_error": ["finished"],  # Allow retry after error
         "finalised": [],  # Use reopen_financial_year instead
+        "reopened": ["in_review", "finished", "finalised"],
     }
     allowed = ALLOWED_TRANSITIONS.get(fy.status, [])
     # Eva-managed statuses (pending_eva, eva_cleared) are blocked below separately
@@ -1541,8 +1542,9 @@ def financial_year_status(request, pk):
         return redirect("core:financial_year_detail", pk=pk)
 
     # Eva Finalisation Gate: finalisation now requires Eva clearance
+    # Reopened years can go directly to finalised (corrections-only path)
     if new_status == "finalised":
-        if fy.status != FinancialYear.Status.EVA_CLEARED:
+        if fy.status not in (FinancialYear.Status.EVA_CLEARED, FinancialYear.Status.REOPENED):
             messages.error(
                 request,
                 "Finalisation is now gated through Eva. Please use the 'Ask Eva to Review' "
@@ -1852,7 +1854,7 @@ def reopen_financial_year(request, pk):
     reopened_labels = []
     for year in reversed(years_to_reopen):
         old_status = year.status
-        year.status = FinancialYear.Status.DRAFT
+        year.status = FinancialYear.Status.REOPENED
         year.reopened_at = timezone.now()
         year.reopened_by = request.user
         year.reopen_reason = reason
@@ -1891,7 +1893,178 @@ def reopen_financial_year(request, pk):
 
 
 # ============================================================
-# Re-Roll Forward (update subsequent year after amendment)
+# Re-Roll Forward — Diff & Apply (modal-based workflow)
+# ============================================================
+
+@login_required
+def reroll_forward_diff(request, pk):
+    """GET /api/years/<pk>/reroll-forward-diff/
+
+    Compare this year's closing TB balances against the next year's
+    opening balances and return a JSON diff.
+    """
+    current_fy = get_financial_year_for_user(request, pk)
+
+    if not request.user.can_do_accounting:
+        return JsonResponse({"error": "Permission denied."}, status=403)
+
+    next_fy = current_fy.next_year.first()
+    if not next_fy:
+        return JsonResponse({"error": "No subsequent financial year found."}, status=404)
+
+    # Build aggregated closing balances for the current year (by account_code)
+    from django.db.models import Sum as _Sum
+    current_lines = (
+        current_fy.trial_balance_lines
+        .filter(is_adjustment=False)
+        .values("account_code", "account_name")
+        .annotate(closing=_Sum("closing_balance"))
+    )
+    current_map = {}
+    for row in current_lines:
+        current_map[row["account_code"]] = {
+            "account_name": row["account_name"],
+            "closing": row["closing"],
+        }
+
+    # Build opening balances in the next year (rollover lines only)
+    next_rollover = (
+        next_fy.trial_balance_lines
+        .filter(source="rollover", is_adjustment=False)
+    )
+    next_map = {}
+    for line in next_rollover:
+        next_map[line.account_code] = {
+            "account_name": line.account_name,
+            "opening": line.opening_balance,
+            "line_id": str(line.pk),
+        }
+
+    changes = []
+    for code, cur in current_map.items():
+        closing = cur["closing"] or Decimal("0")
+        if code in next_map:
+            opening = next_map[code]["opening"] or Decimal("0")
+            if closing != opening:
+                changes.append({
+                    "account_code": code,
+                    "account_name": cur["account_name"],
+                    "original_opening": str(opening),
+                    "new_closing": str(closing),
+                    "difference": str(closing - opening),
+                    "line_id": next_map[code]["line_id"],
+                })
+        # New accounts in current year not in next year rollover are ignored
+        # here — those require a full re-roll forward via the existing view.
+
+    return JsonResponse({
+        "status": "ok",
+        "current_year": current_fy.year_label,
+        "next_year": next_fy.year_label,
+        "next_year_pk": str(next_fy.pk),
+        "changes": changes,
+        "change_count": len(changes),
+    })
+
+
+@login_required
+@require_POST
+def reroll_forward_apply(request, pk):
+    """POST /api/years/<pk>/reroll-forward-apply/
+
+    Accept the diff and update only the changed opening balance lines
+    in the next financial year.
+    """
+    import json as _json
+    current_fy = get_financial_year_for_user(request, pk)
+
+    if not request.user.can_do_accounting:
+        return JsonResponse({"error": "Permission denied."}, status=403)
+
+    next_fy = current_fy.next_year.first()
+    if not next_fy:
+        return JsonResponse({"error": "No subsequent financial year found."}, status=404)
+
+    # Re-compute the diff to ensure consistency (don't trust client-side data)
+    from django.db.models import Sum as _Sum
+    current_lines = (
+        current_fy.trial_balance_lines
+        .filter(is_adjustment=False)
+        .values("account_code")
+        .annotate(closing=_Sum("closing_balance"))
+    )
+    current_map = {row["account_code"]: row["closing"] or Decimal("0") for row in current_lines}
+
+    next_rollover = (
+        next_fy.trial_balance_lines
+        .filter(source="rollover", is_adjustment=False)
+    )
+
+    updated = []
+    for line in next_rollover:
+        new_closing = current_map.get(line.account_code)
+        if new_closing is not None and new_closing != (line.opening_balance or Decimal("0")):
+            old_opening = line.opening_balance
+            line.opening_balance = new_closing
+            line.closing_balance = new_closing + line.debit - line.credit
+            line.save(update_fields=["opening_balance", "closing_balance"])
+            updated.append({
+                "account_code": line.account_code,
+                "account_name": line.account_name,
+                "old_opening": str(old_opening),
+                "new_opening": str(new_closing),
+            })
+
+    # Log activity for both years
+    if updated:
+        summary_lines = "; ".join(
+            f"{u['account_code']} {u['old_opening']} → {u['new_opening']}"
+            for u in updated[:10]
+        )
+        if len(updated) > 10:
+            summary_lines += f" ... and {len(updated) - 10} more"
+
+        note = (
+            f"Opening balances updated via Re-Roll Forward from {current_fy.year_label}. "
+            f"{len(updated)} line(s) changed: {summary_lines}"
+        )
+
+        ActivityLog.objects.create(
+            user=request.user,
+            event_type="general",
+            title=f"Re-Roll Forward Applied — {current_fy.year_label} → {next_fy.year_label}",
+            description=note,
+            entity=current_fy.entity,
+            financial_year=current_fy,
+            url=f"/entities/years/{current_fy.pk}/",
+        )
+        ActivityLog.objects.create(
+            user=request.user,
+            event_type="general",
+            title=f"Opening Balances Updated via Re-Roll Forward from {current_fy.year_label}",
+            description=note,
+            entity=next_fy.entity,
+            financial_year=next_fy,
+            url=f"/entities/years/{next_fy.pk}/",
+        )
+
+        _log_action(
+            request, "reroll_forward",
+            f"Re-Roll Forward applied: {current_fy.year_label} → {next_fy.year_label}. "
+            f"{len(updated)} opening balance(s) updated.",
+            current_fy,
+        )
+
+    return JsonResponse({
+        "status": "ok",
+        "updated_count": len(updated),
+        "updated": updated,
+        "next_year_label": next_fy.year_label,
+    })
+
+
+# ============================================================
+# Re-Roll Forward (full wipe & recreate — legacy view)
 # ============================================================
 
 @login_required

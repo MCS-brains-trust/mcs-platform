@@ -31,7 +31,7 @@
         <p class="text-muted mb-0">
             {{ fy.start_date|date:"d M Y" }} to {{ fy.end_date|date:"d M Y" }}
             &middot;
-            <span class="badge bg-{% if fy.status == 'draft' %}warning text-dark{% elif fy.status == 'in_review' %}info{% elif fy.status == 'finished' %}primary{% elif fy.status == 'prepared' %}info{% elif fy.status == 'eva_cleared' %}success{% else %}success{% endif %} fs-6">
+            <span class="badge bg-{% if fy.status == 'draft' %}warning text-dark{% elif fy.status == 'reopened' %}warning text-dark{% elif fy.status == 'in_review' %}info{% elif fy.status == 'finished' %}primary{% elif fy.status == 'prepared' %}info{% elif fy.status == 'eva_cleared' %}success{% else %}success{% endif %} fs-6">
                 {% if fy.status == 'prepared' %}<span class="spinner-border spinner-border-sm me-1" style="width:12px;height:12px;"></span>{% endif %}
                 {{ fy.get_status_display }}
             </span>
@@ -106,9 +106,16 @@
                         {% csrf_token %}
                         <label class="form-label mb-0 text-nowrap"><strong>Status:</strong></label>
                         <select name="status" class="form-select form-select-sm" style="max-width: 180px;">
+                            {% if fy.status == 'reopened' %}
+                            <option value="reopened" selected>Reopened</option>
+                            <option value="in_review">In Review</option>
+                            <option value="finished">Finished</option>
+                            <option value="finalised">Finalised</option>
+                            {% else %}
                             <option value="draft" {% if fy.status == 'draft' %}selected{% endif %}>Draft</option>
                             <option value="in_review" {% if fy.status == 'in_review' %}selected{% endif %}>In Review</option>
                             <option value="finished" {% if fy.status == 'finished' %}selected{% endif %}>Finished</option>
+                            {% endif %}
                         </select>
                         <button type="submit" class="btn btn-sm btn-primary">Update</button>
                     </form>
@@ -127,6 +134,15 @@
                     <button type="button" class="btn btn-sm btn-success" onclick="evaFinalise()">
                         <i class="bi bi-check-circle"></i> Finalise
                     </button>
+                    {% elif fy.status == 'reopened' %}
+                    <form method="post" action="{% url 'core:financial_year_status' pk=fy.pk %}" class="d-inline">
+                        {% csrf_token %}
+                        <input type="hidden" name="status" value="finalised">
+                        <button type="submit" class="btn btn-sm btn-success"
+                                title="Re-finalise after corrections (or run Eva review first)">
+                            <i class="bi bi-check-circle"></i> Finalise
+                        </button>
+                    </form>
                     {% elif not fy.is_locked %}
                     <button type="button" class="btn btn-sm btn-success" disabled
                             title="Submit to Eva for review before finalising">
@@ -155,7 +171,7 @@
                     <button type="button" class="btn btn-sm btn-danger" onclick="showPeriodModal('pdf')">
                         <i class="bi bi-file-earmark-pdf"></i> Download Financial Statements
                     </button>
-                    {% elif fy.status == 'draft' or fy.status == 'in_review' or fy.status == 'finished' or fy.status == 'prepared' or fy.status == 'pending_eva' or fy.status == 'eva_error' %}
+                    {% elif fy.status == 'draft' or fy.status == 'in_review' or fy.status == 'finished' or fy.status == 'prepared' or fy.status == 'pending_eva' or fy.status == 'eva_error' or fy.status == 'reopened' %}
                     <!-- Management Accounts — opens period selection modal -->
                     <button type="button" class="btn btn-sm btn-outline-dark" onclick="openMgmtAccountsModal()" title="Watermarked management accounts. Complete Eva review to generate final financials.">
                         <i class="bi bi-file-earmark-text"></i> Download Management Accounts
@@ -182,20 +198,25 @@
 
                     <div class="vr d-none d-md-block"></div>
 
-                    <!-- Roll Forward -->
-                    {% if fy.is_locked %}
-                        {% if fy.next_year.first %}
-                        {# A following year already exists — this year was re-opened and re-finalised #}
-                        <a href="{% url 'core:reroll_forward' pk=fy.pk %}" class="btn btn-sm btn-outline-info"
-                           title="This year was re-opened and re-finalised. Click to push the updated figures into {{ fy.next_year.first.year_label }}.">
-                            <i class="bi bi-arrow-repeat"></i> Re-Roll Forward
-                        </a>
-                        {% else %}
-                        {# No following year yet — standard first roll-forward #}
-                        <a href="{% url 'core:roll_forward' pk=fy.pk %}" class="btn btn-sm btn-outline-primary">
-                            <i class="bi bi-arrow-right-circle"></i> Roll Forward
-                        </a>
-                        {% endif %}
+                    <!-- Roll Forward / Re-Roll Forward -->
+                    {% if fy.next_year.first %}
+                    {# A following year already exists — show Re-Roll Forward #}
+                    {% if fy.is_locked or fy.status == 'reopened' %}
+                    <button type="button" class="btn btn-sm btn-warning" onclick="openRerollModal()"
+                       title="Compare and update opening balances in {{ fy.next_year.first.year_label }} from this year's closing balances.">
+                        <i class="bi bi-arrow-repeat"></i> Re-Roll Forward
+                    </button>
+                    {% else %}
+                    <button type="button" class="btn btn-sm btn-warning" disabled
+                            title="Finalise or reopen this financial year before re-rolling forward">
+                        <i class="bi bi-arrow-repeat"></i> Re-Roll Forward
+                    </button>
+                    {% endif %}
+                    {% elif fy.is_locked %}
+                    {# No following year — standard roll-forward #}
+                    <a href="{% url 'core:roll_forward' pk=fy.pk %}" class="btn btn-sm btn-outline-primary">
+                        <i class="bi bi-arrow-right-circle"></i> Roll Forward
+                    </a>
                     {% else %}
                     <button type="button" class="btn btn-sm btn-outline-primary" disabled title="Finalise this financial year before rolling forward">
                         <i class="bi bi-arrow-right-circle"></i> Roll Forward
@@ -292,6 +313,158 @@
         </div>
     </div>
 </div>
+{% endif %}
+
+<!-- Re-Roll Forward Modal -->
+{% if fy.next_year.first %}
+<div class="modal fade" id="rerollModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header bg-warning">
+                <h5 class="modal-title"><i class="bi bi-arrow-repeat"></i> Re-Roll Forward — Compare Opening Balances</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div id="reroll-loading" class="text-center py-4">
+                    <div class="spinner-border text-warning" role="status"></div>
+                    <p class="mt-2">Comparing closing balances against {{ fy.next_year.first.year_label }} opening balances...</p>
+                </div>
+                <div id="reroll-no-changes" style="display:none;" class="text-center py-4">
+                    <i class="bi bi-check-circle-fill text-success" style="font-size: 2.5rem;"></i>
+                    <p class="mt-2 fw-semibold">No changes detected.</p>
+                    <p class="text-muted">Opening balances in <strong id="reroll-next-year-label"></strong> already match this year's closing balances.</p>
+                </div>
+                <div id="reroll-diff" style="display:none;">
+                    <div class="alert alert-warning py-2 mb-3">
+                        <i class="bi bi-exclamation-triangle-fill"></i>
+                        <strong><span id="reroll-change-count"></span> line(s)</strong> have different closing balances compared to the opening balances in <strong id="reroll-next-year-label2"></strong>.
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-hover">
+                            <thead class="table-light">
+                                <tr>
+                                    <th>Account Code</th>
+                                    <th>Account Name</th>
+                                    <th class="text-end">Original Opening<br><small class="text-muted">(next year)</small></th>
+                                    <th class="text-end">New Closing<br><small class="text-muted">(this year)</small></th>
+                                    <th class="text-end">Difference</th>
+                                </tr>
+                            </thead>
+                            <tbody id="reroll-diff-body"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div id="reroll-error" style="display:none;" class="alert alert-danger"></div>
+                <div id="reroll-success" style="display:none;" class="text-center py-4">
+                    <i class="bi bi-check-circle-fill text-success" style="font-size: 2.5rem;"></i>
+                    <p class="mt-2 fw-semibold text-success">Opening balances updated successfully.</p>
+                    <p class="text-muted"><strong id="reroll-updated-count"></strong> line(s) updated in <strong id="reroll-updated-year"></strong>.</p>
+                </div>
+            </div>
+            <div class="modal-footer" id="reroll-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-warning" id="reroll-accept-btn" style="display:none;" onclick="applyRerollForward()">
+                    <i class="bi bi-check-circle"></i> Accept All Changes
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+function openRerollModal() {
+    var modal = new bootstrap.Modal(document.getElementById('rerollModal'));
+    document.getElementById('reroll-loading').style.display = '';
+    document.getElementById('reroll-no-changes').style.display = 'none';
+    document.getElementById('reroll-diff').style.display = 'none';
+    document.getElementById('reroll-error').style.display = 'none';
+    document.getElementById('reroll-success').style.display = 'none';
+    document.getElementById('reroll-accept-btn').style.display = 'none';
+    document.getElementById('reroll-footer').querySelector('.btn-secondary').style.display = '';
+    modal.show();
+
+    fetch('{% url "core:reroll_forward_diff" pk=fy.pk %}', {
+        headers: {'X-Requested-With': 'XMLHttpRequest'},
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        document.getElementById('reroll-loading').style.display = 'none';
+        if (data.error) {
+            document.getElementById('reroll-error').textContent = data.error;
+            document.getElementById('reroll-error').style.display = '';
+            return;
+        }
+        if (data.change_count === 0) {
+            document.getElementById('reroll-no-changes').style.display = '';
+            document.getElementById('reroll-next-year-label').textContent = data.next_year;
+            return;
+        }
+        document.getElementById('reroll-change-count').textContent = data.change_count;
+        document.getElementById('reroll-next-year-label2').textContent = data.next_year;
+        var tbody = document.getElementById('reroll-diff-body');
+        tbody.innerHTML = '';
+        data.changes.forEach(function(c) {
+            var diff = parseFloat(c.difference);
+            var diffClass = diff > 0 ? 'text-success' : (diff < 0 ? 'text-danger' : '');
+            var diffPrefix = diff > 0 ? '+' : '';
+            var row = '<tr>'
+                + '<td><code>' + c.account_code + '</code></td>'
+                + '<td>' + c.account_name + '</td>'
+                + '<td class="text-end">' + parseFloat(c.original_opening).toLocaleString('en-AU', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</td>'
+                + '<td class="text-end fw-semibold">' + parseFloat(c.new_closing).toLocaleString('en-AU', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</td>'
+                + '<td class="text-end ' + diffClass + '">' + diffPrefix + parseFloat(c.difference).toLocaleString('en-AU', {minimumFractionDigits: 2, maximumFractionDigits: 2}) + '</td>'
+                + '</tr>';
+            tbody.innerHTML += row;
+        });
+        document.getElementById('reroll-diff').style.display = '';
+        document.getElementById('reroll-accept-btn').style.display = '';
+    })
+    .catch(function() {
+        document.getElementById('reroll-loading').style.display = 'none';
+        document.getElementById('reroll-error').textContent = 'Connection error. Please try again.';
+        document.getElementById('reroll-error').style.display = '';
+    });
+}
+
+function applyRerollForward() {
+    var btn = document.getElementById('reroll-accept-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Applying...';
+
+    fetch('{% url "core:reroll_forward_apply" pk=fy.pk %}', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': '{{ csrf_token }}',
+            'X-Requested-With': 'XMLHttpRequest',
+        },
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (data.status === 'ok') {
+            document.getElementById('reroll-diff').style.display = 'none';
+            document.getElementById('reroll-success').style.display = '';
+            document.getElementById('reroll-updated-count').textContent = data.updated_count;
+            document.getElementById('reroll-updated-year').textContent = data.next_year_label;
+            btn.style.display = 'none';
+            // Change Cancel to Close
+            var cancelBtn = document.getElementById('reroll-footer').querySelector('.btn-secondary');
+            cancelBtn.textContent = 'Close';
+            cancelBtn.onclick = function() { location.reload(); };
+        } else {
+            document.getElementById('reroll-error').textContent = data.error || 'Failed to apply changes.';
+            document.getElementById('reroll-error').style.display = '';
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-check-circle"></i> Accept All Changes';
+        }
+    })
+    .catch(function() {
+        document.getElementById('reroll-error').textContent = 'Connection error. Please try again.';
+        document.getElementById('reroll-error').style.display = '';
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-check-circle"></i> Accept All Changes';
+    });
+}
+</script>
 {% endif %}
 
 <!-- Period Selection Modal -->
