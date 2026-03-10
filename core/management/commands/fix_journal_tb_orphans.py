@@ -58,10 +58,16 @@ class Command(BaseCommand):
             type=str,
             help="Limit to a specific journal by UUID",
         )
+        parser.add_argument(
+            "--repair-mismatched",
+            action="store_true",
+            help="Re-reverse and re-apply TB lines for journals with mismatched TB impact (Phase 3)",
+        )
 
     def handle(self, *args, **options):
         dry_run = options["dry_run"]
         delete_orphans = options["delete_orphans"]
+        repair_mismatched = options["repair_mismatched"]
         entity_filter = options.get("entity")
         journal_uuid = options.get("journal")
 
@@ -365,6 +371,7 @@ class Command(BaseCommand):
             )
 
         mismatch_count = 0
+        repaired_count = 0
         for journal in journals_qs2.iterator(chunk_size=100):
             jnl_lines = list(journal.lines.all())
             tb_lines = list(journal.tb_lines.all())
@@ -374,40 +381,92 @@ class Command(BaseCommand):
             if expected_count == 0:
                 continue
 
+            is_mismatched = False
+            reason = ""
+
             # Check count mismatch
             if expected_count != actual_count:
-                fy = journal.financial_year
-                self.stdout.write(
-                    self.style.WARNING(
-                        f"  {fy.entity.entity_name} / {fy.year_label} — "
-                        f"journal {journal.reference_number} ({journal.pk}): "
-                        f"expected {expected_count} TB lines, found {actual_count}"
-                    )
-                )
-                mismatch_count += 1
-                continue
+                is_mismatched = True
+                reason = f"expected {expected_count} TB lines, found {actual_count}"
+            else:
+                # Check value mismatch (total debit/credit)
+                jnl_dr = sum(l.debit for l in jnl_lines)
+                jnl_cr = sum(l.credit for l in jnl_lines)
+                tb_dr = sum(l.debit for l in tb_lines)
+                tb_cr = sum(l.credit for l in tb_lines)
 
-            # Check value mismatch (total debit/credit)
-            jnl_dr = sum(l.debit for l in jnl_lines)
-            jnl_cr = sum(l.credit for l in jnl_lines)
-            tb_dr = sum(l.debit for l in tb_lines)
-            tb_cr = sum(l.credit for l in tb_lines)
-
-            if jnl_dr != tb_dr or jnl_cr != tb_cr:
-                fy = journal.financial_year
-                self.stdout.write(
-                    self.style.WARNING(
-                        f"  {fy.entity.entity_name} / {fy.year_label} — "
-                        f"journal {journal.reference_number} ({journal.pk}): "
+                if jnl_dr != tb_dr or jnl_cr != tb_cr:
+                    is_mismatched = True
+                    reason = (
                         f"JNL totals Dr={jnl_dr} Cr={jnl_cr} vs "
                         f"TB totals Dr={tb_dr} Cr={tb_cr}"
                     )
+
+            if is_mismatched:
+                fy = journal.financial_year
+                self.stdout.write(
+                    self.style.WARNING(
+                        f"  {fy.entity.entity_name} / {fy.year_label} — "
+                        f"journal {journal.reference_number} ({journal.pk}): "
+                        f"{reason}"
+                    )
                 )
                 mismatch_count += 1
+
+                if repair_mismatched and not dry_run:
+                    # Repair: delete existing FK-linked TB lines, then re-apply
+                    with transaction.atomic():
+                        # Delete all TB lines linked to this journal
+                        deleted = TrialBalanceLine.objects.filter(
+                            source_journal=journal,
+                        ).delete()[0]
+
+                        # Also attempt to clean up unlinked lines that match
+                        # this journal by exact account_code + debit/credit
+                        for jl in jnl_lines:
+                            TrialBalanceLine.objects.filter(
+                                financial_year=fy,
+                                account_code=jl.account_code,
+                                debit=jl.debit,
+                                credit=jl.credit,
+                                is_adjustment=True,
+                                source_journal__isnull=True,
+                                source__in=("manual_journal", "journal_upload"),
+                            ).delete()
+
+                        # Re-apply each journal line to the TB
+                        for jl in jnl_lines:
+                            TrialBalanceLine.objects.create(
+                                financial_year=fy,
+                                account_code=jl.account_code,
+                                account_name=jl.account_name,
+                                debit=jl.debit,
+                                credit=jl.credit,
+                                is_adjustment=True,
+                                source="manual_journal",
+                                description=journal.description,
+                                source_journal=journal,
+                            )
+
+                    self.stdout.write(
+                        self.style.SUCCESS(
+                            f"    → Repaired: deleted {deleted} old TB line(s), "
+                            f"re-applied {expected_count} line(s) with source_journal FK"
+                        )
+                    )
+                    repaired_count += 1
 
         self.stdout.write(
             f"\n  Phase 3 summary: {mismatch_count} journal(s) with mismatched TB impact"
         )
+        if repaired_count:
+            self.stdout.write(
+                self.style.SUCCESS(f"  Repaired {repaired_count} journal(s)")
+            )
+        elif mismatch_count and not repair_mismatched:
+            self.stdout.write(
+                self.style.WARNING("  Use --repair-mismatched to fix them")
+            )
 
         # ── Done ──────────────────────────────────────────────────────
         if dry_run:
