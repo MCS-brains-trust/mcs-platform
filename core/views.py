@@ -196,7 +196,7 @@ def _infer_section_for_unmapped(entity, account_code):
     return 'Unmapped'
 
 
-def _apply_journal_line_to_tb(fy, account_code, account_name, jnl_debit, jnl_credit, source='manual_journal', bulk_upload=None, description=''):
+def _apply_journal_line_to_tb(fy, account_code, account_name, jnl_debit, jnl_credit, source='manual_journal', bulk_upload=None, description='', journal=None):
     """
     Apply a journal line to the trial balance by creating a separate
     adjustment row.  The display aggregation logic nets these rows
@@ -207,6 +207,10 @@ def _apply_journal_line_to_tb(fy, account_code, account_name, jnl_debit, jnl_cre
          (ensures the adjustment lands in the same section as the original)
       2. ClientAccountMapping (entity-level learned mapping)
       3. None (unmapped fallback)
+
+    Pass journal=<AdjustingJournal instance> to link the TB line back to its
+    source journal via the source_journal FK — this enables reliable reversal
+    on edit without fragile debit/credit matching.
     """
     mapped_item = None
 
@@ -243,22 +247,40 @@ def _apply_journal_line_to_tb(fy, account_code, account_name, jnl_debit, jnl_cre
         source=source,
         description=description,
         bulk_journal_upload=bulk_upload,
+        source_journal=journal,
     )
 
 
-def _reverse_journal_line_from_tb(fy, account_code, jnl_debit, jnl_credit):
+def _reverse_journal_line_from_tb(fy, account_code, jnl_debit, jnl_credit, journal=None):
     """
     Reverse a previously applied journal line by deleting its adjustment row.
+
+    When journal is provided, the deletion is scoped to TB lines linked to
+    that specific journal via source_journal FK — this is reliable even when
+    multiple lines share the same account code and amounts.
+
+    Falls back to the legacy debit/credit match when journal is None (e.g.
+    for journals created before the source_journal FK was added).
     """
-    adj = TrialBalanceLine.objects.filter(
-        financial_year=fy,
-        account_code=account_code,
-        debit=jnl_debit,
-        credit=jnl_credit,
-        is_adjustment=True,
-    ).first()
-    if adj:
-        adj.delete()
+    if journal is not None:
+        # Preferred path: delete the row linked to this exact journal
+        TrialBalanceLine.objects.filter(
+            financial_year=fy,
+            account_code=account_code,
+            is_adjustment=True,
+            source_journal=journal,
+        ).delete()
+    else:
+        # Legacy fallback: match by debit/credit (may be ambiguous)
+        adj = TrialBalanceLine.objects.filter(
+            financial_year=fy,
+            account_code=account_code,
+            debit=jnl_debit,
+            credit=jnl_credit,
+            is_adjustment=True,
+        ).first()
+        if adj:
+            adj.delete()
 
 
 def _get_or_create_tb_line(financial_year=None, account_code=None, defaults=None, fy=None):
@@ -3935,6 +3957,7 @@ def adjustment_create(request, pk):
                     fy, line.account_code, line.account_name,
                     line.debit, line.credit, source='manual_journal',
                     description=journal.description,
+                    journal=journal,
                 )
 
             journal.status = AdjustingJournal.JournalStatus.POSTED
@@ -4001,6 +4024,7 @@ def journal_post(request, pk):
             fy, line.account_code, line.account_name,
             line.debit, line.credit, source='manual_journal',
             description=journal.description,
+            journal=journal,
         )
 
     # Update journal status
@@ -4037,10 +4061,14 @@ def journal_delete(request, pk):
 
     # If the journal was posted, reverse its effect on the Trial Balance
     if status == AdjustingJournal.JournalStatus.POSTED:
-        for line in journal.lines.all():
-            _reverse_journal_line_from_tb(
-                fy, line.account_code, line.debit, line.credit,
-            )
+        # Use FK-based deletion when available; legacy fallback for old journals
+        if journal.tb_lines.exists():
+            journal.tb_lines.all().delete()
+        else:
+            for line in journal.lines.all():
+                _reverse_journal_line_from_tb(
+                    fy, line.account_code, line.debit, line.credit,
+                )
 
     journal.delete()
     _log_action(request, "adjustment", f"Deleted {status} journal {ref}")
@@ -4135,11 +4163,19 @@ def journal_edit(request, pk):
         form = AdjustingJournalForm(request.POST, instance=journal)
         formset = EditJournalLineFormSet(request.POST, instance=journal)
         if form.is_valid() and formset.is_valid():
-            # Reverse all existing TB adjustment lines for this journal
-            for line in journal.lines.all():
-                _reverse_journal_line_from_tb(
-                    fy, line.account_code, line.debit, line.credit
-                )
+            # Reverse all existing TB adjustment lines for this journal.
+            # Use the source_journal FK for reliable scoped deletion; fall back
+            # to the legacy debit/credit match for pre-FK journals.
+            has_fk_lines = journal.tb_lines.exists()
+            if has_fk_lines:
+                # New path: delete all TB lines linked to this journal at once
+                journal.tb_lines.all().delete()
+            else:
+                # Legacy fallback for journals created before the source_journal FK
+                for line in journal.lines.all():
+                    _reverse_journal_line_from_tb(
+                        fy, line.account_code, line.debit, line.credit
+                    )
 
             # Save the updated header
             updated_journal = form.save(commit=False)
@@ -4164,6 +4200,7 @@ def journal_edit(request, pk):
                         fy, line.account_code, line.account_name,
                         line.debit, line.credit, source="manual_journal",
                         description=journal.description,
+                        journal=journal,
                     )
                 messages.error(
                     request,
@@ -4175,12 +4212,13 @@ def journal_edit(request, pk):
                     "fy": fy, "entity": entity, "accounts": accounts,
                 })
 
-            # Apply the new lines to the TB
+            # Apply the new lines to the TB, linked to this journal via source_journal FK
             for line in all_lines:
                 _apply_journal_line_to_tb(
                     fy, line.account_code, line.account_name,
                     line.debit, line.credit, source="manual_journal",
                     description=updated_journal.description,
+                    journal=journal,
                 )
 
             # Update cached totals
