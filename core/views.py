@@ -10527,7 +10527,7 @@ def _apply_journal_learned_mappings(fy, raw_lines):
     # TB lines for this financial year.  These are the names already displayed on
     # the TB and are the source of truth.
     tb_names = {
-        tbl.account_code.lower(): tbl.account_name
+        tbl["account_code"].lower(): tbl["account_name"]
         for tbl in TrialBalanceLine.objects.filter(
             financial_year=fy, is_adjustment=False
         ).values("account_code", "account_name").distinct()
