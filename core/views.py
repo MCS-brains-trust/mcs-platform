@@ -86,6 +86,42 @@ def _resolve_account_name(entity, account_code, raw_name):
     return raw_name or account_code
 
 
+# ---------------------------------------------------------------------------
+# HandiLedger account code range -> canonical display section.
+# The numeric account code range is the AUTHORITATIVE source of truth for
+# section classification on all HandiLedger / Access Ledger imports.  It
+# overrides whatever statement_section the mapped_line_item carries, so that
+# an account like 2475 (Retention Receivable) can never be pushed into
+# Non-Current Assets simply because it was once mapped to a BS-NCA code.
+# ---------------------------------------------------------------------------
+_HL_RANGE_SECTION = [
+    (0,    999,  'Income'),
+    (1000, 1499, 'Cost of Sales'),
+    (1500, 1999, 'Expenses'),
+    (2000, 2499, 'Current Assets'),
+    (2500, 2999, 'Non Current Assets'),
+    (3000, 3499, 'Current Liabilities'),
+    (3500, 3999, 'Non Current Liabilities'),
+    (4000, 4999, 'Equity'),
+]
+
+
+def _hl_section_for_code(account_code):
+    """
+    Return the canonical display section for a HandiLedger account code
+    based purely on the numeric range.  Returns None if the code cannot
+    be resolved (e.g. non-numeric or out of the known ranges).
+    """
+    try:
+        code_int = int(str(account_code).split('.')[0])
+    except (ValueError, TypeError):
+        return None
+    for lo, hi, section in _HL_RANGE_SECTION:
+        if lo <= code_int <= hi:
+            return section
+    return None
+
+
 # Mapping from EntityChartOfAccount / ChartOfAccount section values to
 # the display section names used in the trial balance UI.
 _COA_SECTION_TO_DISPLAY = {
@@ -1027,7 +1063,13 @@ def financial_year_detail(request, pk):
 
     sections = OrderedDict()
     for line in tb_lines:
-        if line.mapped_line_item:
+        # HARD RULE: the HandiLedger numeric code range is authoritative.
+        # This prevents accounts like 2475 (Retention Receivable, range 2000-2499)
+        # from being misclassified as Non-Current Assets due to a stale mapping.
+        hl_section = _hl_section_for_code(line.account_code)
+        if hl_section:
+            display_section = hl_section
+        elif line.mapped_line_item:
             raw_section = line.mapped_line_item.statement_section
             display_section = SECTION_DISPLAY.get(raw_section, raw_section)
         else:
@@ -1893,32 +1935,29 @@ def reroll_forward(request, pk):
         pl_lines = []
 
         for line in current_fy.trial_balance_lines.filter(is_adjustment=False):
-            is_bs = False
-            if line.mapped_line_item:
+            # HARD RULE: use the HandiLedger numeric code range to determine
+            # whether a line is balance sheet or P&L.
+            hl_sec = _hl_section_for_code(line.account_code)
+            if hl_sec is not None:
+                is_bs = hl_sec not in ('Income', 'Cost of Sales', 'Expenses')
+            elif line.mapped_line_item:
                 is_bs = line.mapped_line_item.financial_statement in BS_STATEMENTS
             elif line.account_code in coa_sections:
                 is_bs = coa_sections[line.account_code] in BS_SECTIONS
             else:
                 code_prefix = line.account_code.split(".")[0] if line.account_code else ""
-                if code_prefix.isdigit():
-                    is_bs = int(code_prefix) >= 2000
+                is_bs = code_prefix.isdigit() and int(code_prefix) >= 2000
 
             if is_bs:
-                name_lower = line.account_name.lower()
-                is_retained = (
-                    "retained" in name_lower
-                    or "undistributed" in name_lower
-                    or "accumulated" in name_lower
-                    or "unappropriated" in name_lower
-                )
-                if not is_retained and line.mapped_line_item:
-                    mapped_code = line.mapped_line_item.standard_code or ""
-                    is_retained = mapped_code in ("BS-EQ-002", "BS-EQ-005", "BS-EQ-006", "BS-EQ-008")
-                if is_retained:
+                # HARD RULE: only account 4199 is the retained profits target.
+                code_prefix = line.account_code.split(".")[0] if line.account_code else ""
+                if code_prefix == "4199":
                     retained_profits_line = line
 
                 is_income_tax = False
                 if line.account_name and "income tax" in line.account_name.lower():
+                    is_income_tax = True
+                if code_prefix == "4110":
                     is_income_tax = True
                 if line.mapped_line_item and (line.mapped_line_item.standard_code or "") == "BS-EQ-011":
                     is_income_tax = True
@@ -2226,37 +2265,35 @@ def roll_forward(request, pk):
         pl_lines = []
 
         for line in current_fy.trial_balance_lines.filter(is_adjustment=False):
-            # Determine if this is a balance sheet account
-            is_bs = False
-            if line.mapped_line_item:
+            # HARD RULE: use the HandiLedger numeric code range to determine
+            # whether a line is balance sheet or P&L.  This is authoritative
+            # and prevents equity accounts (4000-4999) from being treated as
+            # P&L lines, and P&L accounts (0-1999) from being treated as BS.
+            hl_sec = _hl_section_for_code(line.account_code)
+            if hl_sec is not None:
+                is_bs = hl_sec not in ('Income', 'Cost of Sales', 'Expenses')
+            elif line.mapped_line_item:
                 is_bs = line.mapped_line_item.financial_statement in BS_STATEMENTS
             elif line.account_code in coa_sections:
                 is_bs = coa_sections[line.account_code] in BS_SECTIONS
             else:
-                # Fallback: check if account code starts with 2/3 (common for BS)
-                # or if the section keyword is in the account name
                 code_prefix = line.account_code.split(".")[0] if line.account_code else ""
-                if code_prefix.isdigit():
-                    is_bs = int(code_prefix) >= 2000
+                is_bs = code_prefix.isdigit() and int(code_prefix) >= 2000
 
             if is_bs:
-                # Check if this is the retained profits / undistributed income account
-                name_lower = line.account_name.lower()
-                is_retained = (
-                    "retained" in name_lower
-                    or "undistributed" in name_lower
-                    or "accumulated" in name_lower
-                    or "unappropriated" in name_lower
-                )
-                if not is_retained and line.mapped_line_item:
-                    mapped_code = line.mapped_line_item.standard_code or ""
-                    is_retained = mapped_code in ("BS-EQ-002", "BS-EQ-005", "BS-EQ-006", "BS-EQ-008")
-                if is_retained:
+                # HARD RULE: account 4199 is ALWAYS the retained profits target.
+                # Only 4199 is accepted as retained_profits_line.  Other equity
+                # accounts (e.g. 4200.03 shareholder sub-accounts) must never
+                # receive the rolled-forward P&L, even if mapped to BS-EQ-002.
+                code_prefix = line.account_code.split(".")[0] if line.account_code else ""
+                if code_prefix == "4199":
                     retained_profits_line = line
 
                 # Check if this is the income tax line (4110 or mapped to BS-EQ-011)
                 is_income_tax = False
                 if line.account_name and "income tax" in line.account_name.lower():
+                    is_income_tax = True
+                if code_prefix == "4110":
                     is_income_tax = True
                 if line.mapped_line_item and (line.mapped_line_item.standard_code or "") == "BS-EQ-011":
                     is_income_tax = True
@@ -3299,8 +3336,11 @@ def trial_balance_view(request, pk):
         else:
             line.display_dr = line.debit if line.debit else Decimal('0')
             line.display_cr = line.credit if line.credit else Decimal('0')
-
-        if line.mapped_line_item:
+        # HARD RULE: HandiLedger numeric code range is authoritative for section.
+        hl_section = _hl_section_for_code(line.account_code)
+        if hl_section:
+            display_section = hl_section
+        elif line.mapped_line_item:
             raw_section = line.mapped_line_item.statement_section
             display_section = SECTION_DISPLAY.get(raw_section, raw_section)
         else:
@@ -4755,7 +4795,11 @@ def trial_balance_pdf(request, pk):
     sections = OrderedDict()
     unmapped_lines = []
     for line in tb_lines:
-        if line.mapped_line_item:
+        # HARD RULE: HandiLedger numeric code range is authoritative for section.
+        hl_section = _hl_section_for_code(line.account_code)
+        if hl_section:
+            display_section = hl_section
+        elif line.mapped_line_item:
             raw_section = line.mapped_line_item.statement_section
             display_section = SECTION_DISPLAY.get(raw_section, raw_section)
         else:
@@ -8921,9 +8965,12 @@ def trial_balance_download(request, pk):
     grand_cr = Decimal('0')
     grand_prior_dr = Decimal('0')
     grand_prior_cr = Decimal('0')
-
     for line in tb_lines:
-        if line.mapped_line_item:
+        # HARD RULE: HandiLedger numeric code range is authoritative for section.
+        hl_section = _hl_section_for_code(line.account_code)
+        if hl_section:
+            display_section = hl_section
+        elif line.mapped_line_item:
             raw_section = line.mapped_line_item.statement_section
             display_section = SECTION_DISPLAY.get(raw_section, raw_section)
         else:
@@ -10719,9 +10766,12 @@ def net_profit_api(request, pk):
     pl_sections = {'Income', 'Cost of Sales', 'Expenses'}
     pl_dr = Decimal('0')
     pl_cr = Decimal('0')
-
     for line in tb_lines:
-        if line.mapped_line_item:
+        # HARD RULE: HandiLedger numeric code range is authoritative for section.
+        hl_section = _hl_section_for_code(line.account_code)
+        if hl_section:
+            display_section = hl_section
+        elif line.mapped_line_item:
             raw_section = line.mapped_line_item.statement_section
             display_section = SECTION_DISPLAY.get(raw_section, raw_section)
         else:
