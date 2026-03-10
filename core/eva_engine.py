@@ -2025,13 +2025,20 @@ def eva_finding_resolve(request, pk):
             status=400,
         )
 
-    finding.status = "addressed"
-    finding.resolution_note = resolution_note
-    finding.resolved_by = request.user
-    finding.resolved_at = timezone.now()
-    finding.save(update_fields=[
-        "status", "resolution_note", "resolved_by", "resolved_at"
-    ])
+    try:
+        finding.status = "addressed"
+        finding.resolution_note = resolution_note
+        finding.resolved_by = request.user
+        finding.resolved_at = timezone.now()
+        finding.save(update_fields=[
+            "status", "resolution_note", "resolved_by", "resolved_at"
+        ])
+    except Exception as exc:
+        logger.exception("Failed to save Eva finding resolution (finding=%s): %s", pk, exc)
+        return JsonResponse(
+            {"error": f"Failed to save resolution: {exc}"},
+            status=500,
+        )
 
     # Check if all findings are now addressed
     review = finding.eva_review
@@ -2077,7 +2084,7 @@ def eva_finding_resolve(request, pk):
     )
 
     return JsonResponse({
-        "status": "success",
+        "status": "ok",
         "finding_status": "addressed",
         "open_findings_remaining": open_findings,
         "review_status": review.status,
