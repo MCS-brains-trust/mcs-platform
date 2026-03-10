@@ -765,7 +765,32 @@
                             <span class="text-muted" style="font-size: 0.7rem;">&mdash;</span>
                             {% endif %}
                         </td>
-                        <td>
+                        <td class="text-nowrap">
+                            <button type="button" class="btn btn-sm btn-outline-secondary py-0 px-1 me-1"
+                                    title="Edit"
+                                    onclick="openEditAssetModal(
+                                        '{{ asset.pk }}',
+                                        '{{ asset.asset_name|escapejs }}',
+                                        '{{ asset.category|escapejs }}',
+                                        '{{ asset.purchase_date|date:"Y-m-d" }}',
+                                        '{{ asset.total_cost }}',
+                                        '{{ asset.opening_wdv }}',
+                                        '{{ asset.private_use_pct }}',
+                                        '{{ asset.method }}',
+                                        '{{ asset.rate }}',
+                                        '{{ asset.addition_cost }}',
+                                        '{{ asset.addition_date|date:"Y-m-d" }}',
+                                        '{{ asset.disposal_date|date:"Y-m-d" }}',
+                                        '{{ asset.disposal_consideration }}',
+                                        '{{ asset.asset_account_code|escapejs }}',
+                                        '{{ asset.asset_account_name|escapejs }}',
+                                        '{{ asset.accum_dep_code|escapejs }}',
+                                        '{{ asset.accum_dep_name|escapejs }}',
+                                        '{{ asset.dep_expense_code|escapejs }}',
+                                        '{{ asset.dep_expense_name|escapejs }}'
+                                    )">
+                                <i class="bi bi-pencil" style="font-size: 0.75rem;"></i>
+                            </button>
                             <form method="post" action="{% url 'core:depreciation_delete' pk=asset.pk %}" class="d-inline"
                                   onsubmit="return confirm('Delete asset {{ asset.asset_name }}?');">
                                 {% csrf_token %}
@@ -1469,6 +1494,177 @@
   wireAccountNew('modalAccumDepSelect',  'newAccumDepRow',  'newAccumDepName',  'newAccumDepCode',  'newAccumDepConfirm',  'newAccumDepCancel',  'modalAccumDepName',  'assets');
   wireAccountNew('modalDepExpSelect',    'newDepExpRow',    'newDepExpName',    'newDepExpCode',    'newDepExpConfirm',    'newDepExpCancel',    'modalDepExpName',    'expenses');
 })();
+</script>
+
+<!-- ===== EDIT ASSET MODAL ===== -->
+<div class="modal fade" id="editAssetModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-pencil-square me-2"></i>Edit Asset</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="post" id="editAssetForm" action="">
+                {% csrf_token %}
+                <div class="modal-body">
+                    <div class="row g-3">
+                        <div class="col-12">
+                            <label class="form-label fw-semibold">Asset Name</label>
+                            <input type="text" name="asset_name" id="editAssetName" class="form-control" required>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Category</label>
+                            <input type="text" name="category" id="editAssetCategory" class="form-control" required>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Purchase Date</label>
+                            <input type="date" name="purchase_date" id="editAssetPurchaseDate" class="form-control">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Total Cost ($)</label>
+                            <input type="number" name="total_cost" id="editAssetTotalCost" class="form-control" step="0.01" value="0">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Opening WDV ($)</label>
+                            <input type="number" name="opening_wdv" id="editAssetOpeningWdv" class="form-control" step="0.01" value="0">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Private Use (%)</label>
+                            <input type="number" name="private_use_pct" id="editAssetPrivateUse" class="form-control" step="0.01" value="0">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Method</label>
+                            <select name="method" id="editAssetMethod" class="form-select">
+                                <option value="D">Diminishing Value</option>
+                                <option value="P">Prime Cost</option>
+                                <option value="W">Written Off</option>
+                            </select>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Rate (%)</label>
+                            <input type="number" name="rate" id="editAssetRate" class="form-control" step="0.01" value="0">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Addition Cost ($)</label>
+                            <input type="number" name="addition_cost" id="editAssetAdditionCost" class="form-control" step="0.01" value="0">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Addition Date</label>
+                            <input type="date" name="addition_date" id="editAssetAdditionDate" class="form-control">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Disposal Date</label>
+                            <input type="date" name="disposal_date" id="editAssetDisposalDate" class="form-control">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold">Disposal Consideration ($)</label>
+                            <input type="number" name="disposal_consideration" id="editAssetDisposalConsideration" class="form-control" step="0.01" value="0">
+                        </div>
+                        <!-- Account Mapping -->
+                        <div class="col-12 mt-3">
+                            <hr class="my-2">
+                            <small class="text-muted fw-semibold"><i class="bi bi-journal-text me-1"></i> Journal Posting Accounts (optional &mdash; used when posting to TB)</small>
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold" style="font-size:0.85rem;">Asset Account</label>
+                            <select name="asset_account_code" class="form-select form-select-sm" id="editAssetAcctSelect">
+                                <option value="">-- Auto-detect --</option>
+                                {% for code, name in dep_asset_accounts %}
+                                <option value="{{ code }}" data-name="{{ name }}">{{ code }} &mdash; {{ name }}</option>
+                                {% endfor %}
+                            </select>
+                            <input type="hidden" name="asset_account_name" id="editAssetAcctName" value="">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold" style="font-size:0.85rem;">Accum. Depreciation Account</label>
+                            <select name="accum_dep_code" class="form-select form-select-sm" id="editAccumDepSelect">
+                                <option value="">-- Auto-detect --</option>
+                                {% for code, name in dep_asset_accounts %}
+                                <option value="{{ code }}" data-name="{{ name }}">{{ code }} &mdash; {{ name }}</option>
+                                {% endfor %}
+                            </select>
+                            <input type="hidden" name="accum_dep_name" id="editAccumDepName" value="">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-semibold" style="font-size:0.85rem;">Depreciation Expense Account</label>
+                            <select name="dep_expense_code" class="form-select form-select-sm" id="editDepExpSelect">
+                                <option value="">-- Auto-detect --</option>
+                                {% for code, name in dep_expense_accounts %}
+                                <option value="{{ code }}" data-name="{{ name }}">{{ code }} &mdash; {{ name }}</option>
+                                {% endfor %}
+                            </select>
+                            <input type="hidden" name="dep_expense_name" id="editDepExpName" value="">
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-save"></i> Save Changes
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+<script>
+function openEditAssetModal(pk, name, category, purchaseDate, totalCost, openingWdv,
+                             privateUse, method, rate, additionCost, additionDate,
+                             disposalDate, disposalConsideration,
+                             assetAcctCode, assetAcctName, accumDepCode, accumDepName,
+                             depExpCode, depExpName) {
+    // Set form action to the edit URL
+    document.getElementById('editAssetForm').action = '/depreciation/' + pk + '/edit/';
+    // Populate fields
+    document.getElementById('editAssetName').value = name;
+    document.getElementById('editAssetCategory').value = category;
+    document.getElementById('editAssetPurchaseDate').value = purchaseDate !== 'None' ? purchaseDate : '';
+    document.getElementById('editAssetTotalCost').value = totalCost;
+    document.getElementById('editAssetOpeningWdv').value = openingWdv;
+    document.getElementById('editAssetPrivateUse').value = privateUse;
+    document.getElementById('editAssetMethod').value = method;
+    document.getElementById('editAssetRate').value = rate;
+    document.getElementById('editAssetAdditionCost').value = additionCost;
+    document.getElementById('editAssetAdditionDate').value = additionDate !== 'None' ? additionDate : '';
+    document.getElementById('editAssetDisposalDate').value = disposalDate !== 'None' ? disposalDate : '';
+    document.getElementById('editAssetDisposalConsideration').value = disposalConsideration;
+    // Account selects
+    function setSelect(selectId, hiddenId, code, name) {
+        const sel = document.getElementById(selectId);
+        const hidden = document.getElementById(hiddenId);
+        // Try to find existing option
+        let found = false;
+        for (let opt of sel.options) {
+            if (opt.value === code) { sel.value = code; found = true; break; }
+        }
+        if (!found && code) {
+            // Add it as a new option
+            const opt = new Option(code + ' — ' + name, code);
+            opt.dataset.name = name;
+            sel.insertBefore(opt, sel.options[sel.options.length - 1]);
+            sel.value = code;
+        }
+        if (!code) sel.value = '';
+        hidden.value = name || '';
+    }
+    setSelect('editAssetAcctSelect', 'editAssetAcctName', assetAcctCode, assetAcctName);
+    setSelect('editAccumDepSelect',  'editAccumDepName',  accumDepCode,  accumDepName);
+    setSelect('editDepExpSelect',    'editDepExpName',    depExpCode,    depExpName);
+    // Sync hidden name on change
+    ['editAssetAcctSelect', 'editAccumDepSelect', 'editDepExpSelect'].forEach(function(selId) {
+        const hiddenId = selId.replace('Select', 'Name').replace('Acct', 'Acct').replace('edit', 'edit');
+        const hiddenMap = {
+            'editAssetAcctSelect': 'editAssetAcctName',
+            'editAccumDepSelect':  'editAccumDepName',
+            'editDepExpSelect':    'editDepExpName',
+        };
+        document.getElementById(selId).onchange = function() {
+            document.getElementById(hiddenMap[selId]).value = this.options[this.selectedIndex].dataset.name || '';
+        };
+    });
+    // Show modal
+    new bootstrap.Modal(document.getElementById('editAssetModal')).show();
+}
 </script>
 
 <!-- ===== ADD STOCK MODAL ===== -->
