@@ -448,6 +448,7 @@ class FinancialYear(models.Model):
         EVA_ERROR = "eva_error", "Eva Error"
         LOCKED = "locked", "Locked"
         FINALISED = "finalised", "Finalised"  # Legacy — use LOCKED for new workflow
+        REOPENED = "reopened", "Reopened"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     entity = models.ForeignKey(
@@ -579,8 +580,9 @@ class FinancialYear(models.Model):
         'pending_eva': ['finished', 'eva_cleared', 'eva_error'],
         'eva_cleared': ['locked', 'finished'],  # finished = reopen
         'eva_error': ['finished'],
-        'locked': ['draft'],  # reopen resets to draft
-        'finalised': ['draft'],  # legacy: reopen resets to draft
+        'locked': ['reopened'],  # reopen sets to reopened
+        'finalised': ['reopened'],  # legacy: reopen sets to reopened
+        'reopened': ['in_review', 'finished', 'prepared', 'pending_eva', 'finalised'],
     }
 
     @property
@@ -589,10 +591,11 @@ class FinancialYear(models.Model):
 
     @property
     def can_ask_eva(self):
-        """Eva can be triggered once the file is Finished."""
+        """Eva can be triggered once the file is Finished or Reopened."""
         return self.status in (
             self.Status.FINISHED, self.Status.PREPARED,
             self.Status.PENDING_EVA, self.Status.EVA_ERROR,
+            self.Status.REOPENED,
         )
 
     @property
