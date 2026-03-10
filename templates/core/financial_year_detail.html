@@ -1226,7 +1226,7 @@
                         </div>
                         <div class="col-6">
                             <label class="form-label fw-semibold">Category</label>
-                            <select name="category" class="form-select">
+                            <select name="category" class="form-select" id="modalCategorySelect">
                                 <option value="Furniture and Fixtures">Furniture and Fixtures</option>
                                 <option value="Plant and Equipment">Plant and Equipment</option>
                                 <option value="Motor Vehicles">Motor Vehicles</option>
@@ -1235,7 +1235,13 @@
                                 <option value="Leasehold Improvements">Leasehold Improvements</option>
                                 <option value="Low Value Pool">Low Value Pool</option>
                                 <option value="Other">Other</option>
+                                <option value="__new__">&#43; Add new category&hellip;</option>
                             </select>
+                            <div id="newCategoryRow" class="input-group input-group-sm mt-1" style="display:none;">
+                                <input type="text" id="newCategoryInput" class="form-control" placeholder="New category name">
+                                <button type="button" class="btn btn-success" id="newCategoryConfirm"><i class="bi bi-check-lg"></i></button>
+                                <button type="button" class="btn btn-outline-secondary" id="newCategoryCancel"><i class="bi bi-x-lg"></i></button>
+                            </div>
                         </div>
                         <div class="col-6">
                             <label class="form-label fw-semibold">Purchase Date</label>
@@ -1294,8 +1300,18 @@
                                 {% for code, name in dep_asset_accounts %}
                                 <option value="{{ code }}" data-name="{{ name }}">{{ code }} &mdash; {{ name }}</option>
                                 {% endfor %}
+                                <option value="__new__">&#43; Add new account&hellip;</option>
                             </select>
                             <input type="hidden" name="asset_account_name" id="modalAssetAcctName" value="">
+                            <div id="newAssetAcctRow" class="mt-1" style="display:none;">
+                                <input type="text" id="newAssetAcctName" class="form-control form-control-sm mb-1" placeholder="Account name (e.g. Plant &amp; Equipment)">
+                                <div class="input-group input-group-sm">
+                                    <span class="input-group-text">Code</span>
+                                    <input type="text" id="newAssetAcctCode" class="form-control" placeholder="Suggested&hellip;">
+                                    <button type="button" class="btn btn-success" id="newAssetAcctConfirm"><i class="bi bi-check-lg"></i> Create</button>
+                                    <button type="button" class="btn btn-outline-secondary" id="newAssetAcctCancel"><i class="bi bi-x-lg"></i></button>
+                                </div>
+                            </div>
                         </div>
                         <div class="col-6">
                             <label class="form-label fw-semibold" style="font-size:0.85rem;">Accum. Depreciation Account</label>
@@ -1304,8 +1320,18 @@
                                 {% for code, name in dep_asset_accounts %}
                                 <option value="{{ code }}" data-name="{{ name }}">{{ code }} &mdash; {{ name }}</option>
                                 {% endfor %}
+                                <option value="__new__">&#43; Add new account&hellip;</option>
                             </select>
                             <input type="hidden" name="accum_dep_name" id="modalAccumDepName" value="">
+                            <div id="newAccumDepRow" class="mt-1" style="display:none;">
+                                <input type="text" id="newAccumDepName" class="form-control form-control-sm mb-1" placeholder="Account name (e.g. Less: Accum. Depreciation)">
+                                <div class="input-group input-group-sm">
+                                    <span class="input-group-text">Code</span>
+                                    <input type="text" id="newAccumDepCode" class="form-control" placeholder="Suggested&hellip;">
+                                    <button type="button" class="btn btn-success" id="newAccumDepConfirm"><i class="bi bi-check-lg"></i> Create</button>
+                                    <button type="button" class="btn btn-outline-secondary" id="newAccumDepCancel"><i class="bi bi-x-lg"></i></button>
+                                </div>
+                            </div>
                         </div>
                         <div class="col-6">
                             <label class="form-label fw-semibold" style="font-size:0.85rem;">Depreciation Expense Account</label>
@@ -1314,8 +1340,18 @@
                                 {% for code, name in dep_expense_accounts %}
                                 <option value="{{ code }}" data-name="{{ name }}">{{ code }} &mdash; {{ name }}</option>
                                 {% endfor %}
+                                <option value="__new__">&#43; Add new account&hellip;</option>
                             </select>
                             <input type="hidden" name="dep_expense_name" id="modalDepExpName" value="">
+                            <div id="newDepExpRow" class="mt-1" style="display:none;">
+                                <input type="text" id="newDepExpName" class="form-control form-control-sm mb-1" placeholder="Account name (e.g. Depreciation - Plant)">
+                                <div class="input-group input-group-sm">
+                                    <span class="input-group-text">Code</span>
+                                    <input type="text" id="newDepExpCode" class="form-control" placeholder="Suggested&hellip;">
+                                    <button type="button" class="btn btn-success" id="newDepExpConfirm"><i class="bi bi-check-lg"></i> Create</button>
+                                    <button type="button" class="btn btn-outline-secondary" id="newDepExpCancel"><i class="bi bi-x-lg"></i></button>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1330,16 +1366,109 @@
     </div>
 </div>
 <script>
-// Sync hidden name fields for Add Asset modal selects
-document.getElementById('modalAssetAcctSelect')?.addEventListener('change', function() {
-    document.getElementById('modalAssetAcctName').value = this.options[this.selectedIndex].dataset.name || '';
-});
-document.getElementById('modalAccumDepSelect')?.addEventListener('change', function() {
-    document.getElementById('modalAccumDepName').value = this.options[this.selectedIndex].dataset.name || '';
-});
-document.getElementById('modalDepExpSelect')?.addEventListener('change', function() {
-    document.getElementById('modalDepExpName').value = this.options[this.selectedIndex].dataset.name || '';
-});
+(function() {
+  const suggestUrl = '{% url "core:depreciation_suggest_account_code" pk=fy.pk %}';
+  const createUrl  = '{% url "core:depreciation_create_account" pk=fy.pk %}';
+  const csrfToken  = '{{ csrf_token }}';
+
+  // ── Category: Add new ──────────────────────────────────────────────────────
+  const catSel   = document.getElementById('modalCategorySelect');
+  const catRow   = document.getElementById('newCategoryRow');
+  const catInput = document.getElementById('newCategoryInput');
+
+  catSel?.addEventListener('change', function() {
+    catRow.style.display = this.value === '__new__' ? 'flex' : 'none';
+    if (this.value === '__new__') catInput.focus();
+  });
+  document.getElementById('newCategoryConfirm')?.addEventListener('click', function() {
+    const val = catInput.value.trim();
+    if (!val) return;
+    const opt = new Option(val, val);
+    catSel.insertBefore(opt, catSel.querySelector('option[value="__new__"]'));
+    catSel.value = val;
+    catRow.style.display = 'none';
+    catInput.value = '';
+  });
+  document.getElementById('newCategoryCancel')?.addEventListener('click', function() {
+    catSel.value = catSel.options[0].value;
+    catRow.style.display = 'none';
+    catInput.value = '';
+  });
+
+  // ── Generic helper: wire an account dropdown with Add New flow ─────────────
+  function wireAccountNew(selectId, rowId, nameInputId, codeInputId, confirmId, cancelId, hiddenNameId, section) {
+    const sel        = document.getElementById(selectId);
+    const row        = document.getElementById(rowId);
+    const nameInput  = document.getElementById(nameInputId);
+    const codeInput  = document.getElementById(codeInputId);
+    const hiddenName = document.getElementById(hiddenNameId);
+
+    sel?.addEventListener('change', function() {
+      if (this.value === '__new__') {
+        row.style.display = 'block';
+        hiddenName.value = '';
+        nameInput.focus();
+      } else {
+        row.style.display = 'none';
+        hiddenName.value = this.options[this.selectedIndex].dataset.name || '';
+      }
+    });
+
+    // Auto-suggest code as user types
+    let timer;
+    nameInput?.addEventListener('input', function() {
+      clearTimeout(timer);
+      const name = this.value.trim();
+      if (!name) { codeInput.value = ''; return; }
+      timer = setTimeout(() => {
+        fetch(suggestUrl + '?section=' + section + '&account_name=' + encodeURIComponent(name))
+          .then(r => r.json())
+          .then(data => { codeInput.value = data.suggested_code || ''; });
+      }, 400);
+    });
+
+    document.getElementById(confirmId)?.addEventListener('click', function() {
+      const name = nameInput.value.trim();
+      const code = codeInput.value.trim();
+      if (!name || !code) { alert('Please enter both a name and a code.'); return; }
+      const btn = this;
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span>';
+      fetch(createUrl, {
+        method: 'POST',
+        headers: {'X-CSRFToken': csrfToken, 'Content-Type': 'application/x-www-form-urlencoded'},
+        body: 'account_name=' + encodeURIComponent(name) + '&account_code=' + encodeURIComponent(code) + '&section=' + section,
+      })
+        .then(r => r.json())
+        .then(data => {
+          if (data.error) { alert(data.error); btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg"></i> Create'; return; }
+          const opt = new Option(data.account_code + ' — ' + data.account_name, data.account_code);
+          opt.dataset.name = data.account_name;
+          sel.insertBefore(opt, sel.querySelector('option[value="__new__"]'));
+          sel.value = data.account_code;
+          hiddenName.value = data.account_name;
+          row.style.display = 'none';
+          nameInput.value = '';
+          codeInput.value = '';
+          btn.disabled = false;
+          btn.innerHTML = '<i class="bi bi-check-lg"></i> Create';
+        })
+        .catch(() => { alert('Network error. Please try again.'); btn.disabled = false; btn.innerHTML = '<i class="bi bi-check-lg"></i> Create'; });
+    });
+
+    document.getElementById(cancelId)?.addEventListener('click', function() {
+      sel.value = '';
+      hiddenName.value = '';
+      row.style.display = 'none';
+      nameInput.value = '';
+      codeInput.value = '';
+    });
+  }
+
+  wireAccountNew('modalAssetAcctSelect', 'newAssetAcctRow', 'newAssetAcctName', 'newAssetAcctCode', 'newAssetAcctConfirm', 'newAssetAcctCancel', 'modalAssetAcctName', 'assets');
+  wireAccountNew('modalAccumDepSelect',  'newAccumDepRow',  'newAccumDepName',  'newAccumDepCode',  'newAccumDepConfirm',  'newAccumDepCancel',  'modalAccumDepName',  'assets');
+  wireAccountNew('modalDepExpSelect',    'newDepExpRow',    'newDepExpName',    'newDepExpCode',    'newDepExpConfirm',    'newDepExpCancel',    'modalDepExpName',    'expenses');
+})();
 </script>
 
 <!-- ===== ADD STOCK MODAL ===== -->

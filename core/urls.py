@@ -218,6 +218,8 @@ urlpatterns = [
 
     # Depreciation
     path("years/<uuid:pk>/depreciation/add/", views.depreciation_add, name="depreciation_add"),
+    path("years/<uuid:pk>/depreciation/suggest-account-code/", views.depreciation_suggest_account_code, name="depreciation_suggest_account_code"),
+    path("years/<uuid:pk>/depreciation/create-account/", views.depreciation_create_account, name="depreciation_create_account"),
     path("depreciation/<uuid:pk>/edit/", views.depreciation_edit, name="depreciation_edit"),
     path("depreciation/<uuid:pk>/delete/", views.depreciation_delete, name="depreciation_delete"),
     path("years/<uuid:pk>/depreciation/roll-forward/", views.depreciation_roll_forward, name="depreciation_roll_forward"),
