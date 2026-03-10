@@ -1,14 +1,18 @@
 """MCS Platform - Core Views"""
+import logging
 import openpyxl
 from decimal import Decimal, InvalidOperation
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
+from django.db import transaction as db_transaction
 from django.db.models import Q, Count, Sum
 from django.http import HttpResponse, HttpResponseNotAllowed, JsonResponse
 from django.views.decorators.http import require_POST
 from django.shortcuts import render, redirect, get_object_or_404
 from django.urls import reverse
 from django.utils import timezone
+
+logger = logging.getLogger("core.views")
 
 from .models import (
     Client, Entity, FinancialYear, TrialBalanceLine,
@@ -277,11 +281,10 @@ def _apply_journal_line_to_tb(fy, account_code, account_name, jnl_debit, jnl_cre
         bulk_journal_upload=bulk_upload,
         source_journal=journal,
     )
-    import logging as _logging
-    _logging.getLogger("core.tb_posting").info(
-        "TB line created: pk=%s fy=%s code=%s dr=%s cr=%s source=%s journal=%s",
-        tb_line.pk, fy.pk, account_code, jnl_debit, jnl_credit, source,
-        journal.pk if journal else None,
+    logger.info(
+        "TB line posted: %s DR=%s CR=%s journal=%s fy=%s pk=%s source=%s",
+        account_code, jnl_debit, jnl_credit,
+        journal.pk if journal else None, fy.pk, tb_line.pk, source,
     )
 
 
@@ -293,6 +296,9 @@ def _post_journal_to_tb(journal, fy):
     is valid accounting practice — e.g. splitting a single payment across the
     same expense account with different narrations — and must not be silently
     dropped or deduplicated.
+
+    Wrapped in transaction.atomic() so that all TB lines are created or none
+    are — a partial failure cannot leave orphaned TB lines.
     """
     from collections import OrderedDict
 
@@ -308,17 +314,31 @@ def _post_journal_to_tb(journal, fy):
         agg[key]["dr"] += line.debit
         agg[key]["cr"] += line.credit
 
-    for account_code, vals in agg.items():
-        _apply_journal_line_to_tb(
-            fy,
-            account_code,
-            vals["name"],
-            vals["dr"],
-            vals["cr"],
-            source="manual_journal",
-            description=journal.description,
-            journal=journal,
+    if not agg:
+        logger.warning(
+            "No journal lines found for journal %s (%s) — nothing to post",
+            journal.reference_number, journal.pk,
         )
+        return
+
+    logger.info(
+        "Posting journal %s (%s) to TB: %d unique account codes from %d lines",
+        journal.reference_number, journal.pk, len(agg),
+        journal.lines.count(),
+    )
+
+    with db_transaction.atomic():
+        for account_code, vals in agg.items():
+            _apply_journal_line_to_tb(
+                fy,
+                account_code,
+                vals["name"],
+                vals["dr"],
+                vals["cr"],
+                source="manual_journal",
+                description=journal.description,
+                journal=journal,
+            )
 
 
 def _reverse_journal_tb_lines(journal):
@@ -345,9 +365,6 @@ def _reverse_journal_tb_lines(journal):
 
     Returns the total number of TB lines deleted.
     """
-    import logging as _logging
-    _log = _logging.getLogger("core.tb_reversal")
-
     fy = journal.financial_year
     deleted_count = 0
 
@@ -361,7 +378,7 @@ def _reverse_journal_tb_lines(journal):
     if tier1:
         fk_qs.delete()
         deleted_count += tier1
-        _log.info(
+        logger.info(
             "Tier 1 (FK): deleted %d TB lines for journal %s (%s)",
             tier1, journal.reference_number, journal.pk,
         )
@@ -386,7 +403,7 @@ def _reverse_journal_tb_lines(journal):
             deleted_count += 1
 
     if deleted_count:
-        _log.info(
+        logger.info(
             "Tier 2 (exact match): deleted %d TB lines for journal %s (%s)",
             deleted_count, journal.reference_number, journal.pk,
         )
@@ -419,12 +436,12 @@ def _reverse_journal_tb_lines(journal):
             deleted_count += 1
 
     if deleted_count:
-        _log.info(
+        logger.info(
             "Tier 3 (broad match): deleted %d TB lines for journal %s (%s)",
             deleted_count, journal.reference_number, journal.pk,
         )
     else:
-        _log.warning(
+        logger.warning(
             "No TB lines found to reverse for journal %s (%s) — all 3 tiers empty",
             journal.reference_number, journal.pk,
         )
@@ -4694,13 +4711,16 @@ def adjustment_create(request, pk):
             journal.total_credit = total_cr
             journal.save(update_fields=["total_debit", "total_credit"])
 
-            # Auto-post to Trial Balance, aggregating by account code
-            _post_journal_to_tb(journal, fy)
+            # Auto-post to Trial Balance and mark as POSTED in one atomic
+            # block — if TB posting fails, the journal stays DRAFT and no
+            # orphan TB lines are left behind.
+            with db_transaction.atomic():
+                _post_journal_to_tb(journal, fy)
 
-            journal.status = AdjustingJournal.JournalStatus.POSTED
-            journal.posted_by = request.user
-            journal.posted_at = timezone.now()
-            journal.save(update_fields=["status", "posted_by", "posted_at"])
+                journal.status = AdjustingJournal.JournalStatus.POSTED
+                journal.posted_by = request.user
+                journal.posted_at = timezone.now()
+                journal.save(update_fields=["status", "posted_by", "posted_at"])
 
             _log_action(request, "adjustment", f"Created and posted journal {journal.reference_number}: {journal.description}", journal)
             # Auto-trigger risk engine after journal post
@@ -4755,14 +4775,15 @@ def journal_post(request, pk):
         messages.error(request, "Cannot post to a finalised year.")
         return redirect("core:journal_detail", pk=pk)
 
-    # Apply journal lines to Trial Balance, aggregating by account code
-    _post_journal_to_tb(journal, fy)
+    # Apply journal lines to Trial Balance and mark as POSTED atomically —
+    # if TB posting fails, the journal stays DRAFT with no orphan TB lines.
+    with db_transaction.atomic():
+        _post_journal_to_tb(journal, fy)
 
-    # Update journal status
-    journal.status = AdjustingJournal.JournalStatus.POSTED
-    journal.posted_by = request.user
-    journal.posted_at = timezone.now()
-    journal.save(update_fields=["status", "posted_by", "posted_at"])
+        journal.status = AdjustingJournal.JournalStatus.POSTED
+        journal.posted_by = request.user
+        journal.posted_at = timezone.now()
+        journal.save(update_fields=["status", "posted_by", "posted_at"])
 
     _log_action(request, "adjustment", f"Posted journal {journal.reference_number}", journal)
     # Auto-trigger risk engine after journal post
@@ -4780,8 +4801,6 @@ def journal_delete(request, pk):
     that a partial failure (e.g. TB reversal succeeds but journal delete
     fails) cannot leave the database in an inconsistent state.
     """
-    from django.db import transaction as db_transaction
-
     journal = get_object_or_404(
         AdjustingJournal.objects.prefetch_related("lines"),
         pk=pk,
@@ -4907,8 +4926,6 @@ def journal_edit(request, pk):
         form = AdjustingJournalForm(request.POST, instance=journal)
         formset = EditJournalLineFormSet(request.POST, instance=journal)
         if form.is_valid() and formset.is_valid():
-            from django.db import transaction as db_transaction
-
             # Wrap the entire reverse → save → re-apply cycle in an atomic
             # block so a failure at any step rolls back all changes.
             with db_transaction.atomic():
@@ -7958,14 +7975,14 @@ def depreciation_post_to_tb(request, pk):
             f"Dr {dep_code} {dep_name} ${amount:,.2f} / Cr {accum_code} {accum_name} ${amount:,.2f}"
         )
 
-    # Auto-post: apply journal lines to Trial Balance, aggregating by account code
-    _post_journal_to_tb(journal, fy)
+    # Auto-post and mark POSTED atomically — no orphan TB lines on failure
+    with db_transaction.atomic():
+        _post_journal_to_tb(journal, fy)
 
-    # Mark as posted
-    journal.status = AdjustingJournal.JournalStatus.POSTED
-    journal.posted_by = request.user
-    journal.posted_at = timezone.now()
-    journal.save(update_fields=["status", "posted_by", "posted_at"])
+        journal.status = AdjustingJournal.JournalStatus.POSTED
+        journal.posted_by = request.user
+        journal.posted_at = timezone.now()
+        journal.save(update_fields=["status", "posted_by", "posted_at"])
 
     _log_action(
         request, "adjustment",
@@ -9086,13 +9103,14 @@ def review_post_opening_balance(request, pk):
         ))
     JournalLine.objects.bulk_create(journal_lines)
 
-    # Auto-post: apply to Trial Balance, aggregating by account code
-    _post_journal_to_tb(journal, fy)
+    # Auto-post and mark POSTED atomically — no orphan TB lines on failure
+    with db_transaction.atomic():
+        _post_journal_to_tb(journal, fy)
 
-    journal.status = AdjustingJournal.JournalStatus.POSTED
-    journal.posted_by = request.user
-    journal.posted_at = timezone.now()
-    journal.save(update_fields=['status', 'posted_by', 'posted_at'])
+        journal.status = AdjustingJournal.JournalStatus.POSTED
+        journal.posted_by = request.user
+        journal.posted_at = timezone.now()
+        journal.save(update_fields=['status', 'posted_by', 'posted_at'])
 
     _log_action(request, 'adjustment', f'Posted opening balance journal {journal.reference_number}', journal)
 

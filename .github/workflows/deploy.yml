@@ -32,6 +32,9 @@ jobs:
             /opt/statementhub/venv/bin/python manage.py makemigrations --no-input
             /opt/statementhub/venv/bin/python manage.py migrate --no-input
 
+            echo "=== Repairing journal-TB integrity ==="
+            /opt/statementhub/venv/bin/python manage.py verify_journal_tb_integrity --repair
+
             echo "=== Collecting static files ==="
             /opt/statementhub/venv/bin/python manage.py collectstatic --no-input
 
