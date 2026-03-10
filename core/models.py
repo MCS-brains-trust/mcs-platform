@@ -1085,6 +1085,14 @@ class TrialBalanceLine(models.Model):
         related_name='trial_balance_lines',
         help_text="Links this adjustment line to its parent bulk journal upload",
     )
+    source_journal = models.ForeignKey(
+        'AdjustingJournal',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='tb_lines',
+        help_text="The manual journal that created this adjustment TB line",
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
 
