@@ -1792,11 +1792,11 @@ def financial_year_status(request, pk):
     ALLOWED_TRANSITIONS = {
         "draft": ["in_review", "finished"],
         "in_review": ["finished", "draft"],
-        "finished": ["prepared", "in_review"],
-        "prepared": ["pending_eva", "finished"],
+        "finished": ["prepared", "in_review", "draft"],
+        "prepared": ["pending_eva", "finished", "draft"],
         "pending_eva": [],  # Managed by Eva engine only
-        "eva_cleared": ["finalised"],
-        "eva_error": ["finished"],  # Allow retry after error
+        "eva_cleared": ["finalised", "draft"],
+        "eva_error": ["finished", "draft"],
         "finalised": [],  # Use reopen_financial_year instead
         "reopened": ["in_review", "finished", "finalised"],
     }
@@ -2016,16 +2016,39 @@ def financial_year_status(request, pk):
             logging.getLogger(__name__).error(f"Auto Tier 3 on In Review failed: {e}")
 
     # ── Draft revert: clear all Eva findings and risk flags ─────────
+    # Wrapped in a transaction so the status change and cleanup are atomic.
     if new_status == "draft":
-        deleted_reviews = fy.eva_reviews.all().delete()[0]  # cascades to EvaFinding
-        deleted_flags = fy.risk_flags.all().delete()[0]
-        if deleted_reviews or deleted_flags:
+        from django.db import transaction as db_transaction
+        with db_transaction.atomic():
+            deleted_reviews = fy.eva_reviews.all().delete()[0]  # cascades to EvaFinding
+            deleted_flags = fy.risk_flags.all().delete()[0]
+
+            old_status = fy.status
+            fy.status = new_status
+            fy.save()
+
             _log_action(
                 request, "status_change",
-                f"Draft revert: cleared {deleted_reviews} Eva review(s) and "
-                f"{deleted_flags} risk flag(s) for {fy}",
+                f"Status reverted to Draft — all Eva findings cleared. Ready for re-review. "
+                f"(deleted {deleted_reviews} Eva review(s), {deleted_flags} risk flag(s))",
                 fy,
             )
+
+            # Activity log entry for the dashboard feed
+            ActivityLog.objects.create(
+                user=request.user,
+                financial_year=fy,
+                entity=fy.entity,
+                event_type="general",
+                title="Status reverted to Draft",
+                description=(
+                    f"Status reverted to Draft — all Eva findings cleared. Ready for re-review. "
+                    f"Deleted {deleted_reviews} Eva review(s) and {deleted_flags} risk flag(s)."
+                ),
+            )
+
+        messages.success(request, f"Status changed to {fy.get_status_display()}. All Eva findings and risk flags have been cleared.")
+        return redirect("core:financial_year_detail", pk=pk)
 
     old_status = fy.status
     fy.status = new_status
