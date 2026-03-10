@@ -22,7 +22,49 @@ from core.risk_modules.base import BaseDetectionModule, ZERO
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SG_RATE = Decimal("0.12")  # 12% for FY2025-26
+# ---------------------------------------------------------------------------
+# ATO Super Guarantee rate schedule — source:
+# https://www.ato.gov.au/tax-rates-and-codes/key-superannuation-rates-and-thresholds/super-guarantee
+# Key = calendar year of 30 June end date (i.e. FY ending 30 Jun YYYY)
+# ---------------------------------------------------------------------------
+_SG_RATE_BY_YEAR = {
+    2013: Decimal("0.0900"),  # 1 Jul 2012 – 30 Jun 2013
+    2014: Decimal("0.0925"),  # 1 Jul 2013 – 30 Jun 2014
+    2015: Decimal("0.0950"),  # 1 Jul 2014 – 30 Jun 2015
+    2016: Decimal("0.0950"),
+    2017: Decimal("0.0950"),
+    2018: Decimal("0.0950"),
+    2019: Decimal("0.0950"),
+    2020: Decimal("0.0950"),
+    2021: Decimal("0.0950"),
+    2022: Decimal("0.1000"),  # 1 Jul 2021 – 30 Jun 2022
+    2023: Decimal("0.1050"),  # 1 Jul 2022 – 30 Jun 2023
+    2024: Decimal("0.1100"),  # 1 Jul 2023 – 30 Jun 2024
+    2025: Decimal("0.1150"),  # 1 Jul 2024 – 30 Jun 2025
+    2026: Decimal("0.1200"),  # 1 Jul 2025 – 30 Jun 2026
+    2027: Decimal("0.1200"),  # 1 Jul 2026 onwards
+}
+DEFAULT_SG_RATE = Decimal("0.12")  # Fallback for future years not yet in table
+
+
+def _get_sg_rate_for_fy(financial_year):
+    """Return the correct ATO SG rate for the given FinancialYear.
+
+    Uses the end_date year to determine which rate applies.
+    Falls back to DEFAULT_SG_RATE if the year is not in the table.
+    """
+    if financial_year.end_date:
+        end_year = financial_year.end_date.year
+        return _SG_RATE_BY_YEAR.get(end_year, DEFAULT_SG_RATE)
+    # Try to parse from year_label e.g. "FY2024"
+    label = financial_year.year_label or ""
+    for part in label.split():
+        digits = "".join(c for c in part if c.isdigit())
+        if len(digits) == 4:
+            return _SG_RATE_BY_YEAR.get(int(digits), DEFAULT_SG_RATE)
+    return DEFAULT_SG_RATE
+
+
 SG_TOLERANCE = Decimal("0.95")     # 5% tolerance for timing
 CONTRACTOR_THRESHOLD = Decimal("20000")
 SG_CHARGE_THRESHOLD = Decimal("5000")
@@ -65,12 +107,17 @@ class SGCCluster(BaseDetectionModule):
         self.tb_data = self.load_trial_balance()
         self.ref_data = self.load_reference_data()
 
-        # Get SG rate from reference data
+        # Determine the correct SG rate from the ATO schedule for this FY.
+        # RiskReferenceData can still override if an explicit "sg_rate" key
+        # is present (e.g. for a non-standard year), but the ATO table is
+        # the primary source of truth.
+        self.sg_rate = _get_sg_rate_for_fy(self.fy)
+
+        # Allow RiskReferenceData override (explicit "sg_rate" key only)
         sg_rate_str = self.ref_data.get("sg_rate")
         if sg_rate_str:
             try:
                 rate = Decimal(str(sg_rate_str))
-                # Handle both 0.12 and 12 formats
                 if rate > Decimal("1"):
                     rate = rate / Decimal("100")
                 self.sg_rate = rate

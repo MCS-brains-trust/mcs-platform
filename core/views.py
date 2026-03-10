@@ -21,10 +21,11 @@ from .models import (
 from .forms import (
     ClientForm, EntityForm, FinancialYearForm,
     TrialBalanceUploadForm, AccountMappingForm,
-    AdjustingJournalForm, JournalLineFormSet,
+    AdjustingJournalForm, JournalLineFormSet, JournalLineForm,
     EntityOfficerForm, ClientAssociateForm, AccountingSoftwareForm,
     MeetingNoteForm,
 )
+from django import forms
 from config.authorization import get_entity_for_user, get_financial_year_for_user
 import re as _re_mod
 
@@ -35,7 +36,7 @@ def _get_subsequent_finalised_years(fy):
     current = fy
     while True:
         nxt = current.next_year.first()
-        if nxt and nxt.status == "finalised":
+        if nxt and nxt.is_locked:
             result.append(nxt)
             current = nxt
         else:
@@ -84,6 +85,42 @@ def _resolve_account_name(entity, account_code, raw_name):
 
     # No match found — return whatever we have (code as last resort)
     return raw_name or account_code
+
+
+# ---------------------------------------------------------------------------
+# HandiLedger account code range -> canonical display section.
+# The numeric account code range is the AUTHORITATIVE source of truth for
+# section classification on all HandiLedger / Access Ledger imports.  It
+# overrides whatever statement_section the mapped_line_item carries, so that
+# an account like 2475 (Retention Receivable) can never be pushed into
+# Non-Current Assets simply because it was once mapped to a BS-NCA code.
+# ---------------------------------------------------------------------------
+_HL_RANGE_SECTION = [
+    (0,    999,  'Income'),
+    (1000, 1499, 'Cost of Sales'),
+    (1500, 1999, 'Expenses'),
+    (2000, 2499, 'Current Assets'),
+    (2500, 2999, 'Non Current Assets'),
+    (3000, 3499, 'Current Liabilities'),
+    (3500, 3999, 'Non Current Liabilities'),
+    (4000, 4999, 'Equity'),
+]
+
+
+def _hl_section_for_code(account_code):
+    """
+    Return the canonical display section for a HandiLedger account code
+    based purely on the numeric range.  Returns None if the code cannot
+    be resolved (e.g. non-numeric or out of the known ranges).
+    """
+    try:
+        code_int = int(str(account_code).split('.')[0])
+    except (ValueError, TypeError):
+        return None
+    for lo, hi, section in _HL_RANGE_SECTION:
+        if lo <= code_int <= hi:
+            return section
+    return None
 
 
 # Mapping from EntityChartOfAccount / ChartOfAccount section values to
@@ -159,7 +196,7 @@ def _infer_section_for_unmapped(entity, account_code):
     return 'Unmapped'
 
 
-def _apply_journal_line_to_tb(fy, account_code, account_name, jnl_debit, jnl_credit, source='manual_journal', bulk_upload=None, description=''):
+def _apply_journal_line_to_tb(fy, account_code, account_name, jnl_debit, jnl_credit, source='manual_journal', bulk_upload=None, description='', journal=None):
     """
     Apply a journal line to the trial balance by creating a separate
     adjustment row.  The display aggregation logic nets these rows
@@ -170,6 +207,10 @@ def _apply_journal_line_to_tb(fy, account_code, account_name, jnl_debit, jnl_cre
          (ensures the adjustment lands in the same section as the original)
       2. ClientAccountMapping (entity-level learned mapping)
       3. None (unmapped fallback)
+
+    Pass journal=<AdjustingJournal instance> to link the TB line back to its
+    source journal via the source_journal FK — this enables reliable reversal
+    on edit without fragile debit/credit matching.
     """
     mapped_item = None
 
@@ -206,22 +247,40 @@ def _apply_journal_line_to_tb(fy, account_code, account_name, jnl_debit, jnl_cre
         source=source,
         description=description,
         bulk_journal_upload=bulk_upload,
+        source_journal=journal,
     )
 
 
-def _reverse_journal_line_from_tb(fy, account_code, jnl_debit, jnl_credit):
+def _reverse_journal_line_from_tb(fy, account_code, jnl_debit, jnl_credit, journal=None):
     """
     Reverse a previously applied journal line by deleting its adjustment row.
+
+    When journal is provided, the deletion is scoped to TB lines linked to
+    that specific journal via source_journal FK — this is reliable even when
+    multiple lines share the same account code and amounts.
+
+    Falls back to the legacy debit/credit match when journal is None (e.g.
+    for journals created before the source_journal FK was added).
     """
-    adj = TrialBalanceLine.objects.filter(
-        financial_year=fy,
-        account_code=account_code,
-        debit=jnl_debit,
-        credit=jnl_credit,
-        is_adjustment=True,
-    ).first()
-    if adj:
-        adj.delete()
+    if journal is not None:
+        # Preferred path: delete the row linked to this exact journal
+        TrialBalanceLine.objects.filter(
+            financial_year=fy,
+            account_code=account_code,
+            is_adjustment=True,
+            source_journal=journal,
+        ).delete()
+    else:
+        # Legacy fallback: match by debit/credit (may be ambiguous)
+        adj = TrialBalanceLine.objects.filter(
+            financial_year=fy,
+            account_code=account_code,
+            debit=jnl_debit,
+            credit=jnl_credit,
+            is_adjustment=True,
+        ).first()
+        if adj:
+            adj.delete()
 
 
 def _get_or_create_tb_line(financial_year=None, account_code=None, defaults=None, fy=None):
@@ -1027,7 +1086,13 @@ def financial_year_detail(request, pk):
 
     sections = OrderedDict()
     for line in tb_lines:
-        if line.mapped_line_item:
+        # HARD RULE: the HandiLedger numeric code range is authoritative.
+        # This prevents accounts like 2475 (Retention Receivable, range 2000-2499)
+        # from being misclassified as Non-Current Assets due to a stale mapping.
+        hl_section = _hl_section_for_code(line.account_code)
+        if hl_section:
+            display_section = hl_section
+        elif line.mapped_line_item:
             raw_section = line.mapped_line_item.statement_section
             display_section = SECTION_DISPLAY.get(raw_section, raw_section)
         else:
@@ -1447,7 +1512,7 @@ def financial_year_status(request, pk):
 
     # Validate status transition is allowed
     ALLOWED_TRANSITIONS = {
-        "draft": ["in_review"],
+        "draft": ["in_review", "finished"],  # reopened years can go straight back to finished
         "in_review": ["finished", "draft"],
         "finished": ["prepared", "in_review"],
         "prepared": ["pending_eva", "finished"],
@@ -1758,12 +1823,10 @@ def reopen_financial_year(request, pk):
     if not request.user.can_finalise:
         messages.error(request, "Only senior accountants or admins can reopen a finalised year.")
         return redirect("core:financial_year_detail", pk=pk)
-
     # ── Status check ─────────────────────────────────────────────────
-    if fy.status != "finalised":
+    if not fy.is_locked:
         messages.error(request, "This financial year is not finalised.")
         return redirect("core:financial_year_detail", pk=pk)
-
     # ── Collect inputs ───────────────────────────────────────────────
     reason = request.POST.get("reopen_reason", "").strip()
     if not reason:
@@ -1779,7 +1842,7 @@ def reopen_financial_year(request, pk):
         while True:
             # next_year is the related_name on prior_year FK (reverse)
             nxt = current.next_year.first()
-            if nxt and nxt.status == "finalised":
+            if nxt and nxt.is_locked:
                 years_to_reopen.append(nxt)
                 current = nxt
             else:
@@ -1852,7 +1915,7 @@ def reroll_forward(request, pk):
         messages.error(request, "You do not have permission.")
         return redirect("core:financial_year_detail", pk=pk)
 
-    if current_fy.status != "finalised":
+    if not current_fy.is_locked:
         messages.error(request, "This financial year must be finalised before re-rolling forward.")
         return redirect("core:financial_year_detail", pk=pk)
 
@@ -1865,12 +1928,37 @@ def reroll_forward(request, pk):
     if request.method == "POST":
         from decimal import Decimal
 
-        # ── Step 1: Delete old rollover data in the next year ────────
-        deleted_tb = next_fy.trial_balance_lines.filter(source="rollover").delete()[0]
+        # ── Step 1: Full wipe of system-generated lines in the next year ────
+        #
+        # We delete ALL non-adjustment, non-bank-statement lines from the next
+        # year regardless of their source tag.  This is the only reliable way
+        # to handle the case where:
+        #   (a) the next year was also imported from Handiledger (source='tb_import'),
+        #   (b) the prior year has NEW accounts that don't exist in the next year yet,
+        #   (c) the prior year has accounts whose balances changed.
+        #
+        # User-entered journals (is_adjustment=True) and bank statement lines
+        # are explicitly preserved.
+        #
+        # The next year's own TB data (debit/credit/closing_balance columns)
+        # is also preserved — we only wipe the opening_balance and prior-year
+        # comparative columns, which are the ones we control via roll-forward.
+        # The cleanest approach is to delete and recreate the non-adjustment
+        # base lines so the next year's own activity (journals) sits on top.
+        deleted_tb = next_fy.trial_balance_lines.filter(
+            is_adjustment=False,
+        ).exclude(
+            source='bank_statement',
+        ).delete()[0]
+
         deleted_stock = next_fy.stock_items.filter(
             notes__icontains="Rolled forward"
         ).delete()[0]
-        deleted_dep = 0  # Depreciation roll-forward is separate
+        # Delete previously rolled-forward depreciation assets so they are
+        # recreated fresh from the (now-amended) current year's closing WDVs.
+        deleted_dep = next_fy.depreciation_assets.filter(
+            notes__icontains="Rolled forward"
+        ).delete()[0]
 
         # ── Step 2: Re-run the roll-forward logic ────────────────────
         # (Replicates the core logic from roll_forward but targets the
@@ -1893,32 +1981,29 @@ def reroll_forward(request, pk):
         pl_lines = []
 
         for line in current_fy.trial_balance_lines.filter(is_adjustment=False):
-            is_bs = False
-            if line.mapped_line_item:
+            # HARD RULE: use the HandiLedger numeric code range to determine
+            # whether a line is balance sheet or P&L.
+            hl_sec = _hl_section_for_code(line.account_code)
+            if hl_sec is not None:
+                is_bs = hl_sec not in ('Income', 'Cost of Sales', 'Expenses')
+            elif line.mapped_line_item:
                 is_bs = line.mapped_line_item.financial_statement in BS_STATEMENTS
             elif line.account_code in coa_sections:
                 is_bs = coa_sections[line.account_code] in BS_SECTIONS
             else:
                 code_prefix = line.account_code.split(".")[0] if line.account_code else ""
-                if code_prefix.isdigit():
-                    is_bs = int(code_prefix) >= 2000
+                is_bs = code_prefix.isdigit() and int(code_prefix) >= 2000
 
             if is_bs:
-                name_lower = line.account_name.lower()
-                is_retained = (
-                    "retained" in name_lower
-                    or "undistributed" in name_lower
-                    or "accumulated" in name_lower
-                    or "unappropriated" in name_lower
-                )
-                if not is_retained and line.mapped_line_item:
-                    mapped_code = line.mapped_line_item.standard_code or ""
-                    is_retained = mapped_code in ("BS-EQ-002", "BS-EQ-005", "BS-EQ-006", "BS-EQ-008")
-                if is_retained:
+                # HARD RULE: only account 4199 is the retained profits target.
+                code_prefix = line.account_code.split(".")[0] if line.account_code else ""
+                if code_prefix == "4199":
                     retained_profits_line = line
 
                 is_income_tax = False
                 if line.account_name and "income tax" in line.account_name.lower():
+                    is_income_tax = True
+                if code_prefix == "4110":
                     is_income_tax = True
                 if line.mapped_line_item and (line.mapped_line_item.standard_code or "") == "BS-EQ-011":
                     is_income_tax = True
@@ -2129,17 +2214,46 @@ def reroll_forward(request, pk):
             )
             stock_rolled += 1
 
+        # Pass 5: Roll forward depreciation assets
+        dep_rolled = 0
+        for pa in current_fy.depreciation_assets.all():
+            if pa.closing_wdv <= 0 and not pa.disposal_date:
+                continue
+            new_asset = DepreciationAsset(
+                financial_year=next_fy,
+                category=pa.category,
+                asset_name=pa.asset_name,
+                purchase_date=pa.purchase_date,
+                total_cost=pa.total_cost,
+                private_use_pct=pa.private_use_pct,
+                opening_wdv=pa.closing_wdv,  # Prior closing becomes new opening
+                method=pa.method,
+                rate=pa.rate,
+                display_order=pa.display_order,
+                asset_account_code=pa.asset_account_code,
+                asset_account_name=pa.asset_account_name,
+                accum_dep_code=pa.accum_dep_code,
+                accum_dep_name=pa.accum_dep_name,
+                dep_expense_code=pa.dep_expense_code,
+                dep_expense_name=pa.dep_expense_name,
+                notes=f"Rolled forward from FY{current_fy.year_label}",
+            )
+            _calc_depreciation(new_asset)
+            new_asset.save()
+            dep_rolled += 1
+
         pl_direction = "profit" if net_pl_result < 0 else "loss"
         tax_msg = f" Income tax of ${abs(tax_amount):,.2f} absorbed." if tax_amount else ""
         stock_msg = f" {stock_converted} closing stock entries converted to opening stock." if stock_converted else ""
         stock_items_msg = f" {stock_rolled} stock items rolled forward." if stock_rolled else ""
+        dep_msg = f" {dep_rolled} depreciation assets rolled forward." if dep_rolled else ""
 
         _log_action(
             request, "import",
             f"Re-rolled forward to {next_fy.year_label}: removed {deleted_tb} old rollover TB lines, "
             f"recreated {carried_bs} BS items + {carried_pl} P&L comparatives. "
             f"Net {pl_direction} of ${abs(net_pl_result):,.2f} closed to retained earnings."
-            f"{tax_msg}{stock_msg}{stock_items_msg}",
+            f"{tax_msg}{stock_msg}{stock_items_msg}{dep_msg}",
             next_fy,
         )
         messages.success(
@@ -2148,17 +2262,160 @@ def reroll_forward(request, pk):
             f"Removed {deleted_tb} old rollover lines, recreated {carried_bs} BS items + "
             f"{carried_pl} P&L comparatives. Net {pl_direction} of ${abs(net_pl_result):,.2f} "
             f"less tax ${abs(tax_amount):,.2f} closed to retained earnings."
-            f"{stock_msg}{stock_items_msg}"
+            f"{stock_msg}{stock_items_msg}{dep_msg}"
         )
         return redirect("core:financial_year_detail", pk=next_fy.pk)
 
-    # GET: show confirmation page
-    next_fy = current_fy.next_year.first()
-    rollover_count = next_fy.trial_balance_lines.filter(source="rollover").count() if next_fy else 0
+    # GET: compute diff and show preview page
+    from decimal import Decimal
+
+    BS_STATEMENTS = {"balance_sheet", "equity"}
+    BS_SECTIONS   = {"assets", "liabilities", "equity", "capital_accounts"}
+
+    coa_sections = dict(
+        ChartOfAccount.objects.filter(
+            entity_type=entity.entity_type, is_active=True
+        ).values_list("account_code", "section")
+    )
+
+    def _is_bs(line):
+        hl_sec = _hl_section_for_code(line.account_code)
+        if hl_sec is not None:
+            return hl_sec not in ('Income', 'Cost of Sales', 'Expenses')
+        if line.mapped_line_item:
+            return line.mapped_line_item.financial_statement in BS_STATEMENTS
+        if line.account_code in coa_sections:
+            return coa_sections[line.account_code] in BS_SECTIONS
+        code_prefix = line.account_code.split(".")[0] if line.account_code else ""
+        return code_prefix.isdigit() and int(code_prefix) >= 2000
+
+    # Build what the new opening balance WOULD be for each BS account in current_fy
+    # (mirrors the Pass 1 / Pass 2 logic in the POST handler)
+    net_pl = Decimal("0")
+    retained_line = None
+    income_tax_line = None
+    bs_lines_cur = []
+    pl_lines_cur = []
+    for line in current_fy.trial_balance_lines.filter(is_adjustment=False):
+        if _is_bs(line):
+            code_prefix = line.account_code.split(".")[0] if line.account_code else ""
+            if code_prefix == "4199":
+                retained_line = line
+            is_it = False
+            if line.account_name and "income tax" in line.account_name.lower():
+                is_it = True
+            if code_prefix == "4110":
+                is_it = True
+            if line.mapped_line_item and (line.mapped_line_item.standard_code or "") == "BS-EQ-011":
+                is_it = True
+            if is_it:
+                income_tax_line = line
+            bs_lines_cur.append(line)
+        else:
+            pl_lines_cur.append(line)
+            net_pl += line.debit - line.credit
+
+    tax_amount = income_tax_line.closing_balance if income_tax_line else Decimal("0")
+
+    # Compute proposed opening balances keyed by account_code
+    proposed = {}  # account_code -> {name, opening, type: 'bs'|'pl'}
+    for line in bs_lines_cur:
+        if line.closing_balance == 0 and line != retained_line:
+            continue
+        if line == income_tax_line:
+            proposed[line.account_code] = {
+                "name": line.account_name,
+                "proposed_opening": Decimal("0"),
+                "type": "bs",
+            }
+            continue
+        opening = line.closing_balance
+        if line == retained_line:
+            opening = line.closing_balance + net_pl + tax_amount
+            if opening == 0:
+                continue
+        proposed[line.account_code] = {
+            "name": line.account_name,
+            "proposed_opening": opening,
+            "type": "bs",
+        }
+    # P&L lines get zero opening (they only carry prior-year comparatives)
+    for line in pl_lines_cur:
+        if line.debit == 0 and line.credit == 0:
+            continue
+        proposed[line.account_code] = {
+            "name": line.account_name,
+            "proposed_opening": Decimal("0"),
+            "type": "pl",
+        }
+
+    # Build current state of next_fy base lines (non-adjustment)
+    existing = {}  # account_code -> opening_balance
+    for line in next_fy.trial_balance_lines.filter(is_adjustment=False).exclude(source='bank_statement'):
+        existing[line.account_code] = {
+            "name": line.account_name,
+            "current_opening": line.opening_balance or Decimal("0"),
+        }
+
+    # Compute diff
+    diff_added   = []  # in proposed but not in existing
+    diff_updated = []  # in both but opening_balance differs
+    diff_removed = []  # in existing but not in proposed
+    diff_unchanged = []  # in both and identical
+
+    for code, pdata in proposed.items():
+        if code not in existing:
+            diff_added.append({
+                "code": code,
+                "name": pdata["name"],
+                "current_opening": None,
+                "proposed_opening": pdata["proposed_opening"],
+                "type": pdata["type"],
+            })
+        else:
+            cur_open = existing[code]["current_opening"]
+            prop_open = pdata["proposed_opening"]
+            if cur_open != prop_open:
+                diff_updated.append({
+                    "code": code,
+                    "name": pdata["name"],
+                    "current_opening": cur_open,
+                    "proposed_opening": prop_open,
+                    "type": pdata["type"],
+                })
+            else:
+                diff_unchanged.append({
+                    "code": code,
+                    "name": pdata["name"],
+                    "current_opening": cur_open,
+                    "proposed_opening": prop_open,
+                    "type": pdata["type"],
+                })
+
+    for code, edata in existing.items():
+        if code not in proposed:
+            diff_removed.append({
+                "code": code,
+                "name": edata["name"],
+                "current_opening": edata["current_opening"],
+                "proposed_opening": None,
+                "type": "bs",
+            })
+
+    # Sort each list by account code for readability
+    for lst in (diff_added, diff_updated, diff_removed, diff_unchanged):
+        lst.sort(key=lambda x: x["code"])
+
+    has_changes = bool(diff_added or diff_updated or diff_removed)
+
     return render(request, "core/reroll_forward_confirm.html", {
         "fy": current_fy,
         "next_fy": next_fy,
-        "rollover_count": rollover_count,
+        "diff_added": diff_added,
+        "diff_updated": diff_updated,
+        "diff_removed": diff_removed,
+        "diff_unchanged": diff_unchanged,
+        "has_changes": has_changes,
     })
 
 
@@ -2172,8 +2429,8 @@ def roll_forward(request, pk):
         messages.error(request, "You do not have permission.")
         return redirect("core:financial_year_detail", pk=pk)
 
-    # Cannot roll forward unless the current FY is finalised
-    if current_fy.status != "finalised":
+    # Cannot roll forward unless the current FY is finalised (locked or finalised status)
+    if not current_fy.is_locked:
         messages.error(
             request,
             "Cannot roll forward: this financial year must be finalised before rolling forward."
@@ -2226,37 +2483,35 @@ def roll_forward(request, pk):
         pl_lines = []
 
         for line in current_fy.trial_balance_lines.filter(is_adjustment=False):
-            # Determine if this is a balance sheet account
-            is_bs = False
-            if line.mapped_line_item:
+            # HARD RULE: use the HandiLedger numeric code range to determine
+            # whether a line is balance sheet or P&L.  This is authoritative
+            # and prevents equity accounts (4000-4999) from being treated as
+            # P&L lines, and P&L accounts (0-1999) from being treated as BS.
+            hl_sec = _hl_section_for_code(line.account_code)
+            if hl_sec is not None:
+                is_bs = hl_sec not in ('Income', 'Cost of Sales', 'Expenses')
+            elif line.mapped_line_item:
                 is_bs = line.mapped_line_item.financial_statement in BS_STATEMENTS
             elif line.account_code in coa_sections:
                 is_bs = coa_sections[line.account_code] in BS_SECTIONS
             else:
-                # Fallback: check if account code starts with 2/3 (common for BS)
-                # or if the section keyword is in the account name
                 code_prefix = line.account_code.split(".")[0] if line.account_code else ""
-                if code_prefix.isdigit():
-                    is_bs = int(code_prefix) >= 2000
+                is_bs = code_prefix.isdigit() and int(code_prefix) >= 2000
 
             if is_bs:
-                # Check if this is the retained profits / undistributed income account
-                name_lower = line.account_name.lower()
-                is_retained = (
-                    "retained" in name_lower
-                    or "undistributed" in name_lower
-                    or "accumulated" in name_lower
-                    or "unappropriated" in name_lower
-                )
-                if not is_retained and line.mapped_line_item:
-                    mapped_code = line.mapped_line_item.standard_code or ""
-                    is_retained = mapped_code in ("BS-EQ-002", "BS-EQ-005", "BS-EQ-006", "BS-EQ-008")
-                if is_retained:
+                # HARD RULE: account 4199 is ALWAYS the retained profits target.
+                # Only 4199 is accepted as retained_profits_line.  Other equity
+                # accounts (e.g. 4200.03 shareholder sub-accounts) must never
+                # receive the rolled-forward P&L, even if mapped to BS-EQ-002.
+                code_prefix = line.account_code.split(".")[0] if line.account_code else ""
+                if code_prefix == "4199":
                     retained_profits_line = line
 
                 # Check if this is the income tax line (4110 or mapped to BS-EQ-011)
                 is_income_tax = False
                 if line.account_name and "income tax" in line.account_name.lower():
+                    is_income_tax = True
+                if code_prefix == "4110":
                     is_income_tax = True
                 if line.mapped_line_item and (line.mapped_line_item.standard_code or "") == "BS-EQ-011":
                     is_income_tax = True
@@ -2517,13 +2772,45 @@ def roll_forward(request, pk):
             )
             stock_rolled += 1
 
+        # -----------------------------------------------------------------
+        # Pass 5: Roll forward depreciation assets (closing WDV → opening WDV)
+        # -----------------------------------------------------------------
+        dep_rolled = 0
+        for pa in current_fy.depreciation_assets.all():
+            # Skip assets that are fully written off and have no disposal
+            if pa.closing_wdv <= 0 and not pa.disposal_date:
+                continue
+            new_asset = DepreciationAsset(
+                financial_year=new_fy,
+                category=pa.category,
+                asset_name=pa.asset_name,
+                purchase_date=pa.purchase_date,
+                total_cost=pa.total_cost,
+                private_use_pct=pa.private_use_pct,
+                opening_wdv=pa.closing_wdv,  # Prior closing becomes new opening
+                method=pa.method,
+                rate=pa.rate,
+                display_order=pa.display_order,
+                asset_account_code=pa.asset_account_code,
+                asset_account_name=pa.asset_account_name,
+                accum_dep_code=pa.accum_dep_code,
+                accum_dep_name=pa.accum_dep_name,
+                dep_expense_code=pa.dep_expense_code,
+                dep_expense_name=pa.dep_expense_name,
+                notes=f"Rolled forward from FY{current_fy.year_label}",
+            )
+            _calc_depreciation(new_asset)
+            new_asset.save()
+            dep_rolled += 1
+
         total_carried = carried_bs + carried_pl
         pl_direction = "profit" if net_pl_result < 0 else "loss"
         tax_msg = f" Income tax of ${abs(tax_amount):,.2f} absorbed." if tax_amount else ""
         stock_msg = f" {stock_converted} closing stock entries converted to opening stock." if stock_converted else ""
         stock_items_msg = f" {stock_rolled} stock items rolled forward." if stock_rolled else ""
-        _log_action(request, "import", f"Rolled forward to {new_label} with {carried_bs} BS items, {carried_pl} P&L comparatives. Net {pl_direction} of ${abs(net_pl_result):,.2f} closed to retained earnings.{tax_msg}{stock_msg}{stock_items_msg}", new_fy)
-        messages.success(request, f"Rolled forward to {new_label}. {carried_bs} balance sheet items carried, {carried_pl} P&L comparatives. Net {pl_direction} of ${abs(net_pl_result):,.2f} less tax ${abs(tax_amount):,.2f} closed to retained earnings.{stock_msg}{stock_items_msg}")
+        dep_msg = f" {dep_rolled} depreciation assets rolled forward." if dep_rolled else ""
+        _log_action(request, "import", f"Rolled forward to {new_label} with {carried_bs} BS items, {carried_pl} P&L comparatives. Net {pl_direction} of ${abs(net_pl_result):,.2f} closed to retained earnings.{tax_msg}{stock_msg}{stock_items_msg}{dep_msg}", new_fy)
+        messages.success(request, f"Rolled forward to {new_label}. {carried_bs} balance sheet items carried, {carried_pl} P&L comparatives. Net {pl_direction} of ${abs(net_pl_result):,.2f} less tax ${abs(tax_amount):,.2f} closed to retained earnings.{stock_msg}{stock_items_msg}{dep_msg}")
         return redirect("core:financial_year_detail", pk=new_fy.pk)
 
     return render(request, "core/roll_forward_confirm.html", {"fy": current_fy})
@@ -3198,15 +3485,53 @@ def commit_tb_import(request, pk):
             )
 
             # Update the learning system
+            resolved_name = _resolve_account_name(entity, line["account_code"], line["account_name"])
             ClientAccountMapping.objects.update_or_create(
                 entity=entity,
                 client_account_code=account_code,
                 defaults={
-                    "client_account_name": _resolve_account_name(entity, line["account_code"], line["account_name"]),
+                    "client_account_name": resolved_name,
                     "mapped_line_item": mapped_item,
                 },
             )
-
+            # ── Sync EntityChartOfAccount ──────────────────────────────────────────
+            # Keep the entity CoA in sync with what's in the TB.
+            # If the account already exists in the CoA, update its name only
+            # (preserve section, maps_to, tax_code, and other metadata).
+            # If it doesn't exist yet, create a minimal entry so it appears
+            # in the CoA tab and the journal account picker.
+            _section_for_code = _hl_section_for_code(account_code)
+            _section_map = {
+                'Income': EntityChartOfAccount.StatementSection.REVENUE,
+                'Cost of Sales': EntityChartOfAccount.StatementSection.COST_OF_SALES,
+                'Expenses': EntityChartOfAccount.StatementSection.EXPENSES,
+                'Current Assets': EntityChartOfAccount.StatementSection.ASSETS,
+                'Non-Current Assets': EntityChartOfAccount.StatementSection.ASSETS,
+                'Current Liabilities': EntityChartOfAccount.StatementSection.LIABILITIES,
+                'Non-Current Liabilities': EntityChartOfAccount.StatementSection.LIABILITIES,
+                'Equity': EntityChartOfAccount.StatementSection.EQUITY,
+            }
+            default_section = _section_map.get(_section_for_code, EntityChartOfAccount.StatementSection.SUSPENSE)
+            existing_coa = EntityChartOfAccount.objects.filter(
+                entity=entity, account_code=account_code
+            ).first()
+            if existing_coa:
+                # Only update the name (don't overwrite section/maps_to/tax_code)
+                if existing_coa.account_name != resolved_name:
+                    existing_coa.account_name = resolved_name
+                    existing_coa.save(update_fields=['account_name', 'updated_at'])
+            else:
+                # Create a new CoA entry seeded from the TB data
+                EntityChartOfAccount.objects.create(
+                    entity=entity,
+                    account_code=account_code,
+                    account_name=resolved_name,
+                    section=default_section,
+                    maps_to=mapped_item,
+                    is_active=True,
+                    is_custom=True,
+                )
+            # ────────────────────────────────────────────────────────────────────
             uploaded_codes.add(account_code)
             imported += 1
             if not mapped_item:
@@ -3299,8 +3624,11 @@ def trial_balance_view(request, pk):
         else:
             line.display_dr = line.debit if line.debit else Decimal('0')
             line.display_cr = line.credit if line.credit else Decimal('0')
-
-        if line.mapped_line_item:
+        # HARD RULE: HandiLedger numeric code range is authoritative for section.
+        hl_section = _hl_section_for_code(line.account_code)
+        if hl_section:
+            display_section = hl_section
+        elif line.mapped_line_item:
             raw_section = line.mapped_line_item.statement_section
             display_section = SECTION_DISPLAY.get(raw_section, raw_section)
         else:
@@ -3768,28 +4096,28 @@ def adjustment_create(request, pk):
             {"client_account_code": a["account_code"], "client_account_name": a["account_name"]}
             for a in tb_accounts
         ]
-
-    if entity_accounts:
-        # Ensure keys are consistent for the template
-        accounts = [
-            {
-                "client_account_code": a.get("client_account_code", a.get("account_code", "")),
-                "client_account_name": a.get("client_account_name", a.get("account_name", "")),
-            }
-            for a in entity_accounts
-        ]
-    else:
-        # Fallback: master Chart of Accounts for the entity type
-        entity_type = fy.entity.entity_type
-        master_accounts = list(
+    # Always merge with the entity's Chart of Accounts so that accounts
+    # which exist in the CoA but have no TB line yet are still selectable.
+    entity_type = fy.entity.entity_type
+    coa_accounts = (
+        EntityChartOfAccount.objects.filter(entity=fy.entity, is_active=True)
+        .order_by("account_code")
+        .values("account_code", "account_name")
+    )
+    if not coa_accounts.exists():
+        coa_accounts = (
             ChartOfAccount.objects.filter(entity_type=entity_type, is_active=True)
             .order_by("account_code")
             .values("account_code", "account_name")
         )
-        accounts = [
-            {"client_account_code": a["account_code"], "client_account_name": a["account_name"]}
-            for a in master_accounts
-        ]
+    # Build a merged, deduplicated list keyed by account_code.
+    # TB lines take priority (they carry the entity-specific name).
+    merged = {}
+    for a in coa_accounts:
+        merged[a["account_code"]] = {"client_account_code": a["account_code"], "client_account_name": a["account_name"]}
+    for a in entity_accounts:
+        merged[a["client_account_code"]] = a  # TB name wins
+    accounts = sorted(merged.values(), key=lambda x: x["client_account_code"])
 
     if request.method == "POST":
         form = AdjustingJournalForm(request.POST)
@@ -3829,6 +4157,7 @@ def adjustment_create(request, pk):
                     fy, line.account_code, line.account_name,
                     line.debit, line.credit, source='manual_journal',
                     description=journal.description,
+                    journal=journal,
                 )
 
             journal.status = AdjustingJournal.JournalStatus.POSTED
@@ -3895,6 +4224,7 @@ def journal_post(request, pk):
             fy, line.account_code, line.account_name,
             line.debit, line.credit, source='manual_journal',
             description=journal.description,
+            journal=journal,
         )
 
     # Update journal status
@@ -3931,10 +4261,14 @@ def journal_delete(request, pk):
 
     # If the journal was posted, reverse its effect on the Trial Balance
     if status == AdjustingJournal.JournalStatus.POSTED:
-        for line in journal.lines.all():
-            _reverse_journal_line_from_tb(
-                fy, line.account_code, line.debit, line.credit,
-            )
+        # Use FK-based deletion when available; legacy fallback for old journals
+        if journal.tb_lines.exists():
+            journal.tb_lines.all().delete()
+        else:
+            for line in journal.lines.all():
+                _reverse_journal_line_from_tb(
+                    fy, line.account_code, line.debit, line.credit,
+                )
 
     journal.delete()
     _log_action(request, "adjustment", f"Deleted {status} journal {ref}")
@@ -3945,6 +4279,209 @@ def journal_delete(request, pk):
     messages.success(request, f"Journal {ref} has been deleted.")
     from django.urls import reverse
     return redirect(reverse("core:financial_year_detail", args=[fy.pk]) + "?tab=journals")
+
+
+@login_required
+def journal_edit(request, pk):
+    """Edit a posted journal entry.
+
+    Reverses the existing TB adjustment lines, applies the corrected lines,
+    and writes a full before/after diff to the audit log.
+    Only accountants can edit journals; locked years are protected.
+    """
+    journal = get_object_or_404(
+        AdjustingJournal.objects.select_related(
+            "financial_year", "financial_year__entity",
+            "created_by", "posted_by",
+        ).prefetch_related("lines"),
+        pk=pk,
+    )
+    fy = journal.financial_year
+    get_financial_year_for_user(request, fy.pk)  # IDOR check
+    entity = fy.entity
+
+    if fy.is_locked:
+        messages.error(request, "Cannot edit journals in a finalised year.")
+        return redirect("core:journal_detail", pk=pk)
+
+    if not request.user.can_do_accounting:
+        messages.error(request, "You do not have permission to edit journals.")
+        return redirect("core:journal_detail", pk=pk)
+
+    # Build account list for the picker: merge TB lines with the entity's
+    # Chart of Accounts so that accounts which exist in the CoA but have
+    # no TB line yet (e.g. 2895) are still selectable.
+    tb_accounts = (
+        TrialBalanceLine.objects.filter(financial_year=fy)
+        .exclude(account_code="")
+        .values("account_code", "account_name")
+        .distinct()
+        .order_by("account_code")
+    )
+    tb_list = [
+        {"client_account_code": a["account_code"], "client_account_name": a["account_name"]}
+        for a in tb_accounts
+    ]
+    coa_qs = EntityChartOfAccount.objects.filter(entity=entity, is_active=True).order_by("account_code").values("account_code", "account_name")
+    if not coa_qs.exists():
+        coa_qs = ChartOfAccount.objects.filter(entity_type=entity.entity_type, is_active=True).order_by("account_code").values("account_code", "account_name")
+    merged = {}
+    for a in coa_qs:
+        merged[a["account_code"]] = {"client_account_code": a["account_code"], "client_account_name": a["account_name"]}
+    for a in tb_list:
+        merged[a["client_account_code"]] = a  # TB name wins
+    accounts = sorted(merged.values(), key=lambda x: x["client_account_code"])
+
+    # Snapshot the journal state before any changes (for audit log)
+    before_lines = [
+        {
+            "account_code": line.account_code,
+            "account_name": line.account_name,
+            "description": line.description,
+            "debit": str(line.debit),
+            "credit": str(line.credit),
+        }
+        for line in journal.lines.all()
+    ]
+    before_header = {
+        "journal_type": journal.journal_type,
+        "journal_date": str(journal.journal_date),
+        "description": journal.description,
+        "narration": journal.narration,
+    }
+
+    # Build formset with extra=1 so there's always one blank row available
+    EditJournalLineFormSet = forms.inlineformset_factory(
+        AdjustingJournal,
+        JournalLine,
+        form=JournalLineForm,
+        extra=1,
+        can_delete=True,
+    )
+
+    if request.method == "POST":
+        form = AdjustingJournalForm(request.POST, instance=journal)
+        formset = EditJournalLineFormSet(request.POST, instance=journal)
+        if form.is_valid() and formset.is_valid():
+            # Reverse all existing TB adjustment lines for this journal.
+            # Use the source_journal FK for reliable scoped deletion; fall back
+            # to the legacy debit/credit match for pre-FK journals.
+            has_fk_lines = journal.tb_lines.exists()
+            if has_fk_lines:
+                # New path: delete all TB lines linked to this journal at once
+                journal.tb_lines.all().delete()
+            else:
+                # Legacy fallback for journals created before the source_journal FK
+                for line in journal.lines.all():
+                    _reverse_journal_line_from_tb(
+                        fy, line.account_code, line.debit, line.credit
+                    )
+
+            # Save the updated header
+            updated_journal = form.save(commit=False)
+            updated_journal.save()
+
+            # Save the updated lines
+            new_lines = formset.save()
+
+            # Renumber lines
+            for i, line in enumerate(journal.lines.order_by("line_number", "id"), start=1):
+                line.line_number = i
+                line.save(update_fields=["line_number"])
+
+            # Validate balance
+            all_lines = list(journal.lines.all())
+            total_dr = sum(l.debit for l in all_lines)
+            total_cr = sum(l.credit for l in all_lines)
+            if total_dr != total_cr:
+                # Re-apply the original lines so the TB stays consistent
+                for line in all_lines:
+                    _apply_journal_line_to_tb(
+                        fy, line.account_code, line.account_name,
+                        line.debit, line.credit, source="manual_journal",
+                        description=journal.description,
+                        journal=journal,
+                    )
+                messages.error(
+                    request,
+                    f"Journal does not balance: Dr ${total_dr:,.2f} \u2260 Cr ${total_cr:,.2f}. "
+                    "Changes have been reverted."
+                )
+                return render(request, "core/journal_edit.html", {
+                    "form": form, "formset": formset, "journal": journal,
+                    "fy": fy, "entity": entity, "accounts": accounts,
+                })
+
+            # Apply the new lines to the TB, linked to this journal via source_journal FK
+            for line in all_lines:
+                _apply_journal_line_to_tb(
+                    fy, line.account_code, line.account_name,
+                    line.debit, line.credit, source="manual_journal",
+                    description=updated_journal.description,
+                    journal=journal,
+                )
+
+            # Update cached totals
+            journal.total_debit = total_dr
+            journal.total_credit = total_cr
+            journal.save(update_fields=["total_debit", "total_credit"])
+
+            # Build after snapshot for audit log
+            after_lines = [
+                {
+                    "account_code": line.account_code,
+                    "account_name": line.account_name,
+                    "description": line.description,
+                    "debit": str(line.debit),
+                    "credit": str(line.credit),
+                }
+                for line in journal.lines.all()
+            ]
+            after_header = {
+                "journal_type": updated_journal.journal_type,
+                "journal_date": str(updated_journal.journal_date),
+                "description": updated_journal.description,
+                "narration": updated_journal.narration,
+            }
+
+            # Build a human-readable diff for the audit log
+            import json as _json
+            diff_parts = []
+            for key in ("journal_type", "journal_date", "description", "narration"):
+                if before_header.get(key) != after_header.get(key):
+                    diff_parts.append(
+                        f"  {key}: '{before_header.get(key)}' -> '{after_header.get(key)}'"
+                    )
+            if before_lines != after_lines:
+                diff_parts.append("  Lines changed:")
+                diff_parts.append(f"    Before: {_json.dumps(before_lines)}")
+                diff_parts.append(f"    After:  {_json.dumps(after_lines)}")
+
+            audit_detail = "\n".join(diff_parts) if diff_parts else "No changes detected."
+            _log_action(
+                request, "adjustment",
+                f"Edited posted journal {journal.reference_number}:\n{audit_detail}",
+                journal,
+            )
+
+            # Trigger risk engine recalc
+            from core.signals import trigger_risk_recalc
+            trigger_risk_recalc(fy, "journal_edited")
+
+            messages.success(
+                request,
+                f"Journal {journal.reference_number} has been updated and the Trial Balance recalculated."
+            )
+            return redirect("core:journal_detail", pk=journal.pk)
+
+    else:
+        form = AdjustingJournalForm(instance=journal)
+        formset = EditJournalLineFormSet(instance=journal)
+
+    return render(request, "core/journal_edit.html", {
+        "form": form, "formset": formset, "journal": journal,
+        "fy": fy, "entity": entity, "accounts": accounts,
+    })
 
 
 @login_required
@@ -4755,7 +5292,11 @@ def trial_balance_pdf(request, pk):
     sections = OrderedDict()
     unmapped_lines = []
     for line in tb_lines:
-        if line.mapped_line_item:
+        # HARD RULE: HandiLedger numeric code range is authoritative for section.
+        hl_section = _hl_section_for_code(line.account_code)
+        if hl_section:
+            display_section = hl_section
+        elif line.mapped_line_item:
             raw_section = line.mapped_line_item.statement_section
             display_section = SECTION_DISPLAY.get(raw_section, raw_section)
         else:
@@ -6153,6 +6694,94 @@ def depreciation_add(request, pk):
     return redirect("core:financial_year_detail", pk=pk)
 
 
+
+@login_required
+def depreciation_suggest_account_code(request, pk):
+    """
+    AJAX endpoint: suggest the next available account code for a new
+    depreciation asset account or accumulated depreciation account.
+    Delegates to the existing entity_coa_suggest_code logic so the
+    alphabetical-placement algorithm is reused exactly.
+    Expects GET params: account_name, section (assets|liabilities|expenses)
+    """
+    from django.http import QueryDict
+    fy = get_financial_year_for_user(request, pk)
+    entity = fy.entity
+    section = request.GET.get('section', 'assets').strip()
+    account_name = request.GET.get('account_name', '').strip()
+    if not account_name:
+        return JsonResponse({'suggested_code': '', 'position_info': 'Enter an account name.'})
+    # Reuse the existing suggest-code logic by forwarding to the same function
+    # but constructing a fake GET with the right params.
+    fake_get = QueryDict(mutable=True)
+    fake_get['section'] = section
+    fake_get['account_name'] = account_name
+    request.GET = fake_get
+    return entity_coa_suggest_code(request, pk)
+
+
+@login_required
+def depreciation_create_account(request, pk):
+    """
+    AJAX POST endpoint: create a new EntityChartOfAccount for an asset or
+    accumulated depreciation account directly from the Add Asset modal.
+    Returns JSON with the new account_code and account_name so the modal
+    can add the option to the dropdown and select it automatically.
+
+    POST params:
+      account_name  - required
+      account_code  - required (suggested code confirmed by user)
+      section       - 'assets' (default) or 'expenses'
+      account_type  - 'asset' | 'accum_dep' | 'dep_expense' (informational only)
+    """
+    fy = get_financial_year_for_user(request, pk)
+    entity = fy.entity
+    if not request.user.can_do_accounting:
+        return JsonResponse({'error': 'Permission denied'}, status=403)
+    if request.method != 'POST':
+        return JsonResponse({'error': 'POST required'}, status=405)
+
+    account_name = request.POST.get('account_name', '').strip()
+    account_code = request.POST.get('account_code', '').strip()
+    section = request.POST.get('section', 'assets').strip()
+
+    if not account_name or not account_code:
+        return JsonResponse({'error': 'account_name and account_code are required'}, status=400)
+
+    # Validate section
+    valid_sections = [s[0] for s in EntityChartOfAccount.StatementSection.choices]
+    if section not in valid_sections:
+        return JsonResponse({'error': f'Invalid section: {section}'}, status=400)
+
+    # Check for duplicate code
+    if EntityChartOfAccount.objects.filter(entity=entity, account_code=account_code).exists():
+        existing = EntityChartOfAccount.objects.get(entity=entity, account_code=account_code)
+        return JsonResponse({
+            'account_code': existing.account_code,
+            'account_name': existing.account_name,
+            'already_existed': True,
+        })
+
+    # Create the entity COA account
+    new_account = EntityChartOfAccount.objects.create(
+        entity=entity,
+        account_code=account_code,
+        account_name=account_name,
+        section=section,
+        is_active=True,
+        is_custom=True,
+    )
+    _log_action(
+        request, 'create',
+        f'Created new {section} account from depreciation modal: {account_code} — {account_name}',
+        fy,
+    )
+    return JsonResponse({
+        'account_code': new_account.account_code,
+        'account_name': new_account.account_name,
+        'already_existed': False,
+    })
+
 @login_required
 def depreciation_edit(request, pk):
     """Edit a depreciation asset."""
@@ -6239,7 +6868,7 @@ def depreciation_roll_forward(request, pk):
     for pa in prior_assets:
         if pa.closing_wdv <= 0 and not pa.disposal_date:
             continue  # Skip fully depreciated with no disposal
-        DepreciationAsset.objects.create(
+        new_asset = DepreciationAsset(
             financial_year=fy,
             category=pa.category,
             asset_name=pa.asset_name,
@@ -6250,7 +6879,18 @@ def depreciation_roll_forward(request, pk):
             method=pa.method,
             rate=pa.rate,
             display_order=pa.display_order,
+            # Carry forward account mapping so journal posting still works
+            asset_account_code=pa.asset_account_code,
+            asset_account_name=pa.asset_account_name,
+            accum_dep_code=pa.accum_dep_code,
+            accum_dep_name=pa.accum_dep_name,
+            dep_expense_code=pa.dep_expense_code,
+            dep_expense_name=pa.dep_expense_name,
+            notes=f"Rolled forward from FY{fy.prior_year.year_label}",
         )
+        # Pre-calculate depreciation so the schedule is immediately populated
+        _calc_depreciation(new_asset)
+        new_asset.save()
         count += 1
 
     _log_action(request, "roll_forward", f"Rolled forward {count} depreciation assets to {fy}", fy)
@@ -6798,6 +7438,141 @@ def depreciation_post_to_tb(request, pk):
             f"See journal details for per-account breakdown."
         )
     return redirect("core:financial_year_detail", pk=pk)
+
+
+# ---------------------------------------------------------------------------
+# Depreciation Schedule PDF Export
+# ---------------------------------------------------------------------------
+@login_required
+def depreciation_pdf(request, pk):
+    """
+    Generate and download a PDF of the depreciation schedule for a financial year.
+    Uses weasyprint to render an HTML template to PDF.
+    """
+    import weasyprint
+    from html import escape as html_escape
+    from collections import OrderedDict
+
+    fy = get_financial_year_for_user(request, pk)
+
+    # Gather assets grouped by category (same logic as the main view)
+    dep_assets = DepreciationAsset.objects.filter(
+        financial_year=fy
+    ).order_by('category', 'display_order', 'asset_name')
+
+    dep_categories = OrderedDict()
+    dep_total_opening = Decimal('0')
+    dep_total_depreciation = Decimal('0')
+    dep_total_closing = Decimal('0')
+    for asset in dep_assets:
+        if asset.category not in dep_categories:
+            dep_categories[asset.category] = []
+        dep_categories[asset.category].append(asset)
+        dep_total_opening += asset.opening_wdv
+        dep_total_depreciation += asset.depreciation_amount
+        dep_total_closing += asset.closing_wdv
+
+    # Build table rows HTML
+    rows_html = ""
+    for category, assets in dep_categories.items():
+        rows_html += f'<tr class="category-row"><td colspan="7"><strong>{html_escape(category)}</strong></td></tr>\n'
+        for asset in assets:
+            badges = ""
+            if asset.disposal_date:
+                badges += ' <span class="badge disposed">Disposed</span>'
+            if asset.addition_cost > 0:
+                badges += ' <span class="badge addition">Addition</span>'
+            addition_cell = f"${asset.addition_cost:,.2f}" if asset.addition_cost > 0 else ""
+            rows_html += f"""<tr>
+                <td>{html_escape(asset.asset_name)}{badges}</td>
+                <td>{html_escape(asset.get_method_display())}</td>
+                <td class="r">{asset.rate:.2f}%</td>
+                <td class="r">${asset.opening_wdv:,.2f}</td>
+                <td class="r">{addition_cell}</td>
+                <td class="r">${asset.depreciation_amount:,.2f}</td>
+                <td class="r">${asset.closing_wdv:,.2f}</td>
+            </tr>\n"""
+
+    now_str = timezone.now().strftime("%d/%m/%Y %H:%M")
+    entity_name = html_escape(fy.entity.entity_name)
+    fy_label = html_escape(fy.year_label)
+    period_label = html_escape(
+        f"{fy.start_date.strftime('%d/%m/%Y')} — {fy.end_date.strftime('%d/%m/%Y')}"
+    )
+
+    html = f"""<!DOCTYPE html>
+<html><head><meta charset="utf-8">
+<style>
+    @page {{
+        size: A4 landscape;
+        margin: 15mm 12mm;
+        @bottom-right {{ content: "Page " counter(page) " of " counter(pages); font-size: 7pt; color: #999; }}
+        @bottom-left {{ content: "Generated {now_str}"; font-size: 7pt; color: #999; }}
+    }}
+    body {{ font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-size: 9pt; color: #333; }}
+    .header {{ display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 5mm; border-bottom: 2px solid #1a6b3c; padding-bottom: 3mm; }}
+    .header-left h1 {{ font-size: 15pt; margin: 0 0 2px 0; color: #1a1a2e; }}
+    .header-left .subtitle {{ font-size: 10pt; color: #555; }}
+    .header-right {{ text-align: right; font-size: 8pt; color: #666; }}
+    table {{ width: 100%; border-collapse: collapse; margin-bottom: 5mm; }}
+    th {{ background: #f0f4f0; font-weight: 700; font-size: 8pt; text-transform: uppercase;
+          letter-spacing: 0.3px; color: #444; padding: 4px 6px; border-bottom: 2px solid #ccc;
+          text-align: left; white-space: nowrap; }}
+    th.r {{ text-align: right; }}
+    td {{ padding: 3px 6px; font-size: 8.5pt; border-bottom: 1px solid #eee; vertical-align: middle; }}
+    .r {{ text-align: right; }}
+    .category-row td {{ background: #f7f7f7; font-size: 9pt; padding: 5px 6px;
+                        border-top: 1px solid #ccc; border-bottom: 1px solid #ccc; }}
+    .total-row {{ border-top: 2px solid #333; }}
+    .total-row td {{ font-weight: 700; padding: 5px 6px; font-size: 9pt; }}
+    .badge {{ display: inline-block; font-size: 6.5pt; padding: 1px 4px; border-radius: 3px;
+              font-weight: 600; margin-left: 4px; vertical-align: middle; }}
+    .disposed {{ background: #fde8e8; color: #c62828; }}
+    .addition {{ background: #e3f2fd; color: #1565c0; }}
+    .firm {{ font-size: 7.5pt; color: #888; margin-top: 3mm; }}
+</style></head><body>
+<div class="header">
+    <div class="header-left">
+        <h1>{entity_name}</h1>
+        <div class="subtitle">Depreciation Schedule &mdash; {fy_label}</div>
+    </div>
+    <div class="header-right">
+        Period: {period_label}<br>
+        Prepared by: MC &amp; S Pty Ltd
+    </div>
+</div>
+<table>
+    <thead>
+        <tr>
+            <th>Asset</th>
+            <th>Method</th>
+            <th class="r">Rate %</th>
+            <th class="r">Opening WDV</th>
+            <th class="r">Additions</th>
+            <th class="r">Depreciation</th>
+            <th class="r">Closing WDV</th>
+        </tr>
+    </thead>
+    <tbody>
+        {rows_html}
+        <tr class="total-row">
+            <td colspan="3" class="r">Totals</td>
+            <td class="r">${dep_total_opening:,.2f}</td>
+            <td></td>
+            <td class="r">${dep_total_depreciation:,.2f}</td>
+            <td class="r">${dep_total_closing:,.2f}</td>
+        </tr>
+    </tbody>
+</table>
+<div class="firm">MC &amp; S Pty Ltd &mdash; Confidential &mdash; For client use only</div>
+</body></html>"""
+
+    pdf_bytes = weasyprint.HTML(string=html).write_pdf()
+    entity_slug = fy.entity.entity_name.replace(" ", "_").replace("/", "-")[:40]
+    filename = f"{entity_slug}_Depreciation_Schedule_{fy.year_label}.pdf"
+    response = HttpResponse(pdf_bytes, content_type="application/pdf")
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -8921,9 +9696,12 @@ def trial_balance_download(request, pk):
     grand_cr = Decimal('0')
     grand_prior_dr = Decimal('0')
     grand_prior_cr = Decimal('0')
-
     for line in tb_lines:
-        if line.mapped_line_item:
+        # HARD RULE: HandiLedger numeric code range is authoritative for section.
+        hl_section = _hl_section_for_code(line.account_code)
+        if hl_section:
+            display_section = hl_section
+        elif line.mapped_line_item:
             raw_section = line.mapped_line_item.statement_section
             display_section = SECTION_DISPLAY.get(raw_section, raw_section)
         else:
@@ -9965,10 +10743,48 @@ def entity_coa_edit(request, pk):
         acct.is_franking_credit = request.POST.get("is_franking_credit") == "on"
 
         acct.save()
-        if fy:
-            _log_action(request, "update", f"Edited entity account: {old_code} → {acct.account_code} — {acct.account_name}", fy)
-        messages.success(request, f"Account {acct.account_code} updated.")
 
+        # ── Sync TB lines ────────────────────────────────────────────────────
+        # Propagate name/code changes to every TrialBalanceLine for this entity
+        # so the TB always reflects the current CoA.
+        tb_qs = TrialBalanceLine.objects.filter(
+            financial_year__entity=entity,
+            account_code=old_code,
+        )
+        tb_updated = 0
+        if old_code != acct.account_code:
+            # Code changed: update both code and name
+            tb_updated = tb_qs.update(
+                account_code=acct.account_code,
+                account_name=acct.account_name,
+            )
+            # Also update ClientAccountMapping
+            ClientAccountMapping.objects.filter(
+                entity=entity, client_account_code=old_code
+            ).update(
+                client_account_code=acct.account_code,
+                client_account_name=acct.account_name,
+            )
+        else:
+            # Name-only change
+            tb_updated = tb_qs.update(account_name=acct.account_name)
+            ClientAccountMapping.objects.filter(
+                entity=entity, client_account_code=acct.account_code
+            ).update(client_account_name=acct.account_name)
+        # ────────────────────────────────────────────────────────────────────
+
+        if fy:
+            _log_action(
+                request, "update",
+                f"Edited entity account: {old_code} → {acct.account_code} — {acct.account_name}"
+                + (f" (synced {tb_updated} TB line(s))" if tb_updated else ""),
+                fy,
+            )
+        messages.success(
+            request,
+            f"Account {acct.account_code} updated."
+            + (f" {tb_updated} trial balance line(s) synced." if tb_updated else ""),
+        )
         if fy:
             return redirect("core:financial_year_detail", pk=fy.pk)
         return redirect("core:entity_detail", pk=entity.pk)
@@ -10323,7 +11139,7 @@ def journal_upload(request, pk):
                 return redirect("core:journal_upload", pk=pk)
 
             # Apply learned mappings (same pattern as TB import)
-            staged_lines = _apply_journal_learned_mappings(fy.entity, raw_lines)
+            staged_lines = _apply_journal_learned_mappings(fy, raw_lines)
 
             # Store in session for the review wizard
             request.session["staged_journal_upload"] = {
@@ -10331,6 +11147,11 @@ def journal_upload(request, pk):
                 "filename": uploaded_file.name,
                 "lines": staged_lines,
             }
+            # Force session save to DB before redirect so the next
+            # request (possibly handled by a different Gunicorn worker)
+            # can read the staged data from the database backend.
+            request.session.modified = True
+            request.session.save()
 
             return redirect("core:review_journal_upload", pk=pk)
         except Exception as e:
@@ -10449,10 +11270,18 @@ def _parse_journal_excel(fy, file):
     return raw_lines
 
 
-def _apply_journal_learned_mappings(entity, raw_lines):
+def _apply_journal_learned_mappings(fy, raw_lines):
     """Apply learned mappings and entity COA matching to parsed journal lines.
     Returns a list of staged line dicts ready for the review wizard.
-    Same pattern as _apply_tb_learned_mappings."""
+
+    Account name resolution priority:
+      1. Existing TrialBalanceLine for this financial year (source of truth —
+         matches what is already displayed on the TB).
+      2. Entity COA (EntityChartOfAccount) — used for accounts not yet in the TB.
+      3. Raw Excel name — last resort for genuinely new accounts.
+    """
+    entity = fy.entity
+
     existing_mappings = {
         cam.client_account_code: cam
         for cam in ClientAccountMapping.objects.filter(entity=entity)
@@ -10463,13 +11292,35 @@ def _apply_journal_learned_mappings(entity, raw_lines):
         for ea in EntityChartOfAccount.objects.filter(entity=entity)
         .select_related("maps_to")
     }
+    # Build a lookup of canonical account names from the existing (non-adjustment)
+    # TB lines for this financial year.  These are the names already displayed on
+    # the TB and are the source of truth.
+    tb_names = {
+        tbl["account_code"].lower(): tbl["account_name"]
+        for tbl in TrialBalanceLine.objects.filter(
+            financial_year=fy, is_adjustment=False
+        ).values("account_code", "account_name").distinct()
+    }
+
     staged = []
     for line in raw_lines:
         code = line["account_code"]
         cam = existing_mappings.get(code)
+
+        # Resolve the canonical account name:
+        #   1. Use the existing TB name if the account is already in the TB.
+        #   2. Fall back to the entity COA name for accounts not yet in the TB.
+        #   3. Fall back to the raw Excel name for genuinely new accounts.
+        tb_name = tb_names.get(code.lower())
+        if tb_name:
+            resolved_name = tb_name
+        else:
+            ea_lookup = entity_coa.get(code.lower())
+            resolved_name = (ea_lookup.account_name if ea_lookup else None) or line["account_name"]
+
         staged_line = {
             "account_code": code,
-            "account_name": line["account_name"],
+            "account_name": resolved_name,
             "description": line.get("description", ""),
             "journal_date": line.get("journal_date", ""),
             "debit": line["debit"],
@@ -10492,10 +11343,9 @@ def _apply_journal_learned_mappings(entity, raw_lines):
         ea = entity_coa.get(code.lower())
         if ea:
             staged_line["entity_acct_code"] = ea.account_code
-            staged_line["entity_acct_name"] = ea.account_name
-            # Update account_name if it's still just the raw code
-            if staged_line["account_name"] == code or not staged_line["account_name"]:
-                staged_line["account_name"] = ea.account_name
+            # Use the TB name for the entity account display if available,
+            # since the TB is the source of truth and the COA may be stale.
+            staged_line["entity_acct_name"] = tb_names.get(code.lower()) or ea.account_name
             if staged_line["confidence"] == "new":
                 staged_line["confidence"] = "matched"
             if ea.maps_to and not staged_line["mapped_id"]:
@@ -10719,9 +11569,12 @@ def net_profit_api(request, pk):
     pl_sections = {'Income', 'Cost of Sales', 'Expenses'}
     pl_dr = Decimal('0')
     pl_cr = Decimal('0')
-
     for line in tb_lines:
-        if line.mapped_line_item:
+        # HARD RULE: HandiLedger numeric code range is authoritative for section.
+        hl_section = _hl_section_for_code(line.account_code)
+        if hl_section:
+            display_section = hl_section
+        elif line.mapped_line_item:
             raw_section = line.mapped_line_item.statement_section
             display_section = SECTION_DISPLAY.get(raw_section, raw_section)
         else:

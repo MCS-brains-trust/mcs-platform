@@ -114,6 +114,7 @@ urlpatterns = [
     path("journals/<uuid:pk>/", views.journal_detail, name="journal_detail"),
     path("journals/<uuid:pk>/post/", views.journal_post, name="journal_post"),
     path("journals/<uuid:pk>/delete/", views.journal_delete, name="journal_delete"),
+    path("journals/<uuid:pk>/edit/", views.journal_edit, name="journal_edit"),
     path("years/<uuid:pk>/accounts-api/", views.account_list_api, name="account_list_api"),
     path("years/<uuid:pk>/journals/pdf/", views.journals_pdf, name="journals_pdf"),
     path("years/<uuid:pk>/journals/upload/", views.journal_upload, name="journal_upload"),
@@ -217,10 +218,13 @@ urlpatterns = [
 
     # Depreciation
     path("years/<uuid:pk>/depreciation/add/", views.depreciation_add, name="depreciation_add"),
+    path("years/<uuid:pk>/depreciation/suggest-account-code/", views.depreciation_suggest_account_code, name="depreciation_suggest_account_code"),
+    path("years/<uuid:pk>/depreciation/create-account/", views.depreciation_create_account, name="depreciation_create_account"),
     path("depreciation/<uuid:pk>/edit/", views.depreciation_edit, name="depreciation_edit"),
     path("depreciation/<uuid:pk>/delete/", views.depreciation_delete, name="depreciation_delete"),
     path("years/<uuid:pk>/depreciation/roll-forward/", views.depreciation_roll_forward, name="depreciation_roll_forward"),
     path("years/<uuid:pk>/depreciation/post-to-tb/", views.depreciation_post_to_tb, name="depreciation_post_to_tb"),
+    path("years/<uuid:pk>/depreciation/pdf/", views.depreciation_pdf, name="depreciation_pdf"),
     path("depreciation/add-from-transaction/<uuid:pk>/", views.depreciation_add_from_transaction, name="depreciation_add_from_transaction"),
 
     # Stock
@@ -365,6 +369,8 @@ urlpatterns = [
     path("api/financial-years/<uuid:pk>/eva-review/", eva_engine.eva_review_detail, name="eva_review_detail"),
     path("api/financial-years/<uuid:pk>/eva-review-status/", eva_engine.eva_review_status, name="eva_review_status"),
     path("api/eva-findings/<uuid:pk>/resolve/", eva_engine.eva_finding_resolve, name="eva_resolve_finding"),
+    path("api/eva-findings/<uuid:pk>/clarify/", eva_engine.eva_clarify_finding, name="eva_clarify_finding"),
+    path("api/eva-findings/<uuid:pk>/clarify-question/", eva_engine.eva_clarification_question, name="eva_clarification_question"),
     path("api/financial-years/<uuid:pk>/eva-preflight/", eva_engine.eva_preflight, name="eva_preflight"),
     path("api/financial-years/<uuid:pk>/eva-rerun/", views_eva.eva_rerun_review, name="eva_rerun_review"),
     path("api/financial-years/<uuid:pk>/eva-finalise/", views_eva.eva_finalise, name="eva_finalise"),

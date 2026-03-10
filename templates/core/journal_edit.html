@@ -1,18 +1,29 @@
 {% extends "base.html" %}
-{% block title %}Create Journal Entry - StatementHub{% endblock %}
+{% block title %}Edit {{ journal.reference_number }} - StatementHub{% endblock %}
 {% block content %}
 <div class="row">
     <div class="col-lg-10 mx-auto">
         <nav aria-label="breadcrumb">
             <ol class="breadcrumb">
-                <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy.entity.entity_name }} - {{ fy.year_label }}</a></li>
-                <li class="breadcrumb-item active">Create Journal Entry</li>
+                <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy.year_label }}</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'core:journal_detail' pk=journal.pk %}">{{ journal.reference_number }}</a></li>
+                <li class="breadcrumb-item active">Edit</li>
             </ol>
         </nav>
+
+        <div class="alert alert-warning d-flex align-items-center gap-2 py-2">
+            <i class="bi bi-exclamation-triangle-fill"></i>
+            <span>You are editing a <strong>posted</strong> journal. The Trial Balance will be recalculated on save. All changes are logged for audit purposes.</span>
+        </div>
+
         <div class="card">
             <div class="card-header">
-                <h5 class="mb-0"><i class="bi bi-journal-plus"></i> Create Journal Entry</h5>
-                <small class="text-muted">Journals are posted directly to the Trial Balance.</small>
+                <h5 class="mb-0">
+                    <i class="bi bi-pencil-square"></i>
+                    Edit {{ journal.reference_number }}
+                </h5>
             </div>
             <div class="card-body">
                 <form method="post" id="journal-form">
@@ -105,12 +116,12 @@
                             <i class="bi bi-plus-lg"></i> Add Line
                         </button>
                         <div class="d-flex gap-2">
-                            <button type="submit" class="btn btn-primary" id="postBtn">
-                                <i class="bi bi-check-circle" id="postIcon"></i>
-                                <span class="spinner-border spinner-border-sm d-none" id="postSpinner" role="status" aria-hidden="true"></span>
-                                <span id="postBtnText">Post to Trial Balance</span>
+                            <button type="submit" class="btn btn-warning" id="saveBtn">
+                                <i class="bi bi-check-circle" id="saveIcon"></i>
+                                <span class="spinner-border spinner-border-sm d-none" id="saveSpinner" role="status" aria-hidden="true"></span>
+                                <span id="saveBtnText">Save Changes &amp; Recalculate TB</span>
                             </button>
-                            <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary" id="cancelBtn">Cancel</a>
+                            <a href="{% url 'core:journal_detail' pk=journal.pk %}" class="btn btn-outline-secondary" id="cancelBtn">Cancel</a>
                         </div>
                     </div>
                 </form>
@@ -142,25 +153,10 @@
 .account-dropdown-empty {
     padding: 8px 10px; font-size: 0.85rem; color: #6c757d; font-style: italic;
 }
-.account-dropdown-create {
-    padding: 8px 10px; font-size: 0.85rem; color: #0d6efd; cursor: pointer;
-    border-top: 1px solid #dee2e6; font-weight: 500;
-}
-.account-dropdown-create:hover { background-color: #e9f0ff; }
-.account-create-panel {
-    border: 1px solid #dee2e6; border-radius: .375rem;
-    background: #f8f9fa; padding: 10px; margin-top: 4px;
-    display: none; position: absolute; z-index: 1060;
-    width: 340px; box-shadow: 0 4px 12px rgba(0,0,0,.15);
-}
-.account-create-panel.show { display: block; }
 </style>
 
 <script>
-// Account data from server
 const ACCOUNTS = {{ accounts|safe }};
-
-// Normalise account data
 const ACCOUNT_LIST = ACCOUNTS.map(function(acc) {
     return {
         code: acc.client_account_code || acc.code || '',
@@ -168,31 +164,19 @@ const ACCOUNT_LIST = ACCOUNTS.map(function(acc) {
     };
 });
 
-const JOURNAL_SUGGEST_URL = '{% url "core:depreciation_suggest_account_code" pk=fy.pk %}';
-const JOURNAL_CREATE_URL  = '{% url "core:depreciation_create_account" pk=fy.pk %}';
-const JOURNAL_CSRF        = '{{ csrf_token }}';
-
 document.addEventListener('DOMContentLoaded', function() {
 
-    // ---- Searchable Account Picker ----
     function createAccountPicker(container) {
         const row = container.closest('tr');
-
-        // Find the ORIGINAL inputs (may be in this td or the next td)
         const origCodeInput = row.querySelector('[name$="-account_code"]');
         const origNameInput = row.querySelector('[name$="-account_name"]');
-
-        // Capture existing values and names before we touch the DOM
         const codeName = origCodeInput ? origCodeInput.name : '';
         const nameFieldName = origNameInput ? origNameInput.name : '';
         const codeValue = origCodeInput ? origCodeInput.value : '';
         const nameValue = origNameInput ? origNameInput.value : '';
-
-        // Remove ALL original inputs from the DOM (they may be in different tds)
         if (origCodeInput) origCodeInput.remove();
         if (origNameInput) origNameInput.remove();
 
-        // Create fresh hidden inputs that will carry the form values
         const hiddenCode = document.createElement('input');
         hiddenCode.type = 'hidden';
         hiddenCode.name = codeName;
@@ -205,39 +189,32 @@ document.addEventListener('DOMContentLoaded', function() {
         hiddenName.value = nameValue;
         hiddenName.className = 'account-name-hidden';
 
-        // Create the visible search input
         const input = document.createElement('input');
         input.type = 'text';
         input.className = 'form-control form-control-sm account-picker-input';
         input.placeholder = 'Type code or name...';
         input.autocomplete = 'off';
 
-        // Pre-fill if editing
         if (codeValue) {
             const match = ACCOUNT_LIST.find(a => a.code === codeValue);
             input.value = match ? codeValue + ' - ' + match.name : codeValue;
         }
 
-        // Create dropdown
         const dropdown = document.createElement('div');
         dropdown.className = 'account-dropdown';
 
-        // Build the wrapper
         const wrapper = document.createElement('div');
         wrapper.className = 'account-picker-wrapper';
         wrapper.appendChild(input);
         wrapper.appendChild(dropdown);
 
-        // Clear the container and rebuild with wrapper + hidden fields
         container.innerHTML = '';
         container.appendChild(wrapper);
         container.appendChild(hiddenCode);
         container.appendChild(hiddenName);
 
-        // Use local references for selectAccount
         const codeInput = hiddenCode;
         const nameInput = hiddenName;
-
         let activeIndex = -1;
 
         function renderDropdown(filter) {
@@ -249,120 +226,24 @@ document.addEventListener('DOMContentLoaded', function() {
                     a.code.toLowerCase().includes(query) ||
                     a.name.toLowerCase().includes(query))
                 : ACCOUNT_LIST;
-
             if (matches.length === 0) {
                 dropdown.innerHTML = '<div class="account-dropdown-empty">No matching accounts</div>';
             } else {
-                matches.forEach(function(acc, i) {
+                matches.forEach(function(acc) {
                     const item = document.createElement('div');
                     item.className = 'account-dropdown-item';
                     item.dataset.code = acc.code;
                     item.dataset.name = acc.name;
                     item.innerHTML = '<code>' + acc.code + '</code> ' + acc.name;
                     item.addEventListener('mousedown', function(e) {
-                        e.preventDefault(); // Prevent blur
+                        e.preventDefault();
                         selectAccount(acc);
                     });
                     dropdown.appendChild(item);
                 });
             }
-            // Always append "Create new account" option at the bottom
-            const createItem = document.createElement('div');
-            createItem.className = 'account-dropdown-create';
-            createItem.innerHTML = '<i class="bi bi-plus-circle me-1"></i> Create new account…';
-            createItem.addEventListener('mousedown', function(e) {
-                e.preventDefault();
-                dropdown.classList.remove('show');
-                showCreatePanel(input.value.trim());
-            });
-            dropdown.appendChild(createItem);
             dropdown.classList.add('show');
         }
-
-        // ---- Inline Create Account Panel ----
-        const panelId = 'cp_' + Math.random().toString(36).slice(2);
-        const createPanel = document.createElement('div');
-        createPanel.className = 'account-create-panel';
-        createPanel.innerHTML =
-            '<div class="mb-2 fw-semibold" style="font-size:0.85rem;"><i class="bi bi-plus-circle me-1"></i>Create New Account</div>' +
-            '<input type="text" class="form-control form-control-sm mb-1 cp-name-input" placeholder="Account name (e.g. Legal fees)">' +
-            '<div class="input-group input-group-sm mb-2">' +
-            '  <span class="input-group-text">Code</span>' +
-            '  <input type="text" class="form-control cp-code-input" placeholder="Suggested…">' +
-            '</div>' +
-            '<div class="d-flex gap-1">' +
-            '  <button type="button" class="btn btn-sm btn-primary cp-confirm"><i class="bi bi-check-lg"></i> Create</button>' +
-            '  <button type="button" class="btn btn-sm btn-outline-secondary cp-cancel"><i class="bi bi-x-lg"></i> Cancel</button>' +
-            '</div>';
-        wrapper.appendChild(createPanel);
-        const cpNameInput = createPanel.querySelector('.cp-name-input');
-        const cpCodeInput = createPanel.querySelector('.cp-code-input');
-        let cpSuggestTimer;
-        function showCreatePanel(prefill) {
-            cpNameInput.value = prefill || '';
-            cpCodeInput.value = '';
-            createPanel.classList.add('show');
-            cpNameInput.focus();
-            if (prefill) triggerSuggest(prefill);
-        }
-        function triggerSuggest(name) {
-            clearTimeout(cpSuggestTimer);
-            cpSuggestTimer = setTimeout(function() {
-                fetch(JOURNAL_SUGGEST_URL + '?name=' + encodeURIComponent(name) + '&section=auto', {
-                    headers: { 'X-Requested-With': 'XMLHttpRequest' }
-                })
-                .then(function(r) { return r.json(); })
-                .then(function(d) { if (d.suggested_code) cpCodeInput.value = d.suggested_code; })
-                .catch(function() {});
-            }, 350);
-        }
-        cpNameInput.addEventListener('input', function() { triggerSuggest(this.value); });
-        createPanel.querySelector('.cp-cancel').addEventListener('click', function() {
-            createPanel.classList.remove('show');
-            input.focus();
-        });
-        createPanel.querySelector('.cp-confirm').addEventListener('click', function() {
-            const name = cpNameInput.value.trim();
-            const code = cpCodeInput.value.trim();
-            if (!name || !code) { cpNameInput.focus(); return; }
-            const btn = this;
-            btn.disabled = true;
-            btn.textContent = 'Creating…';
-            fetch(JOURNAL_CREATE_URL, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': JOURNAL_CSRF,
-                    'X-Requested-With': 'XMLHttpRequest'
-                },
-                body: JSON.stringify({ name: name, code: code, section: 'auto' })
-            })
-            .then(function(r) { return r.json(); })
-            .then(function(d) {
-                if (d.success) {
-                    const newAcc = { code: d.code, name: d.name };
-                    ACCOUNT_LIST.push(newAcc);
-                    ACCOUNT_LIST.sort(function(a, b) { return a.code.localeCompare(b.code); });
-                    selectAccount(newAcc);
-                    createPanel.classList.remove('show');
-                } else {
-                    alert(d.error || 'Could not create account.');
-                    btn.disabled = false;
-                    btn.innerHTML = '<i class="bi bi-check-lg"></i> Create';
-                }
-            })
-            .catch(function() {
-                alert('Network error. Please try again.');
-                btn.disabled = false;
-                btn.innerHTML = '<i class="bi bi-check-lg"></i> Create';
-            });
-        });
-        // Close panel on outside click
-        document.addEventListener('mousedown', function(e) {
-            if (!createPanel.contains(e.target) && e.target !== input) {
-                createPanel.classList.remove('show');
-            }
-        });
 
         function selectAccount(acc) {
             input.value = acc.code + ' - ' + acc.name;
@@ -371,18 +252,9 @@ document.addEventListener('DOMContentLoaded', function() {
             dropdown.classList.remove('show');
         }
 
-        input.addEventListener('focus', function() {
-            renderDropdown(input.value.split(' - ')[0]);
-        });
-
-        input.addEventListener('input', function() {
-            renderDropdown(input.value);
-        });
-
-        input.addEventListener('blur', function() {
-            setTimeout(function() { dropdown.classList.remove('show'); }, 150);
-        });
-
+        input.addEventListener('focus', function() { renderDropdown(input.value.split(' - ')[0]); });
+        input.addEventListener('input', function() { renderDropdown(input.value); });
+        input.addEventListener('blur', function() { setTimeout(function() { dropdown.classList.remove('show'); }, 150); });
         input.addEventListener('keydown', function(e) {
             const items = dropdown.querySelectorAll('.account-dropdown-item');
             if (e.key === 'ArrowDown') {
@@ -398,36 +270,43 @@ document.addEventListener('DOMContentLoaded', function() {
             } else if (e.key === 'Enter') {
                 e.preventDefault();
                 if (activeIndex >= 0 && items[activeIndex]) {
-                    const code = items[activeIndex].dataset.code;
-                    const name = items[activeIndex].dataset.name;
-                    selectAccount({ code, name });
+                    selectAccount({ code: items[activeIndex].dataset.code, name: items[activeIndex].dataset.name });
                 }
             } else if (e.key === 'Escape') {
                 dropdown.classList.remove('show');
                 input.blur();
             } else if (e.key === 'Tab') {
-                // Auto-select first match on Tab if there's a filter
                 if (items.length > 0 && input.value) {
-                    const code = items[0].dataset.code;
-                    const name = items[0].dataset.name;
-                    selectAccount({ code, name });
+                    selectAccount({ code: items[0].dataset.code, name: items[0].dataset.name });
                 }
                 dropdown.classList.remove('show');
             }
         });
-
         return { input, dropdown, wrapper };
     }
 
-    // Initialize existing pickers
     document.querySelectorAll('.account-picker-container').forEach(function(container) {
         createAccountPicker(container);
     });
 
-    // Debit/Credit calculation
-    // Format number with commas (e.g. 211557.68 -> 211,557.68)
     function fmtNum(n) {
         return n.toLocaleString('en-AU', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    }
+
+    function parseRaw(val) {
+        if (!val) return 0;
+        return parseFloat(val.replace(/,/g, '')) || 0;
+    }
+
+    function formatField(el) {
+        var num = parseRaw(el.value);
+        el.value = num === 0 ? '0' : fmtNum(num);
+    }
+
+    function stripField(el) {
+        var num = parseRaw(el.value);
+        el.value = num === 0 ? '' : num.toFixed(2);
+        el.select();
     }
 
     function updateTotals() {
@@ -435,115 +314,60 @@ document.addEventListener('DOMContentLoaded', function() {
         document.querySelectorAll('.journal-line-row').forEach(function(row) {
             const delCheck = row.querySelector('[name$="-DELETE"]');
             if (delCheck && delCheck.checked) return;
-            const dr = parseRaw(row.querySelector('[name$="-debit"]')?.value);
-            const cr = parseRaw(row.querySelector('[name$="-credit"]')?.value);
-            totalDr += dr;
-            totalCr += cr;
+            totalDr += parseRaw(row.querySelector('[name$="-debit"]')?.value);
+            totalCr += parseRaw(row.querySelector('[name$="-credit"]')?.value);
         });
         document.getElementById('total-debit').textContent = '$' + fmtNum(totalDr);
         document.getElementById('total-credit').textContent = '$' + fmtNum(totalCr);
-
         const indicator = document.getElementById('balance-indicator');
         const saveBtn = document.querySelector('button[type="submit"]');
         const diff = Math.abs(totalDr - totalCr);
         if (totalDr === 0 && totalCr === 0) {
             indicator.textContent = '';
             saveBtn.disabled = true;
-            saveBtn.title = 'Enter at least one debit and credit line';
         } else if (diff < 0.01) {
             indicator.innerHTML = '<span class="text-success"><i class="bi bi-check-circle"></i> Balanced</span>';
             saveBtn.disabled = false;
-            saveBtn.title = '';
         } else {
             indicator.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle"></i> Out of balance by $' + fmtNum(diff) + '</span>';
             saveBtn.disabled = true;
-            saveBtn.title = 'Journal must balance before saving — Dr $' + fmtNum(totalDr) + ' ≠ Cr $' + fmtNum(totalCr);
         }
-    }
-
-    // Parse a possibly comma-formatted string to a raw number
-    function parseRaw(val) {
-        if (!val) return 0;
-        return parseFloat(val.replace(/,/g, '')) || 0;
-    }
-
-    // Format a field value with commas on blur
-    function formatField(el) {
-        var num = parseRaw(el.value);
-        if (num === 0) {
-            el.value = '0';
-        } else {
-            el.value = fmtNum(num);
-        }
-    }
-
-    // Strip commas on focus so user can type freely
-    function stripField(el) {
-        var num = parseRaw(el.value);
-        if (num === 0) {
-            el.value = '';
-        } else {
-            el.value = num.toFixed(2);
-        }
-        el.select();
     }
 
     document.addEventListener('focus', function(e) {
-        if (e.target.classList && e.target.classList.contains('dr-cr-field')) {
-            stripField(e.target);
-        }
+        if (e.target.classList && e.target.classList.contains('dr-cr-field')) stripField(e.target);
     }, true);
-
     document.addEventListener('blur', function(e) {
-        if (e.target.classList && e.target.classList.contains('dr-cr-field')) {
-            formatField(e.target);
-            updateTotals();
-        }
+        if (e.target.classList && e.target.classList.contains('dr-cr-field')) { formatField(e.target); updateTotals(); }
     }, true);
-
     document.addEventListener('change', function(e) {
-        if (e.target.name && e.target.name.endsWith('-DELETE')) {
-            updateTotals();
-        }
+        if (e.target.name && e.target.name.endsWith('-DELETE')) updateTotals();
     });
 
-    // Before form submit:
-    // 1. Strip commas from all dr/cr fields so Django gets clean numbers
-    // 2. Auto-mark empty rows for deletion so Django skips them
-    // 3. Clear debit/credit on empty rows so Django doesn't think they have data
     document.getElementById('journal-form').addEventListener('submit', function(e) {
-        // Strip commas from all dr/cr fields
         document.querySelectorAll('.dr-cr-field').forEach(function(el) {
             el.value = parseRaw(el.value).toFixed(2);
         });
-
-        // Show spinner and disable button
-        var postBtn = document.getElementById('postBtn');
-        var postIcon = document.getElementById('postIcon');
-        var postSpinner = document.getElementById('postSpinner');
-        var postBtnText = document.getElementById('postBtnText');
+        var saveBtn = document.getElementById('saveBtn');
+        var saveIcon = document.getElementById('saveIcon');
+        var saveSpinner = document.getElementById('saveSpinner');
+        var saveBtnText = document.getElementById('saveBtnText');
         var cancelBtn = document.getElementById('cancelBtn');
-        if (postBtn) {
-            postBtn.disabled = true;
-            if (postIcon) postIcon.classList.add('d-none');
-            if (postSpinner) postSpinner.classList.remove('d-none');
-            if (postBtnText) postBtnText.textContent = 'Posting... Please wait';
+        if (saveBtn) {
+            saveBtn.disabled = true;
+            if (saveIcon) saveIcon.classList.add('d-none');
+            if (saveSpinner) saveSpinner.classList.remove('d-none');
+            if (saveBtnText) saveBtnText.textContent = 'Saving... Please wait';
             if (cancelBtn) cancelBtn.classList.add('disabled');
         }
-
-        // Auto-mark empty rows for deletion
         document.querySelectorAll('.journal-line-row').forEach(function(row) {
-            var codeInput = row.querySelector('.account-code-hidden') ||
-                            row.querySelector('[name$="-account_code"]');
+            var codeInput = row.querySelector('.account-code-hidden') || row.querySelector('[name$="-account_code"]');
             var code = codeInput ? codeInput.value.trim() : '';
             var dr = parseRaw(row.querySelector('[name$="-debit"]')?.value);
             var cr = parseRaw(row.querySelector('[name$="-credit"]')?.value);
-
-            // If no account code and no amounts, mark for deletion
             if (!code && dr === 0 && cr === 0) {
                 var delCheck = row.querySelector('[name$="-DELETE"]');
                 if (delCheck) delCheck.checked = true;
-                // Also clear the debit/credit to ensure Django sees this as truly empty
                 var debitEl = row.querySelector('[name$="-debit"]');
                 var creditEl = row.querySelector('[name$="-credit"]');
                 if (debitEl) debitEl.value = '';
@@ -552,68 +376,12 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
-    // Format existing fields on page load
-    document.querySelectorAll('.dr-cr-field').forEach(function(el) {
-        formatField(el);
-    });
+    document.querySelectorAll('.dr-cr-field').forEach(function(el) { formatField(el); });
 
-    // ===== Tab key: Debit <-> Credit navigation on same row =====
-    // Tab from Debit goes to Credit on same row.
-    // Shift+Tab from Credit goes back to Debit on same row.
-    // Tab from Credit: if neither debit nor credit has a non-zero value,
-    //   trap focus back to Debit (user must enter a figure before moving on).
-    //   If a figure exists, allow default tab to next row.
-    document.addEventListener('keydown', function(e) {
-        if (e.key !== 'Tab') return;
-        var el = e.target;
-        if (!el.name) return;
-        var row = el.closest('.journal-line-row');
-        if (!row) return;
-
-        var debitEl = row.querySelector('[name$="-debit"]');
-        var creditEl = row.querySelector('[name$="-credit"]');
-        var drVal = parseRaw(debitEl ? debitEl.value : '0');
-        var crVal = parseRaw(creditEl ? creditEl.value : '0');
-        var hasValue = (drVal !== 0 || crVal !== 0);
-
-        if (el.name.endsWith('-debit') && !e.shiftKey) {
-            // Tab from Debit -> go to Credit on same row
-            e.preventDefault();
-            if (creditEl) { creditEl.focus(); creditEl.select(); }
-        } else if (el.name.endsWith('-credit') && e.shiftKey) {
-            // Shift+Tab from Credit -> go back to Debit on same row
-            e.preventDefault();
-            if (debitEl) { debitEl.focus(); debitEl.select(); }
-        } else if (el.name.endsWith('-credit') && !e.shiftKey) {
-            // Tab from Credit
-            if (!hasValue) {
-                // No figure entered — trap back to Debit
-                e.preventDefault();
-                if (debitEl) { debitEl.focus(); debitEl.select(); }
-            } else {
-                // Check if this is the last visible (non-deleted) row
-                var allRows = Array.from(document.querySelectorAll('.journal-line-row'));
-                var visibleRows = allRows.filter(function(r) {
-                    var del = r.querySelector('[name$="-DELETE"]');
-                    return !del || !del.checked;
-                });
-                var isLastRow = visibleRows.length > 0 && visibleRows[visibleRows.length - 1] === row;
-                if (isLastRow) {
-                    // Auto-add a new line and focus its account picker
-                    e.preventDefault();
-                    document.getElementById('add-line-btn').click();
-                }
-                // else: allow default tab to next row
-            }
-        }
-    });
-
-    // Add line button
     document.getElementById('add-line-btn').addEventListener('click', function() {
         const totalForms = document.getElementById('id_lines-TOTAL_FORMS');
         const idx = parseInt(totalForms.value);
         const tbody = document.getElementById('line-tbody');
-
         const tr = document.createElement('tr');
         tr.className = 'journal-line-row';
         tr.innerHTML = `
@@ -643,19 +411,13 @@ document.addEventListener('DOMContentLoaded', function() {
             </td>
         `;
         tbody.appendChild(tr);
-
-        // Initialize searchable account picker on the new row
         const container = tr.querySelector('.account-picker-container');
         createAccountPicker(container);
-
         totalForms.value = idx + 1;
-
-        // Focus the new account picker input
         const newInput = container.querySelector('.account-picker-input');
         if (newInput) newInput.focus();
     });
 
-    // Initial totals
     updateTotals();
 });
 </script>

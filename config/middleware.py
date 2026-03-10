@@ -1,6 +1,7 @@
 """
 Custom middleware for security enforcement.
 """
+import ipaddress
 from django.http import JsonResponse
 from django.shortcuts import redirect
 from django.urls import reverse
@@ -68,5 +69,48 @@ class Require2FAMiddleware:
                             status=403,
                         )
                     return redirect(reverse("accounts:setup_2fa"))
+
+        return self.get_response(request)
+
+
+class SetRemoteAddrFromForwardedFor:
+    """
+    Populates REMOTE_ADDR from the first valid IP in the X-Forwarded-For header
+    when the server is running behind a reverse proxy (e.g. Nginx) and
+    REMOTE_ADDR is empty or not a valid IP address.
+
+    This is required because django-ratelimit uses REMOTE_ADDR to key
+    per-IP rate limits. When Gunicorn sits behind Nginx via a Unix socket,
+    REMOTE_ADDR can be empty, causing a ValueError in ip_network() and a
+    500 error on every request that hits a rate-limited view.
+
+    Security note: Only the *first* IP in X-Forwarded-For is used (the
+    client-supplied value). This is safe only when Nginx is the sole entry
+    point and is configured to set/overwrite X-Forwarded-For with
+    $proxy_add_x_forwarded_for (which prepends the real client IP).
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        remote_addr = request.META.get("REMOTE_ADDR", "")
+        # Only intervene when REMOTE_ADDR is missing or not a valid IP.
+        try:
+            if remote_addr:
+                ipaddress.ip_address(remote_addr)
+        except ValueError:
+            remote_addr = ""
+
+        if not remote_addr:
+            forwarded_for = request.META.get("HTTP_X_FORWARDED_FOR", "")
+            if forwarded_for:
+                # X-Forwarded-For may be a comma-separated list; take the first.
+                candidate = forwarded_for.split(",")[0].strip()
+                try:
+                    ipaddress.ip_address(candidate)
+                    request.META["REMOTE_ADDR"] = candidate
+                except ValueError:
+                    pass  # Leave REMOTE_ADDR as-is; ratelimit will raise its own error.
 
         return self.get_response(request)

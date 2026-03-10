@@ -951,7 +951,7 @@ def resolve_eva_finding(finding, user, resolution_note):
     from core.models import EvaFinding
     from core.models import AuditLog
 
-    finding.status = EvaFinding.Status.ADDRESSED
+    finding.status = EvaFinding.FindingStatus.ADDRESSED
     finding.resolution_note = resolution_note
     finding.resolved_by = user
     finding.resolved_at = timezone.now()
@@ -975,7 +975,7 @@ def resolve_eva_finding(finding, user, resolution_note):
 
     # Check if all findings are now addressed
     review = finding.eva_review
-    open_count = review.findings.filter(status=EvaFinding.Status.OPEN).count()
+    open_count = review.findings.filter(status=EvaFinding.FindingStatus.OPEN).count()
     should_rerun = (open_count == 0)
 
     return finding, should_rerun
@@ -1428,3 +1428,295 @@ def sync_knowledge_brain(limit=0):
 
     logger.info(f"Knowledge Brain sync complete: {stats}")
     return stats
+
+
+# ===========================================================================
+# Interactive Clarification System
+# ===========================================================================
+
+CLARIFICATION_QUESTIONS = {
+    "div7a": {
+        "question_id": "div7a_borrower_type",
+        "question_text": (
+            "Eva has flagged a potential Division 7A issue for the loan account "
+            "**\"{account_name}\"**. To help Eva assess this accurately, please "
+            "confirm: who is the borrower?"
+        ),
+        "options": [
+            {
+                "value": "related_company",
+                "label": "Related Company (Pty Ltd)",
+                "outcome_hint": "dismiss",
+                "outcome_message": (
+                    "Division 7A does not apply to loans between companies. "
+                    "This finding has been dismissed. Eva will remember this "
+                    "for future reviews of this entity."
+                ),
+                "learning_note": (
+                    "Borrower confirmed as a related company — Div 7A does not apply. "
+                    "Dismiss Div 7A findings for this account in future reviews."
+                ),
+            },
+            {
+                "value": "director_shareholder",
+                "label": "Director / Shareholder (individual)",
+                "outcome_hint": "confirm",
+                "outcome_message": (
+                    "Loans to directors and shareholders are subject to Division 7A. "
+                    "This finding has been confirmed as requiring attention. "
+                    "A complying loan agreement or repayment is required before lodgement day."
+                ),
+                "learning_note": (
+                    "Borrower confirmed as a director/shareholder — Div 7A applies. "
+                    "Confirm Div 7A findings for this account in future reviews."
+                ),
+            },
+            {
+                "value": "associate_spouse",
+                "label": "Associate / Spouse / Family Member",
+                "outcome_hint": "confirm",
+                "outcome_message": (
+                    "Loans to associates of shareholders (including spouses and family members) "
+                    "are subject to Division 7A under s 109 ITAA 1936. "
+                    "This finding has been confirmed as critical."
+                ),
+                "learning_note": (
+                    "Borrower confirmed as an associate/spouse — Div 7A applies. "
+                    "Confirm Div 7A findings for this account in future reviews."
+                ),
+            },
+            {
+                "value": "trust",
+                "label": "Trust (discretionary or unit)",
+                "outcome_hint": "needs_review",
+                "outcome_message": (
+                    "Loans to trusts can attract Division 7A if the trust has a "
+                    "shareholder or associate as a beneficiary. This finding has been "
+                    "flagged for further review — please check whether a UPE sub-trust "
+                    "arrangement or complying loan agreement is in place."
+                ),
+                "learning_note": (
+                    "Borrower confirmed as a trust — Div 7A may apply depending on "
+                    "beneficiary composition. Flag for further review in future."
+                ),
+            },
+            {
+                "value": "employee_arm_length",
+                "label": "Employee (arm's length, not a shareholder/associate)",
+                "outcome_hint": "reduce_severity",
+                "outcome_message": (
+                    "Loans to employees who are not shareholders or associates are "
+                    "generally not subject to Division 7A. This finding has been "
+                    "reduced to Advisory pending confirmation that the employee has "
+                    "no shareholding or associate relationship."
+                ),
+                "learning_note": (
+                    "Borrower confirmed as an arm's length employee — Div 7A unlikely. "
+                    "Reduce severity for this account in future reviews."
+                ),
+            },
+        ],
+    },
+    "related_party": {
+        "question_id": "related_party_arm_length",
+        "question_text": (
+            "Eva has flagged a related party transaction for **\"{account_name}\"**. "
+            "Was this transaction conducted at arm's length (i.e., on commercial terms "
+            "that would apply between independent parties)?"
+        ),
+        "options": [
+            {
+                "value": "arm_length_documented",
+                "label": "Yes — arm's length, documented",
+                "outcome_hint": "dismiss",
+                "outcome_message": (
+                    "Arm's length related party transactions are generally acceptable. "
+                    "This finding has been dismissed. Ensure the documentation is "
+                    "retained on file."
+                ),
+                "learning_note": "Related party transaction confirmed as arm's length with documentation.",
+            },
+            {
+                "value": "arm_length_undocumented",
+                "label": "Yes — arm's length, but not formally documented",
+                "outcome_hint": "reduce_severity",
+                "outcome_message": (
+                    "The transaction appears arm's length but lacks formal documentation. "
+                    "This finding has been reduced to Advisory. Consider preparing a "
+                    "written agreement or board minute to support the pricing."
+                ),
+                "learning_note": "Related party transaction arm's length but undocumented — advisory.",
+            },
+            {
+                "value": "not_arm_length",
+                "label": "No — not at arm's length",
+                "outcome_hint": "confirm",
+                "outcome_message": (
+                    "Non-arm's length related party transactions may attract ATO scrutiny "
+                    "and transfer pricing adjustments. This finding has been confirmed. "
+                    "Consider whether the pricing should be adjusted or disclosed."
+                ),
+                "learning_note": "Related party transaction confirmed as not arm's length.",
+            },
+        ],
+    },
+    "super_guarantee": {
+        "question_id": "sgc_worker_classification",
+        "question_text": (
+            "Eva has identified a potential Superannuation Guarantee shortfall for "
+            "**\"{account_name}\"**. Is this worker classified as an employee for "
+            "superannuation purposes (including contractors paid mainly for labour)?"
+        ),
+        "options": [
+            {
+                "value": "employee_sgc_paid",
+                "label": "Yes — employee, SGC was paid correctly",
+                "outcome_hint": "dismiss",
+                "outcome_message": (
+                    "SGC has been confirmed as correctly paid for this worker. "
+                    "This finding has been dismissed."
+                ),
+                "learning_note": "Worker confirmed as employee with correct SGC paid.",
+            },
+            {
+                "value": "contractor_no_sgc",
+                "label": "Contractor — not subject to SGC",
+                "outcome_hint": "reduce_severity",
+                "outcome_message": (
+                    "If this worker is a genuine contractor (not a deemed employee), "
+                    "SGC may not apply. This finding has been reduced to Advisory. "
+                    "Ensure the contractor arrangement is documented and does not "
+                    "meet the results test criteria under s 12(3) SGAA 1992."
+                ),
+                "learning_note": "Worker classified as contractor — SGC may not apply.",
+            },
+            {
+                "value": "employee_sgc_underpaid",
+                "label": "Yes — employee, SGC may be underpaid",
+                "outcome_hint": "confirm",
+                "outcome_message": (
+                    "SGC underpayment is a critical compliance risk. This finding has "
+                    "been confirmed. A Superannuation Guarantee Charge (SGC) statement "
+                    "may need to be lodged with the ATO."
+                ),
+                "learning_note": "Worker confirmed as employee with potential SGC underpayment.",
+            },
+        ],
+    },
+    "trust_distribution": {
+        "question_id": "trust_resolution_status",
+        "question_text": (
+            "Eva has flagged a potential issue with trust distribution resolutions "
+            "for **\"{account_name}\"**. Has a valid distribution resolution been "
+            "passed before 30 June of the relevant income year?"
+        ),
+        "options": [
+            {
+                "value": "resolution_in_place",
+                "label": "Yes — resolution was passed before 30 June",
+                "outcome_hint": "dismiss",
+                "outcome_message": (
+                    "A valid distribution resolution is in place. This finding has "
+                    "been dismissed. Ensure the resolution is retained on file."
+                ),
+                "learning_note": "Trust distribution resolution confirmed as in place before 30 June.",
+            },
+            {
+                "value": "resolution_late",
+                "label": "Resolution passed after 30 June",
+                "outcome_hint": "confirm",
+                "outcome_message": (
+                    "A late distribution resolution may result in the trustee being "
+                    "assessed on the entire net income at the top marginal rate. "
+                    "This finding has been confirmed as critical."
+                ),
+                "learning_note": "Trust distribution resolution confirmed as late.",
+            },
+            {
+                "value": "no_resolution",
+                "label": "No resolution was passed",
+                "outcome_hint": "confirm",
+                "outcome_message": (
+                    "Without a valid distribution resolution, the trustee may be "
+                    "assessed on the entire net income at the top marginal rate under "
+                    "s 99A ITAA 1936. This finding has been confirmed as critical."
+                ),
+                "learning_note": "No trust distribution resolution — critical finding confirmed.",
+            },
+        ],
+    },
+}
+
+
+def get_clarification_question(check_name, account_name=""):
+    """
+    Return the clarification question definition for a given check_name,
+    with the account_name placeholder substituted in the question text.
+    Returns None if no clarification question is defined for this check_name.
+    """
+    defn = CLARIFICATION_QUESTIONS.get(check_name)
+    if not defn:
+        return None
+    question_text = defn["question_text"].replace("{account_name}", account_name or "this account")
+    return {
+        "question_id": defn["question_id"],
+        "question_text": question_text,
+        "options": defn["options"],
+    }
+
+
+def _reevaluate_finding(finding, clarification):
+    """
+    Re-evaluate an EvaFinding based on a submitted clarification answer.
+    Updates finding.severity, finding.confidence, and finding.status
+    based on the outcome_hint from the selected option.
+    Returns a dict with the updated finding state.
+    """
+    from core.models import EvaFinding
+
+    outcome_hint = clarification.outcome_hint
+    outcome_message = clarification.outcome_message
+
+    if outcome_hint == "dismiss":
+        finding.status = EvaFinding.FindingStatus.ADDRESSED
+        finding.resolution_note = (
+            f"[Eva Clarification] {outcome_message}\n"
+            f"Answered by: {clarification.answered_by.get_full_name() if clarification.answered_by else 'Unknown'}"
+        )
+        finding.resolved_by = clarification.answered_by
+        finding.resolved_at = timezone.now()
+        finding.save(update_fields=["status", "resolution_note", "resolved_by", "resolved_at"])
+        clarification.outcome = "dismissed"
+
+    elif outcome_hint == "confirm":
+        if finding.severity != EvaFinding.Severity.CRITICAL:
+            finding.severity = EvaFinding.Severity.CRITICAL
+        finding.confidence = EvaFinding.Confidence.HIGH
+        finding.save(update_fields=["severity", "confidence"])
+        clarification.outcome = "confirmed"
+
+    elif outcome_hint == "reduce_severity":
+        if finding.severity == EvaFinding.Severity.CRITICAL:
+            finding.severity = EvaFinding.Severity.ADVISORY
+            finding.save(update_fields=["severity"])
+        clarification.outcome = "reduced"
+
+    elif outcome_hint == "needs_review":
+        finding.confidence = EvaFinding.Confidence.MEDIUM
+        finding.save(update_fields=["confidence"])
+        clarification.outcome = "pending"
+
+    clarification.save(update_fields=["outcome"])
+
+    review = finding.eva_review
+    open_count = review.findings.filter(status="open").count()
+
+    return {
+        "finding_id": str(finding.pk),
+        "new_status": finding.status,
+        "new_severity": finding.severity,
+        "new_confidence": finding.confidence,
+        "outcome": clarification.outcome,
+        "outcome_message": outcome_message,
+        "should_clear_review": (open_count == 0),
+    }
