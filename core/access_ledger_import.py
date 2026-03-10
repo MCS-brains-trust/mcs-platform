@@ -743,6 +743,71 @@ def _parse_depreciation(reader, year):
     return result
 
 
+def _derive_depreciation_from_tb(tb_lines):
+    """
+    Fallback: derive basic depreciation asset records from the trial balance
+    when no DepSchedule.txt / AssetMaster.txt / AssetDetail.txt files exist
+    in the Handiledger ZIP.
+
+    Strategy:
+    - Non-current asset accounts (codes 2500-2999) whose name does NOT contain
+      'accum' / 'less' / 'provision' are treated as asset cost accounts.
+    - For each such account, the closing balance is used as the asset's
+      total_cost and closing_wdv (we cannot split cost vs. accumulated dep
+      without the schedule files).
+    - Accounts whose name DOES contain 'accum' / 'less' / 'provision' are
+      treated as accumulated depreciation contra accounts and are EXCLUDED
+      from the asset list (they are already on the TB).
+
+    Returns a list of dicts in the same format as _parse_depreciation().
+    """
+    _ACCUM_KEYWORDS = ("accum", "less:", "less ", "provision", "written", "amortis")
+
+    result = []
+    seq = 0
+    for line in tb_lines:
+        code_str = str(line.get("account_code", "")).split(".")[0]
+        try:
+            code_int = int(code_str)
+        except (ValueError, TypeError):
+            continue
+
+        # Non-current assets: codes 2500-2999
+        if not (2500 <= code_int <= 2999):
+            continue
+
+        name_lower = line.get("account_name", "").lower()
+        if any(kw in name_lower for kw in _ACCUM_KEYWORDS):
+            continue  # Skip accumulated depreciation contra accounts
+
+        closing_bal = abs(line.get("closing_balance", Decimal("0")))
+        if closing_bal <= 0:
+            continue  # Skip zero-balance accounts
+
+        seq += 1
+        result.append({
+            "category": "Assets",
+            "asset_name": line.get("account_name", f"Asset {code_str}"),
+            "purchase_date": None,
+            "total_cost": closing_bal,
+            "private_use_pct": Decimal("0"),
+            "opening_wdv": closing_bal,  # Best estimate: closing balance = opening WDV
+            "disposal_date": None,
+            "disposal_consideration": Decimal("0"),
+            "addition_date": None,
+            "addition_cost": Decimal("0"),
+            "depreciable_value": closing_bal,
+            "method": "D",
+            "rate": Decimal("0"),
+            "depreciation_amount": Decimal("0"),
+            "private_depreciation": Decimal("0"),
+            "closing_wdv": closing_bal,
+            "display_order": seq,
+        })
+
+    return result
+
+
 # =============================================================================
 # Auto-Mapping Logic
 # =============================================================================
@@ -1310,6 +1375,19 @@ def import_access_ledger_zip(zip_file, client=None, entity=None, replace_existin
 
         # --- Parse and import depreciation ---
         dep_assets = _parse_depreciation(reader, year)
+        # Fallback: if no DepSchedule.txt data exists, derive basic asset
+        # records from the non-current asset accounts on the trial balance.
+        # This ensures the depreciation tab is populated even when the
+        # Handiledger ZIP does not include depreciation schedule files.
+        dep_source = "schedule"
+        if not dep_assets and tb_lines:
+            dep_assets = _derive_depreciation_from_tb(tb_lines)
+            dep_source = "tb_fallback"
+            if dep_assets:
+                logger.info(
+                    f"  Year {year}: no DepSchedule.txt found — derived "
+                    f"{len(dep_assets)} asset(s) from TB non-current accounts"
+                )
         dep_objects = []
         for asset_data in dep_assets:
             dep_objects.append(DepreciationAsset(
@@ -1331,12 +1409,12 @@ def import_access_ledger_zip(zip_file, client=None, entity=None, replace_existin
                 private_depreciation=asset_data["private_depreciation"],
                 closing_wdv=asset_data["closing_wdv"],
                 display_order=asset_data["display_order"],
+                notes=f"Derived from TB (no DepSchedule.txt in ZIP)" if dep_source == "tb_fallback" else "",
             ))
-
         if dep_objects:
             DepreciationAsset.objects.bulk_create(dep_objects)
             result["total_dep_assets"] += len(dep_objects)
-            logger.info(f"  Year {year}: {len(dep_objects)} depreciation assets imported")
+            logger.info(f"  Year {year}: {len(dep_objects)} depreciation assets imported ({dep_source})")
 
         # Lock comparatives on finalised years (matches normal finalisation
         # behaviour) so the year is immediately ready for roll-forward.
