@@ -35,7 +35,8 @@ jobs:
             echo "=== Collecting static files ==="
             /opt/statementhub/venv/bin/python manage.py collectstatic --no-input
 
-            echo "=== Restarting Gunicorn ==="
+            echo "=== Restarting services ==="
             sudo systemctl restart gunicorn
+            sudo systemctl restart celery
 
             echo "=== Deploy complete ==="
