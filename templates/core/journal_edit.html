@@ -1,0 +1,424 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ journal.reference_number }} - StatementHub{% endblock %}
+{% block content %}
+<div class="row">
+    <div class="col-lg-10 mx-auto">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy.year_label }}</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'core:journal_detail' pk=journal.pk %}">{{ journal.reference_number }}</a></li>
+                <li class="breadcrumb-item active">Edit</li>
+            </ol>
+        </nav>
+
+        <div class="alert alert-warning d-flex align-items-center gap-2 py-2">
+            <i class="bi bi-exclamation-triangle-fill"></i>
+            <span>You are editing a <strong>posted</strong> journal. The Trial Balance will be recalculated on save. All changes are logged for audit purposes.</span>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0">
+                    <i class="bi bi-pencil-square"></i>
+                    Edit {{ journal.reference_number }}
+                </h5>
+            </div>
+            <div class="card-body">
+                <form method="post" id="journal-form">
+                    {% csrf_token %}
+                    <!-- Journal Header -->
+                    <div class="row mb-3">
+                        <div class="col-md-3">
+                            <label class="form-label">Type</label>
+                            {{ form.journal_type }}
+                            {% if form.journal_type.errors %}<div class="invalid-feedback d-block">{{ form.journal_type.errors.0 }}</div>{% endif %}
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label">Journal Date</label>
+                            {{ form.journal_date }}
+                            {% if form.journal_date.errors %}<div class="invalid-feedback d-block">{{ form.journal_date.errors.0 }}</div>{% endif %}
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label">Description <span class="text-danger">*</span></label>
+                            {{ form.description }}
+                            {% if form.description.errors %}<div class="invalid-feedback d-block">{{ form.description.errors.0 }}</div>{% endif %}
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col-12">
+                            <label class="form-label">Narration / Notes <small class="text-muted">(optional, for audit trail)</small></label>
+                            {{ form.narration }}
+                        </div>
+                    </div>
+
+                    <!-- Journal Lines -->
+                    <h6 class="mt-4 mb-2">Journal Lines</h6>
+                    <div class="alert alert-info small py-2 d-flex justify-content-between align-items-center">
+                        <span><i class="bi bi-info-circle"></i> Total debits must equal total credits. Select accounts from the dropdown or type a code.</span>
+                        <span id="balance-indicator" class="fw-bold"></span>
+                    </div>
+
+                    {{ formset.management_form }}
+                    {% if formset.non_form_errors %}
+                    <div class="alert alert-danger small py-2">
+                        {% for error in formset.non_form_errors %}<div>{{ error }}</div>{% endfor %}
+                    </div>
+                    {% endif %}
+                    <div class="table-responsive">
+                        <table class="table table-sm" id="journal-lines">
+                            <thead class="table-light">
+                                <tr>
+                                    <th style="width: 200px;">Account</th>
+                                    <th style="width: 200px;">Account Name</th>
+                                    <th>Description</th>
+                                    <th style="width: 130px;">Debit</th>
+                                    <th style="width: 130px;">Credit</th>
+                                    <th style="width: 50px;">Del</th>
+                                </tr>
+                            </thead>
+                            <tbody id="line-tbody">
+                                {% for line_form in formset %}
+                                <tr class="journal-line-row">
+                                    <td class="account-picker-container">
+                                        <div class="d-none">{{ line_form.account_code }}</div>
+                                    </td>
+                                    <td>
+                                        <div class="d-none">{{ line_form.account_name }}</div>
+                                    </td>
+                                    <td>{{ line_form.description }}</td>
+                                    <td>{{ line_form.debit }}</td>
+                                    <td>{{ line_form.credit }}</td>
+                                    <td class="text-center">
+                                        {{ line_form.DELETE }}
+                                        {% for hidden in line_form.hidden_fields %}{{ hidden }}{% endfor %}
+                                    </td>
+                                </tr>
+                                {% if line_form.errors %}
+                                <tr><td colspan="6" class="text-danger small py-0 border-0">{% for field, errors in line_form.errors.items %}{{ field }}: {{ errors.0 }} {% endfor %}</td></tr>
+                                {% endif %}
+                                {% endfor %}
+                            </tbody>
+                            <tfoot>
+                                <tr class="table-light fw-bold">
+                                    <td colspan="3" class="text-end">Totals:</td>
+                                    <td class="text-end" id="total-debit">$0.00</td>
+                                    <td class="text-end" id="total-credit">$0.00</td>
+                                    <td></td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+
+                    <div class="d-flex justify-content-between mt-3">
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="add-line-btn">
+                            <i class="bi bi-plus-lg"></i> Add Line
+                        </button>
+                        <div class="d-flex gap-2">
+                            <button type="submit" class="btn btn-warning" id="saveBtn">
+                                <i class="bi bi-check-circle" id="saveIcon"></i>
+                                <span class="spinner-border spinner-border-sm d-none" id="saveSpinner" role="status" aria-hidden="true"></span>
+                                <span id="saveBtnText">Save Changes &amp; Recalculate TB</span>
+                            </button>
+                            <a href="{% url 'core:journal_detail' pk=journal.pk %}" class="btn btn-outline-secondary" id="cancelBtn">Cancel</a>
+                        </div>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.account-picker-wrapper { position: relative; }
+.account-picker-input { cursor: text; }
+.account-dropdown {
+    position: absolute; z-index: 1050; top: 100%; left: 0; right: 0;
+    max-height: 250px; overflow-y: auto;
+    background: #fff; border: 1px solid #dee2e6; border-top: none;
+    border-radius: 0 0 .375rem .375rem;
+    box-shadow: 0 4px 12px rgba(0,0,0,.15);
+    display: none;
+}
+.account-dropdown.show { display: block; }
+.account-dropdown-item {
+    padding: 6px 10px; cursor: pointer; font-size: 0.85rem;
+    border-bottom: 1px solid #f0f0f0;
+}
+.account-dropdown-item:hover, .account-dropdown-item.active {
+    background-color: #e9ecef;
+}
+.account-dropdown-item code { margin-right: 6px; color: #0d6efd; }
+.account-dropdown-empty {
+    padding: 8px 10px; font-size: 0.85rem; color: #6c757d; font-style: italic;
+}
+</style>
+
+<script>
+const ACCOUNTS = {{ accounts|safe }};
+const ACCOUNT_LIST = ACCOUNTS.map(function(acc) {
+    return {
+        code: acc.client_account_code || acc.code || '',
+        name: acc.client_account_name || acc.name || ''
+    };
+});
+
+document.addEventListener('DOMContentLoaded', function() {
+
+    function createAccountPicker(container) {
+        const row = container.closest('tr');
+        const origCodeInput = row.querySelector('[name$="-account_code"]');
+        const origNameInput = row.querySelector('[name$="-account_name"]');
+        const codeName = origCodeInput ? origCodeInput.name : '';
+        const nameFieldName = origNameInput ? origNameInput.name : '';
+        const codeValue = origCodeInput ? origCodeInput.value : '';
+        const nameValue = origNameInput ? origNameInput.value : '';
+        if (origCodeInput) origCodeInput.remove();
+        if (origNameInput) origNameInput.remove();
+
+        const hiddenCode = document.createElement('input');
+        hiddenCode.type = 'hidden';
+        hiddenCode.name = codeName;
+        hiddenCode.value = codeValue;
+        hiddenCode.className = 'account-code-hidden';
+
+        const hiddenName = document.createElement('input');
+        hiddenName.type = 'hidden';
+        hiddenName.name = nameFieldName;
+        hiddenName.value = nameValue;
+        hiddenName.className = 'account-name-hidden';
+
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'form-control form-control-sm account-picker-input';
+        input.placeholder = 'Type code or name...';
+        input.autocomplete = 'off';
+
+        if (codeValue) {
+            const match = ACCOUNT_LIST.find(a => a.code === codeValue);
+            input.value = match ? codeValue + ' - ' + match.name : codeValue;
+        }
+
+        const dropdown = document.createElement('div');
+        dropdown.className = 'account-dropdown';
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'account-picker-wrapper';
+        wrapper.appendChild(input);
+        wrapper.appendChild(dropdown);
+
+        container.innerHTML = '';
+        container.appendChild(wrapper);
+        container.appendChild(hiddenCode);
+        container.appendChild(hiddenName);
+
+        const codeInput = hiddenCode;
+        const nameInput = hiddenName;
+        let activeIndex = -1;
+
+        function renderDropdown(filter) {
+            dropdown.innerHTML = '';
+            activeIndex = -1;
+            const query = (filter || '').toLowerCase();
+            const matches = query
+                ? ACCOUNT_LIST.filter(a =>
+                    a.code.toLowerCase().includes(query) ||
+                    a.name.toLowerCase().includes(query))
+                : ACCOUNT_LIST;
+            if (matches.length === 0) {
+                dropdown.innerHTML = '<div class="account-dropdown-empty">No matching accounts</div>';
+            } else {
+                matches.forEach(function(acc) {
+                    const item = document.createElement('div');
+                    item.className = 'account-dropdown-item';
+                    item.dataset.code = acc.code;
+                    item.dataset.name = acc.name;
+                    item.innerHTML = '<code>' + acc.code + '</code> ' + acc.name;
+                    item.addEventListener('mousedown', function(e) {
+                        e.preventDefault();
+                        selectAccount(acc);
+                    });
+                    dropdown.appendChild(item);
+                });
+            }
+            dropdown.classList.add('show');
+        }
+
+        function selectAccount(acc) {
+            input.value = acc.code + ' - ' + acc.name;
+            if (codeInput) codeInput.value = acc.code;
+            if (nameInput) nameInput.value = acc.name;
+            dropdown.classList.remove('show');
+        }
+
+        input.addEventListener('focus', function() { renderDropdown(input.value.split(' - ')[0]); });
+        input.addEventListener('input', function() { renderDropdown(input.value); });
+        input.addEventListener('blur', function() { setTimeout(function() { dropdown.classList.remove('show'); }, 150); });
+        input.addEventListener('keydown', function(e) {
+            const items = dropdown.querySelectorAll('.account-dropdown-item');
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                activeIndex = Math.min(activeIndex + 1, items.length - 1);
+                items.forEach((el, i) => el.classList.toggle('active', i === activeIndex));
+                if (items[activeIndex]) items[activeIndex].scrollIntoView({ block: 'nearest' });
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                activeIndex = Math.max(activeIndex - 1, 0);
+                items.forEach((el, i) => el.classList.toggle('active', i === activeIndex));
+                if (items[activeIndex]) items[activeIndex].scrollIntoView({ block: 'nearest' });
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                if (activeIndex >= 0 && items[activeIndex]) {
+                    selectAccount({ code: items[activeIndex].dataset.code, name: items[activeIndex].dataset.name });
+                }
+            } else if (e.key === 'Escape') {
+                dropdown.classList.remove('show');
+                input.blur();
+            } else if (e.key === 'Tab') {
+                if (items.length > 0 && input.value) {
+                    selectAccount({ code: items[0].dataset.code, name: items[0].dataset.name });
+                }
+                dropdown.classList.remove('show');
+            }
+        });
+        return { input, dropdown, wrapper };
+    }
+
+    document.querySelectorAll('.account-picker-container').forEach(function(container) {
+        createAccountPicker(container);
+    });
+
+    function fmtNum(n) {
+        return n.toLocaleString('en-AU', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    }
+
+    function parseRaw(val) {
+        if (!val) return 0;
+        return parseFloat(val.replace(/,/g, '')) || 0;
+    }
+
+    function formatField(el) {
+        var num = parseRaw(el.value);
+        el.value = num === 0 ? '0' : fmtNum(num);
+    }
+
+    function stripField(el) {
+        var num = parseRaw(el.value);
+        el.value = num === 0 ? '' : num.toFixed(2);
+        el.select();
+    }
+
+    function updateTotals() {
+        let totalDr = 0, totalCr = 0;
+        document.querySelectorAll('.journal-line-row').forEach(function(row) {
+            const delCheck = row.querySelector('[name$="-DELETE"]');
+            if (delCheck && delCheck.checked) return;
+            totalDr += parseRaw(row.querySelector('[name$="-debit"]')?.value);
+            totalCr += parseRaw(row.querySelector('[name$="-credit"]')?.value);
+        });
+        document.getElementById('total-debit').textContent = '$' + fmtNum(totalDr);
+        document.getElementById('total-credit').textContent = '$' + fmtNum(totalCr);
+        const indicator = document.getElementById('balance-indicator');
+        const saveBtn = document.querySelector('button[type="submit"]');
+        const diff = Math.abs(totalDr - totalCr);
+        if (totalDr === 0 && totalCr === 0) {
+            indicator.textContent = '';
+            saveBtn.disabled = true;
+        } else if (diff < 0.01) {
+            indicator.innerHTML = '<span class="text-success"><i class="bi bi-check-circle"></i> Balanced</span>';
+            saveBtn.disabled = false;
+        } else {
+            indicator.innerHTML = '<span class="text-danger"><i class="bi bi-x-circle"></i> Out of balance by $' + fmtNum(diff) + '</span>';
+            saveBtn.disabled = true;
+        }
+    }
+
+    document.addEventListener('focus', function(e) {
+        if (e.target.classList && e.target.classList.contains('dr-cr-field')) stripField(e.target);
+    }, true);
+    document.addEventListener('blur', function(e) {
+        if (e.target.classList && e.target.classList.contains('dr-cr-field')) { formatField(e.target); updateTotals(); }
+    }, true);
+    document.addEventListener('change', function(e) {
+        if (e.target.name && e.target.name.endsWith('-DELETE')) updateTotals();
+    });
+
+    document.getElementById('journal-form').addEventListener('submit', function(e) {
+        document.querySelectorAll('.dr-cr-field').forEach(function(el) {
+            el.value = parseRaw(el.value).toFixed(2);
+        });
+        var saveBtn = document.getElementById('saveBtn');
+        var saveIcon = document.getElementById('saveIcon');
+        var saveSpinner = document.getElementById('saveSpinner');
+        var saveBtnText = document.getElementById('saveBtnText');
+        var cancelBtn = document.getElementById('cancelBtn');
+        if (saveBtn) {
+            saveBtn.disabled = true;
+            if (saveIcon) saveIcon.classList.add('d-none');
+            if (saveSpinner) saveSpinner.classList.remove('d-none');
+            if (saveBtnText) saveBtnText.textContent = 'Saving... Please wait';
+            if (cancelBtn) cancelBtn.classList.add('disabled');
+        }
+        document.querySelectorAll('.journal-line-row').forEach(function(row) {
+            var codeInput = row.querySelector('.account-code-hidden') || row.querySelector('[name$="-account_code"]');
+            var code = codeInput ? codeInput.value.trim() : '';
+            var dr = parseRaw(row.querySelector('[name$="-debit"]')?.value);
+            var cr = parseRaw(row.querySelector('[name$="-credit"]')?.value);
+            if (!code && dr === 0 && cr === 0) {
+                var delCheck = row.querySelector('[name$="-DELETE"]');
+                if (delCheck) delCheck.checked = true;
+                var debitEl = row.querySelector('[name$="-debit"]');
+                var creditEl = row.querySelector('[name$="-credit"]');
+                if (debitEl) debitEl.value = '';
+                if (creditEl) creditEl.value = '';
+            }
+        });
+    });
+
+    document.querySelectorAll('.dr-cr-field').forEach(function(el) { formatField(el); });
+
+    document.getElementById('add-line-btn').addEventListener('click', function() {
+        const totalForms = document.getElementById('id_lines-TOTAL_FORMS');
+        const idx = parseInt(totalForms.value);
+        const tbody = document.getElementById('line-tbody');
+        const tr = document.createElement('tr');
+        tr.className = 'journal-line-row';
+        tr.innerHTML = `
+            <td class="account-picker-container">
+                <div class="d-none">
+                    <input type="text" name="lines-${idx}-account_code" class="form-control form-control-sm" id="id_lines-${idx}-account_code">
+                </div>
+            </td>
+            <td>
+                <div class="d-none">
+                    <input type="text" name="lines-${idx}-account_name" class="form-control form-control-sm" id="id_lines-${idx}-account_name">
+                </div>
+            </td>
+            <td>
+                <input type="text" name="lines-${idx}-description" class="form-control form-control-sm" id="id_lines-${idx}-description" placeholder="Line description (optional)">
+            </td>
+            <td>
+                <input type="text" inputmode="decimal" name="lines-${idx}-debit" class="form-control form-control-sm dr-cr-field" id="id_lines-${idx}-debit" value="0">
+            </td>
+            <td>
+                <input type="text" inputmode="decimal" name="lines-${idx}-credit" class="form-control form-control-sm dr-cr-field" id="id_lines-${idx}-credit" value="0">
+            </td>
+            <td class="text-center">
+                <input type="checkbox" name="lines-${idx}-DELETE" id="id_lines-${idx}-DELETE">
+                <input type="hidden" name="lines-${idx}-id" id="id_lines-${idx}-id">
+                <input type="hidden" name="lines-${idx}-journal" id="id_lines-${idx}-journal">
+            </td>
+        `;
+        tbody.appendChild(tr);
+        const container = tr.querySelector('.account-picker-container');
+        createAccountPicker(container);
+        totalForms.value = idx + 1;
+        const newInput = container.querySelector('.account-picker-input');
+        if (newInput) newInput.focus();
+    });
+
+    updateTotals();
+});
+</script>
+{% endblock %}

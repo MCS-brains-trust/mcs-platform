@@ -21,10 +21,11 @@ from .models import (
 from .forms import (
     ClientForm, EntityForm, FinancialYearForm,
     TrialBalanceUploadForm, AccountMappingForm,
-    AdjustingJournalForm, JournalLineFormSet,
+    AdjustingJournalForm, JournalLineFormSet, JournalLineForm,
     EntityOfficerForm, ClientAssociateForm, AccountingSoftwareForm,
     MeetingNoteForm,
 )
+from django import forms
 from config.authorization import get_entity_for_user, get_financial_year_for_user
 import re as _re_mod
 
@@ -3985,6 +3986,199 @@ def journal_delete(request, pk):
     messages.success(request, f"Journal {ref} has been deleted.")
     from django.urls import reverse
     return redirect(reverse("core:financial_year_detail", args=[fy.pk]) + "?tab=journals")
+
+
+@login_required
+def journal_edit(request, pk):
+    """Edit a posted journal entry.
+
+    Reverses the existing TB adjustment lines, applies the corrected lines,
+    and writes a full before/after diff to the audit log.
+    Only accountants can edit journals; locked years are protected.
+    """
+    journal = get_object_or_404(
+        AdjustingJournal.objects.select_related(
+            "financial_year", "financial_year__entity",
+            "created_by", "posted_by",
+        ).prefetch_related("lines"),
+        pk=pk,
+    )
+    fy = journal.financial_year
+    get_financial_year_for_user(request, fy.pk)  # IDOR check
+    entity = fy.entity
+
+    if fy.is_locked:
+        messages.error(request, "Cannot edit journals in a finalised year.")
+        return redirect("core:journal_detail", pk=pk)
+
+    if not request.user.can_do_accounting:
+        messages.error(request, "You do not have permission to edit journals.")
+        return redirect("core:journal_detail", pk=pk)
+
+    # Build account list for the picker (same logic as create view)
+    tb_accounts = (
+        TrialBalanceLine.objects.filter(financial_year=fy)
+        .exclude(account_code="")
+        .values("account_code", "account_name")
+        .distinct()
+        .order_by("account_code")
+    )
+    accounts = [
+        {"client_account_code": a["account_code"], "client_account_name": a["account_name"]}
+        for a in tb_accounts
+    ]
+    if not accounts:
+        entity_type = entity.entity_type
+        master_accounts = list(
+            ChartOfAccount.objects.filter(entity_type=entity_type, is_active=True)
+            .order_by("account_code")
+            .values("account_code", "account_name")
+        )
+        accounts = [
+            {"client_account_code": a["account_code"], "client_account_name": a["account_name"]}
+            for a in master_accounts
+        ]
+
+    # Snapshot the journal state before any changes (for audit log)
+    before_lines = [
+        {
+            "account_code": line.account_code,
+            "account_name": line.account_name,
+            "description": line.description,
+            "debit": str(line.debit),
+            "credit": str(line.credit),
+        }
+        for line in journal.lines.all()
+    ]
+    before_header = {
+        "journal_type": journal.journal_type,
+        "journal_date": str(journal.journal_date),
+        "description": journal.description,
+        "narration": journal.narration,
+    }
+
+    # Build formset with extra=1 so there's always one blank row available
+    EditJournalLineFormSet = forms.inlineformset_factory(
+        AdjustingJournal,
+        JournalLine,
+        form=JournalLineForm,
+        extra=1,
+        can_delete=True,
+    )
+
+    if request.method == "POST":
+        form = AdjustingJournalForm(request.POST, instance=journal)
+        formset = EditJournalLineFormSet(request.POST, instance=journal)
+        if form.is_valid() and formset.is_valid():
+            # Reverse all existing TB adjustment lines for this journal
+            for line in journal.lines.all():
+                _reverse_journal_line_from_tb(
+                    fy, line.account_code, line.debit, line.credit
+                )
+
+            # Save the updated header
+            updated_journal = form.save(commit=False)
+            updated_journal.save()
+
+            # Save the updated lines
+            new_lines = formset.save()
+
+            # Renumber lines
+            for i, line in enumerate(journal.lines.order_by("line_number", "id"), start=1):
+                line.line_number = i
+                line.save(update_fields=["line_number"])
+
+            # Validate balance
+            all_lines = list(journal.lines.all())
+            total_dr = sum(l.debit for l in all_lines)
+            total_cr = sum(l.credit for l in all_lines)
+            if total_dr != total_cr:
+                # Re-apply the original lines so the TB stays consistent
+                for line in all_lines:
+                    _apply_journal_line_to_tb(
+                        fy, line.account_code, line.account_name,
+                        line.debit, line.credit, source="manual_journal",
+                        description=journal.description,
+                    )
+                messages.error(
+                    request,
+                    f"Journal does not balance: Dr ${total_dr:,.2f} \u2260 Cr ${total_cr:,.2f}. "
+                    "Changes have been reverted."
+                )
+                return render(request, "core/journal_edit.html", {
+                    "form": form, "formset": formset, "journal": journal,
+                    "fy": fy, "entity": entity, "accounts": accounts,
+                })
+
+            # Apply the new lines to the TB
+            for line in all_lines:
+                _apply_journal_line_to_tb(
+                    fy, line.account_code, line.account_name,
+                    line.debit, line.credit, source="manual_journal",
+                    description=updated_journal.description,
+                )
+
+            # Update cached totals
+            journal.total_debit = total_dr
+            journal.total_credit = total_cr
+            journal.save(update_fields=["total_debit", "total_credit"])
+
+            # Build after snapshot for audit log
+            after_lines = [
+                {
+                    "account_code": line.account_code,
+                    "account_name": line.account_name,
+                    "description": line.description,
+                    "debit": str(line.debit),
+                    "credit": str(line.credit),
+                }
+                for line in journal.lines.all()
+            ]
+            after_header = {
+                "journal_type": updated_journal.journal_type,
+                "journal_date": str(updated_journal.journal_date),
+                "description": updated_journal.description,
+                "narration": updated_journal.narration,
+            }
+
+            # Build a human-readable diff for the audit log
+            import json as _json
+            diff_parts = []
+            for key in ("journal_type", "journal_date", "description", "narration"):
+                if before_header.get(key) != after_header.get(key):
+                    diff_parts.append(
+                        f"  {key}: '{before_header.get(key)}' -> '{after_header.get(key)}'"
+                    )
+            if before_lines != after_lines:
+                diff_parts.append("  Lines changed:")
+                diff_parts.append(f"    Before: {_json.dumps(before_lines)}")
+                diff_parts.append(f"    After:  {_json.dumps(after_lines)}")
+
+            audit_detail = "\n".join(diff_parts) if diff_parts else "No changes detected."
+            _log_action(
+                request, "adjustment",
+                f"Edited posted journal {journal.reference_number}:\n{audit_detail}",
+                journal,
+            )
+
+            # Trigger risk engine recalc
+            from core.signals import trigger_risk_recalc
+            trigger_risk_recalc(fy, "journal_edited")
+
+            messages.success(
+                request,
+                f"Journal {journal.reference_number} has been updated and the Trial Balance recalculated."
+            )
+            return redirect("core:journal_detail", pk=journal.pk)
+
+    else:
+        form = AdjustingJournalForm(instance=journal)
+        formset = EditJournalLineFormSet(instance=journal)
+
+    return render(request, "core/journal_edit.html", {
+        "form": form, "formset": formset, "journal": journal,
+        "fy": fy, "entity": entity, "accounts": accounts,
+    })
 
 
 @login_required

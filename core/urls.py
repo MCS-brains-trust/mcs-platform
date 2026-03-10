@@ -114,6 +114,7 @@ urlpatterns = [
     path("journals/<uuid:pk>/", views.journal_detail, name="journal_detail"),
     path("journals/<uuid:pk>/post/", views.journal_post, name="journal_post"),
     path("journals/<uuid:pk>/delete/", views.journal_delete, name="journal_delete"),
+    path("journals/<uuid:pk>/edit/", views.journal_edit, name="journal_edit"),
     path("years/<uuid:pk>/accounts-api/", views.account_list_api, name="account_list_api"),
     path("years/<uuid:pk>/journals/pdf/", views.journals_pdf, name="journals_pdf"),
     path("years/<uuid:pk>/journals/upload/", views.journal_upload, name="journal_upload"),
