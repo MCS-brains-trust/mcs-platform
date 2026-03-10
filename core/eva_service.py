@@ -951,7 +951,7 @@ def resolve_eva_finding(finding, user, resolution_note):
     from core.models import EvaFinding
     from core.models import AuditLog
 
-    finding.status = EvaFinding.Status.ADDRESSED
+    finding.status = EvaFinding.FindingStatus.ADDRESSED
     finding.resolution_note = resolution_note
     finding.resolved_by = user
     finding.resolved_at = timezone.now()
@@ -975,7 +975,7 @@ def resolve_eva_finding(finding, user, resolution_note):
 
     # Check if all findings are now addressed
     review = finding.eva_review
-    open_count = review.findings.filter(status=EvaFinding.Status.OPEN).count()
+    open_count = review.findings.filter(status=EvaFinding.FindingStatus.OPEN).count()
     should_rerun = (open_count == 0)
 
     return finding, should_rerun
