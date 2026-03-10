@@ -10370,7 +10370,7 @@ def journal_upload(request, pk):
                 return redirect("core:journal_upload", pk=pk)
 
             # Apply learned mappings (same pattern as TB import)
-            staged_lines = _apply_journal_learned_mappings(fy.entity, raw_lines)
+            staged_lines = _apply_journal_learned_mappings(fy, raw_lines)
 
             # Store in session for the review wizard
             request.session["staged_journal_upload"] = {
@@ -10501,10 +10501,18 @@ def _parse_journal_excel(fy, file):
     return raw_lines
 
 
-def _apply_journal_learned_mappings(entity, raw_lines):
+def _apply_journal_learned_mappings(fy, raw_lines):
     """Apply learned mappings and entity COA matching to parsed journal lines.
     Returns a list of staged line dicts ready for the review wizard.
-    Same pattern as _apply_tb_learned_mappings."""
+
+    Account name resolution priority:
+      1. Existing TrialBalanceLine for this financial year (source of truth —
+         matches what is already displayed on the TB).
+      2. Entity COA (EntityChartOfAccount) — used for accounts not yet in the TB.
+      3. Raw Excel name — last resort for genuinely new accounts.
+    """
+    entity = fy.entity
+
     existing_mappings = {
         cam.client_account_code: cam
         for cam in ClientAccountMapping.objects.filter(entity=entity)
@@ -10515,13 +10523,35 @@ def _apply_journal_learned_mappings(entity, raw_lines):
         for ea in EntityChartOfAccount.objects.filter(entity=entity)
         .select_related("maps_to")
     }
+    # Build a lookup of canonical account names from the existing (non-adjustment)
+    # TB lines for this financial year.  These are the names already displayed on
+    # the TB and are the source of truth.
+    tb_names = {
+        tbl.account_code.lower(): tbl.account_name
+        for tbl in TrialBalanceLine.objects.filter(
+            financial_year=fy, is_adjustment=False
+        ).values("account_code", "account_name").distinct()
+    }
+
     staged = []
     for line in raw_lines:
         code = line["account_code"]
         cam = existing_mappings.get(code)
+
+        # Resolve the canonical account name:
+        #   1. Use the existing TB name if the account is already in the TB.
+        #   2. Fall back to the entity COA name for accounts not yet in the TB.
+        #   3. Fall back to the raw Excel name for genuinely new accounts.
+        tb_name = tb_names.get(code.lower())
+        if tb_name:
+            resolved_name = tb_name
+        else:
+            ea_lookup = entity_coa.get(code.lower())
+            resolved_name = (ea_lookup.account_name if ea_lookup else None) or line["account_name"]
+
         staged_line = {
             "account_code": code,
-            "account_name": line["account_name"],
+            "account_name": resolved_name,
             "description": line.get("description", ""),
             "journal_date": line.get("journal_date", ""),
             "debit": line["debit"],
@@ -10544,22 +10574,7 @@ def _apply_journal_learned_mappings(entity, raw_lines):
         ea = entity_coa.get(code.lower())
         if ea:
             staged_line["entity_acct_code"] = ea.account_code
-            # If the Excel name differs from the COA name, the account was
-            # renamed in HandiLedger since the COA was last seeded. Sync the
-            # COA name to the current Excel name so the Entity Account column
-            # stays up to date and the TB remains consistent.
-            excel_name = line["account_name"]
-            if (excel_name
-                    and excel_name != code
-                    and excel_name != ea.account_name):
-                EntityChartOfAccount.objects.filter(pk=ea.pk).update(
-                    account_name=excel_name
-                )
-                ea.account_name = excel_name  # keep in-memory dict current
             staged_line["entity_acct_name"] = ea.account_name
-            # Update account_name if it's still just the raw code
-            if staged_line["account_name"] == code or not staged_line["account_name"]:
-                staged_line["account_name"] = ea.account_name
             if staged_line["confidence"] == "new":
                 staged_line["confidence"] = "matched"
             if ea.maps_to and not staged_line["mapped_id"]:
