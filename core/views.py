@@ -4546,8 +4546,18 @@ def journal_post(request, pk):
 
 @login_required
 def journal_delete(request, pk):
-    """Delete a journal entry. If posted, also removes its adjustment TB lines."""
-    journal = get_object_or_404(AdjustingJournal, pk=pk)
+    """Delete a journal entry. If posted, also removes its adjustment TB lines.
+
+    The entire reversal + deletion is wrapped in a database transaction so
+    that a partial failure (e.g. TB reversal succeeds but journal delete
+    fails) cannot leave the database in an inconsistent state.
+    """
+    from django.db import transaction as db_transaction
+
+    journal = get_object_or_404(
+        AdjustingJournal.objects.prefetch_related("lines"),
+        pk=pk,
+    )
     fy = journal.financial_year
     get_financial_year_for_user(request, fy.pk)  # IDOR check
 
@@ -4562,18 +4572,44 @@ def journal_delete(request, pk):
     ref = journal.reference_number
     status = journal.status
 
-    # If the journal was posted, reverse its effect on the Trial Balance
-    if status == AdjustingJournal.JournalStatus.POSTED:
-        # Use FK-based deletion when available; legacy fallback for old journals
-        if journal.tb_lines.exists():
-            journal.tb_lines.all().delete()
-        else:
-            for line in journal.lines.all():
-                _reverse_journal_line_from_tb(
-                    fy, line.account_code, line.debit, line.credit,
-                )
+    with db_transaction.atomic():
+        # If the journal was posted, reverse its effect on the Trial Balance
+        if status == AdjustingJournal.JournalStatus.POSTED:
+            # --- Primary path: FK-based deletion ---
+            fk_lines = journal.tb_lines.all()
+            if fk_lines.exists():
+                fk_lines.delete()
+            else:
+                # --- Legacy fallback for journals created before source_journal FK ---
+                # Delete adjustment TB lines that match each journal line.
+                # Use a consumed list so that duplicate (code, dr, cr) combos
+                # each delete exactly one matching TB row.
+                for jnl_line in journal.lines.all():
+                    adj = TrialBalanceLine.objects.filter(
+                        financial_year=fy,
+                        account_code=jnl_line.account_code,
+                        debit=jnl_line.debit,
+                        credit=jnl_line.credit,
+                        is_adjustment=True,
+                        source_journal__isnull=True,
+                    ).first()
+                    if adj:
+                        adj.delete()
 
-    journal.delete()
+            # Clean up any zero-balance TB lines that were created solely by
+            # journal adjustments and now have no remaining purpose.
+            TrialBalanceLine.objects.filter(
+                financial_year=fy,
+                is_adjustment=True,
+                source='manual_journal',
+                source_journal=journal,
+                debit=Decimal("0"),
+                credit=Decimal("0"),
+                closing_balance=Decimal("0"),
+            ).delete()
+
+        journal.delete()
+
     _log_action(request, "adjustment", f"Deleted {status} journal {ref}")
     # Auto-trigger risk engine after journal deletion
     if status == AdjustingJournal.JournalStatus.POSTED:
@@ -4666,70 +4702,75 @@ def journal_edit(request, pk):
         form = AdjustingJournalForm(request.POST, instance=journal)
         formset = EditJournalLineFormSet(request.POST, instance=journal)
         if form.is_valid() and formset.is_valid():
-            # Reverse all existing TB adjustment lines for this journal.
-            # Use the source_journal FK for reliable scoped deletion; fall back
-            # to the legacy debit/credit match for pre-FK journals.
-            has_fk_lines = journal.tb_lines.exists()
-            if has_fk_lines:
-                # New path: delete all TB lines linked to this journal at once
-                journal.tb_lines.all().delete()
-            else:
-                # Legacy fallback for journals created before the source_journal FK
-                for line in journal.lines.all():
-                    _reverse_journal_line_from_tb(
-                        fy, line.account_code, line.debit, line.credit
+            from django.db import transaction as db_transaction
+
+            # Wrap the entire reverse → save → re-apply cycle in an atomic
+            # block so a failure at any step rolls back all changes.
+            with db_transaction.atomic():
+                # Reverse all existing TB adjustment lines for this journal.
+                # Use the source_journal FK for reliable scoped deletion; fall
+                # back to the legacy debit/credit match for pre-FK journals.
+                fk_lines = journal.tb_lines.all()
+                if fk_lines.exists():
+                    fk_lines.delete()
+                else:
+                    for line in journal.lines.all():
+                        adj = TrialBalanceLine.objects.filter(
+                            financial_year=fy,
+                            account_code=line.account_code,
+                            debit=line.debit,
+                            credit=line.credit,
+                            is_adjustment=True,
+                            source_journal__isnull=True,
+                        ).first()
+                        if adj:
+                            adj.delete()
+
+                # Save the updated header
+                updated_journal = form.save(commit=False)
+                updated_journal.save()
+
+                # Save the updated lines
+                new_lines = formset.save()
+
+                # Renumber lines
+                for i, line in enumerate(journal.lines.order_by("line_number", "id"), start=1):
+                    line.line_number = i
+                    line.save(update_fields=["line_number"])
+
+                # Validate balance
+                all_lines = list(journal.lines.all())
+                total_dr = sum(l.debit for l in all_lines)
+                total_cr = sum(l.credit for l in all_lines)
+                if total_dr != total_cr:
+                    # Roll back the atomic block — this aborts the entire edit
+                    # including the line saves, so the old TB state is preserved.
+                    db_transaction.set_rollback(True)
+                    messages.error(
+                        request,
+                        f"Journal does not balance: Dr ${total_dr:,.2f} \u2260 Cr ${total_cr:,.2f}. "
+                        "No changes were saved."
                     )
+                    return render(request, "core/journal_edit.html", {
+                        "form": form, "formset": formset, "journal": journal,
+                        "fy": fy, "entity": entity, "accounts": accounts,
+                    })
 
-            # Save the updated header
-            updated_journal = form.save(commit=False)
-            updated_journal.save()
-
-            # Save the updated lines
-            new_lines = formset.save()
-
-            # Renumber lines
-            for i, line in enumerate(journal.lines.order_by("line_number", "id"), start=1):
-                line.line_number = i
-                line.save(update_fields=["line_number"])
-
-            # Validate balance
-            all_lines = list(journal.lines.all())
-            total_dr = sum(l.debit for l in all_lines)
-            total_cr = sum(l.credit for l in all_lines)
-            if total_dr != total_cr:
-                # Re-apply the original lines so the TB stays consistent
+                # Apply the new lines to the TB, linked via source_journal FK
                 for line in all_lines:
                     _apply_journal_line_to_tb(
                         fy, line.account_code, line.account_name,
                         line.debit, line.credit, source="manual_journal",
-                        description=journal.description,
+                        description=updated_journal.description,
                         journal=journal,
                     )
-                messages.error(
-                    request,
-                    f"Journal does not balance: Dr ${total_dr:,.2f} \u2260 Cr ${total_cr:,.2f}. "
-                    "Changes have been reverted."
-                )
-                return render(request, "core/journal_edit.html", {
-                    "form": form, "formset": formset, "journal": journal,
-                    "fy": fy, "entity": entity, "accounts": accounts,
-                })
 
-            # Apply the new lines to the TB, linked to this journal via source_journal FK
-            for line in all_lines:
-                _apply_journal_line_to_tb(
-                    fy, line.account_code, line.account_name,
-                    line.debit, line.credit, source="manual_journal",
-                    description=updated_journal.description,
-                    journal=journal,
-                )
+                # Update cached totals
+                journal.total_debit = total_dr
+                journal.total_credit = total_cr
+                journal.save(update_fields=["total_debit", "total_credit"])
 
-            # Update cached totals
-            journal.total_debit = total_dr
-            journal.total_credit = total_cr
-            journal.save(update_fields=["total_debit", "total_credit"])
-
-            # Build after snapshot for audit log
+            # Build after snapshot for audit log (outside atomic — read-only)
             after_lines = [
                 {
                     "account_code": line.account_code,
