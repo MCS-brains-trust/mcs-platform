@@ -10544,12 +10544,21 @@ def _apply_journal_learned_mappings(entity, raw_lines):
         ea = entity_coa.get(code.lower())
         if ea:
             staged_line["entity_acct_code"] = ea.account_code
+            # If the Excel name differs from the COA name, the account was
+            # renamed in HandiLedger since the COA was last seeded. Sync the
+            # COA name to the current Excel name so the Entity Account column
+            # stays up to date and the TB remains consistent.
+            excel_name = line["account_name"]
+            if (excel_name
+                    and excel_name != code
+                    and excel_name != ea.account_name):
+                EntityChartOfAccount.objects.filter(pk=ea.pk).update(
+                    account_name=excel_name
+                )
+                ea.account_name = excel_name  # keep in-memory dict current
             staged_line["entity_acct_name"] = ea.account_name
-            # Always use the COA name when a match exists — the Excel name
-            # is often inconsistent with the entity's standardised account
-            # names, which causes the posted TB line to differ from the
-            # original import lines for the same account code.
-            if ea.account_name:
+            # Update account_name if it's still just the raw code
+            if staged_line["account_name"] == code or not staged_line["account_name"]:
                 staged_line["account_name"] = ea.account_name
             if staged_line["confidence"] == "new":
                 staged_line["confidence"] = "matched"
