@@ -35,6 +35,11 @@
                         </button>
                     </form>
                     {% endif %}
+                    {% if journal.status == 'posted' and not fy.is_locked and request.user.can_do_accounting %}
+                    <a href="{% url 'core:journal_edit' pk=journal.pk %}" class="btn btn-outline-warning btn-sm">
+                        <i class="bi bi-pencil-square"></i> Edit
+                    </a>
+                    {% endif %}
                     {% if not fy.is_locked %}
                     <form method="post" action="{% url 'core:journal_delete' pk=journal.pk %}" class="d-inline"
                           onsubmit="return confirm('Are you sure you want to delete journal {{ journal.reference_number }}? This action will be logged for audit purposes.');">
