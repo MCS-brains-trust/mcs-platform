@@ -262,7 +262,7 @@ def _apply_journal_line_to_tb(fy, account_code, account_name, jnl_debit, jnl_cre
     # code or blank name, look it up from EntityChartOfAccount / ChartOfAccount
     account_name = _resolve_account_name(fy.entity, account_code, account_name)
 
-    TrialBalanceLine.objects.create(
+    tb_line = TrialBalanceLine.objects.create(
         financial_year=fy,
         account_code=account_code,
         account_name=account_name,
@@ -277,6 +277,12 @@ def _apply_journal_line_to_tb(fy, account_code, account_name, jnl_debit, jnl_cre
         bulk_journal_upload=bulk_upload,
         source_journal=journal,
     )
+    import logging as _logging
+    _logging.getLogger("core.tb_posting").info(
+        "TB line created: pk=%s fy=%s code=%s dr=%s cr=%s source=%s journal=%s",
+        tb_line.pk, fy.pk, account_code, jnl_debit, jnl_credit, source,
+        journal.pk if journal else None,
+    )
 
 
 def _reverse_journal_tb_lines(journal):
@@ -284,6 +290,12 @@ def _reverse_journal_tb_lines(journal):
 
     Uses a multi-tier strategy to handle journals from different eras of the
     codebase:
+
+    .. note:: Tier 2 and 3 MUST exclude lines linked to a BulkJournalUpload
+       (bulk_journal_upload__isnull=True) — those belong to bulk uploads, not
+       manual journals.  Without this guard, editing/deleting a pre-FK journal
+       can accidentally delete TB lines from unrelated bulk uploads that share
+       the same account codes.
 
       Tier 1 – FK-based:  TB lines linked via source_journal FK (reliable,
                works for journals posted after migration 0068).
@@ -297,6 +309,9 @@ def _reverse_journal_tb_lines(journal):
 
     Returns the total number of TB lines deleted.
     """
+    import logging as _logging
+    _log = _logging.getLogger("core.tb_reversal")
+
     fy = journal.financial_year
     deleted_count = 0
 
@@ -310,9 +325,15 @@ def _reverse_journal_tb_lines(journal):
     if tier1:
         fk_qs.delete()
         deleted_count += tier1
+        _log.info(
+            "Tier 1 (FK): deleted %d TB lines for journal %s (%s)",
+            tier1, journal.reference_number, journal.pk,
+        )
         return deleted_count  # FK path is authoritative — done
 
     # ── Tier 2: Exact value match (legacy, pre-FK journals) ───────────
+    # IMPORTANT: exclude lines linked to a BulkJournalUpload — those
+    # belong to bulk uploads, not to this manual journal.
     for jnl_line in journal.lines.all():
         adj = TrialBalanceLine.objects.filter(
             financial_year=fy,
@@ -320,13 +341,19 @@ def _reverse_journal_tb_lines(journal):
             debit=jnl_line.debit,
             credit=jnl_line.credit,
             is_adjustment=True,
+            source="manual_journal",
             source_journal__isnull=True,
+            bulk_journal_upload__isnull=True,
         ).first()
         if adj:
             adj.delete()
             deleted_count += 1
 
     if deleted_count:
+        _log.info(
+            "Tier 2 (exact match): deleted %d TB lines for journal %s (%s)",
+            deleted_count, journal.reference_number, journal.pk,
+        )
         return deleted_count
 
     # ── Tier 3: Broad account-code match ──────────────────────────────
@@ -335,6 +362,9 @@ def _reverse_journal_tb_lines(journal):
     # modified TB lines without updating JournalLine records).  Match by
     # account_code + source type only, deleting one TB line per journal
     # line.
+    # IMPORTANT: only match source="manual_journal" and exclude lines
+    # linked to bulk uploads — those belong to BulkJournalUpload, not
+    # to this manual journal.
     journal_codes = list(
         journal.lines.order_by("account_code")
         .values_list("account_code", flat=True)
@@ -344,12 +374,24 @@ def _reverse_journal_tb_lines(journal):
             financial_year=fy,
             account_code=code,
             is_adjustment=True,
-            source__in=("manual_journal", "journal_upload"),
+            source="manual_journal",
             source_journal__isnull=True,
+            bulk_journal_upload__isnull=True,
         ).first()
         if adj:
             adj.delete()
             deleted_count += 1
+
+    if deleted_count:
+        _log.info(
+            "Tier 3 (broad match): deleted %d TB lines for journal %s (%s)",
+            deleted_count, journal.reference_number, journal.pk,
+        )
+    else:
+        _log.warning(
+            "No TB lines found to reverse for journal %s (%s) — all 3 tiers empty",
+            journal.reference_number, journal.pk,
+        )
 
     return deleted_count
 
@@ -374,13 +416,16 @@ def _reverse_journal_line_from_tb(fy, account_code, jnl_debit, jnl_credit, journ
             source_journal=journal,
         ).delete()
     else:
-        # Legacy fallback: match by debit/credit (may be ambiguous)
+        # Legacy fallback: match by debit/credit (may be ambiguous).
+        # Exclude bulk upload lines — they belong to BulkJournalUpload.
         adj = TrialBalanceLine.objects.filter(
             financial_year=fy,
             account_code=account_code,
             debit=jnl_debit,
             credit=jnl_credit,
             is_adjustment=True,
+            source="manual_journal",
+            bulk_journal_upload__isnull=True,
         ).first()
         if adj:
             adj.delete()

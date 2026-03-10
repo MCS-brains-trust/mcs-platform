@@ -422,7 +422,9 @@ class Command(BaseCommand):
                         ).delete()[0]
 
                         # Also attempt to clean up unlinked lines that match
-                        # this journal by exact account_code + debit/credit
+                        # this journal by exact account_code + debit/credit.
+                        # IMPORTANT: only match manual_journal source and
+                        # exclude bulk-upload-linked lines.
                         for jl in jnl_lines:
                             TrialBalanceLine.objects.filter(
                                 financial_year=fy,
@@ -430,8 +432,9 @@ class Command(BaseCommand):
                                 debit=jl.debit,
                                 credit=jl.credit,
                                 is_adjustment=True,
+                                source="manual_journal",
                                 source_journal__isnull=True,
-                                source__in=("manual_journal", "journal_upload"),
+                                bulk_journal_upload__isnull=True,
                             ).delete()
 
                         # Re-apply each journal line to the TB
