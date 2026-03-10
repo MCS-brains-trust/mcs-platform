@@ -6,11 +6,17 @@ whether its debit and credit lines are correctly reflected in the trial
 balance.  Identifies journals with missing or incorrect TB impact and
 optionally repairs them by re-posting the missing lines.
 
+The posting logic aggregates multiple journal lines to the same account code
+into a single TB line (summed debits and credits).  The expected TB line
+count is therefore the number of *unique account codes* in the journal, not
+the raw journal line count.
+
 Usage:
     python manage.py verify_journal_tb_integrity              # report only
     python manage.py verify_journal_tb_integrity --repair      # report + fix
     python manage.py verify_journal_tb_integrity --entity "Foo" # filter by entity
 """
+from collections import OrderedDict
 from decimal import Decimal
 
 from django.core.management.base import BaseCommand
@@ -20,6 +26,20 @@ from core.models import (
     AdjustingJournal,
     TrialBalanceLine,
 )
+
+
+def _aggregate_journal_lines(jnl_lines):
+    """Return an OrderedDict of {account_code: {name, dr, cr}} aggregated
+    from the given journal lines.  Multiple lines to the same account code
+    are summed."""
+    agg = OrderedDict()
+    for jl in jnl_lines:
+        key = jl.account_code
+        if key not in agg:
+            agg[key] = {"name": jl.account_name, "dr": Decimal("0"), "cr": Decimal("0")}
+        agg[key]["dr"] += jl.debit
+        agg[key]["cr"] += jl.credit
+    return agg
 
 
 class Command(BaseCommand):
@@ -76,6 +96,10 @@ class Command(BaseCommand):
             if not jnl_lines:
                 continue
 
+            # Aggregate journal lines by account code (matching posting logic)
+            agg = _aggregate_journal_lines(jnl_lines)
+            expected_count = len(agg)
+
             # TB lines linked via FK
             tb_lines = list(TrialBalanceLine.objects.filter(
                 source_journal=journal,
@@ -83,12 +107,11 @@ class Command(BaseCommand):
                 is_adjustment=True,
             ))
 
-            expected_count = len(jnl_lines)
             actual_count = len(tb_lines)
 
-            # Calculate expected totals from journal lines
-            expected_dr = sum(l.debit for l in jnl_lines)
-            expected_cr = sum(l.credit for l in jnl_lines)
+            # Calculate expected totals from aggregated journal lines
+            expected_dr = sum(v["dr"] for v in agg.values())
+            expected_cr = sum(v["cr"] for v in agg.values())
 
             # Calculate actual totals from TB lines
             actual_dr = sum(l.debit for l in tb_lines)
@@ -96,25 +119,26 @@ class Command(BaseCommand):
 
             # Determine the type of mismatch
             if actual_count == 0:
-                # Completely missing — no FK-linked TB lines at all
+                # Completely missing — no FK-linked TB lines at all.
                 # Try to find unlinked TB lines that might belong to this journal
-                unlinked_count = 0
-                for jl in jnl_lines:
-                    exists = TrialBalanceLine.objects.filter(
+                # by checking each *aggregated* account code.
+                unlinked_matches = OrderedDict()
+                for code, vals in agg.items():
+                    match = TrialBalanceLine.objects.filter(
                         financial_year=fy,
-                        account_code=jl.account_code,
-                        debit=jl.debit,
-                        credit=jl.credit,
+                        account_code=code,
+                        debit=vals["dr"],
+                        credit=vals["cr"],
                         is_adjustment=True,
                         source="manual_journal",
                         source_journal__isnull=True,
                         bulk_journal_upload__isnull=True,
-                    ).exists()
-                    if exists:
-                        unlinked_count += 1
+                    ).first()
+                    if match:
+                        unlinked_matches[code] = match
 
-                if unlinked_count == expected_count:
-                    # All lines exist but are unlinked — backfill FKs
+                if len(unlinked_matches) == expected_count:
+                    # All aggregated lines exist but are unlinked — backfill FKs
                     self.stdout.write(
                         self.style.WARNING(
                             f"  {entity_name} / {fy.year_label} — "
@@ -125,21 +149,10 @@ class Command(BaseCommand):
                     if repair:
                         with transaction.atomic():
                             linked = 0
-                            for jl in jnl_lines:
-                                tb_line = TrialBalanceLine.objects.filter(
-                                    financial_year=fy,
-                                    account_code=jl.account_code,
-                                    debit=jl.debit,
-                                    credit=jl.credit,
-                                    is_adjustment=True,
-                                    source="manual_journal",
-                                    source_journal__isnull=True,
-                                    bulk_journal_upload__isnull=True,
-                                ).first()
-                                if tb_line:
-                                    tb_line.source_journal = journal
-                                    tb_line.save(update_fields=["source_journal"])
-                                    linked += 1
+                            for code, tb_line in unlinked_matches.items():
+                                tb_line.source_journal = journal
+                                tb_line.save(update_fields=["source_journal"])
+                                linked += 1
                         self.stdout.write(
                             self.style.SUCCESS(
                                 f"    → Backfilled source_journal FK on {linked} TB line(s)"
@@ -147,14 +160,14 @@ class Command(BaseCommand):
                         )
                         total_repaired += 1
                     total_missing += 1
-                elif unlinked_count > 0:
+                elif len(unlinked_matches) > 0:
                     # Partial match — some lines exist unlinked
                     self.stdout.write(
                         self.style.WARNING(
                             f"  {entity_name} / {fy.year_label} — "
                             f"{journal.reference_number} ({journal.pk}): "
-                            f"PARTIAL: {unlinked_count}/{expected_count} unlinked TB lines found, "
-                            f"{expected_count - unlinked_count} completely missing"
+                            f"PARTIAL: {len(unlinked_matches)}/{expected_count} unlinked TB lines found, "
+                            f"{expected_count - len(unlinked_matches)} completely missing"
                         )
                     )
                     if repair:
@@ -181,8 +194,8 @@ class Command(BaseCommand):
                     self.style.WARNING(
                         f"  {entity_name} / {fy.year_label} — "
                         f"{journal.reference_number} ({journal.pk}): "
-                        f"COUNT MISMATCH: expected {expected_count} TB lines, "
-                        f"found {actual_count}"
+                        f"COUNT MISMATCH: expected {expected_count} TB lines "
+                        f"(unique account codes), found {actual_count}"
                     )
                 )
                 if repair:
@@ -231,8 +244,11 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS("\nAll posted journals have correct TB impact."))
 
     def _repair_journal(self, journal, fy, jnl_lines):
-        """Delete existing FK-linked TB lines and re-post from journal lines."""
-        from core.views import _apply_journal_line_to_tb
+        """Delete existing TB lines and re-post from journal lines using
+        aggregated posting (one TB line per unique account code)."""
+        from core.views import _post_journal_to_tb
+
+        agg = _aggregate_journal_lines(jnl_lines)
 
         with transaction.atomic():
             # Delete all existing TB lines for this journal (FK-linked)
@@ -240,15 +256,17 @@ class Command(BaseCommand):
                 source_journal=journal,
             ).delete()[0]
 
-            # Also clean up unlinked manual_journal lines that match exactly
-            # (pre-FK orphans for this specific journal)
+            # Also clean up unlinked manual_journal lines that match the
+            # aggregated values (pre-FK orphans for this specific journal).
+            # Use aggregated values to avoid over-matching when multiple
+            # journal lines target the same account code.
             deleted_unlinked = 0
-            for jl in jnl_lines:
+            for code, vals in agg.items():
                 result = TrialBalanceLine.objects.filter(
                     financial_year=fy,
-                    account_code=jl.account_code,
-                    debit=jl.debit,
-                    credit=jl.credit,
+                    account_code=code,
+                    debit=vals["dr"],
+                    credit=vals["cr"],
                     is_adjustment=True,
                     source="manual_journal",
                     source_journal__isnull=True,
@@ -256,19 +274,13 @@ class Command(BaseCommand):
                 ).delete()
                 deleted_unlinked += result[0]
 
-            # Re-post each journal line to TB with source_journal FK
-            for jl in jnl_lines:
-                _apply_journal_line_to_tb(
-                    fy, jl.account_code, jl.account_name,
-                    jl.debit, jl.credit, source="manual_journal",
-                    description=journal.description,
-                    journal=journal,
-                )
+            # Re-post using the aggregated helper
+            _post_journal_to_tb(journal, fy)
 
         self.stdout.write(
             self.style.SUCCESS(
                 f"    → Repaired: deleted {deleted_fk} FK-linked + "
                 f"{deleted_unlinked} unlinked TB line(s), "
-                f"re-posted {len(jnl_lines)} line(s) with source_journal FK"
+                f"re-posted {len(agg)} aggregated TB line(s) with source_journal FK"
             )
         )
