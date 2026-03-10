@@ -84,7 +84,7 @@ class Command(BaseCommand):
         total_linked = 0
         total_journals_fixed = 0
 
-        for journal in journals_qs.iterator():
+        for journal in journals_qs.iterator(chunk_size=100):
             fy = journal.financial_year
             entity_name = fy.entity.entity_name
 
@@ -232,7 +232,7 @@ class Command(BaseCommand):
             )
 
         mismatch_count = 0
-        for journal in journals_qs2.iterator():
+        for journal in journals_qs2.iterator(chunk_size=100):
             jnl_lines = list(journal.lines.all())
             tb_lines = list(journal.tb_lines.all())
             expected_count = len(jnl_lines)
