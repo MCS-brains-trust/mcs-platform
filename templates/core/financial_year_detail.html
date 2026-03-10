@@ -713,6 +713,9 @@
                     <i class="bi bi-plus-lg"></i> Add Asset
                 </button>
                 {% if depreciation_assets %}
+                <a href="{% url 'core:depreciation_pdf' pk=fy.pk %}" class="btn btn-outline-secondary btn-sm" title="Download depreciation schedule as PDF">
+                    <i class="bi bi-file-earmark-pdf"></i> Download PDF
+                </a>
                 <form method="post" action="{% url 'core:depreciation_post_to_tb' pk=fy.pk %}" class="d-inline"
                       onsubmit="return confirm('This will create a depreciation journal entry and post it to the trial balance.\n\nTotal business depreciation: ${{ dep_total_depreciation|floatformat:2 }}\n\nContinue?');">
                     {% csrf_token %}
