@@ -1928,27 +1928,28 @@ def reroll_forward(request, pk):
     if request.method == "POST":
         from decimal import Decimal
 
-        # ── Step 1: Delete old rollover data in the next year ────────
-        # Delete all previously rolled-forward lines (source='rollover').
-        deleted_tb = next_fy.trial_balance_lines.filter(source="rollover").delete()[0]
-
-        # Also delete any tb_import lines in the next year whose account codes
-        # exist in the current year.  This handles the case where the next year
-        # was ALSO imported from Handiledger: those lines carry stale opening
-        # balances and prior-year figures that must be replaced by the
-        # re-rolled values.  We only remove non-adjustment lines so that
-        # user-entered journals in the next year are preserved.
-        current_fy_codes = set(
-            current_fy.trial_balance_lines
-            .filter(is_adjustment=False)
-            .values_list("account_code", flat=True)
-        )
-        deleted_tb_import = next_fy.trial_balance_lines.filter(
-            source="tb_import",
+        # ── Step 1: Full wipe of system-generated lines in the next year ────
+        #
+        # We delete ALL non-adjustment, non-bank-statement lines from the next
+        # year regardless of their source tag.  This is the only reliable way
+        # to handle the case where:
+        #   (a) the next year was also imported from Handiledger (source='tb_import'),
+        #   (b) the prior year has NEW accounts that don't exist in the next year yet,
+        #   (c) the prior year has accounts whose balances changed.
+        #
+        # User-entered journals (is_adjustment=True) and bank statement lines
+        # are explicitly preserved.
+        #
+        # The next year's own TB data (debit/credit/closing_balance columns)
+        # is also preserved — we only wipe the opening_balance and prior-year
+        # comparative columns, which are the ones we control via roll-forward.
+        # The cleanest approach is to delete and recreate the non-adjustment
+        # base lines so the next year's own activity (journals) sits on top.
+        deleted_tb = next_fy.trial_balance_lines.filter(
             is_adjustment=False,
-            account_code__in=current_fy_codes,
+        ).exclude(
+            source='bank_statement',
         ).delete()[0]
-        deleted_tb += deleted_tb_import
 
         deleted_stock = next_fy.stock_items.filter(
             notes__icontains="Rolled forward"
