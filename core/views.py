@@ -279,6 +279,81 @@ def _apply_journal_line_to_tb(fy, account_code, account_name, jnl_debit, jnl_cre
     )
 
 
+def _reverse_journal_tb_lines(journal):
+    """Delete all TB adjustment lines created by a posted journal.
+
+    Uses a multi-tier strategy to handle journals from different eras of the
+    codebase:
+
+      Tier 1 – FK-based:  TB lines linked via source_journal FK (reliable,
+               works for journals posted after migration 0068).
+      Tier 2 – Value match:  Match each JournalLine's account_code + exact
+               debit/credit against unlinked (source_journal IS NULL)
+               adjustment TB lines.  For pre-FK journals.
+      Tier 3 – Broad match:  Match each JournalLine's account_code against
+               unlinked adjustment TB lines with source='manual_journal',
+               ignoring exact debit/credit.  Catches journals whose lines
+               were edited after posting (values diverged).
+
+    Returns the total number of TB lines deleted.
+    """
+    fy = journal.financial_year
+    deleted_count = 0
+
+    # ── Tier 1: FK-based deletion ─────────────────────────────────────
+    fk_qs = TrialBalanceLine.objects.filter(
+        financial_year=fy,
+        is_adjustment=True,
+        source_journal=journal,
+    )
+    tier1 = fk_qs.count()
+    if tier1:
+        fk_qs.delete()
+        deleted_count += tier1
+        return deleted_count  # FK path is authoritative — done
+
+    # ── Tier 2: Exact value match (legacy, pre-FK journals) ───────────
+    for jnl_line in journal.lines.all():
+        adj = TrialBalanceLine.objects.filter(
+            financial_year=fy,
+            account_code=jnl_line.account_code,
+            debit=jnl_line.debit,
+            credit=jnl_line.credit,
+            is_adjustment=True,
+            source_journal__isnull=True,
+        ).first()
+        if adj:
+            adj.delete()
+            deleted_count += 1
+
+    if deleted_count:
+        return deleted_count
+
+    # ── Tier 3: Broad account-code match ──────────────────────────────
+    # The journal's JournalLine values may have diverged from the original
+    # TB lines (e.g. after a partially-failed edit, or a code path that
+    # modified TB lines without updating JournalLine records).  Match by
+    # account_code + source type only, deleting one TB line per journal
+    # line.
+    journal_codes = list(
+        journal.lines.order_by("account_code")
+        .values_list("account_code", flat=True)
+    )
+    for code in journal_codes:
+        adj = TrialBalanceLine.objects.filter(
+            financial_year=fy,
+            account_code=code,
+            is_adjustment=True,
+            source__in=("manual_journal", "journal_upload"),
+            source_journal__isnull=True,
+        ).first()
+        if adj:
+            adj.delete()
+            deleted_count += 1
+
+    return deleted_count
+
+
 def _reverse_journal_line_from_tb(fy, account_code, jnl_debit, jnl_credit, journal=None):
     """
     Reverse a previously applied journal line by deleting its adjustment row.
@@ -4623,39 +4698,16 @@ def journal_delete(request, pk):
 
     with db_transaction.atomic():
         # If the journal was posted, reverse its effect on the Trial Balance
+        # using the multi-tier strategy (FK → exact match → broad match).
         if status == AdjustingJournal.JournalStatus.POSTED:
-            # --- Primary path: FK-based deletion ---
-            fk_lines = journal.tb_lines.all()
-            if fk_lines.exists():
-                fk_lines.delete()
-            else:
-                # --- Legacy fallback for journals created before source_journal FK ---
-                # Delete adjustment TB lines that match each journal line.
-                # Use a consumed list so that duplicate (code, dr, cr) combos
-                # each delete exactly one matching TB row.
-                for jnl_line in journal.lines.all():
-                    adj = TrialBalanceLine.objects.filter(
-                        financial_year=fy,
-                        account_code=jnl_line.account_code,
-                        debit=jnl_line.debit,
-                        credit=jnl_line.credit,
-                        is_adjustment=True,
-                        source_journal__isnull=True,
-                    ).first()
-                    if adj:
-                        adj.delete()
+            _reverse_journal_tb_lines(journal)
 
-            # Clean up any zero-balance TB lines that were created solely by
-            # journal adjustments and now have no remaining purpose.
-            TrialBalanceLine.objects.filter(
-                financial_year=fy,
-                is_adjustment=True,
-                source='manual_journal',
-                source_journal=journal,
-                debit=Decimal("0"),
-                credit=Decimal("0"),
-                closing_balance=Decimal("0"),
-            ).delete()
+        # Sever FK links before delete so SET_NULL doesn't leave orphaned
+        # TB lines that we intentionally chose not to delete (shouldn't
+        # happen after _reverse_journal_tb_lines, but belt-and-suspenders).
+        TrialBalanceLine.objects.filter(source_journal=journal).update(
+            source_journal=None
+        )
 
         journal.delete()
 
@@ -4756,24 +4808,9 @@ def journal_edit(request, pk):
             # Wrap the entire reverse → save → re-apply cycle in an atomic
             # block so a failure at any step rolls back all changes.
             with db_transaction.atomic():
-                # Reverse all existing TB adjustment lines for this journal.
-                # Use the source_journal FK for reliable scoped deletion; fall
-                # back to the legacy debit/credit match for pre-FK journals.
-                fk_lines = journal.tb_lines.all()
-                if fk_lines.exists():
-                    fk_lines.delete()
-                else:
-                    for line in journal.lines.all():
-                        adj = TrialBalanceLine.objects.filter(
-                            financial_year=fy,
-                            account_code=line.account_code,
-                            debit=line.debit,
-                            credit=line.credit,
-                            is_adjustment=True,
-                            source_journal__isnull=True,
-                        ).first()
-                        if adj:
-                            adj.delete()
+                # Reverse all existing TB adjustment lines for this journal
+                # using the multi-tier strategy (FK → exact match → broad).
+                _reverse_journal_tb_lines(journal)
 
                 # Save the updated header
                 updated_journal = form.save(commit=False)
@@ -7794,6 +7831,7 @@ def depreciation_post_to_tb(request, pk):
             fy, line.account_code, line.account_name,
             line.debit, line.credit, source='manual_journal',
             description=journal.description,
+            journal=journal,
         )
 
     # Mark as posted
@@ -8928,6 +8966,7 @@ def review_post_opening_balance(request, pk):
             line['debit'], line['credit'],
             source='manual_journal',
             description=journal.description,
+            journal=journal,
         )
 
     journal.status = AdjustingJournal.JournalStatus.POSTED
