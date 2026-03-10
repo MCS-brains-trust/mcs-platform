@@ -445,8 +445,13 @@ def _post_bank_contra_entry(txn, fy, bank_mapping, has_gst):
 
 def _reverse_bank_contra_entry(txn, fy):
     """
-    Reverse the bank-side (contra) entry for a transaction by creating
-    an adjustment line with opposite sign.  Never mutates existing lines.
+    Reverse the bank-side (contra) entry for a transaction by decrementing
+    the accumulated values on the original TB line.
+
+    This mirrors _post_bank_contra_entry() which accumulates into the
+    original line — the reversal must undo that accumulation rather than
+    creating a separate adjustment line, to prevent closing_balance drift
+    after unconfirm→re-approve cycles.
     """
     if not txn.job or not txn.job.entity:
         return
@@ -455,21 +460,29 @@ def _reverse_bank_contra_entry(txn, fy):
         return
     gross_amount = abs(txn.amount)
     bank_code = bank_mapping.tb_account_code
-    bank_name = bank_mapping.tb_account_name
 
-    # Original posting: receipt (amount>0) → debit bank; payment (amount<0) → credit bank
-    # Reversal: receipt → credit bank; payment → debit bank
-    TrialBalanceLine.objects.create(
+    tb_line = TrialBalanceLine.objects.filter(
         financial_year=fy,
         account_code=bank_code,
-        account_name=bank_name,
-        debit=gross_amount if txn.amount < 0 else Decimal("0"),
-        credit=gross_amount if txn.amount > 0 else Decimal("0"),
-        closing_balance=gross_amount if txn.amount < 0 else -gross_amount,
-        is_adjustment=True,
-        source="bank_statement",
-        description=f"Reversal of bank contra for transaction {txn.pk}",
-    )
+        is_adjustment=False,
+    ).first()
+    if not tb_line:
+        tb_line = TrialBalanceLine.objects.filter(
+            financial_year=fy,
+            account_code=bank_code,
+        ).first()
+    if not tb_line:
+        return
+
+    if txn.amount > 0:
+        # Original posting debited bank — reverse by decrementing debit
+        tb_line.debit = max(Decimal("0"), tb_line.debit - gross_amount)
+        tb_line.closing_balance -= gross_amount
+    else:
+        # Original posting credited bank — reverse by decrementing credit
+        tb_line.credit = max(Decimal("0"), tb_line.credit - gross_amount)
+        tb_line.closing_balance += gross_amount
+    tb_line.save(update_fields=["debit", "credit", "closing_balance"])
 
 
 def _post_txn_to_tb(txn, fy, has_gst):
@@ -582,6 +595,123 @@ def _post_txn_to_tb(txn, fy, has_gst):
         txn.save(update_fields=['posted_to_tb'])
 
     return True
+
+
+def _recalculate_bank_tb_lines(fy):
+    """Recompute the debit/credit/closing_balance on bank-accumulated TB lines
+    by aggregating from all currently-posted PendingTransactions.
+
+    This is a safety-net function that ensures the TB reflects the true state
+    of all posted bank transactions.  It rebuilds each non-adjustment TB line
+    that has source='bank_statement' from scratch.
+
+    Journal-created adjustment lines (source='manual_journal') are never
+    touched — they are managed by _apply_journal_line_to_tb / _reverse_journal_line_from_tb.
+    """
+    from review.models import PendingTransaction
+    from django.db.models import Sum, Q, F
+
+    posted_txns = PendingTransaction.objects.filter(
+        job__entity=fy.entity,
+        is_confirmed=True,
+        posted_to_tb=True,
+    ).select_related('job')
+
+    # Build a mapping of account_code → (total_debit, total_credit) from posted txns
+    account_totals = {}  # code -> {'debit': D, 'credit': D}
+    gst_debit = Decimal("0")
+    gst_credit = Decimal("0")
+    bank_totals = {}  # bank_code -> {'debit': D, 'credit': D}
+
+    for txn in posted_txns:
+        has_gst = txn.confirmed_gst_amount and txn.confirmed_gst_amount > 0
+        net_for_tb = txn.net_amount if has_gst else abs(txn.amount)
+
+        code = txn.confirmed_code
+        if not code:
+            continue
+
+        if code not in account_totals:
+            account_totals[code] = {'debit': Decimal("0"), 'credit': Decimal("0")}
+
+        if txn.amount < 0:
+            account_totals[code]['debit'] += net_for_tb
+        else:
+            account_totals[code]['credit'] += net_for_tb
+
+        # GST
+        if has_gst:
+            gst_amt = txn.confirmed_gst_amount
+            if txn.amount > 0:
+                gst_credit += gst_amt
+            else:
+                gst_debit += gst_amt
+
+        # Bank contra
+        bank_mapping = _get_bank_mapping_for_txn(txn)
+        if bank_mapping:
+            bcode = bank_mapping.tb_account_code
+            if bcode not in bank_totals:
+                bank_totals[bcode] = {'debit': Decimal("0"), 'credit': Decimal("0")}
+            gross = abs(txn.amount)
+            if txn.amount > 0:
+                bank_totals[bcode]['debit'] += gross
+            else:
+                bank_totals[bcode]['credit'] += gross
+
+    # Now update the non-adjustment TB lines for each account code
+    # Only touch lines with source='bank_statement' to avoid interfering with imports
+    for code, totals in account_totals.items():
+        tb_line = TrialBalanceLine.objects.filter(
+            financial_year=fy,
+            account_code=code,
+            is_adjustment=False,
+            source='bank_statement',
+        ).first()
+        if tb_line:
+            ob = tb_line.opening_balance or Decimal("0")
+            tb_line.debit = totals['debit']
+            tb_line.credit = totals['credit']
+            tb_line.closing_balance = ob + totals['debit'] - totals['credit']
+            tb_line.save(update_fields=["debit", "credit", "closing_balance"])
+
+    # GST control account
+    if gst_debit or gst_credit:
+        gst_line = TrialBalanceLine.objects.filter(
+            financial_year=fy,
+            account_code="3380",
+            is_adjustment=False,
+            source='bank_statement',
+        ).first()
+        if gst_line:
+            ob = gst_line.opening_balance or Decimal("0")
+            gst_line.debit = gst_debit
+            gst_line.credit = gst_credit
+            gst_line.closing_balance = ob + gst_debit - gst_credit
+            gst_line.save(update_fields=["debit", "credit", "closing_balance"])
+
+    # Bank contra accounts
+    for bcode, totals in bank_totals.items():
+        bank_line = TrialBalanceLine.objects.filter(
+            financial_year=fy,
+            account_code=bcode,
+            is_adjustment=False,
+            source='bank_statement',
+        ).first()
+        if bank_line:
+            ob = bank_line.opening_balance or Decimal("0")
+            bank_line.debit = totals['debit']
+            bank_line.credit = totals['credit']
+            bank_line.closing_balance = ob + totals['debit'] - totals['credit']
+            bank_line.save(update_fields=["debit", "credit", "closing_balance"])
+
+    # Clean up orphaned reversal adjustment lines from the old pattern
+    TrialBalanceLine.objects.filter(
+        financial_year=fy,
+        is_adjustment=True,
+        source='bank_statement',
+        description__startswith='Reversal of ',
+    ).delete()
 
 
 def _log_action(request, action, description, obj=None):
@@ -8881,8 +9011,12 @@ def review_delete_selected_transactions(request, pk):
 
 def _reverse_tb_for_transaction(txn, fy):
     """Reverse the trial balance impact of a single confirmed transaction
-    by creating adjustment lines with opposite sign values.
-    Never mutates existing TrialBalanceLine records.
+    by decrementing the accumulated values on the original TB lines.
+
+    _post_txn_to_tb() accumulates debit/credit/closing_balance directly
+    into existing TB lines.  The reversal MUST undo that accumulation
+    (not create separate reversal lines) to prevent closing_balance drift
+    after unconfirm→re-approve cycles.
     """
     from django.db import transaction as db_transaction
 
@@ -8894,36 +9028,50 @@ def _reverse_tb_for_transaction(txn, fy):
         has_gst = txn.confirmed_gst_amount and txn.confirmed_gst_amount > 0
         net_for_tb = txn.net_amount if has_gst else abs(txn.amount)
 
-        # Original: payment (amount<0) → debit expense; receipt (amount>0) → credit income
-        # Reversal: payment → credit; receipt → debit
-        TrialBalanceLine.objects.create(
+        tb_line = TrialBalanceLine.objects.filter(
             financial_year=fy,
             account_code=txn.confirmed_code,
-            account_name=txn.confirmed_name or txn.confirmed_code,
-            debit=net_for_tb if txn.amount > 0 else Decimal("0"),
-            credit=net_for_tb if txn.amount < 0 else Decimal("0"),
-            closing_balance=net_for_tb if txn.amount > 0 else -net_for_tb,
-            is_adjustment=True,
-            source="bank_statement",
-            description=f"Reversal of transaction {txn.pk}",
-        )
+            is_adjustment=False,
+        ).first()
+        if not tb_line:
+            tb_line = TrialBalanceLine.objects.filter(
+                financial_year=fy,
+                account_code=txn.confirmed_code,
+            ).first()
+        if tb_line:
+            if txn.amount < 0:
+                # Original posting debited expense — reverse
+                tb_line.debit = max(Decimal("0"), tb_line.debit - net_for_tb)
+                tb_line.closing_balance -= net_for_tb
+            else:
+                # Original posting credited income — reverse
+                tb_line.credit = max(Decimal("0"), tb_line.credit - net_for_tb)
+                tb_line.closing_balance += net_for_tb
+            tb_line.save(update_fields=["debit", "credit", "closing_balance"])
 
         # --- 2. Reverse the GST clearing account ---
         if has_gst:
             gst_amt = txn.confirmed_gst_amount
-            # Original: receipt (amount>0) → credit 3380; payment (amount<0) → debit 3380
-            # Reversal: receipt → debit 3380; payment → credit 3380
-            TrialBalanceLine.objects.create(
+            gst_line = TrialBalanceLine.objects.filter(
                 financial_year=fy,
                 account_code="3380",
-                account_name="GST payable control account",
-                debit=gst_amt if txn.amount > 0 else Decimal("0"),
-                credit=gst_amt if txn.amount < 0 else Decimal("0"),
-                closing_balance=gst_amt if txn.amount > 0 else -gst_amt,
-                is_adjustment=True,
-                source="bank_statement",
-                description=f"Reversal of GST for transaction {txn.pk}",
-            )
+                is_adjustment=False,
+            ).first()
+            if not gst_line:
+                gst_line = TrialBalanceLine.objects.filter(
+                    financial_year=fy,
+                    account_code="3380",
+                ).first()
+            if gst_line:
+                if txn.amount > 0:
+                    # Original: receipt credited 3380 — reverse
+                    gst_line.credit = max(Decimal("0"), gst_line.credit - gst_amt)
+                    gst_line.closing_balance += gst_amt
+                else:
+                    # Original: payment debited 3380 — reverse
+                    gst_line.debit = max(Decimal("0"), gst_line.debit - gst_amt)
+                    gst_line.closing_balance -= gst_amt
+                gst_line.save(update_fields=["debit", "credit", "closing_balance"])
 
         # --- 3. Reverse the bank contra-entry ---
         _reverse_bank_contra_entry(txn, fy)

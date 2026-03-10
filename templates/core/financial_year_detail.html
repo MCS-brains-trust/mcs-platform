@@ -652,13 +652,13 @@ function applyRerollForward() {
         <div class="d-flex justify-content-between align-items-center mb-3">
             <div>
                 <h6 class="mb-1">Comparative Trial Balance as at {{ fy.end_date|date:"d M Y" }}</h6>
-                <small class="text-muted">
-                    Total Debits: <strong>${{ total_debit|floatformat:2 }}</strong> &middot;
-                    Total Credits: <strong>${{ total_credit|floatformat:2 }}</strong>
+                <small class="text-muted" id="tb-header-totals">
+                    Total Debits: <strong id="tb-header-debit">${{ total_debit|floatformat:2 }}</strong> &middot;
+                    Total Credits: <strong id="tb-header-credit">${{ total_credit|floatformat:2 }}</strong>
                     {% if total_debit == total_credit %}
-                    <span class="text-success"><i class="bi bi-check-circle"></i> Balanced</span>
+                    <span class="text-success" id="tb-header-balance"><i class="bi bi-check-circle"></i> Balanced</span>
                     {% else %}
-                    <span class="text-danger"><i class="bi bi-x-circle"></i> Out of balance</span>
+                    <span class="text-danger" id="tb-header-balance"><i class="bi bi-x-circle"></i> Out of balance</span>
                     {% endif %}
                 </small>
             </div>
@@ -728,8 +728,8 @@ function applyRerollForward() {
                     <tr class="border-top border-2 border-dark fw-bold">
                         <td></td>
                         <td class="text-end">Totals</td>
-                        <td class="text-end">{{ total_debit|floatformat:2|intcomma }}</td>
-                        <td class="text-end">{{ total_credit|floatformat:2|intcomma }}</td>
+                        <td class="text-end" id="tfoot-total-debit">{{ total_debit|floatformat:2|intcomma }}</td>
+                        <td class="text-end" id="tfoot-total-credit">{{ total_credit|floatformat:2|intcomma }}</td>
                         <td class="text-end text-muted">{{ total_prior_debit|floatformat:2|intcomma }}</td>
                         <td class="text-end text-muted">{{ total_prior_credit|floatformat:2|intcomma }}</td>
                         <td></td>
@@ -3476,6 +3476,34 @@ function refreshNetProfit() {
             } else {
                 tfootNP.innerHTML = '<span class="text-danger">($' + abs + ')</span>';
             }
+        }
+
+        // Update debit/credit totals in header and footer
+        if (data.total_debit !== undefined) {
+            var td = parseFloat(data.total_debit);
+            var tc = parseFloat(data.total_credit);
+            var fmtDr = td.toLocaleString('en-AU', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            var fmtCr = tc.toLocaleString('en-AU', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+
+            var headerDr = document.getElementById('tb-header-debit');
+            var headerCr = document.getElementById('tb-header-credit');
+            var headerBal = document.getElementById('tb-header-balance');
+            if (headerDr) headerDr.textContent = '$' + fmtDr;
+            if (headerCr) headerCr.textContent = '$' + fmtCr;
+            if (headerBal) {
+                if (data.balanced) {
+                    headerBal.className = 'text-success';
+                    headerBal.innerHTML = '<i class="bi bi-check-circle"></i> Balanced';
+                } else {
+                    headerBal.className = 'text-danger';
+                    headerBal.innerHTML = '<i class="bi bi-x-circle"></i> Out of balance';
+                }
+            }
+
+            var tfootDr = document.getElementById('tfoot-total-debit');
+            var tfootCr = document.getElementById('tfoot-total-credit');
+            if (tfootDr) tfootDr.textContent = fmtDr;
+            if (tfootCr) tfootCr.textContent = fmtCr;
         }
     })
     .catch(function() {});
