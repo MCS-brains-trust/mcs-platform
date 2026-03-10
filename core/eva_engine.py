@@ -1935,7 +1935,7 @@ def eva_review_detail(request, pk):
     ordered_findings = (
         review.findings
         .select_related("resolved_by")
-        .prefetch_related("related_findings")
+        .prefetch_related("related_findings", "clarifications__answered_by")
         .annotate(_sev_order=severity_order, _status_order=status_order)
         .order_by("_sev_order", "_status_order", "check_name")
     )
@@ -1944,6 +1944,21 @@ def eva_review_detail(request, pk):
         related = [
             {"id": str(rf.pk), "check_name": rf.check_name, "title": rf.title}
             for rf in f.related_findings.all()
+        ]
+        # Build clarifications list
+        clarifications = [
+            {
+                "id": str(c.pk),
+                "question_id": c.question_id,
+                "answer_value": c.answer_value,
+                "answer_label": c.answer_label,
+                "answer_detail": c.answer_detail,
+                "outcome": c.outcome,
+                "outcome_message": c.outcome_message,
+                "answered_by": c.answered_by.get_full_name() if c.answered_by else "Unknown",
+                "answered_at": c.answered_at.isoformat(),
+            }
+            for c in f.clarifications.all()
         ]
 
         findings.append({
@@ -1964,6 +1979,7 @@ def eva_review_detail(request, pk):
             "resolved_by": f.resolved_by.get_full_name() if f.resolved_by else None,
             "resolved_at": f.resolved_at.isoformat() if f.resolved_at else None,
             "related_findings": related,
+            "clarifications": clarifications,
         })
 
     return JsonResponse({
@@ -2239,4 +2255,196 @@ def knowledge_status(request):
             for c in categories
         ],
         "last_sync": last_sync.isoformat() if last_sync else None,
+    })
+
+
+# ===========================================================================
+# Eva Clarification Endpoint
+# ===========================================================================
+
+@login_required
+@require_POST
+def eva_clarify_finding(request, pk):
+    """
+    Submit a clarification answer for an Eva finding.
+    POST /api/eva-findings/<pk>/clarify/
+
+    Body (JSON):
+    {
+        "answer_value": "related_company",
+        "answer_detail": "Optional free-text note"
+    }
+
+    Returns:
+    {
+        "status": "ok",
+        "outcome": "dismissed" | "confirmed" | "reduced" | "pending",
+        "outcome_message": "...",
+        "new_severity": "critical" | "advisory",
+        "new_status": "open" | "addressed",
+        "new_confidence": "high" | "medium" | "low",
+        "should_clear_review": bool
+    }
+    """
+    from core.models import EvaFinding, EvaClarification, ActivityLog
+    from core.eva_service import CLARIFICATION_QUESTIONS, _reevaluate_finding
+
+    try:
+        finding = EvaFinding.objects.select_related(
+            "eva_review__financial_year__entity"
+        ).get(pk=pk)
+    except EvaFinding.DoesNotExist:
+        return JsonResponse({"error": "Finding not found"}, status=404)
+
+    try:
+        body = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid JSON"}, status=400)
+
+    answer_value = body.get("answer_value", "").strip()
+    answer_detail = body.get("answer_detail", "").strip()
+
+    if not answer_value:
+        return JsonResponse({"error": "answer_value is required"}, status=400)
+
+    # Look up the question definition for this check_name
+    check_defn = CLARIFICATION_QUESTIONS.get(finding.check_name)
+    if not check_defn:
+        return JsonResponse(
+            {"error": f"No clarification questions defined for check '{finding.check_name}'"},
+            status=400,
+        )
+
+    # Find the matching option
+    option = next(
+        (o for o in check_defn["options"] if o["value"] == answer_value),
+        None,
+    )
+    if not option:
+        return JsonResponse(
+            {"error": f"Unknown answer value '{answer_value}' for check '{finding.check_name}'"},
+            status=400,
+        )
+
+    # Extract the account name from the finding title for the question text
+    # (best-effort: use the finding title, or fall back to check_name)
+    account_name = finding.title or finding.check_name
+
+    # Build the question text (with account_name substituted)
+    question_text = check_defn["question_text"].replace(
+        "{account_name}", account_name
+    )
+
+    # Create the clarification record
+    clarification = EvaClarification.objects.create(
+        finding=finding,
+        question_id=check_defn["question_id"],
+        question_text=question_text,
+        answer_value=answer_value,
+        answer_label=option["label"],
+        answer_detail=answer_detail,
+        outcome_hint=option["outcome_hint"],
+        outcome_message=option["outcome_message"],
+        learning_note=option["learning_note"],
+        answered_by=request.user,
+        outcome="pending",  # will be updated by _reevaluate_finding
+    )
+
+    # Re-evaluate the finding based on the answer
+    result = _reevaluate_finding(finding, clarification)
+
+    fy = finding.eva_review.financial_year
+    entity = fy.entity
+
+    # If all findings are now addressed, clear the review
+    if result["should_clear_review"]:
+        review = finding.eva_review
+        review.status = "cleared"
+        review.save(update_fields=["status"])
+        fy.status = fy.Status.EVA_CLEARED
+        fy.save(update_fields=["status"])
+        ActivityLog.objects.create(
+            user=request.user,
+            event_type="eva_cleared",
+            title=f"Eva Cleared — {entity.entity_name}",
+            description=(
+                f"All Eva findings addressed for {entity.entity_name} ({fy.year_label}). "
+                f"Financial year is now cleared for finalisation."
+            ),
+            entity=entity,
+            financial_year=fy,
+            url=f"/entities/years/{fy.pk}/",
+        )
+
+    # Log the clarification
+    ActivityLog.objects.create(
+        user=request.user,
+        event_type="eva_clarification",
+        title=f"Eva Clarification — {finding.title or finding.check_name}",
+        description=(
+            f"Clarification submitted for finding '{finding.title or finding.check_name}' "
+            f"({entity.entity_name}, {fy.year_label}). "
+            f"Answer: {option['label']}. Outcome: {result['outcome']}."
+        ),
+        entity=entity,
+        financial_year=fy,
+        url=f"/entities/years/{fy.pk}/",
+    )
+
+    return JsonResponse({
+        "status": "ok",
+        "outcome": result["outcome"],
+        "outcome_message": result["outcome_message"],
+        "new_severity": result["new_severity"],
+        "new_status": result["new_status"],
+        "new_confidence": result["new_confidence"],
+        "should_clear_review": result["should_clear_review"],
+    })
+
+
+@login_required
+@require_GET
+def eva_clarification_question(request, pk):
+    """
+    Get the clarification question for a finding.
+    GET /api/eva-findings/<pk>/clarify/
+
+    Returns:
+    {
+        "has_question": bool,
+        "question_id": str,
+        "question_text": str,
+        "options": [...],
+        "existing_clarifications": [...]
+    }
+    """
+    from core.models import EvaFinding, EvaClarification
+    from core.eva_service import get_clarification_question
+
+    try:
+        finding = EvaFinding.objects.prefetch_related("clarifications__answered_by").get(pk=pk)
+    except EvaFinding.DoesNotExist:
+        return JsonResponse({"error": "Finding not found"}, status=404)
+
+    question = get_clarification_question(finding.check_name)
+
+    # Fetch existing clarifications for this finding
+    existing = []
+    for c in finding.clarifications.all():
+        existing.append({
+            "id": str(c.pk),
+            "question_id": c.question_id,
+            "answer_value": c.answer_value,
+            "answer_label": c.answer_label,
+            "answer_detail": c.answer_detail,
+            "outcome": c.outcome,
+            "outcome_message": c.outcome_message,
+            "answered_by": c.answered_by.get_full_name() if c.answered_by else "Unknown",
+            "answered_at": c.answered_at.isoformat(),
+        })
+
+    return JsonResponse({
+        "has_question": question is not None,
+        "question": question,
+        "existing_clarifications": existing,
     })
