@@ -1,0 +1,41 @@
+name: Deploy to Production
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy to Digital Ocean Droplet
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DO_HOST }}
+          username: ${{ secrets.DO_USER }}
+          key: ${{ secrets.DO_SSH_KEY }}
+          script: |
+            set -e
+            echo "=== Starting deploy ==="
+
+            cd /opt/statementhub
+
+            echo "=== Pulling latest code ==="
+            git pull origin master
+
+            echo "=== Installing dependencies ==="
+            /opt/statementhub/venv/bin/pip install -r requirements.txt -q
+
+            echo "=== Running migrations ==="
+            /opt/statementhub/venv/bin/python manage.py makemigrations --no-input
+            /opt/statementhub/venv/bin/python manage.py migrate --no-input
+
+            echo "=== Collecting static files ==="
+            /opt/statementhub/venv/bin/python manage.py collectstatic --no-input
+
+            echo "=== Restarting Gunicorn ==="
+            sudo systemctl restart gunicorn
+
+            echo "=== Deploy complete ==="
