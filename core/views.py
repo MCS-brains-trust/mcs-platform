@@ -1970,6 +1970,18 @@ def financial_year_status(request, pk):
             import logging
             logging.getLogger(__name__).error(f"Auto Tier 3 on In Review failed: {e}")
 
+    # ── Draft revert: clear all Eva findings and risk flags ─────────
+    if new_status == "draft":
+        deleted_reviews = fy.eva_reviews.all().delete()[0]  # cascades to EvaFinding
+        deleted_flags = fy.risk_flags.all().delete()[0]
+        if deleted_reviews or deleted_flags:
+            _log_action(
+                request, "status_change",
+                f"Draft revert: cleared {deleted_reviews} Eva review(s) and "
+                f"{deleted_flags} risk flag(s) for {fy}",
+                fy,
+            )
+
     old_status = fy.status
     fy.status = new_status
     if new_status == "finished":

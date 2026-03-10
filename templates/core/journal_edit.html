@@ -153,6 +153,18 @@
 .account-dropdown-empty {
     padding: 8px 10px; font-size: 0.85rem; color: #6c757d; font-style: italic;
 }
+.account-dropdown-create {
+    padding: 8px 10px; font-size: 0.85rem; color: #0d6efd; cursor: pointer;
+    border-top: 1px solid #dee2e6; font-weight: 500;
+}
+.account-dropdown-create:hover { background-color: #e9f0ff; }
+.account-create-panel {
+    border: 1px solid #dee2e6; border-radius: .375rem;
+    background: #f8f9fa; padding: 10px; margin-top: 4px;
+    display: none; position: absolute; z-index: 1060;
+    width: 340px; box-shadow: 0 4px 12px rgba(0,0,0,.15);
+}
+.account-create-panel.show { display: block; }
 </style>
 
 <script>
@@ -163,6 +175,10 @@ const ACCOUNT_LIST = ACCOUNTS.map(function(acc) {
         name: acc.client_account_name || acc.name || ''
     };
 });
+
+const JOURNAL_SUGGEST_URL = '{% url "core:depreciation_suggest_account_code" pk=fy.pk %}';
+const JOURNAL_CREATE_URL  = '{% url "core:depreciation_create_account" pk=fy.pk %}';
+const JOURNAL_CSRF        = '{{ csrf_token }}';
 
 document.addEventListener('DOMContentLoaded', function() {
 
@@ -242,8 +258,101 @@ document.addEventListener('DOMContentLoaded', function() {
                     dropdown.appendChild(item);
                 });
             }
+            // "Create new account" option at the bottom
+            const createItem = document.createElement('div');
+            createItem.className = 'account-dropdown-create';
+            createItem.innerHTML = '<i class="bi bi-plus-circle me-1"></i> Create new account…';
+            createItem.addEventListener('mousedown', function(e) {
+                e.preventDefault();
+                dropdown.classList.remove('show');
+                showCreatePanel(input.value.trim());
+            });
+            dropdown.appendChild(createItem);
             dropdown.classList.add('show');
         }
+
+        // ---- Inline Create Account Panel ----
+        const createPanel = document.createElement('div');
+        createPanel.className = 'account-create-panel';
+        createPanel.innerHTML =
+            '<div class="mb-2 fw-semibold" style="font-size:0.85rem;"><i class="bi bi-plus-circle me-1"></i>Create New Account</div>' +
+            '<input type="text" class="form-control form-control-sm mb-1 cp-name-input" placeholder="Account name (e.g. Legal fees)">' +
+            '<div class="input-group input-group-sm mb-2">' +
+            '  <span class="input-group-text">Code</span>' +
+            '  <input type="text" class="form-control cp-code-input" placeholder="Suggested…">' +
+            '</div>' +
+            '<div class="d-flex gap-1">' +
+            '  <button type="button" class="btn btn-sm btn-primary cp-confirm"><i class="bi bi-check-lg"></i> Create</button>' +
+            '  <button type="button" class="btn btn-sm btn-outline-secondary cp-cancel"><i class="bi bi-x-lg"></i> Cancel</button>' +
+            '</div>';
+        wrapper.appendChild(createPanel);
+        const cpNameInput = createPanel.querySelector('.cp-name-input');
+        const cpCodeInput = createPanel.querySelector('.cp-code-input');
+        let cpSuggestTimer;
+        function showCreatePanel(prefill) {
+            cpNameInput.value = prefill || '';
+            cpCodeInput.value = '';
+            createPanel.classList.add('show');
+            cpNameInput.focus();
+            if (prefill) triggerSuggest(prefill);
+        }
+        function triggerSuggest(name) {
+            clearTimeout(cpSuggestTimer);
+            cpSuggestTimer = setTimeout(function() {
+                fetch(JOURNAL_SUGGEST_URL + '?name=' + encodeURIComponent(name) + '&section=auto', {
+                    headers: { 'X-Requested-With': 'XMLHttpRequest' }
+                })
+                .then(function(r) { return r.json(); })
+                .then(function(d) { if (d.suggested_code) cpCodeInput.value = d.suggested_code; })
+                .catch(function() {});
+            }, 350);
+        }
+        cpNameInput.addEventListener('input', function() { triggerSuggest(this.value); });
+        createPanel.querySelector('.cp-cancel').addEventListener('click', function() {
+            createPanel.classList.remove('show');
+            input.focus();
+        });
+        createPanel.querySelector('.cp-confirm').addEventListener('click', function() {
+            const name = cpNameInput.value.trim();
+            const code = cpCodeInput.value.trim();
+            if (!name || !code) { cpNameInput.focus(); return; }
+            const btn = this;
+            btn.disabled = true;
+            btn.textContent = 'Creating…';
+            fetch(JOURNAL_CREATE_URL, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': JOURNAL_CSRF,
+                    'X-Requested-With': 'XMLHttpRequest'
+                },
+                body: JSON.stringify({ name: name, code: code, section: 'auto' })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.success) {
+                    const newAcc = { code: d.code, name: d.name };
+                    ACCOUNT_LIST.push(newAcc);
+                    ACCOUNT_LIST.sort(function(a, b) { return a.code.localeCompare(b.code); });
+                    selectAccount(newAcc);
+                    createPanel.classList.remove('show');
+                } else {
+                    alert(d.error || 'Could not create account.');
+                    btn.disabled = false;
+                    btn.innerHTML = '<i class="bi bi-check-lg"></i> Create';
+                }
+            })
+            .catch(function() {
+                alert('Network error. Please try again.');
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-check-lg"></i> Create';
+            });
+        });
+        document.addEventListener('mousedown', function(e) {
+            if (!createPanel.contains(e.target) && e.target !== input) {
+                createPanel.classList.remove('show');
+            }
+        });
 
         function selectAccount(acc) {
             input.value = acc.code + ' - ' + acc.name;
@@ -298,8 +407,26 @@ document.addEventListener('DOMContentLoaded', function() {
         return parseFloat(val.replace(/,/g, '')) || 0;
     }
 
+    function evaluateExpression(val) {
+        if (!val) return 0;
+        var expr = val.replace(/,/g, '').trim();
+        // If it contains arithmetic operators, evaluate as expression
+        if (/[+\-*/]/.test(expr.replace(/^-/, ''))) {
+            // Only allow digits, decimal points, parentheses, and operators
+            if (/^[\d.+\-*/() ]+$/.test(expr)) {
+                try {
+                    var result = Function('"use strict"; return (' + expr + ')')();
+                    if (typeof result === 'number' && isFinite(result)) {
+                        return Math.round(result * 100) / 100;
+                    }
+                } catch(e) {}
+            }
+        }
+        return parseFloat(expr) || 0;
+    }
+
     function formatField(el) {
-        var num = parseRaw(el.value);
+        var num = evaluateExpression(el.value);
         el.value = num === 0 ? '0' : fmtNum(num);
     }
 

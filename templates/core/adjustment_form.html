@@ -467,9 +467,28 @@ document.addEventListener('DOMContentLoaded', function() {
         return parseFloat(val.replace(/,/g, '')) || 0;
     }
 
+    // Evaluate arithmetic expressions (e.g. 1000+500, 8181.82*2)
+    function evaluateExpression(val) {
+        if (!val) return 0;
+        var expr = val.replace(/,/g, '').trim();
+        // If it contains arithmetic operators, evaluate as expression
+        if (/[+\-*/]/.test(expr.replace(/^-/, ''))) {
+            // Only allow digits, decimal points, parentheses, and operators
+            if (/^[\d.+\-*/() ]+$/.test(expr)) {
+                try {
+                    var result = Function('"use strict"; return (' + expr + ')')();
+                    if (typeof result === 'number' && isFinite(result)) {
+                        return Math.round(result * 100) / 100;
+                    }
+                } catch(e) {}
+            }
+        }
+        return parseFloat(expr) || 0;
+    }
+
     // Format a field value with commas on blur
     function formatField(el) {
-        var num = parseRaw(el.value);
+        var num = evaluateExpression(el.value);
         if (num === 0) {
             el.value = '0';
         } else {
