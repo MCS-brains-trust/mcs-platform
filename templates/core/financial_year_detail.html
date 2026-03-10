@@ -1274,11 +1274,11 @@
                         </div>
                         <div class="col-6">
                             <label class="form-label fw-semibold">Total Cost ($)</label>
-                            <input type="number" name="total_cost" class="form-control" step="0.01" value="0">
+                            <input type="number" name="total_cost" id="addAssetTotalCost" class="form-control" step="0.01" value="0">
                         </div>
                         <div class="col-6">
                             <label class="form-label fw-semibold">Opening WDV ($)</label>
-                            <input type="number" name="opening_wdv" class="form-control" step="0.01" value="0">
+                            <input type="number" name="opening_wdv" id="addAssetOpeningWdv" class="form-control" step="0.01" value="0">
                         </div>
                         <div class="col-4">
                             <label class="form-label fw-semibold">Method</label>
@@ -1493,6 +1493,26 @@
   wireAccountNew('modalAssetAcctSelect', 'newAssetAcctRow', 'newAssetAcctName', 'newAssetAcctCode', 'newAssetAcctConfirm', 'newAssetAcctCancel', 'modalAssetAcctName', 'assets');
   wireAccountNew('modalAccumDepSelect',  'newAccumDepRow',  'newAccumDepName',  'newAccumDepCode',  'newAccumDepConfirm',  'newAccumDepCancel',  'modalAccumDepName',  'assets');
   wireAccountNew('modalDepExpSelect',    'newDepExpRow',    'newDepExpName',    'newDepExpCode',    'newDepExpConfirm',    'newDepExpCancel',    'modalDepExpName',    'expenses');
+
+  // Auto-fill Opening WDV from Total Cost when adding a new asset
+  const addTotalCost   = document.getElementById('addAssetTotalCost');
+  const addOpeningWdv  = document.getElementById('addAssetOpeningWdv');
+  addTotalCost?.addEventListener('input', function() {
+    // Only mirror if Opening WDV hasn't been manually changed from 0
+    if (!addOpeningWdv._manuallyEdited) {
+      addOpeningWdv.value = this.value;
+    }
+  });
+  addOpeningWdv?.addEventListener('input', function() {
+    // If user manually changes Opening WDV, stop mirroring
+    if (this.value !== addTotalCost.value) {
+      this._manuallyEdited = true;
+    }
+  });
+  // Reset manual edit flag when the modal is hidden
+  document.getElementById('addAssetModal')?.addEventListener('hidden.bs.modal', function() {
+    if (addOpeningWdv) addOpeningWdv._manuallyEdited = false;
+  });
 })();
 </script>
 
