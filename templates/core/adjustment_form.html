@@ -147,14 +147,70 @@
     border-top: 1px solid #dee2e6; font-weight: 500;
 }
 .account-dropdown-create:hover { background-color: #e9f0ff; }
-.account-create-panel {
-    border: 1px solid #dee2e6; border-radius: .375rem;
-    background: #f8f9fa; padding: 10px; margin-top: 4px;
-    display: none; position: absolute; z-index: 1060;
-    width: 340px; box-shadow: 0 4px 12px rgba(0,0,0,.15);
-}
-.account-create-panel.show { display: block; }
 </style>
+
+<!-- Create Account Modal -->
+<div class="modal fade" id="createAccountModal" tabindex="-1" aria-labelledby="createAccountModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="createAccountModalLabel">
+                    <i class="bi bi-plus-circle me-1"></i> Create New Account
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div id="createAcctError" class="alert alert-danger small py-2 d-none"></div>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Account Type / Section <span class="text-danger">*</span></label>
+                    <select class="form-select form-select-sm" id="ca-section">
+                        <option value="">-- Select Section --</option>
+                        <option value="revenue">Revenue (0 - 999)</option>
+                        <option value="cost_of_sales">Cost of Sales (0 - 999)</option>
+                        <option value="expenses">Expenses (1000 - 1999)</option>
+                        <option value="assets">Assets (2000 - 2999)</option>
+                        <option value="liabilities">Liabilities (3000 - 3999)</option>
+                        <option value="equity">Equity (4000+)</option>
+                        <option value="capital_accounts">Capital Accounts (4000+)</option>
+                        <option value="pl_appropriation">P&amp;L Appropriation (4000+)</option>
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Account Name <span class="text-danger">*</span></label>
+                    <input type="text" class="form-control form-control-sm" id="ca-name" placeholder="e.g. Legal Fees">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Account Code <span class="text-danger">*</span></label>
+                    <div class="input-group input-group-sm">
+                        <input type="text" class="form-control" id="ca-code" placeholder="Auto-suggested...">
+                        <span class="input-group-text" id="ca-code-status"></span>
+                    </div>
+                    <div class="form-text" id="ca-code-hint"></div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Tax Code</label>
+                    <select class="form-select form-select-sm" id="ca-tax-code">
+                        <option value="">-- None --</option>
+                        <option value="GST">GST</option>
+                        <option value="ADS">ADS - GST on Purchases (Adjustments)</option>
+                        <option value="ITS">ITS - Input Taxed Sales</option>
+                        <option value="FRE">FRE - GST Free</option>
+                        <option value="CAP">CAP - Capital Acquisitions</option>
+                        <option value="INP">INP - Input Taxed Purchases</option>
+                        <option value="GNR">GNR - GST Not Registered</option>
+                        <option value="N-T">N-T - Not Reportable</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary btn-sm" id="ca-save-btn">
+                    <i class="bi bi-check-lg"></i> Create Account
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
 
 <script>
 // Account data from server
@@ -174,25 +230,138 @@ const JOURNAL_CSRF        = '{{ csrf_token }}';
 
 document.addEventListener('DOMContentLoaded', function() {
 
+    // ---- Create Account Modal logic ----
+    const caModal = new bootstrap.Modal(document.getElementById('createAccountModal'));
+    const caSection = document.getElementById('ca-section');
+    const caName = document.getElementById('ca-name');
+    const caCode = document.getElementById('ca-code');
+    const caTaxCode = document.getElementById('ca-tax-code');
+    const caCodeStatus = document.getElementById('ca-code-status');
+    const caCodeHint = document.getElementById('ca-code-hint');
+    const caError = document.getElementById('createAcctError');
+    const caSaveBtn = document.getElementById('ca-save-btn');
+    let caResolveCallback = null;
+    let caSuggestTimer;
+
+    function openCreateAccountModal(prefill, onCreated) {
+        caError.classList.add('d-none');
+        caSection.value = '';
+        caName.value = '';
+        caCode.value = '';
+        caTaxCode.value = '';
+        caCodeStatus.textContent = '';
+        caCodeHint.textContent = '';
+        caSaveBtn.disabled = false;
+        caSaveBtn.innerHTML = '<i class="bi bi-check-lg"></i> Create Account';
+        caResolveCallback = onCreated;
+
+        if (prefill) {
+            var stripped = prefill.replace(/\s*-\s*.*$/, '').trim();
+            if (/^\d+/.test(stripped)) {
+                caCode.value = stripped;
+            } else {
+                caName.value = prefill;
+            }
+        }
+        caModal.show();
+        setTimeout(function() {
+            if (caName.value) { caName.focus(); triggerCaSuggest(); }
+            else caSection.focus();
+        }, 300);
+    }
+
+    function triggerCaSuggest() {
+        clearTimeout(caSuggestTimer);
+        var name = caName.value.trim();
+        var section = caSection.value;
+        if (!name || !section) return;
+        caSuggestTimer = setTimeout(function() {
+            fetch(JOURNAL_SUGGEST_URL + '?account_name=' + encodeURIComponent(name) + '&section=' + encodeURIComponent(section), {
+                headers: { 'X-Requested-With': 'XMLHttpRequest' }
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(d) {
+                if (d.suggested_code) {
+                    caCode.value = d.suggested_code;
+                    caCodeStatus.innerHTML = '<i class="bi bi-check-circle text-success"></i>';
+                }
+                if (d.position_info) caCodeHint.textContent = d.position_info;
+            })
+            .catch(function() {});
+        }, 350);
+    }
+
+    caSection.addEventListener('change', triggerCaSuggest);
+    caName.addEventListener('input', triggerCaSuggest);
+    caCode.addEventListener('input', function() {
+        caCodeStatus.textContent = '';
+        caCodeHint.textContent = '';
+    });
+
+    caSaveBtn.addEventListener('click', function() {
+        var section = caSection.value;
+        var name = caName.value.trim();
+        var code = caCode.value.trim();
+        var taxCode = caTaxCode.value;
+
+        if (!section || !name || !code) {
+            caError.textContent = 'Section, account name, and account code are all required.';
+            caError.classList.remove('d-none');
+            return;
+        }
+        caError.classList.add('d-none');
+        caSaveBtn.disabled = true;
+        caSaveBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Creating...';
+
+        fetch(JOURNAL_CREATE_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': JOURNAL_CSRF,
+                'X-Requested-With': 'XMLHttpRequest'
+            },
+            body: JSON.stringify({
+                account_name: name,
+                account_code: code,
+                section: section,
+                tax_code: taxCode
+            })
+        })
+        .then(function(r) { return r.json().then(function(d) { return {ok: r.ok, data: d}; }); })
+        .then(function(result) {
+            if (result.ok && result.data.success) {
+                var newAcc = { code: result.data.code, name: result.data.name };
+                ACCOUNT_LIST.push(newAcc);
+                ACCOUNT_LIST.sort(function(a, b) { return a.code.localeCompare(b.code); });
+                caModal.hide();
+                if (caResolveCallback) caResolveCallback(newAcc);
+            } else {
+                caError.textContent = result.data.error || 'Could not create account.';
+                caError.classList.remove('d-none');
+                caSaveBtn.disabled = false;
+                caSaveBtn.innerHTML = '<i class="bi bi-check-lg"></i> Create Account';
+            }
+        })
+        .catch(function() {
+            caError.textContent = 'Network error. Please try again.';
+            caError.classList.remove('d-none');
+            caSaveBtn.disabled = false;
+            caSaveBtn.innerHTML = '<i class="bi bi-check-lg"></i> Create Account';
+        });
+    });
+
     // ---- Searchable Account Picker ----
     function createAccountPicker(container) {
         const row = container.closest('tr');
-
-        // Find the ORIGINAL inputs (may be in this td or the next td)
         const origCodeInput = row.querySelector('[name$="-account_code"]');
         const origNameInput = row.querySelector('[name$="-account_name"]');
-
-        // Capture existing values and names before we touch the DOM
         const codeName = origCodeInput ? origCodeInput.name : '';
         const nameFieldName = origNameInput ? origNameInput.name : '';
         const codeValue = origCodeInput ? origCodeInput.value : '';
         const nameValue = origNameInput ? origNameInput.value : '';
-
-        // Remove ALL original inputs from the DOM (they may be in different tds)
         if (origCodeInput) origCodeInput.remove();
         if (origNameInput) origNameInput.remove();
 
-        // Create fresh hidden inputs that will carry the form values
         const hiddenCode = document.createElement('input');
         hiddenCode.type = 'hidden';
         hiddenCode.name = codeName;
@@ -205,40 +374,40 @@ document.addEventListener('DOMContentLoaded', function() {
         hiddenName.value = nameValue;
         hiddenName.className = 'account-name-hidden';
 
-        // Create the visible search input
         const input = document.createElement('input');
         input.type = 'text';
         input.className = 'form-control form-control-sm account-picker-input';
         input.placeholder = 'Type code or name...';
         input.autocomplete = 'off';
 
-        // Pre-fill if editing
         if (codeValue) {
             const match = ACCOUNT_LIST.find(a => a.code === codeValue);
             input.value = match ? codeValue + ' - ' + match.name : codeValue;
         }
 
-        // Create dropdown
         const dropdown = document.createElement('div');
         dropdown.className = 'account-dropdown';
 
-        // Build the wrapper
         const wrapper = document.createElement('div');
         wrapper.className = 'account-picker-wrapper';
         wrapper.appendChild(input);
         wrapper.appendChild(dropdown);
 
-        // Clear the container and rebuild with wrapper + hidden fields
         container.innerHTML = '';
         container.appendChild(wrapper);
         container.appendChild(hiddenCode);
         container.appendChild(hiddenName);
 
-        // Use local references for selectAccount
         const codeInput = hiddenCode;
         const nameInput = hiddenName;
-
         let activeIndex = -1;
+
+        function selectAccount(acc) {
+            input.value = acc.code + ' - ' + acc.name;
+            if (codeInput) codeInput.value = acc.code;
+            if (nameInput) nameInput.value = acc.name;
+            dropdown.classList.remove('show');
+        }
 
         function renderDropdown(filter) {
             dropdown.innerHTML = '';
@@ -260,115 +429,24 @@ document.addEventListener('DOMContentLoaded', function() {
                     item.dataset.name = acc.name;
                     item.innerHTML = '<code>' + acc.code + '</code> ' + acc.name;
                     item.addEventListener('mousedown', function(e) {
-                        e.preventDefault(); // Prevent blur
+                        e.preventDefault();
                         selectAccount(acc);
                     });
                     dropdown.appendChild(item);
                 });
             }
-            // Always append "Create new account" option at the bottom
             const createItem = document.createElement('div');
             createItem.className = 'account-dropdown-create';
-            createItem.innerHTML = '<i class="bi bi-plus-circle me-1"></i> Create new account…';
+            createItem.innerHTML = '<i class="bi bi-plus-circle me-1"></i> Create new account\u2026';
             createItem.addEventListener('mousedown', function(e) {
                 e.preventDefault();
                 dropdown.classList.remove('show');
-                showCreatePanel(input.value.trim());
+                openCreateAccountModal(input.value.trim(), function(newAcc) {
+                    selectAccount(newAcc);
+                });
             });
             dropdown.appendChild(createItem);
             dropdown.classList.add('show');
-        }
-
-        // ---- Inline Create Account Panel ----
-        const panelId = 'cp_' + Math.random().toString(36).slice(2);
-        const createPanel = document.createElement('div');
-        createPanel.className = 'account-create-panel';
-        createPanel.innerHTML =
-            '<div class="mb-2 fw-semibold" style="font-size:0.85rem;"><i class="bi bi-plus-circle me-1"></i>Create New Account</div>' +
-            '<input type="text" class="form-control form-control-sm mb-1 cp-name-input" placeholder="Account name (e.g. Legal fees)">' +
-            '<div class="input-group input-group-sm mb-2">' +
-            '  <span class="input-group-text">Code</span>' +
-            '  <input type="text" class="form-control cp-code-input" placeholder="Suggested…">' +
-            '</div>' +
-            '<div class="d-flex gap-1">' +
-            '  <button type="button" class="btn btn-sm btn-primary cp-confirm"><i class="bi bi-check-lg"></i> Create</button>' +
-            '  <button type="button" class="btn btn-sm btn-outline-secondary cp-cancel"><i class="bi bi-x-lg"></i> Cancel</button>' +
-            '</div>';
-        wrapper.appendChild(createPanel);
-        const cpNameInput = createPanel.querySelector('.cp-name-input');
-        const cpCodeInput = createPanel.querySelector('.cp-code-input');
-        let cpSuggestTimer;
-        function showCreatePanel(prefill) {
-            cpNameInput.value = prefill || '';
-            cpCodeInput.value = '';
-            createPanel.classList.add('show');
-            cpNameInput.focus();
-            if (prefill) triggerSuggest(prefill);
-        }
-        function triggerSuggest(name) {
-            clearTimeout(cpSuggestTimer);
-            cpSuggestTimer = setTimeout(function() {
-                fetch(JOURNAL_SUGGEST_URL + '?name=' + encodeURIComponent(name) + '&section=auto', {
-                    headers: { 'X-Requested-With': 'XMLHttpRequest' }
-                })
-                .then(function(r) { return r.json(); })
-                .then(function(d) { if (d.suggested_code) cpCodeInput.value = d.suggested_code; })
-                .catch(function() {});
-            }, 350);
-        }
-        cpNameInput.addEventListener('input', function() { triggerSuggest(this.value); });
-        createPanel.querySelector('.cp-cancel').addEventListener('click', function() {
-            createPanel.classList.remove('show');
-            input.focus();
-        });
-        createPanel.querySelector('.cp-confirm').addEventListener('click', function() {
-            const name = cpNameInput.value.trim();
-            const code = cpCodeInput.value.trim();
-            if (!name || !code) { cpNameInput.focus(); return; }
-            const btn = this;
-            btn.disabled = true;
-            btn.textContent = 'Creating…';
-            fetch(JOURNAL_CREATE_URL, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': JOURNAL_CSRF,
-                    'X-Requested-With': 'XMLHttpRequest'
-                },
-                body: JSON.stringify({ name: name, code: code, section: 'auto' })
-            })
-            .then(function(r) { return r.json(); })
-            .then(function(d) {
-                if (d.success) {
-                    const newAcc = { code: d.code, name: d.name };
-                    ACCOUNT_LIST.push(newAcc);
-                    ACCOUNT_LIST.sort(function(a, b) { return a.code.localeCompare(b.code); });
-                    selectAccount(newAcc);
-                    createPanel.classList.remove('show');
-                } else {
-                    alert(d.error || 'Could not create account.');
-                    btn.disabled = false;
-                    btn.innerHTML = '<i class="bi bi-check-lg"></i> Create';
-                }
-            })
-            .catch(function() {
-                alert('Network error. Please try again.');
-                btn.disabled = false;
-                btn.innerHTML = '<i class="bi bi-check-lg"></i> Create';
-            });
-        });
-        // Close panel on outside click
-        document.addEventListener('mousedown', function(e) {
-            if (!createPanel.contains(e.target) && e.target !== input) {
-                createPanel.classList.remove('show');
-            }
-        });
-
-        function selectAccount(acc) {
-            input.value = acc.code + ' - ' + acc.name;
-            if (codeInput) codeInput.value = acc.code;
-            if (nameInput) nameInput.value = acc.name;
-            dropdown.classList.remove('show');
         }
 
         input.addEventListener('focus', function() {
@@ -398,19 +476,14 @@ document.addEventListener('DOMContentLoaded', function() {
             } else if (e.key === 'Enter') {
                 e.preventDefault();
                 if (activeIndex >= 0 && items[activeIndex]) {
-                    const code = items[activeIndex].dataset.code;
-                    const name = items[activeIndex].dataset.name;
-                    selectAccount({ code, name });
+                    selectAccount({ code: items[activeIndex].dataset.code, name: items[activeIndex].dataset.name });
                 }
             } else if (e.key === 'Escape') {
                 dropdown.classList.remove('show');
                 input.blur();
             } else if (e.key === 'Tab') {
-                // Auto-select first match on Tab if there's a filter
                 if (items.length > 0 && input.value) {
-                    const code = items[0].dataset.code;
-                    const name = items[0].dataset.name;
-                    selectAccount({ code, name });
+                    selectAccount({ code: items[0].dataset.code, name: items[0].dataset.name });
                 }
                 dropdown.classList.remove('show');
             }
