@@ -475,17 +475,18 @@ def _maybe_trigger_proactive_risk_suggestion(financial_year, result):
 
     # Check for HIGH/CRITICAL flags specifically
     from core.models import RiskFlag
-    recent_flags = RiskFlag.objects.filter(
+    open_flags_qs = RiskFlag.objects.filter(
         financial_year=financial_year,
         status="open",
         severity__in=["HIGH", "CRITICAL"],
-    ).order_by("-created_at")[:5]
+    ).order_by("-created_at")
 
-    if not recent_flags.exists():
+    if not open_flags_qs.exists():
         return
 
-    critical_count = recent_flags.filter(severity="CRITICAL").count()
-    high_count = recent_flags.filter(severity="HIGH").count()
+    critical_count = open_flags_qs.filter(severity="CRITICAL").count()
+    high_count = open_flags_qs.filter(severity="HIGH").count()
+    recent_flags = open_flags_qs[:5]
     flag_details = "\n".join(
         f"- [{f.severity}] {f.title}: {f.description[:120]}"
         for f in recent_flags
