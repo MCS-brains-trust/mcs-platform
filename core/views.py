@@ -4058,28 +4058,28 @@ def adjustment_create(request, pk):
             {"client_account_code": a["account_code"], "client_account_name": a["account_name"]}
             for a in tb_accounts
         ]
-
-    if entity_accounts:
-        # Ensure keys are consistent for the template
-        accounts = [
-            {
-                "client_account_code": a.get("client_account_code", a.get("account_code", "")),
-                "client_account_name": a.get("client_account_name", a.get("account_name", "")),
-            }
-            for a in entity_accounts
-        ]
-    else:
-        # Fallback: master Chart of Accounts for the entity type
-        entity_type = fy.entity.entity_type
-        master_accounts = list(
+    # Always merge with the entity's Chart of Accounts so that accounts
+    # which exist in the CoA but have no TB line yet are still selectable.
+    entity_type = fy.entity.entity_type
+    coa_accounts = (
+        EntityChartOfAccount.objects.filter(entity=fy.entity, is_active=True)
+        .order_by("account_code")
+        .values("account_code", "account_name")
+    )
+    if not coa_accounts.exists():
+        coa_accounts = (
             ChartOfAccount.objects.filter(entity_type=entity_type, is_active=True)
             .order_by("account_code")
             .values("account_code", "account_name")
         )
-        accounts = [
-            {"client_account_code": a["account_code"], "client_account_name": a["account_name"]}
-            for a in master_accounts
-        ]
+    # Build a merged, deduplicated list keyed by account_code.
+    # TB lines take priority (they carry the entity-specific name).
+    merged = {}
+    for a in coa_accounts:
+        merged[a["account_code"]] = {"client_account_code": a["account_code"], "client_account_name": a["account_name"]}
+    for a in entity_accounts:
+        merged[a["client_account_code"]] = a  # TB name wins
+    accounts = sorted(merged.values(), key=lambda x: x["client_account_code"])
 
     if request.method == "POST":
         form = AdjustingJournalForm(request.POST)
@@ -4270,7 +4270,9 @@ def journal_edit(request, pk):
         messages.error(request, "You do not have permission to edit journals.")
         return redirect("core:journal_detail", pk=pk)
 
-    # Build account list for the picker (same logic as create view)
+    # Build account list for the picker: merge TB lines with the entity's
+    # Chart of Accounts so that accounts which exist in the CoA but have
+    # no TB line yet (e.g. 2895) are still selectable.
     tb_accounts = (
         TrialBalanceLine.objects.filter(financial_year=fy)
         .exclude(account_code="")
@@ -4278,21 +4280,19 @@ def journal_edit(request, pk):
         .distinct()
         .order_by("account_code")
     )
-    accounts = [
+    tb_list = [
         {"client_account_code": a["account_code"], "client_account_name": a["account_name"]}
         for a in tb_accounts
     ]
-    if not accounts:
-        entity_type = entity.entity_type
-        master_accounts = list(
-            ChartOfAccount.objects.filter(entity_type=entity_type, is_active=True)
-            .order_by("account_code")
-            .values("account_code", "account_name")
-        )
-        accounts = [
-            {"client_account_code": a["account_code"], "client_account_name": a["account_name"]}
-            for a in master_accounts
-        ]
+    coa_qs = EntityChartOfAccount.objects.filter(entity=entity, is_active=True).order_by("account_code").values("account_code", "account_name")
+    if not coa_qs.exists():
+        coa_qs = ChartOfAccount.objects.filter(entity_type=entity.entity_type, is_active=True).order_by("account_code").values("account_code", "account_name")
+    merged = {}
+    for a in coa_qs:
+        merged[a["account_code"]] = {"client_account_code": a["account_code"], "client_account_name": a["account_name"]}
+    for a in tb_list:
+        merged[a["client_account_code"]] = a  # TB name wins
+    accounts = sorted(merged.values(), key=lambda x: x["client_account_code"])
 
     # Snapshot the journal state before any changes (for audit log)
     before_lines = [
