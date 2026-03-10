@@ -10574,7 +10574,9 @@ def _apply_journal_learned_mappings(fy, raw_lines):
         ea = entity_coa.get(code.lower())
         if ea:
             staged_line["entity_acct_code"] = ea.account_code
-            staged_line["entity_acct_name"] = ea.account_name
+            # Use the TB name for the entity account display if available,
+            # since the TB is the source of truth and the COA may be stale.
+            staged_line["entity_acct_name"] = tb_names.get(code.lower()) or ea.account_name
             if staged_line["confidence"] == "new":
                 staged_line["confidence"] = "matched"
             if ea.maps_to and not staged_line["mapped_id"]:
