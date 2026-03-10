@@ -1913,7 +1913,11 @@ def reroll_forward(request, pk):
         deleted_stock = next_fy.stock_items.filter(
             notes__icontains="Rolled forward"
         ).delete()[0]
-        deleted_dep = 0  # Depreciation roll-forward is separate
+        # Delete previously rolled-forward depreciation assets so they are
+        # recreated fresh from the (now-amended) current year's closing WDVs.
+        deleted_dep = next_fy.depreciation_assets.filter(
+            notes__icontains="Rolled forward"
+        ).delete()[0]
 
         # ── Step 2: Re-run the roll-forward logic ────────────────────
         # (Replicates the core logic from roll_forward but targets the
@@ -2169,17 +2173,46 @@ def reroll_forward(request, pk):
             )
             stock_rolled += 1
 
+        # Pass 5: Roll forward depreciation assets
+        dep_rolled = 0
+        for pa in current_fy.depreciation_assets.all():
+            if pa.closing_wdv <= 0 and not pa.disposal_date:
+                continue
+            new_asset = DepreciationAsset(
+                financial_year=next_fy,
+                category=pa.category,
+                asset_name=pa.asset_name,
+                purchase_date=pa.purchase_date,
+                total_cost=pa.total_cost,
+                private_use_pct=pa.private_use_pct,
+                opening_wdv=pa.closing_wdv,  # Prior closing becomes new opening
+                method=pa.method,
+                rate=pa.rate,
+                display_order=pa.display_order,
+                asset_account_code=pa.asset_account_code,
+                asset_account_name=pa.asset_account_name,
+                accum_dep_code=pa.accum_dep_code,
+                accum_dep_name=pa.accum_dep_name,
+                dep_expense_code=pa.dep_expense_code,
+                dep_expense_name=pa.dep_expense_name,
+                notes=f"Rolled forward from FY{current_fy.year_label}",
+            )
+            _calc_depreciation(new_asset)
+            new_asset.save()
+            dep_rolled += 1
+
         pl_direction = "profit" if net_pl_result < 0 else "loss"
         tax_msg = f" Income tax of ${abs(tax_amount):,.2f} absorbed." if tax_amount else ""
         stock_msg = f" {stock_converted} closing stock entries converted to opening stock." if stock_converted else ""
         stock_items_msg = f" {stock_rolled} stock items rolled forward." if stock_rolled else ""
+        dep_msg = f" {dep_rolled} depreciation assets rolled forward." if dep_rolled else ""
 
         _log_action(
             request, "import",
             f"Re-rolled forward to {next_fy.year_label}: removed {deleted_tb} old rollover TB lines, "
             f"recreated {carried_bs} BS items + {carried_pl} P&L comparatives. "
             f"Net {pl_direction} of ${abs(net_pl_result):,.2f} closed to retained earnings."
-            f"{tax_msg}{stock_msg}{stock_items_msg}",
+            f"{tax_msg}{stock_msg}{stock_items_msg}{dep_msg}",
             next_fy,
         )
         messages.success(
@@ -2188,7 +2221,7 @@ def reroll_forward(request, pk):
             f"Removed {deleted_tb} old rollover lines, recreated {carried_bs} BS items + "
             f"{carried_pl} P&L comparatives. Net {pl_direction} of ${abs(net_pl_result):,.2f} "
             f"less tax ${abs(tax_amount):,.2f} closed to retained earnings."
-            f"{stock_msg}{stock_items_msg}"
+            f"{stock_msg}{stock_items_msg}{dep_msg}"
         )
         return redirect("core:financial_year_detail", pk=next_fy.pk)
 
@@ -2555,13 +2588,45 @@ def roll_forward(request, pk):
             )
             stock_rolled += 1
 
+        # -----------------------------------------------------------------
+        # Pass 5: Roll forward depreciation assets (closing WDV → opening WDV)
+        # -----------------------------------------------------------------
+        dep_rolled = 0
+        for pa in current_fy.depreciation_assets.all():
+            # Skip assets that are fully written off and have no disposal
+            if pa.closing_wdv <= 0 and not pa.disposal_date:
+                continue
+            new_asset = DepreciationAsset(
+                financial_year=new_fy,
+                category=pa.category,
+                asset_name=pa.asset_name,
+                purchase_date=pa.purchase_date,
+                total_cost=pa.total_cost,
+                private_use_pct=pa.private_use_pct,
+                opening_wdv=pa.closing_wdv,  # Prior closing becomes new opening
+                method=pa.method,
+                rate=pa.rate,
+                display_order=pa.display_order,
+                asset_account_code=pa.asset_account_code,
+                asset_account_name=pa.asset_account_name,
+                accum_dep_code=pa.accum_dep_code,
+                accum_dep_name=pa.accum_dep_name,
+                dep_expense_code=pa.dep_expense_code,
+                dep_expense_name=pa.dep_expense_name,
+                notes=f"Rolled forward from FY{current_fy.year_label}",
+            )
+            _calc_depreciation(new_asset)
+            new_asset.save()
+            dep_rolled += 1
+
         total_carried = carried_bs + carried_pl
         pl_direction = "profit" if net_pl_result < 0 else "loss"
         tax_msg = f" Income tax of ${abs(tax_amount):,.2f} absorbed." if tax_amount else ""
         stock_msg = f" {stock_converted} closing stock entries converted to opening stock." if stock_converted else ""
         stock_items_msg = f" {stock_rolled} stock items rolled forward." if stock_rolled else ""
-        _log_action(request, "import", f"Rolled forward to {new_label} with {carried_bs} BS items, {carried_pl} P&L comparatives. Net {pl_direction} of ${abs(net_pl_result):,.2f} closed to retained earnings.{tax_msg}{stock_msg}{stock_items_msg}", new_fy)
-        messages.success(request, f"Rolled forward to {new_label}. {carried_bs} balance sheet items carried, {carried_pl} P&L comparatives. Net {pl_direction} of ${abs(net_pl_result):,.2f} less tax ${abs(tax_amount):,.2f} closed to retained earnings.{stock_msg}{stock_items_msg}")
+        dep_msg = f" {dep_rolled} depreciation assets rolled forward." if dep_rolled else ""
+        _log_action(request, "import", f"Rolled forward to {new_label} with {carried_bs} BS items, {carried_pl} P&L comparatives. Net {pl_direction} of ${abs(net_pl_result):,.2f} closed to retained earnings.{tax_msg}{stock_msg}{stock_items_msg}{dep_msg}", new_fy)
+        messages.success(request, f"Rolled forward to {new_label}. {carried_bs} balance sheet items carried, {carried_pl} P&L comparatives. Net {pl_direction} of ${abs(net_pl_result):,.2f} less tax ${abs(tax_amount):,.2f} closed to retained earnings.{stock_msg}{stock_items_msg}{dep_msg}")
         return redirect("core:financial_year_detail", pk=new_fy.pk)
 
     return render(request, "core/roll_forward_confirm.html", {"fy": current_fy})
@@ -6565,7 +6630,7 @@ def depreciation_roll_forward(request, pk):
     for pa in prior_assets:
         if pa.closing_wdv <= 0 and not pa.disposal_date:
             continue  # Skip fully depreciated with no disposal
-        DepreciationAsset.objects.create(
+        new_asset = DepreciationAsset(
             financial_year=fy,
             category=pa.category,
             asset_name=pa.asset_name,
@@ -6576,7 +6641,18 @@ def depreciation_roll_forward(request, pk):
             method=pa.method,
             rate=pa.rate,
             display_order=pa.display_order,
+            # Carry forward account mapping so journal posting still works
+            asset_account_code=pa.asset_account_code,
+            asset_account_name=pa.asset_account_name,
+            accum_dep_code=pa.accum_dep_code,
+            accum_dep_name=pa.accum_dep_name,
+            dep_expense_code=pa.dep_expense_code,
+            dep_expense_name=pa.dep_expense_name,
+            notes=f"Rolled forward from FY{fy.prior_year.year_label}",
         )
+        # Pre-calculate depreciation so the schedule is immediately populated
+        _calc_depreciation(new_asset)
+        new_asset.save()
         count += 1
 
     _log_action(request, "roll_forward", f"Rolled forward {count} depreciation assets to {fy}", fy)

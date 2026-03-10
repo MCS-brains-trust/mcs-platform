@@ -636,21 +636,20 @@ def _parse_depreciation(reader, year):
             "disposal_consideration": _safe_decimal(row[6]) if len(row) > 6 else Decimal("0"),
         }
 
-    # Parse asset detail (annual calculations)
+    # Parse asset detail (annual calculations).
+    # We read ALL year rows from the file so we can derive opening WDV from
+    # the prior year's closing position (Access Ledger does not export opening
+    # WDV directly; we must back-calculate it).
     detail_rows = reader.read_csv(year, "AssetDetail.txt")
-    assets_detail = {}  # (cat_id, seq) -> detail data
+    assets_detail = {}   # (cat_id, seq) -> current year detail
+    prior_detail = {}    # (cat_id, seq) -> prior year detail (year - 1)
     for row in detail_rows:
         if len(row) < 12:
             continue
         cat_id = _safe_int(row[0])
         seq = _safe_int(row[1])
         detail_year = _safe_int(row[2])
-
-        # Only include detail for the matching year
-        if detail_year != year:
-            continue
-
-        assets_detail[(cat_id, seq)] = {
+        row_data = {
             "cost_basis": _safe_decimal(row[3]),
             "disposal_consid_detail": _safe_decimal(row[4]),
             "depreciation_amount": _safe_decimal(row[5]),
@@ -661,6 +660,11 @@ def _parse_depreciation(reader, year):
             "business_depreciation": _safe_decimal(row[11]) if len(row) > 11 else Decimal("0"),
             "private_depreciation": _safe_decimal(row[13]) if len(row) > 13 else Decimal("0"),
         }
+        if detail_year == year:
+            assets_detail[(cat_id, seq)] = row_data
+        elif detail_year == year - 1:
+            # Prior year closing detail — used to derive current year opening WDV
+            prior_detail[(cat_id, seq)] = row_data
 
     # Combine master + detail into asset records
     result = []
@@ -692,11 +696,23 @@ def _parse_depreciation(reader, year):
         # Depreciable value = cost_basis (from detail) or total_cost
         depreciable_value = cost_basis if cost_basis else total_cost
 
-        # Opening WDV: we estimate from cost_basis - depreciation
-        # (Access Ledger doesn't directly export OWDV, but we can derive it)
-        opening_wdv = depreciable_value  # Will be refined if we have prior year detail
+        # Opening WDV: derive from prior year's closing position.
+        # Prior year closing WDV = prior_cost_basis - prior_depreciation + prior_additions.
+        # If no prior year detail exists the asset was acquired in this year,
+        # so opening WDV is 0 (the full cost was added this year).
+        prior = prior_detail.get((cat_id, seq))
+        if prior:
+            prior_cost_basis = prior["cost_basis"]
+            prior_dep = prior["depreciation_amount"]
+            prior_add = prior["addition_cost"]
+            opening_wdv = prior_cost_basis - prior_dep + prior_add
+            if opening_wdv < Decimal("0"):
+                opening_wdv = Decimal("0")
+        else:
+            # No prior year data — asset acquired this year, opening WDV = 0
+            opening_wdv = Decimal("0")
 
-        # Closing WDV = Opening WDV - Depreciation + Additions - Disposals
+        # Closing WDV = Opening WDV - Depreciation + Additions
         closing_wdv = opening_wdv - depreciation + addition_cost
 
         # Skip fully disposed assets with no current year activity

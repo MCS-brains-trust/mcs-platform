@@ -1231,6 +1231,10 @@ class DepreciationAsset(models.Model):
         max_length=255, blank=True, default="",
         help_text="Depreciation expense account name (e.g. Depreciation - Plant)",
     )
+    notes = models.TextField(
+        blank=True, default="",
+        help_text="Internal notes, e.g. roll-forward provenance",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
