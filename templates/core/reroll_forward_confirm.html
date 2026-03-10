@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Re-Roll Forward - {{ fy.year_label }} - StatementHub{% endblock %}
+{% block title %}Re-Roll Forward Preview — {{ fy.year_label }} → {{ next_fy.year_label }} — StatementHub{% endblock %}
 
 {% block content %}
 <nav aria-label="breadcrumb">
@@ -7,52 +7,153 @@
         <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
         <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=fy.entity.pk %}">{{ fy.entity.entity_name }}</a></li>
         <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy.year_label }}</a></li>
-        <li class="breadcrumb-item active">Re-Roll Forward</li>
+        <li class="breadcrumb-item active">Re-Roll Forward Preview</li>
     </ol>
 </nav>
 
-<div class="row justify-content-center">
-    <div class="col-md-8">
-        <div class="card">
-            <div class="card-header bg-info text-white">
-                <h5 class="mb-0"><i class="bi bi-arrow-repeat"></i> Re-Roll Forward to {{ next_fy.year_label }}</h5>
-            </div>
-            <div class="card-body">
-                <div class="alert alert-warning">
-                    <i class="bi bi-exclamation-triangle-fill"></i>
-                    <strong>Important:</strong> This will update the opening balances and comparatives in
-                    <strong>{{ next_fy.year_label }}</strong> based on the current closing balances of
-                    <strong>{{ fy.year_label }}</strong>.
-                </div>
-
-                <p>This operation will:</p>
-                <ol>
-                    <li><strong>Remove</strong> {{ rollover_count }} previously rolled-forward trial balance lines from {{ next_fy.year_label }}.</li>
-                    <li><strong>Recreate</strong> the opening balances, retained earnings, and P&L comparatives using the updated closing balances from {{ fy.year_label }}.</li>
-                    <li><strong>Re-roll</strong> stock items from {{ fy.year_label }} into {{ next_fy.year_label }}.</li>
-                </ol>
-
-                <div class="alert alert-info">
-                    <i class="bi bi-info-circle"></i>
-                    <strong>Note:</strong> Any journals, imported trial balance data, or other user-entered data
-                    in {{ next_fy.year_label }} will be <strong>preserved</strong>. Only the rolled-forward
-                    (system-generated) data will be replaced.
-                </div>
-
-                <div class="d-flex gap-2 mt-4">
-                    <form method="post" action="{% url 'core:reroll_forward' pk=fy.pk %}">
-                        {% csrf_token %}
-                        <button type="submit" class="btn btn-info"
-                                onclick="this.disabled=true; this.innerHTML='<span class=\'spinner-border spinner-border-sm\'></span> Re-rolling...'; this.form.submit();">
-                            <i class="bi bi-arrow-repeat"></i> Confirm Re-Roll Forward
-                        </button>
-                    </form>
-                    <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-secondary">
-                        Cancel
-                    </a>
-                </div>
-            </div>
-        </div>
+<div class="d-flex align-items-center justify-content-between mb-3">
+    <h4 class="mb-0">
+        <i class="bi bi-arrow-repeat text-info"></i>
+        Re-Roll Forward: <strong>{{ fy.year_label }}</strong> &rarr; <strong>{{ next_fy.year_label }}</strong>
+    </h4>
+    <div class="d-flex gap-2">
+        <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-sm btn-outline-secondary">
+            <i class="bi bi-x-lg"></i> Cancel
+        </a>
+        {% if has_changes %}
+        <form method="post" action="{% url 'core:reroll_forward' pk=fy.pk %}" id="rerollForm">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-sm btn-info"
+                    onclick="this.disabled=true; this.innerHTML='<span class=\'spinner-border spinner-border-sm\'></span> Applying&hellip;'; this.form.submit();">
+                <i class="bi bi-check-lg"></i> Apply Changes
+            </button>
+        </form>
+        {% else %}
+        <button class="btn btn-sm btn-secondary" disabled>No Changes to Apply</button>
+        {% endif %}
     </div>
 </div>
+
+{% if not has_changes %}
+<div class="alert alert-success">
+    <i class="bi bi-check-circle-fill"></i>
+    <strong>{{ next_fy.year_label }} is already up to date.</strong>
+    The opening balances in {{ next_fy.year_label }} match the closing balances of {{ fy.year_label }}.
+    No changes are needed.
+</div>
+{% else %}
+
+<div class="alert alert-info mb-3">
+    <i class="bi bi-info-circle"></i>
+    The table below shows exactly what will change in <strong>{{ next_fy.year_label }}</strong>
+    when you apply the re-roll forward. Review the changes and click <strong>Apply Changes</strong> to proceed.
+    User-entered journals and bank statement lines in {{ next_fy.year_label }} will not be affected.
+</div>
+
+<!-- Summary badges -->
+<div class="d-flex gap-2 mb-3 flex-wrap">
+    {% if diff_added %}
+    <span class="badge bg-success fs-6 px-3 py-2">
+        <i class="bi bi-plus-circle"></i> {{ diff_added|length }} account{{ diff_added|length|pluralize }} to add
+    </span>
+    {% endif %}
+    {% if diff_updated %}
+    <span class="badge bg-warning text-dark fs-6 px-3 py-2">
+        <i class="bi bi-pencil"></i> {{ diff_updated|length }} account{{ diff_updated|length|pluralize }} to update
+    </span>
+    {% endif %}
+    {% if diff_removed %}
+    <span class="badge bg-danger fs-6 px-3 py-2">
+        <i class="bi bi-dash-circle"></i> {{ diff_removed|length }} account{{ diff_removed|length|pluralize }} to remove
+    </span>
+    {% endif %}
+    {% if diff_unchanged %}
+    <span class="badge bg-secondary fs-6 px-3 py-2">
+        <i class="bi bi-check2"></i> {{ diff_unchanged|length }} unchanged
+    </span>
+    {% endif %}
+</div>
+
+<!-- Changes table -->
+{% if diff_added or diff_updated or diff_removed %}
+<div class="card mb-4">
+    <div class="card-header fw-semibold">Changes to {{ next_fy.year_label }}</div>
+    <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th style="width:90px">Code</th>
+                    <th>Account Name</th>
+                    <th class="text-end" style="width:160px">Current Opening</th>
+                    <th class="text-end" style="width:160px">New Opening</th>
+                    <th style="width:90px">Change</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in diff_added %}
+                <tr class="table-success">
+                    <td class="font-monospace text-muted small">{{ item.code }}</td>
+                    <td>{{ item.name }}</td>
+                    <td class="text-end text-muted">&mdash;</td>
+                    <td class="text-end fw-semibold">${{ item.proposed_opening|floatformat:2 }}</td>
+                    <td><span class="badge bg-success">Added</span></td>
+                </tr>
+                {% endfor %}
+                {% for item in diff_updated %}
+                <tr class="table-warning">
+                    <td class="font-monospace text-muted small">{{ item.code }}</td>
+                    <td>{{ item.name }}</td>
+                    <td class="text-end text-muted">${{ item.current_opening|floatformat:2 }}</td>
+                    <td class="text-end fw-semibold">${{ item.proposed_opening|floatformat:2 }}</td>
+                    <td><span class="badge bg-warning text-dark">Updated</span></td>
+                </tr>
+                {% endfor %}
+                {% for item in diff_removed %}
+                <tr class="table-danger">
+                    <td class="font-monospace text-muted small">{{ item.code }}</td>
+                    <td>{{ item.name }}</td>
+                    <td class="text-end text-muted">${{ item.current_opening|floatformat:2 }}</td>
+                    <td class="text-end text-muted">&mdash;</td>
+                    <td><span class="badge bg-danger">Removed</span></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+{% endif %}{# end has_changes #}
+
+<!-- Unchanged accounts (collapsed by default) -->
+{% if diff_unchanged %}
+<details class="mb-4">
+    <summary class="text-muted small" style="cursor:pointer">
+        Show {{ diff_unchanged|length }} unchanged account{{ diff_unchanged|length|pluralize }}
+    </summary>
+    <div class="table-responsive mt-2">
+        <table class="table table-sm table-hover mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th style="width:90px">Code</th>
+                    <th>Account Name</th>
+                    <th class="text-end" style="width:160px">Opening Balance</th>
+                    <th style="width:90px">Status</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in diff_unchanged %}
+                <tr>
+                    <td class="font-monospace text-muted small">{{ item.code }}</td>
+                    <td>{{ item.name }}</td>
+                    <td class="text-end">${{ item.current_opening|floatformat:2 }}</td>
+                    <td><span class="badge bg-secondary">No change</span></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</details>
+{% endif %}
+
 {% endblock %}

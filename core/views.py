@@ -2266,13 +2266,156 @@ def reroll_forward(request, pk):
         )
         return redirect("core:financial_year_detail", pk=next_fy.pk)
 
-    # GET: show confirmation page
-    next_fy = current_fy.next_year.first()
-    rollover_count = next_fy.trial_balance_lines.filter(source="rollover").count() if next_fy else 0
+    # GET: compute diff and show preview page
+    from decimal import Decimal
+
+    BS_STATEMENTS = {"balance_sheet", "equity"}
+    BS_SECTIONS   = {"assets", "liabilities", "equity", "capital_accounts"}
+
+    coa_sections = dict(
+        ChartOfAccount.objects.filter(
+            entity_type=entity.entity_type, is_active=True
+        ).values_list("account_code", "section")
+    )
+
+    def _is_bs(line):
+        hl_sec = _hl_section_for_code(line.account_code)
+        if hl_sec is not None:
+            return hl_sec not in ('Income', 'Cost of Sales', 'Expenses')
+        if line.mapped_line_item:
+            return line.mapped_line_item.financial_statement in BS_STATEMENTS
+        if line.account_code in coa_sections:
+            return coa_sections[line.account_code] in BS_SECTIONS
+        code_prefix = line.account_code.split(".")[0] if line.account_code else ""
+        return code_prefix.isdigit() and int(code_prefix) >= 2000
+
+    # Build what the new opening balance WOULD be for each BS account in current_fy
+    # (mirrors the Pass 1 / Pass 2 logic in the POST handler)
+    net_pl = Decimal("0")
+    retained_line = None
+    income_tax_line = None
+    bs_lines_cur = []
+    pl_lines_cur = []
+    for line in current_fy.trial_balance_lines.filter(is_adjustment=False):
+        if _is_bs(line):
+            code_prefix = line.account_code.split(".")[0] if line.account_code else ""
+            if code_prefix == "4199":
+                retained_line = line
+            is_it = False
+            if line.account_name and "income tax" in line.account_name.lower():
+                is_it = True
+            if code_prefix == "4110":
+                is_it = True
+            if line.mapped_line_item and (line.mapped_line_item.standard_code or "") == "BS-EQ-011":
+                is_it = True
+            if is_it:
+                income_tax_line = line
+            bs_lines_cur.append(line)
+        else:
+            pl_lines_cur.append(line)
+            net_pl += line.debit - line.credit
+
+    tax_amount = income_tax_line.closing_balance if income_tax_line else Decimal("0")
+
+    # Compute proposed opening balances keyed by account_code
+    proposed = {}  # account_code -> {name, opening, type: 'bs'|'pl'}
+    for line in bs_lines_cur:
+        if line.closing_balance == 0 and line != retained_line:
+            continue
+        if line == income_tax_line:
+            proposed[line.account_code] = {
+                "name": line.account_name,
+                "proposed_opening": Decimal("0"),
+                "type": "bs",
+            }
+            continue
+        opening = line.closing_balance
+        if line == retained_line:
+            opening = line.closing_balance + net_pl + tax_amount
+            if opening == 0:
+                continue
+        proposed[line.account_code] = {
+            "name": line.account_name,
+            "proposed_opening": opening,
+            "type": "bs",
+        }
+    # P&L lines get zero opening (they only carry prior-year comparatives)
+    for line in pl_lines_cur:
+        if line.debit == 0 and line.credit == 0:
+            continue
+        proposed[line.account_code] = {
+            "name": line.account_name,
+            "proposed_opening": Decimal("0"),
+            "type": "pl",
+        }
+
+    # Build current state of next_fy base lines (non-adjustment)
+    existing = {}  # account_code -> opening_balance
+    for line in next_fy.trial_balance_lines.filter(is_adjustment=False).exclude(source='bank_statement'):
+        existing[line.account_code] = {
+            "name": line.account_name,
+            "current_opening": line.opening_balance or Decimal("0"),
+        }
+
+    # Compute diff
+    diff_added   = []  # in proposed but not in existing
+    diff_updated = []  # in both but opening_balance differs
+    diff_removed = []  # in existing but not in proposed
+    diff_unchanged = []  # in both and identical
+
+    for code, pdata in proposed.items():
+        if code not in existing:
+            diff_added.append({
+                "code": code,
+                "name": pdata["name"],
+                "current_opening": None,
+                "proposed_opening": pdata["proposed_opening"],
+                "type": pdata["type"],
+            })
+        else:
+            cur_open = existing[code]["current_opening"]
+            prop_open = pdata["proposed_opening"]
+            if cur_open != prop_open:
+                diff_updated.append({
+                    "code": code,
+                    "name": pdata["name"],
+                    "current_opening": cur_open,
+                    "proposed_opening": prop_open,
+                    "type": pdata["type"],
+                })
+            else:
+                diff_unchanged.append({
+                    "code": code,
+                    "name": pdata["name"],
+                    "current_opening": cur_open,
+                    "proposed_opening": prop_open,
+                    "type": pdata["type"],
+                })
+
+    for code, edata in existing.items():
+        if code not in proposed:
+            diff_removed.append({
+                "code": code,
+                "name": edata["name"],
+                "current_opening": edata["current_opening"],
+                "proposed_opening": None,
+                "type": "bs",
+            })
+
+    # Sort each list by account code for readability
+    for lst in (diff_added, diff_updated, diff_removed, diff_unchanged):
+        lst.sort(key=lambda x: x["code"])
+
+    has_changes = bool(diff_added or diff_updated or diff_removed)
+
     return render(request, "core/reroll_forward_confirm.html", {
         "fy": current_fy,
         "next_fy": next_fy,
-        "rollover_count": rollover_count,
+        "diff_added": diff_added,
+        "diff_updated": diff_updated,
+        "diff_removed": diff_removed,
+        "diff_unchanged": diff_unchanged,
+        "has_changes": has_changes,
     })
 
 
