@@ -184,14 +184,18 @@
 
                     <!-- Roll Forward -->
                     {% if fy.status == 'finalised' %}
-                    <a href="{% url 'core:roll_forward' pk=fy.pk %}" class="btn btn-sm btn-outline-primary">
-                        <i class="bi bi-arrow-right-circle"></i> Roll Forward
-                    </a>
-                    {% if subsequent_finalised_years or fy.next_year.first %}
-                    <a href="{% url 'core:reroll_forward' pk=fy.pk %}" class="btn btn-sm btn-outline-info">
-                        <i class="bi bi-arrow-repeat"></i> Re-Roll Forward
-                    </a>
-                    {% endif %}
+                        {% if fy.next_year.first %}
+                        {# A following year already exists — this year was re-opened and re-finalised #}
+                        <a href="{% url 'core:reroll_forward' pk=fy.pk %}" class="btn btn-sm btn-outline-info"
+                           title="This year was re-opened and re-finalised. Click to push the updated figures into {{ fy.next_year.first.year_label }}.">
+                            <i class="bi bi-arrow-repeat"></i> Re-Roll Forward
+                        </a>
+                        {% else %}
+                        {# No following year yet — standard first roll-forward #}
+                        <a href="{% url 'core:roll_forward' pk=fy.pk %}" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-arrow-right-circle"></i> Roll Forward
+                        </a>
+                        {% endif %}
                     {% else %}
                     <button type="button" class="btn btn-sm btn-outline-primary" disabled title="Finalise this financial year before rolling forward">
                         <i class="bi bi-arrow-right-circle"></i> Roll Forward
