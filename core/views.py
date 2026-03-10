@@ -1490,7 +1490,7 @@ def financial_year_status(request, pk):
 
     # Validate status transition is allowed
     ALLOWED_TRANSITIONS = {
-        "draft": ["in_review"],
+        "draft": ["in_review", "finished"],  # reopened years can go straight back to finished
         "in_review": ["finished", "draft"],
         "finished": ["prepared", "in_review"],
         "prepared": ["pending_eva", "finished"],
