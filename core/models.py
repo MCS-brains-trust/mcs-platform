@@ -3475,6 +3475,68 @@ class EvaFinding(models.Model):
 
 
 # ---------------------------------------------------------------------------
+# Eva Clarification Model
+# ---------------------------------------------------------------------------
+class EvaClarification(models.Model):
+    """An interactive clarification question/answer on an EvaFinding."""
+    class Outcome(models.TextChoices):
+        PENDING = "pending", "Pending"
+        DISMISSED = "dismissed", "Dismissed"
+        CONFIRMED = "confirmed", "Confirmed"
+        REDUCED = "reduced", "Severity Reduced"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    finding = models.ForeignKey(
+        EvaFinding, on_delete=models.CASCADE, related_name="clarifications"
+    )
+    question_id = models.CharField(
+        max_length=100,
+        help_text="Identifier of the question from CLARIFICATION_QUESTIONS",
+    )
+    question_text = models.TextField(help_text="The question as shown to the accountant")
+    answer_value = models.CharField(
+        max_length=100,
+        help_text="The selected option value (e.g. 'related_company')",
+    )
+    answer_label = models.CharField(
+        max_length=255, blank=True, default="",
+        help_text="The human-readable label of the selected option",
+    )
+    answer_detail = models.TextField(
+        blank=True, default="",
+        help_text="Optional free-text elaboration from the accountant",
+    )
+    outcome_hint = models.CharField(
+        max_length=20, blank=True, default="",
+        help_text="Outcome hint from the option definition (dismiss/confirm/reduce_severity)",
+    )
+    outcome = models.CharField(
+        max_length=15, choices=Outcome.choices, default=Outcome.PENDING,
+    )
+    outcome_message = models.TextField(
+        blank=True, default="",
+        help_text="Eva's explanation of how this answer affects the finding",
+    )
+    learning_note = models.TextField(
+        blank=True, default="",
+        help_text="Note stored for future reviews (e.g. borrower is a related company)",
+    )
+    answered_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="eva_clarifications",
+    )
+    answered_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["answered_at"]
+
+    def __str__(self):
+        return f"Clarification on {self.finding} — Q:{self.question_id} A:{self.answer_value}"
+
+
+# ---------------------------------------------------------------------------
 # Knowledge Brain Models
 # ---------------------------------------------------------------------------
 class KnowledgeDocument(models.Model):
