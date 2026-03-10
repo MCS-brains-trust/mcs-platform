@@ -3485,15 +3485,53 @@ def commit_tb_import(request, pk):
             )
 
             # Update the learning system
+            resolved_name = _resolve_account_name(entity, line["account_code"], line["account_name"])
             ClientAccountMapping.objects.update_or_create(
                 entity=entity,
                 client_account_code=account_code,
                 defaults={
-                    "client_account_name": _resolve_account_name(entity, line["account_code"], line["account_name"]),
+                    "client_account_name": resolved_name,
                     "mapped_line_item": mapped_item,
                 },
             )
-
+            # ── Sync EntityChartOfAccount ──────────────────────────────────────────
+            # Keep the entity CoA in sync with what's in the TB.
+            # If the account already exists in the CoA, update its name only
+            # (preserve section, maps_to, tax_code, and other metadata).
+            # If it doesn't exist yet, create a minimal entry so it appears
+            # in the CoA tab and the journal account picker.
+            _section_for_code = _hl_section_for_code(account_code)
+            _section_map = {
+                'Income': EntityChartOfAccount.StatementSection.REVENUE,
+                'Cost of Sales': EntityChartOfAccount.StatementSection.COST_OF_SALES,
+                'Expenses': EntityChartOfAccount.StatementSection.EXPENSES,
+                'Current Assets': EntityChartOfAccount.StatementSection.ASSETS,
+                'Non-Current Assets': EntityChartOfAccount.StatementSection.ASSETS,
+                'Current Liabilities': EntityChartOfAccount.StatementSection.LIABILITIES,
+                'Non-Current Liabilities': EntityChartOfAccount.StatementSection.LIABILITIES,
+                'Equity': EntityChartOfAccount.StatementSection.EQUITY,
+            }
+            default_section = _section_map.get(_section_for_code, EntityChartOfAccount.StatementSection.SUSPENSE)
+            existing_coa = EntityChartOfAccount.objects.filter(
+                entity=entity, account_code=account_code
+            ).first()
+            if existing_coa:
+                # Only update the name (don't overwrite section/maps_to/tax_code)
+                if existing_coa.account_name != resolved_name:
+                    existing_coa.account_name = resolved_name
+                    existing_coa.save(update_fields=['account_name', 'updated_at'])
+            else:
+                # Create a new CoA entry seeded from the TB data
+                EntityChartOfAccount.objects.create(
+                    entity=entity,
+                    account_code=account_code,
+                    account_name=resolved_name,
+                    section=default_section,
+                    maps_to=mapped_item,
+                    is_active=True,
+                    is_custom=True,
+                )
+            # ────────────────────────────────────────────────────────────────────
             uploaded_codes.add(account_code)
             imported += 1
             if not mapped_item:
@@ -10705,10 +10743,48 @@ def entity_coa_edit(request, pk):
         acct.is_franking_credit = request.POST.get("is_franking_credit") == "on"
 
         acct.save()
-        if fy:
-            _log_action(request, "update", f"Edited entity account: {old_code} → {acct.account_code} — {acct.account_name}", fy)
-        messages.success(request, f"Account {acct.account_code} updated.")
 
+        # ── Sync TB lines ────────────────────────────────────────────────────
+        # Propagate name/code changes to every TrialBalanceLine for this entity
+        # so the TB always reflects the current CoA.
+        tb_qs = TrialBalanceLine.objects.filter(
+            financial_year__entity=entity,
+            account_code=old_code,
+        )
+        tb_updated = 0
+        if old_code != acct.account_code:
+            # Code changed: update both code and name
+            tb_updated = tb_qs.update(
+                account_code=acct.account_code,
+                account_name=acct.account_name,
+            )
+            # Also update ClientAccountMapping
+            ClientAccountMapping.objects.filter(
+                entity=entity, client_account_code=old_code
+            ).update(
+                client_account_code=acct.account_code,
+                client_account_name=acct.account_name,
+            )
+        else:
+            # Name-only change
+            tb_updated = tb_qs.update(account_name=acct.account_name)
+            ClientAccountMapping.objects.filter(
+                entity=entity, client_account_code=acct.account_code
+            ).update(client_account_name=acct.account_name)
+        # ────────────────────────────────────────────────────────────────────
+
+        if fy:
+            _log_action(
+                request, "update",
+                f"Edited entity account: {old_code} → {acct.account_code} — {acct.account_name}"
+                + (f" (synced {tb_updated} TB line(s))" if tb_updated else ""),
+                fy,
+            )
+        messages.success(
+            request,
+            f"Account {acct.account_code} updated."
+            + (f" {tb_updated} trial balance line(s) synced." if tb_updated else ""),
+        )
         if fy:
             return redirect("core:financial_year_detail", pk=fy.pk)
         return redirect("core:entity_detail", pk=entity.pk)
