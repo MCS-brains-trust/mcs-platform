@@ -10378,6 +10378,11 @@ def journal_upload(request, pk):
                 "filename": uploaded_file.name,
                 "lines": staged_lines,
             }
+            # Force session save to DB before redirect so the next
+            # request (possibly handled by a different Gunicorn worker)
+            # can read the staged data from the database backend.
+            request.session.modified = True
+            request.session.save()
 
             return redirect("core:review_journal_upload", pk=pk)
         except Exception as e:
