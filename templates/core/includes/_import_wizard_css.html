@@ -8,8 +8,9 @@
     .confidence-badge.new { background-color: #fd7e14; }
     .confidence-badge.matched { background-color: #0d6efd; }
     .mapping-select { min-width: 280px; font-size: 0.875rem; }
-    /* Prevent table-responsive from clipping dropdowns */
-    .table-responsive { overflow: visible !important; }
+    /* Prevent table-responsive from clipping dropdowns — use x-axis scroll
+       with visible vertical overflow so dropdowns can escape the container */
+    .table-responsive { overflow-x: auto; overflow-y: visible !important; }
     .amount-cell { text-align: right; font-family: monospace; white-space: nowrap; }
     .sticky-header th { position: sticky; top: 0; z-index: 10; }
     .balance-bar { position: sticky; bottom: 0; z-index: 20; }
@@ -18,7 +19,7 @@
     .entity-acct-display:hover { background-color: #f8f9fa; border-color: #adb5bd; }
     .entity-acct-display.assigned { border-color: #198754; background-color: #f0fff0; }
     .entity-acct-display.unassigned { border-color: #ffc107; background-color: #fff8f0; }
-    .search-dropdown { position: absolute; z-index: 9999; background: #fff; border: 2px solid #0d6efd; border-radius: 0.5rem; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.20); width: 420px; max-height: 380px; display: none; }
+    .search-dropdown { position: absolute; z-index: 1060; background: #fff; border: 2px solid #0d6efd; border-radius: 0.5rem; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.20); width: 420px; max-height: 380px; display: none; }
     .search-dropdown.show { display: block; }
     .search-dropdown .search-input { border: none; border-bottom: 1px solid #dee2e6; border-radius: 6px 6px 0 0; }
     .search-dropdown .results-list { max-height: 250px; overflow-y: auto; }

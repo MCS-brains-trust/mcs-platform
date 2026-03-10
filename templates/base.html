@@ -10,6 +10,16 @@
     <link href="{% static 'css/style.css' %}" rel="stylesheet">
     <script src="https://unpkg.com/htmx.org@2.0.4"></script>
     <style>
+        /* ── Z-Index Hierarchy ──
+           1000 — Bootstrap dropdowns (default)
+           1020 — Sticky sub-bars (tax planning, etc.)
+           1030 — Top bar (.sh-topbar)
+           1035 — Sidebar overlay
+           1040 — Sidebar
+           1050 — Bootstrap modals / Eva chat panel / search results
+           1060 — Dropdowns inside modals or above overlays (account pickers, search dropdowns)
+        */
+
         /* ── CSS Variables ── */
         :root {
             --sidebar-width: 240px;
