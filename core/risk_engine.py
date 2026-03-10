@@ -1012,7 +1012,7 @@ def _eval_gst_check(rule, fy, tb, ref, ctx, config):
 
         # Sum GST amounts from confirmed transactions
         gst_total = PendingTransaction.objects.filter(
-            financial_year=fy,
+            job__entity=fy.entity,
             is_confirmed=True,
         ).aggregate(total_gst=Sum("gst_amount"))["total_gst"] or ZERO
 
@@ -1047,7 +1047,7 @@ def _eval_gst_check(rule, fy, tb, ref, ctx, config):
     elif check_type == "gst_unclassified":
         # Check for unclassified transactions
         unclassified = PendingTransaction.objects.filter(
-            financial_year=fy,
+            job__entity=fy.entity,
             is_confirmed=False,
         ).count()
 
@@ -1244,18 +1244,13 @@ def _compute_flag_hash(financial_year_id, rule_id, description):
 
 
 def _create_flag(financial_year, run_id, flag_data):
-    """Create a RiskFlag record, or update if same flag_hash already exists open."""
+    """Create a RiskFlag record, or update if same rule already exists open."""
     from core.models import RiskFlag
 
-    # Compute deduplication hash from (FY, rule_id, description)
-    flag_hash = _compute_flag_hash(
-        str(financial_year.pk), flag_data["rule_id"], flag_data["description"]
-    )
-
-    # Check if an open flag with this hash already exists
+    # Check if an open flag with this rule_id already exists for this FY
     existing = RiskFlag.objects.filter(
         financial_year=financial_year,
-        flag_hash=flag_hash,
+        rule_id=flag_data["rule_id"],
         status__in=["open", "reviewed"],
     ).first()
 
@@ -1281,5 +1276,4 @@ def _create_flag(financial_year, run_id, flag_data):
         calculated_values=flag_data.get("calculated_values", {}),
         recommended_action=flag_data.get("recommended_action", ""),
         legislation_ref=flag_data.get("legislation_ref", ""),
-        flag_hash=flag_hash,
     )
