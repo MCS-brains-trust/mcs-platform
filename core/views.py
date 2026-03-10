@@ -285,6 +285,42 @@ def _apply_journal_line_to_tb(fy, account_code, account_name, jnl_debit, jnl_cre
     )
 
 
+def _post_journal_to_tb(journal, fy):
+    """Post a journal's lines to the trial balance, aggregating by account code.
+
+    Multiple journal lines targeting the same account code are summed into a
+    single TB adjustment line (total debits and total credits per code).  This
+    is valid accounting practice — e.g. splitting a single payment across the
+    same expense account with different narrations — and must not be silently
+    dropped or deduplicated.
+    """
+    from collections import OrderedDict
+
+    agg = OrderedDict()
+    for line in journal.lines.order_by("line_number", "id"):
+        key = line.account_code
+        if key not in agg:
+            agg[key] = {
+                "name": line.account_name,
+                "dr": Decimal("0"),
+                "cr": Decimal("0"),
+            }
+        agg[key]["dr"] += line.debit
+        agg[key]["cr"] += line.credit
+
+    for account_code, vals in agg.items():
+        _apply_journal_line_to_tb(
+            fy,
+            account_code,
+            vals["name"],
+            vals["dr"],
+            vals["cr"],
+            source="manual_journal",
+            description=journal.description,
+            journal=journal,
+        )
+
+
 def _reverse_journal_tb_lines(journal):
     """Delete all TB adjustment lines created by a posted journal.
 
@@ -4658,14 +4694,8 @@ def adjustment_create(request, pk):
             journal.total_credit = total_cr
             journal.save(update_fields=["total_debit", "total_credit"])
 
-            # Auto-post to Trial Balance immediately
-            for line in lines:
-                _apply_journal_line_to_tb(
-                    fy, line.account_code, line.account_name,
-                    line.debit, line.credit, source='manual_journal',
-                    description=journal.description,
-                    journal=journal,
-                )
+            # Auto-post to Trial Balance, aggregating by account code
+            _post_journal_to_tb(journal, fy)
 
             journal.status = AdjustingJournal.JournalStatus.POSTED
             journal.posted_by = request.user
@@ -4725,14 +4755,8 @@ def journal_post(request, pk):
         messages.error(request, "Cannot post to a finalised year.")
         return redirect("core:journal_detail", pk=pk)
 
-    # Apply journal lines to Trial Balance (nets against existing balances)
-    for line in journal.lines.all():
-        _apply_journal_line_to_tb(
-            fy, line.account_code, line.account_name,
-            line.debit, line.credit, source='manual_journal',
-            description=journal.description,
-            journal=journal,
-        )
+    # Apply journal lines to Trial Balance, aggregating by account code
+    _post_journal_to_tb(journal, fy)
 
     # Update journal status
     journal.status = AdjustingJournal.JournalStatus.POSTED
@@ -4922,14 +4946,8 @@ def journal_edit(request, pk):
                         "fy": fy, "entity": entity, "accounts": accounts,
                     })
 
-                # Apply the new lines to the TB, linked via source_journal FK
-                for line in all_lines:
-                    _apply_journal_line_to_tb(
-                        fy, line.account_code, line.account_name,
-                        line.debit, line.credit, source="manual_journal",
-                        description=updated_journal.description,
-                        journal=journal,
-                    )
+                # Apply the new lines to the TB, aggregating by account code
+                _post_journal_to_tb(journal, fy)
 
                 # Update cached totals
                 journal.total_debit = total_dr
@@ -7905,14 +7923,8 @@ def depreciation_post_to_tb(request, pk):
             f"Dr {dep_code} {dep_name} ${amount:,.2f} / Cr {accum_code} {accum_name} ${amount:,.2f}"
         )
 
-    # Auto-post: apply journal lines to Trial Balance
-    for line in journal.lines.all():
-        _apply_journal_line_to_tb(
-            fy, line.account_code, line.account_name,
-            line.debit, line.credit, source='manual_journal',
-            description=journal.description,
-            journal=journal,
-        )
+    # Auto-post: apply journal lines to Trial Balance, aggregating by account code
+    _post_journal_to_tb(journal, fy)
 
     # Mark as posted
     journal.status = AdjustingJournal.JournalStatus.POSTED
@@ -9039,15 +9051,8 @@ def review_post_opening_balance(request, pk):
         ))
     JournalLine.objects.bulk_create(journal_lines)
 
-    # Auto-post: apply to Trial Balance
-    for line in validated_lines:
-        _apply_journal_line_to_tb(
-            fy, line['account_code'], line['account_name'],
-            line['debit'], line['credit'],
-            source='manual_journal',
-            description=journal.description,
-            journal=journal,
-        )
+    # Auto-post: apply to Trial Balance, aggregating by account code
+    _post_journal_to_tb(journal, fy)
 
     journal.status = AdjustingJournal.JournalStatus.POSTED
     journal.posted_by = request.user
