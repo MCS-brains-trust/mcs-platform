@@ -127,7 +127,7 @@
                     <button type="button" class="btn btn-sm btn-success" onclick="evaFinalise()">
                         <i class="bi bi-check-circle"></i> Finalise
                     </button>
-                    {% elif fy.status != 'finalised' %}
+                    {% elif not fy.is_locked %}
                     <button type="button" class="btn btn-sm btn-success" disabled
                             title="Submit to Eva for review before finalising">
                         <i class="bi bi-lock"></i> Finalise (Eva Review Required)
@@ -183,7 +183,7 @@
                     <div class="vr d-none d-md-block"></div>
 
                     <!-- Roll Forward -->
-                    {% if fy.status == 'finalised' %}
+                    {% if fy.is_locked %}
                         {% if fy.next_year.first %}
                         {# A following year already exists — this year was re-opened and re-finalised #}
                         <a href="{% url 'core:reroll_forward' pk=fy.pk %}" class="btn btn-sm btn-outline-info"
@@ -223,7 +223,7 @@
 
 
 <!-- Reopen Financial Year Modal -->
-{% if fy.status == 'finalised' and user.can_finalise %}
+{% if fy.is_locked and user.can_finalise %}
 <div class="modal fade" id="reopenModal" tabindex="-1">
     <div class="modal-dialog">
         <div class="modal-content">
