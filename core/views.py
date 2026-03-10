@@ -140,6 +140,34 @@ _COA_SECTION_TO_DISPLAY = {
 # Which CoA sections are P&L (used for Net Profit on unmapped lines)
 _PL_COA_SECTIONS = {'revenue', 'cost_of_sales', 'expenses'}
 
+# Sections that are balance sheet (used for roll-forward filtering)
+_BS_SECTIONS = {"assets", "liabilities", "equity", "capital_accounts"}
+_BS_STATEMENTS = {"balance_sheet", "equity"}
+
+
+def _is_balance_sheet_account(account_code, mapped_line_item, coa_sections):
+    """Classify an account as balance sheet or P&L.
+
+    Income statement accounts (revenue/expense) are excluded from roll
+    forward — they reset to zero at year end.  Only balance sheet accounts
+    (assets, liabilities, equity) carry forward.
+
+    Uses the same three-tier classification as roll_forward:
+      1. HandiLedger numeric code range (authoritative)
+      2. mapped_line_item.financial_statement
+      3. ChartOfAccount section lookup
+      4. Numeric fallback (code >= 2000 = BS)
+    """
+    hl_sec = _hl_section_for_code(account_code)
+    if hl_sec is not None:
+        return hl_sec not in ('Income', 'Cost of Sales', 'Expenses')
+    if mapped_line_item:
+        return getattr(mapped_line_item, 'financial_statement', '') in _BS_STATEMENTS
+    if account_code in coa_sections:
+        return coa_sections[account_code] in _BS_SECTIONS
+    code_prefix = account_code.split(".")[0] if account_code else ""
+    return code_prefix.isdigit() and int(code_prefix) >= 2000
+
 
 def _build_coa_section_lookup(entity):
     """Build a dict mapping account_code -> display_section for an entity.
@@ -2032,8 +2060,12 @@ def reroll_forward_diff(request, pk):
 
     Compare this year's closing TB balances against the next year's
     opening balances and return a JSON diff.
+
+    Income statement accounts (revenue/expense) are excluded — they reset
+    to zero at year end.  Only balance sheet accounts carry forward.
     """
     current_fy = get_financial_year_for_user(request, pk)
+    entity = current_fy.entity
 
     if not request.user.can_do_accounting:
         return JsonResponse({"error": "Permission denied."}, status=403)
@@ -2042,28 +2074,43 @@ def reroll_forward_diff(request, pk):
     if not next_fy:
         return JsonResponse({"error": "No subsequent financial year found."}, status=404)
 
-    # Build aggregated closing balances for the current year (by account_code)
+    # Build CoA section lookup for BS/PL classification
+    coa_sections = dict(
+        ChartOfAccount.objects.filter(
+            entity_type=entity.entity_type, is_active=True
+        ).values_list("account_code", "section")
+    )
+
+    # Build aggregated closing balances for the current year (BS accounts only)
     from django.db.models import Sum as _Sum
     current_lines = (
         current_fy.trial_balance_lines
+        .select_related("mapped_line_item")
         .filter(is_adjustment=False)
-        .values("account_code", "account_name")
-        .annotate(closing=_Sum("closing_balance"))
     )
     current_map = {}
-    for row in current_lines:
-        current_map[row["account_code"]] = {
-            "account_name": row["account_name"],
-            "closing": row["closing"],
-        }
+    for line in current_lines:
+        if not _is_balance_sheet_account(line.account_code, line.mapped_line_item, coa_sections):
+            continue
+        cb = line.closing_balance or Decimal("0")
+        if line.account_code in current_map:
+            current_map[line.account_code]["closing"] += cb
+        else:
+            current_map[line.account_code] = {
+                "account_name": line.account_name,
+                "closing": cb,
+            }
 
-    # Build opening balances in the next year (rollover lines only)
+    # Build opening balances in the next year (rollover lines only, BS only)
     next_rollover = (
         next_fy.trial_balance_lines
+        .select_related("mapped_line_item")
         .filter(source="rollover", is_adjustment=False)
     )
     next_map = {}
     for line in next_rollover:
+        if not _is_balance_sheet_account(line.account_code, line.mapped_line_item, coa_sections):
+            continue
         next_map[line.account_code] = {
             "account_name": line.account_name,
             "opening": line.opening_balance,
@@ -2104,9 +2151,13 @@ def reroll_forward_apply(request, pk):
 
     Accept the diff and update only the changed opening balance lines
     in the next financial year.
+
+    Income statement accounts (revenue/expense) are excluded — they reset
+    to zero at year end.  Only balance sheet accounts carry forward.
     """
     import json as _json
     current_fy = get_financial_year_for_user(request, pk)
+    entity = current_fy.entity
 
     if not request.user.can_do_accounting:
         return JsonResponse({"error": "Permission denied."}, status=403)
@@ -2115,23 +2166,42 @@ def reroll_forward_apply(request, pk):
     if not next_fy:
         return JsonResponse({"error": "No subsequent financial year found."}, status=404)
 
-    # Re-compute the diff to ensure consistency (don't trust client-side data)
+    # Build CoA section lookup for BS/PL classification
+    coa_sections = dict(
+        ChartOfAccount.objects.filter(
+            entity_type=entity.entity_type, is_active=True
+        ).values_list("account_code", "section")
+    )
+
+    # Re-compute the diff to ensure consistency (don't trust client-side data).
+    # Only include balance sheet accounts — P&L accounts reset to zero.
     from django.db.models import Sum as _Sum
     current_lines = (
         current_fy.trial_balance_lines
+        .select_related("mapped_line_item")
         .filter(is_adjustment=False)
-        .values("account_code")
-        .annotate(closing=_Sum("closing_balance"))
     )
-    current_map = {row["account_code"]: row["closing"] or Decimal("0") for row in current_lines}
+    current_map = {}
+    for line in current_lines:
+        if not _is_balance_sheet_account(line.account_code, line.mapped_line_item, coa_sections):
+            continue
+        cb = line.closing_balance or Decimal("0")
+        if line.account_code in current_map:
+            current_map[line.account_code] += cb
+        else:
+            current_map[line.account_code] = cb
 
     next_rollover = (
         next_fy.trial_balance_lines
+        .select_related("mapped_line_item")
         .filter(source="rollover", is_adjustment=False)
     )
 
     updated = []
     for line in next_rollover:
+        # Skip P&L rollover lines — they should keep opening_balance=0
+        if not _is_balance_sheet_account(line.account_code, line.mapped_line_item, coa_sections):
+            continue
         new_closing = current_map.get(line.account_code)
         if new_closing is not None and new_closing != (line.opening_balance or Decimal("0")):
             old_opening = line.opening_balance
@@ -2267,35 +2337,27 @@ def reroll_forward(request, pk):
         # (Replicates the core logic from roll_forward but targets the
         #  existing next_fy instead of creating a new one.)
 
-        BS_SECTIONS = {"assets", "liabilities", "equity", "capital_accounts"}
-        BS_STATEMENTS = {"balance_sheet", "equity"}
-
         coa_sections = dict(
             ChartOfAccount.objects.filter(
                 entity_type=entity.entity_type, is_active=True
             ).values_list("account_code", "section")
         )
 
+        # -----------------------------------------------------------------
         # Pass 1: Classify lines and calculate net P&L
+        #
+        # Income statement accounts (revenue/expense) are excluded — they
+        # reset to zero at year end.  Only balance sheet accounts (assets,
+        # liabilities, equity) carry forward.
+        # -----------------------------------------------------------------
         net_pl_result = Decimal("0")
         retained_profits_line = None
         income_tax_line = None
         bs_lines = []
         pl_lines = []
 
-        for line in current_fy.trial_balance_lines.filter(is_adjustment=False):
-            # HARD RULE: use the HandiLedger numeric code range to determine
-            # whether a line is balance sheet or P&L.
-            hl_sec = _hl_section_for_code(line.account_code)
-            if hl_sec is not None:
-                is_bs = hl_sec not in ('Income', 'Cost of Sales', 'Expenses')
-            elif line.mapped_line_item:
-                is_bs = line.mapped_line_item.financial_statement in BS_STATEMENTS
-            elif line.account_code in coa_sections:
-                is_bs = coa_sections[line.account_code] in BS_SECTIONS
-            else:
-                code_prefix = line.account_code.split(".")[0] if line.account_code else ""
-                is_bs = code_prefix.isdigit() and int(code_prefix) >= 2000
+        for line in current_fy.trial_balance_lines.select_related("mapped_line_item").filter(is_adjustment=False):
+            is_bs = _is_balance_sheet_account(line.account_code, line.mapped_line_item, coa_sections)
 
             if is_bs:
                 # HARD RULE: only account 4199 is the retained profits target.
@@ -2765,10 +2827,6 @@ def roll_forward(request, pk):
         # Seed entity chart of accounts from template if not already done
         EntityChartOfAccount.seed_from_template(entity)
 
-        # Determine which sections are balance sheet
-        BS_SECTIONS = {"assets", "liabilities", "equity", "capital_accounts"}
-        BS_STATEMENTS = {"balance_sheet", "equity"}
-
         # Build lookup of account_code -> section from ChartOfAccount
         coa_sections = dict(
             ChartOfAccount.objects.filter(
@@ -2778,6 +2836,10 @@ def roll_forward(request, pk):
 
         # -----------------------------------------------------------------
         # Pass 1: Classify all lines and calculate net P&L result
+        #
+        # Income statement accounts (revenue/expense) are excluded — they
+        # reset to zero at year end.  Only balance sheet accounts (assets,
+        # liabilities, equity) carry forward.
         # -----------------------------------------------------------------
         net_pl_result = Decimal("0")  # Positive = net expense (loss), Negative = net income (profit)
         retained_profits_line = None
@@ -2785,21 +2847,8 @@ def roll_forward(request, pk):
         bs_lines = []
         pl_lines = []
 
-        for line in current_fy.trial_balance_lines.filter(is_adjustment=False):
-            # HARD RULE: use the HandiLedger numeric code range to determine
-            # whether a line is balance sheet or P&L.  This is authoritative
-            # and prevents equity accounts (4000-4999) from being treated as
-            # P&L lines, and P&L accounts (0-1999) from being treated as BS.
-            hl_sec = _hl_section_for_code(line.account_code)
-            if hl_sec is not None:
-                is_bs = hl_sec not in ('Income', 'Cost of Sales', 'Expenses')
-            elif line.mapped_line_item:
-                is_bs = line.mapped_line_item.financial_statement in BS_STATEMENTS
-            elif line.account_code in coa_sections:
-                is_bs = coa_sections[line.account_code] in BS_SECTIONS
-            else:
-                code_prefix = line.account_code.split(".")[0] if line.account_code else ""
-                is_bs = code_prefix.isdigit() and int(code_prefix) >= 2000
+        for line in current_fy.trial_balance_lines.select_related("mapped_line_item").filter(is_adjustment=False):
+            is_bs = _is_balance_sheet_account(line.account_code, line.mapped_line_item, coa_sections)
 
             if is_bs:
                 # HARD RULE: account 4199 is ALWAYS the retained profits target.
