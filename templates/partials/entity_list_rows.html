@@ -18,6 +18,15 @@
         <span class="badge bg-{% if entity.entity_type == 'company' %}primary{% elif entity.entity_type == 'trust' %}info{% elif entity.entity_type == 'smsf' %}success{% elif entity.entity_type == 'partnership' %}warning text-dark{% elif entity.entity_type == 'sole_trader' %}secondary{% else %}light text-dark{% endif %}">
             {{ entity.get_entity_type_display }}
         </span>
+        {% if entity.entity_type == 'company' %}
+            {% if entity.is_small_business_entity is None or entity.is_base_rate_entity is None %}
+            <span class="badge bg-warning text-dark ms-1" title="Tax classification required"><i class="bi bi-exclamation-triangle-fill"></i></span>
+            {% elif entity.is_base_rate_entity %}
+            <span class="badge bg-light text-dark ms-1" title="Base rate entity (25%)">25%</span>
+            {% else %}
+            <span class="badge bg-light text-dark ms-1" title="Standard rate (30%)">30%</span>
+            {% endif %}
+        {% endif %}
     </td>
     <td><small>{{ entity.get_industry_display|default:"—" }}</small></td>
     <td><small>{{ entity.abn|default:"—" }}</small></td>

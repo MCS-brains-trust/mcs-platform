@@ -76,6 +76,19 @@ document.addEventListener('DOMContentLoaded', function() {
         toggleAcn();
     }
 
+    // Show/hide Tax Classification fields based on entity type (company only)
+    const sbeRow = document.getElementById('div_id_is_small_business_entity') || document.querySelector('[id$="id_is_small_business_entity"]')?.closest('.mb-3');
+    const breRow = document.getElementById('div_id_is_base_rate_entity') || document.querySelector('[id$="id_is_base_rate_entity"]')?.closest('.mb-3');
+    function toggleTaxClassification() {
+        const isCompany = entityTypeEl && entityTypeEl.value === 'company';
+        if (sbeRow) sbeRow.style.display = isCompany ? '' : 'none';
+        if (breRow) breRow.style.display = isCompany ? '' : 'none';
+    }
+    if (entityTypeEl) {
+        entityTypeEl.addEventListener('change', toggleTaxClassification);
+        toggleTaxClassification();
+    }
+
     // Show/hide BAS frequency based on GST registration
     const gstCheckbox = document.getElementById('id_is_gst_registered');
     const basFreqRow = document.getElementById('div_id_bas_frequency') || document.querySelector('[id$="id_bas_frequency"]')?.closest('.mb-3');
