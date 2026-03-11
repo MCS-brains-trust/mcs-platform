@@ -374,6 +374,7 @@ urlpatterns = [
     path("api/eva-findings/<uuid:pk>/resolve/", eva_engine.eva_finding_resolve, name="eva_resolve_finding"),
     path("api/eva-findings/<uuid:pk>/clarify/", eva_engine.eva_clarify_finding, name="eva_clarify_finding"),
     path("api/eva-findings/<uuid:pk>/clarify-question/", eva_engine.eva_clarification_question, name="eva_clarification_question"),
+    path("api/eva-findings/<uuid:pk>/auto-disclose-rp/", eva_engine.eva_auto_disclose_rp, name="eva_auto_disclose_rp"),
     path("api/financial-years/<uuid:pk>/eva-preflight/", eva_engine.eva_preflight, name="eva_preflight"),
     path("api/financial-years/<uuid:pk>/eva-rerun/", views_eva.eva_rerun_review, name="eva_rerun_review"),
     path("api/financial-years/<uuid:pk>/eva-finalise/", views_eva.eva_finalise, name="eva_finalise"),

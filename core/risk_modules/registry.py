@@ -27,7 +27,10 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 DETECTION_MODULES = [
     "core.risk_modules.div7a.Div7ADetectionModule",
-    "core.risk_modules.going_concern.GoingConcernModule",
+    # Going Concern disabled — directors sign ASIC minutes confirming
+    # awareness of going concern obligations annually.  The module remains
+    # in the codebase but is not executed by the risk engine.
+    # "core.risk_modules.going_concern.GoingConcernModule",
     "core.risk_modules.section100a.Section100AModule",
     "core.risk_modules.cluster_rp.RelatedPartyCluster",
     "core.risk_modules.cluster_sgc.SGCCluster",
@@ -45,9 +48,10 @@ MODULE_COVERS = {
         "D7A-",       # Old D7A-01 through D7A-06 (keyword-based heuristics)
         "T2-D7A-",    # New T2-D7A-01 through T2-D7A-08 (handled by module)
     ],
-    "going_concern": [
-        "SOL-",       # Old SOL-01 through SOL-04 (solvency: net assets, current ratio, etc.)
-    ],
+    # Going Concern disabled — see DETECTION_MODULES note above.
+    # "going_concern": [
+    #     "SOL-",       # Old SOL-01 through SOL-04 (solvency: net assets, current ratio, etc.)
+    # ],
     "section100a": [
         "TRU-",       # Old TRU-01 through TRU-06 (trust distribution rules)
     ],

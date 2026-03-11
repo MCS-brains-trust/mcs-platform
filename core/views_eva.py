@@ -265,6 +265,7 @@ def eva_review_status(request, pk):
     ordered_findings = (
         review.findings
         .select_related("resolved_by")
+        .exclude(status__in=["addressed", "closed"])
         .annotate(_sev_order=severity_order, _status_order=status_order)
         .order_by("_sev_order", "_status_order", "check_name")
     )

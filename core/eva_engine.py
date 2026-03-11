@@ -112,14 +112,9 @@ COMPLIANCE_CHECKS = [
                          "sole_trader", "partnership", "smsf", "individual"],
         "severity_default": "CRITICAL",
     },
-    {
-        "id": "comparative_consistency",
-        "name": "Comparative Period Consistency",
-        "description": "Check that prior year comparatives match the finalised prior year figures",
-        "entity_types": ["company", "trust_discretionary", "trust_unit", "trust_hybrid",
-                         "sole_trader", "partnership", "smsf"],
-        "severity_default": "ADVISORY",
-    },
+    # comparative_consistency removed — year-on-year variance is handled
+    # by Tier 1 variance analysis and amber indicators.  The LLM check
+    # duplicated that work and produced noise without actionable value.
     {
         "id": "super_guarantee",
         "name": "Superannuation Guarantee Compliance",
@@ -136,14 +131,9 @@ COMPLIANCE_CHECKS = [
                          "sole_trader", "partnership"],
         "severity_default": "ADVISORY",
     },
-    {
-        "id": "going_concern",
-        "name": "Going Concern Assessment",
-        "description": "Assess whether there are indicators the entity may not continue as a going concern within 12 months",
-        "entity_types": ["company", "trust_discretionary", "trust_unit", "trust_hybrid",
-                         "partnership", "smsf"],
-        "severity_default": "CRITICAL",
-    },
+    # going_concern removed — directors sign ASIC minutes confirming
+    # awareness of going concern obligations annually.  The detection
+    # module (GoingConcernModule) is also disabled in registry.py.
     {
         "id": "tpar",
         "name": "Taxable Payments Annual Report (TPAR)",
@@ -1936,6 +1926,7 @@ def eva_review_detail(request, pk):
         review.findings
         .select_related("resolved_by")
         .prefetch_related("related_findings", "clarifications__answered_by")
+        .exclude(status__in=["addressed", "closed"])
         .annotate(_sev_order=severity_order, _status_order=status_order)
         .order_by("_sev_order", "_status_order", "check_name")
     )
@@ -2086,6 +2077,126 @@ def eva_finding_resolve(request, pk):
     return JsonResponse({
         "status": "ok",
         "finding_status": "addressed",
+        "open_findings_remaining": open_findings,
+        "review_status": review.status,
+        "fy_status": fy.status,
+    })
+
+
+@login_required
+@require_POST
+def eva_auto_disclose_rp(request, pk):
+    """
+    Auto-disclose Related Party Transactions in workpaper notes.
+
+    POST /api/eva-findings/<pk>/auto-disclose-rp/
+
+    Reads the finding's explanation to extract RP details, creates or
+    updates a WorkpaperNote with AASB 124 format disclosure text, and
+    marks the finding as addressed.
+    """
+    from core.models import EvaFinding, WorkpaperNote, ActivityLog
+
+    try:
+        finding = EvaFinding.objects.select_related(
+            "eva_review__financial_year__entity"
+        ).get(pk=pk)
+    except EvaFinding.DoesNotExist:
+        return JsonResponse({"error": "Finding not found"}, status=404)
+
+    if finding.check_name != "related_party":
+        return JsonResponse(
+            {"error": "Auto-disclosure is only available for Related Party findings"},
+            status=400,
+        )
+
+    fy = finding.eva_review.financial_year
+    entity = fy.entity
+
+    # Build AASB 124 format disclosure text from the finding
+    explanation = finding.plain_english_explanation or finding.title or ""
+    entity_name = entity.entity_name
+    year_label = fy.year_label
+
+    disclosure_lines = [
+        f"Related Party Transactions — {entity_name} ({year_label})",
+        "",
+        "Disclosure prepared in accordance with AASB 124 Related Party Disclosures.",
+        "",
+        "Key management personnel (KMP) and related parties of the entity have "
+        "transacted with the entity during the financial year as follows:",
+        "",
+    ]
+
+    # Extract account details from finding explanation
+    disclosure_lines.append(explanation)
+    disclosure_lines.append("")
+    disclosure_lines.append(
+        "All related party transactions were conducted on normal commercial "
+        "terms and conditions unless otherwise stated."
+    )
+    disclosure_lines.append("")
+    disclosure_lines.append(
+        "Amounts receivable from and payable to related parties at "
+        "reporting date are shown in the financial statements."
+    )
+
+    disclosure_text = "\n".join(disclosure_lines)
+
+    # Create or update the WorkpaperNote for "Related Party Transactions"
+    rp_note, created = WorkpaperNote.objects.update_or_create(
+        financial_year=fy,
+        account_code="RP-DISCLOSURE",
+        note_type="preparer",
+        defaults={
+            "account_name": "Related Party Transactions (AASB 124)",
+            "content": disclosure_text,
+            "status": "completed",
+            "author": request.user,
+        },
+    )
+
+    # Mark the finding as addressed
+    finding.status = "addressed"
+    finding.resolution_note = (
+        f"Auto-disclosed in workpaper notes (AASB 124 format). "
+        f"Note ID: {rp_note.pk}"
+    )
+    finding.resolved_by = request.user
+    finding.resolved_at = timezone.now()
+    finding.save(update_fields=[
+        "status", "resolution_note", "resolved_by", "resolved_at"
+    ])
+
+    # Check if all findings are now addressed
+    review = finding.eva_review
+    open_findings = review.findings.filter(status="open").count()
+
+    if open_findings == 0:
+        review.status = "cleared"
+        review.save(update_fields=["status"])
+        fy.status = fy.Status.EVA_CLEARED
+        fy.save(update_fields=["status"])
+
+    # Log
+    ActivityLog.objects.create(
+        user=request.user,
+        event_type="eva_finding_resolved",
+        title=f"RP Auto-Disclosed — {entity_name}",
+        description=(
+            f"Related Party finding auto-disclosed for {entity_name} ({year_label}). "
+            f"AASB 124 disclosure note {'created' if created else 'updated'}."
+        ),
+        entity=entity,
+        financial_year=fy,
+        url=f"/entities/years/{fy.pk}/",
+    )
+
+    return JsonResponse({
+        "status": "ok",
+        "finding_status": "addressed",
+        "note_created": created,
+        "note_id": str(rp_note.pk),
         "open_findings_remaining": open_findings,
         "review_status": review.status,
         "fy_status": fy.status,

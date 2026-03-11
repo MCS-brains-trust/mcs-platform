@@ -32,7 +32,7 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
         <div class="text-center py-3" id="eva-review-prompt">
             <i class="bi bi-shield-check" style="font-size: 2.5rem; color: #0F6B74;"></i>
             <p class="mt-2 mb-3">Submit this financial year to Eva for a structured compliance review before finalisation.</p>
-            <p class="text-muted small mb-3">Eva will check: Division 7A, Superannuation, ATO Benchmarks, Trust Distributions, Going Concern, Related Party, TPAR, and Thin Capitalisation (as applicable to this entity type).</p>
+            <p class="text-muted small mb-3">Eva will check: Division 7A, Superannuation, ATO Benchmarks, Trust Distributions, Related Party, TPAR, and Thin Capitalisation (as applicable to this entity type).</p>
             <button type="button" class="btn btn-lg" style="background: #0F6B74; color: white;" onclick="askEvaToReview()" id="eva-review-btn">
                 <i class="bi bi-stars me-1"></i> Ask Eva to Review
             </button>
@@ -291,7 +291,15 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
         var list = document.getElementById('eva-findings-list');
         list.innerHTML = '';
 
-        data.findings.forEach(function(f) {
+        // Filter out addressed/closed findings and removed check types
+        var visibleFindings = data.findings.filter(function(f) {
+            if (f.status === 'addressed' || f.status === 'closed') return false;
+            if (f.check_name === 'comparative_consistency') return false;
+            if (f.check_name === 'going_concern') return false;
+            return true;
+        });
+
+        visibleFindings.forEach(function(f) {
             var card = document.createElement('div');
             card.className = 'card mb-3 border-' + (f.severity === 'critical' ? 'danger' : 'warning');
             card.id = 'finding-card-' + f.id;
@@ -362,6 +370,19 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
                     + '</div>'
                     + '<a href="/years/' + fyPk + '/legal-docs/wizard/div7a_loan_agreement/" class="btn btn-sm btn-outline-primary">'
                     + '<i class="bi bi-file-earmark-plus me-1"></i>Generate Agreement</a>'
+                    + '</div></div>';
+            }
+
+            if (f.check_name === 'related_party' && f.status === 'open') {
+                actionButtonsHtml += '<div class="mt-3 mb-2 p-2 border rounded bg-white">'
+                    + '<div class="d-flex align-items-center gap-2">'
+                    + '<i class="bi bi-journal-text text-info" style="font-size: 1.2rem;"></i>'
+                    + '<div class="flex-grow-1">'
+                    + '<small class="fw-semibold d-block">Related Party Disclosure (AASB 124)</small>'
+                    + '<small class="text-muted">Auto-populate disclosure note and mark this finding as addressed</small>'
+                    + '</div>'
+                    + '<button type="button" class="btn btn-sm btn-outline-info" onclick="autoDiscloseRP(\'' + f.id + '\')" id="auto-disclose-btn-' + f.id + '">'
+                    + '<i class="bi bi-journal-plus me-1"></i>Auto-Disclose in Notes</button>'
                     + '</div></div>';
             }
 
@@ -654,6 +675,63 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
             alert('Connection error. Please try again.');
             btn.disabled = false;
             btn.innerHTML = '<i class="bi bi-check-circle me-1"></i> Mark as Addressed';
+        });
+    };
+
+    // ── Auto-Disclose Related Party ──
+    window.autoDiscloseRP = function(findingId) {
+        var btn = document.getElementById('auto-disclose-btn-' + findingId);
+        if (!btn) return;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Disclosing...';
+
+        fetch('/api/eva-findings/' + findingId + '/auto-disclose-rp/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrfToken,
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+            body: JSON.stringify({}),
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.status === 'ok') {
+                var card = document.getElementById('finding-card-' + findingId);
+                card.className = card.className.replace('border-danger', 'border-success').replace('border-warning', 'border-success');
+                btn.parentElement.parentElement.parentElement.innerHTML =
+                    '<div class="mt-3 mb-2 p-2 border rounded bg-light">'
+                    + '<small class="text-success"><i class="bi bi-check-circle me-1"></i>'
+                    + 'AASB 124 disclosure note ' + (data.note_created ? 'created' : 'updated') + ' in workpaper notes.</small>'
+                    + '</div>';
+
+                // Hide resolution form
+                var resForm = document.getElementById('resolution-' + findingId);
+                if (resForm && resForm.parentElement) {
+                    resForm.parentElement.innerHTML = '<div class="mt-2 p-2 bg-light rounded"><small class="text-success"><i class="bi bi-check-circle"></i> Addressed via auto-disclosure</small></div>';
+                }
+
+                // Update count
+                var countBadge = document.getElementById('eva-findings-count');
+                if (countBadge) {
+                    var parts = countBadge.textContent.split('/');
+                    var openCount = Math.max(0, parseInt(parts[0]) - 1);
+                    countBadge.textContent = openCount + ' open /' + (parts[1] || '');
+                }
+
+                if (data.fy_status === 'eva_cleared') {
+                    setTimeout(function() { location.reload(); }, 1500);
+                }
+            } else {
+                alert(data.error || 'Failed to auto-disclose');
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-journal-plus me-1"></i>Auto-Disclose in Notes';
+            }
+        })
+        .catch(function() {
+            alert('Connection error. Please try again.');
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-journal-plus me-1"></i>Auto-Disclose in Notes';
         });
     };
 

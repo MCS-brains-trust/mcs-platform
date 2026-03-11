@@ -470,27 +470,39 @@ def _rule_t2_d7a_01(ctx):
     """
     T2-D7A-01: Shareholder/Director Loan Debit Balance
 
-    Fires on POSITION (debit balance exists), not MOVEMENT.
-    A static $300K debit fires every year until resolved.
-    Threshold: $1 or more. Any debit balance triggers.
+    Only fires when the CURRENT YEAR debit movement is > 0 (i.e. new
+    lending occurred this year).  A static loan that hasn't increased
+    does not trigger.  One flag is created per loan account code.
     """
     debit_accounts = []
     total_debit = ZERO
 
     for acct in ctx.loan_accounts:
-        if acct["is_debit"]:
-            # Check false positive guard: exclude if Div7ACompliance exists
-            # with status=COMPLIANT and loan_balance >= net_debit_balance
-            if _has_compliant_coverage(ctx, acct["net_balance"]):
-                continue
+        if not acct["is_debit"]:
+            continue
 
-            debit_accounts.append({
-                "account_code": acct["account_code"],
-                "account_name": acct["account_name"],
-                "balance": str(acct["net_balance"]),
-                "py_balance": str(acct["prior_balance"]),
-            })
-            total_debit += acct["net_balance"]
+        # Calculate current year debit MOVEMENT (increase)
+        cy_balance = acct["net_balance"]
+        py_balance = acct["prior_balance"] if acct["prior_balance"] > ZERO else ZERO
+        cy_movement = cy_balance - py_balance
+
+        if cy_movement <= ZERO:
+            # No new lending this year — skip
+            continue
+
+        # Check false positive guard: exclude if Div7ACompliance exists
+        # with status=COMPLIANT and loan_balance >= net_debit_balance
+        if _has_compliant_coverage(ctx, acct["net_balance"]):
+            continue
+
+        debit_accounts.append({
+            "account_code": acct["account_code"],
+            "account_name": acct["account_name"],
+            "balance": str(acct["net_balance"]),
+            "py_balance": str(acct["prior_balance"]),
+            "cy_movement": str(cy_movement),
+        })
+        total_debit += cy_movement
 
     if total_debit > ZERO:
         ctx.rules_fired.append("T2-D7A-01")
@@ -499,11 +511,12 @@ def _rule_t2_d7a_01(ctx):
 
         for acct in debit_accounts:
             ctx.finding_lines.append(
-                f"Director/Shareholder Loan ({acct['account_name']}, "
-                f"{acct['account_code']}) has a ${Decimal(acct['balance']):,.2f} debit "
-                f"balance at {ctx.fy.end_date.strftime('%d %B %Y')}. Without a complying "
-                f"Div 7A loan agreement, this balance is assessable as an unfranked "
-                f"deemed dividend under ss 109C–109D ITAA 1936."
+                f"Director/Shareholder Loan — {acct['account_name']} "
+                f"({acct['account_code']}): current year debit movement of "
+                f"${Decimal(acct['cy_movement']):,.2f} (closing balance "
+                f"${Decimal(acct['balance']):,.2f}). Without a complying "
+                f"Div 7A loan agreement, this increase is assessable as an "
+                f"unfranked deemed dividend under ss 109C–109D ITAA 1936."
             )
 
 
@@ -1041,7 +1054,11 @@ def _persist_assessment(ctx):
 
 
 def _create_consolidated_finding(ctx, assessment):
-    """Create or update the consolidated EvaFinding card."""
+    """Create one EvaFinding per loan account (instead of one combined card).
+
+    Non-loan findings (UPE, s 109E, interposed entity) still produce
+    a single consolidated card.
+    """
     from core.models import EvaFinding, EvaReview
 
     # Get or create the latest EvaReview for this FY
@@ -1050,7 +1067,6 @@ def _create_consolidated_finding(ctx, assessment):
     ).order_by("-triggered_at").first()
 
     if not review:
-        # Create a review record for the Div 7A assessment
         review = EvaReview.objects.create(
             financial_year=ctx.fy,
             status="findings_raised",
@@ -1058,74 +1074,116 @@ def _create_consolidated_finding(ctx, assessment):
             applicable_checks=["div7a"],
         )
 
-    # Build the consolidated finding content
     severity = "critical" if ctx.overall_severity == "CRITICAL" else "advisory"
-
-    # Summary
-    summary_parts = [f"Total Div 7A exposure: ${ctx.total_exposure:,.2f}"]
-    if ctx.direct_loan_balance > ZERO:
-        summary_parts.append(f"${ctx.direct_loan_balance:,.2f} direct loans")
-    if ctx.upe_exposure > ZERO:
-        summary_parts.append(f"${ctx.upe_exposure:,.2f} UPE")
-    if ctx.s109e_payments > ZERO:
-        summary_parts.append(f"${ctx.s109e_payments:,.2f} s 109E payments")
-    summary_parts.append(f"{len(ctx.rules_fired)} issue(s) detected.")
-
-    summary = " (".join(summary_parts[:1]) + " (" + " + ".join(summary_parts[1:-1]) + "). " + summary_parts[-1] if len(summary_parts) > 2 else ". ".join(summary_parts)
-
-    # Detailed explanation
-    explanation = (
-        f"Division 7A Assessment — {ctx.entity.entity_name} {ctx.fy.year_label}\n\n"
-        + "\n\n".join(ctx.finding_lines)
-    )
-
-    # Remediation steps
-    remediation = _build_remediation_steps(ctx)
-
-    # Compliance checklist
-    checklist = _build_compliance_checklist(ctx)
-
-    # Legislation reference
     legislation = "Division 7A, ITAA 1936 (ss 109C–109Q, s 109N, s 109R). QC 17928 benchmark rate."
     if ctx.upe_exposure > ZERO:
         legislation += " TD 2022/11 for UPEs."
 
-    # Create or update the finding
-    finding_defaults = {
-        "check_name": "div7a",
-        "severity": severity,
-        "title": f"Division 7A Assessment — {ctx.entity.entity_name} {ctx.fy.year_label}",
-        "plain_english_explanation": explanation,
-        "recommendation": remediation,
-        "remediation_authority": legislation,
-        "remediation_synthesis": checklist,
-        "legislation_reference": legislation,
-        "confidence": "high",
-        "source": "risk_engine",
-    }
+    remediation = _build_remediation_steps(ctx)
+    checklist = _build_compliance_checklist(ctx)
 
-    # Check if an existing Div 7A finding exists for this review
-    existing = EvaFinding.objects.filter(
-        eva_review=review,
-        check_name="div7a",
-    ).first()
+    findings_created = []
 
-    if existing:
-        for key, value in finding_defaults.items():
-            setattr(existing, key, value)
-        existing.save()
-        finding = existing
-    else:
-        finding = EvaFinding.objects.create(
-            eva_review=review,
-            **finding_defaults,
+    # --- One finding per loan account ---
+    for acct in ctx.direct_loan_accounts:
+        acct_code = acct["account_code"]
+        acct_name = acct["account_name"]
+        cy_movement = acct.get("cy_movement", acct["balance"])
+        balance = acct["balance"]
+
+        title = f"Div 7A — {acct_name} ({acct_code})"
+        explanation = (
+            f"Director/Shareholder Loan — {acct_name} ({acct_code}): "
+            f"current year debit movement of ${Decimal(cy_movement):,.2f} "
+            f"(closing balance ${Decimal(balance):,.2f}) for "
+            f"{ctx.entity.entity_name} {ctx.fy.year_label}.\n\n"
+            f"Without a complying Div 7A loan agreement, this increase is "
+            f"assessable as an unfranked deemed dividend under "
+            f"ss 109C–109D ITAA 1936."
         )
 
-    # Link assessment to finding
-    assessment.eva_finding = finding
-    assessment.save(update_fields=["eva_finding"])
+        finding_defaults = {
+            "check_name": "div7a",
+            "severity": severity,
+            "title": title,
+            "plain_english_explanation": explanation,
+            "recommendation": remediation,
+            "remediation_authority": legislation,
+            "remediation_synthesis": checklist,
+            "legislation_reference": legislation,
+            "confidence": "high",
+            "source": "risk_engine",
+        }
 
-    return finding
+        # Use account code as dedup key within the review
+        existing = EvaFinding.objects.filter(
+            eva_review=review,
+            check_name="div7a",
+            title__contains=acct_code,
+        ).first()
+
+        if existing:
+            for key, value in finding_defaults.items():
+                setattr(existing, key, value)
+            existing.save()
+            findings_created.append(existing)
+        else:
+            finding = EvaFinding.objects.create(
+                eva_review=review,
+                **finding_defaults,
+            )
+            findings_created.append(finding)
+
+    # --- Non-loan findings (UPE, s 109E, interposed) as one card ---
+    non_loan_lines = [
+        line for line in ctx.finding_lines
+        if not line.startswith("Director/Shareholder Loan")
+    ]
+    if non_loan_lines:
+        non_loan_title = f"Div 7A — Other Exposures — {ctx.entity.entity_name} {ctx.fy.year_label}"
+        non_loan_explanation = (
+            f"Division 7A — Other Exposures for "
+            f"{ctx.entity.entity_name} {ctx.fy.year_label}\n\n"
+            + "\n\n".join(non_loan_lines)
+        )
+
+        existing_other = EvaFinding.objects.filter(
+            eva_review=review,
+            check_name="div7a",
+            title__contains="Other Exposures",
+        ).first()
+
+        other_defaults = {
+            "check_name": "div7a",
+            "severity": severity,
+            "title": non_loan_title,
+            "plain_english_explanation": non_loan_explanation,
+            "recommendation": remediation,
+            "remediation_authority": legislation,
+            "remediation_synthesis": checklist,
+            "legislation_reference": legislation,
+            "confidence": "high",
+            "source": "risk_engine",
+        }
+
+        if existing_other:
+            for key, value in other_defaults.items():
+                setattr(existing_other, key, value)
+            existing_other.save()
+            findings_created.append(existing_other)
+        else:
+            finding = EvaFinding.objects.create(
+                eva_review=review,
+                **other_defaults,
+            )
+            findings_created.append(finding)
+
+    # Link assessment to first finding (for backwards compat)
+    if findings_created:
+        assessment.eva_finding = findings_created[0]
+        assessment.save(update_fields=["eva_finding"])
+
+    return findings_created[0] if findings_created else None
 
 
 def _build_remediation_steps(ctx):
