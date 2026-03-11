@@ -3504,6 +3504,12 @@ def trial_balance_import(request, pk):
                     messages.error(request, "No data rows found in the uploaded file.")
                     return redirect("core:trial_balance_import", pk=pk)
 
+                # Merge duplicate account codes before mapping
+                from core.tb_dedup import merge_duplicate_accounts
+                raw_lines, merge_warnings = merge_duplicate_accounts(raw_lines)
+                for w in merge_warnings:
+                    messages.warning(request, w)
+
                 # Apply learned mappings and code matching
                 staged_lines = _apply_tb_learned_mappings(fy.entity, raw_lines)
 
@@ -3512,6 +3518,7 @@ def trial_balance_import(request, pk):
                     "fy_pk": str(fy.pk),
                     "lines": staged_lines,
                     "filename": uploaded_file.name,
+                    "merge_warnings": merge_warnings,
                 }
                 # Force session save to DB before redirect so the next
                 # request (possibly handled by a different Gunicorn worker)
@@ -4252,6 +4259,11 @@ def commit_tb_import(request, pk):
             reclassified=comp.get("reclassified", False),
             comparatives_locked=comp.get("comparatives_locked", False),
         )
+
+    # Surface any merge warnings that were recorded at staging time
+    merge_warnings = staged.get("merge_warnings", [])
+    for w in merge_warnings:
+        messages.warning(request, w)
 
     # Clean up session
     request.session.pop("staged_tb_import", None)
