@@ -31,7 +31,7 @@ class User(AbstractUser):
     is_active = models.BooleanField(default=True)
 
     # TOTP 2FA fields
-    totp_secret = EncryptedCharField(max_length=255, blank=True, default="")
+    totp_secret = EncryptedCharField(blank=True, default="")
     totp_confirmed = models.BooleanField(
         default=False,
         help_text="Whether the user has confirmed their TOTP setup by entering a valid code.",

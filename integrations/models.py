@@ -548,11 +548,11 @@ class MYOBCompanyFile(models.Model):
 
     # Company file credentials (encrypted at rest)
     cf_username = EncryptedCharField(
-        max_length=500, blank=True, default="Administrator",
+        blank=True, default="Administrator",
         help_text="Company file username",
     )
     cf_password = EncryptedCharField(
-        max_length=500, blank=True, default="",
+        blank=True, default="",
         help_text="Company file password (encrypted at rest)",
     )
 

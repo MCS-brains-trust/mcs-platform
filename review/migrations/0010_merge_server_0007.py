@@ -13,8 +13,6 @@ from django.db import migrations
 class Migration(migrations.Migration):
 
     dependencies = [
-        # The server-side leaf node (created on server, not in repo)
-        ('review', '0007_alter_entitygstsetting_financial_year'),
         # The repo's leaf node
         ('review', '0009_backfill_posted_to_tb'),
     ]

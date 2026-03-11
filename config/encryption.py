@@ -63,10 +63,12 @@ def decrypt_value(value):
         return value
 
 
-class EncryptedCharField(models.CharField):
+class EncryptedCharField(models.TextField):
     """
-    A CharField that transparently encrypts data at rest.
+    A TextField that transparently encrypts data at rest.
     Values are encrypted before saving and decrypted when reading.
+    Uses TEXT column to accommodate Fernet ciphertext which is always
+    longer than the original plaintext.
     """
 
     def get_prep_value(self, value):
