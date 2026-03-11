@@ -4,6 +4,8 @@ Implements the full data model from the specification:
 Clients, Entities, Financial Years, Trial Balance Lines,
 Account Mappings, Notes/Disclosures, Adjusting Journals, Audit Log.
 """
+import hashlib
+import json
 import uuid
 from django.conf import settings
 from django.db import models
@@ -3594,19 +3596,20 @@ class EvaFindingSuppression(models.Model):
         return f"Suppression {self.fingerprint[:12]}… on {self.financial_year}"
 
     @staticmethod
-    def generate_fingerprint(entity_id, financial_year_id, rule_category, account_refs):
+    def generate_fingerprint(entity_id, financial_year_id, rule_category, account_refs=None):
         """
         Generate a stable fingerprint from structural identifiers only.
         account_refs should be a list of account codes/numbers — sort before hashing.
         """
-        import hashlib
         payload = {
             'entity_id': str(entity_id),
             'financial_year_id': str(financial_year_id),
-            'rule_category': rule_category,
-            'account_refs': sorted(account_refs),
+            'rule_category': str(rule_category),
+            'account_refs': sorted([str(r) for r in (account_refs or [])]),
         }
-        return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+        return hashlib.sha256(
+            json.dumps(payload, sort_keys=True).encode()
+        ).hexdigest()
 
 
 # ---------------------------------------------------------------------------
