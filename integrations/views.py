@@ -405,6 +405,12 @@ def _do_cloud_import(request, fy, entity, provider, access_token, tenant_id, con
             messages.warning(request, f"No trial balance data returned from {provider.display_name}.")
             return redirect("core:financial_year_detail", pk=fy.pk)
 
+        # Merge duplicate account codes before mapping
+        from core.tb_dedup import merge_duplicate_accounts
+        raw_lines, merge_warnings = merge_duplicate_accounts(raw_lines)
+        for w in merge_warnings:
+            messages.warning(request, w)
+
         staged_lines = _apply_learned_mappings(entity, raw_lines)
 
         request.session["staged_import"] = {
@@ -413,6 +419,7 @@ def _do_cloud_import(request, fy, entity, provider, access_token, tenant_id, con
             "as_at_date": as_at_date.isoformat(),
             "provider_name": provider.display_name,
             "lines": staged_lines,
+            "merge_warnings": merge_warnings,
         }
         # Force session save to DB before redirect so the next
         # request (possibly handled by a different Gunicorn worker)
@@ -672,6 +679,11 @@ def commit_import(request, fy_pk):
             )
         except AccountingConnection.DoesNotExist:
             pass
+
+    # Surface any merge warnings that were recorded at staging time
+    merge_warnings = staged.get("merge_warnings", [])
+    for w in merge_warnings:
+        messages.warning(request, w)
 
     request.session.pop("staged_import", None)
 
