@@ -301,8 +301,8 @@ def track_fy_status_change(sender, instance, created, **kwargs):
     """
     Handle FinancialYear status transitions:
     - DRAFT → IN_REVIEW: Log activity
-    - IN_REVIEW → FINISHED: Trigger Eva Finalisation Review
-    - EVA_CLEARED → LOCKED: Trigger Eva Client Summary generation
+    - IN_REVIEW → FINALISED: Trigger Eva Client Summary generation
+    - FINALISED → REOPENED: Log activity
     """
     if created:
         return
@@ -324,26 +324,15 @@ def track_fy_status_change(sender, instance, created, **kwargs):
         from core.models import ActivityLog
         ActivityLog.objects.create(
             financial_year=instance,
-            event_type="general",
+            event_type="fy_status_changed",
             title="Status change",
             description=f"Status changed from {old_status} to {new_status}",
         )
     except Exception:
         logger.exception("Failed to log status change activity")
 
-    # Trigger Eva Finalisation Review when moving to FINISHED
-    if new_status == "FINISHED" and old_status != "FINISHED":
-        try:
-            from core.tasks import eva_finalisation_review
-            eva_finalisation_review.delay(str(instance.pk))
-            logger.info("Queued Eva finalisation review for FY %s", instance.pk)
-        except Exception:
-            logger.warning(
-                "Could not queue Eva finalisation review (Celery may not be running)"
-            )
-
-    # Trigger Eva Client Summary when year is LOCKED
-    if new_status == "LOCKED" and old_status != "LOCKED":
+    # Trigger Eva Client Summary when year is finalised
+    if new_status == "finalised" and old_status != "finalised":
         try:
             from core.tasks import eva_client_summary
             eva_client_summary.delay(str(instance.pk))
@@ -357,31 +346,18 @@ def track_fy_status_change(sender, instance, created, **kwargs):
 @receiver(post_save, sender="core.EvaReview")
 def handle_eva_review_completion(sender, instance, **kwargs):
     """
-    When an EvaReview is completed with all critical/high findings resolved,
-    auto-transition the FY to EVA_CLEARED.
+    When an EvaReview is completed, log the event.
+    FY stays in_review — the accountant must click Finalise manually
+    after all findings are addressed.
     """
-    if instance.status != "completed":
+    if instance.status not in ("completed", "cleared", "findings_raised"):
         return
 
     fy = instance.financial_year
-    if fy.status != "FINISHED":
-        return
-
-    # Check if all critical/high findings are resolved
-    from core.models import EvaFinding
-    unresolved = EvaFinding.objects.filter(
-        review=instance,
-        severity__in=["critical", "high"],
-    ).exclude(
-        status__in=["resolved", "not_applicable"],
-    ).count()
-
-    if unresolved == 0:
-        fy.status = "EVA_CLEARED"
-        fy.save(update_fields=["status"])
-        logger.info(
-            "FY %s auto-transitioned to EVA_CLEARED (all findings resolved)", fy.pk
-        )
+    logger.info(
+        "Eva review %s completed for FY %s with status=%s",
+        instance.pk, fy.pk, instance.status,
+    )
 
 
 @receiver(post_save, sender="core.LegalDocument")

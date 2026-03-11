@@ -15,7 +15,7 @@ from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, render, redirect
 from django.utils import timezone
-from django.views.decorators.http import require_POST, require_GET
+from django.views.decorators.http import require_POST, require_GET, require_http_methods
 
 from core.models import FinancialYear, AuditLog, TrialBalanceLine
 
@@ -145,90 +145,17 @@ def ask_eva_review(request, pk):
     """
     fy = get_object_or_404(FinancialYear, pk=pk)
 
-    # Pre-flight checks
-    if fy.status != FinancialYear.Status.DRAFT:
+    # Status check: Eva can only be triggered from in_review or reopened
+    if not fy.can_ask_eva:
         return JsonResponse({
-            "error": "Eva review can only be triggered from Draft status.",
+            "error": "Eva review can only be triggered when the financial year is In Review or Reopened.",
             "current_status": fy.get_status_display(),
         }, status=400)
 
-    # Check for unmapped accounts
-    unmapped = TrialBalanceLine.objects.filter(
-        financial_year=fy,
-        mapped_line_item__isnull=True,
-        is_adjustment=False,
-    ).count()
-    if unmapped > 0:
-        return JsonResponse({
-            "error": f"Cannot submit for Eva review: {unmapped} account(s) are unmapped. "
-                     f"Please map all accounts before requesting Eva's review.",
-            "unmapped_count": unmapped,
-        }, status=400)
-
-    # Check trial balance is in balance
-    from django.db.models import Sum
-    totals = TrialBalanceLine.objects.filter(
-        financial_year=fy
-    ).aggregate(
-        total_dr=Sum("debit"),
-        total_cr=Sum("credit"),
-    )
-    total_dr = totals["total_dr"] or 0
-    total_cr = totals["total_cr"] or 0
-    if abs(total_dr - total_cr) > 1:  # Allow $1 rounding tolerance
-        return JsonResponse({
-            "error": "Trial balance is not in balance. Please resolve before requesting Eva's review.",
-            "difference": str(total_dr - total_cr),
-        }, status=400)
-
-    # Check at least one TB line exists
-    if not TrialBalanceLine.objects.filter(financial_year=fy).exists():
-        return JsonResponse({
-            "error": "No trial balance data exists. Import a trial balance first.",
-        }, status=400)
-
-    opus_override = False
-    try:
-        data = json.loads(request.body) if request.body else {}
-        opus_override = data.get("opus_override", False)
-    except json.JSONDecodeError:
-        pass
-
-    # Update status to PREPARED
-    fy.status = FinancialYear.Status.PREPARED
-    fy.save(update_fields=["status"])
-
-    _log_action(
-        request, AuditLog.Action.EVA_REVIEW,
-        f"{request.user.get_full_name() or request.user.email} submitted this financial year for Eva review.",
-        fy,
-    )
-
-    # Run the review in a background thread to avoid blocking
-    user = request.user
-
-    def _run_review():
-        try:
-            from core.eva_service import run_eva_review
-            run_eva_review(fy, user, opus_override=opus_override)
-        except Exception:
-            import logging
-            logging.getLogger("core.views_eva").exception(
-                "Background Eva review failed for FY %s", fy.pk,
-            )
-            # Update review status so the UI doesn't hang
-            from core.models import EvaReview
-            EvaReview.objects.filter(
-                financial_year=fy, status="running",
-            ).update(status="error", error_message="Background review thread crashed")
-
-    thread = threading.Thread(target=_run_review, daemon=True)
-    thread.start()
-
-    return JsonResponse({
-        "status": "accepted",
-        "message": "Eva is now reviewing this financial year. Check back shortly.",
-    }, status=202)
+    # Delegate to the eva_engine.ask_eva_review which handles preflight checks,
+    # activity logging, and launching the background thread.
+    from core.eva_engine import ask_eva_review as engine_ask_eva
+    return engine_ask_eva(request, pk)
 
 
 @login_required
@@ -381,14 +308,10 @@ def eva_rerun_review(request, pk):
     """
     fy = get_object_or_404(FinancialYear, pk=pk)
 
-    if fy.status not in [FinancialYear.Status.PREPARED, FinancialYear.Status.DRAFT]:
+    if not fy.can_ask_eva:
         return JsonResponse({
-            "error": "Cannot re-run Eva review in current status.",
+            "error": "Cannot re-run Eva review in current status. Must be In Review or Reopened.",
         }, status=400)
-
-    # Reset to PREPARED for re-run
-    fy.status = FinancialYear.Status.PREPARED
-    fy.save(update_fields=["status"])
 
     user = request.user
 
@@ -421,17 +344,23 @@ def eva_rerun_review(request, pk):
 def eva_finalise(request, pk):
     """
     POST /api/financial-years/<pk>/eva-finalise/
-    Finalise the financial year. Only succeeds if status is EVA_CLEARED.
+    Finalise the financial year. Requires Eva review run with zero open findings.
     """
     fy = get_object_or_404(FinancialYear, pk=pk)
 
-    if fy.status != FinancialYear.Status.EVA_CLEARED:
+    # Permission check: only senior users can finalise
+    if not request.user.can_finalise:
         return JsonResponse({
-            "error": "Financial year can only be finalised after Eva has cleared it.",
-            "current_status": fy.get_status_display(),
+            "error": "Only senior accountants or admins can finalise a financial year.",
+        }, status=403)
+
+    if not fy.can_finalise:
+        return JsonResponse({
+            "error": "Cannot finalise. Eva review must be complete with zero open findings.",
+            "can_finalise": False,
         }, status=400)
 
-    fy.status = FinancialYear.Status.LOCKED
+    fy.status = FinancialYear.Status.FINALISED
     fy.finalised_at = timezone.now()
     fy.save(update_fields=["status", "finalised_at"])
 
@@ -440,9 +369,24 @@ def eva_finalise(request, pk):
 
     _log_action(
         request, AuditLog.Action.STATUS_CHANGE,
-        f"{request.user.get_full_name() or request.user.email} locked this financial year. "
+        f"{request.user.get_full_name() or request.user.email} finalised this financial year. "
         f"Eva clearance on record. All documents and data locked.",
         fy,
+    )
+
+    # Activity log entry
+    from core.models import ActivityLog
+    ActivityLog.objects.create(
+        user=request.user,
+        event_type="year_finalised",
+        title=f"Finalised by {request.user.get_full_name() or request.user.username}",
+        description=(
+            f"Financial year finalised at {timezone.now().strftime('%d %b %Y %H:%M')}. "
+            f"All Eva findings resolved."
+        ),
+        entity=fy.entity,
+        financial_year=fy,
+        url=f"/entities/years/{fy.pk}/",
     )
 
     # Trigger Eva Client Summary generation (async if Celery available)
@@ -454,7 +398,8 @@ def eva_finalise(request, pk):
 
     return JsonResponse({
         "status": "ok",
-        "message": "Financial year has been locked. Eva Client Summary is being generated.",
+        "finalised": True,
+        "message": "Financial year has been finalised. Eva Client Summary is being generated.",
     })
 
 
@@ -524,6 +469,48 @@ def trigger_knowledge_sync(request):
         "status": "accepted",
         "message": "Knowledge Brain sync has been triggered. Check the Activity tab for results.",
     }, status=202)
+
+
+# ===========================================================================
+# Suppression Override
+# ===========================================================================
+@login_required
+@require_http_methods(["POST", "DELETE"])
+def override_suppression(request, fy_pk, suppression_pk):
+    """
+    POST/DELETE /api/financial-years/<fy_pk>/override-suppression/<suppression_pk>/
+    Delete an EvaFindingSuppression so the finding is re-evaluated on next Eva review.
+    """
+    from core.models import EvaFindingSuppression, ActivityLog
+
+    fy = get_object_or_404(FinancialYear, pk=fy_pk)
+
+    # Permission: only senior users can override suppressions
+    if not request.user.is_senior:
+        return JsonResponse({"error": "Only senior accountants can override suppressions."}, status=403)
+
+    try:
+        suppression = EvaFindingSuppression.objects.get(pk=suppression_pk, financial_year=fy)
+    except EvaFindingSuppression.DoesNotExist:
+        return JsonResponse({"error": "Suppression record not found."}, status=404)
+
+    rule_category = suppression.rule_category
+    suppression.delete()
+
+    ActivityLog.objects.create(
+        user=request.user,
+        event_type="general",
+        title=f"Suppression overridden — {rule_category}",
+        description=(
+            f"Suppression overridden by {request.user.get_full_name() or request.user.username} — "
+            f"finding will be re-evaluated on next Eva review."
+        ),
+        entity=fy.entity,
+        financial_year=fy,
+        url=f"/entities/years/{fy.pk}/",
+    )
+
+    return JsonResponse({"overridden": True})
 
 
 # ===========================================================================

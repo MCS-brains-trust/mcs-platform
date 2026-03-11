@@ -42,10 +42,15 @@
         <p class="text-muted mb-0">
             {{ fy.start_date|date:"d M Y" }} to {{ fy.end_date|date:"d M Y" }}
             &middot;
-            <span class="badge bg-{% if fy.status == 'draft' %}warning text-dark{% elif fy.status == 'reopened' %}warning text-dark{% elif fy.status == 'in_review' %}info{% elif fy.status == 'finished' %}primary{% elif fy.status == 'prepared' %}info{% elif fy.status == 'eva_cleared' %}success{% else %}success{% endif %} fs-6">
-                {% if fy.status == 'prepared' %}<span class="spinner-border spinner-border-sm me-1" style="width:12px;height:12px;"></span>{% endif %}
-                {{ fy.get_status_display }}
-            </span>
+            {% if fy.status == 'draft' %}
+            <span class="badge bg-warning text-dark fs-6">Draft</span>
+            {% elif fy.status == 'in_review' %}
+            <span class="badge bg-info fs-6">In Review</span>
+            {% elif fy.status == 'finalised' %}
+            <span class="badge bg-success fs-6">Finalised</span>
+            {% elif fy.status == 'reopened' %}
+            <span class="badge bg-warning text-dark fs-6">Reopened</span>
+            {% endif %}
             {% if fy.reopened_at %}
             &middot;
             <span class="badge bg-info fs-6" title="Last reopened on {{ fy.reopened_at|date:'d M Y H:i' }} by {{ fy.reopened_by.get_full_name|default:'Unknown' }}">
@@ -55,7 +60,7 @@
         </p>
     </div>
     <div class="d-flex gap-2 flex-wrap">
-        {% if not fy.is_locked and user.can_do_accounting %}
+        {% if fy.status != 'finalised' and user.can_do_accounting %}
         <a href="{% url 'core:trial_balance_import' pk=fy.pk %}" class="btn btn-outline-success btn-sm">
             <i class="bi bi-upload"></i> Import TB
         </a>
@@ -68,7 +73,7 @@
         <a href="{% url 'core:journal_upload' pk=fy.pk %}" class="btn btn-outline-secondary btn-sm">
             <i class="bi bi-journal-arrow-up"></i> Upload JNLs
         </a>
-        {% elif fy.is_locked %}
+        {% elif fy.status == 'finalised' %}
         <button class="btn btn-outline-success btn-sm" disabled title="Change status to Draft to import trial balance">
             <i class="bi bi-upload"></i> Import TB
         </button>
@@ -116,16 +121,13 @@
                     <form method="post" action="{% url 'core:financial_year_status' pk=fy.pk %}" class="d-flex align-items-center gap-2" id="statusForm">
                         {% csrf_token %}
                         <label class="form-label mb-0 text-nowrap"><strong>Status:</strong></label>
-                        <select name="status" class="form-select form-select-sm" style="max-width: 180px;">
+                        <select name="status" class="form-select form-select-sm" style="max-width: 180px;" id="statusSelect">
                             {% if fy.status == 'reopened' %}
                             <option value="reopened" selected>Reopened</option>
                             <option value="in_review">In Review</option>
-                            <option value="finished">Finished</option>
-                            <option value="finalised">Finalised</option>
                             {% else %}
                             <option value="draft" {% if fy.status == 'draft' %}selected{% endif %}>Draft</option>
                             <option value="in_review" {% if fy.status == 'in_review' %}selected{% endif %}>In Review</option>
-                            <option value="finished" {% if fy.status == 'finished' %}selected{% endif %}>Finished</option>
                             {% endif %}
                         </select>
                         <button type="submit" class="btn btn-sm btn-primary">Update</button>
@@ -141,25 +143,18 @@
                     {% endif %}
 
                     <!-- Finalise Button (Eva-gated) -->
-                    {% if fy.status == 'eva_cleared' %}
-                    <button type="button" class="btn btn-sm btn-success" onclick="evaFinalise()">
-                        <i class="bi bi-check-circle"></i> Finalise
-                    </button>
-                    {% elif fy.status == 'reopened' %}
-                    <form method="post" action="{% url 'core:financial_year_status' pk=fy.pk %}" class="d-inline">
-                        {% csrf_token %}
-                        <input type="hidden" name="status" value="finalised">
-                        <button type="submit" class="btn btn-sm btn-success"
-                                title="Re-finalise after corrections (or run Eva review first)">
-                            <i class="bi bi-check-circle"></i> Finalise
+                    {% if fy.status == 'in_review' %}
+                        {% if can_finalise %}
+                        <button type="button" class="btn btn-sm btn-success" id="finaliseBtn" onclick="evaFinalise()">
+                            <i class="bi bi-lock-fill"></i> Finalise
                         </button>
-                    </form>
-                    {% elif not fy.is_locked %}
-                    <button type="button" class="btn btn-sm btn-success" disabled
-                            title="Submit to Eva for review before finalising">
-                        <i class="bi bi-lock"></i> Finalise (Eva Review Required)
-                    </button>
-                    {% else %}
+                        {% else %}
+                        <button type="button" class="btn btn-sm btn-success" disabled
+                                title="Resolve all Eva findings before finalising">
+                            <i class="bi bi-lock-fill"></i> Finalise
+                        </button>
+                        {% endif %}
+                    {% elif fy.status == 'finalised' %}
                     <span class="badge bg-success fs-6 py-2 px-3">
                         <i class="bi bi-check-circle-fill"></i> Finalised
                         {% if fy.finalised_at %} &mdash; {{ fy.finalised_at|date:"d M Y" }}{% endif %}
@@ -174,7 +169,7 @@
                     <div class="vr d-none d-md-block"></div>
 
                     <!-- Financial Statement Download Buttons -->
-                    {% if fy.status == 'eva_cleared' or fy.status == 'locked' or fy.status == 'finalised' %}
+                    {% if fy.status == 'finalised' %}
                     <!-- Final statements — direct download, no modal -->
                     <button type="button" class="btn btn-sm btn-dark" onclick="showPeriodModal('docx')">
                         <i class="bi bi-file-earmark-word"></i> Download Financial Statements
@@ -182,7 +177,7 @@
                     <button type="button" class="btn btn-sm btn-danger" onclick="showPeriodModal('pdf')">
                         <i class="bi bi-file-earmark-pdf"></i> Download Financial Statements
                     </button>
-                    {% elif fy.status == 'draft' or fy.status == 'in_review' or fy.status == 'finished' or fy.status == 'prepared' or fy.status == 'pending_eva' or fy.status == 'eva_error' or fy.status == 'reopened' %}
+                    {% elif fy.status == 'draft' or fy.status == 'in_review' or fy.status == 'reopened' %}
                     <!-- Management Accounts — opens period selection modal -->
                     <button type="button" class="btn btn-sm btn-outline-dark" onclick="openMgmtAccountsModal()" title="Watermarked management accounts. Complete Eva review to generate final financials.">
                         <i class="bi bi-file-earmark-text"></i> Download Management Accounts
@@ -212,7 +207,7 @@
                     <!-- Roll Forward / Re-Roll Forward -->
                     {% if fy.next_year.first %}
                     {# A following year already exists — show Re-Roll Forward #}
-                    {% if fy.is_locked or fy.status == 'reopened' %}
+                    {% if fy.status == 'finalised' or fy.status == 'reopened' %}
                     <button type="button" class="btn btn-sm btn-warning" onclick="openRerollModal()"
                        title="Compare and update opening balances in {{ fy.next_year.first.year_label }} from this year's closing balances.">
                         <i class="bi bi-arrow-repeat"></i> Re-Roll Forward
@@ -223,7 +218,7 @@
                         <i class="bi bi-arrow-repeat"></i> Re-Roll Forward
                     </button>
                     {% endif %}
-                    {% elif fy.is_locked %}
+                    {% elif fy.status == 'finalised' %}
                     {# No following year — standard roll-forward #}
                     <a href="{% url 'core:roll_forward' pk=fy.pk %}" class="btn btn-sm btn-outline-primary">
                         <i class="bi bi-arrow-right-circle"></i> Roll Forward
@@ -237,17 +232,17 @@
                     <div class="vr d-none d-md-block"></div>
 
                     <!-- Package Assembly -->
-                    {% if fy.status == 'finalised' or fy.status == 'FINISHED' or fy.status == 'EVA_CLEARED' or fy.status == 'LOCKED' %}
+                    {% if fy.can_assemble_package %}
                     <a href="{% url 'core:package_assembly' pk=fy.pk %}" class="btn btn-sm btn-outline-success">
                         <i class="bi bi-box-seam"></i> Assemble Client Package
                     </a>
                     {% else %}
-                    <button type="button" class="btn btn-sm btn-outline-success" disabled title="Financial year must be finished before assembling package">
+                    <button type="button" class="btn btn-sm btn-outline-success" disabled title="Finalise this financial year before assembling the client package">
                         <i class="bi bi-box-seam"></i> Assemble Client Package
                     </button>
                     {% endif %}
 
-                    {% if entity.entity_type == 'company' and fy.is_locked %}
+                    {% if entity.entity_type == 'company' and fy.status == 'finalised' %}
                     <div class="vr d-none d-md-block"></div>
                     {% if show_tax_journal_btn %}
                     <form method="post" action="{% url 'core:calculate_tax_journal' pk=fy.pk %}" class="d-inline"
@@ -273,7 +268,7 @@
 
 
 <!-- Reopen Financial Year Modal -->
-{% if fy.is_locked and user.can_finalise %}
+{% if fy.status == 'finalised' and user.can_finalise %}
 <div class="modal fade" id="reopenModal" tabindex="-1">
     <div class="modal-dialog">
         <div class="modal-content">
@@ -797,7 +792,7 @@ function applyRerollForward() {
         <div class="text-center py-5 text-muted">
             <i class="bi bi-upload" style="font-size: 3rem;"></i>
             <p class="mt-2">No trial balance data yet. Import an Excel file or pull from your accounting platform.</p>
-            {% if not fy.is_locked and user.can_do_accounting %}
+            {% if fy.status != 'finalised' and user.can_do_accounting %}
             <div class="d-flex gap-2 justify-content-center">
                 <a href="{% url 'core:trial_balance_import' pk=fy.pk %}" class="btn btn-primary">
                     <i class="bi bi-upload"></i> Import Excel
@@ -816,7 +811,7 @@ function applyRerollForward() {
         <div class="d-flex justify-content-between align-items-center mb-3">
             <h6 class="mb-0">Journal Entries</h6>
             <div class="d-flex gap-2">
-                {% if not fy.is_locked and user.can_do_accounting %}
+                {% if fy.status != 'finalised' and user.can_do_accounting %}
                 <a href="{% url 'core:adjustment_create' pk=fy.pk %}" class="btn btn-primary btn-sm">
                     <i class="bi bi-journal-plus"></i> New Journal Entry
                 </a>
@@ -892,7 +887,7 @@ function applyRerollForward() {
         <div class="text-center py-4 text-muted">
             <i class="bi bi-journal-text" style="font-size: 2.5rem;"></i>
             <p class="mt-2">No journal entries yet.</p>
-            {% if not fy.is_locked and user.can_do_accounting %}
+            {% if fy.status != 'finalised' and user.can_do_accounting %}
             <a href="{% url 'core:adjustment_create' pk=fy.pk %}" class="btn btn-primary btn-sm">
                 <i class="bi bi-journal-plus"></i> Create First Journal Entry
             </a>
@@ -1369,8 +1364,8 @@ function applyRerollForward() {
                     {% for log in activity_logs %}
                     <tr>
                         <td>
-                            <span class="fw-semibold">{{ log.timestamp|date:"d M Y" }}</span><br>
-                            <small class="text-muted">{{ log.timestamp|date:"H:i:s" }}</small>
+                            <span class="fw-semibold">{{ log._sort_dt|date:"d M Y" }}</span><br>
+                            <small class="text-muted">{{ log._sort_dt|date:"H:i:s" }}</small>
                         </td>
                         <td>
                             {% if log.user %}
@@ -1381,50 +1376,85 @@ function applyRerollForward() {
                             {% endif %}
                         </td>
                         <td>
-                            {% if log.action == 'adjustment' %}
-                                {% if 'Posted' in log.description %}
+                            {% if log._source == "activity" %}
+                                {# ActivityLog entries #}
+                                {% if log.event_type == 'eva_finding_addressed' %}
+                                <span class="badge" style="background:#0F6B74;"><i class="bi bi-check-circle"></i> Finding Addressed</span>
+                                {% elif log.event_type == 'eva_review_triggered' %}
+                                <span class="badge" style="background:#0F6B74;"><i class="bi bi-shield-check"></i> Eva Review</span>
+                                {% elif log.event_type == 'eva_review_cleared' %}
+                                <span class="badge bg-success"><i class="bi bi-check2-all"></i> Eva Cleared</span>
+                                {% elif log.event_type == 'year_finalised' %}
+                                <span class="badge bg-success"><i class="bi bi-lock-fill"></i> Finalised</span>
+                                {% elif log.event_type == 'fy_status_changed' %}
+                                <span class="badge bg-warning text-dark"><i class="bi bi-arrow-repeat"></i> Status Change</span>
+                                {% elif log.event_type == 'tb_import' %}
+                                <span class="badge bg-primary"><i class="bi bi-upload"></i> Import</span>
+                                {% elif log.event_type == 'journal_posted' %}
                                 <span class="badge bg-success"><i class="bi bi-check-circle"></i> Posted</span>
-                                {% elif 'Deleted' in log.description %}
+                                {% elif log.event_type == 'doc_generated' or log.event_type == 'mgmt_accts_gen' %}
+                                <span class="badge bg-info text-dark"><i class="bi bi-file-earmark"></i> Generated</span>
+                                {% elif log.event_type == 'audit_run' %}
+                                <span class="badge bg-danger"><i class="bi bi-shield-exclamation"></i> Risk Analysis</span>
+                                {% else %}
+                                <span class="badge bg-secondary">{{ log.get_event_type_display }}</span>
+                                {% endif %}
+                            {% else %}
+                                {# AuditLog entries #}
+                                {% if log.action == 'adjustment' %}
+                                    {% if 'Posted' in log.description %}
+                                    <span class="badge bg-success"><i class="bi bi-check-circle"></i> Posted</span>
+                                    {% elif 'Deleted' in log.description %}
+                                    <span class="badge bg-danger"><i class="bi bi-trash"></i> Deleted</span>
+                                    {% elif 'Created' in log.description %}
+                                    <span class="badge bg-info text-dark"><i class="bi bi-plus-circle"></i> Created</span>
+                                    {% else %}
+                                    <span class="badge bg-secondary">{{ log.get_action_display }}</span>
+                                    {% endif %}
+                                {% elif log.action == 'import' %}
+                                <span class="badge bg-primary"><i class="bi bi-upload"></i> Import</span>
+                                {% elif log.action == 'generate' %}
+                                <span class="badge bg-info text-dark"><i class="bi bi-file-earmark"></i> Generated</span>
+                                {% elif log.action == 'status_change' %}
+                                <span class="badge bg-warning text-dark"><i class="bi bi-arrow-repeat"></i> Status Change</span>
+                                {% elif log.action == 'delete' %}
                                 <span class="badge bg-danger"><i class="bi bi-trash"></i> Deleted</span>
-                                {% elif 'Created' in log.description %}
-                                <span class="badge bg-info text-dark"><i class="bi bi-plus-circle"></i> Created</span>
+                                {% elif log.action == 'reopen' %}
+                                <span class="badge bg-warning text-dark"><i class="bi bi-unlock"></i> Reopened</span>
+                                {% elif log.action == 'eva_chat' %}
+                                <span class="badge" style="background:#0F6B74;"><i class="bi bi-stars"></i> Eva Chat</span>
+                                {% elif log.action == 'eva_review' %}
+                                <span class="badge" style="background:#0F6B74;"><i class="bi bi-shield-check"></i> Eva Review</span>
+                                {% elif log.action == 'eva_finding' %}
+                                <span class="badge bg-warning text-dark"><i class="bi bi-exclamation-triangle"></i> Eva Finding</span>
+                                {% elif log.action == 'eva_sync' %}
+                                <span class="badge bg-info text-dark"><i class="bi bi-cloud-arrow-down"></i> Eva Sync</span>
                                 {% else %}
                                 <span class="badge bg-secondary">{{ log.get_action_display }}</span>
                                 {% endif %}
-                            {% elif log.action == 'import' %}
-                            <span class="badge bg-primary"><i class="bi bi-upload"></i> Import</span>
-                            {% elif log.action == 'generate' %}
-                            <span class="badge bg-info text-dark"><i class="bi bi-file-earmark"></i> Generated</span>
-                            {% elif log.action == 'status_change' %}
-                            <span class="badge bg-warning text-dark"><i class="bi bi-arrow-repeat"></i> Status Change</span>
-                            {% elif log.action == 'delete' %}
-                            <span class="badge bg-danger"><i class="bi bi-trash"></i> Deleted</span>
-                            {% elif log.action == 'reopen' %}
-                            <span class="badge bg-warning text-dark"><i class="bi bi-unlock"></i> Reopened</span>
-                            {% elif log.action == 'eva_chat' %}
-                            <span class="badge" style="background:#0F6B74;"><i class="bi bi-stars"></i> Eva Chat</span>
-                            {% elif log.action == 'eva_review' %}
-                            <span class="badge" style="background:#0F6B74;"><i class="bi bi-shield-check"></i> Eva Review</span>
-                            {% elif log.action == 'eva_finding' %}
-                            <span class="badge bg-warning text-dark"><i class="bi bi-exclamation-triangle"></i> Eva Finding</span>
-                            {% elif log.action == 'eva_sync' %}
-                            <span class="badge bg-info text-dark"><i class="bi bi-cloud-arrow-down"></i> Eva Sync</span>
-                            {% else %}
-                            <span class="badge bg-secondary">{{ log.get_action_display }}</span>
                             {% endif %}
                         </td>
-                        <td>{{ log.description }}</td>
                         <td>
-                            {% if log.affected_object_id and log.action == 'adjustment' and 'Deleted' not in log.description %}
+                            {% if log._source == "activity" %}{{ log.title }}{% if log.description %}<br><small class="text-muted">{{ log.description|truncatewords:30 }}</small>{% endif %}{% else %}{{ log.description }}{% endif %}
+                        </td>
+                        <td>
+                            {% if log._source == "audit" and log.affected_object_id and log.action == 'adjustment' and 'Deleted' not in log.description %}
                             <code>{{ log.description|truncatewords:2 }}</code>
-                            {% elif log.affected_object_id %}
+                            {% elif log._source == "audit" and log.affected_object_id %}
                             <code class="text-muted">{{ log.affected_object_id|truncatechars:12 }}</code>
                             {% else %}
                             <span class="text-muted">&mdash;</span>
                             {% endif %}
                         </td>
                         <td class="text-center">
-                            {% if log.affected_object_id and log.action == 'adjustment' and 'Deleted' not in log.description %}
+                            {% if log._source == "activity" and log.event_type == 'eva_finding_addressed' and user.is_senior %}
+                            <button class="btn btn-sm btn-outline-warning"
+                                    title="Override suppression — re-enable this finding on next Eva run"
+                                    onclick="overrideSuppression('{{ log.metadata.suppression_id }}', this)"
+                                    {% if fy.status == 'finalised' %}disabled{% endif %}>
+                                <i class="bi bi-arrow-counterclockwise"></i>
+                            </button>
+                            {% elif log._source == "audit" and log.affected_object_id and log.action == 'adjustment' and 'Deleted' not in log.description %}
                             <a href="{% url 'core:journal_detail' pk=log.affected_object_id %}" class="btn btn-sm btn-outline-primary" title="View journal">
                                 <i class="bi bi-eye"></i>
                             </a>
@@ -3831,6 +3861,29 @@ document.addEventListener('DOMContentLoaded', function() {
     // After initial page load, enable refresh behaviour
     setTimeout(function() { initialLoad = false; }, 500);
 })();
+</script>
+
+<script>
+function overrideSuppression(suppressionId, btn) {
+    if (!suppressionId || !confirm('Override this suppression? The finding will re-appear on the next Eva review run.')) return;
+    btn.disabled = true;
+    fetch("{% url 'core:override_suppression' fy_pk=fy.pk suppression_pk='00000000-0000-0000-0000-000000000000' %}".replace('00000000-0000-0000-0000-000000000000', suppressionId), {
+        method: 'DELETE',
+        headers: {'X-CSRFToken': '{{ csrf_token }}'},
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.ok) {
+            btn.closest('tr').style.opacity = '0.4';
+            btn.title = 'Suppression removed';
+            btn.innerHTML = '<i class="bi bi-check-lg"></i>';
+        } else {
+            alert(data.error || 'Failed to override suppression');
+            btn.disabled = false;
+        }
+    })
+    .catch(() => { btn.disabled = false; });
+}
 </script>
 
 <!-- ===== EVA CHAT PANEL ===== -->

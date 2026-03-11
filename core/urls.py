@@ -379,6 +379,7 @@ urlpatterns = [
     path("api/financial-years/<uuid:pk>/eva-preflight/", eva_engine.eva_preflight, name="eva_preflight"),
     path("api/financial-years/<uuid:pk>/eva-rerun/", views_eva.eva_rerun_review, name="eva_rerun_review"),
     path("api/financial-years/<uuid:pk>/eva-finalise/", views_eva.eva_finalise, name="eva_finalise"),
+    path("api/financial-years/<uuid:fy_pk>/override-suppression/<uuid:suppression_pk>/", views_eva.override_suppression, name="override_suppression"),
 
     # Knowledge Brain
     path("api/knowledge/sync/", eva_engine.knowledge_sync, name="knowledge_sync"),

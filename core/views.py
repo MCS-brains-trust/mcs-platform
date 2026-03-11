@@ -1108,7 +1108,7 @@ def dashboard(request):
     unfinalised_years = (
         FinancialYear.objects.filter(
             entity__client__in=clients,
-            status__in=["draft", "in_review", "finished"],
+            status__in=["draft", "in_review", "reopened"],
         )
         .select_related("entity", "entity__client")
         .order_by("entity__client__name", "entity__entity_name", "-end_date")
@@ -1773,19 +1773,35 @@ def financial_year_detail(request, pk):
         entity=fy.entity, is_active=True
     ).order_by('-created_at')
 
-    # Activity / Audit trail — all AuditLog entries for this financial year
-    activity_logs = AuditLog.objects.filter(
+    # Activity / Audit trail — AuditLog + ActivityLog entries for this FY
+    audit_logs_fy = AuditLog.objects.filter(
         affected_object_id=str(fy.pk),
     ).select_related('user').order_by('-timestamp')
-    # Also include journal-specific logs (where affected_object_id is a journal PK)
     journal_pks = list(fy.adjusting_journals.values_list('pk', flat=True))
     journal_logs = AuditLog.objects.filter(
         affected_object_id__in=[str(pk) for pk in journal_pks],
     ).select_related('user').order_by('-timestamp') if journal_pks else AuditLog.objects.none()
-    # Merge and deduplicate, ordered by timestamp descending
-    from itertools import chain
-    all_log_pks = set(activity_logs.values_list('pk', flat=True)) | set(journal_logs.values_list('pk', flat=True))
-    activity_logs = AuditLog.objects.filter(pk__in=all_log_pks).select_related('user').order_by('-timestamp')
+    all_log_pks = set(audit_logs_fy.values_list('pk', flat=True)) | set(journal_logs.values_list('pk', flat=True))
+    merged_audit = list(AuditLog.objects.filter(pk__in=all_log_pks).select_related('user').order_by('-timestamp'))
+    for entry in merged_audit:
+        entry._source = "audit"
+        entry._sort_dt = entry.timestamp
+
+    # Include ActivityLog entries (Eva findings, status changes, etc.)
+    merged_activity = list(
+        ActivityLog.objects.filter(financial_year=fy)
+        .select_related('user')
+        .order_by('-created_at')
+    )
+    for entry in merged_activity:
+        entry._source = "activity"
+        entry._sort_dt = entry.created_at
+
+    activity_logs = sorted(
+        merged_audit + merged_activity,
+        key=lambda x: x._sort_dt,
+        reverse=True,
+    )
 
     # Check if this entity has bank statement uploads
     has_bank_statements = (
@@ -1917,6 +1933,10 @@ def financial_year_detail(request, pk):
             applicable_entities__contains=fy.entity.entity_type
         ).order_by('financial_statement', 'line_item_label'),
         "active_tab": request.GET.get("tab", ""),
+        # Finalise button state
+        "can_finalise": fy.can_finalise,
+        # Eva review running state (check for running/pending review records)
+        "eva_review_running": fy.eva_reviews.filter(status__in=["pending", "running"]).exists(),
         # Reopen feature: list of subsequent finalised years for cascade info
         "subsequent_finalised_years": _get_subsequent_finalised_years(fy),
         # Eva Amber Indicators
@@ -1929,7 +1949,7 @@ def financial_year_detail(request, pk):
     }
 
     # --- Tax Journal context (companies only) ---
-    if fy.entity.entity_type == "company" and fy.is_locked:
+    if fy.entity.entity_type == "company" and fy.status == FinancialYear.Status.FINALISED:
         has_tax_journal = AdjustingJournal.objects.filter(
             financial_year=fy, description__icontains="Income tax",
         ).exists()
@@ -1961,7 +1981,13 @@ def financial_year_detail(request, pk):
 
 @login_required
 def financial_year_status(request, pk):
-    """Change the status of a financial year."""
+    """Change the status of a financial year.
+
+    The only valid manual transitions via the status dropdown are:
+        draft → in_review
+        in_review → draft
+    Finalisation and reopening are handled by dedicated endpoints.
+    """
     fy = get_financial_year_for_user(request, pk)
     new_status = request.POST.get("status")
 
@@ -1969,212 +1995,20 @@ def financial_year_status(request, pk):
         messages.error(request, "Invalid status.")
         return redirect("core:financial_year_detail", pk=pk)
 
-    # Validate status transition is allowed
+    # Only draft ↔ in_review is allowed via this dropdown
     ALLOWED_TRANSITIONS = {
-        "draft": ["in_review", "finished"],
-        "in_review": ["finished", "draft"],
-        "finished": ["prepared", "in_review", "draft"],
-        "prepared": ["pending_eva", "finished", "draft"],
-        "pending_eva": [],  # Managed by Eva engine only
-        "eva_cleared": ["finalised", "draft"],
-        "eva_error": ["finished", "draft"],
-        "finalised": [],  # Use reopen_financial_year instead
-        "reopened": ["in_review", "finished", "finalised"],
+        "draft": ["in_review"],
+        "in_review": ["draft"],
+        "reopened": ["in_review"],
     }
     allowed = ALLOWED_TRANSITIONS.get(fy.status, [])
-    # Eva-managed statuses (pending_eva, eva_cleared) are blocked below separately
-    if new_status not in allowed and new_status not in ["prepared", "eva_cleared", "pending_eva", "finalised"]:
+    if new_status not in allowed:
         messages.error(
             request,
             f"Cannot change status from '{fy.get_status_display()}' to '{new_status}'. "
-            f"Allowed transitions: {', '.join(allowed) if allowed else 'none (use reopen)'}."
+            f"Allowed transitions: {', '.join(allowed) if allowed else 'none'}."
         )
         return redirect("core:financial_year_detail", pk=pk)
-
-    # Permission checks
-    if new_status == "finalised" and not request.user.can_finalise:
-        messages.error(request, "Only senior accountants can finalise.")
-        return redirect("core:financial_year_detail", pk=pk)
-
-    if new_status == "finished" and not request.user.is_senior:
-        messages.error(request, "Only senior accountants can mark as finished.")
-        return redirect("core:financial_year_detail", pk=pk)
-
-    # Eva Finalisation Gate: finalisation now requires Eva clearance
-    # Reopened years can go directly to finalised (corrections-only path)
-    if new_status == "finalised":
-        if fy.status not in (FinancialYear.Status.EVA_CLEARED, FinancialYear.Status.REOPENED):
-            messages.error(
-                request,
-                "Finalisation is now gated through Eva. Please use the 'Ask Eva to Review' "
-                "button to submit this financial year for compliance review. Once Eva clears it, "
-                "you can finalise."
-            )
-            return redirect("core:financial_year_detail", pk=pk)
-
-    # Prevent manual status change to prepared/eva_cleared
-    if new_status in ["prepared", "eva_cleared"]:
-        messages.error(
-            request,
-            "This status is managed by Eva's review process and cannot be set manually."
-        )
-        return redirect("core:financial_year_detail", pk=pk)
-
-    # Legacy Finalisation Gate: enforce risk engine completion and flag resolution
-    if new_status == "finalised":
-        override_reason = request.POST.get("override_reason", "").strip()
-        force_override = request.POST.get("force_override") == "1"
-
-        # Gate 1: HARD BLOCK — Risk engine must have been run at least once
-        total_flags = fy.risk_flags.count()
-        if total_flags == 0:
-            messages.error(
-                request,
-                "BLOCKED: The Risk Engine has not been run for this financial year. "
-                "This is a mandatory step. Please run the Risk Engine from the Audit Risk tab."
-            )
-            return redirect("core:financial_year_detail", pk=pk)
-
-        # Gate 2: HARD BLOCK — No CRITICAL flags can remain open (no override)
-        critical_open = fy.risk_flags.filter(status="open", severity="CRITICAL").count()
-        if critical_open > 0:
-            messages.error(
-                request,
-                f"BLOCKED: {critical_open} CRITICAL risk flag(s) remain unresolved. "
-                f"Critical flags cannot be overridden — they must be resolved before finalisation. "
-                f"These include Division 7A breaches, solvency issues, and TB imbalances."
-            )
-            return redirect("core:financial_year_detail", pk=pk)
-
-        # Gate 3: WARN — HIGH flags can be overridden with a reason logged to audit trail
-        high_open = fy.risk_flags.filter(status="open", severity="HIGH").count()
-        if high_open > 0:
-            if not force_override or not override_reason:
-                messages.warning(
-                    request,
-                    f"WARNING: {high_open} HIGH severity risk flag(s) remain unresolved. "
-                    f"You may override this gate by providing a reason. "
-                    f"This will be logged to the audit trail for partner review."
-                )
-                # Set a session flag so the template can show the override form
-                request.session["finalisation_gate_warn"] = {
-                    "high_open": high_open,
-                    "fy_pk": pk,
-                }
-                return redirect("core:financial_year_detail", pk=pk)
-            else:
-                # Override accepted — log to audit trail
-                _log_action(
-                    request, "finalisation_override",
-                    f"Finalisation gate overridden for {high_open} HIGH flags. "
-                    f"Reason: {override_reason}",
-                    fy
-                )
-                # Mark the HIGH flags as reviewed with override note
-                fy.risk_flags.filter(status="open", severity="HIGH").update(
-                    status="reviewed",
-                    resolution_notes=f"Overridden at finalisation by {request.user.get_full_name()}. "
-                                     f"Reason: {override_reason}",
-                    resolved_at=timezone.now(),
-                    resolved_by=request.user,
-                )
-                # Clear the session flag
-                request.session.pop("finalisation_gate_warn", None)
-
-        # Gate 4: WARN — MEDIUM/LOW flags can be overridden with a reason
-        open_medium_low = fy.risk_flags.filter(
-            status="open", severity__in=["MEDIUM", "LOW"]
-        ).count()
-        if open_medium_low > 0:
-            if not force_override or not override_reason:
-                messages.warning(
-                    request,
-                    f"WARNING: {open_medium_low} MEDIUM/LOW risk flag(s) remain open. "
-                    f"You may override this gate by providing a reason."
-                )
-                request.session["finalisation_gate_warn"] = {
-                    "medium_low_open": open_medium_low,
-                    "fy_pk": pk,
-                }
-                return redirect("core:financial_year_detail", pk=pk)
-            else:
-                # Override accepted — log to audit trail
-                _log_action(
-                    request, "finalisation_override",
-                    f"Finalisation gate overridden for {open_medium_low} MEDIUM/LOW flags. "
-                    f"Reason: {override_reason}",
-                    fy
-                )
-                fy.risk_flags.filter(
-                    status="open", severity__in=["MEDIUM", "LOW"]
-                ).update(
-                    status="reviewed",
-                    resolution_notes=f"Overridden at finalisation by {request.user.get_full_name()}. "
-                                     f"Reason: {override_reason}",
-                    resolved_at=timezone.now(),
-                    resolved_by=request.user,
-                )
-                request.session.pop("finalisation_gate_warn", None)
-
-    # ── Last-minute Full Risk Check on Finalisation ──────────────────────
-    if new_status == "finalised":
-        try:
-            # Re-run Tier 1+2 to ensure flags are current
-            from .risk_engine import RiskEngine
-            engine = RiskEngine(fy)
-            new_flags = engine.run_full_analysis()
-            _log_action(
-                request, "audit_run",
-                f"Finalisation gate: Tier 1+2 re-run produced {new_flags} flags", fy
-            )
-            # Run Tier 3 AI analysis on all open flags
-            try:
-                from .ai_service import batch_analyse_flags
-                ai_result = batch_analyse_flags(fy, force=False)
-                _log_action(
-                    request, "audit_run",
-                    f"Finalisation gate: Tier 3 AI analysis — "
-                    f"{ai_result.get('analysed', 0)} analysed, "
-                    f"{ai_result.get('skipped', 0)} cached",
-                    fy
-                )
-            except Exception as ai_err:
-                import logging
-                logging.getLogger(__name__).error(f"Finalisation Tier 3 AI failed: {ai_err}")
-
-            # Re-check: did the last-minute sweep produce new CRITICAL flags?
-            critical_open = fy.risk_flags.filter(status="open", severity="CRITICAL").count()
-            if critical_open > 0:
-                messages.error(
-                    request,
-                    f"BLOCKED: Last-minute AI risk check found {critical_open} new CRITICAL "
-                    f"flag(s). These must be resolved before finalisation can proceed. "
-                    f"Please review the Audit Risk tab."
-                )
-                return redirect("core:financial_year_detail", pk=pk)
-
-            # Re-check: did the sweep produce new HIGH flags?
-            high_open = fy.risk_flags.filter(status="open", severity="HIGH").count()
-            if high_open > 0 and not (request.POST.get("force_override") == "1" and request.POST.get("override_reason", "").strip()):
-                messages.warning(
-                    request,
-                    f"WARNING: Last-minute AI risk check found {high_open} new HIGH "
-                    f"flag(s). You may override with a reason, or resolve them first."
-                )
-                request.session["finalisation_gate_warn"] = {
-                    "high_open": high_open,
-                    "fy_pk": pk,
-                    "ai_check_triggered": True,
-                }
-                return redirect("core:financial_year_detail", pk=pk)
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f"Last-minute AI risk check failed: {e}")
-            # Log the failure but don't block finalisation if the engine itself errors
-            _log_action(
-                request, "audit_run",
-                f"Last-minute AI risk check failed (non-blocking): {e}", fy
-            )
 
     # ── Tier 3 auto-trigger on milestone status changes ────────────
     if new_status == "in_review":
@@ -2197,12 +2031,13 @@ def financial_year_status(request, pk):
             logging.getLogger(__name__).error(f"Auto Tier 3 on In Review failed: {e}")
 
     # ── Draft revert: clear all Eva findings and risk flags ─────────
-    # Wrapped in a transaction so the status change and cleanup are atomic.
     if new_status == "draft":
         from django.db import transaction as db_transaction
         with db_transaction.atomic():
             deleted_reviews = fy.eva_reviews.all().delete()[0]  # cascades to EvaFinding
             deleted_flags = fy.risk_flags.all().delete()[0]
+            # Also clear suppressions since we're resetting everything
+            deleted_suppressions = fy.suppressed_findings.all().delete()[0]
 
             old_status = fy.status
             fy.status = new_status
@@ -2215,7 +2050,6 @@ def financial_year_status(request, pk):
                 fy,
             )
 
-            # Activity log entry for the dashboard feed
             ActivityLog.objects.create(
                 user=request.user,
                 financial_year=fy,
@@ -2233,66 +2067,23 @@ def financial_year_status(request, pk):
 
     old_status = fy.status
     fy.status = new_status
-    if new_status == "finished":
-        fy.reviewed_by = request.user
-    if new_status == "finalised":
-        fy.finalised_at = timezone.now()
-        # Lock comparatives
-        fy.trial_balance_lines.update(comparatives_locked=True)
-
-        # ── Auto-regenerate clean (no watermark) final documents ─────────
-        try:
-            from .docgen import generate_financial_statements
-            from django.core.files.base import ContentFile
-
-            buffer = generate_financial_statements(fy.pk, has_open_risks=False, is_final=True)
-            entity_name = fy.entity.entity_name.replace(" ", "_")
-            filename = f"{entity_name}_Financial_Statements_{fy.year_label}_FINAL.docx"
-
-            # Determine next version number
-            latest_version = fy.generated_documents.filter(
-                document_type="financial_statements"
-            ).order_by("-version").values_list("version", flat=True).first() or 0
-
-            doc = GeneratedDocument(
-                financial_year=fy,
-                file_format="docx",
-                document_type="financial_statements",
-                version=latest_version + 1,
-                status="final",
-                is_locked=True,
-                generated_by=request.user,
-            )
-            doc.file.save(filename, ContentFile(buffer.getvalue()), save=True)
-
-            _log_action(
-                request, "generate",
-                f"Auto-generated final financial statements (v{latest_version + 1}, no watermark) for {fy}", fy
-            )
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f"Final document auto-regeneration failed: {e}")
-            messages.warning(
-                request,
-                f"Financial year finalised, but auto-regeneration of clean documents failed: {e}. "
-                f"You can manually regenerate from the Documents tab."
-            )
-
-        # Mark all previous draft documents as superseded
-        fy.generated_documents.filter(status="draft").update(status="draft")
-        # Lock the latest version of each document type as final
-        for doc_type in fy.generated_documents.values_list('document_type', flat=True).distinct():
-            latest = fy.generated_documents.filter(document_type=doc_type).order_by('-version').first()
-            if latest:
-                latest.status = 'final'
-                latest.is_locked = True
-                latest.save(update_fields=['status', 'is_locked'])
     fy.save()
 
     _log_action(
         request, "status_change",
         f"Changed {fy} from {old_status} to {new_status}", fy
     )
+
+    ActivityLog.objects.create(
+        user=request.user,
+        financial_year=fy,
+        entity=fy.entity,
+        event_type="fy_status_changed",
+        title=f"Status changed to {fy.get_status_display()}",
+        description=f"Changed from {old_status} to {new_status}.",
+        url=f"/entities/years/{fy.pk}/",
+    )
+
     messages.success(request, f"Status changed to {fy.get_status_display()}.")
     return redirect("core:financial_year_detail", pk=pk)
 
@@ -8677,7 +8468,7 @@ def review_approve_transaction(request, pk):
         # Find the financial year for this entity that covers this transaction
         from datetime import datetime as dt
         entity = txn.job.entity
-        fys = FinancialYear.objects.filter(entity=entity, status__in=['draft', 'in_review', 'finished'])
+        fys = FinancialYear.objects.filter(entity=entity, status__in=['draft', 'in_review', 'reopened'])
         target_fy = None
         for fy_candidate in fys:
             # Try to parse the transaction date
@@ -8757,7 +8548,7 @@ def review_unconfirm_transaction(request, pk):
         if txn.job and txn.job.entity and txn.confirmed_code:
             from datetime import datetime as dt
             entity = txn.job.entity
-            fys = FinancialYear.objects.filter(entity=entity, status__in=['draft', 'in_review', 'finished'])
+            fys = FinancialYear.objects.filter(entity=entity, status__in=['draft', 'in_review', 'reopened'])
             target_fy = None
             for fy_candidate in fys:
                 txn_date = None
