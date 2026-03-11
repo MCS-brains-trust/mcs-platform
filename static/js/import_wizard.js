@@ -31,6 +31,7 @@ var ImportWizard = (function() {
         populateStatementLineDropdowns();
         populateQuickAddMapsTo();
         checkBalance();
+        bindRoundingCheckbox();
         bindEntitySearch();
         bindQuickAddModal();
         bindFilters();
@@ -97,7 +98,9 @@ var ImportWizard = (function() {
         if (totalCreditEl) totalCreditEl.textContent = totalCr.toLocaleString('en-AU', {minimumFractionDigits: 2, maximumFractionDigits: 2});
 
         var diff = Math.abs(totalDr - totalCr);
-        var balanced = diff < 0.02; // Allow 1 cent rounding
+        var isBalanced = diff < 0.005;          // effectively zero
+        var isWithinTolerance = diff <= 0.02;    // $0.01 or $0.02 rounding
+        var isBlocked = diff > 0.02;
 
         var balanceCard = document.getElementById('balanceCard');
         var balanceStatus = document.getElementById('balanceStatus');
@@ -105,29 +108,71 @@ var ImportWizard = (function() {
         var balanceMsg = document.getElementById('balanceMessage');
         var balanceDetail = document.getElementById('balanceDetail');
         var commitBtn = document.getElementById('commitBtn');
+        var detailStr = 'Dr $' + totalDr.toLocaleString('en-AU', {minimumFractionDigits: 2}) +
+            (isBalanced ? ' = ' : ' vs ') +
+            'Cr $' + totalCr.toLocaleString('en-AU', {minimumFractionDigits: 2});
+        if (!isBalanced) detailStr += ' \u2014 Difference: $' + diff.toLocaleString('en-AU', {minimumFractionDigits: 2});
 
-        if (balanced) {
+        if (isBalanced) {
             if (balanceCard) balanceCard.className = 'card text-center border-success';
             if (balanceStatus) balanceStatus.innerHTML = '<i class="bi bi-check-circle text-success"></i> Balanced';
             if (balanceBar) balanceBar.className = 'card-body py-2 d-flex justify-content-between align-items-center balance-ok';
             if (balanceMsg) balanceMsg.innerHTML = '<i class="bi bi-check-circle-fill text-success"></i> Trial balance is in balance';
-            if (balanceDetail) balanceDetail.textContent = 'Dr $' + totalDr.toLocaleString('en-AU', {minimumFractionDigits: 2}) + ' = Cr $' + totalCr.toLocaleString('en-AU', {minimumFractionDigits: 2});
+            if (balanceDetail) balanceDetail.textContent = detailStr;
             if (commitBtn) {
                 commitBtn.disabled = false;
                 commitBtn.classList.remove('btn-secondary');
                 commitBtn.classList.add('btn-success');
             }
+        } else if (isWithinTolerance) {
+            // Minor rounding — allow with checkbox acknowledgement
+            if (balanceCard) balanceCard.className = 'card text-center border-warning';
+            if (balanceStatus) balanceStatus.innerHTML = '<i class="bi bi-exclamation-triangle text-warning"></i> Rounding';
+            if (balanceBar) balanceBar.className = 'card-body py-2 d-flex justify-content-between align-items-center balance-warning';
+            if (balanceMsg) balanceMsg.innerHTML = '<i class="bi bi-exclamation-triangle-fill text-warning"></i> Minor rounding difference ($' + diff.toFixed(2) + ')';
+            if (balanceDetail) balanceDetail.textContent = detailStr;
+            // Enable/disable based on rounding checkbox
+            updateCommitBtnForRounding();
         } else {
+            // Blocked — out of balance beyond tolerance
             if (balanceCard) balanceCard.className = 'card text-center border-danger';
             if (balanceStatus) balanceStatus.innerHTML = '<i class="bi bi-exclamation-triangle text-danger"></i> Out';
             if (balanceBar) balanceBar.className = 'card-body py-2 d-flex justify-content-between align-items-center balance-error';
             if (balanceMsg) balanceMsg.innerHTML = '<i class="bi bi-exclamation-triangle-fill text-danger"></i> Trial balance is OUT OF BALANCE';
-            if (balanceDetail) balanceDetail.textContent = 'Dr $' + totalDr.toLocaleString('en-AU', {minimumFractionDigits: 2}) + ' vs Cr $' + totalCr.toLocaleString('en-AU', {minimumFractionDigits: 2}) + ' — Difference: $' + diff.toLocaleString('en-AU', {minimumFractionDigits: 2});
+            if (balanceDetail) balanceDetail.textContent = detailStr;
             if (commitBtn && config.balanceRequired) {
                 commitBtn.disabled = true;
                 commitBtn.classList.remove('btn-success');
                 commitBtn.classList.add('btn-secondary');
             }
+        }
+    }
+
+    function updateCommitBtnForRounding() {
+        var commitBtn = document.getElementById('commitBtn');
+        var checkbox = document.getElementById('roundingCheckbox');
+        if (!commitBtn || !config.balanceRequired) return;
+
+        if (checkbox && checkbox.checked) {
+            commitBtn.disabled = false;
+            commitBtn.classList.remove('btn-secondary');
+            commitBtn.classList.add('btn-success');
+        } else {
+            commitBtn.disabled = true;
+            commitBtn.classList.remove('btn-success');
+            commitBtn.classList.add('btn-secondary');
+        }
+    }
+
+    function bindRoundingCheckbox() {
+        var checkbox = document.getElementById('roundingCheckbox');
+        if (checkbox) {
+            checkbox.addEventListener('change', function() {
+                // Sync to hidden input inside the form
+                var hidden = document.getElementById('roundingHidden');
+                if (hidden) hidden.value = checkbox.checked ? '1' : '';
+                updateCommitBtnForRounding();
+            });
         }
     }
 
@@ -562,10 +607,20 @@ var ImportWizard = (function() {
                     totalCr += cr;
                 });
                 var diff = Math.abs(totalDr - totalCr);
-                if (diff >= 0.02) {
+                if (diff > 0.02) {
                     e.preventDefault();
-                    alert('Cannot import: Trial balance is out of balance by $' + diff.toFixed(2) + '. Debits must equal credits.');
+                    alert('Import blocked \u2014 Trial Balance is out of balance by $' + diff.toFixed(2) +
+                          '.\n\nTotal debits: $' + totalDr.toFixed(2) + '\nTotal credits: $' + totalCr.toFixed(2) +
+                          '\n\nThis must be resolved in the source system before importing.');
                     return;
+                }
+                if (diff > 0.005) {
+                    var checkbox = document.getElementById('roundingCheckbox');
+                    if (!checkbox || !checkbox.checked) {
+                        e.preventDefault();
+                        alert('Please tick the rounding acknowledgement checkbox to proceed with a $' + diff.toFixed(2) + ' rounding difference.');
+                        return;
+                    }
                 }
             }
 
