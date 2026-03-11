@@ -449,6 +449,74 @@ def _reverse_journal_tb_lines(journal):
     return deleted_count
 
 
+def _delete_orphaned_tb_lines_for_journal(journal):
+    """Delete orphaned TB lines that match a journal's aggregated line values.
+
+    Targets adjustment lines with source_journal=NULL that match the journal's
+    account codes and aggregated debit/credit amounts.  These are remnants of
+    pre-FK posting or failed edit operations that ``_reverse_journal_tb_lines``
+    may not have caught (e.g. when Tier 1 FK-based deletion succeeded but
+    orphaned duplicates remain).
+    """
+    from collections import OrderedDict
+
+    fy = journal.financial_year
+    jnl_lines = list(journal.lines.all())
+    if not jnl_lines:
+        return 0
+
+    # Aggregate by account code to match the posting logic
+    agg = OrderedDict()
+    for jl in jnl_lines:
+        key = jl.account_code
+        if key not in agg:
+            agg[key] = {"dr": Decimal("0"), "cr": Decimal("0")}
+        agg[key]["dr"] += jl.debit
+        agg[key]["cr"] += jl.credit
+
+    deleted = 0
+    for code, vals in agg.items():
+        result = TrialBalanceLine.objects.filter(
+            financial_year=fy,
+            account_code=code,
+            debit=vals["dr"],
+            credit=vals["cr"],
+            is_adjustment=True,
+            source="manual_journal",
+            source_journal__isnull=True,
+            bulk_journal_upload__isnull=True,
+        ).delete()
+        deleted += result[0]
+
+    if deleted:
+        logger.info(
+            "Orphan cleanup: deleted %d orphaned TB line(s) for journal %s (%s)",
+            deleted, journal.reference_number, journal.pk,
+        )
+    return deleted
+
+
+def _verify_tb_balance(fy):
+    """Check that total debits equal total credits for a financial year.
+
+    Logs a warning if the TB is out of balance after a journal operation.
+    This is a diagnostic safeguard — it does not attempt auto-repair.
+    """
+    totals = TrialBalanceLine.objects.filter(
+        financial_year=fy,
+    ).aggregate(total_dr=Sum("debit"), total_cr=Sum("credit"))
+
+    total_dr = totals["total_dr"] or Decimal("0")
+    total_cr = totals["total_cr"] or Decimal("0")
+
+    if total_dr != total_cr:
+        logger.warning(
+            "TB OUT OF BALANCE after journal operation — FY %s (%s): "
+            "total DR=%s, total CR=%s, difference=%s",
+            fy.year_label, fy.pk, total_dr, total_cr, total_dr - total_cr,
+        )
+
+
 def _reverse_journal_line_from_tb(fy, account_code, jnl_debit, jnl_credit, journal=None):
     """
     Reverse a previously applied journal line by deleting its adjustment row.
@@ -4839,6 +4907,11 @@ def journal_delete(request, pk):
         if status == AdjustingJournal.JournalStatus.POSTED:
             _reverse_journal_tb_lines(journal)
 
+            # Clean up orphaned TB lines: adjustment lines matching this
+            # journal's account codes and amounts but with a NULL
+            # source_journal FK (e.g. from pre-FK posting or failed edits).
+            _delete_orphaned_tb_lines_for_journal(journal)
+
         # Sever FK links before delete so SET_NULL doesn't leave orphaned
         # TB lines that we intentionally chose not to delete (shouldn't
         # happen after _reverse_journal_tb_lines, but belt-and-suspenders).
@@ -4847,6 +4920,10 @@ def journal_delete(request, pk):
         )
 
         journal.delete()
+
+        # Post-deletion balance verification
+        if status == AdjustingJournal.JournalStatus.POSTED:
+            _verify_tb_balance(fy)
 
     _log_action(request, "adjustment", f"Deleted {status} journal {ref}")
     # Auto-trigger risk engine after journal deletion

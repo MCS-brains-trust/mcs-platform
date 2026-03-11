@@ -35,6 +35,9 @@ jobs:
             echo "=== Repairing journal-TB integrity ==="
             /opt/statementhub/venv/bin/python manage.py verify_journal_tb_integrity --repair
 
+            echo "=== Fixing TB balance orphans ==="
+            /opt/statementhub/venv/bin/python manage.py fix_tb_balance --fix
+
             echo "=== Collecting static files ==="
             /opt/statementhub/venv/bin/python manage.py collectstatic --no-input
 
