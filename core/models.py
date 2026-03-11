@@ -208,11 +208,11 @@ class Entity(models.Model):
         help_text="Xero Practice Manager reference",
     )
     contact_phone = EncryptedCharField(
-        max_length=255, blank=True,
+        blank=True,
         help_text="Primary contact phone for this entity",
     )
     tfn = EncryptedCharField(
-        max_length=255, blank=True, verbose_name="TFN",
+        blank=True, verbose_name="TFN",
         help_text="Tax File Number (encrypted at rest)",
     )
     address_line_1 = models.CharField(
