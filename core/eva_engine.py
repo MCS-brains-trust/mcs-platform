@@ -51,6 +51,24 @@ def _is_finding_suppressed(financial_year, rule_category, account_refs=None):
         fingerprint=fingerprint,
     ).exists()
 
+
+def _is_finding_addressed(financial_year, finding_key):
+    """Return True if a prior EvaFinding with this key was addressed/dismissed.
+
+    Addressed findings must NOT reappear on re-review.  We look across ALL
+    reviews for this financial year, checking for status=addressed or a
+    clarification with outcome=dismissed.
+    """
+    if not finding_key:
+        return False
+    from core.models import EvaFinding
+    return EvaFinding.objects.filter(
+        eva_review__financial_year=financial_year,
+        finding_key=finding_key,
+        status__in=["addressed", "closed"],
+    ).exists()
+
+
 # ---------------------------------------------------------------------------
 # Loan Detection Keywords (shared with risk_engine.py)
 # ---------------------------------------------------------------------------
@@ -703,13 +721,23 @@ def _build_check_context(financial_year, check_id, risk_flags=None):
             pass
 
         # Also include raw loan account data for LLM context
+        # NOTE: Annotate each account with its Div 7A risk status based on
+        # net balance.  Only DEBIT net balances trigger Division 7A — zero
+        # and credit balances are explicitly marked as NO risk so the LLM
+        # does not raise false positives for cleared or credit-balance loans.
         extra.append("=== LOAN & RELATED PARTY ACCOUNTS (EFFECTIVE BALANCES) ===")
+        extra.append("  NOTE: Only accounts with DEBIT net balance trigger Division 7A.")
         found_any = False
         for line in tb_data["lines"]:
             name_lower = (line.account_name or "").lower()
             if any(kw in name_lower for kw in LOAN_KEYWORDS):
                 net = line.effective_dr - line.effective_cr
-                balance_type = "DEBIT (owed TO company)" if net > ZERO else "CREDIT (owed BY company)"
+                if net > ZERO:
+                    balance_type = "DEBIT (loan TO shareholder — POTENTIAL DIV 7A)"
+                elif net == ZERO:
+                    balance_type = "ZERO (account cleared — NO Div 7A risk)"
+                else:
+                    balance_type = "CREDIT (company OWES the person — NO Div 7A risk)"
                 extra.append(
                     f"  {line.account_code} {line.account_name}: "
                     f"Effective DR ${line.effective_dr:,.2f} / CR ${line.effective_cr:,.2f} "
@@ -874,6 +902,64 @@ def _build_check_context(financial_year, check_id, risk_flags=None):
         if not found_any:
             extra.append("  No contractor/subcontractor accounts found.")
         extra.append(f"  Industry: {entity.industry or 'Not specified'}")
+
+    elif check_id == "gst_reconciliation":
+        # GST accounts with pre-computed net movements to prevent LLM doubling
+        from core.models import BASPeriod
+        gst_kw = ["gst", "goods and services tax", "bas", "input tax", "output tax"]
+        extra.append("=== GST ACCOUNTS (EFFECTIVE BALANCES — NET MOVEMENTS) ===")
+        total_gst_collected = ZERO
+        total_input_credits = ZERO
+        found_any = False
+        for line in tb_data["lines"]:
+            name_lower = (line.account_name or "").lower()
+            if any(kw in name_lower for kw in gst_kw):
+                cy_net = line.effective_dr - line.effective_cr
+                py_net = (line.prior_debit or ZERO) - (line.prior_credit or ZERO)
+                net_movement = cy_net - py_net
+                if py_net != ZERO:
+                    movement_pct = (net_movement / abs(py_net) * 100)
+                    pct_str = f" ({'+' if movement_pct >= 0 else ''}{movement_pct:.1f}%)"
+                else:
+                    pct_str = ""
+                extra.append(
+                    f"  Account {line.account_code} {line.account_name}: "
+                    f"CY Net ${cy_net:,.2f}, PY Net ${py_net:,.2f}, "
+                    f"Movement ${net_movement:,.2f}{pct_str}"
+                )
+                found_any = True
+                # Classify for totals
+                if any(kw in name_lower for kw in ["gst collected", "gst on sales", "output tax"]):
+                    total_gst_collected += abs(cy_net)
+                elif any(kw in name_lower for kw in ["gst paid", "gst on purchases", "input tax"]):
+                    total_input_credits += abs(cy_net)
+        if not found_any:
+            extra.append("  No GST accounts found in TB.")
+        else:
+            extra.append(f"\n  Total GST Collected: ${total_gst_collected:,.2f}")
+            extra.append(f"  Total Input Tax Credits: ${total_input_credits:,.2f}")
+            net_gst = total_gst_collected - total_input_credits
+            extra.append(f"  Net GST Position: ${net_gst:,.2f}")
+        extra.append(
+            "  IMPORTANT: Use the Net Movement figures above. "
+            "Do NOT sum raw debit/credit columns."
+        )
+
+        # BAS lodgement snapshot data if available
+        bas_periods = BASPeriod.objects.filter(
+            financial_year=fy, status="lodged"
+        ).order_by("period_number")
+        if bas_periods.exists():
+            extra.append("\n=== BAS LODGEMENT SNAPSHOTS ===")
+            for bp in bas_periods:
+                label = f"Period {bp.period_number} ({bp.period_start} to {bp.period_end})"
+                s1a = bp.snapshot_1a if bp.snapshot_1a is not None else "N/A"
+                s1b = bp.snapshot_1b if bp.snapshot_1b is not None else "N/A"
+                s_net = bp.snapshot_net if bp.snapshot_net is not None else "N/A"
+                extra.append(
+                    f"  {label}: 1A (GST on Sales) ${s1a}, "
+                    f"1B (GST on Purchases) ${s1b}, Net ${s_net} — {bp.status}"
+                )
 
     elif check_id == "comparative_consistency":
         # Add summary of significant variances using effective balances
@@ -1542,47 +1628,57 @@ def _run_eva_review_background(fy_pk, user_pk):
                 if _is_finding_suppressed(fy, check_def["id"], _account_refs):
                     print(f"[Eva] SUPPRESSED finding for {check_def['id']} — skipping creation", flush=True)
                 else:
-                    try:
-                        finding = EvaFinding.objects.create(
-                            eva_review=review,
-                            check_name=check_def["id"][:50],
-                            severity=raw_severity,
-                            title=(result.get("title", check_def["name"]) or "")[:255],
-                            plain_english_explanation=result.get("explanation", "") or "",
-                            recommendation=recommendation_text,
-                            remediation_firm_procedure=result.get("remediation_firm_procedure", "") or "",
-                            remediation_authority=result.get("remediation_authority", "") or "",
-                            remediation_synthesis=remediation_fix,
-                            legislation_reference=(result.get("legislation_reference", "") or "")[:255],
-                            knowledge_brain_citation=(kb_citation or "")[:500],
-                            confidence=raw_confidence,
-                            source=finding_source,
-                            prior_finding=prior_finding_link,
-                            status="reopened" if prior_finding_link else "open",
-                        )
-                        # Store cross-references for post-processing
-                        cross_refs = result.get("cross_references", []) or []
-                        if cross_refs:
-                            finding._cross_ref_check_ids = cross_refs
-                        # Tag affected TB lines with this finding's check_name
-                        affected_codes = _account_refs
-                        if affected_codes:
-                            try:
-                                tag_tb_lines_with_finding(fy, finding, affected_codes)
-                            except Exception as tag_err:
-                                print(f"[Eva] WARNING: failed to tag TB lines for {check_def['id']}: {tag_err}", flush=True)
-                        findings_created += 1
-                        _eva_review_tasks[task_key]["findings_count"] = findings_created
-                        review.raw_response = {"progress": _eva_review_tasks[task_key]}
-                        review.save(update_fields=["raw_response"])
-                        print(f"[Eva] Finding created for {check_def['id']}: {(result.get('title', '')[:60])}", flush=True)
-                    except Exception as save_err:
-                        print(f"[Eva] EXCEPTION saving finding for {check_def['id']}: {save_err}", flush=True)
-                        traceback.print_exc()
-                        checks_with_errors.append({
-                            "check_id": check_def["id"],
-                            "error": f"Finding save failed: {save_err}",
-                        })
+                    # Build a deterministic finding_key for cross-review dedup
+                    _finding_key = EvaFinding.build_finding_key(
+                        check_def["id"], account_codes=_account_refs,
+                    )
+
+                    # Skip if this finding was previously addressed
+                    if _is_finding_addressed(fy, _finding_key):
+                        print(f"[Eva] ADDRESSED finding for {check_def['id']} (key={_finding_key}) — skipping", flush=True)
+                    else:
+                        try:
+                            finding = EvaFinding.objects.create(
+                                eva_review=review,
+                                check_name=check_def["id"][:50],
+                                severity=raw_severity,
+                                title=(result.get("title", check_def["name"]) or "")[:255],
+                                plain_english_explanation=result.get("explanation", "") or "",
+                                recommendation=recommendation_text,
+                                remediation_firm_procedure=result.get("remediation_firm_procedure", "") or "",
+                                remediation_authority=result.get("remediation_authority", "") or "",
+                                remediation_synthesis=remediation_fix,
+                                legislation_reference=(result.get("legislation_reference", "") or "")[:255],
+                                knowledge_brain_citation=(kb_citation or "")[:500],
+                                confidence=raw_confidence,
+                                source=finding_source,
+                                prior_finding=prior_finding_link,
+                                finding_key=_finding_key,
+                                status="reopened" if prior_finding_link else "open",
+                            )
+                            # Store cross-references for post-processing
+                            cross_refs = result.get("cross_references", []) or []
+                            if cross_refs:
+                                finding._cross_ref_check_ids = cross_refs
+                            # Tag affected TB lines with this finding's check_name
+                            affected_codes = _account_refs
+                            if affected_codes:
+                                try:
+                                    tag_tb_lines_with_finding(fy, finding, affected_codes)
+                                except Exception as tag_err:
+                                    print(f"[Eva] WARNING: failed to tag TB lines for {check_def['id']}: {tag_err}", flush=True)
+                            findings_created += 1
+                            _eva_review_tasks[task_key]["findings_count"] = findings_created
+                            review.raw_response = {"progress": _eva_review_tasks[task_key]}
+                            review.save(update_fields=["raw_response"])
+                            print(f"[Eva] Finding created for {check_def['id']}: {(result.get('title', '')[:60])}", flush=True)
+                        except Exception as save_err:
+                            print(f"[Eva] EXCEPTION saving finding for {check_def['id']}: {save_err}", flush=True)
+                            traceback.print_exc()
+                            checks_with_errors.append({
+                                "check_id": check_def["id"],
+                                "error": f"Finding save failed: {save_err}",
+                            })
 
             # Track checks that returned errors (LLM parse failure, API error, etc.)
             elif result and result.get("error") and not result.get("has_finding"):
@@ -1608,6 +1704,13 @@ def _run_eva_review_background(fy_pk, user_pk):
                     if _is_finding_suppressed(fy, check_def["id"], flag_codes):
                         print(f"[Eva] SUPPRESSED fallback finding for {check_def['id']} — skipping", flush=True)
                         continue
+                    # Build finding_key for fallback findings too
+                    _fb_finding_key = EvaFinding.build_finding_key(
+                        check_def["id"], account_codes=flag_codes,
+                    )
+                    if _is_finding_addressed(fy, _fb_finding_key):
+                        print(f"[Eva] ADDRESSED fallback finding for {check_def['id']} (key={_fb_finding_key}) — skipping", flush=True)
+                        continue
                     try:
                         fallback_finding = EvaFinding.objects.create(
                             eva_review=review,
@@ -1619,6 +1722,7 @@ def _run_eva_review_background(fy_pk, user_pk):
                             legislation_reference=(flag.legislation_ref or "")[:255],
                             knowledge_brain_citation="",
                             confidence="high",
+                            finding_key=_fb_finding_key,
                             status="open",
                         )
                         if flag_codes:

@@ -543,6 +543,9 @@ def _check_div7a_loans(tb_data, entity_context):
 
     for line in tb_data["lines"]:
         net = line.effective_dr - line.effective_cr
+        # Only DEBIT (positive net) balances trigger Div 7A.  Zero balances
+        # (loan fully repaid) and credit balances (company owes the person)
+        # are NOT Div 7A exposures and must be skipped to avoid false positives.
         if net <= ZERO:
             continue  # credit or zero — normal for a liability
 
@@ -1218,6 +1221,64 @@ def _eval_expense_benchmark(rule, fy, tb, ref, ctx, config):
     return None
 
 
+def _eval_tax_provision(rule, fy, tb, ref, ctx, config):
+    """Check if a profitable company is missing an income tax provision.
+
+    Fires when:
+      - entity_type == 'company'
+      - net profit > 0  (revenue exceeds expenses)
+      - income tax expense balance < 1% of net profit
+      - no AdjustingJournal with journal_type='tax_provision' is posted
+    """
+    from core.models import AdjustingJournal
+
+    if ctx.get("entity_type") != "company":
+        return None
+
+    # In the risk engine, revenue is negative (credit) and expenses positive
+    # (debit), so net_profit < 0 means the company is profitable.
+    raw_net_profit = tb["totals"].get("net_profit", ZERO)
+    if raw_net_profit >= ZERO:
+        # Not profitable — no provision needed
+        return None
+
+    profit = abs(raw_net_profit)
+
+    # Check for existing income tax expense on the TB
+    tax_keywords = ["income tax", "tax expense", "tax provision"]
+    tax_balance = ZERO
+    for line in tb["lines"]:
+        name_lower = line.account_name.lower()
+        if any(kw in name_lower for kw in tax_keywords):
+            tax_balance += abs(line.effective_dr - line.effective_cr)
+
+    threshold = profit * Decimal("0.01")
+    if tax_balance >= threshold:
+        return None
+
+    # Check for a posted tax_provision journal
+    has_journal = AdjustingJournal.objects.filter(
+        financial_year=fy,
+        journal_type="tax_provision",
+        status="posted",
+    ).exists()
+    if has_journal:
+        return None
+
+    return {
+        "rule_id": rule.rule_id,
+        "tier": 2,
+        "severity": rule.severity,
+        "title": rule.title,
+        "description": rule.description.format(
+            entity_name=ctx.get("entity_name", ""),
+            net_profit=f"${profit:,.2f}",
+        ),
+        "recommended_action": rule.recommended_action,
+        "legislation_ref": rule.legislation_ref,
+    }
+
+
 # Evaluator registry
 TIER2_EVALUATORS = {
     "account_threshold": _eval_account_threshold,
@@ -1229,6 +1290,7 @@ TIER2_EVALUATORS = {
     "superannuation": _eval_superannuation,
     "trust_distribution": _eval_trust_distribution,
     "expense_benchmark": _eval_expense_benchmark,
+    "tax_provision": _eval_tax_provision,
 }
 
 

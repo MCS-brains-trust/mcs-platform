@@ -4879,6 +4879,293 @@ def calculate_tax_journal(request, pk):
     return redirect("core:financial_year_detail", pk=fy.pk)
 
 
+# ---------------------------------------------------------------------------
+# Auto Tax Provision — status check + post
+# ---------------------------------------------------------------------------
+
+def _resolve_tax_accounts(entity):
+    """Resolve income tax expense and provision account codes for an entity.
+
+    Uses the three-tier lookup:
+      1. ClientAccountMapping → AccountMapping with standard_code IS-TAX-001 / BS-CL-003
+      2. Fallback to well-known EntityChartOfAccount codes (4110, 3325)
+      3. Return defaults if nothing found
+
+    Returns (expense_code, expense_name, provision_code, provision_name).
+    """
+    expense_code, expense_name = "4110", "Income tax on profit"
+    provision_code, provision_name = "3325", "Taxation"
+
+    # Try IS-TAX-001 mapping
+    cam_expense = (
+        ClientAccountMapping.objects
+        .filter(entity=entity, mapped_line_item__standard_code="IS-TAX-001")
+        .select_related("mapped_line_item")
+        .first()
+    )
+    if cam_expense:
+        expense_code = cam_expense.client_account_code
+        expense_name = cam_expense.client_account_name or expense_name
+
+    # Try BS-CL-003 mapping
+    cam_provision = (
+        ClientAccountMapping.objects
+        .filter(entity=entity, mapped_line_item__standard_code="BS-CL-003")
+        .select_related("mapped_line_item")
+        .first()
+    )
+    if cam_provision:
+        provision_code = cam_provision.client_account_code
+        provision_name = cam_provision.client_account_name or provision_name
+
+    # If no ClientAccountMapping found, check EntityChartOfAccount for known codes
+    if not cam_expense:
+        ecoa = EntityChartOfAccount.objects.filter(entity=entity, account_code="4110").first()
+        if ecoa:
+            expense_name = ecoa.account_name or expense_name
+    if not cam_provision:
+        ecoa = EntityChartOfAccount.objects.filter(entity=entity, account_code="3325").first()
+        if ecoa:
+            provision_name = ecoa.account_name or provision_name
+
+    return expense_code, expense_name, provision_code, provision_name
+
+
+def _calculate_net_profit(fy):
+    """Calculate net profit from the trial balance P&L sections.
+
+    Mirrors the logic in calculate_tax_journal exactly.
+    Returns Decimal.
+    """
+    pl_sections = {"Income", "Revenue", "Cost of Sales", "Expenses"}
+    all_tb = TrialBalanceLine.objects.filter(
+        financial_year=fy,
+    ).select_related("mapped_line_item")
+    pl_dr = Decimal("0")
+    pl_cr = Decimal("0")
+    for line in all_tb:
+        mapping = line.mapped_line_item
+        if mapping and mapping.statement_section in pl_sections:
+            pl_dr += line.debit or Decimal("0")
+            pl_cr += line.credit or Decimal("0")
+    return pl_cr - pl_dr
+
+
+def _calculate_existing_provision(fy, provision_code):
+    """Calculate the existing tax provision balance from the trial balance.
+
+    For a liability account, a credit balance is normal. Returns the net
+    credit balance (positive means a credit-side provision exists).
+    """
+    agg = TrialBalanceLine.objects.filter(
+        financial_year=fy,
+        account_code=provision_code,
+    ).aggregate(total_dr=Sum("debit"), total_cr=Sum("credit"))
+    total_dr = agg["total_dr"] or Decimal("0")
+    total_cr = agg["total_cr"] or Decimal("0")
+    return total_cr - total_dr  # positive = credit balance (normal for liability)
+
+
+@login_required
+def tax_provision_status(request, pk):
+    """Return JSON with tax provision eligibility and calculation details."""
+    import math as _math
+
+    fy = get_financial_year_for_user(request, pk)
+    entity = fy.entity
+
+    # Entity must be a company
+    if entity.entity_type != "company":
+        return JsonResponse({
+            "eligible": False,
+            "reason": "Tax provision is only available for company entities.",
+        })
+
+    # Financial year must not be locked
+    if fy.is_locked:
+        return JsonResponse({
+            "eligible": False,
+            "reason": "Financial year is locked.",
+        })
+
+    # Base rate entity flag must be set
+    if entity.is_base_rate_entity is None:
+        return JsonResponse({
+            "eligible": False,
+            "reason": "Please set the Base Rate Entity flag on the entity before calculating tax provision.",
+        })
+
+    # Check for existing tax provision journal
+    existing_provision_journal = AdjustingJournal.objects.filter(
+        financial_year=fy, journal_type="tax_provision",
+    ).first()
+    if existing_provision_journal:
+        return JsonResponse({
+            "eligible": False,
+            "reason": "A tax provision journal already exists for this financial year.",
+            "existing_journal_ref": existing_provision_journal.reference_number,
+            "existing_journal_amount": str(existing_provision_journal.total_debit),
+        })
+
+    # Resolve accounts
+    expense_code, expense_name, provision_code, provision_name = _resolve_tax_accounts(entity)
+
+    # Calculate net profit
+    net_profit = _calculate_net_profit(fy)
+
+    if net_profit <= 0:
+        return JsonResponse({
+            "eligible": False,
+            "reason": "No tax provision required — entity is in a loss position.",
+            "net_profit": str(net_profit),
+        })
+
+    # Determine tax rate
+    if entity.is_base_rate_entity:
+        tax_rate = Decimal("0.25")
+        rate_label = "25% (Base Rate Entity)"
+    else:
+        tax_rate = Decimal("0.30")
+        rate_label = "30% (Standard Rate)"
+
+    calculated_tax = Decimal(_math.ceil(net_profit * tax_rate))
+
+    # Existing provision balance
+    existing_provision = _calculate_existing_provision(fy, provision_code)
+
+    # Adjustment required
+    adjustment_required = calculated_tax - existing_provision
+
+    return JsonResponse({
+        "eligible": True,
+        "net_profit": str(net_profit),
+        "tax_rate": str(tax_rate),
+        "rate_label": rate_label,
+        "calculated_tax": str(calculated_tax),
+        "existing_provision": str(existing_provision),
+        "adjustment_required": str(adjustment_required),
+        "expense_account": {"code": expense_code, "name": expense_name},
+        "provision_account": {"code": provision_code, "name": provision_name},
+        "year_end": fy.end_date.strftime("%d %B %Y"),
+    })
+
+
+@login_required
+@require_POST
+def auto_tax_provision(request, pk):
+    """Create and post a tax provision journal."""
+    import math as _math
+
+    fy = get_financial_year_for_user(request, pk)
+    entity = fy.entity
+
+    if entity.entity_type != "company":
+        return JsonResponse({"error": "Tax provision is only available for company entities."}, status=400)
+
+    if fy.is_locked:
+        return JsonResponse({"error": "Financial year is locked."}, status=400)
+
+    if entity.is_base_rate_entity is None:
+        return JsonResponse({"error": "Please set the Base Rate Entity flag on the entity."}, status=400)
+
+    # Check for existing tax provision journal
+    if AdjustingJournal.objects.filter(financial_year=fy, journal_type="tax_provision").exists():
+        return JsonResponse({"error": "A tax provision journal already exists."}, status=400)
+
+    # Resolve accounts
+    expense_code, expense_name, provision_code, provision_name = _resolve_tax_accounts(entity)
+
+    # Calculate net profit
+    net_profit = _calculate_net_profit(fy)
+    if net_profit <= 0:
+        return JsonResponse({"error": "No tax provision required — entity is in a loss position."}, status=400)
+
+    # Tax rate
+    if entity.is_base_rate_entity:
+        tax_rate = Decimal("0.25")
+        rate_label = "25% (Base Rate Entity)"
+    else:
+        tax_rate = Decimal("0.30")
+        rate_label = "30% (Standard Rate)"
+
+    calculated_tax = Decimal(_math.ceil(net_profit * tax_rate))
+    existing_provision = _calculate_existing_provision(fy, provision_code)
+    adjustment_required = calculated_tax - existing_provision
+
+    if adjustment_required <= 0:
+        return JsonResponse({
+            "error": f"No adjustment required — existing provision (${existing_provision:,.0f}) already covers calculated tax (${calculated_tax:,.0f}).",
+        }, status=400)
+
+    # Ensure account codes exist in entity CoA
+    tax_accounts = [
+        (expense_code, expense_name, "expenses"),
+        (provision_code, provision_name, "liabilities"),
+    ]
+    for code, name, section in tax_accounts:
+        EntityChartOfAccount.objects.get_or_create(
+            entity=entity,
+            account_code=code,
+            defaults={
+                "account_name": name,
+                "section": section,
+                "is_custom": True,
+            },
+        )
+
+    # Create and post the journal
+    description = f"Tax provision for year ended {fy.end_date.strftime('%d %B %Y')}"
+    with db_transaction.atomic():
+        journal = AdjustingJournal.objects.create(
+            financial_year=fy,
+            journal_type="tax_provision",
+            journal_date=fy.end_date,
+            description=description,
+            created_by=request.user,
+            status=AdjustingJournal.JournalStatus.POSTED,
+            posted_by=request.user,
+            posted_at=timezone.now(),
+            total_debit=adjustment_required,
+            total_credit=adjustment_required,
+        )
+        JournalLine.objects.create(
+            journal=journal,
+            account_code=expense_code,
+            account_name=expense_name,
+            debit=adjustment_required,
+            credit=Decimal("0"),
+            line_number=1,
+            description=f"Income tax expense at {rate_label}",
+        )
+        JournalLine.objects.create(
+            journal=journal,
+            account_code=provision_code,
+            account_name=provision_name,
+            debit=Decimal("0"),
+            credit=adjustment_required,
+            line_number=2,
+            description=f"Current tax liability provision",
+        )
+        _post_journal_to_tb(journal, fy)
+
+    _log_action(
+        request, "adjustment",
+        f"Posted tax provision {journal.reference_number} — ${adjustment_required:,.0f} at {rate_label} "
+        f"(calculated: ${calculated_tax:,.0f}, existing: ${existing_provision:,.0f})",
+        journal,
+    )
+
+    return JsonResponse({
+        "success": True,
+        "journal_ref": journal.reference_number,
+        "adjustment_amount": str(adjustment_required),
+        "calculated_tax": str(calculated_tax),
+        "existing_provision": str(existing_provision),
+        "rate_label": rate_label,
+        "message": f"Tax provision posted — ${adjustment_required:,.0f} at {rate_label}",
+    })
+
+
 @login_required
 def journal_delete(request, pk):
     """Delete a journal entry. If posted, also removes its adjustment TB lines.

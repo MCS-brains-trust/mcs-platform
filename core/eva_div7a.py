@@ -410,7 +410,16 @@ def _is_personal_benefit_account(line):
 
 
 def _detect_loan_accounts(ctx):
-    """Scan TB for all loan accounts and compute net debit balance."""
+    """Scan TB for all loan accounts and compute net debit balance.
+
+    All loan accounts are collected here (debit, zero, and credit balances).
+    The ``is_debit`` flag on each entry indicates whether the net balance is
+    positive (i.e. money owed BY a shareholder/director TO the company).
+    Downstream rules (T2-D7A-01 etc.) MUST check ``is_debit`` before treating
+    an account as a Div 7A exposure.  Zero and credit-balance accounts do NOT
+    represent Div 7A risk — they indicate the loan has been repaid or the
+    company owes the person.
+    """
     for line in ctx.tb_data["lines"]:
         if _is_loan_account(line):
             net = line.effective_dr - line.effective_cr
@@ -1058,8 +1067,12 @@ def _create_consolidated_finding(ctx, assessment):
 
     Non-loan findings (UPE, s 109E, interposed entity) still produce
     a single consolidated card.
+
+    Findings that were previously *addressed* (status=addressed/closed) for the
+    same financial year and finding_key are skipped — they must not reappear.
     """
     from core.models import EvaFinding, EvaReview
+    from core.eva_engine import _is_finding_addressed
 
     # Get or create the latest EvaReview for this FY
     review = EvaReview.objects.filter(
@@ -1091,6 +1104,14 @@ def _create_consolidated_finding(ctx, assessment):
         cy_movement = acct.get("cy_movement", acct["balance"])
         balance = acct["balance"]
 
+        # Deterministic finding_key for this loan account
+        fk = EvaFinding.build_finding_key("div7a", account_codes=[acct_code])
+
+        # Skip if previously addressed
+        if _is_finding_addressed(ctx.fy, fk):
+            logger.info("Div7A finding for %s addressed — skipping", acct_code)
+            continue
+
         title = f"Div 7A — {acct_name} ({acct_code})"
         explanation = (
             f"Director/Shareholder Loan — {acct_name} ({acct_code}): "
@@ -1113,14 +1134,21 @@ def _create_consolidated_finding(ctx, assessment):
             "legislation_reference": legislation,
             "confidence": "high",
             "source": "risk_engine",
+            "finding_key": fk,
         }
 
-        # Use account code as dedup key within the review
+        # Use finding_key as dedup key within the review (preferred over title__contains)
         existing = EvaFinding.objects.filter(
             eva_review=review,
-            check_name="div7a",
-            title__contains=acct_code,
+            finding_key=fk,
         ).first()
+        if not existing:
+            # Fallback: legacy dedup via title
+            existing = EvaFinding.objects.filter(
+                eva_review=review,
+                check_name="div7a",
+                title__contains=acct_code,
+            ).first()
 
         if existing:
             for key, value in finding_defaults.items():
@@ -1135,48 +1163,65 @@ def _create_consolidated_finding(ctx, assessment):
             findings_created.append(finding)
 
     # --- Non-loan findings (UPE, s 109E, interposed) as one card ---
+    # Guard: only create the "Other Exposures" card if there is genuine
+    # non-loan exposure (UPE or s109E).  When all loan accounts have zero
+    # or credit balances and no UPE/s109E amounts exist, total_exposure
+    # will be <= 0 and we should not generate a misleading finding.
     non_loan_lines = [
         line for line in ctx.finding_lines
         if not line.startswith("Director/Shareholder Loan")
     ]
-    if non_loan_lines:
-        non_loan_title = f"Div 7A — Other Exposures — {ctx.entity.entity_name} {ctx.fy.year_label}"
-        non_loan_explanation = (
-            f"Division 7A — Other Exposures for "
-            f"{ctx.entity.entity_name} {ctx.fy.year_label}\n\n"
-            + "\n\n".join(non_loan_lines)
-        )
+    non_loan_exposure = ctx.upe_exposure + ctx.s109e_payments
+    if non_loan_lines and non_loan_exposure > ZERO:
+        other_fk = EvaFinding.build_finding_key("div7a", qualifier="OTHER_EXPOSURES")
 
-        existing_other = EvaFinding.objects.filter(
-            eva_review=review,
-            check_name="div7a",
-            title__contains="Other Exposures",
-        ).first()
-
-        other_defaults = {
-            "check_name": "div7a",
-            "severity": severity,
-            "title": non_loan_title,
-            "plain_english_explanation": non_loan_explanation,
-            "recommendation": remediation,
-            "remediation_authority": legislation,
-            "remediation_synthesis": checklist,
-            "legislation_reference": legislation,
-            "confidence": "high",
-            "source": "risk_engine",
-        }
-
-        if existing_other:
-            for key, value in other_defaults.items():
-                setattr(existing_other, key, value)
-            existing_other.save()
-            findings_created.append(existing_other)
+        # Skip if previously addressed
+        if _is_finding_addressed(ctx.fy, other_fk):
+            logger.info("Div7A Other Exposures finding addressed — skipping")
         else:
-            finding = EvaFinding.objects.create(
-                eva_review=review,
-                **other_defaults,
+            non_loan_title = f"Div 7A — Other Exposures — {ctx.entity.entity_name} {ctx.fy.year_label}"
+            non_loan_explanation = (
+                f"Division 7A — Other Exposures for "
+                f"{ctx.entity.entity_name} {ctx.fy.year_label}\n\n"
+                + "\n\n".join(non_loan_lines)
             )
-            findings_created.append(finding)
+
+            existing_other = EvaFinding.objects.filter(
+                eva_review=review,
+                finding_key=other_fk,
+            ).first()
+            if not existing_other:
+                existing_other = EvaFinding.objects.filter(
+                    eva_review=review,
+                    check_name="div7a",
+                    title__contains="Other Exposures",
+                ).first()
+
+            other_defaults = {
+                "check_name": "div7a",
+                "severity": severity,
+                "title": non_loan_title,
+                "plain_english_explanation": non_loan_explanation,
+                "recommendation": remediation,
+                "remediation_authority": legislation,
+                "remediation_synthesis": checklist,
+                "legislation_reference": legislation,
+                "confidence": "high",
+                "source": "risk_engine",
+                "finding_key": other_fk,
+            }
+
+            if existing_other:
+                for key, value in other_defaults.items():
+                    setattr(existing_other, key, value)
+                existing_other.save()
+                findings_created.append(existing_other)
+            else:
+                finding = EvaFinding.objects.create(
+                    eva_review=review,
+                    **other_defaults,
+                )
+                findings_created.append(finding)
 
     # Link assessment to first finding (for backwards compat)
     if findings_created:

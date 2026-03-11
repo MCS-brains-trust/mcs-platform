@@ -21,39 +21,7 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        # ── 1. Create ActivityLog ──────────────────────────────────
-        migrations.CreateModel(
-            name='ActivityLog',
-            fields=[
-                ('id', models.UUIDField(default=uuid.uuid4, editable=False, primary_key=True, serialize=False)),
-                ('event_type', models.CharField(choices=[
-                    ('document_generated', 'Document Generated'),
-                    ('document_signed', 'Document Signed'),
-                    ('document_sent', 'Document Sent for Signing'),
-                    ('document_executed', 'Document Executed'),
-                    ('eva_review_started', 'Eva Review Started'),
-                    ('eva_review_completed', 'Eva Review Completed'),
-                    ('eva_finding_added', 'Eva Finding Added'),
-                    ('eva_chat_message', 'Eva Chat Message'),
-                    ('trust_distribution_confirmed', 'Trust Distribution Confirmed'),
-                    ('package_assembled', 'Client Package Assembled'),
-                    ('package_sent', 'Client Package Sent'),
-                    ('status_changed', 'Status Changed'),
-                    ('governing_doc_uploaded', 'Governing Document Uploaded'),
-                    ('governing_doc_extracted', 'Governing Document Text Extracted'),
-                    ('other', 'Other'),
-                ], max_length=30)),
-                ('description', models.TextField(blank=True, default='')),
-                ('metadata', models.JSONField(blank=True, default=dict)),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
-                ('entity', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.CASCADE, related_name='activity_logs', to='core.entity')),
-                ('financial_year', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.CASCADE, related_name='activity_logs', to='core.financialyear')),
-                ('user', models.ForeignKey(blank=True, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='activity_logs', to=settings.AUTH_USER_MODEL)),
-            ],
-            options={
-                'ordering': ['-created_at'],
-            },
-        ),
+        # ── 1. ActivityLog already created in 0015 — skipped.
 
         # ── 2. Create EntityRelationship ───────────────────────────
         migrations.CreateModel(
@@ -110,17 +78,7 @@ class Migration(migrations.Migration):
             field=models.CharField(blank=True, default='', help_text='Registered office postcode', max_length=10),
         ),
 
-        # ── 4. FinancialYear reopen fields ─────────────────────────
-        migrations.AddField(
-            model_name='financialyear',
-            name='reopened_at',
-            field=models.DateTimeField(blank=True, help_text='Timestamp when this FY was reopened after being locked.', null=True),
-        ),
-        migrations.AddField(
-            model_name='financialyear',
-            name='reopened_by',
-            field=models.ForeignKey(blank=True, help_text='User who reopened this financial year.', null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='reopened_years', to=settings.AUTH_USER_MODEL),
-        ),
+        # ── 4. FinancialYear reopen fields — already in 0039, skipped.
 
         # ── 5. LegalDocument.title and context_data ────────────────
         migrations.AddField(

@@ -818,6 +818,13 @@ function applyRerollForward() {
                 <a href="{% url 'core:journal_upload' pk=fy.pk %}" class="btn btn-outline-secondary btn-sm">
                     <i class="bi bi-journal-arrow-up"></i> Upload JNLs
                 </a>
+                {% if entity.entity_type == 'company' %}
+                <button type="button" class="btn btn-sm btn-outline-info" id="btnTaxProvision"
+                        data-bs-toggle="modal" data-bs-target="#taxProvisionModal"
+                        title="Calculate and post tax provision journal">
+                    <i class="bi bi-receipt-cutoff"></i> Tax Provision
+                </button>
+                {% endif %}
                 {% else %}
                 <button class="btn btn-primary btn-sm" disabled
                         title="Change status to Draft to create journal entries"
@@ -3885,6 +3892,151 @@ function overrideSuppression(suppressionId, btn) {
     .catch(() => { btn.disabled = false; });
 }
 </script>
+
+<!-- ===== TAX PROVISION MODAL ===== -->
+{% if entity.entity_type == 'company' and not fy.is_locked %}
+<div class="modal fade" id="taxProvisionModal" tabindex="-1" aria-labelledby="taxProvisionModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="taxProvisionModalLabel">
+                    <i class="bi bi-receipt-cutoff text-info"></i> Auto Tax Provision
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body" id="taxProvisionBody">
+                <div class="text-center py-4" id="taxProvisionLoading">
+                    <div class="spinner-border text-info" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <p class="mt-2 text-muted">Calculating tax provision...</p>
+                </div>
+                <div id="taxProvisionContent" class="d-none"></div>
+            </div>
+            <div class="modal-footer" id="taxProvisionFooter">
+                <button type="button" class="btn btn-secondary btn-sm" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-info btn-sm d-none" id="btnPostTaxProvision">
+                    <i class="bi bi-check-circle"></i> Post Tax Provision
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+(function() {
+    const modal = document.getElementById('taxProvisionModal');
+    if (!modal) return;
+
+    const statusUrl = "{% url 'core:tax_provision_status' pk=fy.pk %}";
+    const postUrl = "{% url 'core:auto_tax_provision' pk=fy.pk %}";
+    const csrfToken = "{{ csrf_token }}";
+
+    modal.addEventListener('show.bs.modal', function() {
+        document.getElementById('taxProvisionLoading').classList.remove('d-none');
+        document.getElementById('taxProvisionContent').classList.add('d-none');
+        document.getElementById('btnPostTaxProvision').classList.add('d-none');
+
+        fetch(statusUrl, { headers: { 'X-Requested-With': 'XMLHttpRequest' } })
+        .then(r => r.json())
+        .then(data => {
+            document.getElementById('taxProvisionLoading').classList.add('d-none');
+            const content = document.getElementById('taxProvisionContent');
+            content.classList.remove('d-none');
+
+            if (!data.eligible) {
+                content.innerHTML =
+                    '<div class="alert alert-warning mb-0">' +
+                    '<i class="bi bi-exclamation-triangle-fill"></i> ' + escapeHtml(data.reason) +
+                    '</div>';
+                if (data.existing_journal_ref) {
+                    content.innerHTML +=
+                        '<p class="mt-2 mb-0 text-muted small">Existing journal: <strong>' +
+                        escapeHtml(data.existing_journal_ref) + '</strong> ($' +
+                        Number(data.existing_journal_amount).toLocaleString('en-AU', {minimumFractionDigits: 0}) +
+                        ')</p>';
+                }
+                return;
+            }
+
+            const netProfit = Number(data.net_profit);
+            const calcTax = Number(data.calculated_tax);
+            const existProv = Number(data.existing_provision);
+            const adjReq = Number(data.adjustment_required);
+            const fmt = v => '$' + Math.abs(v).toLocaleString('en-AU', {minimumFractionDigits: 0, maximumFractionDigits: 0});
+
+            let html = '<table class="table table-sm mb-3">';
+            html += '<tr><td>Net Profit</td><td class="text-end fw-bold">' + fmt(netProfit) + '</td></tr>';
+            html += '<tr><td>Tax Rate</td><td class="text-end">' + escapeHtml(data.rate_label) + '</td></tr>';
+            html += '<tr><td>Calculated Tax</td><td class="text-end fw-bold">' + fmt(calcTax) + '</td></tr>';
+            html += '<tr><td>Existing Provision</td><td class="text-end">' + fmt(existProv) + '</td></tr>';
+            html += '<tr class="table-info"><td class="fw-bold">Adjustment Required</td><td class="text-end fw-bold">' + fmt(adjReq) + '</td></tr>';
+            html += '</table>';
+            html += '<p class="small text-muted mb-1">Expense: ' + escapeHtml(data.expense_account.code) + ' — ' + escapeHtml(data.expense_account.name) + '</p>';
+            html += '<p class="small text-muted mb-0">Provision: ' + escapeHtml(data.provision_account.code) + ' — ' + escapeHtml(data.provision_account.name) + '</p>';
+
+            if (adjReq <= 0) {
+                html += '<div class="alert alert-success mt-3 mb-0"><i class="bi bi-check-circle-fill"></i> No additional provision required.</div>';
+            }
+
+            content.innerHTML = html;
+
+            if (adjReq > 0) {
+                document.getElementById('btnPostTaxProvision').classList.remove('d-none');
+            }
+        })
+        .catch(err => {
+            document.getElementById('taxProvisionLoading').classList.add('d-none');
+            const content = document.getElementById('taxProvisionContent');
+            content.classList.remove('d-none');
+            content.innerHTML = '<div class="alert alert-danger mb-0">Failed to load tax provision status.</div>';
+        });
+    });
+
+    document.getElementById('btnPostTaxProvision').addEventListener('click', function() {
+        const btn = this;
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Posting...';
+
+        fetch(postUrl, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': csrfToken,
+                'X-Requested-With': 'XMLHttpRequest',
+            },
+        })
+        .then(r => r.json().then(data => ({ ok: r.ok, data })))
+        .then(({ ok, data }) => {
+            if (ok && data.success) {
+                const content = document.getElementById('taxProvisionContent');
+                content.innerHTML =
+                    '<div class="alert alert-success mb-0">' +
+                    '<i class="bi bi-check-circle-fill"></i> ' + escapeHtml(data.message) +
+                    '<br><small>Journal ref: <strong>' + escapeHtml(data.journal_ref) + '</strong></small>' +
+                    '</div>';
+                btn.classList.add('d-none');
+                setTimeout(() => location.reload(), 1500);
+            } else {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-check-circle"></i> Post Tax Provision';
+                alert(data.error || 'Failed to post tax provision.');
+            }
+        })
+        .catch(() => {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-check-circle"></i> Post Tax Provision';
+            alert('Network error — please try again.');
+        });
+    });
+
+    function escapeHtml(str) {
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    }
+})();
+</script>
+{% endif %}
 
 <!-- ===== EVA CHAT PANEL ===== -->
 {% include "core/partials/eva_chat_panel.html" %}

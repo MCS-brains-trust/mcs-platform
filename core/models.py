@@ -1319,6 +1319,7 @@ class AdjustingJournal(models.Model):
         YEAR_END = "year_end", "Year-End Entry"
         DEPRECIATION = "depreciation", "Depreciation Entry"
         TAX = "tax", "Tax Adjustment"
+        TAX_PROVISION = "tax_provision", "Tax Provision"
 
     class JournalStatus(models.TextChoices):
         DRAFT = "draft", "Draft"
@@ -3486,6 +3487,16 @@ class EvaFinding(models.Model):
         help_text="Link to the prior review's finding that this re-opens or supersedes",
     )
     created_at = models.DateTimeField(auto_now_add=True)
+    finding_key = models.CharField(
+        max_length=255, blank=True, default="",
+        db_index=True,
+        help_text=(
+            "Deterministic key for cross-review deduplication: "
+            "{check_id}_{ACCOUNT_CODE_OR_CATEGORY}.  "
+            "Used to detect whether a previously-addressed finding should be "
+            "skipped on re-review."
+        ),
+    )
     related_findings = models.ManyToManyField(
         "self",
         blank=True,
@@ -3498,9 +3509,37 @@ class EvaFinding(models.Model):
         indexes = [
             models.Index(fields=["eva_review", "status"]),
         ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["eva_review", "finding_key"],
+                name="unique_finding_key_per_review",
+                condition=~models.Q(finding_key=""),
+            ),
+        ]
 
     def __str__(self):
         return f"{self.get_severity_display()}: {self.check_name} — {self.get_status_display()}"
+
+    # ------------------------------------------------------------------
+    # Finding-key helpers
+    # ------------------------------------------------------------------
+    @staticmethod
+    def build_finding_key(check_id, account_codes=None, qualifier=None):
+        """Return a deterministic finding_key for cross-review dedup.
+
+        Format:  {check_id}_{qualifier_or_sorted_accounts}
+        Examples:
+            div7a_1200                     (single loan account)
+            div7a_OTHER_EXPOSURES          (consolidated non-loan card)
+            gst_reconciliation             (no sub-key)
+            sgc_WAGES-5000_SUPER-2100      (multiple accounts)
+        """
+        parts = [str(check_id)]
+        if qualifier:
+            parts.append(str(qualifier))
+        elif account_codes:
+            parts.append("_".join(sorted(str(c) for c in account_codes)))
+        return "_".join(parts)
 
 
 # ---------------------------------------------------------------------------

@@ -10,29 +10,7 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.RenameIndex(
-            model_name='evaconversation',
-            new_name='core_evacon_financi_652320_idx',
-            old_name='core_evaconvo_fy_user_idx',
-        ),
-        migrations.RenameIndex(
-            model_name='evafinding',
-            new_name='core_evafin_eva_rev_1b2c3d_idx',
-            old_name='core_evafinding_review_severity_idx',
-        ),
-        migrations.RenameIndex(
-            model_name='evareview',
-            new_name='core_evarev_financi_4a5b6c_idx',
-            old_name='core_evareview_fy_status_idx',
-        ),
-        migrations.RenameIndex(
-            model_name='knowledgechunk',
-            new_name='core_knowle_documen_7d8e9f_idx',
-            old_name='core_knowledgechunk_doc_idx',
-        ),
-        migrations.RenameIndex(
-            model_name='knowledgedocument',
-            new_name='core_knowle_categor_a1b2c3_idx',
-            old_name='core_knowledgedoc_category_idx',
-        ),
+        # RenameIndex operations removed — the old_name values referenced
+        # index names that were never created (migration 0044/0045 used
+        # different names).  Keeping as no-op to preserve migration history.
     ]

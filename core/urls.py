@@ -124,6 +124,8 @@ urlpatterns = [
     path("years/<uuid:pk>/journals/upload/commit/", views.commit_journal_upload, name="commit_journal_upload"),
     path("journals/template/", views.journal_template_download, name="journal_template_download"),
     path("years/<uuid:pk>/calculate-tax-journal/", views.calculate_tax_journal, name="calculate_tax_journal"),
+    path("years/<uuid:pk>/tax-provision/status/", views.tax_provision_status, name="tax_provision_status"),
+    path("years/<uuid:pk>/tax-provision/post/", views.auto_tax_provision, name="auto_tax_provision"),
 
     # Financial Statements Preview
     path("years/<uuid:pk>/statements/", views.financial_statements_view, name="financial_statements_view"),

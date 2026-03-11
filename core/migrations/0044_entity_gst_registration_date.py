@@ -10,9 +10,6 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.AddField(
-            model_name='entity',
-            name='gst_registration_date',
-            field=models.DateField(blank=True, help_text='Date the entity registered for GST.', null=True),
-        ),
+        # Field already added by 0044_eva_ai_compliance_reviewer — no-op to avoid
+        # duplicate column error on SQLite (which cannot use IF NOT EXISTS).
     ]

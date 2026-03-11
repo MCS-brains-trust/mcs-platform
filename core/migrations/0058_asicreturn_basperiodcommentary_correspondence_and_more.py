@@ -212,10 +212,8 @@ class Migration(migrations.Migration):
             new_name='core_knowle_sharepo_a78fde_idx',
             old_name='core_knowdoc_sp_item_idx',
         ),
-        migrations.RemoveField(
-            model_name='activitylog',
-            name='metadata',
-        ),
+        # RemoveField activitylog.metadata skipped — field was never
+        # created (the duplicate CreateModel in 0051 was removed).
         migrations.RemoveField(
             model_name='entity',
             name='registered_address_city',
@@ -248,21 +246,8 @@ class Migration(migrations.Migration):
             model_name='entityrelationship',
             name='units_held',
         ),
-        migrations.AddField(
-            model_name='activitylog',
-            name='is_read',
-            field=models.BooleanField(default=False),
-        ),
-        migrations.AddField(
-            model_name='activitylog',
-            name='title',
-            field=models.CharField(default='', max_length=255),
-        ),
-        migrations.AddField(
-            model_name='activitylog',
-            name='url',
-            field=models.CharField(blank=True, default='', max_length=500),
-        ),
+        # AddField activitylog.is_read / title / url skipped —
+        # these fields already exist from 0015_activitylog.
         migrations.AddField(
             model_name='entity',
             name='commentary_frequency_override',
@@ -383,14 +368,8 @@ class Migration(migrations.Migration):
             name='status',
             field=models.CharField(choices=[('in_place', 'In Place'), ('not_in_place', 'Not In Place'), ('required_not_yet_made', 'Required — Not Yet Made'), ('not_applicable', 'Not Applicable')], default='not_applicable', max_length=25),
         ),
-        migrations.AddIndex(
-            model_name='activitylog',
-            index=models.Index(fields=['user', '-created_at'], name='core_activi_user_id_33cb61_idx'),
-        ),
-        migrations.AddIndex(
-            model_name='activitylog',
-            index=models.Index(fields=['is_read', '-created_at'], name='core_activi_is_read_096c40_idx'),
-        ),
+        # AddIndex activitylog user/is_read indexes skipped —
+        # already created by 0015_activitylog.
         migrations.AddField(
             model_name='asicreturn',
             name='entity',
