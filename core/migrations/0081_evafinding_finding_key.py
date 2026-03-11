@@ -10,11 +10,6 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.RenameIndex(
-            model_name="evaconversation",
-            new_name="core_evacon_financi_652320_idx",
-            old_name="core_evaconvo_fy_user_idx",
-        ),
         migrations.AddField(
             model_name="evafinding",
             name="finding_key",
