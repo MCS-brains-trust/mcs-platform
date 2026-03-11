@@ -1,0 +1,208 @@
+{% load humanize %}
+<!-- Franking Account Tab Content -->
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <h6 class="mb-1"><i class="bi bi-bank"></i> Franking Account Ledger</h6>
+        <div class="d-flex gap-4">
+            <span class="text-muted">Opening Balance: <strong>${{ opening_balance|floatformat:2 }}</strong></span>
+            <span class="{% if closing_balance < 0 %}text-warning fw-bold{% else %}text-muted{% endif %}">
+                Closing Balance:
+                <strong{% if closing_balance < 0 %} class="text-warning"{% endif %}>
+                    ${{ closing_balance|floatformat:2 }}
+                    {% if closing_balance >= 0 %}CR{% else %}DR{% endif %}
+                </strong>
+            </span>
+        </div>
+    </div>
+    {% if fy.status != 'finalised' and fy.status != 'locked' %}
+    <button class="btn btn-sm btn-outline-info" data-bs-toggle="collapse" data-bs-target="#frankingAddForm">
+        <i class="bi bi-plus-lg"></i> Add Transaction
+    </button>
+    {% endif %}
+</div>
+
+<!-- Add Transaction Form (collapsible) -->
+{% if fy.status != 'finalised' and fy.status != 'locked' %}
+<div class="collapse mb-3" id="frankingAddForm">
+    <div class="card card-body bg-light border">
+        <form method="post" action="{% url 'core:franking_entry_create' pk=fy.pk %}" id="frankingEntryForm">
+            {% csrf_token %}
+            <div class="row g-2 align-items-end">
+                <div class="col-md-2">
+                    <label class="form-label small fw-bold">Date</label>
+                    <input type="date" name="date" class="form-control form-control-sm" required
+                           value="{{ fy.end_date|date:'Y-m-d' }}">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small fw-bold">Type</label>
+                    <select name="entry_type" id="franking_entry_type" class="form-select form-select-sm" required>
+                        <option value="">Select...</option>
+                        {% for code, label in entry_type_choices %}
+                        <option value="{{ code }}">{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-3">
+                    <label class="form-label small fw-bold">Description</label>
+                    <input type="text" name="description" id="franking_description" class="form-control form-control-sm" placeholder="Auto-fills from type">
+                </div>
+                <div class="col-md-1">
+                    <label class="form-label small fw-bold">Credit ($)</label>
+                    <input type="number" name="credit" id="franking_credit" class="form-control form-control-sm" step="0.01" min="0" placeholder="0.00">
+                </div>
+                <div class="col-md-1">
+                    <label class="form-label small fw-bold">Debit ($)</label>
+                    <input type="number" name="debit" id="franking_debit" class="form-control form-control-sm" step="0.01" min="0" placeholder="0.00">
+                </div>
+                <div class="col-md-2">
+                    <label class="form-label small fw-bold">Notes</label>
+                    <input type="text" name="notes" class="form-control form-control-sm" placeholder="Optional">
+                </div>
+                <div class="col-md-1">
+                    <button type="submit" class="btn btn-sm btn-info text-white w-100">Save</button>
+                </div>
+            </div>
+            <small class="text-muted mt-1 d-block">
+                <strong>Credit</strong> = increases balance (tax payments, credits received) &nbsp;|&nbsp;
+                <strong>Debit</strong> = decreases balance (franking debits on dividends paid)
+            </small>
+        </form>
+    </div>
+</div>
+{% endif %}
+
+<!-- Transaction Table -->
+{% if entries_with_balances %}
+<div class="table-responsive">
+    <table class="table table-sm table-hover align-middle">
+        <thead class="table-light">
+            <tr>
+                <th style="width:110px;">Date</th>
+                <th>Description</th>
+                <th style="width:180px;">Type</th>
+                <th class="text-end" style="width:110px;">Debit</th>
+                <th class="text-end" style="width:110px;">Credit</th>
+                <th class="text-end" style="width:130px;">Balance</th>
+                {% if fy.status != 'finalised' and fy.status != 'locked' %}
+                <th style="width:40px;"></th>
+                {% endif %}
+            </tr>
+        </thead>
+        <tbody>
+            <!-- Opening balance row -->
+            <tr class="table-light">
+                <td>{{ fy.start_date|date:"d M Y" }}</td>
+                <td class="fst-italic text-muted">Opening Balance (carried forward)</td>
+                <td><span class="badge bg-secondary">Opening</span></td>
+                <td class="text-end">&mdash;</td>
+                <td class="text-end">&mdash;</td>
+                <td class="text-end fw-bold">
+                    ${{ opening_balance|floatformat:2 }}
+                    {% if opening_balance >= 0 %}CR{% else %}DR{% endif %}
+                </td>
+                {% if fy.status != 'finalised' and fy.status != 'locked' %}
+                <td></td>
+                {% endif %}
+            </tr>
+            {% for item in entries_with_balances %}
+            <tr>
+                <td>{{ item.entry.date|date:"d M Y" }}</td>
+                <td>
+                    {{ item.entry.description }}
+                    {% if item.entry.notes %}<br><small class="text-muted">{{ item.entry.notes }}</small>{% endif %}
+                </td>
+                <td><span class="badge bg-light text-dark border">{{ item.entry.get_entry_type_display }}</span></td>
+                <td class="text-end">
+                    {% if item.entry.debit %}
+                    <span class="text-danger">${{ item.entry.debit|floatformat:2 }}</span>
+                    {% else %}
+                    <span class="text-muted">&mdash;</span>
+                    {% endif %}
+                </td>
+                <td class="text-end">
+                    {% if item.entry.credit %}
+                    <span class="text-success">${{ item.entry.credit|floatformat:2 }}</span>
+                    {% else %}
+                    <span class="text-muted">&mdash;</span>
+                    {% endif %}
+                </td>
+                <td class="text-end fw-semibold{% if item.running_balance < 0 %} text-warning{% endif %}">
+                    ${{ item.running_balance|floatformat:2 }}
+                    {% if item.running_balance >= 0 %}CR{% else %}DR{% endif %}
+                </td>
+                {% if fy.status != 'finalised' and fy.status != 'locked' %}
+                <td>
+                    <form method="post" action="{% url 'core:franking_entry_delete' pk=fy.pk entry_pk=item.entry.pk %}"
+                          onsubmit="return confirm('Delete this franking entry?');" style="display:inline;">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-sm btn-link text-danger p-0" title="Delete">
+                            <i class="bi bi-x-lg"></i>
+                        </button>
+                    </form>
+                </td>
+                {% endif %}
+            </tr>
+            {% endfor %}
+        </tbody>
+        <tfoot class="table-light">
+            <tr class="fw-bold">
+                <td colspan="3" class="text-end">Totals / Closing Balance:</td>
+                <td class="text-end text-danger">${{ total_debits|floatformat:2 }}</td>
+                <td class="text-end text-success">${{ total_credits|floatformat:2 }}</td>
+                <td class="text-end{% if closing_balance < 0 %} text-warning{% endif %}">
+                    ${{ closing_balance|floatformat:2 }}
+                    {% if closing_balance >= 0 %}CR{% else %}DR{% endif %}
+                </td>
+                {% if fy.status != 'finalised' and fy.status != 'locked' %}
+                <td></td>
+                {% endif %}
+            </tr>
+        </tfoot>
+    </table>
+</div>
+{% else %}
+<div class="text-center py-4 text-muted">
+    <i class="bi bi-bank" style="font-size: 2.5rem;"></i>
+    <p class="mt-2">No transactions recorded. Add the opening balance or first tax payment to begin.</p>
+</div>
+{% endif %}
+
+<div class="alert alert-light border mt-3 small">
+    <i class="bi bi-info-circle text-info"></i>
+    Franking credits arise when the company pays income tax. The closing balance is available for
+    attachment to franked dividends. A negative balance (franking deficit) results in a franking
+    deficit tax liability.
+</div>
+
+<script>
+(function() {
+    const typeSelect = document.getElementById('franking_entry_type');
+    const descInput = document.getElementById('franking_description');
+    const creditInput = document.getElementById('franking_credit');
+    const debitInput = document.getElementById('franking_debit');
+
+    if (!typeSelect) return;
+
+    const creditTypes = ['PAYMENT_OF_TAX', 'PAYG_INSTALMENT', 'FRANKING_CREDIT_RECEIVED', 'OPENING_BALANCE', 'OTHER_CREDIT'];
+    const debitTypes = ['FRANKING_DEBIT_DIVIDEND', 'REFUND_OF_TAX', 'OTHER_DEBIT'];
+
+    typeSelect.addEventListener('change', function() {
+        const val = this.value;
+        const label = this.options[this.selectedIndex].text;
+
+        // Auto-populate description if empty
+        if (!descInput.value.trim()) {
+            descInput.value = label;
+        }
+
+        // Focus the appropriate amount field
+        if (creditTypes.includes(val)) {
+            creditInput.focus();
+            debitInput.value = '';
+        } else if (debitTypes.includes(val)) {
+            debitInput.focus();
+            creditInput.value = '';
+        }
+    });
+})();
+</script>

@@ -20,6 +20,7 @@ from core.models import (
     StockItem, MeetingNote, ActivityLog, TrialBalanceLine, AccountMapping,
     AdjustingJournal, JournalLine, EntityChartOfAccount, ClientAccountMapping,
     EvaReview, EvaFinding, EvaFindingSuppression, RiskRule, RiskFlag,
+    FrankingAccountEntry, DividendEvent,
 )
 
 # Override static files storage for tests (no manifest needed)
@@ -1505,3 +1506,229 @@ class TaxProvisionMissingRuleTests(TestCase):
         results = run_risk_engine(self.fy, tiers=[2])
         rule_ids = [f.rule_id for f in RiskFlag.objects.filter(financial_year=self.fy)]
         self.assertNotIn("TAX_PROVISION_MISSING", rule_ids)
+
+
+# ============================================================================
+# FRANKING ACCOUNT TESTS
+# ============================================================================
+
+@override_settings(STORAGES=STORAGES_OVERRIDE)
+class FrankingAccountTests(TestCase):
+    """Tests for the FrankingAccountEntry model and franking account views."""
+
+    @classmethod
+    def setUpTestData(cls):
+        two_fa_kwargs = {"totp_secret": "TESTSECRET", "totp_confirmed": True}
+        cls.admin = User.objects.create_user(
+            username="frank_admin", password="testpass123",
+            role=User.Role.ADMIN, first_name="Admin", last_name="User",
+            **two_fa_kwargs,
+        )
+        cls.client_obj = Client.objects.create(name="Franking Test Client")
+
+        # Company entity
+        cls.entity = Entity.objects.create(
+            entity_name="Franking Co",
+            entity_type="company",
+            client=cls.client_obj,
+            is_base_rate_entity=True,
+        )
+        cls.prior_fy = FinancialYear.objects.create(
+            entity=cls.entity,
+            year_label="FY2024",
+            start_date=date(2023, 7, 1),
+            end_date=date(2024, 6, 30),
+            status="finalised",
+        )
+        cls.fy = FinancialYear.objects.create(
+            entity=cls.entity,
+            year_label="FY2025",
+            start_date=date(2024, 7, 1),
+            end_date=date(2025, 6, 30),
+            status="in_review",
+            prior_year=cls.prior_fy,
+        )
+
+        # Trust entity (for non-company test)
+        cls.trust_entity = Entity.objects.create(
+            entity_name="Franking Trust",
+            entity_type="trust",
+            client=cls.client_obj,
+        )
+        cls.trust_fy = FinancialYear.objects.create(
+            entity=cls.trust_entity,
+            year_label="FY2025",
+            start_date=date(2024, 7, 1),
+            end_date=date(2025, 6, 30),
+        )
+
+    def setUp(self):
+        self.test_client = TestClient()
+        self.test_client.force_login(self.admin)
+
+    def test_running_balance_calculates_correctly(self):
+        """3 credit entries, 1 debit — assert each row balance is correct."""
+        from core.views_franking import calculate_running_balances
+
+        e1 = FrankingAccountEntry.objects.create(
+            entity=self.entity, financial_year=self.fy,
+            date=date(2024, 9, 1), description="Tax payment",
+            entry_type="PAYMENT_OF_TAX", credit=Decimal("5000"),
+            created_by=self.admin,
+        )
+        e2 = FrankingAccountEntry.objects.create(
+            entity=self.entity, financial_year=self.fy,
+            date=date(2024, 10, 1), description="PAYG",
+            entry_type="PAYG_INSTALMENT", credit=Decimal("3000"),
+            created_by=self.admin,
+        )
+        e3 = FrankingAccountEntry.objects.create(
+            entity=self.entity, financial_year=self.fy,
+            date=date(2024, 11, 1), description="Dividend paid",
+            entry_type="FRANKING_DEBIT_DIVIDEND", debit=Decimal("2000"),
+            created_by=self.admin,
+        )
+        e4 = FrankingAccountEntry.objects.create(
+            entity=self.entity, financial_year=self.fy,
+            date=date(2024, 12, 1), description="Another payment",
+            entry_type="PAYMENT_OF_TAX", credit=Decimal("1000"),
+            created_by=self.admin,
+        )
+
+        entries = FrankingAccountEntry.objects.filter(
+            entity=self.entity, financial_year=self.fy,
+        ).order_by("date", "sort_order", "created_at")
+        result = calculate_running_balances(entries)
+
+        self.assertEqual(len(result), 4)
+        self.assertEqual(result[0]["running_balance"], Decimal("5000"))
+        self.assertEqual(result[1]["running_balance"], Decimal("8000"))
+        self.assertEqual(result[2]["running_balance"], Decimal("6000"))
+        self.assertEqual(result[3]["running_balance"], Decimal("7000"))
+
+    def test_closing_balance_is_zero_with_no_entries(self):
+        """Closing balance is zero when no entries exist."""
+        resp = self.test_client.get(
+            reverse("core:franking_account_summary_api", kwargs={"pk": self.fy.pk}),
+        )
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(data["closing_balance"], "0.00")
+        self.assertEqual(int(data["entry_count"]), 0)
+
+    def test_franking_deficit_detected_when_debits_exceed_credits(self):
+        """Closing balance is negative (deficit) when debits exceed credits."""
+        FrankingAccountEntry.objects.create(
+            entity=self.entity, financial_year=self.fy,
+            date=date(2024, 9, 1), description="Small payment",
+            entry_type="PAYMENT_OF_TAX", credit=Decimal("1000"),
+            created_by=self.admin,
+        )
+        FrankingAccountEntry.objects.create(
+            entity=self.entity, financial_year=self.fy,
+            date=date(2024, 10, 1), description="Large dividend",
+            entry_type="FRANKING_DEBIT_DIVIDEND", debit=Decimal("5000"),
+            created_by=self.admin,
+        )
+
+        resp = self.test_client.get(
+            reverse("core:franking_account_summary_api", kwargs={"pk": self.fy.pk}),
+        )
+        data = resp.json()
+        self.assertEqual(Decimal(data["closing_balance"]), Decimal("-4000.00"))
+
+    def test_entry_create_updates_dividend_event_closing_balance(self):
+        """Creating a franking entry updates DividendEvent closing balances."""
+        event = DividendEvent.objects.create(
+            entity=self.entity,
+            financial_year=self.fy,
+            dividend_type="final",
+            total_amount=Decimal("10000"),
+            franking_percentage=Decimal("100"),
+            company_tax_rate=Decimal("25"),
+            record_date=date(2025, 3, 1),
+            payment_date=date(2025, 3, 15),
+            declaration_date=date(2025, 3, 1),
+            created_by=self.admin,
+        )
+
+        import json
+        self.test_client.post(
+            reverse("core:franking_entry_create", kwargs={"pk": self.fy.pk}),
+            data=json.dumps({
+                "date": "2025-01-15",
+                "description": "Tax payment",
+                "entry_type": "PAYMENT_OF_TAX",
+                "credit": "8000",
+                "debit": "0",
+            }),
+            content_type="application/json",
+        )
+
+        event.refresh_from_db()
+        self.assertEqual(event.franking_account_opening_balance, Decimal("0.00"))
+        self.assertEqual(event.franking_account_closing_balance, Decimal("8000.00"))
+
+    def test_entry_delete_recalculates_dividend_event_closing_balance(self):
+        """Deleting a franking entry recalculates DividendEvent closing balance."""
+        entry = FrankingAccountEntry.objects.create(
+            entity=self.entity, financial_year=self.fy,
+            date=date(2025, 1, 15), description="Tax payment",
+            entry_type="PAYMENT_OF_TAX", credit=Decimal("8000"),
+            created_by=self.admin,
+        )
+        event = DividendEvent.objects.create(
+            entity=self.entity,
+            financial_year=self.fy,
+            dividend_type="final",
+            total_amount=Decimal("10000"),
+            franking_percentage=Decimal("100"),
+            company_tax_rate=Decimal("25"),
+            record_date=date(2025, 3, 1),
+            payment_date=date(2025, 3, 15),
+            declaration_date=date(2025, 3, 1),
+            franking_account_closing_balance=Decimal("8000"),
+            created_by=self.admin,
+        )
+
+        self.test_client.post(
+            reverse("core:franking_entry_delete", kwargs={
+                "pk": self.fy.pk, "entry_pk": entry.pk,
+            }),
+        )
+
+        event.refresh_from_db()
+        self.assertEqual(event.franking_account_closing_balance, Decimal("0.00"))
+
+    def test_franking_tab_not_visible_for_non_company_entity(self):
+        """Franking tab should not appear for trust entities."""
+        resp = self.test_client.get(
+            reverse("core:financial_year_detail", kwargs={"pk": self.trust_fy.pk}),
+        )
+        self.assertEqual(resp.status_code, 200)
+        content = resp.content.decode()
+        self.assertNotIn("tab-franking", content)
+        self.assertNotIn("Franking Account", content)
+
+    def test_opening_balance_carries_from_prior_year_closing(self):
+        """Opening balance = prior year closing balance."""
+        # Add entries to prior year
+        FrankingAccountEntry.objects.create(
+            entity=self.entity, financial_year=self.prior_fy,
+            date=date(2024, 1, 1), description="Prior year tax",
+            entry_type="PAYMENT_OF_TAX", credit=Decimal("12000"),
+            created_by=self.admin,
+        )
+        FrankingAccountEntry.objects.create(
+            entity=self.entity, financial_year=self.prior_fy,
+            date=date(2024, 3, 1), description="Prior year dividend",
+            entry_type="FRANKING_DEBIT_DIVIDEND", debit=Decimal("4000"),
+            created_by=self.admin,
+        )
+        # Prior year closing = 12000 - 4000 = 8000
+
+        resp = self.test_client.get(
+            reverse("core:franking_account_summary_api", kwargs={"pk": self.fy.pk}),
+        )
+        data = resp.json()
+        self.assertEqual(Decimal(data["opening_balance"]), Decimal("8000.00"))

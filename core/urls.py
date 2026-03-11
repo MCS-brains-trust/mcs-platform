@@ -21,6 +21,7 @@ from . import views_bas_commentary
 from . import views_div7a
 from . import views_workpapers
 from . import views_webhooks
+from . import views_franking
 
 app_name = "core"
 
@@ -64,6 +65,12 @@ urlpatterns = [
     path("years/<uuid:pk>/compliance/loan-acknowledgment/", views_compliance_docs.generate_loan_acknowledgment, name="generate_loan_acknowledgment"),
     path("years/<uuid:pk>/compliance/management-rep-letter/", views_compliance_docs.generate_management_rep_letter, name="generate_management_rep_letter"),
     path("years/<uuid:pk>/compliance/cover-letter/", views_compliance_docs.generate_cover_letter, name="generate_cover_letter"),
+
+    # Franking Account
+    path("years/<uuid:pk>/franking/", views_franking.franking_account_tab, name="franking_account_tab"),
+    path("years/<uuid:pk>/franking/create/", views_franking.franking_entry_create, name="franking_entry_create"),
+    path("years/<uuid:pk>/franking/<uuid:entry_pk>/delete/", views_franking.franking_entry_delete, name="franking_entry_delete"),
+    path("years/<uuid:pk>/franking/summary/", views_franking.franking_account_summary_api, name="franking_account_summary_api"),
 
     # Partnership + Cross-Entity Documents
     path("years/<uuid:pk>/partner-statements/", views_partnership_docs.partner_statements, name="partner_statements"),

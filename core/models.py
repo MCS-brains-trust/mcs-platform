@@ -4564,6 +4564,61 @@ class DividendShareholderAllocation(models.Model):
 
 
 # ---------------------------------------------------------------------------
+# Franking Account Ledger
+# ---------------------------------------------------------------------------
+class FrankingAccountEntry(models.Model):
+    """A single movement in a company entity's franking account ledger.
+
+    Credits increase the balance (tax payments add franking credits).
+    Debits decrease the balance (franking debits when paying franked dividends).
+    Running balance is calculated at query time, not stored.
+    """
+
+    ENTRY_TYPE_CHOICES = [
+        ("PAYMENT_OF_TAX", "Payment of Tax"),
+        ("PAYG_INSTALMENT", "PAYG Instalment"),
+        ("REFUND_OF_TAX", "Refund of Income Tax"),
+        ("FRANKING_DEBIT_DIVIDEND", "Franking Debit — Dividend Paid"),
+        ("FRANKING_CREDIT_RECEIVED", "Franking Credit Received"),
+        ("OPENING_BALANCE", "Opening Balance"),
+        ("OTHER_CREDIT", "Other Credit"),
+        ("OTHER_DEBIT", "Other Debit"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entity = models.ForeignKey(
+        "Entity", on_delete=models.CASCADE, related_name="franking_entries",
+    )
+    financial_year = models.ForeignKey(
+        "FinancialYear", on_delete=models.CASCADE, related_name="franking_entries",
+    )
+    date = models.DateField()
+    description = models.CharField(max_length=255)
+    entry_type = models.CharField(max_length=40, choices=ENTRY_TYPE_CHOICES)
+    debit = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True,
+    )
+    credit = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True,
+    )
+    sort_order = models.PositiveIntegerField(default=0)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    notes = models.TextField(blank=True, default="")
+
+    class Meta:
+        ordering = ["date", "sort_order", "created_at"]
+
+    def __str__(self):
+        amt = self.credit if self.credit else self.debit
+        direction = "CR" if self.credit else "DR"
+        return f"{self.date} — {self.description} (${amt} {direction})"
+
+
+# ---------------------------------------------------------------------------
 # Phase 12 — Engagement Letter Config
 # ---------------------------------------------------------------------------
 class EngagementLetterConfig(models.Model):

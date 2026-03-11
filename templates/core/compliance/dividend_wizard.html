@@ -63,8 +63,15 @@
                         </div>
                         <div class="col-md-4">
                             <label class="form-label small fw-bold">Franking Account Opening ($)</label>
-                            <input type="number" id="franking_opening" class="form-control form-control-sm"
-                                   step="0.01" oninput="recalcAllocations()">
+                            <input type="number" id="franking_opening" class="form-control form-control-sm bg-light"
+                                   step="0.01" oninput="recalcAllocations()" readonly>
+                            <small class="text-muted" id="franking-source-link">
+                                <a href="{% url 'core:financial_year_detail' pk=fy.pk %}?tab=franking">Update in Franking Account tab</a>
+                            </small>
+                            <div id="franking-no-entries" class="alert alert-info small mt-1 d-none">
+                                <i class="bi bi-info-circle"></i> No franking account entries recorded for this year.
+                                <a href="{% url 'core:financial_year_detail' pk=fy.pk %}?tab=franking">Add transactions</a> before declaring a franked dividend.
+                            </div>
                         </div>
                         <div class="col-md-4">
                             <label class="form-label small fw-bold">Resolution Type</label>
@@ -261,6 +268,22 @@ function submitDividend() {
     })
     .catch(err => alert('Error: ' + err.message));
 }
+
+// Fetch franking account balances from API
+(function loadFrankingBalances() {
+    const FRANKING_API = '{% url "core:franking_account_summary_api" pk=fy.pk %}';
+    fetch(FRANKING_API)
+        .then(r => r.json())
+        .then(data => {
+            const openingEl = document.getElementById('franking_opening');
+            openingEl.value = parseFloat(data.opening_balance) || 0;
+            if (parseInt(data.entry_count) === 0) {
+                document.getElementById('franking-no-entries').classList.remove('d-none');
+            }
+            recalcAllocations();
+        })
+        .catch(() => { /* Silently fall back to manual entry */ });
+})();
 
 // Initial calc
 recalcAllocations();

@@ -661,6 +661,13 @@ function applyRerollForward() {
         </a>
     </li>
     {% endif %}
+    {% if entity.entity_type == 'company' %}
+    <li class="nav-item">
+        <button class="nav-link{% if active_tab == 'franking' %} active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-franking" data-tab-name="franking" type="button">
+            <i class="bi bi-bank"></i> Franking Account
+        </button>
+    </li>
+    {% endif %}
     <li class="nav-item">
         <button class="nav-link{% if active_tab == 'activity' %} active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-activity" data-tab-name="activity" type="button">
             <i class="bi bi-clock-history"></i> Activity ({{ activity_logs.count }})
@@ -1344,6 +1351,19 @@ function applyRerollForward() {
     {% if entity.entity_type == 'trust' or entity.entity_type == 'trust_discretionary' or entity.entity_type == 'trust_unit' or entity.entity_type == 'trust_hybrid' %}
     <div class="tab-pane fade{% if active_tab == 'trust' %} show active{% endif %} p-0" id="tab-trust">
         {% include 'core/includes/trust_tab.html' %}
+    </div>
+    {% endif %}
+
+    <!-- ===== FRANKING ACCOUNT TAB (company only) ===== -->
+    {% if entity.entity_type == 'company' %}
+    <div class="tab-pane fade{% if active_tab == 'franking' %} show active{% endif %} p-3" id="tab-franking"
+         hx-get="{% url 'core:franking_account_tab' pk=fy.pk %}"
+         hx-trigger="intersect once"
+         hx-swap="innerHTML">
+        <div class="text-center py-4">
+            <div class="spinner-border spinner-border-sm text-info" role="status"></div>
+            <span class="text-muted ms-2">Loading franking account...</span>
+        </div>
     </div>
     {% endif %}
 
