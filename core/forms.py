@@ -32,6 +32,7 @@ class EntityForm(forms.ModelForm):
         fields = (
             "entity_name", "trading_as", "entity_type", "industry", "abn", "acn", "tfn",
             "reporting_framework", "company_size", "show_cents",
+            "is_small_business_entity", "is_base_rate_entity",
             "is_gst_registered", "bas_frequency",
             "contact_email",
             "address_line_1", "address_line_2", "suburb", "state", "postcode", "country",
@@ -67,6 +68,21 @@ class EntityForm(forms.ModelForm):
         self.fields["postcode"].required = True
         self.fields["bas_frequency"].required = True
 
+        # Tax classification fields — Yes/No selects for companies
+        for bool_field in ("is_small_business_entity", "is_base_rate_entity"):
+            self.fields[bool_field].widget = forms.Select(
+                choices=[("", "— Select —"), ("true", "Yes"), ("false", "No")],
+                attrs={"class": "form-select"},
+            )
+            # Pre-populate from instance value
+            inst_val = getattr(self.instance, bool_field, None)
+            if inst_val is True:
+                self.initial[bool_field] = "true"
+            elif inst_val is False:
+                self.initial[bool_field] = "false"
+            else:
+                self.initial[bool_field] = ""
+
         # Only senior users can change assigned_accountant
         if user and not user.is_senior:
             self.fields.pop("assigned_accountant", None)
@@ -78,6 +94,16 @@ class EntityForm(forms.ModelForm):
         # ACN is compulsory for companies
         if entity_type == "company" and not acn:
             self.add_error("acn", "ACN is required for companies.")
+        # Tax classification fields — convert string to bool, required for companies
+        for bool_field in ("is_small_business_entity", "is_base_rate_entity"):
+            raw = self.data.get(bool_field, "")
+            if entity_type == "company":
+                if raw == "":
+                    self.add_error(bool_field, "This field is required for companies.")
+                else:
+                    cleaned[bool_field] = raw == "true"
+            else:
+                cleaned[bool_field] = None
         return cleaned
 
     def save(self, commit=True):

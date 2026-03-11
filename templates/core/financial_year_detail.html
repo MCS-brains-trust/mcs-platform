@@ -235,6 +235,24 @@
                         <i class="bi bi-box-seam"></i> Assemble Client Package
                     </button>
                     {% endif %}
+
+                    {% if entity.entity_type == 'company' and fy.is_locked %}
+                    <div class="vr d-none d-md-block"></div>
+                    {% if show_tax_journal_btn %}
+                    <form method="post" action="{% url 'core:calculate_tax_journal' pk=fy.pk %}" class="d-inline"
+                          onsubmit="return confirm('Calculate and post income tax journal?');">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-sm btn-outline-danger">
+                            <i class="bi bi-calculator"></i> Calculate &amp; Post Tax Journal
+                        </button>
+                    </form>
+                    {% elif has_tax_journal %}
+                    <span class="badge bg-success fs-6 py-2 px-3" title="{{ tax_journal.description }}">
+                        <i class="bi bi-check-circle-fill"></i> Tax journal posted — ${{ tax_journal.total_debit|floatformat:0 }}
+                        {% if entity.is_base_rate_entity %}at 25% (Base Rate Entity){% else %}at 30% (Standard Rate){% endif %}
+                    </span>
+                    {% endif %}
+                    {% endif %}
                 </div>
             </div>
         </div>

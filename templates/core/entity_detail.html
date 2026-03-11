@@ -283,6 +283,48 @@
                         </table>
                     </div>
                 </div>
+                {% if entity.entity_type == 'company' %}
+                <!-- Tax Classification (Companies Only) -->
+                <div class="card mt-3">
+                    <div class="card-header"><h6 class="mb-0"><i class="bi bi-calculator"></i> Tax Classification</h6></div>
+                    <div class="card-body">
+                        {% if entity.is_small_business_entity is None or entity.is_base_rate_entity is None %}
+                        <div class="alert alert-warning py-2 mb-3">
+                            <i class="bi bi-exclamation-triangle-fill"></i> <strong>Tax classification required</strong> — please
+                            <a href="{% url 'core:entity_edit' pk=entity.pk %}">edit this entity</a> and set both fields.
+                        </div>
+                        {% endif %}
+                        <table class="table table-sm table-borderless mb-0">
+                            <tbody>
+                                <tr>
+                                    <td class="text-muted" style="width:40%">Small Business Entity</td>
+                                    <td>
+                                        {% if entity.is_small_business_entity is None %}
+                                        <span class="badge bg-warning text-dark">Not set</span>
+                                        {% elif entity.is_small_business_entity %}
+                                        <span class="badge bg-success">Yes</span>
+                                        {% else %}
+                                        <span class="badge bg-secondary">No</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td class="text-muted">Base Rate Entity (25%)</td>
+                                    <td>
+                                        {% if entity.is_base_rate_entity is None %}
+                                        <span class="badge bg-warning text-dark">Not set</span>
+                                        {% elif entity.is_base_rate_entity %}
+                                        <span class="badge bg-success">Yes — 25% tax rate</span>
+                                        {% else %}
+                                        <span class="badge bg-info">No — 30% tax rate</span>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                {% endif %}
             </div>
 
             <!-- Contact & Address -->

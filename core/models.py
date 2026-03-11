@@ -195,9 +195,13 @@ class Entity(models.Model):
         default=CommentaryFrequency.MATCH_BAS,
         help_text="Override the default commentary generation frequency. 'Match BAS' uses the entity's BAS frequency.",
     )
+    is_small_business_entity = models.BooleanField(
+        null=True, blank=True,
+        help_text="Companies only: whether this entity qualifies as a small business entity under the ATO definition.",
+    )
     is_base_rate_entity = models.BooleanField(
-        default=True,
-        help_text="Companies only: True = 25% base rate entity, False = 30% non-base rate. Used in trust tax planning.",
+        null=True, blank=True,
+        help_text="Companies only: True = 25% base rate entity, False = 30% non-base rate. Used in tax calculations.",
     )
     show_cents = models.BooleanField(
         default=False,

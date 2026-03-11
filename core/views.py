@@ -1889,6 +1889,19 @@ def financial_year_detail(request, pk):
         ).select_related("generated_by", "bas_period").order_by("-generated_at"),
     }
 
+    # --- Tax Journal context (companies only) ---
+    if fy.entity.entity_type == "company" and fy.is_locked:
+        has_tax_journal = AdjustingJournal.objects.filter(
+            financial_year=fy, description__icontains="Income tax",
+        ).exists()
+        context["show_tax_journal_btn"] = not has_tax_journal
+        context["has_tax_journal"] = has_tax_journal
+        if has_tax_journal:
+            tax_jnl = AdjustingJournal.objects.filter(
+                financial_year=fy, description__icontains="Income tax",
+            ).first()
+            context["tax_journal"] = tax_jnl
+
     # --- Management Accounts context ---
     from .mgmt_accounts import detect_tb_source
     context["tb_source"] = detect_tb_source(fy.entity)
@@ -4910,6 +4923,117 @@ def journal_post(request, pk):
     from core.signals import trigger_risk_recalc
     trigger_risk_recalc(fy, "journal_posted")
     messages.success(request, f"Journal {journal.reference_number} has been posted.")
+    return redirect("core:financial_year_detail", pk=fy.pk)
+
+
+@login_required
+def calculate_tax_journal(request, pk):
+    """Calculate and post an income tax journal for company entities."""
+    import math as _math
+
+    fy = get_financial_year_for_user(request, pk)
+    entity = fy.entity
+
+    if entity.entity_type != "company":
+        messages.error(request, "Tax journal calculation is only available for company entities.")
+        return redirect("core:financial_year_detail", pk=fy.pk)
+
+    if not fy.is_locked:
+        messages.error(request, "Financial year must be finalised before calculating tax.")
+        return redirect("core:financial_year_detail", pk=fy.pk)
+
+    if entity.is_base_rate_entity is None:
+        messages.error(request, "Please set the Base Rate Entity flag on the entity before calculating tax.")
+        return redirect("core:financial_year_detail", pk=fy.pk)
+
+    # Check for existing tax journal
+    existing = AdjustingJournal.objects.filter(
+        financial_year=fy, description__icontains="Income tax",
+    ).exists()
+    if existing:
+        messages.warning(request, "An income tax journal already exists for this financial year.")
+        return redirect("core:financial_year_detail", pk=fy.pk)
+
+    # Calculate net profit from TB — aggregate all lines by P&L sections
+    # statement_section values "Revenue" and "Income" both map to P&L
+    pl_sections = {"Income", "Revenue", "Cost of Sales", "Expenses"}
+    all_tb = TrialBalanceLine.objects.filter(
+        financial_year=fy,
+    ).select_related("mapped_line_item")
+    pl_dr = Decimal("0")
+    pl_cr = Decimal("0")
+    for line in all_tb:
+        mapping = line.mapped_line_item
+        if mapping and mapping.statement_section in pl_sections:
+            pl_dr += line.debit or Decimal("0")
+            pl_cr += line.credit or Decimal("0")
+    net_profit = pl_cr - pl_dr
+
+    if net_profit <= 0:
+        messages.info(request, "No tax payable — entity is in a loss position.")
+        return redirect("core:financial_year_detail", pk=fy.pk)
+
+    # Determine tax rate
+    if entity.is_base_rate_entity:
+        tax_rate = Decimal("0.25")
+        rate_label = "25% (Base Rate Entity)"
+    else:
+        tax_rate = Decimal("0.30")
+        rate_label = "30% (Standard Rate)"
+
+    tax_amount = Decimal(_math.ceil(net_profit * tax_rate))
+
+    # Ensure account codes 4110 and 3325 exist in entity CoA
+    tax_accounts = [
+        ("4110", "Income tax on profit", "expenses"),
+        ("3325", "Taxation", "liabilities"),
+    ]
+    for code, name, section in tax_accounts:
+        EntityChartOfAccount.objects.get_or_create(
+            entity=entity,
+            account_code=code,
+            defaults={
+                "account_name": name,
+                "section": section,
+                "is_custom": True,
+            },
+        )
+
+    # Create and post the journal
+    description = f"Income tax on profit for year ended {fy.end_date.strftime('%d %B %Y')}"
+    with db_transaction.atomic():
+        journal = AdjustingJournal.objects.create(
+            financial_year=fy,
+            journal_type="tax",
+            journal_date=fy.end_date,
+            description=description,
+            created_by=request.user,
+            status=AdjustingJournal.JournalStatus.POSTED,
+            posted_by=request.user,
+            posted_at=timezone.now(),
+            total_debit=tax_amount,
+            total_credit=tax_amount,
+        )
+        JournalLine.objects.create(
+            journal=journal,
+            account_code="4110",
+            account_name="Income tax on profit",
+            debit=tax_amount,
+            credit=Decimal("0"),
+            line_number=1,
+        )
+        JournalLine.objects.create(
+            journal=journal,
+            account_code="3325",
+            account_name="Taxation",
+            debit=Decimal("0"),
+            credit=tax_amount,
+            line_number=2,
+        )
+        _post_journal_to_tb(journal, fy)
+
+    _log_action(request, "adjustment", f"Posted tax journal {journal.reference_number} — ${tax_amount:,.0f} at {rate_label}", journal)
+    messages.success(request, f"Tax journal posted — ${tax_amount:,.0f} at {rate_label}")
     return redirect("core:financial_year_detail", pk=fy.pk)
 
 
