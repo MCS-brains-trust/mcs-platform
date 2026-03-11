@@ -2359,12 +2359,17 @@ class ActivityLog(models.Model):
         CLASSIFY_COMPLETE = "classify_complete", "AI Classification Complete"
         CLASSIFY_STARTED = "classify_started", "AI Classification Started"
         TB_IMPORT = "tb_import", "Trial Balance Imported"
+        TB_IMPORT_DUPLICATE_MERGED = "tb_dup_merged", "TB Duplicate Accounts Merged"
         JOURNAL_POSTED = "journal_posted", "Journal Entry Posted"
         YEAR_FINALISED = "year_finalised", "Financial Year Finalised"
+        FY_STATUS_CHANGED = "fy_status_changed", "Financial Year Status Changed"
         AUDIT_RUN = "audit_run", "Audit Risk Analysis Run"
         REVIEW_APPROVED = "review_approved", "Transactions Approved"
         DOCUMENT_GENERATED = "doc_generated", "Document Generated"
         MGMT_ACCOUNTS_GENERATED = "mgmt_accts_gen", "Management Accounts Generated"
+        EVA_REVIEW_TRIGGERED = "eva_review_triggered", "Eva Review Triggered"
+        EVA_REVIEW_CLEARED = "eva_review_cleared", "Eva Review Cleared"
+        EVA_FINDING_ADDRESSED = "eva_finding_addressed", "Eva Finding Addressed"
         BAS_COMMENTARY_GENERATED = "bas_commentary_generated", "BAS Commentary Generated"
         BAS_COMMENTARY_EDITED = "bas_commentary_edited", "BAS Commentary Edited"
         BAS_COMMENTARY_REGENERATED = "bas_commentary_regenerated", "BAS Commentary Regenerated"
@@ -2381,7 +2386,7 @@ class ActivityLog(models.Model):
         related_name="activity_logs",
     )
     event_type = models.CharField(
-        max_length=30, choices=EventType.choices, default=EventType.GENERAL
+        max_length=40, choices=EventType.choices, default=EventType.GENERAL
     )
     title = models.CharField(max_length=255, default="")
     description = models.TextField(blank=True, default="")
@@ -2399,6 +2404,14 @@ class ActivityLog(models.Model):
         blank=True,
         related_name="activity_logs",
     )
+    eva_finding = models.ForeignKey(
+        "EvaFinding",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="activity_logs",
+    )
+    metadata = models.JSONField(blank=True, default=dict)
     url = models.CharField(max_length=500, blank=True, default="")
     is_read = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
