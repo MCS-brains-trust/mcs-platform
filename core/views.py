@@ -3989,6 +3989,14 @@ def review_tb_import(request, pk):
     auto_mapped = sum(1 for l in lines if l.get("mapped_id") or l.get("entity_acct_code"))
     unmapped = total - auto_mapped
 
+    # Balance check — compute totals from staged data
+    total_dr = sum(Decimal(str(l.get("debit", "0"))) for l in lines)
+    total_cr = sum(Decimal(str(l.get("credit", "0"))) for l in lines)
+    balance_diff = abs(total_dr - total_cr)
+    TOLERANCE = Decimal("0.02")
+    balance_blocked = balance_diff > TOLERANCE
+    balance_warning = Decimal("0") < balance_diff <= TOLERANCE
+
     context = {
         "fy": fy,
         "lines": lines,
@@ -3998,6 +4006,11 @@ def review_tb_import(request, pk):
         "auto_mapped": auto_mapped,
         "unmapped": unmapped,
         "source_name": staged.get("filename", "Excel TB"),
+        "balance_total_dr": total_dr,
+        "balance_total_cr": total_cr,
+        "balance_diff": balance_diff,
+        "balance_blocked": balance_blocked,
+        "balance_warning": balance_warning,
     }
     return render(request, "core/review_tb_import.html", context)
 
@@ -4023,6 +4036,31 @@ def commit_tb_import(request, pk):
 
     entity = fy.entity
     staged_lines = staged["lines"]
+
+    # Server-side balance validation — block if DR/CR differ by > $0.02
+    total_dr = sum(Decimal(str(l.get("debit", "0"))) for l in staged_lines)
+    total_cr = sum(Decimal(str(l.get("credit", "0"))) for l in staged_lines)
+    balance_diff = abs(total_dr - total_cr)
+    TOLERANCE = Decimal("0.02")
+
+    if balance_diff > TOLERANCE:
+        messages.error(
+            request,
+            f"Import blocked \u2014 Trial Balance is out of balance. "
+            f"Total debits ${total_dr:,.2f} vs total credits ${total_cr:,.2f} "
+            f"\u2014 a difference of ${balance_diff:,.2f}. "
+            f"Please correct the source data and re-import.",
+        )
+        return redirect("core:review_tb_import", pk=pk)
+
+    if balance_diff > 0 and not request.POST.get("rounding_acknowledged"):
+        messages.error(
+            request,
+            f"This TB has a minor rounding difference of ${balance_diff:,.2f}. "
+            f"Please tick the rounding acknowledgement checkbox to proceed.",
+        )
+        return redirect("core:review_tb_import", pk=pk)
+
     imported = 0
     unmapped = 0
     errors = []

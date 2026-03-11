@@ -75,6 +75,35 @@
             </div>
         </div>
 
+        {% if balance_blocked %}
+        <div class="alert alert-danger" id="balanceBlockedAlert">
+            <h5 class="alert-heading"><i class="bi bi-exclamation-octagon-fill"></i> Import blocked — Trial Balance is out of balance</h5>
+            <p class="mb-0">
+                The imported trial balance has total debits of <strong>${{ balance_total_dr|floatformat:2 }}</strong>
+                and total credits of <strong>${{ balance_total_cr|floatformat:2 }}</strong>
+                — a difference of <strong>${{ balance_diff|floatformat:2 }}</strong>.
+                This must be resolved in the source accounting system before importing.
+                Common causes include unposted transactions, draft invoices, or rounding errors.
+                Please correct the source data and re-import.
+            </p>
+        </div>
+        {% elif balance_warning %}
+        <div class="alert alert-warning" id="balanceWarningAlert">
+            <h6 class="alert-heading mb-1"><i class="bi bi-exclamation-triangle-fill"></i> Minor rounding difference detected</h6>
+            <p class="mb-2">
+                Total debits <strong>${{ balance_total_dr|floatformat:2 }}</strong> vs
+                total credits <strong>${{ balance_total_cr|floatformat:2 }}</strong>
+                — difference of <strong>${{ balance_diff|floatformat:2 }}</strong>.
+            </p>
+            <div class="form-check">
+                <input class="form-check-input" type="checkbox" id="roundingCheckbox" name="rounding_acknowledged" value="1">
+                <label class="form-check-label" for="roundingCheckbox">
+                    I understand this TB has a minor rounding difference of ${{ balance_diff|floatformat:2 }} and wish to proceed
+                </label>
+            </div>
+        </div>
+        {% endif %}
+
         <!-- Filter Bar -->
         <div class="card mb-3">
             <div class="card-body py-2">
@@ -108,6 +137,7 @@
         <!-- Import Form -->
         <form method="post" action="{% url 'core:commit_tb_import' pk=fy.pk %}" id="importForm">
             {% csrf_token %}
+            <input type="hidden" name="rounding_acknowledged" id="roundingHidden" value="">
 
             <div class="card">
                 <div class="card-body p-0">
@@ -236,7 +266,9 @@ document.addEventListener('DOMContentLoaded', function() {
         suggestCodeUrl: "{% url 'core:entity_coa_suggest_code' pk=fy.pk %}",
         quickAddUrl: "{% url 'integrations:quick_add_entity_account' %}",
         csrfToken: document.querySelector('[name=csrfmiddlewaretoken]').value,
-        balanceRequired: true
+        balanceRequired: true,
+        balanceBlocked: {{ balance_blocked|yesno:"true,false" }},
+        balanceWarning: {{ balance_warning|yesno:"true,false" }}
     });
 });
 </script>
