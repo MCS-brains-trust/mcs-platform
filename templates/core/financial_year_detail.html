@@ -5,16 +5,27 @@
 
 {% block content %}
 <style>
-.amber-indicator {
-    color: #D97706;
-    font-size: 0.85rem;
-    margin-left: 4px;
+.tb-flag-icon {
+    font-size: 14px;
+    margin-left: 8px;
     cursor: default;
     vertical-align: middle;
+    line-height: 1;
 }
-.amber-indicator:hover {
-    color: #B45309;
+.tb-flag-tooltip .tooltip-inner {
+    max-width: 380px;
+    text-align: left;
+    padding: 10px 12px;
+    font-size: 0.82rem;
 }
+.tb-flag-tooltip .tt-section-title {
+    font-weight: 600;
+    border-bottom: 1px solid rgba(255,255,255,.25);
+    padding-bottom: 3px;
+    margin-bottom: 5px;
+}
+.tt-badge-critical { background: #DC2626; color: #fff; padding: 1px 5px; border-radius: 3px; font-size: 0.7rem; font-weight: 600; }
+.tt-badge-advisory { background: #D97706; color: #fff; padding: 1px 5px; border-radius: 3px; font-size: 0.7rem; font-weight: 600; }
 </style>
 <nav aria-label="breadcrumb">
     <ol class="breadcrumb">
@@ -692,8 +703,8 @@ function applyRerollForward() {
             </div>
         </div>
         <div class="d-flex align-items-center gap-2 mb-2">
-            <button type="button" class="btn btn-sm btn-outline-warning" id="btn-amber-filter" onclick="toggleAmberFilter()" title="Show only accounts with amber indicators">
-                <span>&#9888;</span> Show Amber Only
+            <button type="button" class="btn btn-sm btn-outline-warning" id="btn-amber-filter" onclick="toggleAmberFilter()" title="Show only accounts with flags">
+                <span>&#9888;</span> Show Flagged Only
             </button>
             <small class="text-muted" id="amber-count-label"></small>
         </div>
@@ -720,11 +731,17 @@ function applyRerollForward() {
                         </td>
                     </tr>
                     {% for line in lines %}
-                    <tr class="{% if not line.mapped_line_item %}table-warning{% endif %}{% if line.is_adjustment %} fst-italic{% endif %}" style="border-color: #e9ecef;" {% if line.amber_indicators %}data-amber="true"{% endif %}>
+                    <tr class="{% if not line.mapped_line_item %}table-warning{% endif %}{% if line.is_adjustment %} fst-italic{% endif %}" style="border-color: #e9ecef;" {% if line.amber_indicators or line.eva_finding_flags %}data-amber="true"{% endif %}>
                         <td><code class="text-muted">{{ line.account_code }}</code></td>
                         <td>
                             {{ line.account_name }}
-                            {% if line.amber_indicators %}<span class="amber-indicator" data-bs-toggle="tooltip" data-bs-html="true" title="{% for ai in line.amber_indicators %}{{ ai.message }}{% if not forloop.last %}&lt;br&gt;&lt;br&gt;{% endif %}{% endfor %}">&#9888;</span>{% endif %}
+                            {% if line.amber_indicators and line.eva_finding_flags %}
+                            <span class="tb-flag-icon" style="color:#DC2626;" data-bs-toggle="tooltip" data-bs-custom-class="tb-flag-tooltip" data-bs-html="true" title="&lt;div class='tt-section-title'&gt;Variance Indicators&lt;/div&gt;{% for ai in line.amber_indicators %}{{ ai.message }}{% if not forloop.last %}&lt;br&gt;{% endif %}{% endfor %}&lt;hr style='margin:6px 0;border-color:rgba(255,255,255,.3)'&gt;&lt;div class='tt-section-title'&gt;Eva Compliance Findings&lt;/div&gt;{% for ef in line.eva_finding_flags %}{{ ef.title }}&amp;nbsp;&lt;span class='tt-badge-{{ ef.severity }}'&gt;{{ ef.severity|upper }}&lt;/span&gt;{% if not forloop.last %}&lt;br&gt;{% endif %}{% endfor %}">&#9888;</span>
+                            {% elif line.amber_indicators %}
+                            <span class="tb-flag-icon" style="color:#D97706;" data-bs-toggle="tooltip" data-bs-custom-class="tb-flag-tooltip" data-bs-html="true" title="{% for ai in line.amber_indicators %}{{ ai.message }}{% if not forloop.last %}&lt;br&gt;&lt;br&gt;{% endif %}{% endfor %}">&#9888;</span>
+                            {% elif line.eva_finding_flags %}
+                            <span class="tb-flag-icon" style="color:#7C3AED;" data-bs-toggle="tooltip" data-bs-custom-class="tb-flag-tooltip" data-bs-html="true" title="{% for ef in line.eva_finding_flags %}{{ ef.title }}&amp;nbsp;&lt;span class='tt-badge-{{ ef.severity }}'&gt;{{ ef.severity|upper }}&lt;/span&gt;{% if not forloop.last %}&lt;br&gt;{% endif %}{% endfor %}">&#9873;</span>
+                            {% endif %}
                             {% if not line.mapped_line_item %}<small class="text-danger ms-1"><i class="bi bi-exclamation-triangle"></i></small>{% endif %}
                         </td>
                         <td class="text-end">{% if line.display_dr and line.display_dr != 0 %}<a href="{% url 'core:account_code_breakdown' pk=fy.pk account_code=line.account_code %}" target="_blank" class="text-decoration-none" title="View {% if line.is_aggregated %}{{ line.sub_count }} entries{% else %}account details{% endif %} &amp; re-allocate">{{ line.display_dr|floatformat:2|intcomma }}</a>{% endif %}</td>
@@ -3773,17 +3790,17 @@ function toggleAmberFilter() {
     } else {
         btn.classList.remove('btn-warning', 'text-white');
         btn.classList.add('btn-outline-warning');
-        btn.innerHTML = '<span>&#9888;</span> Show Amber Only';
+        btn.innerHTML = '<span>&#9888;</span> Show Flagged Only';
     }
-    document.getElementById('amber-count-label').textContent = amberFilterActive ? visibleCount + ' amber accounts shown' : '';
+    document.getElementById('amber-count-label').textContent = amberFilterActive ? visibleCount + ' flagged accounts shown' : '';
 }
-// Set amber count on load
+// Set flagged count on load
 document.addEventListener('DOMContentLoaded', function() {
     const table = document.getElementById('tb-table');
     if (table) {
         const count = table.querySelectorAll('tr[data-amber]').length;
         if (count > 0) {
-            document.getElementById('amber-count-label').textContent = count + ' accounts with amber indicators';
+            document.getElementById('amber-count-label').textContent = count + ' accounts with flags';
         }
     }
 });

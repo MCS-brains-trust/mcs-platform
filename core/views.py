@@ -21,6 +21,7 @@ from .models import (
     ClientAssociate, AccountingSoftware, MeetingNote,
     DepreciationAsset, RiskFlag, StockItem, ActivityLog, EntityChartOfAccount,
     BulkJournalUpload, BASPeriod, BankAccountMapping, BASPeriodCommentary,
+    EvaReview,
 )
 from .forms import (
     ClientForm, EntityForm, FinancialYearForm,
@@ -1569,6 +1570,13 @@ def financial_year_detail(request, pk):
                 agg.prior_balance_override = any(getattr(l, 'prior_balance_override', False) for l in group)
                 agg.reclassified = any(getattr(l, 'reclassified', False) for l in group)
                 agg.risk_flags_list = first.risk_flags_list if hasattr(first, 'risk_flags_list') else []
+                # Merge eva_flags across all sub-entries (deduplicated)
+                merged_eva = []
+                for l in group:
+                    for f in (getattr(l, 'eva_flags', None) or []):
+                        if f not in merged_eva:
+                            merged_eva.append(f)
+                agg.eva_flags = merged_eva
                 agg.sub_entries = group
                 agg.is_aggregated = True
                 agg.sub_count = len(group)
@@ -1690,6 +1698,37 @@ def financial_year_detail(request, pk):
     from core.eva_amber import annotate_tb_lines_with_amber
     for section_name, section_lines in aggregated_sections.items():
         annotate_tb_lines_with_amber(section_lines)
+
+    # Build Eva finding metadata lookup for TB flag rendering
+    # (check_name -> {title, severity}) from the latest review's open findings
+    eva_finding_meta = {}
+    latest_review = (
+        EvaReview.objects.filter(financial_year=fy)
+        .order_by("-completed_at")
+        .first()
+    )
+    if latest_review:
+        for ef in latest_review.findings.filter(
+            status__in=["open", "reopened"]
+        ).values("check_name", "title", "severity"):
+            eva_finding_meta[ef["check_name"]] = {
+                "title": ef["title"],
+                "severity": ef["severity"],
+            }
+    # Annotate each TB line with resolved eva_findings metadata
+    for section_name, section_lines in aggregated_sections.items():
+        for line in section_lines:
+            raw_flags = getattr(line, "eva_flags", None) or []
+            enriched = []
+            for cn in raw_flags:
+                meta = eva_finding_meta.get(cn)
+                if meta:
+                    enriched.append({
+                        "check_name": cn,
+                        "title": meta["title"],
+                        "severity": meta["severity"],
+                    })
+            line.eva_finding_flags = enriched
 
     # Depreciation assets
     depreciation_assets = DepreciationAsset.objects.filter(financial_year=fy).select_related('source_transaction')
