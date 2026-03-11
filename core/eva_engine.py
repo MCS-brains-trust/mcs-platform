@@ -54,6 +54,66 @@ RELATED_PARTY_KEYWORDS = {
 }
 
 # ---------------------------------------------------------------------------
+# TB Line ↔ EvaFinding Tagging Helpers
+# ---------------------------------------------------------------------------
+
+def tag_tb_lines_with_finding(financial_year, finding, account_codes):
+    """Tag TrialBalanceLine rows by appending the finding's check_name to eva_flags.
+
+    Called after each EvaFinding is saved during the Eva review task.
+
+    Args:
+        financial_year: FinancialYear instance
+        finding: EvaFinding instance (must have check_name set)
+        account_codes: list of account code strings Eva identified
+    """
+    if not account_codes:
+        return
+    from core.models import TrialBalanceLine
+
+    check_name = finding.check_name
+    lines = list(
+        TrialBalanceLine.objects.filter(
+            financial_year=financial_year,
+            account_code__in=account_codes,
+        )
+    )
+    updated = []
+    for line in lines:
+        flags = line.eva_flags or []
+        if check_name not in flags:
+            flags.append(check_name)
+            line.eva_flags = flags
+            updated.append(line)
+    if updated:
+        TrialBalanceLine.objects.bulk_update(updated, ["eva_flags"])
+
+
+def untag_tb_lines_for_finding(financial_year, check_name):
+    """Remove *check_name* from eva_flags on all TB lines for this FY.
+
+    Called when a finding is addressed so the TB rows are no longer tagged.
+    """
+    from core.models import TrialBalanceLine
+
+    lines = list(
+        TrialBalanceLine.objects.filter(
+            financial_year=financial_year,
+            eva_flags__contains=check_name,
+        )
+    )
+    updated = []
+    for line in lines:
+        flags = line.eva_flags or []
+        if check_name in flags:
+            flags.remove(check_name)
+            line.eva_flags = flags
+            updated.append(line)
+    if updated:
+        TrialBalanceLine.objects.bulk_update(updated, ["eva_flags"])
+
+
+# ---------------------------------------------------------------------------
 # Compliance Check Definitions
 # ---------------------------------------------------------------------------
 # Each check has: id, name, description, entity_types (which types it applies to),
@@ -971,7 +1031,8 @@ OUTPUT FORMAT — JSON object only (no markdown, no code fences)
   "remediation_firm_procedure": "How MC&S handles this issue. MUST cite Knowledge Brain document title if available. If none found: No firm-specific procedure found in the Knowledge Brain. Max 3 sentences.",
   "remediation_authority": "The specific legislative section, ATO ruling number, or AASB standard that governs this issue. Max 2 sentences.",
   "remediation_fix": "Concrete steps specific to THIS entity. What needs to be done, in what order, by whom. Reference the entity's actual account codes and balances. Max 4 sentences.",
-  "cross_references": ["check_id_1", "check_id_2"]
+  "cross_references": ["check_id_1", "check_id_2"],
+  "affected_account_codes": ["1-1100", "2-1200"]
 }
 
 ═══════════════════════════════════════════════════════
@@ -1008,6 +1069,9 @@ Rules:
 - Each remediation section: 2-4 sentences max.
 - cross_references: list check IDs (e.g. "div7a", "super_guarantee") where
   the same account or issue is also relevant. Use this INSTEAD of duplicating.
+- affected_account_codes: list of account codes (e.g. "2-1200") that this
+  finding relates to. Extract these from the trial balance data provided.
+  Empty list if no specific accounts are involved.
 
 ═══════════════════════════════════════════════════════
 COMPARATIVE CONSISTENCY — SPECIAL RULES
@@ -1510,6 +1574,13 @@ def _run_eva_review_background(fy_pk, user_pk):
                     cross_refs = result.get("cross_references", []) or []
                     if cross_refs:
                         finding._cross_ref_check_ids = cross_refs
+                    # Tag affected TB lines with this finding's check_name
+                    affected_codes = result.get("affected_account_codes", []) or []
+                    if affected_codes:
+                        try:
+                            tag_tb_lines_with_finding(fy, finding, affected_codes)
+                        except Exception as tag_err:
+                            print(f"[Eva] WARNING: failed to tag TB lines for {check_def['id']}: {tag_err}", flush=True)
                     findings_created += 1
                     _eva_review_tasks[task_key]["findings_count"] = findings_created
                     review.raw_response = {"progress": _eva_review_tasks[task_key]}
@@ -1539,7 +1610,7 @@ def _run_eva_review_background(fy_pk, user_pk):
                     if flag_severity not in ("critical", "advisory"):
                         flag_severity = "advisory"
                     try:
-                        EvaFinding.objects.create(
+                        fallback_finding = EvaFinding.objects.create(
                             eva_review=review,
                             check_name=check_def["id"][:50],
                             severity=flag_severity,
@@ -1551,6 +1622,16 @@ def _run_eva_review_background(fy_pk, user_pk):
                             confidence="high",
                             status="open",
                         )
+                        # Tag TB lines from the risk flag's affected_accounts
+                        flag_codes = [
+                            a["account_code"] for a in (flag.affected_accounts or [])
+                            if isinstance(a, dict) and a.get("account_code")
+                        ]
+                        if flag_codes:
+                            try:
+                                tag_tb_lines_with_finding(fy, fallback_finding, flag_codes)
+                            except Exception as tag_err:
+                                print(f"[Eva] WARNING: failed to tag TB lines for fallback {check_def['id']}: {tag_err}", flush=True)
                         findings_created += 1
                         _eva_review_tasks[task_key]["findings_count"] = findings_created
                         review.raw_response = {"progress": _eva_review_tasks[task_key]}
@@ -1990,12 +2071,19 @@ def eva_review_detail(request, pk):
 @require_POST
 def eva_finding_resolve(request, pk):
     """
-    Mark an Eva finding as addressed.
+    Mark an Eva finding as addressed — atomically.
 
     POST /api/eva-findings/<pk>/resolve/
     Body: {"resolution_note": "..."}
+
+    Inside a single transaction.atomic() block this endpoint:
+      a) Sets the finding status to ADDRESSED with resolution metadata.
+      b) Creates an ActivityLog with EVA_FINDING_ADDRESSED event type.
+      c) Removes the finding's check_name from eva_flags on all
+         TrialBalanceLine rows for the same financial year.
     """
-    from core.models import EvaFinding, EvaReview, FinancialYear, ActivityLog
+    from django.db import transaction
+    from core.models import EvaFinding, ActivityLog
 
     try:
         finding = EvaFinding.objects.select_related(
@@ -2016,26 +2104,56 @@ def eva_finding_resolve(request, pk):
             status=400,
         )
 
+    review = finding.eva_review
+    fy = review.financial_year
+
     try:
-        finding.status = "addressed"
-        finding.resolution_note = resolution_note
-        finding.resolved_by = request.user
-        finding.resolved_at = timezone.now()
-        finding.save(update_fields=[
-            "status", "resolution_note", "resolved_by", "resolved_at"
-        ])
+        with transaction.atomic():
+            # (a) Mark the finding as addressed
+            finding.status = "addressed"
+            finding.resolution_note = resolution_note
+            finding.resolved_by = request.user
+            finding.resolved_at = timezone.now()
+            finding.save(update_fields=[
+                "status", "resolution_note", "resolved_by", "resolved_at"
+            ])
+
+            # (b) Create ActivityLog with finding FK and full resolution note
+            ActivityLog.objects.create(
+                user=request.user,
+                event_type=ActivityLog.EventType.EVA_FINDING_ADDRESSED,
+                title=f"Eva Finding Addressed — {finding.title or finding.check_name}",
+                description=(
+                    f"[{finding.severity.upper()}] "
+                    f"'{finding.title or finding.check_name}' addressed for "
+                    f"{fy.entity.entity_name} ({fy.year_label}).\n"
+                    f"Resolution: {resolution_note}"
+                ),
+                entity=fy.entity,
+                financial_year=fy,
+                eva_finding=finding,
+                metadata={
+                    "check_name": finding.check_name,
+                    "severity": finding.severity,
+                },
+                url=f"/entities/years/{fy.pk}/",
+            )
+
+            # (c) Remove check_name from eva_flags on tagged TB lines
+            untag_tb_lines_for_finding(fy, finding.check_name)
+
     except Exception as exc:
-        logger.exception("Failed to save Eva finding resolution (finding=%s): %s", pk, exc)
+        logger.exception(
+            "Failed to resolve Eva finding (finding=%s): %s", pk, exc
+        )
         return JsonResponse(
             {"error": f"Failed to save resolution: {exc}"},
             status=500,
         )
 
-    # Check if all findings are now addressed
-    review = finding.eva_review
+    # Check if all findings are now addressed (outside the atomic block
+    # so we read committed state)
     open_findings = review.findings.filter(status="open").count()
-
-    fy = review.financial_year
 
     if open_findings == 0:
         # All findings addressed — clear the review
@@ -2045,10 +2163,9 @@ def eva_finding_resolve(request, pk):
         fy.status = fy.Status.EVA_CLEARED
         fy.save(update_fields=["status"])
 
-        # Log
         ActivityLog.objects.create(
             user=request.user,
-            event_type="eva_cleared",
+            event_type=ActivityLog.EventType.EVA_REVIEW_CLEARED,
             title=f"Eva Cleared — {fy.entity.entity_name}",
             description=(
                 f"All Eva findings addressed for {fy.entity.entity_name} ({fy.year_label}). "
@@ -2058,21 +2175,6 @@ def eva_finding_resolve(request, pk):
             financial_year=fy,
             url=f"/entities/years/{fy.pk}/",
         )
-
-    # Log the resolution
-    ActivityLog.objects.create(
-        user=request.user,
-        event_type="eva_finding_resolved",
-        title=f"Eva Finding Addressed — {finding.title or finding.check_name}",
-        description=(
-            f"Finding '{finding.title or finding.check_name}' addressed for "
-            f"{fy.entity.entity_name} ({fy.year_label}). "
-            f"Note: {resolution_note[:200]}"
-        ),
-        entity=fy.entity,
-        financial_year=fy,
-        url=f"/entities/years/{fy.pk}/",
-    )
 
     return JsonResponse({
         "status": "ok",

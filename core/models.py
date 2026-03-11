@@ -1101,6 +1101,11 @@ class TrialBalanceLine(models.Model):
         help_text="The manual journal that created this adjustment TB line",
     )
 
+    eva_flags = models.JSONField(
+        default=list, blank=True,
+        help_text="List of EvaFinding check_name strings that flagged this row",
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
