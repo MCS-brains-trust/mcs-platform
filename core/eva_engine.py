@@ -2668,3 +2668,64 @@ def eva_clarification_question(request, pk):
         "question": question,
         "existing_clarifications": existing,
     })
+
+
+# ---------------------------------------------------------------------------
+# Financial Year Activity Feed
+# ---------------------------------------------------------------------------
+
+@login_required
+@require_GET
+def financial_year_activity(request, pk):
+    """
+    Return ActivityLog records for a financial year.
+
+    GET /api/financial-years/<pk>/activity/
+    Query params:
+        event_type  — filter by event_type value (optional)
+        limit       — max records to return (default 100, max 500)
+    """
+    from core.models import FinancialYear, ActivityLog
+
+    try:
+        fy = FinancialYear.objects.get(pk=pk)
+    except FinancialYear.DoesNotExist:
+        return JsonResponse({"error": "Financial year not found"}, status=404)
+
+    qs = (
+        ActivityLog.objects
+        .filter(financial_year=fy)
+        .select_related("user", "eva_finding")
+        .order_by("-created_at")
+    )
+
+    event_type = request.GET.get("event_type", "").strip()
+    if event_type:
+        qs = qs.filter(event_type=event_type)
+
+    try:
+        limit = min(int(request.GET.get("limit", 100)), 500)
+    except (ValueError, TypeError):
+        limit = 100
+
+    records = []
+    for log in qs[:limit]:
+        entry = {
+            "id": str(log.pk),
+            "event_type": log.event_type,
+            "description": log.description,
+            "user": log.user.get_full_name() or log.user.username if log.user else "System",
+            "created_at": log.created_at.isoformat(),
+            "metadata": log.metadata,
+        }
+        if log.eva_finding_id:
+            f = log.eva_finding
+            entry["eva_finding"] = {
+                "id": str(f.pk),
+                "title": f.title,
+                "severity": f.severity,
+                "check_name": f.check_name,
+            }
+        records.append(entry)
+
+    return JsonResponse({"results": records})
