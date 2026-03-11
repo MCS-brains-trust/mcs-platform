@@ -12,14 +12,12 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
         </div>
         <div class="d-flex align-items-center gap-2">
             <span id="eva-gate-status-badge" class="badge bg-light text-dark">
-                {% if fy.status == 'pending_eva' %}
+                {% if fy.status == 'in_review' and eva_review_running %}
                     <span class="spinner-border spinner-border-sm me-1" style="width: 12px; height: 12px;"></span> Reviewing...
-                {% elif fy.status == 'eva_cleared' %}
-                    <i class="bi bi-check-circle-fill text-success"></i> Cleared
-                {% elif fy.status == 'eva_error' %}
-                    <i class="bi bi-exclamation-triangle text-danger"></i> Error
-                {% elif fy.status == 'finalised' or fy.status == 'locked' %}
+                {% elif fy.status == 'finalised' %}
                     <i class="bi bi-lock-fill text-success"></i> Finalised
+                {% elif fy.status == 'in_review' %}
+                    <i class="bi bi-clock"></i> Awaiting Review
                 {% else %}
                     <i class="bi bi-clock"></i> Not Submitted
                 {% endif %}
@@ -27,8 +25,8 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
         </div>
     </div>
     <div class="card-body">
-        {% if fy.can_ask_eva and fy.status != 'pending_eva' %}
-        <!-- Show "Ask Eva to Review" button (available when status is Finished) -->
+        {% if fy.can_ask_eva and not eva_review_running %}
+        <!-- Show "Ask Eva to Review" button (available when status is In Review or Reopened) -->
         <div class="text-center py-3" id="eva-review-prompt">
             <i class="bi bi-shield-check" style="font-size: 2.5rem; color: #0F6B74;"></i>
             <p class="mt-2 mb-3">Submit this financial year to Eva for a structured compliance review before finalisation.</p>
@@ -64,8 +62,8 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
             </div>
         </div>
 
-        {% elif fy.status == 'pending_eva' %}
-        <!-- PENDING_EVA: Eva is reviewing (page loaded while review in progress) -->
+        {% elif eva_review_running %}
+        <!-- Eva is currently reviewing (background thread active) -->
         <div id="eva-review-progress">
             <div class="text-center py-3">
                 <div class="d-flex align-items-center justify-content-center gap-3 mb-3">
@@ -90,30 +88,8 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
             </div>
         </div>
 
-        {% elif fy.status == 'eva_cleared' %}
-        <!-- EVA_CLEARED: Ready to finalise -->
-        <div class="text-center py-3" id="eva-cleared-panel">
-            <i class="bi bi-check-circle-fill text-success" style="font-size: 2.5rem;"></i>
-            <p class="fw-semibold mt-2 mb-1 text-success">Eva has cleared this financial year</p>
-            <p class="text-muted small mb-3">No material compliance issues identified. You may now finalise.</p>
-            <button type="button" class="btn btn-success btn-lg" onclick="evaFinalise()" id="eva-finalise-btn">
-                <i class="bi bi-check-circle me-1"></i> Finalise Financial Year
-            </button>
-        </div>
-
-        {% elif fy.status == 'eva_error' %}
-        <!-- EVA_ERROR: Review failed -->
-        <div class="text-center py-3">
-            <i class="bi bi-exclamation-triangle-fill text-danger" style="font-size: 2.5rem;"></i>
-            <p class="fw-semibold mt-2 mb-1 text-danger">Eva Review Error</p>
-            <p class="text-muted small mb-3">The review encountered an error. You can try again.</p>
-            <button type="button" class="btn btn-lg" style="background: #0F6B74; color: white;" onclick="askEvaToReview()" id="eva-review-btn">
-                <i class="bi bi-arrow-repeat me-1"></i> Retry Eva Review
-            </button>
-        </div>
-
-        {% elif fy.status == 'finalised' or fy.status == 'locked' %}
-        <!-- FINALISED / LOCKED -->
+        {% elif fy.status == 'finalised' %}
+        <!-- FINALISED -->
         <div class="text-center py-3">
             <i class="bi bi-lock-fill text-success" style="font-size: 2rem;"></i>
             <p class="fw-semibold mt-2 mb-0">This financial year has been finalised</p>
@@ -309,8 +285,8 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
                 : '<span class="badge bg-warning text-dark">Advisory</span>';
 
             var statusBadge = f.status === 'addressed'
-                ? '<span class="badge bg-success"><i class="bi bi-check-circle"></i> Addressed</span>'
-                : '<span class="badge bg-secondary">Open</span>';
+                ? '<span id="status-badge-' + f.id + '" class="badge bg-success"><i class="bi bi-check-circle"></i> Addressed</span>'
+                : '<span id="status-badge-' + f.id + '" class="badge bg-secondary">Open</span>';
 
             var confidenceBadge = '<span class="badge bg-' + (f.confidence === 'high' ? 'success' : f.confidence === 'medium' ? 'info' : 'secondary') + '">' + f.confidence + ' confidence</span>';
 
@@ -607,6 +583,17 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
                 if (resForm && resForm.parentElement) {
                     resForm.parentElement.innerHTML = '<div class="mt-2 p-2 bg-light rounded"><small class="text-success"><i class="bi bi-check-circle"></i> Addressed via Eva clarification</small></div>';
                 }
+                // Flip the status badge from Open to Addressed
+                var statusBadge = document.getElementById('status-badge-' + findingId);
+                if (statusBadge) {
+                    statusBadge.className = 'badge bg-success';
+                    statusBadge.innerHTML = '<i class="bi bi-check-circle"></i> Addressed';
+                }
+                // Update the card border
+                var card = document.getElementById('finding-card-' + findingId);
+                if (card) {
+                    card.className = card.className.replace('border-danger', 'border-success').replace('border-warning', 'border-success');
+                }
                 // Update count badge
                 var countBadge = document.getElementById('eva-findings-count');
                 if (countBadge) {
@@ -719,7 +706,7 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
                     countBadge.textContent = openCount + ' open /' + (parts[1] || '');
                 }
 
-                if (data.fy_status === 'eva_cleared') {
+                if (data.can_finalise) {
                     setTimeout(function() { location.reload(); }, 1500);
                 }
             } else {
@@ -785,13 +772,13 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
         });
     };
 
-    // ── Auto-poll if status is PENDING_EVA ──
-    {% if fy.status == 'pending_eva' %}
+    // ── Auto-poll if Eva review is running ──
+    {% if eva_review_running %}
     startPolling();
     {% endif %}
 
     // ── Load existing findings if review has findings ──
-    {% if fy.status == 'pending_eva' or fy.status == 'finished' %}
+    {% if eva_review_running or fy.status == 'in_review' or fy.status == 'reopened' %}
     fetch('/api/financial-years/' + fyPk + '/eva-review/', {
         headers: {'X-Requested-With': 'XMLHttpRequest'},
     })

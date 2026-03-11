@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -rn \"finished\" /c/Users/Elio/mcs-platform/core/views*.py | head -30)",
+      "Bash(grep -rn \"\\\\.FINISHED\\\\|Status.FINISHED\\\\|== 'finished'\\\\|== \\\\\"finished\\\\\"\" /c/Users/Elio/mcs-platform/core/*.py)",
+      "Bash(grep -rn \"finished\" /c/Users/Elio/mcs-platform/templates/core/*.html | head -20)",
+      "Bash(grep -n \"ask_eva_review\\\\|package_assembly\" /c/Users/Elio/mcs-platform/core/views*.py | head -30)",
+      "Bash(grep -n \"status == 'finished'\" /c/Users/Elio/mcs-platform/core/views_eva.py)",
+      "Bash(grep -rn \"finished\" /c/Users/Elio/mcs-platform/templates/core/*.html | grep -i \"status\\\\|badge\\\\|option\\\\|value\" | sort)",
+      "Bash(ls -1 /c/Users/Elio/mcs-platform/core/migrations/*.py | grep -v __pycache__ | sort)",
+      "Bash(python manage.py makemigrations core --name=\"eva_finding_suppression\" --dry-run 2>&1 | head -20)",
+      "Bash(grep -r \"Status\\\\.PREPARED\\\\|Status\\\\.EVA_CLEARED\\\\|Status\\\\.PENDING_EVA\\\\|Status\\\\.FINISHED\\\\|Status\\\\.EVA_ERROR\\\\|Status\\\\.LOCKED\" core/*.py | head -30)",
+      "Bash(grep -n \"\\\\\"FINISHED\\\\\"\\\\|\\\\\"EVA_CLEARED\\\\\"\\\\|\\\\\"PENDING_EVA\\\\\"\\\\|\\\\\"FINISHED\\\\\"\\\\|\\\\\"EVA_ERROR\\\\\"\\\\|\\\\\"LOCKED\\\\\"\" core/*.py 2>/dev/null | grep -v \".pyc\" | grep -v \"migrations\")",
+      "Bash(find core:*)"
+    ]
+  }
+}

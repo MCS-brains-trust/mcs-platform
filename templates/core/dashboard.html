@@ -44,7 +44,7 @@
                                     <small class="text-muted">{{ fy.year_label }}</small>
                                 </td>
                                 <td>
-                                    <span class="badge bg-{% if fy.status == 'draft' %}warning text-dark{% elif fy.status == 'in_review' %}info{% elif fy.status == 'finished' %}primary{% else %}success{% endif %}">
+                                    <span class="badge bg-{% if fy.status == 'draft' %}warning text-dark{% elif fy.status == 'in_review' %}info{% elif fy.status == 'reopened' %}warning text-dark{% elif fy.status == 'finalised' %}success{% else %}success{% endif %}">
                                         {{ fy.get_status_display }}
                                     </span>
                                 </td>

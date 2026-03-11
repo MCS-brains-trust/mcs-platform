@@ -44,11 +44,11 @@ def bulk_generate_packages(request):
             results["errors"].append({"id": str(eid), "error": "Entity not found"})
             continue
 
-        # Find the most recent FY that is FINISHED or later
+        # Find the most recent finalised FY
         fy = (
             FinancialYear.objects.filter(
                 entity=entity,
-                status__in=["FINISHED", "EVA_CLEARED", "LOCKED"],
+                status="finalised",
             )
             .order_by("-end_date")
             .first()
@@ -58,7 +58,7 @@ def bulk_generate_packages(request):
             results["skipped"].append({
                 "id": str(eid),
                 "name": entity.entity_name,
-                "reason": "No financial year in FINISHED or later status",
+                "reason": "No finalised financial year",
             })
             continue
 
@@ -102,7 +102,7 @@ def bulk_generate_packages(request):
 @login_required
 def bulk_readiness_check(request):
     """
-    Check package readiness for all entities with a FINISHED+ FY.
+    Check package readiness for all entities with a finalised FY.
     Returns a JSON list of entities with their readiness status.
     """
     from core.views_package_assembly import PACKAGE_CONTENTS
@@ -114,7 +114,7 @@ def bulk_readiness_check(request):
         fy = (
             FinancialYear.objects.filter(
                 entity=entity,
-                status__in=["FINISHED", "EVA_CLEARED", "LOCKED"],
+                status="finalised",
             )
             .order_by("-end_date")
             .first()

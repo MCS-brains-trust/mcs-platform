@@ -445,13 +445,7 @@ class FinancialYear(models.Model):
     class Status(models.TextChoices):
         DRAFT = "draft", "Draft"
         IN_REVIEW = "in_review", "In Review"
-        FINISHED = "finished", "Finished"
-        PREPARED = "prepared", "Prepared (Eva Reviewing)"
-        PENDING_EVA = "pending_eva", "Pending Eva Review"
-        EVA_CLEARED = "eva_cleared", "Eva Cleared"
-        EVA_ERROR = "eva_error", "Eva Error"
-        LOCKED = "locked", "Locked"
-        FINALISED = "finalised", "Finalised"  # Legacy — use LOCKED for new workflow
+        FINALISED = "finalised", "Finalised"
         REOPENED = "reopened", "Reopened"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -578,52 +572,48 @@ class FinancialYear(models.Model):
     # --- Status transition constants ---
     VALID_TRANSITIONS = {
         'draft': ['in_review'],
-        'in_review': ['draft', 'finished'],
-        'finished': ['in_review', 'prepared', 'pending_eva'],
-        'prepared': ['finished', 'eva_cleared', 'eva_error'],
-        'pending_eva': ['finished', 'eva_cleared', 'eva_error'],
-        'eva_cleared': ['locked', 'finished'],  # finished = reopen
-        'eva_error': ['finished'],
-        'locked': ['reopened'],  # reopen sets to reopened
-        'finalised': ['reopened'],  # legacy: reopen sets to reopened
-        'reopened': ['in_review', 'finished', 'prepared', 'pending_eva', 'finalised'],
+        'in_review': ['finalised', 'draft'],
+        'finalised': ['reopened'],
+        'reopened': ['in_review'],
     }
 
     @property
     def is_locked(self):
-        return self.status in (self.Status.LOCKED, self.Status.FINALISED)
+        return self.status == self.Status.FINALISED
 
     @property
     def can_ask_eva(self):
-        """Eva can be triggered once the file is Finished or Reopened."""
-        return self.status in (
-            self.Status.FINISHED, self.Status.PREPARED,
-            self.Status.PENDING_EVA, self.Status.EVA_ERROR,
-            self.Status.REOPENED,
-        )
-
-    @property
-    def is_eva_reviewable(self):
-        """Can the 'Ask Eva to Review' button be clicked?"""
-        return self.status == self.Status.FINISHED
+        """Eva can be triggered when status is in_review or reopened."""
+        return self.status in (self.Status.IN_REVIEW, self.Status.REOPENED)
 
     @property
     def can_finalise(self):
-        """Finalisation requires Eva clearance."""
-        return self.status == self.Status.EVA_CLEARED
+        """
+        Finalise button is active when:
+        - Status is in_review
+        - Eva has been run at least once
+        - Zero open Eva findings remain
+        """
+        if self.status != self.Status.IN_REVIEW:
+            return False
+        has_eva_run = self.eva_reviews.exists()
+        # Use reverse relation through eva_reviews to avoid forward reference
+        from django.apps import apps
+        EvaFindingModel = apps.get_model('core', 'EvaFinding')
+        open_findings = EvaFindingModel.objects.filter(
+            eva_review__financial_year=self,
+            status='open',
+        ).count()
+        return has_eva_run and open_findings == 0
 
     @property
-    def is_finalisable(self):
-        """Can the Finalise button be clicked? Only when Eva has cleared."""
-        return self.status == self.Status.EVA_CLEARED
+    def is_reopened(self):
+        return self.status == self.Status.REOPENED
 
     @property
     def can_assemble_package(self):
-        """Package assembly available from FINISHED onwards."""
-        return self.status in (
-            self.Status.FINISHED, self.Status.EVA_CLEARED,
-            self.Status.LOCKED, self.Status.FINALISED,
-        )
+        """Package assembly available from finalised only."""
+        return self.status == self.Status.FINALISED
 
     def transition_to(self, new_status):
         """Validate and execute a status transition. Returns True if valid."""
@@ -3571,6 +3561,52 @@ class EvaClarification(models.Model):
 
     def __str__(self):
         return f"Clarification on {self.finding} — Q:{self.question_id} A:{self.answer_value}"
+
+
+# ---------------------------------------------------------------------------
+# Eva Finding Suppression
+# ---------------------------------------------------------------------------
+class EvaFindingSuppression(models.Model):
+    """
+    Prevents a resolved Eva finding from being re-raised on re-run.
+    The fingerprint is a deterministic hash of:
+    entity_id + financial_year_id + rule_category + sorted account references.
+    It must NOT include dollar amounts or narrative text — only structural identifiers.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    financial_year = models.ForeignKey(
+        'FinancialYear', on_delete=models.CASCADE, related_name='suppressed_findings'
+    )
+    fingerprint = models.CharField(max_length=64)  # SHA-256 hex digest
+    rule_category = models.CharField(max_length=100)
+    suppressed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+    )
+    suppressed_at = models.DateTimeField(auto_now_add=True)
+    accountant_note = models.TextField(blank=True)
+
+    class Meta:
+        unique_together = ('financial_year', 'fingerprint')
+
+    def __str__(self):
+        return f"Suppression {self.fingerprint[:12]}… on {self.financial_year}"
+
+    @staticmethod
+    def generate_fingerprint(entity_id, financial_year_id, rule_category, account_refs):
+        """
+        Generate a stable fingerprint from structural identifiers only.
+        account_refs should be a list of account codes/numbers — sort before hashing.
+        """
+        import hashlib
+        payload = {
+            'entity_id': str(entity_id),
+            'financial_year_id': str(financial_year_id),
+            'rule_category': rule_category,
+            'account_refs': sorted(account_refs),
+        }
+        return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
 # ---------------------------------------------------------------------------

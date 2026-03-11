@@ -751,9 +751,7 @@ def run_eva_review(financial_year, user, opus_override=False):
         checks_total=len(applicable_checks),
     )
 
-    # Update FY status to PREPARED
-    financial_year.status = FinancialYear.Status.PREPARED
-    financial_year.save(update_fields=["status"])
+    # FY stays in_review — no status change needed
 
     # Log the trigger
     AuditLog.objects.create(
@@ -886,8 +884,7 @@ Please conduct your compliance review now and return the JSON array of findings.
             )
         else:
             review.status = EvaReview.Status.CLEARED
-            financial_year.status = FinancialYear.Status.EVA_CLEARED
-            financial_year.save(update_fields=["status"])
+            # FY stays in_review — accountant clicks Finalise manually
             AuditLog.objects.create(
                 user=user,
                 action=AuditLog.Action.EVA_REVIEW,
@@ -1687,6 +1684,14 @@ def _reevaluate_finding(finding, clarification):
         finding.resolved_at = timezone.now()
         finding.save(update_fields=["status", "resolution_note", "resolved_by", "resolved_at"])
         clarification.outcome = "dismissed"
+
+        # Remove eva_flags from TB lines now that the finding is addressed
+        try:
+            from core.eva_engine import untag_tb_lines_for_finding
+            fy = finding.eva_review.financial_year
+            untag_tb_lines_for_finding(fy, finding.check_name)
+        except Exception:
+            pass  # non-critical — flag display only
 
     elif outcome_hint == "confirm":
         if finding.severity != EvaFinding.Severity.CRITICAL:

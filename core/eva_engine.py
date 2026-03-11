@@ -8,7 +8,7 @@ This module handles:
 4. LLM-powered analysis for each check, with risk engine findings
    injected as CONFIRMED HARD FACTS
 5. Finding creation and resolution workflow
-6. Status transitions (PREPARED → PENDING_EVA → EVA_CLEARED / FINDINGS_RAISED)
+6. Finding suppression (prevents resolved findings from re-appearing on re-run)
 
 Architecture (v2.0 — KB v2 spec):
     1. Risk engine deterministic checks (always first)
@@ -35,6 +35,21 @@ from django.views.decorators.http import require_GET, require_POST
 logger = logging.getLogger(__name__)
 
 ZERO = Decimal("0")
+
+
+def _is_finding_suppressed(financial_year, rule_category, account_refs=None):
+    """Check if a finding with this fingerprint has been suppressed."""
+    from core.models import EvaFindingSuppression
+    fingerprint = EvaFindingSuppression.generate_fingerprint(
+        str(financial_year.entity_id),
+        str(financial_year.pk),
+        rule_category,
+        account_refs or [],
+    )
+    return EvaFindingSuppression.objects.filter(
+        financial_year=financial_year,
+        fingerprint=fingerprint,
+    ).exists()
 
 # ---------------------------------------------------------------------------
 # Loan Detection Keywords (shared with risk_engine.py)
@@ -1416,9 +1431,7 @@ def _run_eva_review_background(fy_pk, user_pk):
             opus_override=(fy.eva_model_override == "opus"),
         )
 
-        # Update FY status to pending_eva
-        fy.status = fy.Status.PENDING_EVA
-        fy.save(update_fields=["status"])
+        # Status stays as in_review — no status change needed when Eva is triggered
 
         # ── STEP 1: Run risk engine FIRST (deterministic checks) ─────
         _eva_review_tasks[task_key] = {
@@ -1552,47 +1565,52 @@ def _run_eva_review_background(fy_pk, user_pk):
                         except Exception:
                             pass
 
-                try:
-                    finding = EvaFinding.objects.create(
-                        eva_review=review,
-                        check_name=check_def["id"][:50],
-                        severity=raw_severity,
-                        title=(result.get("title", check_def["name"]) or "")[:255],
-                        plain_english_explanation=result.get("explanation", "") or "",
-                        recommendation=recommendation_text,
-                        remediation_firm_procedure=result.get("remediation_firm_procedure", "") or "",
-                        remediation_authority=result.get("remediation_authority", "") or "",
-                        remediation_synthesis=remediation_fix,
-                        legislation_reference=(result.get("legislation_reference", "") or "")[:255],
-                        knowledge_brain_citation=(kb_citation or "")[:500],
-                        confidence=raw_confidence,
-                        source=finding_source,
-                        prior_finding=prior_finding_link,
-                        status="reopened" if prior_finding_link else "open",
-                    )
-                    # Store cross-references for post-processing
-                    cross_refs = result.get("cross_references", []) or []
-                    if cross_refs:
-                        finding._cross_ref_check_ids = cross_refs
-                    # Tag affected TB lines with this finding's check_name
-                    affected_codes = result.get("affected_account_codes", []) or []
-                    if affected_codes:
-                        try:
-                            tag_tb_lines_with_finding(fy, finding, affected_codes)
-                        except Exception as tag_err:
-                            print(f"[Eva] WARNING: failed to tag TB lines for {check_def['id']}: {tag_err}", flush=True)
-                    findings_created += 1
-                    _eva_review_tasks[task_key]["findings_count"] = findings_created
-                    review.raw_response = {"progress": _eva_review_tasks[task_key]}
-                    review.save(update_fields=["raw_response"])
-                    print(f"[Eva] Finding created for {check_def['id']}: {(result.get('title', '')[:60])}", flush=True)
-                except Exception as save_err:
-                    print(f"[Eva] EXCEPTION saving finding for {check_def['id']}: {save_err}", flush=True)
-                    traceback.print_exc()
-                    checks_with_errors.append({
-                        "check_id": check_def["id"],
-                        "error": f"Finding save failed: {save_err}",
-                    })
+                # Check suppression before creating finding
+                _account_refs = result.get("affected_account_codes", []) or []
+                if _is_finding_suppressed(fy, check_def["id"], _account_refs):
+                    print(f"[Eva] SUPPRESSED finding for {check_def['id']} — skipping creation", flush=True)
+                else:
+                    try:
+                        finding = EvaFinding.objects.create(
+                            eva_review=review,
+                            check_name=check_def["id"][:50],
+                            severity=raw_severity,
+                            title=(result.get("title", check_def["name"]) or "")[:255],
+                            plain_english_explanation=result.get("explanation", "") or "",
+                            recommendation=recommendation_text,
+                            remediation_firm_procedure=result.get("remediation_firm_procedure", "") or "",
+                            remediation_authority=result.get("remediation_authority", "") or "",
+                            remediation_synthesis=remediation_fix,
+                            legislation_reference=(result.get("legislation_reference", "") or "")[:255],
+                            knowledge_brain_citation=(kb_citation or "")[:500],
+                            confidence=raw_confidence,
+                            source=finding_source,
+                            prior_finding=prior_finding_link,
+                            status="reopened" if prior_finding_link else "open",
+                        )
+                        # Store cross-references for post-processing
+                        cross_refs = result.get("cross_references", []) or []
+                        if cross_refs:
+                            finding._cross_ref_check_ids = cross_refs
+                        # Tag affected TB lines with this finding's check_name
+                        affected_codes = _account_refs
+                        if affected_codes:
+                            try:
+                                tag_tb_lines_with_finding(fy, finding, affected_codes)
+                            except Exception as tag_err:
+                                print(f"[Eva] WARNING: failed to tag TB lines for {check_def['id']}: {tag_err}", flush=True)
+                        findings_created += 1
+                        _eva_review_tasks[task_key]["findings_count"] = findings_created
+                        review.raw_response = {"progress": _eva_review_tasks[task_key]}
+                        review.save(update_fields=["raw_response"])
+                        print(f"[Eva] Finding created for {check_def['id']}: {(result.get('title', '')[:60])}", flush=True)
+                    except Exception as save_err:
+                        print(f"[Eva] EXCEPTION saving finding for {check_def['id']}: {save_err}", flush=True)
+                        traceback.print_exc()
+                        checks_with_errors.append({
+                            "check_id": check_def["id"],
+                            "error": f"Finding save failed: {save_err}",
+                        })
 
             # Track checks that returned errors (LLM parse failure, API error, etc.)
             elif result and result.get("error") and not result.get("has_finding"):
@@ -1609,6 +1627,15 @@ def _run_eva_review_background(fy_pk, user_pk):
                     flag_severity = (flag.severity or "advisory").lower()
                     if flag_severity not in ("critical", "advisory"):
                         flag_severity = "advisory"
+                    # Extract account codes for suppression fingerprint
+                    flag_codes = [
+                        a["account_code"] for a in (flag.affected_accounts or [])
+                        if isinstance(a, dict) and a.get("account_code")
+                    ]
+                    # Check suppression before creating fallback finding
+                    if _is_finding_suppressed(fy, check_def["id"], flag_codes):
+                        print(f"[Eva] SUPPRESSED fallback finding for {check_def['id']} — skipping", flush=True)
+                        continue
                     try:
                         fallback_finding = EvaFinding.objects.create(
                             eva_review=review,
@@ -1622,11 +1649,6 @@ def _run_eva_review_background(fy_pk, user_pk):
                             confidence="high",
                             status="open",
                         )
-                        # Tag TB lines from the risk flag's affected_accounts
-                        flag_codes = [
-                            a["account_code"] for a in (flag.affected_accounts or [])
-                            if isinstance(a, dict) and a.get("account_code")
-                        ]
                         if flag_codes:
                             try:
                                 tag_tb_lines_with_finding(fy, fallback_finding, flag_codes)
@@ -1695,31 +1717,23 @@ def _run_eva_review_background(fy_pk, user_pk):
         print(f"[Eva] All checks complete. Findings created: {findings_created}. Errors: {len(checks_with_errors)}. Saving review...", flush=True)
         duration = time.time() - start_time
 
-        # If checks had errors and no findings were created, the review is
-        # unreliable — mark as error so it isn't mistaken for a clean pass.
+        # Determine review outcome — FY stays in_review regardless.
+        # The accountant must click Finalise manually once all findings are resolved.
         if checks_with_errors and findings_created == 0:
             review.status = "error"
             review.error_message = (
                 f"{len(checks_with_errors)} check(s) failed without producing findings: "
                 + "; ".join(e["check_id"] for e in checks_with_errors[:5])
             )
-            fy.status = fy.Status.EVA_ERROR
-            fy.save(update_fields=["status"])
             logger.warning(
                 "Eva review for FY %s completed with errors in %d check(s) and 0 findings — "
-                "marking as error to prevent false clearance.",
+                "marking review as error.",
                 fy.pk, len(checks_with_errors),
             )
         elif findings_created > 0:
             review.status = "findings_raised"
-            # Set FY back to FINISHED so the page shows findings panel
-            # (pending_eva would show the spinner again on reload)
-            fy.status = fy.Status.FINISHED
-            fy.save(update_fields=["status"])
         else:
             review.status = "cleared"
-            fy.status = fy.Status.EVA_CLEARED
-            fy.save(update_fields=["status"])
 
         review.completed_at = timezone.now()
         review.duration_seconds = duration
@@ -1727,16 +1741,38 @@ def _run_eva_review_background(fy_pk, user_pk):
         print(f"[Eva] Review saved with status={review.status}, duration={duration:.1f}s", flush=True)
 
         # Log activity
-        ActivityLog.objects.create(
-            user=user,
-            event_type="eva_review_complete",
-            title=f"Eva Review {'Cleared' if findings_created == 0 else f'Raised {findings_created} Finding(s)'}",
-            description=(
+        if review.status == "error":
+            _activity_title = f"Eva Review Error"
+            _activity_desc = (
+                f"Eva compliance review for {fy.entity.entity_name} ({fy.year_label}) "
+                f"completed with errors in {duration:.1f}s. "
+                f"{review.error_message}"
+            )
+        elif findings_created == 0:
+            _activity_title = "Eva Review Complete — No findings"
+            _activity_desc = (
+                f"Eva compliance review for {fy.entity.entity_name} ({fy.year_label}) "
+                f"completed in {duration:.1f}s. "
+                f"Eva found no compliance issues."
+            )
+        else:
+            # Collect categories of findings
+            finding_checks = list(
+                review.findings.values_list('check_name', flat=True).distinct()
+            )
+            _activity_title = f"Eva Review Complete — {findings_created} finding(s) raised"
+            _activity_desc = (
                 f"Eva compliance review for {fy.entity.entity_name} ({fy.year_label}) "
                 f"completed in {duration:.1f}s. "
                 f"Risk engine found {total_risk_flags} confirmed issue(s). "
-                f"{'No findings — cleared for finalisation.' if findings_created == 0 else f'{findings_created} finding(s) require attention.'}"
-            ),
+                f"{findings_created} finding(s) require attention. "
+                f"Categories: {', '.join(finding_checks)}."
+            )
+        ActivityLog.objects.create(
+            user=user,
+            event_type="eva_review_complete",
+            title=_activity_title,
+            description=_activity_desc,
             entity=fy.entity,
             financial_year=fy,
             url=f"/entities/years/{fy.pk}/",
@@ -1759,7 +1795,7 @@ def _run_eva_review_background(fy_pk, user_pk):
         logger.error(f"Eva review background error: {e}", exc_info=True)
         duration = time.time() - start_time
 
-        # Try to update the review record
+        # Try to update the review record — FY stays in_review
         try:
             review.status = "error"
             review.error_message = str(e)[:1000]
@@ -1767,8 +1803,15 @@ def _run_eva_review_background(fy_pk, user_pk):
             review.duration_seconds = duration
             review.save(update_fields=["status", "error_message", "completed_at", "duration_seconds"])
 
-            fy.status = fy.Status.EVA_ERROR
-            fy.save(update_fields=["status"])
+            ActivityLog.objects.create(
+                user=user,
+                event_type="eva_review_complete",
+                title="Eva Review Error",
+                description=f"Eva review failed for {fy.entity.entity_name} ({fy.year_label}): {str(e)[:500]}",
+                entity=fy.entity,
+                financial_year=fy,
+                url=f"/entities/years/{fy.pk}/",
+            )
         except Exception as inner_e:
             print(f"[Eva] EXCEPTION in error handler: {inner_e}", flush=True)
             traceback.print_exc()
@@ -1912,10 +1955,7 @@ def eva_review_status(request, pk):
             review.completed_at = tz.now()
             review.save(update_fields=["status", "completed_at", "error_message"])
 
-            # Reset FY status so the page is usable
-            if fy.status == fy.Status.PENDING_EVA:
-                fy.status = fy.Status.FINISHED
-                fy.save(update_fields=["status"])
+            # FY stays in_review — no status reset needed in new workflow
 
             # Clean up in-memory task state if present
             task_key_cleanup = str(pk)
@@ -2064,6 +2104,7 @@ def eva_review_detail(request, pk):
         "opus_override": review.opus_override,
         "findings": findings,
         "fy_status": fy.status,
+        "can_finalise": fy.can_finalise,
     })
 
 
@@ -2118,7 +2159,22 @@ def eva_finding_resolve(request, pk):
                 "status", "resolution_note", "resolved_by", "resolved_at"
             ])
 
-            # (b) Create ActivityLog with finding FK and full resolution note
+            # (b) Create suppression record so this finding isn't re-raised on re-run
+            from core.models import EvaFindingSuppression
+            fingerprint = EvaFindingSuppression.generate_fingerprint(
+                str(fy.entity_id), str(fy.pk), finding.check_name, [],
+            )
+            suppression, _ = EvaFindingSuppression.objects.get_or_create(
+                financial_year=fy,
+                fingerprint=fingerprint,
+                defaults={
+                    "rule_category": finding.check_name,
+                    "suppressed_by": request.user,
+                    "accountant_note": resolution_note,
+                },
+            )
+
+            # (c) Create ActivityLog with finding FK and full resolution note
             ActivityLog.objects.create(
                 user=request.user,
                 event_type=ActivityLog.EventType.EVA_FINDING_ADDRESSED,
@@ -2135,11 +2191,12 @@ def eva_finding_resolve(request, pk):
                 metadata={
                     "check_name": finding.check_name,
                     "severity": finding.severity,
+                    "suppression_id": str(suppression.pk),
                 },
                 url=f"/entities/years/{fy.pk}/",
             )
 
-            # (c) Remove check_name from eva_flags on tagged TB lines
+            # (d) Remove check_name from eva_flags on tagged TB lines
             untag_tb_lines_for_finding(fy, finding.check_name)
 
     except Exception as exc:
@@ -2156,12 +2213,10 @@ def eva_finding_resolve(request, pk):
     open_findings = review.findings.filter(status="open").count()
 
     if open_findings == 0:
-        # All findings addressed — clear the review
+        # All findings addressed — mark review as cleared
+        # FY stays in_review — accountant clicks Finalise manually
         review.status = "cleared"
         review.save(update_fields=["status"])
-
-        fy.status = fy.Status.EVA_CLEARED
-        fy.save(update_fields=["status"])
 
         ActivityLog.objects.create(
             user=request.user,
@@ -2169,7 +2224,7 @@ def eva_finding_resolve(request, pk):
             title=f"Eva Cleared — {fy.entity.entity_name}",
             description=(
                 f"All Eva findings addressed for {fy.entity.entity_name} ({fy.year_label}). "
-                f"Financial year is now cleared for finalisation."
+                f"Financial year is ready for finalisation."
             ),
             entity=fy.entity,
             financial_year=fy,
@@ -2182,6 +2237,7 @@ def eva_finding_resolve(request, pk):
         "open_findings_remaining": open_findings,
         "review_status": review.status,
         "fy_status": fy.status,
+        "can_finalise": fy.can_finalise,
     })
 
 
@@ -2270,6 +2326,21 @@ def eva_auto_disclose_rp(request, pk):
         "status", "resolution_note", "resolved_by", "resolved_at"
     ])
 
+    # Create suppression record
+    from core.models import EvaFindingSuppression
+    fingerprint = EvaFindingSuppression.generate_fingerprint(
+        str(fy.entity_id), str(fy.pk), finding.check_name, [],
+    )
+    EvaFindingSuppression.objects.get_or_create(
+        financial_year=fy,
+        fingerprint=fingerprint,
+        defaults={
+            "rule_category": finding.check_name,
+            "suppressed_by": request.user,
+            "accountant_note": f"Auto-disclosed in workpaper notes (AASB 124 format).",
+        },
+    )
+
     # Check if all findings are now addressed
     review = finding.eva_review
     open_findings = review.findings.filter(status="open").count()
@@ -2277,13 +2348,12 @@ def eva_auto_disclose_rp(request, pk):
     if open_findings == 0:
         review.status = "cleared"
         review.save(update_fields=["status"])
-        fy.status = fy.Status.EVA_CLEARED
-        fy.save(update_fields=["status"])
+        # FY stays in_review — accountant clicks Finalise manually
 
     # Log
     ActivityLog.objects.create(
         user=request.user,
-        event_type="eva_finding_resolved",
+        event_type=ActivityLog.EventType.EVA_FINDING_ADDRESSED,
         title=f"RP Auto-Disclosed — {entity_name}",
         description=(
             f"Related Party finding auto-disclosed for {entity_name} ({year_label}). "
@@ -2302,6 +2372,7 @@ def eva_auto_disclose_rp(request, pk):
         "open_findings_remaining": open_findings,
         "review_status": review.status,
         "fy_status": fy.status,
+        "can_finalise": fy.can_finalise,
     })
 
 
@@ -2577,19 +2648,18 @@ def eva_clarify_finding(request, pk):
     entity = fy.entity
 
     # If all findings are now addressed, clear the review
+    # FY stays in_review — accountant clicks Finalise manually
     if result["should_clear_review"]:
         review = finding.eva_review
         review.status = "cleared"
         review.save(update_fields=["status"])
-        fy.status = fy.Status.EVA_CLEARED
-        fy.save(update_fields=["status"])
         ActivityLog.objects.create(
             user=request.user,
-            event_type="eva_cleared",
+            event_type="eva_review_cleared",
             title=f"Eva Cleared — {entity.entity_name}",
             description=(
                 f"All Eva findings addressed for {entity.entity_name} ({fy.year_label}). "
-                f"Financial year is now cleared for finalisation."
+                f"Financial year is ready for finalisation."
             ),
             entity=entity,
             financial_year=fy,
