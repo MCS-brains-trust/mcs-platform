@@ -505,9 +505,13 @@ document.addEventListener('DOMContentLoaded', function() {
         return parseFloat(val.replace(/,/g, '')) || 0;
     }
 
+    // Evaluate arithmetic expressions (e.g. =1000+500, 8181.82*2, =180000/3)
+    // Returns null if the value is not a valid number or expression
     function evaluateExpression(val) {
         if (!val) return 0;
         var expr = val.replace(/,/g, '').trim();
+        // Strip leading = sign (e.g. =314+114)
+        if (expr.charAt(0) === '=') expr = expr.substring(1).trim();
         // If it contains arithmetic operators, evaluate as expression
         if (/[+\-*/]/.test(expr.replace(/^-/, ''))) {
             // Only allow digits, decimal points, parentheses, and operators
@@ -519,12 +523,15 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
                 } catch(e) {}
             }
+            return null; // invalid expression — leave unchanged
         }
-        return parseFloat(expr) || 0;
+        var num = parseFloat(expr);
+        return isNaN(num) ? null : num;
     }
 
     function formatField(el) {
         var num = evaluateExpression(el.value);
+        if (num === null) return; // invalid — leave unchanged
         el.value = num === 0 ? '0' : fmtNum(num);
     }
 
