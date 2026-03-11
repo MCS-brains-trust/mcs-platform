@@ -217,14 +217,7 @@ COMPLIANCE_CHECKS = [
                          "sole_trader", "partnership"],
         "severity_default": "ADVISORY",
     },
-    {
-        "id": "thin_capitalisation",
-        "name": "Thin Capitalisation",
-        "description": "Assess thin capitalisation rules for entities with foreign-controlled debt or international dealings",
-        "entity_types": ["company", "trust_discretionary", "trust_unit", "trust_hybrid",
-                         "partnership"],
-        "severity_default": "ADVISORY",
-    },
+    # thin_capitalisation removed — deferred to commercial release.
 ]
 
 
@@ -548,7 +541,6 @@ def _run_risk_engine_precheck(financial_year):
         "ato_benchmarks": [],
         "going_concern": [],
         "tpar": [],
-        "thin_capitalisation": [],
     }
 
     for flag in open_flags:
@@ -883,26 +875,6 @@ def _build_check_context(financial_year, check_id, risk_flags=None):
             extra.append("  No contractor/subcontractor accounts found.")
         extra.append(f"  Industry: {entity.industry or 'Not specified'}")
 
-    elif check_id == "thin_capitalisation":
-        # Check for international-related accounts and debt levels
-        extra.append("=== THIN CAPITALISATION INDICATORS ===")
-        debt_kw = ["loan", "borrowing", "debt", "mortgage", "finance", "intercompany"]
-        equity_kw = ["equity", "capital", "retained", "reserve", "share"]
-        total_debt = ZERO
-        total_equity = ZERO
-        for line in tb_data["lines"]:
-            name_lower = (line.account_name or "").lower()
-            net = line.effective_dr - line.effective_cr
-            if any(kw in name_lower for kw in debt_kw):
-                extra.append(f"  DEBT: {line.account_code} {line.account_name}: Net ${net:,.2f}")
-                total_debt += abs(net)
-            elif any(kw in name_lower for kw in equity_kw):
-                total_equity += abs(net)
-        extra.append(f"  Total Debt: ${total_debt:,.2f}")
-        extra.append(f"  Total Equity: ${total_equity:,.2f}")
-        if total_equity > ZERO:
-            extra.append(f"  Debt-to-Equity Ratio: {(total_debt / total_equity):.2f}")
-
     elif check_id == "comparative_consistency":
         # Add summary of significant variances using effective balances
         extra.append("=== SIGNIFICANT YEAR-ON-YEAR MOVEMENTS (EFFECTIVE BALANCES) ===")
@@ -1023,8 +995,8 @@ the data provided.
 
 MEDIUM: Indicators identified from available data, but the conclusion depends on
 information not available in the platform (e.g. external records, client confirmation).
-  Examples: Thin capitalisation depends on foreign dealings status; super guarantee
-  compliance depends on employee headcount not in TB.
+  Examples: Super guarantee compliance depends on employee headcount not in TB;
+  related party assessment depends on external ownership records.
 
 LOW: Inferred from patterns or account names; the issue may not exist. The finding
 is speculative based on limited data.

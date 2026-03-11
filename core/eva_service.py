@@ -34,7 +34,7 @@ TOP_K_CHUNKS = 8
 ENTITY_CHECK_MAP = {
     "company": [
         "division_7a", "superannuation", "ato_benchmarks",
-        "going_concern", "related_party", "tpar", "thin_capitalisation",
+        "going_concern", "related_party", "tpar",
     ],
     "trust": [
         "division_7a", "superannuation", "ato_benchmarks",
@@ -793,7 +793,6 @@ def run_eva_review(financial_year, user, opus_override=False):
         "going_concern": "Going Concern",
         "related_party": "Related Party Transactions",
         "tpar": "TPAR Obligations",
-        "thin_capitalisation": "Thin Capitalisation",
     }
 
     applicable_display = [check_display.get(c, c) for c in applicable_checks]
