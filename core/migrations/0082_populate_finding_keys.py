@@ -20,6 +20,27 @@ def populate_finding_keys(apps, schema_editor):
         finding.finding_key = key
         finding.save(update_fields=["finding_key"])
 
+    # Deduplicate: if multiple findings in the same review got the same key,
+    # append a pk fragment to make them unique before 0083 adds the constraint.
+    from django.db.models import Count
+
+    duplicates = (
+        EvaFinding.objects
+        .exclude(finding_key="")
+        .values("eva_review_id", "finding_key")
+        .annotate(count=Count("id"))
+        .filter(count__gt=1)
+    )
+    for dup in duplicates:
+        findings = EvaFinding.objects.filter(
+            eva_review_id=dup["eva_review_id"],
+            finding_key=dup["finding_key"],
+        ).order_by("created_at")
+        # Keep the first one unchanged, suffix the rest with pk fragment
+        for finding in findings[1:]:
+            finding.finding_key = f"{finding.finding_key}_{str(finding.pk)[:8]}"
+            finding.save(update_fields=["finding_key"])
+
 
 class Migration(migrations.Migration):
 
