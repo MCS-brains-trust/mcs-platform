@@ -1784,8 +1784,8 @@ def financial_year_detail(request, pk):
     all_log_pks = set(audit_logs_fy.values_list('pk', flat=True)) | set(journal_logs.values_list('pk', flat=True))
     merged_audit = list(AuditLog.objects.filter(pk__in=all_log_pks).select_related('user').order_by('-timestamp'))
     for entry in merged_audit:
-        entry._source = "audit"
-        entry._sort_dt = entry.timestamp
+        entry.source = "audit"
+        entry.sort_dt = entry.timestamp
 
     # Include ActivityLog entries (Eva findings, status changes, etc.)
     merged_activity = list(
@@ -1794,12 +1794,12 @@ def financial_year_detail(request, pk):
         .order_by('-created_at')
     )
     for entry in merged_activity:
-        entry._source = "activity"
-        entry._sort_dt = entry.created_at
+        entry.source = "activity"
+        entry.sort_dt = entry.created_at
 
     activity_logs = sorted(
         merged_audit + merged_activity,
-        key=lambda x: x._sort_dt,
+        key=lambda x: x.sort_dt,
         reverse=True,
     )
 
