@@ -133,8 +133,11 @@ def bulk_readiness_check(request):
         )
 
         # Check for financial statements
-        from core.models import Document
-        if Document.objects.filter(financial_year=fy).exists():
+        from core.models import GeneratedDocument
+        if GeneratedDocument.objects.filter(
+            financial_year=fy,
+            document_type=GeneratedDocument.DocumentType.FINANCIAL_STATEMENTS,
+        ).exists():
             existing_types.add("financial_statements")
 
         total_required = sum(1 for _, _, req in required_docs if req)

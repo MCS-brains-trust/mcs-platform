@@ -103,10 +103,10 @@ def assemble_package(financial_year_id, assembled_by_id=None):
     Returns dict with status and document counts.
     """
     from core.models import (
-        Document,
         DividendEvent,
         Entity,
         FinancialYear,
+        GeneratedDocument,
         LegalDocument,
         TrialBalanceLine,
     )
@@ -123,7 +123,10 @@ def assemble_package(financial_year_id, assembled_by_id=None):
     existing_legal_docs = LegalDocument.objects.filter(financial_year=fy)
     existing_types = set(existing_legal_docs.values_list("document_type", flat=True))
 
-    has_fs = Document.objects.filter(financial_year=fy).exists()
+    has_fs = GeneratedDocument.objects.filter(
+        financial_year=fy,
+        document_type=GeneratedDocument.DocumentType.FINANCIAL_STATEMENTS,
+    ).exists()
     if has_fs:
         existing_types.add("financial_statements")
 
@@ -247,8 +250,11 @@ def bulk_generate(entity_ids, triggered_by_id=None):
                 continue
 
             # Check minimum readiness: at least financial statements exist
-            from core.models import Document
-            has_fs = Document.objects.filter(financial_year=fy).exists()
+            from core.models import GeneratedDocument
+            has_fs = GeneratedDocument.objects.filter(
+                financial_year=fy,
+                document_type=GeneratedDocument.DocumentType.FINANCIAL_STATEMENTS,
+            ).exists()
             if not has_fs:
                 results["skipped"].append({
                     "entity_id": str(entity_id),
@@ -443,7 +449,7 @@ def _combine_pdfs(fy, entity, existing_types):
     Documents are ordered according to DOCUMENT_ORDER.
     Returns the path to the combined PDF or None.
     """
-    from core.models import Document, LegalDocument
+    from core.models import GeneratedDocument, LegalDocument
 
     try:
         from PyPDF2 import PdfMerger
@@ -459,8 +465,11 @@ def _combine_pdfs(fy, entity, existing_types):
             continue
 
         if doc_type == "financial_statements":
-            # Financial statements come from the Document model
-            fs_docs = Document.objects.filter(financial_year=fy).order_by("-created_at")
+            # Financial statements come from the GeneratedDocument model
+            fs_docs = GeneratedDocument.objects.filter(
+                financial_year=fy,
+                document_type=GeneratedDocument.DocumentType.FINANCIAL_STATEMENTS,
+            ).order_by("-generated_at")
             for fs_doc in fs_docs[:1]:
                 if fs_doc.file and os.path.exists(fs_doc.file.path):
                     try:

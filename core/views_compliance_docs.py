@@ -431,8 +431,11 @@ def generate_cover_letter(request, pk):
     ]
 
     # Check for financial statements
-    from core.models import Document
-    fs_docs = Document.objects.filter(financial_year=fy).exists()
+    from core.models import GeneratedDocument
+    fs_docs = GeneratedDocument.objects.filter(
+        financial_year=fy,
+        document_type=GeneratedDocument.DocumentType.FINANCIAL_STATEMENTS,
+    ).exists()
     if fs_docs:
         enclosed_list.insert(0, {"type": "Financial Statements", "title": f"Financial Statements — {entity.entity_name}"})
 

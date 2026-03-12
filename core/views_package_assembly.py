@@ -77,9 +77,12 @@ def package_assembly(request, pk):
     existing_docs = LegalDocument.objects.filter(financial_year=fy)
     existing_types = set(existing_docs.values_list("document_type", flat=True))
 
-    # Check for financial statements (from Document model)
-    from core.models import Document
-    has_fs = Document.objects.filter(financial_year=fy).exists()
+    # Check for financial statements (from GeneratedDocument model)
+    from core.models import GeneratedDocument
+    has_fs = GeneratedDocument.objects.filter(
+        financial_year=fy,
+        document_type=GeneratedDocument.DocumentType.FINANCIAL_STATEMENTS,
+    ).exists()
     if has_fs:
         existing_types.add("financial_statements")
 
