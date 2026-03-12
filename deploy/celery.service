@@ -1,0 +1,30 @@
+[Unit]
+Description=StatementHub Celery Worker
+After=network.target redis.service postgresql.service
+Requires=redis.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/statementhub
+Environment="PATH=/opt/statementhub/venv/bin:/usr/local/bin:/usr/bin:/bin"
+EnvironmentFile=/opt/statementhub/.env
+ExecStart=/opt/statementhub/venv/bin/celery -A config worker \
+    --loglevel=info \
+    --concurrency=2 \
+    --max-tasks-per-child=100 \
+    --without-heartbeat \
+    -Q celery
+ExecStop=/bin/kill -s TERM $MAINPID
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:/var/log/statementhub/celery-worker.log
+StandardError=append:/var/log/statementhub/celery-worker.log
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

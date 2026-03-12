@@ -313,10 +313,14 @@ CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = "Australia/Melbourne"
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
+# Note: With DatabaseScheduler, periodic tasks are managed via django-celery-beat
+# PeriodicTask records in the database (created by deploy/setup_celery.sh).
+# The CELERY_BEAT_SCHEDULE below serves as a fallback / documentation of intended
+# schedules. The DatabaseScheduler takes precedence over this dict.
 CELERY_BEAT_SCHEDULE = {
     "sync-knowledge-brain": {
         "task": "core.sync_knowledge_brain",
-        "schedule": 7200,  # Every 2 hours (spec §2.3)
+        "schedule": 7200,  # Every 2 hours
         "options": {"expires": 3600},
     },
 }
