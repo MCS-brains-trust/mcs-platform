@@ -10,6 +10,8 @@ import uuid
 from django.conf import settings
 from django.db import models
 from django.urls import reverse
+from pgvector.django import VectorField
+
 from config.encryption import EncryptedCharField
 
 
@@ -3734,12 +3736,15 @@ class KnowledgeChunk(models.Model):
         help_text="Position of this chunk within the document"
     )
     text = models.TextField(help_text="Raw text of this chunk (~512 tokens)")
-    # Embedding stored as JSON array of floats (1536 dimensions).
-    # When pgvector is installed, migrate to VectorField for similarity search.
-    # For now, use JSONField for compatibility without pgvector extension.
+    # Legacy JSON embedding — kept for backward compatibility during migration.
     embedding = models.JSONField(
         default=list, blank=True,
         help_text="Vector embedding (1536 dimensions) as JSON array",
+    )
+    # pgvector native column for efficient cosine similarity search.
+    embedding_vector = VectorField(
+        dimensions=1536, null=True, blank=True,
+        help_text="pgvector embedding for native cosine distance search",
     )
     token_count = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)

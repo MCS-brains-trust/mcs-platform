@@ -444,7 +444,7 @@ def embed_and_store_chunks(document, chunks):
         embeddings = _get_embeddings(batch_texts)
         all_embeddings.extend(embeddings)
 
-    # Create chunk records
+    # Create chunk records — write to both JSON and pgvector fields
     chunk_objects = []
     for (idx, text), embedding in zip(chunks, all_embeddings):
         token_count = max(1, len(text) // CHARS_PER_TOKEN)
@@ -454,6 +454,7 @@ def embed_and_store_chunks(document, chunks):
                 chunk_index=idx,
                 text=text,
                 embedding=embedding,
+                embedding_vector=embedding if embedding else None,
                 token_count=token_count,
             )
         )
@@ -482,7 +483,8 @@ def _cosine_similarity(vec_a, vec_b):
 
 def retrieve_relevant_chunks(query, top_k=TOP_K_CHUNKS, category_filter=None):
     """
-    Retrieve the top-k most relevant knowledge chunks for a query.
+    Retrieve the top-k most relevant knowledge chunks for a query
+    using pgvector cosine distance for efficient similarity search.
 
     Args:
         query: The search query text
@@ -492,6 +494,8 @@ def retrieve_relevant_chunks(query, top_k=TOP_K_CHUNKS, category_filter=None):
     Returns:
         List of dicts: [{"chunk": KnowledgeChunk, "score": float, "document_title": str}]
     """
+    from pgvector.django import CosineDistance
+
     from core.models import KnowledgeChunk
 
     # Generate query embedding
@@ -502,23 +506,22 @@ def retrieve_relevant_chunks(query, top_k=TOP_K_CHUNKS, category_filter=None):
 
     query_vec = query_embeddings[0]
 
-    # Get all active chunks
+    # Build queryset with pgvector cosine distance
     qs = KnowledgeChunk.objects.select_related("document").filter(
         document__is_archived=False,
         document__sync_status="synced",
-    )
+        embedding_vector__isnull=False,
+    ).annotate(
+        distance=CosineDistance("embedding_vector", query_vec),
+    ).order_by("distance")
+
     if category_filter:
         qs = qs.filter(document__category__in=category_filter)
 
-    # Compute similarity scores
-    # NOTE: For production with many chunks, this should use pgvector's
-    # native cosine similarity operator. This Python-based approach works
-    # for small-to-medium knowledge bases (<10k chunks).
     results = []
-    for chunk in qs.iterator():
-        if not chunk.embedding:
-            continue
-        score = _cosine_similarity(query_vec, chunk.embedding)
+    for chunk in qs[:top_k]:
+        # CosineDistance returns distance (0 = identical); convert to similarity
+        score = 1.0 - (chunk.distance or 0.0)
         results.append({
             "chunk": chunk,
             "score": score,
@@ -527,10 +530,7 @@ def retrieve_relevant_chunks(query, top_k=TOP_K_CHUNKS, category_filter=None):
             "chunk_id": str(chunk.pk),
         })
 
-    # Sort by similarity score descending
-    results.sort(key=lambda x: x["score"], reverse=True)
-
-    return results[:top_k]
+    return results
 
 
 def format_rag_context(chunks_with_scores):

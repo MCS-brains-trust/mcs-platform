@@ -32,6 +32,7 @@ INSTALLED_APPS = [
     "crispy_bootstrap5",
     "csp",
     "django_celery_beat",
+    "pgvector.django",
     # Local apps
     "accounts.apps.AccountsConfig",
     "core.apps.CoreConfig",

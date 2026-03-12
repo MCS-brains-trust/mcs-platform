@@ -293,7 +293,7 @@ def _parse_msg(file_path):
 def search_knowledge_brain(query, category_filter=None, top_k=TOP_K_CHUNKS):
     """
     Search the Knowledge Brain for chunks most relevant to the query.
-    Uses cosine similarity against stored embeddings.
+    Uses pgvector cosine distance for efficient similarity search.
 
     Args:
         query: The search query text
@@ -303,37 +303,36 @@ def search_knowledge_brain(query, category_filter=None, top_k=TOP_K_CHUNKS):
     Returns:
         List of dicts: [{chunk_id, text, document_title, category, similarity}]
     """
+    from pgvector.django import CosineDistance
+
     from core.models import KnowledgeChunk, KnowledgeDocument
 
     query_embedding = get_embedding(query)
 
-    # Get all active (non-archived) chunks with embeddings
+    # Use pgvector native cosine distance search
     chunks_qs = KnowledgeChunk.objects.filter(
         document__is_archived=False,
         document__sync_status=KnowledgeDocument.SyncStatus.SYNCED,
-        embedding__isnull=False,
-    ).select_related("document")
+        embedding_vector__isnull=False,
+    ).select_related("document").annotate(
+        distance=CosineDistance("embedding_vector", query_embedding),
+    ).order_by("distance")
 
     if category_filter:
         chunks_qs = chunks_qs.filter(document__category=category_filter)
 
-    # Score all chunks by cosine similarity
     scored = []
-    for chunk in chunks_qs.iterator():
-        if chunk.embedding:
-            sim = cosine_similarity(query_embedding, chunk.embedding)
-            scored.append({
-                "chunk_id": str(chunk.id),
-                "text": chunk.text,
-                "document_title": chunk.document.title,
-                "document_id": str(chunk.document.id),
-                "category": chunk.document.get_category_display(),
-                "similarity": sim,
-            })
+    for chunk in chunks_qs[:top_k]:
+        scored.append({
+            "chunk_id": str(chunk.id),
+            "text": chunk.text,
+            "document_title": chunk.document.title,
+            "document_id": str(chunk.document.id),
+            "category": chunk.document.get_category_display(),
+            "similarity": 1.0 - (chunk.distance or 0.0),
+        })
 
-    # Sort by similarity descending and return top_k
-    scored.sort(key=lambda x: x["similarity"], reverse=True)
-    return scored[:top_k]
+    return scored
 
 
 # ---------------------------------------------------------------------------

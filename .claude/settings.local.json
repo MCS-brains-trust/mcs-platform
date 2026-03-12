@@ -30,7 +30,12 @@
       "Read(//c/Users/Elio/mcs-platform/**)",
       "Bash(done)",
       "Bash(cd C:/Users/Elio/mcs-platform && python3 << 'EOF'\nimport re\n\nwith open\\('core/models.py', 'r'\\) as f:\n    content = f.read\\(\\)\n\n# Find all class definitions\nclasses = re.finditer\\(r'^class\\\\s+\\(\\\\w+\\)\\\\\\([^\\)]*\\\\\\):', content, re.MULTILINE\\)\n\nmodels = []\nfor match in classes:\n    class_name = match.group\\(1\\)\n    models.append\\(class_name\\)\n\nfor model in models:\n    print\\(model\\)\nEOF)",
-      "Bash(python manage.py makemigrations core --name=\"bas_commentary_task_tracking\" 2>&1)"
+      "Bash(python manage.py makemigrations core --name=\"bas_commentary_task_tracking\" 2>&1)",
+      "Bash(ls -1 C:/Users/Elio/mcs-platform/core/migrations/*.py | tail -5)",
+      "Bash(pip install:*)",
+      "Bash(python -c \"from pgvector.django import VectorExtension, HnswIndex, VectorField, CosineDistance; print\\('All imports OK'\\)\")",
+      "Bash(python -c \"\nfrom pgvector.django import HnswIndex\nimport inspect\nprint\\(inspect.getmro\\(HnswIndex\\)\\)\n\")",
+      "Bash(cd C:/Users/Elio/mcs-platform && python -c \"\nimport django\nimport os\nos.environ.setdefault\\('DJANGO_SETTINGS_MODULE', 'config.settings'\\)\ndjango.setup\\(\\)\nfrom core.models import KnowledgeChunk\nprint\\('Model loaded OK'\\)\nprint\\('Fields:', [f.name for f in KnowledgeChunk._meta.get_fields\\(\\) if hasattr\\(f, 'name'\\)]\\)\n\" 2>&1)"
     ]
   }
 }
