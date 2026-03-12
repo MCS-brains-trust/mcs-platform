@@ -18,7 +18,8 @@
       "Bash(grep -rn \"libreoffice\\\\|soffice\" /c/Users/Elio/mcs-platform/core/*.py | head -20)",
       "Bash(grep -n \"docxtpl\\\\|DocxTemplate\" /c/Users/Elio/mcs-platform/core/*.py | head -30)",
       "Bash(grep -n \"FuseSign\\\\|fusesign\\\\|FUSESIGN\" /c/Users/Elio/mcs-platform/core/*.py | head -30)",
-      "Bash(python manage.py check --no-color 2>&1 | head -20)"
+      "Bash(python manage.py check --no-color 2>&1 | head -20)",
+      "Bash(python -m py_compile core/views_package_assembly.py && python -m py_compile core/package_service.py && python -m py_compile core/eva_client_summary.py && echo \"All files compile OK\")"
     ]
   }
 }

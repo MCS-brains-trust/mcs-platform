@@ -530,17 +530,13 @@ def _has_director_loan_over_10k(fy):
     ).select_related("mapped_line_item")
 
     for line in loan_lines:
-        acct_name = ""
-        if line.account:
-            acct_name = (line.account.name or "").lower()
-        elif line.account_name:
-            acct_name = line.account_name.lower()
+        acct_name = (line.account_name or "").lower()
 
         if any(kw in acct_name for kw in [
             "director loan", "shareholder loan",
             "loan to director", "loan to shareholder",
         ]):
-            balance = abs(float(line.net_balance or line.balance or 0))
+            balance = abs(float(line.closing_balance or 0))
             if balance > 10000:
                 return True
     return False

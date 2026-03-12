@@ -82,20 +82,21 @@ def _build_summary_context(fy, entity):
     equity_total = 0
 
     for line in tb_lines:
-        balance = float(line.net_balance or line.balance or 0)
-        acct_type = ""
-        if line.account:
-            acct_type = getattr(line.account, "account_type", "")
+        balance = float(line.closing_balance or 0)
+        mapping = line.mapped_line_item
+        if not mapping:
+            continue
+        section = (mapping.statement_section or "").lower()
 
-        if acct_type == "revenue" or acct_type == "income":
+        if "revenue" in section or "income" in section:
             revenue_total += balance
-        elif acct_type == "expense" or acct_type == "cost_of_sales":
+        elif "expense" in section or "cost of sales" in section:
             expense_total += balance
-        elif acct_type == "asset" or acct_type == "current_asset" or acct_type == "non_current_asset":
+        elif "asset" in section:
             asset_total += balance
-        elif acct_type == "liability" or acct_type == "current_liability" or acct_type == "non_current_liability":
+        elif "liabilit" in section:
             liability_total += balance
-        elif acct_type == "equity":
+        elif "equity" in section:
             equity_total += balance
 
     context["financials"] = {
@@ -115,16 +116,24 @@ def _build_summary_context(fy, entity):
     ).order_by("-end_date").first()
 
     if prior_fy:
-        prior_lines = TrialBalanceLine.objects.filter(financial_year=prior_fy)
+        prior_lines = TrialBalanceLine.objects.filter(
+            financial_year=prior_fy,
+        ).select_related("mapped_line_item")
         prior_revenue = sum(
-            float(l.net_balance or l.balance or 0)
+            float(l.closing_balance or 0)
             for l in prior_lines
-            if l.account and getattr(l.account, "account_type", "") in ("revenue", "income")
+            if l.mapped_line_item and any(
+                kw in (l.mapped_line_item.statement_section or "").lower()
+                for kw in ("revenue", "income")
+            )
         )
         prior_expense = sum(
-            float(l.net_balance or l.balance or 0)
+            float(l.closing_balance or 0)
             for l in prior_lines
-            if l.account and getattr(l.account, "account_type", "") in ("expense", "cost_of_sales")
+            if l.mapped_line_item and any(
+                kw in (l.mapped_line_item.statement_section or "").lower()
+                for kw in ("expense", "cost of sales")
+            )
         )
         context["prior_year"] = {
             "label": f"{prior_fy.start_date} to {prior_fy.end_date}",
