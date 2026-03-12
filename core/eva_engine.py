@@ -4,7 +4,7 @@ Eva Finalisation Gate — Structured Compliance Review Engine
 This module handles:
 1. Pre-flight checks before Eva review can be triggered
 2. Risk engine pre-run (deterministic checks run FIRST)
-3. The 8 compliance checks with entity-type filtering
+3. The 10 compliance checks with entity-type filtering
 4. LLM-powered analysis for each check, with risk engine findings
    injected as CONFIRMED HARD FACTS
 5. Finding creation and resolution workflow
@@ -205,9 +205,8 @@ COMPLIANCE_CHECKS = [
                          "sole_trader", "partnership", "smsf", "individual"],
         "severity_default": "CRITICAL",
     },
-    # comparative_consistency removed — year-on-year variance is handled
-    # by Tier 1 variance analysis and amber indicators.  The LLM check
-    # duplicated that work and produced noise without actionable value.
+    # comparative_consistency: superseded by amber indicators (TrialBalanceLine variance flags).
+    # Tier 1 variance analysis and amber indicators handle year-on-year movements.
     {
         "id": "super_guarantee",
         "name": "Superannuation Guarantee Compliance",
@@ -224,9 +223,8 @@ COMPLIANCE_CHECKS = [
                          "sole_trader", "partnership"],
         "severity_default": "ADVISORY",
     },
-    # going_concern removed — directors sign ASIC minutes confirming
-    # awareness of going concern obligations annually.  The detection
-    # module (GoingConcernModule) is also disabled in registry.py.
+    # going_concern: deliberately excluded. Directors address solvency via Solvency Resolution document.
+    # The detection module (GoingConcernModule) is also disabled in registry.py.
     {
         "id": "tpar",
         "name": "Taxable Payments Annual Report (TPAR)",
@@ -235,7 +233,7 @@ COMPLIANCE_CHECKS = [
                          "sole_trader", "partnership"],
         "severity_default": "ADVISORY",
     },
-    # thin_capitalisation removed — deferred to commercial release.
+    # thin_capitalisation: deferred. Add to roadmap when targeting large proprietary companies.
 ]
 
 
@@ -333,7 +331,7 @@ def _collect_module_flags(financial_year):
 
     Returns a dict of check_id -> list[_SyntheticFlag].
     """
-    from core.models import Div7AAssessment, GoingConcernAssessment
+    from core.models import Div7AAssessment
     from decimal import Decimal
 
     ZERO = Decimal("0.00")
@@ -395,40 +393,8 @@ def _collect_module_flags(financial_year):
     except Exception as e:
         logger.warning("Failed to collect Div 7A module flags: %s", e)
 
-    # ── Going Concern ────────────────────────────────────────────────
-    try:
-        gc = GoingConcernAssessment.objects.get(financial_year=financial_year)
-        if gc.overall_severity != "CLEAR":
-            desc_parts = []
-            if gc.net_assets < ZERO:
-                desc_parts.append(f"Net assets negative: ${gc.net_assets:,.2f}.")
-            if gc.cash_position < ZERO:
-                desc_parts.append(f"Cash position negative: ${gc.cash_position:,.2f}.")
-            if gc.revenue_decline_pct and gc.revenue_decline_pct >= 20:
-                desc_parts.append(
-                    f"Revenue declined {gc.revenue_decline_pct:.1f}% "
-                    f"(${gc.py_revenue:,.2f} → ${gc.cy_revenue:,.2f})."
-                )
-            if gc.cy_net_result < ZERO:
-                desc_parts.append(f"Current year loss: ${gc.cy_net_result:,.2f}.")
-            if gc.working_capital_ratio is not None and gc.working_capital_ratio < 1:
-                desc_parts.append(f"Working capital ratio: {gc.working_capital_ratio:.2f}.")
-            if gc.is_reliant_on_director:
-                desc_parts.append("Entity reliant on director funding.")
-            desc_parts.append(f"Rules fired: {', '.join(gc.rules_fired)}.")
-
-            flags.setdefault("going_concern", []).append(_SyntheticFlag(
-                rule_id="MODULE:going_concern",
-                severity=gc.overall_severity,
-                title=f"Going Concern Indicators — {gc.overall_severity}",
-                description=" ".join(desc_parts) if desc_parts else "Going concern indicators detected.",
-                recommended_action="Assess going concern and document conclusion in workpapers.",
-                legislation_ref="AASB 101, ASA 570",
-            ))
-    except GoingConcernAssessment.DoesNotExist:
-        pass
-    except Exception as e:
-        logger.warning("Failed to collect Going Concern module flags: %s", e)
+    # going_concern: deliberately excluded. Directors address solvency via Solvency Resolution document.
+    # GoingConcernAssessment model retained — used by GoingConcernModule (disabled in registry.py).
 
     # ── Section 100A (from EvaFinding created by module) ─────────────
     try:
@@ -545,7 +511,7 @@ def _run_risk_engine_precheck(financial_year):
         status__in=["open", "reviewed"],
     ).order_by("tier", "severity")
 
-    # Initialise check_flags with ALL Eva compliance check IDs
+    # Initialise check_flags with active Eva compliance check IDs (10 checks)
     check_flags = {
         "div7a": [],
         "gst_reconciliation": [],
@@ -554,10 +520,8 @@ def _run_risk_engine_precheck(financial_year):
         "trust_distribution": [],
         "depreciation_review": [],
         "tb_integrity": [],
-        "comparative_consistency": [],
         "super_guarantee": [],
         "ato_benchmarks": [],
-        "going_concern": [],
         "tpar": [],
     }
 
@@ -584,21 +548,13 @@ def _run_risk_engine_precheck(financial_year):
         if any(kw in title_lower for kw in ("super", "sgc", "sg rate")):
             check_flags["super_guarantee"].append(flag)
 
-        # Going concern / solvency flags
-        if "solvency" in rule_id.lower() or any(kw in title_lower for kw in ("going concern", "solvency", "negative net")):
-            check_flags["going_concern"].append(flag)
-
         # TPAR / contractor flags
         if any(kw in title_lower for kw in ("tpar", "contractor", "subcontractor")):
             check_flags["tpar"].append(flag)
 
-        # Variance flags — relevant to comparative consistency
-        if "variance" in rule_id.lower() or "variance" in title_lower:
-            check_flags["comparative_consistency"].append(flag)
-
         # Revenue/expense benchmark flags
         if "benchmark" in rule_id.lower() or "benchmark" in title_lower:
-            check_flags["comparative_consistency"].append(flag)
+            check_flags["ato_benchmarks"].append(flag)
 
         # Balance sign / TB integrity flags
         if "balance sign" in title_lower:
@@ -847,45 +803,7 @@ def _build_check_context(financial_year, check_id, risk_flags=None):
             extra.append(f"  Expense Ratio: {(total_expenses / total_revenue * 100):.1f}%")
         extra.append(f"  Industry: {entity.industry or 'Not specified'}")
 
-    elif check_id == "going_concern":
-        # Provide indicators for going concern assessment
-        extra.append("=== GOING CONCERN INDICATORS ===")
-        # Cash position
-        cash_kw = ["cash", "bank", "petty cash", "term deposit"]
-        total_cash = ZERO
-        for line in tb_data["lines"]:
-            name_lower = (line.account_name or "").lower()
-            if any(kw in name_lower for kw in cash_kw):
-                net = line.effective_dr - line.effective_cr
-                total_cash += net
-                extra.append(f"  {line.account_code} {line.account_name}: Net ${net:,.2f}")
-        extra.append(f"  Total Cash/Bank: ${total_cash:,.2f}")
-        # Liabilities vs assets
-        total_current_liab = ZERO
-        total_current_asset = ZERO
-        for line in tb_data["lines"]:
-            section = (getattr(line, 'statement_section', '') or '').lower()
-            net = line.effective_dr - line.effective_cr
-            if 'current liabilit' in section:
-                total_current_liab += abs(net)
-            elif 'current asset' in section:
-                total_current_asset += net
-        extra.append(f"  Current Assets: ${total_current_asset:,.2f}")
-        extra.append(f"  Current Liabilities: ${total_current_liab:,.2f}")
-        if total_current_liab > ZERO:
-            extra.append(f"  Current Ratio: {(total_current_asset / total_current_liab):.2f}")
-        # Net profit/loss
-        total_revenue = ZERO
-        total_expenses = ZERO
-        for line in tb_data["lines"]:
-            section = (getattr(line, 'statement_section', '') or '').lower()
-            net = line.effective_dr - line.effective_cr
-            if 'revenue' in section or 'income' in section:
-                total_revenue += abs(net)
-            elif 'expense' in section:
-                total_expenses += abs(net)
-        extra.append(f"  Revenue: ${total_revenue:,.2f}, Expenses: ${total_expenses:,.2f}")
-        extra.append(f"  Net Result: ${(total_revenue - total_expenses):,.2f}")
+    # going_concern: deliberately excluded. Directors address solvency via Solvency Resolution document.
 
     elif check_id == "tpar":
         # Check for contractor/subcontractor payment accounts
@@ -961,26 +879,7 @@ def _build_check_context(financial_year, check_id, risk_flags=None):
                     f"1B (GST on Purchases) ${s1b}, Net ${s_net} — {bp.status}"
                 )
 
-    elif check_id == "comparative_consistency":
-        # Add summary of significant variances using effective balances
-        extra.append("=== SIGNIFICANT YEAR-ON-YEAR MOVEMENTS (EFFECTIVE BALANCES) ===")
-        variance_count = 0
-        for line in tb_data["lines"]:
-            current_net = line.effective_dr - line.effective_cr
-            prior_net = (line.prior_debit or ZERO) - (line.prior_credit or ZERO)
-            if prior_net != ZERO:
-                variance_pct = abs((current_net - prior_net) / abs(prior_net) * 100)
-                abs_variance = abs(current_net - prior_net)
-                if variance_pct >= 25 and abs_variance >= Decimal("5000"):
-                    direction = "increased" if current_net > prior_net else "decreased"
-                    extra.append(
-                        f"  {line.account_code} {line.account_name}: "
-                        f"${prior_net:,.2f} → ${current_net:,.2f} "
-                        f"({direction} {variance_pct:.1f}%, ${abs_variance:,.2f})"
-                    )
-                    variance_count += 1
-        if variance_count == 0:
-            extra.append("  No significant variances detected (>25% and >$5,000).")
+    # comparative_consistency: superseded by amber indicators (TrialBalanceLine variance flags).
 
     # Inject risk engine hard facts (Defect 3 fix)
     hard_facts_text = ""
@@ -1145,19 +1044,6 @@ Rules:
 - affected_account_codes: list of account codes (e.g. "2-1200") that this
   finding relates to. Extract these from the trial balance data provided.
   Empty list if no specific accounts are involved.
-
-═══════════════════════════════════════════════════════
-COMPARATIVE CONSISTENCY — SPECIAL RULES
-═══════════════════════════════════════════════════════
-
-For the comparative_consistency check:
-- Do NOT create a roll-up finding listing all variances.
-- Only flag accounts NOT already covered by another specific compliance check.
-- If the only significant variances are in accounts covered by div7a,
-  related_party, depreciation_review, or super_guarantee, set has_finding to false
-  and let those specific checks handle the analysis.
-- If you do raise a finding, focus on the single most significant unexplained
-  variance and reference at most 2-3 accounts.
 
 ═══════════════════════════════════════════════════════
 TRIAL BALANCE INTEGRITY — SPECIAL RULES
