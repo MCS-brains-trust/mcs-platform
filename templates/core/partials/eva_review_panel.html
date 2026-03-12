@@ -12,24 +12,32 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
         </div>
         <div class="d-flex align-items-center gap-2">
             <span id="eva-gate-status-badge" class="badge bg-light text-dark">
-                {% if fy.status == 'in_review' and eva_review_running %}
+                {% if eva_review_running %}
                     <span class="spinner-border spinner-border-sm me-1" style="width: 12px; height: 12px;"></span> Reviewing...
+                {% elif fy.status == 'finalised' and fy.can_assemble_package %}
+                    <i class="bi bi-check-circle-fill text-success"></i> Eva Cleared
                 {% elif fy.status == 'finalised' %}
-                    <i class="bi bi-lock-fill text-success"></i> Finalised
-                {% elif fy.status == 'in_review' %}
                     <i class="bi bi-clock"></i> Awaiting Review
                 {% else %}
-                    <i class="bi bi-clock"></i> Not Submitted
+                    <i class="bi bi-clock"></i> Not Ready
                 {% endif %}
             </span>
         </div>
     </div>
     <div class="card-body">
-        {% if fy.can_ask_eva and not eva_review_running %}
-        <!-- Show "Ask Eva to Review" button (available when status is In Review or Reopened) -->
+        {% if fy.status != 'finalised' %}
+        <!-- Not yet finalised — show placeholder message -->
+        <div class="text-center py-3">
+            <i class="bi bi-shield-check text-muted" style="font-size: 2.5rem;"></i>
+            <p class="fw-semibold mt-2 mb-1">Mark this year as Finalised to begin Eva's compliance review.</p>
+            <p class="text-muted small mb-0">Click the green <strong>Finalise</strong> button above to lock the trial balance and enable Eva's structured compliance analysis.</p>
+        </div>
+
+        {% elif fy.can_ask_eva and not eva_review_running %}
+        <!-- Show "Ask Eva to Review" button (available when status is Finalised) -->
         <div class="text-center py-3" id="eva-review-prompt">
             <i class="bi bi-shield-check" style="font-size: 2.5rem; color: #0F6B74;"></i>
-            <p class="mt-2 mb-3">Submit this financial year to Eva for a structured compliance review before finalisation.</p>
+            <p class="mt-2 mb-3">Submit this financial year to Eva for a structured compliance review.</p>
             <p class="text-muted small mb-3">Eva will check: Division 7A, Superannuation, ATO Benchmarks, Trust Distributions, Related Party, TPAR, and Thin Capitalisation (as applicable to this entity type).</p>
             <button type="button" class="btn btn-lg" style="background: #0F6B74; color: white;" onclick="askEvaToReview()" id="eva-review-btn">
                 <i class="bi bi-stars me-1"></i> Ask Eva to Review
@@ -88,14 +96,12 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
             </div>
         </div>
 
-        {% elif fy.status == 'finalised' %}
-        <!-- FINALISED -->
+        {% elif fy.status == 'finalised' and fy.can_assemble_package %}
+        <!-- EVA CLEARED — all findings resolved -->
         <div class="text-center py-3">
-            <i class="bi bi-lock-fill text-success" style="font-size: 2rem;"></i>
-            <p class="fw-semibold mt-2 mb-0">This financial year has been finalised</p>
-            {% if fy.finalised_at %}
-            <small class="text-muted">Finalised on {{ fy.finalised_at|date:"d M Y" }}</small>
-            {% endif %}
+            <i class="bi bi-check-circle-fill text-success" style="font-size: 2rem;"></i>
+            <p class="fw-semibold mt-2 mb-0">Eva compliance review cleared</p>
+            <small class="text-muted">All findings resolved. Client package assembly is now available.</small>
         </div>
         {% endif %}
 
@@ -706,7 +712,7 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
                     countBadge.textContent = openCount + ' open /' + (parts[1] || '');
                 }
 
-                if (data.can_finalise) {
+                if (data.can_assemble_package) {
                     setTimeout(function() { location.reload(); }, 1500);
                 }
             } else {

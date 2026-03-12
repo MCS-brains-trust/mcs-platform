@@ -1995,10 +1995,13 @@ def financial_year_status(request, pk):
         messages.error(request, "Invalid status.")
         return redirect("core:financial_year_detail", pk=pk)
 
-    # Only draft ↔ in_review is allowed via this dropdown
+    # Allowed manual transitions via the status dropdown.
+    # Finalise and reopen have dedicated endpoints but are included
+    # here for admin correction purposes.
     ALLOWED_TRANSITIONS = {
         "draft": ["in_review"],
-        "in_review": ["draft"],
+        "in_review": ["draft", "finalised"],
+        "finalised": ["reopened"],
         "reopened": ["in_review"],
     }
     allowed = ALLOWED_TRANSITIONS.get(fy.status, [])
@@ -2067,6 +2070,9 @@ def financial_year_status(request, pk):
 
     old_status = fy.status
     fy.status = new_status
+    if new_status == "finalised":
+        fy.finalised_at = timezone.now()
+        fy.trial_balance_lines.update(comparatives_locked=True)
     fy.save()
 
     _log_action(

@@ -585,28 +585,16 @@ class FinancialYear(models.Model):
 
     @property
     def can_ask_eva(self):
-        """Eva can be triggered when status is in_review or reopened."""
-        return self.status in (self.Status.IN_REVIEW, self.Status.REOPENED)
+        """Eva review is available once the year has been finalised."""
+        return self.status == self.Status.FINALISED
 
     @property
     def can_finalise(self):
         """
-        Finalise button is active when:
-        - Status is in_review
-        - Eva has been run at least once
-        - Zero open Eva findings remain
+        Finalise button is active when status is in_review.
+        Eva compliance review happens *after* finalisation.
         """
-        if self.status != self.Status.IN_REVIEW:
-            return False
-        has_eva_run = self.eva_reviews.exists()
-        # Use reverse relation through eva_reviews to avoid forward reference
-        from django.apps import apps
-        EvaFindingModel = apps.get_model('core', 'EvaFinding')
-        open_findings = EvaFindingModel.objects.filter(
-            eva_review__financial_year=self,
-            status='open',
-        ).count()
-        return has_eva_run and open_findings == 0
+        return self.status == self.Status.IN_REVIEW
 
     @property
     def is_reopened(self):
@@ -614,8 +602,18 @@ class FinancialYear(models.Model):
 
     @property
     def can_assemble_package(self):
-        """Package assembly available from finalised only."""
-        return self.status == self.Status.FINALISED
+        """Package assembly available once finalised and Eva review is cleared."""
+        if self.status != self.Status.FINALISED:
+            return False
+        if not self.eva_reviews.exists():
+            return False
+        from django.apps import apps
+        EvaFindingModel = apps.get_model('core', 'EvaFinding')
+        open_findings = EvaFindingModel.objects.filter(
+            eva_review__financial_year=self,
+            status='open',
+        ).count()
+        return open_findings == 0
 
     def transition_to(self, new_status):
         """Validate and execute a status transition. Returns True if valid."""

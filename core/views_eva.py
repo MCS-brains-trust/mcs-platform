@@ -145,10 +145,10 @@ def ask_eva_review(request, pk):
     """
     fy = get_object_or_404(FinancialYear, pk=pk)
 
-    # Status check: Eva can only be triggered from in_review or reopened
+    # Status check: Eva review is only available once the year is finalised
     if not fy.can_ask_eva:
         return JsonResponse({
-            "error": "Eva review can only be triggered when the financial year is In Review or Reopened.",
+            "error": "Eva review can only be triggered when the financial year is Finalised.",
             "current_status": fy.get_status_display(),
         }, status=400)
 
@@ -310,7 +310,7 @@ def eva_rerun_review(request, pk):
 
     if not fy.can_ask_eva:
         return JsonResponse({
-            "error": "Cannot re-run Eva review in current status. Must be In Review or Reopened.",
+            "error": "Cannot re-run Eva review in current status. Year must be Finalised.",
         }, status=400)
 
     user = request.user
@@ -356,7 +356,7 @@ def eva_finalise(request, pk):
 
     if not fy.can_finalise:
         return JsonResponse({
-            "error": "Cannot finalise. Eva review must be complete with zero open findings.",
+            "error": "Cannot finalise. The financial year must be in 'In Review' status.",
             "can_finalise": False,
         }, status=400)
 
@@ -370,7 +370,7 @@ def eva_finalise(request, pk):
     _log_action(
         request, AuditLog.Action.STATUS_CHANGE,
         f"{request.user.get_full_name() or request.user.email} finalised this financial year. "
-        f"Eva clearance on record. All documents and data locked.",
+        f"Trial balance locked. Eva compliance review now available.",
         fy,
     )
 
@@ -382,24 +382,17 @@ def eva_finalise(request, pk):
         title=f"Finalised by {request.user.get_full_name() or request.user.username}",
         description=(
             f"Financial year finalised at {timezone.now().strftime('%d %b %Y %H:%M')}. "
-            f"All Eva findings resolved."
+            f"Eva compliance review is now available."
         ),
         entity=fy.entity,
         financial_year=fy,
         url=f"/entities/years/{fy.pk}/",
     )
 
-    # Trigger Eva Client Summary generation (async if Celery available)
-    try:
-        from core.tasks import generate_eva_client_summary
-        generate_eva_client_summary.delay(str(fy.pk), str(request.user.pk))
-    except Exception as e:
-        logger.warning(f"Could not trigger client summary generation: {e}")
-
     return JsonResponse({
         "status": "ok",
         "finalised": True,
-        "message": "Financial year has been finalised. Eva Client Summary is being generated.",
+        "message": "Financial year has been finalised. You can now run Eva's compliance review.",
     })
 
 

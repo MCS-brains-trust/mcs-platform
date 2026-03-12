@@ -2181,6 +2181,7 @@ def eva_review_detail(request, pk):
         "findings": findings,
         "fy_status": fy.status,
         "can_finalise": fy.can_finalise,
+        "can_assemble_package": fy.can_assemble_package,
     })
 
 
@@ -2314,6 +2315,7 @@ def eva_finding_resolve(request, pk):
         "review_status": review.status,
         "fy_status": fy.status,
         "can_finalise": fy.can_finalise,
+        "can_assemble_package": fy.can_assemble_package,
     })
 
 
@@ -2449,6 +2451,7 @@ def eva_auto_disclose_rp(request, pk):
         "review_status": review.status,
         "fy_status": fy.status,
         "can_finalise": fy.can_finalise,
+        "can_assemble_package": fy.can_assemble_package,
     })
 
 
