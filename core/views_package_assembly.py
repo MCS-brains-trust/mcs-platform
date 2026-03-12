@@ -258,7 +258,7 @@ def _has_director_loan_over_10k(fy):
     """Check if there's a director/shareholder loan balance exceeding $10,000."""
     loan_lines = TrialBalanceLine.objects.filter(
         financial_year=fy,
-    ).select_related("account")
+    ).select_related("mapped_line_item")
 
     for line in loan_lines:
         acct_name = ""

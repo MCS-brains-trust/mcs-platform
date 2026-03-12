@@ -43,7 +43,7 @@ def partner_statements(request, pk):
     # Get profit allocation from TB
     profit_lines = TrialBalanceLine.objects.filter(
         financial_year=fy,
-    ).select_related("account")
+    ).select_related("mapped_line_item")
 
     total_revenue = 0
     total_expenses = 0

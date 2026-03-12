@@ -74,7 +74,7 @@ def _build_summary_context(fy, entity):
     }
 
     # Trial Balance data
-    tb_lines = TrialBalanceLine.objects.filter(financial_year=fy).select_related("account")
+    tb_lines = TrialBalanceLine.objects.filter(financial_year=fy).select_related("mapped_line_item")
     revenue_total = 0
     expense_total = 0
     asset_total = 0
