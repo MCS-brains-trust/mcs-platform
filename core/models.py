@@ -4753,6 +4753,24 @@ class BASPeriodCommentary(models.Model):
     # Error tracking
     error_message = models.TextField(blank=True, default="")
 
+    # Celery task tracking (replaces in-memory _commentary_tasks dict)
+    celery_task_id = models.CharField(
+        max_length=255, blank=True, default="",
+        help_text="Celery task ID for tracking generation progress",
+    )
+    generation_started_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="When the background generation task started executing",
+    )
+    generation_completed_at = models.DateTimeField(
+        null=True, blank=True,
+        help_text="When the background generation task finished (success or failure)",
+    )
+    generation_step = models.CharField(
+        max_length=100, blank=True, default="",
+        help_text="Current step description for progress polling",
+    )
+
     # Trend chaining — link to the prior period's commentary for comparison
     prior_commentary = models.ForeignKey(
         "self", on_delete=models.SET_NULL,

@@ -468,7 +468,8 @@ def download_commentary(request, pk):
 def commentary_status(request, pk):
     """
     Poll the generation status of a commentary.
-    Used by the frontend to check when generation is complete.
+    Uses database-backed tracking fields instead of an in-memory dict,
+    so status survives server restarts and works across multiple workers.
     """
     commentary = get_object_or_404(BASPeriodCommentary, pk=pk)
 
@@ -476,18 +477,17 @@ def commentary_status(request, pk):
     if not fy:
         return JsonResponse({"error": "Access denied."}, status=403)
 
-    # Check in-memory task tracker
-    from .eva_bas_commentary import _commentary_tasks
-    task_info = _commentary_tasks.get(str(commentary.pk), {})
-
     response = {
         "id": str(commentary.pk),
         "status": commentary.status,
         "status_display": commentary.get_status_display(),
     }
 
-    if task_info.get("status") == "running":
-        response["step"] = task_info.get("step", "Processing...")
+    if commentary.celery_task_id:
+        response["celery_task_id"] = commentary.celery_task_id
+
+    if commentary.status == "generating":
+        response["step"] = commentary.generation_step or "Processing..."
     elif commentary.status == "error":
         response["error_message"] = commentary.error_message
     elif commentary.status in ("draft", "reviewed", "sent"):
@@ -699,12 +699,16 @@ def _serialize_commentary_for_compare(commentary):
 def _queue_commentary_generation(commentary_pk, user_pk):
     """
     Queue commentary generation. Uses Celery if available, otherwise
-    falls back to a background thread.
+    falls back to a background thread. Stores the Celery task ID on
+    the BASPeriodCommentary record for reliable status tracking.
     """
     try:
         from core.tasks import eva_bas_commentary
-        eva_bas_commentary.delay(commentary_pk, user_pk)
-        logger.info("BAS commentary queued via Celery: %s", commentary_pk)
+        result = eva_bas_commentary.delay(commentary_pk, user_pk)
+        BASPeriodCommentary.objects.filter(pk=commentary_pk).update(
+            celery_task_id=result.id,
+        )
+        logger.info("BAS commentary queued via Celery: %s (task=%s)", commentary_pk, result.id)
     except Exception:
         # Fallback to thread (dev/testing)
         from core.eva_bas_commentary import generate_bas_commentary

@@ -199,6 +199,19 @@ def eva_bas_commentary(self, commentary_id, user_id):
         return result
     except Exception as exc:
         logger.exception("BAS commentary generation failed for %s", commentary_id)
+        # On final retry failure, ensure the DB record is marked as failed
+        if self.request.retries >= self.max_retries:
+            try:
+                from django.utils import timezone as tz
+                from core.models import BASPeriodCommentary
+                BASPeriodCommentary.objects.filter(pk=commentary_id).update(
+                    status="error",
+                    error_message=f"Task failed after {self.max_retries + 1} attempts: {str(exc)[:900]}",
+                    generation_completed_at=tz.now(),
+                    generation_step="",
+                )
+            except Exception:
+                logger.exception("Failed to mark commentary %s as error", commentary_id)
         raise self.retry(exc=exc, countdown=30)
 
 

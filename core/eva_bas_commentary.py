@@ -364,8 +364,11 @@ def _get_prior_year_same_period(fy, period_start, period_end):
 # ---------------------------------------------------------------------------
 # Commentary Generation (Background Task)
 # ---------------------------------------------------------------------------
-# In-memory task tracking (same pattern as Eva review)
-_commentary_tasks = {}
+
+def _update_generation_step(commentary_pk, step):
+    """Update the generation step in the database for progress polling."""
+    from core.models import BASPeriodCommentary
+    BASPeriodCommentary.objects.filter(pk=commentary_pk).update(generation_step=step)
 
 
 def generate_bas_commentary(commentary_pk, user_pk):
@@ -373,20 +376,9 @@ def generate_bas_commentary(commentary_pk, user_pk):
     Generate the BAS period commentary using the LLM.
 
     This is designed to be called from a background thread or Celery task.
-    The 13-step execution flow:
-      1. Load commentary record and validate
-      2. Build period-scoped context
-      3. Query Knowledge Brain for relevant guidance
-      4. Construct the system prompt with tone
-      5. Construct the user prompt with all context
-      6. Call the LLM
-      7. Parse the JSON response
-      8. Populate the five section fields
-      9. Build the full_content field
-     10. Save the context snapshot
-     11. Update status to draft
-     12. Log activity
-     13. Return success
+    Progress is tracked via database fields on BASPeriodCommentary
+    (generation_step, generation_started_at, generation_completed_at)
+    so status survives server restarts and works across multiple workers.
     """
     import django
     django.setup()
@@ -396,7 +388,6 @@ def generate_bas_commentary(commentary_pk, user_pk):
     from django.contrib.auth import get_user_model
 
     User = get_user_model()
-    task_key = str(commentary_pk)
     start_time = time.time()
 
     try:
@@ -408,10 +399,10 @@ def generate_bas_commentary(commentary_pk, user_pk):
         fy = commentary.financial_year
         entity = fy.entity
 
-        _commentary_tasks[task_key] = {
-            "status": "running",
-            "step": "Building period context...",
-        }
+        # Mark generation as started
+        commentary.generation_started_at = timezone.now()
+        commentary.generation_step = "Building period context..."
+        commentary.save(update_fields=["generation_started_at", "generation_step"])
 
         # Step 2: Build period-scoped context
         context_data, formatted_context = build_period_context(
@@ -421,7 +412,7 @@ def generate_bas_commentary(commentary_pk, user_pk):
             commentary.period_label,
         )
 
-        _commentary_tasks[task_key]["step"] = "Querying Knowledge Brain..."
+        _update_generation_step(commentary_pk, "Querying Knowledge Brain...")
 
         # Step 3: Knowledge Brain retrieval
         kb_context = ""
@@ -434,7 +425,7 @@ def generate_bas_commentary(commentary_pk, user_pk):
         except Exception as kb_err:
             logger.warning(f"BAS Commentary KB retrieval error: {kb_err}")
 
-        _commentary_tasks[task_key]["step"] = "Generating commentary..."
+        _update_generation_step(commentary_pk, "Generating commentary...")
 
         # Step 4: Construct system prompt with tone
         tone_key = commentary.tone or "professional"
@@ -516,8 +507,10 @@ Each value should be a string containing the section content in plain text (no m
         commentary.context_snapshot = context_data
         commentary.model_used = tier
 
-        # Step 11: Update status
+        # Step 11: Update status and mark generation complete
         commentary.status = "draft"
+        commentary.generation_completed_at = timezone.now()
+        commentary.generation_step = ""
         commentary.save()
 
         duration = time.time() - start_time
@@ -540,12 +533,6 @@ Each value should be a string containing the section content in plain text (no m
         except Exception:
             pass
 
-        _commentary_tasks[task_key] = {
-            "status": "complete",
-            "commentary_id": str(commentary.pk),
-            "duration": round(duration, 1),
-        }
-
         return True
 
     except Exception as e:
@@ -553,16 +540,14 @@ Each value should be a string containing the section content in plain text (no m
         traceback.print_exc()
 
         try:
-            commentary.status = "error"
-            commentary.error_message = str(e)[:1000]
-            commentary.save(update_fields=["status", "error_message"])
+            BASPeriodCommentary.objects.filter(pk=commentary_pk).update(
+                status="error",
+                error_message=str(e)[:1000],
+                generation_completed_at=timezone.now(),
+                generation_step="",
+            )
         except Exception:
             pass
-
-        _commentary_tasks[task_key] = {
-            "status": "error",
-            "error": str(e),
-        }
 
         return False
 
