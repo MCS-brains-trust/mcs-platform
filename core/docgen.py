@@ -2712,7 +2712,10 @@ def _add_watermark(doc, text="DRAFT", position="top-right", color="#c0c0c0", opa
         font_size = "1pt"
 
     watermark_xml = (
-        f'<w:r {nsdecls("w", "v", "o", "w10")}>' 
+        '<w:r xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+        ' xmlns:v="urn:schemas-microsoft-com:vml"'
+        ' xmlns:o="urn:schemas-microsoft-com:office:office"'
+        ' xmlns:w10="urn:schemas-microsoft-com:office:word">' 
         '  <w:rPr><w:noProof/></w:rPr>'
         '  <w:pict>'
         '    <v:shapetype id="_x0000_t136" coordsize="21600,21600" '

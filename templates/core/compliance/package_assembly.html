@@ -1,14 +1,14 @@
 {% extends "base.html" %}
 {% load humanize %}
 
-{% block title %}Package Assembly — {{ entity.name }}{% endblock %}
+{% block title %}Package Assembly — {{ entity.entity_name }}{% endblock %}
 
 {% block content %}
 <div class="container-fluid py-3">
     <nav aria-label="breadcrumb">
         <ol class="breadcrumb">
             <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
-            <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.name }}</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
             <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy }}</a></li>
             <li class="breadcrumb-item active">Package Assembly</li>
         </ol>
@@ -32,10 +32,37 @@
                             </span>
                             {{ alert.message }}
                         </div>
-                        <a href="{% url 'core:'|add:alert.resolution pk=fy.pk %}"
+                        {% if alert.resolution == 'engagement_letter_wizard' %}
+                        <a href="{% url 'core:engagement_letter_wizard' pk=entity.pk %}"
                            class="btn btn-sm btn-outline-primary text-nowrap">
                             {{ alert.resolution_label }}
                         </a>
+                        {% elif alert.resolution == 'dividend_wizard' %}
+                        <a href="{% url 'core:dividend_wizard' pk=fy.pk %}"
+                           class="btn btn-sm btn-outline-primary text-nowrap">
+                            {{ alert.resolution_label }}
+                        </a>
+                        {% elif alert.resolution == 'generate_solvency_resolution' %}
+                        <a href="{% url 'core:generate_solvency_resolution' pk=fy.pk %}"
+                           class="btn btn-sm btn-outline-primary text-nowrap">
+                            {{ alert.resolution_label }}
+                        </a>
+                        {% elif alert.resolution == 'generate_directors_declaration' %}
+                        <a href="{% url 'core:generate_directors_declaration' pk=fy.pk %}"
+                           class="btn btn-sm btn-outline-primary text-nowrap">
+                            {{ alert.resolution_label }}
+                        </a>
+                        {% elif alert.resolution == 'generate_loan_acknowledgment' %}
+                        <a href="{% url 'core:generate_loan_acknowledgment' pk=fy.pk %}"
+                           class="btn btn-sm btn-outline-primary text-nowrap">
+                            {{ alert.resolution_label }}
+                        </a>
+                        {% else %}
+                        <a href="{% url 'core:financial_year_detail' pk=fy.pk %}"
+                           class="btn btn-sm btn-outline-primary text-nowrap">
+                            {{ alert.resolution_label }}
+                        </a>
+                        {% endif %}
                     </div>
                     {% endfor %}
                 </div>
@@ -125,7 +152,7 @@
                         <div class="d-flex justify-content-between align-items-start">
                             <div>
                                 <small class="fw-bold">{{ doc.title }}</small><br>
-                                <small class="text-muted">{{ doc.get_document_type_display }} &middot; {{ doc.created_at|date:"d M Y" }}</small>
+                                <small class="text-muted">{{ doc.get_document_type_display }} &middot; {{ doc.generated_at|date:"d M Y" }}</small>
                             </div>
                             <span class="badge bg-{% if doc.status == 'signed' %}success{% elif doc.status == 'generated' %}primary{% else %}secondary{% endif %}">
                                 {{ doc.get_status_display }}
