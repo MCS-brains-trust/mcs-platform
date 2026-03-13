@@ -604,11 +604,23 @@ class FinancialYear(models.Model):
 
     @property
     def can_assemble_package(self):
-        """Package assembly available once finalised and Eva review is cleared."""
+        """Package assembly available once finalised and Eva review is cleared.
+
+        Requires:
+        1. FY is finalised.
+        2. At least one completed Eva review exists (status 'cleared' or
+           'findings_raised') — a pending/in-progress review does not count.
+        3. No open EvaFindings remain across any review for this FY.
+        """
         if self.status != self.Status.FINALISED:
             return False
-        if not self.eva_reviews.exists():
+        # Must have at least one completed (non-pending, non-error) Eva review
+        completed_reviews = self.eva_reviews.filter(
+            status__in=['cleared', 'findings_raised']
+        )
+        if not completed_reviews.exists():
             return False
+        # No open EvaFindings may remain across any review for this FY
         from django.apps import apps
         EvaFindingModel = apps.get_model('core', 'EvaFinding')
         open_findings = EvaFindingModel.objects.filter(

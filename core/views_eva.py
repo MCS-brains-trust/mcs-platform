@@ -315,25 +315,10 @@ def eva_rerun_review(request, pk):
 
     user = request.user
 
-    def _run_review():
-        try:
-            from core.eva_service import run_eva_review
-            review = run_eva_review(fy, user)
-            review.is_rerun = True
-            review.save(update_fields=["is_rerun"])
-        except Exception:
-            import logging
-            logging.getLogger("core.views_eva").exception(
-                "Background Eva rerun review failed for FY %s", fy.pk,
-            )
-
-    thread = threading.Thread(target=_run_review, daemon=True)
-    thread.start()
-
-    return JsonResponse({
-        "status": "accepted",
-        "message": "Eva is re-running her compliance review.",
-    }, status=202)
+    # Delegate to the same engine used by ask_eva_review (eva_engine background task)
+    # to avoid the legacy eva_service path which has stale model references.
+    from core.eva_engine import ask_eva_review as engine_ask_eva
+    return engine_ask_eva(request, pk)
 
 
 # ===========================================================================
