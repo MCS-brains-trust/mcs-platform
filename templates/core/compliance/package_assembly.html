@@ -43,20 +43,26 @@
                             {{ alert.resolution_label }}
                         </a>
                         {% elif alert.resolution == 'generate_solvency_resolution' %}
-                        <a href="{% url 'core:generate_solvency_resolution' pk=fy.pk %}"
-                           class="btn btn-sm btn-outline-primary text-nowrap">
-                            {{ alert.resolution_label }}
-                        </a>
+                        <form method="post" action="{% url 'core:generate_solvency_resolution' pk=fy.pk %}" class="d-inline">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-sm btn-outline-primary text-nowrap">
+                                {{ alert.resolution_label }}
+                            </button>
+                        </form>
                         {% elif alert.resolution == 'generate_directors_declaration' %}
-                        <a href="{% url 'core:generate_directors_declaration' pk=fy.pk %}"
-                           class="btn btn-sm btn-outline-primary text-nowrap">
-                            {{ alert.resolution_label }}
-                        </a>
+                        <form method="post" action="{% url 'core:generate_directors_declaration' pk=fy.pk %}" class="d-inline">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-sm btn-outline-primary text-nowrap">
+                                {{ alert.resolution_label }}
+                            </button>
+                        </form>
                         {% elif alert.resolution == 'generate_loan_acknowledgment' %}
-                        <a href="{% url 'core:generate_loan_acknowledgment' pk=fy.pk %}"
-                           class="btn btn-sm btn-outline-primary text-nowrap">
-                            {{ alert.resolution_label }}
-                        </a>
+                        <form method="post" action="{% url 'core:generate_loan_acknowledgment' pk=fy.pk %}" class="d-inline">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-sm btn-outline-primary text-nowrap">
+                                {{ alert.resolution_label }}
+                            </button>
+                        </form>
                         {% else %}
                         <a href="{% url 'core:financial_year_detail' pk=fy.pk %}"
                            class="btn btn-sm btn-outline-primary text-nowrap">
