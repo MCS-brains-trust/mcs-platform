@@ -43,26 +43,20 @@
                             {{ alert.resolution_label }}
                         </a>
                         {% elif alert.resolution == 'generate_solvency_resolution' %}
-                        <form method="post" action="{% url 'core:generate_solvency_resolution' pk=fy.pk %}" class="d-inline">
-                            {% csrf_token %}
-                            <button type="submit" class="btn btn-sm btn-outline-primary text-nowrap">
-                                {{ alert.resolution_label }}
-                            </button>
-                        </form>
+                        <button class="btn btn-sm btn-outline-primary text-nowrap"
+                                onclick="generateDoc('{% url 'core:generate_solvency_resolution' pk=fy.pk %}', 'Solvency Resolution')">
+                            {{ alert.resolution_label }}
+                        </button>
                         {% elif alert.resolution == 'generate_directors_declaration' %}
-                        <form method="post" action="{% url 'core:generate_directors_declaration' pk=fy.pk %}" class="d-inline">
-                            {% csrf_token %}
-                            <button type="submit" class="btn btn-sm btn-outline-primary text-nowrap">
-                                {{ alert.resolution_label }}
-                            </button>
-                        </form>
+                        <button class="btn btn-sm btn-outline-primary text-nowrap"
+                                onclick="generateDoc('{% url 'core:generate_directors_declaration' pk=fy.pk %}', "Director's Declaration")">
+                            {{ alert.resolution_label }}
+                        </button>
                         {% elif alert.resolution == 'generate_loan_acknowledgment' %}
-                        <form method="post" action="{% url 'core:generate_loan_acknowledgment' pk=fy.pk %}" class="d-inline">
-                            {% csrf_token %}
-                            <button type="submit" class="btn btn-sm btn-outline-primary text-nowrap">
-                                {{ alert.resolution_label }}
-                            </button>
-                        </form>
+                        <button class="btn btn-sm btn-outline-primary text-nowrap"
+                                onclick="generateDoc('{% url 'core:generate_loan_acknowledgment' pk=fy.pk %}', 'Loan Acknowledgment')">
+                            {{ alert.resolution_label }}
+                        </button>
                         {% else %}
                         <a href="{% url 'core:financial_year_detail' pk=fy.pk %}"
                            class="btn btn-sm btn-outline-primary text-nowrap">
@@ -198,6 +192,25 @@
 const CSRF_TOKEN = '{{ csrf_token }}';
 const ASSEMBLE_URL = '{% url "core:package_assemble" pk=fy.pk %}';
 const SIGN_URL = '{% url "core:package_send_for_signing" pk=fy.pk %}';
+
+function generateDoc(url, label) {
+    if (!confirm('Generate ' + label + '?')) return;
+    fetch(url, {
+        method: 'POST',
+        headers: {'X-CSRFToken': CSRF_TOKEN},
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            alert(label + ' generated successfully.');
+            location.reload();
+        } else {
+            alert('Error: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(err => alert('Error: ' + err.message));
+}
+
 
 function assemblePackage() {
     if (!confirm('Assemble the client package? This will mark all documents as ready for signing.')) return;
