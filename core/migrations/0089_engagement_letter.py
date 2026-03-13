@@ -13,7 +13,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("core", "0087_pgvector_embedding"),
+        ("core", "0088_remove_knowledgechunk_knowledge_chunk_embedding_hnsw"),
         migrations.swappable_dependency(settings.AUTH_USER_MODEL),
     ]
 

@@ -1,13 +1,13 @@
 # Generated manually to resolve migration conflict between
-# 0088_engagement_letter and 0089_alter_activitylog_event_type
+# 0089_engagement_letter and 0090_alter_activitylog_event_type
 from django.db import migrations
 
 
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("core", "0088_engagement_letter"),
-        ("core", "0089_alter_activitylog_event_type"),
+        ("core", "0089_engagement_letter"),
+        ("core", "0090_alter_activitylog_event_type"),
     ]
 
     operations = [
