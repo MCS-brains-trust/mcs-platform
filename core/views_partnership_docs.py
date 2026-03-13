@@ -260,7 +260,7 @@ def engagement_letter_generate(request, pk):
         "fee_amount": fee_display,
         "fee_basis": config.fee_basis,
         "additional_terms": config.additional_terms,
-        "signatories": [{"name": s.name, "role": s.get_role_display()} for s in signatories],
+        "signatories": [{"name": s.full_name, "role": s.get_role_display()} for s in signatories],
         "date": data.get("date", ""),
     }
 
