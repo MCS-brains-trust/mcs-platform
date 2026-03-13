@@ -610,23 +610,23 @@ class FinancialYear(models.Model):
         1. FY is finalised.
         2. At least one completed Eva review exists (status 'cleared' or
            'findings_raised') — a pending/in-progress review does not count.
-        3. No open EvaFindings remain across any review for this FY.
+        3. No open EvaFindings remain on the MOST RECENT completed review.
+
+        Note: open findings on older/superseded review runs are intentionally
+        ignored — only the latest completed review is authoritative. This
+        prevents stale findings from earlier runs blocking package assembly
+        after a clean re-run.
         """
         if self.status != self.Status.FINALISED:
             return False
-        # Must have at least one completed (non-pending, non-error) Eva review
-        completed_reviews = self.eva_reviews.filter(
+        # Get the most recent completed (non-pending, non-error) Eva review
+        latest_completed = self.eva_reviews.filter(
             status__in=['cleared', 'findings_raised']
-        )
-        if not completed_reviews.exists():
+        ).order_by('-triggered_at').first()
+        if latest_completed is None:
             return False
-        # No open EvaFindings may remain across any review for this FY
-        from django.apps import apps
-        EvaFindingModel = apps.get_model('core', 'EvaFinding')
-        open_findings = EvaFindingModel.objects.filter(
-            eva_review__financial_year=self,
-            status='open',
-        ).count()
+        # No open EvaFindings may remain on the latest completed review only
+        open_findings = latest_completed.findings.filter(status='open').count()
         return open_findings == 0
 
     def transition_to(self, new_status):
