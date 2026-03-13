@@ -422,8 +422,27 @@ def _detect_loan_accounts(ctx):
     """
     for line in ctx.tb_data["lines"]:
         if _is_loan_account(line):
-            net = line.effective_dr - line.effective_cr
-            prior_net = (line.prior_debit or ZERO) - (line.prior_credit or ZERO)
+            # Use closing_balance as the authoritative net position when available.
+            # Some TB imports (e.g. Access Ledger, MYOB) populate only the debit
+            # or credit movement column without the offsetting entry, which causes
+            # effective_dr - effective_cr to reflect the gross movement rather than
+            # the closing balance.  closing_balance is always the net position.
+            raw_closing = getattr(line, 'closing_balance', None)
+            if raw_closing is not None and raw_closing != ZERO:
+                # closing_balance positive = debit (asset/receivable from company's view)
+                # closing_balance negative = credit (liability owed to the person)
+                net = Decimal(str(raw_closing))
+            else:
+                net = line.effective_dr - line.effective_cr
+
+            # Prior year: use prior_closing_balance when available, else fall back
+            # to prior_debit - prior_credit.
+            raw_prior_closing = getattr(line, 'prior_closing_balance', None)
+            if raw_prior_closing is not None and raw_prior_closing != ZERO:
+                prior_net = Decimal(str(raw_prior_closing))
+            else:
+                prior_net = (line.prior_debit or ZERO) - (line.prior_credit or ZERO)
+
             ctx.loan_accounts.append({
                 "line": line,
                 "account_code": line.account_code,
@@ -479,18 +498,28 @@ def _rule_t2_d7a_01(ctx):
     """
     T2-D7A-01: Shareholder/Director Loan Debit Balance
 
-    Only fires when the CURRENT YEAR debit movement is > 0 (i.e. new
-    lending occurred this year).  A static loan that hasn't increased
-    does not trigger.  One flag is created per loan account code.
+    Fires when ALL of the following are true:
+      1. The CLOSING BALANCE (net_balance) is a positive DEBIT — i.e. the
+         company has a net receivable from the shareholder/director at year end.
+      2. The CURRENT YEAR debit MOVEMENT is > 0 — i.e. new lending occurred
+         this year (balance increased or moved from credit into debit).
+
+    The dual guard prevents false positives caused by TB imports that store
+    only the gross debit-column movement for accounts that are nil or in credit
+    at year end.  A nil or credit closing balance means there is no outstanding
+    Div 7A loan regardless of intra-year movement.
     """
     debit_accounts = []
     total_debit = ZERO
 
     for acct in ctx.loan_accounts:
-        if not acct["is_debit"]:
+        # Guard 1: closing balance must be a net DEBIT (positive).
+        # Zero and credit closing balances are NOT Div 7A exposures.
+        if not acct["is_debit"] or acct["net_balance"] <= ZERO:
             continue
 
-        # Calculate current year debit MOVEMENT (increase)
+        # Guard 2: current year debit MOVEMENT must be positive.
+        # A static loan that hasn't increased does not trigger a new finding.
         cy_balance = acct["net_balance"]
         py_balance = acct["prior_balance"] if acct["prior_balance"] > ZERO else ZERO
         cy_movement = cy_balance - py_balance
