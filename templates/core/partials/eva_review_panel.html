@@ -588,34 +588,35 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
                     .replace('border-warning', data.new_severity === 'critical' ? 'border-danger' : 'border-warning');
             }
 
-            // If dismissed, hide the resolution form and update status badge
-            if (outcome === 'dismissed') {
-                var resForm = document.getElementById('resolution-' + findingId);
-                if (resForm && resForm.parentElement) {
-                    resForm.parentElement.innerHTML = '<div class="mt-2 p-2 bg-light rounded"><small class="text-success"><i class="bi bi-check-circle"></i> Addressed via Eva clarification</small></div>';
+            // If dismissed or addressed via clarification, remove the card from the panel
+            if (outcome === 'dismissed' || data.new_status === 'addressed') {
+                var dismissCard = document.getElementById('finding-card-' + findingId);
+                if (dismissCard) {
+                    dismissCard.style.transition = 'opacity 0.4s ease';
+                    dismissCard.style.opacity = '0';
+                    setTimeout(function() {
+                        dismissCard.remove();
+                        // Update count badge
+                        var countBadge = document.getElementById('eva-findings-count');
+                        if (countBadge) {
+                            var parts = countBadge.textContent.split('/');
+                            var openCount = Math.max(0, parseInt(parts[0]) - 1);
+                            var totalCount = Math.max(0, parseInt((parts[1] || '0').trim().replace(' total', '')) - 1);
+                            countBadge.textContent = openCount + ' open / ' + totalCount + ' total';
+                        }
+                        // If review is now cleared or no cards remain, reload
+                        if (data.should_clear_review) {
+                            setTimeout(function() { location.reload(); }, 500);
+                        } else {
+                            var remaining = document.querySelectorAll('#eva-findings-list .card');
+                            if (remaining.length === 0) {
+                                setTimeout(function() { location.reload(); }, 500);
+                            }
+                        }
+                    }, 400);
                 }
-                // Flip the status badge from Open to Addressed
-                var statusBadge = document.getElementById('status-badge-' + findingId);
-                if (statusBadge) {
-                    statusBadge.className = 'badge bg-success';
-                    statusBadge.innerHTML = '<i class="bi bi-check-circle"></i> Addressed';
-                }
-                // Update the card border
-                var card = document.getElementById('finding-card-' + findingId);
-                if (card) {
-                    card.className = card.className.replace('border-danger', 'border-success').replace('border-warning', 'border-success');
-                }
-                // Update count badge
-                var countBadge = document.getElementById('eva-findings-count');
-                if (countBadge) {
-                    var parts = countBadge.textContent.split('/');
-                    var openCount = Math.max(0, parseInt(parts[0]) - 1);
-                    countBadge.textContent = openCount + ' open /' + (parts[1] || '');
-                }
-            }
-
-            // If review should be cleared, reload the page
-            if (data.should_clear_review) {
+            } else if (data.should_clear_review) {
+                // Review cleared without removing card (edge case)
                 setTimeout(function() { location.reload(); }, 1500);
             }
         })
@@ -652,16 +653,28 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
                     // All findings addressed — Eva is re-running
                     location.reload();
                 } else {
-                    // Mark this finding as addressed in the UI
+                    // Remove the finding card from the panel with a fade-out
                     var card = document.getElementById('finding-card-' + findingId);
-                    card.className = card.className.replace('border-danger', 'border-success').replace('border-warning', 'border-success');
-                    btn.parentElement.innerHTML = '<div class="mt-2 p-2 bg-light rounded"><small class="text-success"><i class="bi bi-check-circle"></i> Addressed</small><p class="mb-0 mt-1 small">' + note + '</p></div>';
-
-                    // Update count
-                    var countBadge = document.getElementById('eva-findings-count');
-                    var parts = countBadge.textContent.split('/');
-                    var openCount = parseInt(parts[0]) - 1;
-                    countBadge.textContent = openCount + ' open /' + parts[1];
+                    if (card) {
+                        card.style.transition = 'opacity 0.4s ease';
+                        card.style.opacity = '0';
+                        setTimeout(function() {
+                            card.remove();
+                            // Update count badge
+                            var countBadge = document.getElementById('eva-findings-count');
+                            if (countBadge) {
+                                var parts = countBadge.textContent.split('/');
+                                var openCount = Math.max(0, parseInt(parts[0]) - 1);
+                                var totalCount = Math.max(0, parseInt((parts[1] || '0').trim().replace(' total', '')) - 1);
+                                countBadge.textContent = openCount + ' open / ' + totalCount + ' total';
+                            }
+                            // If no more open findings, show cleared state
+                            var remaining = document.querySelectorAll('#eva-findings-list .card');
+                            if (remaining.length === 0) {
+                                setTimeout(function() { location.reload(); }, 500);
+                            }
+                        }, 400);
+                    }
                 }
             } else {
                 alert(data.error || 'Failed to resolve finding');

@@ -2643,8 +2643,27 @@ def eva_clarify_finding(request, pk):
         ),
         entity=entity,
         financial_year=fy,
-        url=f"/entities/years/{fy.pk}/",
+        eva_finding=finding,
+        url=f"/years/{fy.pk}/",
     )
+
+    # If the finding was dismissed or addressed via clarification, log it as a finding addressed event
+    if result["outcome"] in ("dismissed", "addressed") or result["new_status"] == "addressed":
+        ActivityLog.objects.create(
+            user=request.user,
+            event_type=ActivityLog.EventType.EVA_FINDING_ADDRESSED,
+            title=f"Eva Finding Dismissed — {finding.title or finding.check_name}",
+            description=(
+                f"{request.user.get_full_name() or request.user.email} dismissed Eva finding "
+                f"'{finding.title or finding.check_name}' for {entity.entity_name} ({fy.year_label}). "
+                f"Reason: {option['label']} — {option['outcome_message']}"
+            ),
+            entity=entity,
+            financial_year=fy,
+            eva_finding=finding,
+            metadata={"check_name": finding.check_name, "severity": finding.severity, "outcome": result["outcome"]},
+            url=f"/years/{fy.pk}/",
+        )
 
     return JsonResponse({
         "status": "ok",

@@ -17,7 +17,7 @@ from django.shortcuts import get_object_or_404, render, redirect
 from django.utils import timezone
 from django.views.decorators.http import require_POST, require_GET, require_http_methods
 
-from core.models import FinancialYear, AuditLog, TrialBalanceLine
+from core.models import FinancialYear, AuditLog, TrialBalanceLine, ActivityLog
 
 logger = logging.getLogger(__name__)
 
@@ -269,6 +269,25 @@ def eva_resolve_finding(request, pk):
         finding,
     )
 
+    # Log to Activity tab so the finding appears in the audit trail
+    fy = finding.eva_review.financial_year
+    entity = fy.entity
+    ActivityLog.objects.create(
+        user=request.user,
+        event_type=ActivityLog.EventType.EVA_FINDING_ADDRESSED,
+        title=f"Eva Finding Addressed — {finding.title or finding.check_name}",
+        description=(
+            f"{request.user.get_full_name() or request.user.email} addressed Eva finding "
+            f"'{finding.title or finding.check_name}' for {entity.entity_name} ({fy.year_label}). "
+            f"Resolution: {resolution_note}"
+        ),
+        entity=entity,
+        financial_year=fy,
+        eva_finding=finding,
+        metadata={"check_name": finding.check_name, "severity": finding.severity},
+        url=f"/years/{fy.pk}/",
+    )
+
     response_data = {
         "status": "ok",
         "finding_status": finding.status,
@@ -277,7 +296,6 @@ def eva_resolve_finding(request, pk):
 
     if should_rerun:
         # Trigger a re-run in background
-        fy = finding.eva_review.financial_year
         user = request.user
 
         def _rerun():

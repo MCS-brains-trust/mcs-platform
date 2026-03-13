@@ -2380,6 +2380,7 @@ class ActivityLog(models.Model):
         EVA_REVIEW_TRIGGERED = "eva_review_triggered", "Eva Review Triggered"
         EVA_REVIEW_CLEARED = "eva_review_cleared", "Eva Review Cleared"
         EVA_FINDING_ADDRESSED = "eva_finding_addressed", "Eva Finding Addressed"
+        EVA_CLARIFICATION = "eva_clarification", "Eva Clarification Submitted"
         BAS_COMMENTARY_GENERATED = "bas_commentary_generated", "BAS Commentary Generated"
         BAS_COMMENTARY_EDITED = "bas_commentary_edited", "BAS Commentary Edited"
         BAS_COMMENTARY_REGENERATED = "bas_commentary_regenerated", "BAS Commentary Regenerated"
