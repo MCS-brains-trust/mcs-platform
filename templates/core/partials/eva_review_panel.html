@@ -789,7 +789,7 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
     {% endif %}
 
     // ── Load existing findings if review has findings ──
-    {% if eva_review_running or fy.status == 'in_review' or fy.status == 'reopened' %}
+    {% if eva_review_running or fy.status == 'in_review' or fy.status == 'reopened' or fy.status == 'finalised' %}
     fetch('/api/financial-years/' + fyPk + '/eva-review/', {
         headers: {'X-Requested-With': 'XMLHttpRequest'},
     })
