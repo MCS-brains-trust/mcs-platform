@@ -57,6 +57,16 @@
                                 onclick="generateDoc('{% url 'core:generate_loan_acknowledgment' pk=fy.pk %}', 'Loan Acknowledgment')">
                             {{ alert.resolution_label }}
                         </button>
+                        {% elif alert.resolution == 'generate_management_rep_letter' %}
+                        <button class="btn btn-sm btn-outline-primary text-nowrap"
+                                onclick="generateDoc('{% url 'core:generate_management_rep_letter' pk=fy.pk %}', 'Management Representation Letter')">
+                            {{ alert.resolution_label }}
+                        </button>
+                        {% elif alert.resolution == 'generate_cover_letter' %}
+                        <button class="btn btn-sm btn-outline-primary text-nowrap"
+                                onclick="generateDoc('{% url 'core:generate_cover_letter' pk=fy.pk %}', 'Cover Letter')">
+                            {{ alert.resolution_label }}
+                        </button>
                         {% else %}
                         <a href="{% url 'core:financial_year_detail' pk=fy.pk %}"
                            class="btn btn-sm btn-outline-primary text-nowrap">

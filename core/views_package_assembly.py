@@ -239,6 +239,26 @@ def _evaluate_risk_rules(fy, entity, existing_types):
     # NOTE: T2-71 (engagement letter check) removed — engagement letters are
     # generated at job start (Roll Forward), not at package assembly time.
 
+    # T2-72: No management representation letter
+    if "management_representation_letter" not in existing_types:
+        alerts.append({
+            "rule": "T2-72",
+            "severity": "warning",
+            "message": "No management representation letter has been generated for this financial year.",
+            "resolution": "generate_management_rep_letter",
+            "resolution_label": "Generate Management Rep Letter",
+        })
+
+    # T2-73: No cover letter (generate last, after all other docs are present)
+    if "cover_letter" not in existing_types:
+        alerts.append({
+            "rule": "T2-73",
+            "severity": "info",
+            "message": "No cover letter (transmittal) has been generated. Generate this last, after all other documents are ready.",
+            "resolution": "generate_cover_letter",
+            "resolution_label": "Generate Cover Letter",
+        })
+
     return alerts
 
 
