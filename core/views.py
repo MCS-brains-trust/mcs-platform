@@ -5600,11 +5600,14 @@ def generate_document(request, pk):
 
     from .docgen import generate_financial_statements
 
-    # Check for open audit risk flags — if any exist, watermark the document
-    has_open_risks = fy.risk_flags.filter(status="open").exists()
+    # is_final: suppress DRAFT watermark once Eva has cleared the year for package assembly
+    is_final = fy.can_assemble_package
+    # has_open_risks: only apply AUDIT RISK watermark if there are open risk flags
+    # AND Eva has not yet cleared the year (a cleared review means all risks resolved)
+    has_open_risks = (not is_final) and fy.risk_flags.filter(status="open").exists()
 
     try:
-        buffer = generate_financial_statements(fy.pk, has_open_risks=has_open_risks)
+        buffer = generate_financial_statements(fy.pk, has_open_risks=has_open_risks, is_final=is_final)
     except Exception as e:
         messages.error(request, f"Document generation failed: {e}")
         return redirect("core:financial_year_detail", pk=pk)

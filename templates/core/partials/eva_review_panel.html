@@ -33,8 +33,8 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
             <p class="text-muted small mb-0">Click the green <strong>Finalise</strong> button above to lock the trial balance and enable Eva's structured compliance analysis.</p>
         </div>
 
-        {% elif fy.can_ask_eva and not eva_review_running %}
-        <!-- Show "Ask Eva to Review" button (available when status is Finalised) -->
+        {% elif fy.can_ask_eva and not eva_review_running and not fy.can_assemble_package %}
+        <!-- Show "Ask Eva to Review" button (available when status is Finalised and Eva has not yet cleared) -->
         <div class="text-center py-3" id="eva-review-prompt">
             <i class="bi bi-shield-check" style="font-size: 2.5rem; color: #0F6B74;"></i>
             <p class="mt-2 mb-3">Submit this financial year to Eva for a structured compliance review.</p>
@@ -102,6 +102,11 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
             <i class="bi bi-check-circle-fill text-success" style="font-size: 2rem;"></i>
             <p class="fw-semibold mt-2 mb-0">Eva compliance review cleared</p>
             <small class="text-muted">All findings resolved. Client package assembly is now available.</small>
+            <div class="mt-3">
+                <button type="button" class="btn btn-sm btn-outline-secondary" onclick="rerunEvaReview()">
+                    <i class="bi bi-arrow-repeat me-1"></i> Re-run Review
+                </button>
+            </div>
         </div>
         {% endif %}
 
