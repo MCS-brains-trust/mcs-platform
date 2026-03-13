@@ -233,14 +233,31 @@ def engagement_letter_generate(request, pk):
         role__in=["director", "director_shareholder", "trustee", "partner"],
     )
 
+    # Build registered address from individual fields (Entity has no registered_address property)
+    address_parts = filter(None, [
+        entity.address_line_1,
+        entity.address_line_2,
+        " ".join(filter(None, [entity.suburb, entity.state, entity.postcode])),
+    ])
+    registered_address = ", ".join(address_parts)
+
+    # Format fee as "$X,XXX + GST" for display in the letter
+    if config.fee_amount:
+        try:
+            fee_display = f"${int(config.fee_amount):,} + GST"
+        except (ValueError, TypeError):
+            fee_display = f"{config.fee_amount} + GST"
+    else:
+        fee_display = ""
+
     context = {
         "entity_name": entity.entity_name,
         "entity_type": entity.entity_type,
         "abn": entity.abn or "",
         "acn": entity.acn or "",
-        "registered_address": entity.registered_address or "",
+        "registered_address": registered_address,
         "services_engaged": config.services_engaged,
-        "fee_amount": str(config.fee_amount) if config.fee_amount else "",
+        "fee_amount": fee_display,
         "fee_basis": config.fee_basis,
         "additional_terms": config.additional_terms,
         "signatories": [{"name": s.name, "role": s.get_role_display()} for s in signatories],
