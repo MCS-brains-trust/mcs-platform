@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  @page { size: A4; margin: 2.5cm 2cm 2.5cm 2cm; @bottom-right { content: counter(page); font-size: 8pt; color: #999; } }
+  body { font-family: Arial, sans-serif; font-size: 10.5pt; color: #1a1a1a; line-height: 1.6; }
+  .header { border-bottom: 2px solid #1a3a5c; padding-bottom: 10px; margin-bottom: 24px; }
+  .firm { font-size: 13pt; font-weight: bold; color: #1a3a5c; }
+  .doc-title { font-size: 12pt; font-weight: bold; margin-top: 4px; }
+  table.meta { width: 100%; border-collapse: collapse; margin-bottom: 18px; font-size: 9.5pt; }
+  table.meta td { padding: 4px 8px; border: 1px solid #ddd; }
+  table.meta td:first-child { font-weight: bold; background: #f5f7fa; width: 35%; }
+  h2 { font-size: 11pt; color: #1a3a5c; border-bottom: 1px solid #ccc; padding-bottom: 3px; margin-top: 18px; }
+  p { margin: 6px 0; }
+  ol { margin: 8px 0; padding-left: 22px; }
+  li { margin-bottom: 6px; }
+  .sig-block { margin-top: 36px; page-break-inside: avoid; }
+  .sig-line { border-top: 1px solid #333; width: 55%; margin-top: 38px; margin-bottom: 4px; }
+  .disclaimer { margin-top: 28px; padding: 9px; background: #f9f9f9; border-left: 3px solid #ccc; font-size: 8pt; color: #666; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="firm">MC &amp; S Chartered Accountants</div>
+  <div class="doc-title">Director's Declaration</div>
+</div>
+
+<table class="meta">
+  <tr><td>Entity</td><td>{{ entity_name }}</td></tr>
+  <tr><td>ACN / ABN</td><td>{{ acn_abn|default:"—" }}</td></tr>
+  <tr><td>Financial Year</td><td>{{ financial_year }}</td></tr>
+  <tr><td>Declaration Date</td><td>{{ declaration_date|default:generated_at }}</td></tr>
+  <tr><td>Generated</td><td>{{ generated_at }}</td></tr>
+</table>
+
+<h2>Declaration</h2>
+
+<p>The directors of <strong>{{ entity_name }}</strong> declare that:</p>
+
+<ol>
+  <li>The financial statements and notes set out on the following pages are in accordance with the <em>Corporations Act 2001</em> (Cth), including:
+    <ol type="a">
+      <li>complying with Accounting Standards and the <em>Corporations Regulations 2001</em>; and</li>
+      <li>giving a true and fair view of the financial position of the Company as at {{ financial_year_end|default:financial_year }} and of its performance for the financial year ended on that date.</li>
+    </ol>
+  </li>
+  <li>In the directors' opinion, there are reasonable grounds to believe that the Company will be able to pay its debts as and when they become due and payable.</li>
+  {% if small_company_relief %}<li>The Company has applied the relief available to it under ASIC Corporations (Audit Relief) Instrument 2016/784 and accordingly the financial statements have not been audited.</li>{% endif %}
+</ol>
+
+<p>This declaration is made in accordance with a resolution of the Board of Directors.</p>
+
+<h2>Director Signatures</h2>
+{% if signatories %}
+  {% for s in signatories %}
+  <div class="sig-block">
+    <div class="sig-line"></div>
+    <p><strong>{{ s.name }}</strong><br>{{ s.role }}<br>{{ entity_name }}</p>
+    <p>Date: ___________________</p>
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="sig-block">
+    <div class="sig-line"></div>
+    <p><strong>Director</strong><br>{{ entity_name }}</p>
+    <p>Date: ___________________</p>
+  </div>
+{% endif %}
+
+<div class="disclaimer">{{ firm_name }} — This declaration was prepared by StatementHub for {{ entity_name }} for the financial year ended {{ financial_year }}.</div>
+</body>
+</html>

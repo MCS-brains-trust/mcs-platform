@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  @page { size: A4; margin: 2.5cm 2cm 2.5cm 2cm; @bottom-right { content: counter(page); font-size: 8pt; color: #999; } }
+  body { font-family: Arial, sans-serif; font-size: 10.5pt; color: #1a1a1a; line-height: 1.6; }
+  .header { border-bottom: 2px solid #1a3a5c; padding-bottom: 10px; margin-bottom: 24px; }
+  .firm { font-size: 13pt; font-weight: bold; color: #1a3a5c; }
+  .doc-title { font-size: 12pt; font-weight: bold; margin-top: 4px; }
+  table.meta { width: 100%; border-collapse: collapse; margin-bottom: 18px; font-size: 9.5pt; }
+  table.meta td { padding: 4px 8px; border: 1px solid #ddd; }
+  table.meta td:first-child { font-weight: bold; background: #f5f7fa; width: 35%; }
+  h2 { font-size: 11pt; color: #1a3a5c; border-bottom: 1px solid #ccc; padding-bottom: 3px; margin-top: 18px; }
+  p { margin: 6px 0; }
+  ol { margin: 8px 0; padding-left: 22px; }
+  li { margin-bottom: 5px; }
+  .sig-block { margin-top: 36px; page-break-inside: avoid; }
+  .sig-line { border-top: 1px solid #333; width: 55%; margin-top: 38px; margin-bottom: 4px; }
+  .disclaimer { margin-top: 28px; padding: 9px; background: #f9f9f9; border-left: 3px solid #ccc; font-size: 8pt; color: #666; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="firm">MC &amp; S Chartered Accountants</div>
+  <div class="doc-title">Shareholder / Director Loan Acknowledgment</div>
+</div>
+
+<table class="meta">
+  <tr><td>Entity</td><td>{{ entity_name }}</td></tr>
+  <tr><td>Financial Year</td><td>{{ financial_year }}</td></tr>
+  <tr><td>Loan Balance</td><td>${{ loan_balance|default:"—" }}</td></tr>
+  <tr><td>Date</td><td>{{ generated_at }}</td></tr>
+</table>
+
+<h2>Acknowledgment</h2>
+
+<p>The director(s) / shareholder(s) of <strong>{{ entity_name }}</strong> acknowledge the following in relation to the loan account(s) reflected in the financial statements for the year ended {{ financial_year_end|default:financial_year }}:</p>
+
+<ol>
+  <li>A loan balance of <strong>${{ loan_balance|default:"[amount]" }}</strong> is recorded in the financial statements as owing {% if loan_direction == "to_company" %}to the company{% else %}from the company{% endif %}.</li>
+  <li>The parties acknowledge this balance and confirm it is correctly stated.</li>
+  {% if div7a_complying %}<li>A complying Division 7A loan agreement is in place and minimum yearly repayments have been made in accordance with the <em>Income Tax Assessment Act 1936</em> (Cth).</li>{% endif %}
+  <li>The parties agree to maintain accurate records of all loan transactions and to ensure compliance with applicable taxation laws.</li>
+</ol>
+
+{% if additional_terms %}
+<h2>Additional Terms</h2>
+<p>{{ additional_terms }}</p>
+{% endif %}
+
+<h2>Signatures</h2>
+{% if signatories %}
+  {% for s in signatories %}
+  <div class="sig-block">
+    <div class="sig-line"></div>
+    <p><strong>{{ s.name }}</strong><br>{{ s.role }}<br>{{ entity_name }}</p>
+    <p>Date: ___________________</p>
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="sig-block">
+    <div class="sig-line"></div>
+    <p><strong>Director / Shareholder</strong><br>{{ entity_name }}</p>
+    <p>Date: ___________________</p>
+  </div>
+{% endif %}
+
+<div class="disclaimer">{{ firm_name }} — This acknowledgment was prepared by StatementHub for {{ entity_name }}.</div>
+</body>
+</html>

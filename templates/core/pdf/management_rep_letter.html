@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  @page { size: A4; margin: 2.5cm 2cm 2.5cm 2cm; @bottom-right { content: counter(page); font-size: 8pt; color: #999; } }
+  body { font-family: Arial, sans-serif; font-size: 10.5pt; color: #1a1a1a; line-height: 1.6; }
+  .header { border-bottom: 2px solid #1a3a5c; padding-bottom: 10px; margin-bottom: 24px; }
+  .firm { font-size: 13pt; font-weight: bold; color: #1a3a5c; }
+  .doc-title { font-size: 12pt; font-weight: bold; margin-top: 4px; }
+  table.meta { width: 100%; border-collapse: collapse; margin-bottom: 18px; font-size: 9.5pt; }
+  table.meta td { padding: 4px 8px; border: 1px solid #ddd; }
+  table.meta td:first-child { font-weight: bold; background: #f5f7fa; width: 35%; }
+  h2 { font-size: 11pt; color: #1a3a5c; border-bottom: 1px solid #ccc; padding-bottom: 3px; margin-top: 18px; }
+  p { margin: 6px 0; }
+  ol { margin: 8px 0; padding-left: 22px; }
+  li { margin-bottom: 5px; }
+  .sig-block { margin-top: 36px; page-break-inside: avoid; }
+  .sig-line { border-top: 1px solid #333; width: 55%; margin-top: 38px; margin-bottom: 4px; }
+  .disclaimer { margin-top: 28px; padding: 9px; background: #f9f9f9; border-left: 3px solid #ccc; font-size: 8pt; color: #666; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="firm">MC &amp; S Chartered Accountants</div>
+  <div class="doc-title">Management Representation Letter</div>
+</div>
+
+<table class="meta">
+  <tr><td>To</td><td>MC &amp; S Chartered Accountants</td></tr>
+  <tr><td>From</td><td>Management of {{ entity_name }}</td></tr>
+  <tr><td>Entity</td><td>{{ entity_name }}</td></tr>
+  <tr><td>Financial Year</td><td>{{ financial_year }}</td></tr>
+  <tr><td>Date</td><td>{{ generated_at }}</td></tr>
+</table>
+
+<h2>Management Representations</h2>
+
+<p>This letter is provided in connection with your preparation of the financial statements of <strong>{{ entity_name }}</strong> for the year ended {{ financial_year_end|default:financial_year }}. We confirm, to the best of our knowledge and belief, the following representations:</p>
+
+<h2>Financial Statements</h2>
+<ol>
+  <li>The financial statements give a true and fair view of the financial position of the entity and of its financial performance and cash flows for the year in accordance with applicable accounting standards.</li>
+  <li>All transactions have been recorded in the accounting records and are reflected in the financial statements.</li>
+  <li>We have disclosed to you all information relevant to the preparation of the financial statements.</li>
+</ol>
+
+<h2>Completeness of Information</h2>
+<ol>
+  <li>There are no material transactions that have not been properly recorded in the accounting records underlying the financial statements.</li>
+  <li>We have no plans or intentions that may materially affect the carrying value or classification of assets and liabilities.</li>
+  <li>All related party relationships and transactions have been disclosed.</li>
+  <li>All subsequent events requiring adjustment or disclosure in the financial statements have been adjusted or disclosed.</li>
+</ol>
+
+<h2>Compliance</h2>
+<ol>
+  <li>The entity has complied with all aspects of contractual agreements that could have a material effect on the financial statements.</li>
+  <li>We are not aware of any actual or possible litigation and claims whose effects should be considered when preparing the financial statements.</li>
+  {% if div7a_applicable %}<li>All Division 7A loan agreements are complying loans under the <em>Income Tax Assessment Act 1936</em> (Cth), and minimum yearly repayments have been made.</li>{% endif %}
+  {% if superannuation_applicable %}<li>All superannuation guarantee obligations have been met in full and on time for the financial year.</li>{% endif %}
+</ol>
+
+<h2>Authorised Signatures</h2>
+{% if signatories %}
+  {% for s in signatories %}
+  <div class="sig-block">
+    <div class="sig-line"></div>
+    <p><strong>{{ s.name }}</strong><br>{{ s.role }}<br>{{ entity_name }}</p>
+    <p>Date: ___________________</p>
+  </div>
+  {% endfor %}
+{% else %}
+  <div class="sig-block">
+    <div class="sig-line"></div>
+    <p><strong>Director / Management</strong><br>{{ entity_name }}</p>
+    <p>Date: ___________________</p>
+  </div>
+{% endif %}
+
+<div class="disclaimer">{{ firm_name }} — This management representation letter was prepared by StatementHub for {{ entity_name }} for the financial year ended {{ financial_year }}.</div>
+</body>
+</html>

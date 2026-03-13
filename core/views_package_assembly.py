@@ -4,7 +4,7 @@ import logging
 from datetime import datetime
 
 from django.contrib.auth.decorators import login_required
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_POST
 
@@ -141,48 +141,52 @@ def package_assemble(request, pk):
 
 
 @login_required
-@require_POST
-def package_send_for_signing(request, pk):
-    """Send the assembled package for signing via FuseSign."""
+def package_download_bundle(request, pk):
+    """
+    Download the full client package as a single merged PDF bundle.
+    Combines Financial Statements + all LegalDocuments in the correct order.
+    The accountant can then upload this bundle to FuseSign manually.
+    """
     fy = get_object_or_404(FinancialYear, pk=pk)
 
     if not fy.package_assembled:
-        return JsonResponse({
-            "status": "error",
-            "error": "Package must be assembled before sending for signing.",
-        }, status=400)
-
-    # FuseSign integration placeholder
-    # In production, this would call the FuseSign API to create a signing bundle
-    try:
-        import os
-        fusesign_api_key = os.environ.get("FUSESIGN_API_KEY", "")
-        if not fusesign_api_key:
-            return JsonResponse({
-                "status": "error",
-                "error": "FuseSign API key not configured. Set FUSESIGN_API_KEY in environment.",
-            }, status=400)
-
-        # Collect all documents for signing
-        docs = LegalDocument.objects.filter(
-            financial_year=fy,
-            status__in=["generated", "approved"],
+        return HttpResponse(
+            "Package must be assembled before downloading.",
+            status=400,
+            content_type="text/plain",
         )
 
-        # TODO: Implement actual FuseSign API call
-        # For now, mark as sent
-        fy.package_sent_for_signing = True
-        fy.package_sent_at = datetime.now()
-        fy.save(update_fields=["package_sent_for_signing", "package_sent_at"])
+    try:
+        from core.package_pdf_renderer import build_package_bundle
+        pdf_bytes, filename = build_package_bundle(fy)
 
-        return JsonResponse({
-            "status": "ok",
-            "message": f"Package sent for signing ({docs.count()} documents).",
-        })
+        response = HttpResponse(pdf_bytes, content_type="application/pdf")
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response
 
     except Exception as e:
-        logger.exception("FuseSign send failed: %s", e)
-        return JsonResponse({"status": "error", "error": str(e)}, status=500)
+        logger.exception("Package bundle generation failed: %s", e)
+        return HttpResponse(
+            f"Bundle generation failed: {e}",
+            status=500,
+            content_type="text/plain",
+        )
+
+
+@login_required
+@require_POST
+def package_send_for_signing(request, pk):
+    """
+    Redirect to the bundle download — the accountant downloads the PDF
+    and uploads it to FuseSign manually until the API integration is built.
+    """
+    from django.http import JsonResponse as JR
+    fy = get_object_or_404(FinancialYear, pk=pk)
+    if not fy.package_assembled:
+        return JR({"status": "error", "error": "Package must be assembled first."}, status=400)
+    from django.urls import reverse
+    download_url = reverse("core:package_download_bundle", kwargs={"pk": str(fy.pk)})
+    return JR({"status": "ok", "download_url": download_url})
 
 
 # ---------------------------------------------------------------------------

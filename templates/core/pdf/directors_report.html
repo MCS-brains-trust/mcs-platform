@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  @page { size: A4; margin: 2.5cm 2cm 2.5cm 2cm; @bottom-right { content: counter(page); font-size: 8pt; color: #999; } }
+  body { font-family: Arial, sans-serif; font-size: 10.5pt; color: #1a1a1a; line-height: 1.6; }
+  .header { border-bottom: 2px solid #1a3a5c; padding-bottom: 10px; margin-bottom: 24px; }
+  .firm { font-size: 13pt; font-weight: bold; color: #1a3a5c; }
+  .doc-title { font-size: 12pt; font-weight: bold; margin-top: 4px; }
+  table.meta { width: 100%; border-collapse: collapse; margin-bottom: 18px; font-size: 9.5pt; }
+  table.meta td { padding: 4px 8px; border: 1px solid #ddd; }
+  table.meta td:first-child { font-weight: bold; background: #f5f7fa; width: 35%; }
+  h2 { font-size: 11pt; color: #1a3a5c; border-bottom: 1px solid #ccc; padding-bottom: 3px; margin-top: 18px; }
+  p { margin: 6px 0; }
+  .sig-block { margin-top: 36px; page-break-inside: avoid; }
+  .sig-line { border-top: 1px solid #333; width: 55%; margin-top: 38px; margin-bottom: 4px; }
+  .disclaimer { margin-top: 28px; padding: 9px; background: #f9f9f9; border-left: 3px solid #ccc; font-size: 8pt; color: #666; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="firm">MC &amp; S Chartered Accountants</div>
+  <div class="doc-title">Director's Report</div>
+</div>
+
+<table class="meta">
+  <tr><td>Entity</td><td>{{ entity_name }}</td></tr>
+  <tr><td>ACN / ABN</td><td>{{ acn_abn|default:"—" }}</td></tr>
+  <tr><td>Financial Year</td><td>{{ financial_year }}</td></tr>
+  <tr><td>Date</td><td>{{ generated_at }}</td></tr>
+</table>
+
+<h2>Director's Report</h2>
+
+<p>The directors of <strong>{{ entity_name }}</strong> present their report together with the financial statements for the year ended {{ financial_year_end|default:financial_year }}.</p>
+
+<h2>Directors</h2>
+{% if signatories %}
+<p>The following persons were directors of the company during or since the end of the financial year:</p>
+<ul>
+  {% for s in signatories %}
+  <li><strong>{{ s.name }}</strong> — {{ s.role }}</li>
+  {% endfor %}
+</ul>
+{% else %}
+<p>The names of the directors in office at the date of this report are set out in the financial statements.</p>
+{% endif %}
+
+<h2>Principal Activities</h2>
+<p>{{ principal_activities|default:"The principal activities of the entity during the financial year are set out in the financial statements." }}</p>
+
+<h2>Operating Results</h2>
+<p>{{ operating_results|default:"The operating results for the financial year are set out in the financial statements." }}</p>
+
+{% if dividends_paid %}
+<h2>Dividends</h2>
+<p>{{ dividends_paid }}</p>
+{% endif %}
+
+{% if significant_changes %}
+<h2>Significant Changes in State of Affairs</h2>
+<p>{{ significant_changes }}</p>
+{% else %}
+<h2>Significant Changes in State of Affairs</h2>
+<p>There were no significant changes in the state of affairs of the entity during the financial year.</p>
+{% endif %}
+
+{% if events_after_balance_date %}
+<h2>Events After Balance Date</h2>
+<p>{{ events_after_balance_date }}</p>
+{% else %}
+<h2>Events After Balance Date</h2>
+<p>No matters or circumstances have arisen since the end of the financial year which significantly affected or may significantly affect the operations of the entity, the results of those operations, or the state of affairs of the entity in future financial years.</p>
+{% endif %}
+
+<h2>Signed in Accordance with a Resolution of the Directors</h2>
+{% if signatories %}
+  <div class="sig-block">
+    <div class="sig-line"></div>
+    <p><strong>{{ signatories.0.name }}</strong><br>Director<br>{{ entity_name }}</p>
+    <p>Date: ___________________</p>
+  </div>
+{% else %}
+  <div class="sig-block">
+    <div class="sig-line"></div>
+    <p><strong>Director</strong><br>{{ entity_name }}</p>
+    <p>Date: ___________________</p>
+  </div>
+{% endif %}
+
+<div class="disclaimer">{{ firm_name }} — This director's report was prepared by StatementHub for {{ entity_name }} for the financial year ended {{ financial_year }}.</div>
+</body>
+</html>

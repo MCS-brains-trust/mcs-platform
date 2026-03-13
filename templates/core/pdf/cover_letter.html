@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  @page { size: A4; margin: 2.5cm 2cm 2.5cm 2cm; @bottom-right { content: counter(page); font-size: 8pt; color: #999; } }
+  body { font-family: Arial, sans-serif; font-size: 10.5pt; color: #1a1a1a; line-height: 1.6; }
+  .header { border-bottom: 2px solid #1a3a5c; padding-bottom: 10px; margin-bottom: 24px; }
+  .firm { font-size: 13pt; font-weight: bold; color: #1a3a5c; }
+  .doc-title { font-size: 12pt; font-weight: bold; margin-top: 4px; }
+  .address-block { margin-bottom: 20px; }
+  .date-line { margin-bottom: 16px; }
+  h2 { font-size: 11pt; color: #1a3a5c; border-bottom: 1px solid #ccc; padding-bottom: 3px; margin-top: 18px; }
+  p { margin: 6px 0; }
+  ul { margin: 8px 0; padding-left: 22px; }
+  li { margin-bottom: 4px; }
+  .sig-block { margin-top: 36px; page-break-inside: avoid; }
+  .sig-line { border-top: 1px solid #333; width: 55%; margin-top: 38px; margin-bottom: 4px; }
+  .disclaimer { margin-top: 28px; padding: 9px; background: #f9f9f9; border-left: 3px solid #ccc; font-size: 8pt; color: #666; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="firm">MC &amp; S Chartered Accountants</div>
+  <div class="doc-title">Transmittal Letter</div>
+</div>
+
+<div class="date-line">{{ generated_at }}</div>
+
+<div class="address-block">
+  <p><strong>{{ client_name|default:entity_name }}</strong></p>
+  {% if client_address %}<p>{{ client_address }}</p>{% endif %}
+</div>
+
+<p>Dear {{ salutation|default:"Directors" }},</p>
+
+<h2>{{ entity_name }} — Financial Statements for the Year Ended {{ financial_year_end|default:financial_year }}</h2>
+
+<p>Please find enclosed the financial statements and associated documents for <strong>{{ entity_name }}</strong> for the financial year ended {{ financial_year_end|default:financial_year }}.</p>
+
+<h2>Enclosed Documents</h2>
+<ul>
+  {% if documents_enclosed %}
+    {% for doc in documents_enclosed %}
+    <li>{{ doc }}</li>
+    {% endfor %}
+  {% else %}
+    <li>Financial Statements</li>
+    <li>Director's Declaration</li>
+    <li>Solvency Resolution</li>
+    <li>Management Representation Letter</li>
+  {% endif %}
+</ul>
+
+<h2>Action Required</h2>
+<p>Please review the enclosed documents carefully. We ask that you:</p>
+<ul>
+  <li>Review the financial statements and confirm they accurately reflect the financial position and performance of the entity.</li>
+  <li>Sign and return the <strong>Director's Declaration</strong> and <strong>Solvency Resolution</strong> at your earliest convenience.</li>
+  <li>Sign and return the <strong>Management Representation Letter</strong>.</li>
+  {% if tax_payable %}<li>Note that a tax liability of <strong>${{ tax_payable }}</strong> is payable. Please contact our office to discuss payment arrangements.</li>{% endif %}
+</ul>
+
+{% if additional_notes %}
+<h2>Additional Notes</h2>
+<p>{{ additional_notes }}</p>
+{% endif %}
+
+<p>Should you have any questions regarding the enclosed documents, please do not hesitate to contact our office.</p>
+
+<p>Yours sincerely,</p>
+
+<div class="sig-block">
+  <div class="sig-line"></div>
+  <p><strong>MC &amp; S Chartered Accountants</strong></p>
+  {% if prepared_by %}<p>{{ prepared_by }}</p>{% endif %}
+</div>
+
+<div class="disclaimer">{{ firm_name }} — This transmittal letter was prepared by StatementHub for {{ entity_name }} for the financial year ended {{ financial_year }}.</div>
+</body>
+</html>

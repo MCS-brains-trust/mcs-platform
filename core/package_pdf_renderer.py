@@ -1,0 +1,175 @@
+"""
+Package PDF Bundle Renderer
+============================
+Renders all LegalDocument records for a FinancialYear into individual PDFs
+using weasyprint (from context_data), then merges them with the Financial
+Statements PDF into a single client package bundle using pypdf.
+
+Document order follows DOCUMENT_ORDER in package_service.py:
+  1. Financial Statements (from GeneratedDocument.file)
+  2. Solvency Resolution
+  3. Director's Declaration
+  4. Director's Report
+  5. Management Representation Letter
+  6. Cover Letter (Transmittal)
+  7. Dividend Statements
+  8. Loan Acknowledgment
+"""
+import io
+import logging
+from datetime import date
+
+from django.template.loader import render_to_string
+
+logger = logging.getLogger(__name__)
+
+# Document type → (template_name, title)
+LEGAL_DOC_TEMPLATES = {
+    "solvency_resolution": ("core/pdf/solvency_resolution.html", "Solvency Resolution"),
+    "directors_declaration": ("core/pdf/directors_declaration.html", "Director's Declaration"),
+    "directors_report": ("core/pdf/directors_report.html", "Director's Report"),
+    "management_representation_letter": ("core/pdf/management_rep_letter.html", "Management Representation Letter"),
+    "cover_letter": ("core/pdf/cover_letter.html", "Cover Letter"),
+    "shareholder_loan_acknowledgment": ("core/pdf/loan_acknowledgment.html", "Loan Acknowledgment"),
+}
+
+DOCUMENT_ORDER = [
+    "financial_statements",
+    "solvency_resolution",
+    "directors_declaration",
+    "directors_report",
+    "management_representation_letter",
+    "cover_letter",
+    "dividend_statement",
+    "shareholder_loan_acknowledgment",
+]
+
+
+def render_legal_doc_to_pdf_bytes(doc):
+    """
+    Render a LegalDocument record to PDF bytes using weasyprint.
+    Uses context_data stored on the record.
+    Returns bytes or None on failure.
+    """
+    import weasyprint
+
+    doc_type = doc.document_type
+    template_name = LEGAL_DOC_TEMPLATES.get(doc_type)
+    if not template_name:
+        logger.warning("No PDF template for document type: %s", doc_type)
+        return None
+
+    if isinstance(template_name, tuple):
+        template_name = template_name[0]
+
+    context = dict(doc.context_data or {})
+    context.setdefault("document_title", doc.title or doc.get_document_type_display())
+    context.setdefault("generated_at", doc.generated_at.strftime("%d %B %Y") if doc.generated_at else "")
+    context.setdefault("firm_name", "MC & S Chartered Accountants")
+
+    try:
+        html_string = render_to_string(template_name, context)
+        pdf_bytes = weasyprint.HTML(string=html_string).write_pdf()
+        return pdf_bytes
+    except Exception as e:
+        logger.error("Failed to render %s to PDF: %s", doc_type, e)
+        return None
+
+
+def build_package_bundle(fy):
+    """
+    Build a single merged PDF bundle for the given FinancialYear.
+    Returns (pdf_bytes, filename) or raises an exception.
+    """
+    from pypdf import PdfWriter, PdfReader
+    from core.models import LegalDocument, GeneratedDocument
+
+    writer = PdfWriter()
+    docs_added = 0
+
+    # Build a map of existing LegalDocuments by type (most recent first)
+    legal_docs_by_type = {}
+    for doc in LegalDocument.objects.filter(
+        financial_year=fy,
+        status__in=["generated", "final", "executed", "signed"],
+    ).order_by("-generated_at"):
+        if doc.document_type not in legal_docs_by_type:
+            legal_docs_by_type[doc.document_type] = doc
+
+    entity = fy.entity
+    entity_name = entity.entity_name
+    fy_year = fy.end_date.year
+
+    for doc_type in DOCUMENT_ORDER:
+        if doc_type == "financial_statements":
+            # Pull from GeneratedDocument
+            fs_doc = GeneratedDocument.objects.filter(
+                financial_year=fy,
+                document_type=GeneratedDocument.DocumentType.FINANCIAL_STATEMENTS,
+                file_format="pdf",
+            ).order_by("-generated_at").first()
+
+            if not fs_doc:
+                # Try any format — may be a docx
+                fs_doc = GeneratedDocument.objects.filter(
+                    financial_year=fy,
+                    document_type=GeneratedDocument.DocumentType.FINANCIAL_STATEMENTS,
+                ).order_by("-generated_at").first()
+
+            if fs_doc and fs_doc.file:
+                try:
+                    fs_doc.file.seek(0)
+                    reader = PdfReader(io.BytesIO(fs_doc.file.read()))
+                    for page in reader.pages:
+                        writer.add_page(page)
+                    docs_added += 1
+                    logger.info("Added Financial Statements (%d pages)", len(reader.pages))
+                except Exception as e:
+                    logger.warning("Could not add Financial Statements: %s", e)
+            continue
+
+        # LegalDocument types
+        doc = legal_docs_by_type.get(doc_type)
+        if not doc:
+            continue
+
+        pdf_bytes = None
+
+        # Prefer stored pdf_file if it exists
+        if doc.pdf_file:
+            try:
+                doc.pdf_file.seek(0)
+                pdf_bytes = doc.pdf_file.read()
+            except Exception:
+                pdf_bytes = None
+
+        # Fall back to rendering from context_data
+        if not pdf_bytes:
+            pdf_bytes = render_legal_doc_to_pdf_bytes(doc)
+
+        if pdf_bytes:
+            try:
+                reader = PdfReader(io.BytesIO(pdf_bytes))
+                for page in reader.pages:
+                    writer.add_page(page)
+                docs_added += 1
+                logger.info("Added %s (%d pages)", doc_type, len(reader.pages))
+            except Exception as e:
+                logger.warning("Could not add %s: %s", doc_type, e)
+
+    if docs_added == 0:
+        raise ValueError("No documents could be added to the bundle.")
+
+    # Write to bytes
+    output = io.BytesIO()
+    writer.write(output)
+    pdf_bytes = output.getvalue()
+
+    safe_name = entity_name.replace(" ", "_").replace("/", "_")
+    filename = f"Client_Package_{safe_name}_{fy_year}.pdf"
+
+    logger.info(
+        "Package bundle built for %s %s: %d documents, %d bytes",
+        entity_name, fy_year, docs_added, len(pdf_bytes),
+    )
+    return pdf_bytes, filename

@@ -136,9 +136,8 @@
                 <div class="card-footer d-flex justify-content-end gap-2">
                     <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary">Back</a>
                     {% if fy.package_assembled %}
-                    <button class="btn btn-info" onclick="sendForSigning()" {% if fy.package_sent_for_signing %}disabled{% endif %}>
-                        <i class="bi bi-pen"></i>
-                        {% if fy.package_sent_for_signing %}Sent for Signing{% else %}Send for Signing (FuseSign){% endif %}
+                    <button class="btn btn-info" onclick="sendForSigning()">
+                        <i class="bi bi-download"></i> Download Package Bundle
                     </button>
                     {% else %}
                     <button class="btn btn-success" onclick="assemblePackage()"
@@ -242,17 +241,15 @@ function assemblePackage() {
 }
 
 function sendForSigning() {
-    if (!confirm('Send the assembled package for signing via FuseSign?')) return;
-
+    if (!confirm('Download the client package as a single PDF bundle for upload to FuseSign?')) return;
     fetch(SIGN_URL, {
         method: 'POST',
         headers: {'X-CSRFToken': CSRF_TOKEN},
     })
     .then(r => r.json())
     .then(data => {
-        if (data.status === 'ok') {
-            alert(data.message);
-            location.reload();
+        if (data.status === 'ok' && data.download_url) {
+            window.location.href = data.download_url;
         } else {
             alert('Error: ' + (data.error || 'Unknown error'));
         }
