@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 
-{% block title %}Engagement Letter — {{ entity.name }}{% endblock %}
+{% block title %}Engagement Letter — {{ entity.entity_name }}{% endblock %}
 
 {% block content %}
 <div class="container-fluid py-3">
     <nav aria-label="breadcrumb">
         <ol class="breadcrumb">
             <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
-            <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.name }}</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
             <li class="breadcrumb-item active">Engagement Letter</li>
         </ol>
     </nav>
@@ -125,7 +125,7 @@ function generateLetter() {
     .then(r => r.json())
     .then(data => {
         if (data.status === 'ok') {
-            alert(data.message);
+            alert('Engagement letter generated. You can now begin work on this financial year.');
             location.href = '{% url "core:entity_detail" pk=entity.pk %}';
         } else {
             alert('Error: ' + (data.error || 'Unknown error'));

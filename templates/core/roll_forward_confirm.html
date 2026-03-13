@@ -13,6 +13,13 @@
                     <li>Closing balances from {{ fy.year_label }} will become opening balances</li>
                     <li>{{ fy.year_label }} will be linked as the comparative (prior) year</li>
                 </ul>
+                <div class="alert alert-info d-flex align-items-start gap-2 mt-3 mb-3">
+                    <i class="bi bi-envelope-paper-fill mt-1 flex-shrink-0"></i>
+                    <div>
+                        <strong>Engagement Letter Reminder</strong><br>
+                        <small>After rolling forward, you should generate an engagement letter for the new year before commencing work. This can be done from the entity page under <em>Engagement Letter</em>.</small>
+                    </div>
+                </div>
                 <form method="post">
                     {% csrf_token %}
                     <div class="d-flex gap-2">

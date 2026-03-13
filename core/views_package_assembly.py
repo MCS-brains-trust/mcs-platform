@@ -22,6 +22,8 @@ logger = logging.getLogger(__name__)
 # Package Contents by Entity Type
 # ---------------------------------------------------------------------------
 PACKAGE_CONTENTS = {
+    # NOTE: Engagement letters are a pre-engagement document generated at job start
+    # (Roll Forward), not a client package deliverable. They are excluded here.
     "company": [
         ("financial_statements", "Financial Statements", True),
         ("directors_declaration", "Director's Declaration", True),
@@ -30,14 +32,12 @@ PACKAGE_CONTENTS = {
         ("dividend_statement", "Dividend Statements", False),  # Only if dividend declared
         ("shareholder_loan_acknowledgment", "Loan Acknowledgment", False),  # Only if loan > $10K
         ("management_representation_letter", "Management Representation Letter", True),
-        ("engagement_letter", "Engagement Letter", True),
         ("cover_letter", "Cover Letter (Transmittal)", True),
     ],
     "trust": [
         ("financial_statements", "Financial Statements", True),
         ("trust_distribution_minutes", "Trust Distribution Minutes", True),
         ("management_representation_letter", "Management Representation Letter", True),
-        ("engagement_letter", "Engagement Letter", True),
         ("cover_letter", "Cover Letter (Transmittal)", True),
     ],
     "partnership": [
@@ -45,22 +45,17 @@ PACKAGE_CONTENTS = {
         ("partner_statement", "Partner Statements", True),
         ("partnership_tax_summary", "Partnership Tax Summary", True),
         ("management_representation_letter", "Management Representation Letter", True),
-        ("engagement_letter", "Engagement Letter", True),
         ("cover_letter", "Cover Letter (Transmittal)", True),
     ],
     "individual": [
-        ("engagement_letter", "Engagement Letter", True),
         ("cover_letter", "Cover Letter (Transmittal)", True),
     ],
-    "smsf": [
+      "smsf": [
         ("financial_statements", "Financial Statements", True),
         ("management_representation_letter", "Management Representation Letter", True),
-        ("engagement_letter", "Engagement Letter", True),
         ("cover_letter", "Cover Letter (Transmittal)", True),
     ],
 }
-
-
 # ---------------------------------------------------------------------------
 # Step 1: Scan & Checklist
 # ---------------------------------------------------------------------------
@@ -241,15 +236,8 @@ def _evaluate_risk_rules(fy, entity, existing_types):
                 "resolution_label": "Generate Declaration",
             })
 
-    # T2-71: No engagement letter for current year
-    if "engagement_letter" not in existing_types:
-        alerts.append({
-            "rule": "T2-71",
-            "severity": "info",
-            "message": "No engagement letter has been generated for this financial year.",
-            "resolution": "engagement_letter_wizard",
-            "resolution_label": "Generate Engagement Letter",
-        })
+    # NOTE: T2-71 (engagement letter check) removed — engagement letters are
+    # generated at job start (Roll Forward), not at package assembly time.
 
     return alerts
 
