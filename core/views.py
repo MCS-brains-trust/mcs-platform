@@ -21,7 +21,7 @@ from .models import (
     ClientAssociate, AccountingSoftware, MeetingNote,
     DepreciationAsset, RiskFlag, StockItem, ActivityLog, EntityChartOfAccount,
     BulkJournalUpload, BASPeriod, BankAccountMapping, BASPeriodCommentary,
-    EvaReview,
+    EvaReview, EngagementLetter,
 )
 from .forms import (
     ClientForm, EntityForm, FinancialYearForm,
@@ -1337,6 +1337,11 @@ def entity_detail(request, pk):
         "amendment_docs": entity.governing_documents.filter(
             is_primary=False, status="active"
         ).order_by("-document_date", "-uploaded_at"),
+        # Engagement Letters tab
+        "engagement_letters": entity.engagement_letters.select_related(
+            "financial_year", "uploaded_by"
+        ).order_by("-financial_year__end_date", "-uploaded_at"),
+        "engagement_letters_count": entity.engagement_letters.filter(is_current=True).count(),
     }
     return render(request, "core/entity_detail.html", context)
 
@@ -2935,6 +2940,37 @@ def roll_forward(request, pk):
         )
         return redirect("core:financial_year_detail", pk=pk)
 
+    # ── Engagement Letter Gate ──────────────────────────────────────────────
+    # Calculate the target year label (the year being rolled INTO) so we can
+    # check whether an engagement letter already exists for it.
+    from dateutil.relativedelta import relativedelta as _rdelta
+    _new_end = current_fy.end_date + _rdelta(years=1)
+    _new_label = str(_new_end.year)
+    # Check if the target FY already exists (re-roll scenario)
+    _target_fy = entity.financial_years.filter(year_label=_new_label).first()
+    if _target_fy:
+        # Re-roll: engagement letter must already exist for the target year
+        _has_el = EngagementLetter.objects.filter(
+            entity=entity,
+            financial_year=_target_fy,
+            is_current=True,
+        ).exists()
+    else:
+        # Fresh roll: check by year_label match across all entity letters
+        _has_el = EngagementLetter.objects.filter(
+            entity=entity,
+            financial_year__year_label=_new_label,
+            is_current=True,
+        ).exists()
+    if not _has_el:
+        messages.error(
+            request,
+            f"Cannot roll forward to {_new_label}: an engagement letter for {_new_label} must be "
+            f"uploaded before rolling forward. Please upload it in the Engagement Letters tab first."
+        )
+        return redirect("core:entity_detail", pk=entity.pk)
+    # ── End Engagement Letter Gate ──────────────────────────────────────────
+
     if request.method == "POST":
         # Calculate new dates (add 1 year)
         from dateutil.relativedelta import relativedelta
@@ -3298,7 +3334,11 @@ def roll_forward(request, pk):
         messages.success(request, f"Rolled forward to {new_label}. {carried_bs} balance sheet items carried, {carried_pl} P&L comparatives. Net {pl_direction} of ${abs(net_pl_result):,.2f} less tax ${abs(tax_amount):,.2f} closed to retained earnings.{stock_msg}{stock_items_msg}{dep_msg}")
         return redirect("core:financial_year_detail", pk=new_fy.pk)
 
-    return render(request, "core/roll_forward_confirm.html", {"fy": current_fy})
+    return render(request, "core/roll_forward_confirm.html", {
+        "fy": current_fy,
+        "target_year_label": _new_label,
+        "engagement_letter_ok": _has_el,
+    })
 
 
 # ---------------------------------------------------------------------------

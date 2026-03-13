@@ -92,6 +92,12 @@
             {% endif %}
         </button>
     </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link" id="engagement-letters-tab" data-bs-toggle="tab" data-bs-target="#engagement-letters" type="button" role="tab">
+            <i class="bi bi-envelope-paper"></i> Engagement Letters
+            {% if engagement_letters_count %}<span class="badge bg-info">{{ engagement_letters_count }}</span>{% endif %}
+        </button>
+    </li>
 </ul>
 
 <div class="tab-content" id="entityTabContent">
@@ -843,6 +849,11 @@
     <!-- ============ GOVERNING DOCUMENTS TAB ============ -->
     <div class="tab-pane fade" id="govdocs" role="tabpanel">
         {% include 'core/includes/governing_docs_tab.html' %}
+    </div>
+
+    <!-- ============ ENGAGEMENT LETTERS TAB ============ -->
+    <div class="tab-pane fade" id="engagement-letters" role="tabpanel">
+        {% include 'core/includes/engagement_letters_tab.html' %}
     </div>
 
 </div>

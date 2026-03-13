@@ -5231,3 +5231,98 @@ class WorkPaperTemplate(models.Model):
 
 from .models_office_admin import *  # noqa: F401, F403
 
+
+
+# ---------------------------------------------------------------------------
+# Engagement Letters
+# ---------------------------------------------------------------------------
+class EngagementLetter(models.Model):
+    """
+    A signed or uploaded engagement letter for a specific entity and financial
+    year.  One letter per entity per year is the expected pattern, but the
+    model allows multiple uploads (e.g. revised versions) with a ``is_current``
+    flag to identify the active copy.
+
+    Roll-forward is blocked until an EngagementLetter exists for the target
+    year (see ``roll_forward`` view).
+    """
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        SENT = "sent", "Sent to Client"
+        SIGNED = "signed", "Signed / Executed"
+        SUPERSEDED = "superseded", "Superseded"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    entity = models.ForeignKey(
+        Entity,
+        on_delete=models.CASCADE,
+        related_name="engagement_letters",
+    )
+    # The financial year this letter covers (mandatory — year selection is
+    # enforced in the upload form).
+    financial_year = models.ForeignKey(
+        FinancialYear,
+        on_delete=models.CASCADE,
+        related_name="engagement_letters",
+        help_text="The financial year this engagement letter covers.",
+    )
+
+    # Uploaded file (PDF / DOCX accepted)
+    file = models.FileField(
+        upload_to="engagement_letters/",
+        help_text="Uploaded engagement letter file (PDF or DOCX).",
+    )
+    original_filename = models.CharField(max_length=500, blank=True, default="")
+    file_size_bytes = models.PositiveIntegerField(default=0)
+
+    status = models.CharField(
+        max_length=15,
+        choices=Status.choices,
+        default=Status.DRAFT,
+    )
+
+    # Marks the current/active version when multiple uploads exist for the
+    # same entity + year.
+    is_current = models.BooleanField(
+        default=True,
+        help_text="Whether this is the current active engagement letter for the year.",
+    )
+
+    notes = models.TextField(
+        blank=True,
+        default="",
+        help_text="Internal notes about this engagement letter.",
+    )
+
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="uploaded_engagement_letters",
+    )
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-uploaded_at"]
+        indexes = [
+            models.Index(fields=["entity", "financial_year"]),
+        ]
+        verbose_name = "Engagement Letter"
+        verbose_name_plural = "Engagement Letters"
+
+    def __str__(self):
+        return f"Engagement Letter — {self.entity} ({self.financial_year.year_label})"
+
+    def save(self, *args, **kwargs):
+        # When a new letter is uploaded as current, demote all other letters
+        # for the same entity+year to is_current=False.
+        if self.is_current and self.pk is None:
+            EngagementLetter.objects.filter(
+                entity=self.entity,
+                financial_year=self.financial_year,
+                is_current=True,
+            ).update(is_current=False)
+        super().save(*args, **kwargs)

@@ -11,6 +11,7 @@ from . import eva_engine
 from . import views_eva
 from . import views_trust
 from . import views_governing_docs
+from . import views_engagement_letters
 from . import views_legal_docs
 from . import views_client_summary
 from . import views_compliance_docs
@@ -78,6 +79,12 @@ urlpatterns = [
     path("years/<uuid:pk>/partnership-tax-summary/", views_partnership_docs.generate_partnership_tax_summary, name="generate_partnership_tax_summary"),
     path("entities/<uuid:pk>/engagement-letter/", views_partnership_docs.engagement_letter_wizard, name="engagement_letter_wizard"),
     path("entities/<uuid:pk>/engagement-letter/generate/", views_partnership_docs.engagement_letter_generate, name="engagement_letter_generate"),
+
+    # Engagement Letters tab (per-year storage + audit trail)
+    path("entities/<uuid:pk>/engagement-letters/upload/", views_engagement_letters.engagement_letter_upload, name="engagement_letter_upload"),
+    path("api/engagement-letters/<uuid:letter_pk>/archive/", views_engagement_letters.engagement_letter_archive, name="engagement_letter_archive"),
+    path("api/engagement-letters/<uuid:letter_pk>/delete/", views_engagement_letters.engagement_letter_delete, name="engagement_letter_delete"),
+    path("api/engagement-letters/<uuid:letter_pk>/status/", views_engagement_letters.engagement_letter_update_status, name="engagement_letter_update_status"),
 
     # Package Assembly
     path("years/<uuid:pk>/package/", views_package_assembly.package_assembly, name="package_assembly"),

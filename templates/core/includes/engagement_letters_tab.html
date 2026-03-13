@@ -1,0 +1,265 @@
+{% load humanize %}
+{# ============================================================
+   Engagement Letters Tab
+   Displays all engagement letters for this entity, grouped by
+   financial year.  Accountants must select the year when
+   uploading — one letter per year is the expected pattern.
+   ============================================================ #}
+
+<div class="p-3">
+
+    {# ── Header row ── #}
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <div>
+            <h5 class="mb-1"><i class="bi bi-envelope-paper me-2"></i>Engagement Letters</h5>
+            <p class="text-muted small mb-0">
+                Upload and store the signed engagement letter for each financial year.
+                Roll-forward is blocked until the letter for the new year is on file.
+            </p>
+        </div>
+        <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#uploadEngagementLetterModal">
+            <i class="bi bi-upload me-1"></i> Upload Engagement Letter
+        </button>
+    </div>
+
+    {# ── Letters table ── #}
+    {% if engagement_letters %}
+    <div class="table-responsive">
+        <table class="table table-hover align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Financial Year</th>
+                    <th>File</th>
+                    <th>Status</th>
+                    <th>Uploaded By</th>
+                    <th>Uploaded</th>
+                    <th class="text-end">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for letter in engagement_letters %}
+                <tr id="el-row-{{ letter.pk }}" {% if not letter.is_current %}class="text-muted"{% endif %}>
+                    <td>
+                        <strong>{{ letter.financial_year.year_label }}</strong>
+                        {% if not letter.is_current %}
+                        <span class="badge bg-secondary ms-1">Superseded</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <a href="{{ letter.file.url }}" target="_blank" class="text-decoration-none">
+                            <i class="bi bi-file-earmark-pdf text-danger me-1"></i>
+                            {{ letter.original_filename|default:"Engagement Letter" }}
+                        </a>
+                        {% if letter.file_size_bytes %}
+                        <small class="text-muted ms-1">({{ letter.file_size_bytes|filesizeformat }})</small>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <select class="form-select form-select-sm el-status-select"
+                                data-letter-pk="{{ letter.pk }}"
+                                style="width:auto; min-width:130px;">
+                            {% for val, label in letter.Status.choices %}
+                            <option value="{{ val }}" {% if letter.status == val %}selected{% endif %}>{{ label }}</option>
+                            {% endfor %}
+                        </select>
+                    </td>
+                    <td>
+                        {% if letter.uploaded_by %}
+                        {{ letter.uploaded_by.get_full_name|default:letter.uploaded_by.email }}
+                        {% else %}
+                        <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <small class="text-muted">{{ letter.uploaded_at|date:"d M Y" }}</small>
+                    </td>
+                    <td class="text-end">
+                        <div class="btn-group btn-group-sm">
+                            <a href="{{ letter.file.url }}" class="btn btn-outline-primary" target="_blank" title="Download">
+                                <i class="bi bi-download"></i>
+                            </a>
+                            {% if letter.is_current %}
+                            <button class="btn btn-outline-secondary"
+                                    onclick="archiveEngagementLetter('{{ letter.pk }}')"
+                                    title="Mark as Superseded">
+                                <i class="bi bi-archive"></i>
+                            </button>
+                            {% endif %}
+                            <button class="btn btn-outline-danger"
+                                    onclick="deleteEngagementLetter('{{ letter.pk }}')"
+                                    title="Delete permanently">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="text-center py-5 text-muted">
+        <i class="bi bi-envelope-paper" style="font-size:2.5rem; opacity:0.35;"></i>
+        <p class="mt-2 mb-0">No engagement letters uploaded yet.</p>
+        <p class="small">Upload a letter for each financial year to maintain a complete audit trail.</p>
+    </div>
+    {% endif %}
+
+</div>
+
+{# ============================================================
+   Upload Modal
+   Forces the accountant to select the financial year before
+   the upload is accepted.
+   ============================================================ #}
+<div class="modal fade" id="uploadEngagementLetterModal" tabindex="-1"
+     aria-labelledby="uploadEngagementLetterModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="uploadEngagementLetterModalLabel">
+                    <i class="bi bi-upload me-2"></i>Upload Engagement Letter
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="post"
+                  action="{% url 'core:engagement_letter_upload' pk=entity.pk %}"
+                  enctype="multipart/form-data"
+                  id="engagementLetterUploadForm">
+                {% csrf_token %}
+                <div class="modal-body">
+
+                    {# Year selector — REQUIRED #}
+                    <div class="mb-3">
+                        <label for="el_financial_year_id" class="form-label fw-semibold">
+                            Financial Year <span class="text-danger">*</span>
+                        </label>
+                        <select name="financial_year_id" id="el_financial_year_id"
+                                class="form-select" required>
+                            <option value="">— Select the year this letter covers —</option>
+                            {% for fy in financial_years %}
+                            <option value="{{ fy.pk }}">
+                                {{ fy.year_label }}
+                                ({{ fy.start_date|date:"d M Y" }} — {{ fy.end_date|date:"d M Y" }})
+    
+                            </option>
+                            {% endfor %}
+                        </select>
+                        <div class="form-text">
+                            Select the financial year this engagement letter is for.
+                            If a letter already exists for that year it will be marked as superseded.
+                        </div>
+                    </div>
+
+                    {# File upload #}
+                    <div class="mb-3">
+                        <label for="el_file" class="form-label fw-semibold">
+                            File (PDF or DOCX) <span class="text-danger">*</span>
+                        </label>
+                        <input type="file" name="file" id="el_file"
+                               class="form-control" accept=".pdf,.docx,.doc" required>
+                    </div>
+
+                    {# Status #}
+                    <div class="mb-3">
+                        <label for="el_status" class="form-label fw-semibold">Status</label>
+                        <select name="status" id="el_status" class="form-select">
+                            <option value="draft">Draft</option>
+                            <option value="sent">Sent to Client</option>
+                            <option value="signed" selected>Signed / Executed</option>
+                        </select>
+                    </div>
+
+                    {# Notes #}
+                    <div class="mb-3">
+                        <label for="el_notes" class="form-label">Notes (optional)</label>
+                        <textarea name="notes" id="el_notes" class="form-control" rows="2"
+                                  placeholder="e.g. Signed and returned by client on 15 Jul 2025"></textarea>
+                    </div>
+
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary">
+                        <i class="bi bi-upload me-1"></i> Upload
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+const elCsrfToken = '{{ csrf_token }}';
+
+function archiveEngagementLetter(pk) {
+    if (!confirm('Mark this engagement letter as superseded? It will remain on file for audit purposes.')) return;
+    fetch(`/core/api/engagement-letters/${pk}/archive/`, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': elCsrfToken },
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            location.reload();
+        } else {
+            alert('Error: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(err => alert('Error: ' + err.message));
+}
+
+function deleteEngagementLetter(pk) {
+    if (!confirm('Permanently delete this engagement letter? This cannot be undone.')) return;
+    fetch(`/core/api/engagement-letters/${pk}/delete/`, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': elCsrfToken },
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            const row = document.getElementById('el-row-' + pk);
+            if (row) row.remove();
+        } else {
+            alert('Error: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(err => alert('Error: ' + err.message));
+}
+
+// Inline status update
+document.querySelectorAll('.el-status-select').forEach(function(sel) {
+    sel.addEventListener('change', function() {
+        const pk = this.dataset.letterPk;
+        const newStatus = this.value;
+        fetch(`/core/api/engagement-letters/${pk}/status/`, {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': elCsrfToken,
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ status: newStatus }),
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.status !== 'ok') {
+                alert('Could not update status: ' + (data.error || 'Unknown error'));
+                location.reload();
+            }
+        })
+        .catch(err => {
+            alert('Error: ' + err.message);
+            location.reload();
+        });
+    });
+});
+
+// Auto-open the tab if redirected back with ?tab=engagement_letters
+(function() {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('tab') === 'engagement_letters') {
+        const btn = document.getElementById('engagement-letters-tab');
+        if (btn) btn.click();
+    }
+})();
+</script>
