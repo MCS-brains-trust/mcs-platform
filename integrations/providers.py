@@ -665,16 +665,21 @@ class QuickBooksProvider(BaseProvider):
             row_types[row_type] = row_types.get(row_type, 0) + 1
 
             header = row.get("Header") or {}
-            header_cols = header.get("ColData") or []
+            header_cols = header.get("ColData") or row.get("Header", {}).get("Columns") or []
             summary = row.get("Summary") or {}
-            summary_cols = summary.get("ColData") or []
-            children = row.get("Rows", {}).get("Row", []) or []
-
+            summary_cols = summary.get("ColData") or row.get("ColData") or summary.get("Columns") or []
+            children = row.get("Rows", {}).get("Row", []) or row.get("Rows") or []
             if header_cols and summary_cols:
-                account_name = (header_cols[0].get("value") or "").strip()
-                account_code = header_cols[0].get("id", "") or ""
-                beginning_balance = summary_cols[0].get("value", "0") if len(summary_cols) > 0 else "0"
-                net_activity = summary_cols[3].get("value", "0") if len(summary_cols) > 3 else "0"
+                account_name = (header_cols[0].get("value") or header_cols[0].get("Value") or "").strip()
+                account_code = header_cols[0].get("id", "") or header_cols[0].get("Id", "") or ""
+                summary_values = [
+                    ((col.get("value") if isinstance(col, dict) else "") or (col.get("Value") if isinstance(col, dict) else "") or "").strip()
+                    for col in summary_cols
+                    if isinstance(col, dict)
+                ]
+                numeric_values = [value for value in summary_values if value not in {"", None}]
+                beginning_balance = numeric_values[0] if len(numeric_values) >= 1 else "0"
+                net_activity = numeric_values[-2] if len(numeric_values) >= 2 else (numeric_values[-1] if numeric_values else "0")
                 append_account_row(account_code, account_name, beginning_balance, net_activity)
                 return
 
