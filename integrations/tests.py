@@ -101,33 +101,73 @@ class QuickBooksProviderPeriodMovementTests(TestCase):
         self.provider = QuickBooksProvider()
 
     @patch("integrations.providers.requests.get")
-    def test_fetch_period_movement_parses_net_activity_rows(self, mock_get):
+    def test_fetch_period_movement_parses_nested_account_summary_rows(self, mock_get):
         response = Mock()
         response.raise_for_status = Mock()
         response.json.return_value = {
             "Rows": {
                 "Row": [
                     {
-                        "type": "Data",
-                        "ColData": [
-                            {"value": "ATO Clearing Account", "id": "1"},
-                            {"value": "104252.06"},
-                            {"value": "32825"},
-                            {"value": ""},
-                            {"value": "32825"},
-                            {"value": "137077.06"},
-                        ],
+                        "type": "Section",
+                        "Header": {
+                            "ColData": [
+                                {"value": "ATO Clearing Account", "id": "1"},
+                            ]
+                        },
+                        "Rows": {
+                            "Row": [
+                                {
+                                    "type": "Data",
+                                    "ColData": [
+                                        {"value": "2024-07-16"},
+                                        {"value": "Bill"},
+                                        {"value": "Accounts Payable (A/P)"},
+                                        {"value": "Some detail row"},
+                                        {"value": "32825"},
+                                    ],
+                                }
+                            ]
+                        },
+                        "Summary": {
+                            "ColData": [
+                                {"value": "104252.06"},
+                                {"value": "32825"},
+                                {"value": ""},
+                                {"value": "32825"},
+                                {"value": "137077.06"},
+                            ]
+                        },
                     },
                     {
-                        "type": "Data",
-                        "ColData": [
-                            {"value": "Sales", "id": "2"},
-                            {"value": "0"},
-                            {"value": ""},
-                            {"value": "345304.15"},
-                            {"value": "-345304.15"},
-                            {"value": "-345304.15"},
-                        ],
+                        "type": "Section",
+                        "Header": {
+                            "ColData": [
+                                {"value": "Sales", "id": "2"},
+                            ]
+                        },
+                        "Rows": {
+                            "Row": [
+                                {
+                                    "type": "Data",
+                                    "ColData": [
+                                        {"value": "2024-08-01"},
+                                        {"value": "Invoice"},
+                                        {"value": "Trade Debtors"},
+                                        {"value": "Another detail row"},
+                                        {"value": "-345304.15"},
+                                    ],
+                                }
+                            ]
+                        },
+                        "Summary": {
+                            "ColData": [
+                                {"value": "0"},
+                                {"value": ""},
+                                {"value": "345304.15"},
+                                {"value": "-345304.15"},
+                                {"value": "-345304.15"},
+                            ]
+                        },
                     },
                 ]
             }
@@ -143,12 +183,45 @@ class QuickBooksProviderPeriodMovementTests(TestCase):
 
         self.assertEqual(len(lines), 2)
         self.assertEqual(lines[0]["account_code"], "1")
+        self.assertEqual(lines[0]["account_name"], "ATO Clearing Account")
         self.assertEqual(lines[0]["movement_amount"], Decimal("32825"))
         self.assertEqual(lines[0]["debit"], Decimal("32825"))
         self.assertEqual(lines[0]["credit"], Decimal("0"))
+        self.assertEqual(lines[1]["account_code"], "2")
+        self.assertEqual(lines[1]["account_name"], "Sales")
         self.assertEqual(lines[1]["movement_amount"], Decimal("-345304.15"))
         self.assertEqual(lines[1]["debit"], Decimal("0"))
         self.assertEqual(lines[1]["credit"], Decimal("345304.15"))
+
+    @patch("integrations.providers.requests.get")
+    def test_fetch_period_movement_ignores_transaction_detail_data_rows(self, mock_get):
+        response = Mock()
+        response.raise_for_status = Mock()
+        response.json.return_value = {
+            "Rows": {
+                "Row": [
+                    {
+                        "type": "Data",
+                        "ColData": [
+                            {"value": "2024-07-16"},
+                            {"value": "Bill"},
+                            {"value": "Accounts Payable (A/P)"},
+                            {"value": "Some detail row"},
+                            {"value": "32825"},
+                        ],
+                    }
+                ]
+            }
+        }
+        mock_get.return_value = response
+
+        with self.assertRaisesMessage(ValueError, "no usable General Ledger account rows"):
+            self.provider.fetch_period_movement(
+                "token",
+                "realm-1",
+                date(2025, 7, 1),
+                date(2026, 3, 14),
+            )
 
     @patch("integrations.providers.requests.get")
     def test_fetch_period_movement_raises_for_empty_rows(self, mock_get):
@@ -157,7 +230,7 @@ class QuickBooksProviderPeriodMovementTests(TestCase):
         response.json.return_value = {"Rows": {"Row": [{"type": "Summary"}]}}
         mock_get.return_value = response
 
-        with self.assertRaisesMessage(ValueError, "no usable General Ledger Summary account rows"):
+        with self.assertRaisesMessage(ValueError, "no usable General Ledger account rows"):
             self.provider.fetch_period_movement(
                 "token",
                 "realm-1",

@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 PROVIDERS = {}
 
 
+
 def register_provider(name):
     """Decorator to register a provider class."""
     def decorator(cls):
@@ -294,14 +295,7 @@ class XeroProvider(BaseProvider):
         the existing import wizard.
         """
         if not from_date or not to_date:
-            raise ValueError("Both from and to dates are required for a period movement import.")
-        if from_date > to_date:
-            raise ValueError("The period start date must be on or before the period end date.")
-
-        params = {
-            "fromDate": from_date.isoformat(),
-            "toDate": to_date.isoformat(),
-        }
+            raise ValueError("Xero period movement import requires both from_date and to_date.")
 
         resp = requests.get(
             "https://api.xero.com/api.xro/2.0/Reports/GeneralLedgerSummary",
@@ -310,23 +304,25 @@ class XeroProvider(BaseProvider):
                 "Xero-Tenant-Id": tenant_id,
                 "Accept": "application/json",
             },
-            params=params,
+            params={
+                "fromDate": from_date.isoformat(),
+                "toDate": to_date.isoformat(),
+            },
             timeout=30,
         )
         resp.raise_for_status()
         data = resp.json()
+
         reports = data.get("Reports", [])
         if not reports:
-            raise ValueError(f"Xero returned no General Ledger Summary report for tenant {tenant_id}.")
+            raise ValueError(
+                f"Xero returned no reports for tenant {tenant_id}."
+            )
 
         report = reports[0]
         rows = report.get("Rows", [])
-        if not rows:
-            raise ValueError("Xero returned an empty General Ledger Summary report.")
-
         lines = []
         row_type_counts = {}
-        raw_preview = json.dumps(rows[:5], default=str)[:2000]
 
         for row in rows:
             row_type = row.get("RowType", "Unknown")
@@ -336,42 +332,23 @@ class XeroProvider(BaseProvider):
 
             cells = row.get("Cells", [])
             if len(cells) < 5:
-                logger.warning(
-                    "Xero General Ledger Summary row had fewer than 5 cells",
-                    extra={
-                        "tenant_id": tenant_id,
-                        "row": row,
-                    },
-                )
                 continue
 
             account_name = (cells[0].get("Value") or "").strip()
             account_code = (cells[1].get("Value") or "").strip()
-            if not account_name or account_name.lower() == "total":
-                continue
+            net_movement = _to_decimal(cells[4].get("Value", "0"))
+            debit = net_movement if net_movement > 0 else Decimal("0")
+            credit = -net_movement if net_movement < 0 else Decimal("0")
 
-            debit = _to_decimal(cells[2].get("Value", "0"))
-            credit = _to_decimal(cells[3].get("Value", "0"))
-            movement = _to_decimal(cells[4].get("Value", "0"))
-            derived_debit = movement if movement > 0 else Decimal("0")
-            derived_credit = abs(movement) if movement < 0 else Decimal("0")
-
-            if debit == Decimal("0") and credit == Decimal("0") and movement == Decimal("0"):
-                continue
-
-            account_type = (cells[5].get("Value") or "").strip() if len(cells) > 5 else ""
-
-            lines.append({
-                "account_code": account_code,
-                "account_name": account_name,
-                "opening_balance": Decimal("0"),
-                "debit": derived_debit,
-                "credit": derived_credit,
-                "movement_amount": movement,
-                "source_debit": debit,
-                "source_credit": credit,
-                "account_type": account_type,
-            })
+            if account_name and account_name.lower() != "total" and net_movement != 0:
+                lines.append({
+                    "account_code": account_code,
+                    "account_name": account_name,
+                    "opening_balance": Decimal("0"),
+                    "debit": debit,
+                    "credit": credit,
+                    "movement_amount": net_movement,
+                })
 
         if not lines:
             logger.error(
@@ -381,9 +358,8 @@ class XeroProvider(BaseProvider):
                     "from_date": from_date.isoformat(),
                     "to_date": to_date.isoformat(),
                     "report_name": report.get("ReportName", ""),
-                    "report_date": report.get("ReportDate", ""),
-                    "top_level_row_types": row_type_counts,
-                    "raw_preview": raw_preview,
+                    "row_types": row_type_counts,
+                    "raw_preview": json.dumps(rows[:3], default=str)[:2000],
                 },
             )
             raise ValueError(
@@ -404,8 +380,9 @@ class MYOBProvider(BaseProvider):
     display_name = "MYOB"
     icon_class = "bi-cloud"
 
-    authorize_url = "https://secure.myob.com/oauth2/v1/authorize"
+    authorize_url = "https://secure.myob.com/oauth2/account/authorize"
     token_url = "https://secure.myob.com/oauth2/v1/authorize"
+    scopes = "CompanyFile"
 
     def get_client_id(self):
         return getattr(settings, "MYOB_CLIENT_ID", "")
@@ -413,18 +390,9 @@ class MYOBProvider(BaseProvider):
     def get_client_secret(self):
         return getattr(settings, "MYOB_CLIENT_SECRET", "")
 
-    def get_authorize_params(self, redirect_uri, state):
-        return {
-            "response_type": "code",
-            "client_id": self.get_client_id(),
-            "redirect_uri": redirect_uri,
-            "scope": "CompanyFile",
-            "state": state,
-        }
-
     def exchange_code(self, code, redirect_uri):
         resp = requests.post(
-            "https://secure.myob.com/oauth2/v1/authorize",
+            self.token_url,
             data={
                 "grant_type": "authorization_code",
                 "code": code,
@@ -439,12 +407,12 @@ class MYOBProvider(BaseProvider):
         return {
             "access_token": data["access_token"],
             "refresh_token": data.get("refresh_token", ""),
-            "expires_in": data.get("expires_in", 1200),
+            "expires_in": data.get("expires_in", 1800),
         }
 
     def refresh_tokens(self, refresh_token):
         resp = requests.post(
-            "https://secure.myob.com/oauth2/v1/authorize",
+            self.token_url,
             data={
                 "grant_type": "refresh_token",
                 "refresh_token": refresh_token,
@@ -458,90 +426,69 @@ class MYOBProvider(BaseProvider):
         return {
             "access_token": data["access_token"],
             "refresh_token": data.get("refresh_token", refresh_token),
-            "expires_in": data.get("expires_in", 1200),
+            "expires_in": data.get("expires_in", 1800),
         }
 
     def get_tenants(self, access_token):
-        """MYOB: list company files."""
+        """
+        MYOB: List company files (tenants).
+        Endpoint: GET https://api.myob.com/accountright/
+        """
         resp = requests.get(
             "https://api.myob.com/accountright/",
             headers={
                 "Authorization": f"Bearer {access_token}",
-                "x-myobapi-key": self.get_client_id(),
-                "x-myobapi-version": "v2",
+                "Accept": "application/json",
             },
             timeout=15,
         )
         resp.raise_for_status()
+        data = resp.json()
+        items = data.get("Items", data if isinstance(data, list) else [])
         return [
-            {"id": cf.get("Uri", ""), "name": cf.get("Name", "Unknown")}
-            for cf in resp.json()
+            {
+                "id": t.get("Uri") or t.get("Id") or t.get("CompanyFileId"),
+                "name": t.get("Name", "Unknown"),
+            }
+            for t in items
         ]
 
     def fetch_trial_balance(self, access_token, tenant_id, as_at_date):
         """
         MYOB: GET /GeneralLedger/Account to get all accounts with balances.
-        tenant_id is the company file URI.
+        Note: tenant_id is the Company File URI (e.g. https://api.myob.com/accountright/{cf-guid})
         """
         url = f"{tenant_id}/GeneralLedger/Account"
-        all_accounts = []
-        skip = 0
-
-        while True:
-            resp = requests.get(
-                url,
-                headers={
-                    "Authorization": f"Bearer {access_token}",
-                    "x-myobapi-key": self.get_client_id(),
-                    "x-myobapi-version": "v2",
-                },
-                params={"$top": 400, "$skip": skip},
-                timeout=30,
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            items = data.get("Items", [])
-            if not items:
-                break
-            all_accounts.extend(items)
-            skip += len(items)
-            if len(items) < 400:
-                break
-
+        resp = requests.get(
+            url,
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Accept": "application/json",
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        items = data.get("Items", [])
         lines = []
-        for acct in all_accounts:
-            if acct.get("IsHeader"):
-                continue
-            if not acct.get("IsActive", True):
-                continue
-
-            account_code = acct.get("DisplayID", "")
-            account_name = acct.get("Name", "")
-            opening = _to_decimal(acct.get("OpeningBalance", 0))
-            current = _to_decimal(acct.get("CurrentBalance", 0))
-
-            # Movement = Current - Opening
-            movement = current - opening
-            classification = acct.get("Classification", "")
-
-            # For asset/expense accounts: positive movement = debit
-            # For liability/equity/income: positive movement = credit
-            debit_classes = {"Asset", "Expense", "Cost of Sales", "Other Expense"}
-            if classification in debit_classes:
-                debit = max(movement, Decimal("0"))
-                credit = max(-movement, Decimal("0"))
+        for acct in items:
+            number = acct.get("Number", "")
+            name = acct.get("Name", "")
+            opening = Decimal(str(acct.get("OpeningBalance", "0") or "0"))
+            closing = Decimal(str(acct.get("CurrentBalance", "0") or "0"))
+            if closing >= 0:
+                debit = closing
+                credit = Decimal("0")
             else:
-                credit = max(movement, Decimal("0"))
-                debit = max(-movement, Decimal("0"))
-
+                debit = Decimal("0")
+                credit = -closing
             lines.append({
-                "account_code": account_code,
-                "account_name": account_name,
+                "account_code": number,
+                "account_name": name,
                 "opening_balance": opening,
                 "debit": debit,
                 "credit": credit,
             })
-
         return lines
 
 
@@ -552,8 +499,8 @@ class MYOBProvider(BaseProvider):
 @register_provider("quickbooks")
 class QuickBooksProvider(BaseProvider):
     name = "quickbooks"
-    display_name = "QuickBooks Online"
-    icon_class = "bi-cloud"
+    display_name = "QuickBooks"
+    icon_class = "bi-lightning-charge"
     supports_period_movement_import = True
 
     authorize_url = "https://appcenter.intuit.com/connect/oauth2"
@@ -561,29 +508,27 @@ class QuickBooksProvider(BaseProvider):
     scopes = "com.intuit.quickbooks.accounting"
 
     def get_client_id(self):
-        return getattr(settings, "QBO_CLIENT_ID", "")
+        return getattr(settings, "QB_CLIENT_ID", "")
 
     def get_client_secret(self):
-        return getattr(settings, "QBO_CLIENT_SECRET", "")
+        return getattr(settings, "QB_CLIENT_SECRET", "")
+
+    def get_authorize_params(self, redirect_uri, state):
+        params = super().get_authorize_params(redirect_uri, state)
+        params["scope"] = self.scopes
+        return params
 
     def exchange_code(self, code, redirect_uri):
-        import base64
-        auth_header = base64.b64encode(
-            f"{self.get_client_id()}:{self.get_client_secret()}".encode()
-        ).decode()
-
         resp = requests.post(
             self.token_url,
-            headers={
-                "Authorization": f"Basic {auth_header}",
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
+            auth=(self.get_client_id(), self.get_client_secret()),
             data={
                 "grant_type": "authorization_code",
                 "code": code,
                 "redirect_uri": redirect_uri,
             },
-            timeout=15,
+            headers={"Accept": "application/json"},
+            timeout=20,
         )
         resp.raise_for_status()
         data = resp.json()
@@ -591,25 +536,19 @@ class QuickBooksProvider(BaseProvider):
             "access_token": data["access_token"],
             "refresh_token": data.get("refresh_token", ""),
             "expires_in": data.get("expires_in", 3600),
+            "realm_id": data.get("realmId") or data.get("realm_id") or "",
         }
 
     def refresh_tokens(self, refresh_token):
-        import base64
-        auth_header = base64.b64encode(
-            f"{self.get_client_id()}:{self.get_client_secret()}".encode()
-        ).decode()
-
         resp = requests.post(
             self.token_url,
-            headers={
-                "Authorization": f"Basic {auth_header}",
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
+            auth=(self.get_client_id(), self.get_client_secret()),
             data={
                 "grant_type": "refresh_token",
                 "refresh_token": refresh_token,
             },
-            timeout=15,
+            headers={"Accept": "application/json"},
+            timeout=20,
         )
         resp.raise_for_status()
         data = resp.json()
@@ -633,7 +572,6 @@ class QuickBooksProvider(BaseProvider):
             params["date_macro"] = ""
             params["end_date"] = as_at_date.isoformat()
             params["start_date"] = ""
-
         resp = requests.get(
             f"{base_url}/reports/TrialBalance",
             headers={
@@ -645,24 +583,20 @@ class QuickBooksProvider(BaseProvider):
         )
         resp.raise_for_status()
         data = resp.json()
-
         lines = []
         rows_data = data.get("Rows", {}).get("Row", [])
-
         for section in rows_data:
             section_rows = section.get("Rows", {}).get("Row", [])
             for row in section_rows:
                 col_data = row.get("ColData", [])
                 if len(col_data) < 3:
                     continue
-
                 account_str = col_data[0].get("value", "")
                 debit = _to_decimal(col_data[1].get("value", "0"))
                 credit = _to_decimal(col_data[2].get("value", "0"))
                 account_id = col_data[0].get("id", "")
                 account_code = account_id if account_id else ""
                 account_name = account_str
-
                 lines.append({
                     "account_code": account_code,
                     "account_name": account_name,
@@ -670,16 +604,14 @@ class QuickBooksProvider(BaseProvider):
                     "debit": debit,
                     "credit": credit,
                 })
-
         return lines
 
     def fetch_period_movement(self, access_token, tenant_id, from_date, to_date):
         """
         QBO: GET /v3/company/{realmId}/reports/GeneralLedger
-        Imports the net activity for the selected period and converts it
-        into the debit/credit structure expected by the existing import wizard.
+        Extract account-level net movements from summary rows in the report and
+        convert them into the debit/credit structure expected by the import wizard.
         """
-
         if not from_date or not to_date:
             raise ValueError("QuickBooks period movement import requires both from_date and to_date.")
 
@@ -706,6 +638,25 @@ class QuickBooksProvider(BaseProvider):
         lines = []
         row_types = {}
 
+        def append_account_row(account_code, account_name, beginning_balance, net_activity):
+            account_name = (account_name or "").strip()
+            if not account_name or account_name.lower() == "total":
+                return
+            beginning_balance = _to_decimal(beginning_balance)
+            net_activity = _to_decimal(net_activity)
+            if beginning_balance == 0 and net_activity == 0:
+                return
+            debit = net_activity if net_activity > 0 else Decimal("0")
+            credit = -net_activity if net_activity < 0 else Decimal("0")
+            lines.append({
+                "account_code": (account_code or "").strip(),
+                "account_name": account_name,
+                "opening_balance": beginning_balance,
+                "debit": debit,
+                "credit": credit,
+                "movement_amount": net_activity,
+            })
+
         def handle_row(row):
             if not isinstance(row, dict):
                 return
@@ -713,40 +664,52 @@ class QuickBooksProvider(BaseProvider):
             row_type = row.get("type") or row.get("RowType") or "Unknown"
             row_types[row_type] = row_types.get(row_type, 0) + 1
 
+            header = row.get("Header") or {}
+            header_cols = header.get("ColData") or []
+            summary = row.get("Summary") or {}
+            summary_cols = summary.get("ColData") or []
+            children = row.get("Rows", {}).get("Row", []) or []
+
+            if header_cols and summary_cols:
+                account_name = (header_cols[0].get("value") or "").strip()
+                account_code = header_cols[0].get("id", "") or ""
+                beginning_balance = summary_cols[0].get("value", "0") if len(summary_cols) > 0 else "0"
+                net_activity = summary_cols[3].get("value", "0") if len(summary_cols) > 3 else "0"
+                append_account_row(account_code, account_name, beginning_balance, net_activity)
+                return
+
             col_data = row.get("ColData", []) or []
-            if len(col_data) >= 5:
-                account_name = (col_data[0].get("value") or "").strip()
-                if account_name and account_name.lower() != "total":
-                    account_code = col_data[0].get("id", "") or ""
-                    beginning_balance = _to_decimal(col_data[1].get("value", "0"))
-                    debit_value = _to_decimal(col_data[2].get("value", "0"))
-                    credit_value = _to_decimal(col_data[3].get("value", "0"))
-                    net_activity = _to_decimal(col_data[4].get("value", "0"))
+            if row_type.lower() == "data" and len(col_data) >= 5:
+                first_value = (col_data[0].get("value") or "").strip()
+                first_id = (col_data[0].get("id") or "").strip()
+                looks_like_transaction_row = bool(re.match(r"^\d{4}-\d{2}-\d{2}$", first_value))
+                if not looks_like_transaction_row and (first_id or len(col_data) >= 6):
+                    append_account_row(
+                        first_id,
+                        first_value,
+                        col_data[1].get("value", "0"),
+                        col_data[4].get("value", "0"),
+                    )
+                    return
 
-                    debit = net_activity if net_activity > 0 else Decimal("0")
-                    credit = -net_activity if net_activity < 0 else Decimal("0")
-
-                    if any([
-                        beginning_balance != 0,
-                        debit_value != 0,
-                        credit_value != 0,
-                        net_activity != 0,
-                    ]):
-                        lines.append({
-                            "account_code": account_code,
-                            "account_name": account_name,
-                            "opening_balance": beginning_balance,
-                            "debit": debit,
-                            "credit": credit,
-                            "movement_amount": net_activity,
-                        })
-                        return
-
-            for child in row.get("Rows", {}).get("Row", []) or []:
+            for child in children:
                 handle_row(child)
 
         for row in rows_data:
             handle_row(row)
+
+        deduped = {}
+        for line in lines:
+            key = line["account_code"] or line["account_name"]
+            if key not in deduped:
+                deduped[key] = line.copy()
+            else:
+                deduped[key]["opening_balance"] += line["opening_balance"]
+                deduped[key]["debit"] += line["debit"]
+                deduped[key]["credit"] += line["credit"]
+                deduped[key]["movement_amount"] += line["movement_amount"]
+
+        lines = list(deduped.values())
 
         if not lines:
             logger.error(
