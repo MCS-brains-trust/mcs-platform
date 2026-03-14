@@ -172,65 +172,36 @@
     </div>
 </div>
 
-{% if practice_metrics %}
-<!-- PRACTICE-WIDE METRICS (Admin Only) -->
 <div class="card border-0 shadow-sm mb-4">
-    <div class="card-header bg-white fw-bold py-2">
-        <i class="bi bi-graph-up text-primary"></i> Practice Overview
+    <div class="card-header bg-white fw-bold py-2 d-flex align-items-center justify-content-between">
+        <span><i class="bi bi-calendar-event text-primary"></i> ATO Due Dates</span>
+        <span class="badge text-bg-light">Next 3</span>
     </div>
-    <div class="card-body py-2">
-        <div class="row">
-            <div class="col practice-metric">
-                <div class="pm-value text-dark">{{ practice_metrics.total_entities }}</div>
-                <div class="pm-label">Total Entities</div>
+    <div class="card-body py-3">
+        {% if ato_due_dates %}
+        <div class="row g-3">
+            {% for item in ato_due_dates %}
+            <div class="col-md-4">
+                <div class="border rounded-3 h-100 p-3 bg-white">
+                    <div class="fw-bold text-dark mb-2">{{ item.due_date|date:"j M Y" }}</div>
+                    <div class="small text-primary fw-semibold mb-2">{{ item.title }}</div>
+                    <p class="text-muted small mb-3">{{ item.description }}</p>
+                    <a href="{{ item.source_url }}" target="_blank" rel="noopener" class="small text-decoration-none">
+                        View ATO source <i class="bi bi-box-arrow-up-right"></i>
+                    </a>
+                </div>
             </div>
-            <div class="col practice-metric">
-                <div class="pm-value text-warning">{{ practice_metrics.total_unfinalised }}</div>
-                <div class="pm-label">Unfinalised</div>
-            </div>
-            <div class="col practice-metric">
-                <div class="pm-value text-success">{{ practice_metrics.total_finalised|default:"0" }}</div>
-                <div class="pm-label">Finalised</div>
-            </div>
-            <div class="col practice-metric">
-                <div class="pm-value" style="color: #6f42c1;">{{ practice_metrics.total_eva_reviews|default:"0" }}</div>
-                <div class="pm-label">Eva Reviews</div>
-            </div>
-            <div class="col practice-metric">
-                <div class="pm-value text-secondary">{{ practice_metrics.unassigned_entities }}</div>
-                <div class="pm-label">Unassigned</div>
-            </div>
+            {% endfor %}
         </div>
-
-        {% if practice_metrics.staff_workload %}
-        <hr class="my-2">
-        <div class="section-header" style="font-size: 0.9rem; margin-bottom: 8px;">
-            <i class="bi bi-people"></i> Staff Workload
+        {% else %}
+        <div class="no-data-box py-4">
+            <i class="bi bi-calendar-x text-muted" style="font-size: 2rem;"></i>
+            <h6 class="mt-2 text-muted mb-1">ATO due dates are temporarily unavailable</h6>
+            <p class="small text-muted mb-0">The dashboard will show the next 3 live tax agent due dates when the ATO source is reachable.</p>
         </div>
-        <table class="table table-sm workload-table mb-0">
-            <thead class="table-light">
-                <tr>
-                    <th>Staff Member</th>
-                    <th class="text-center">Primary</th>
-                    <th class="text-center">Reviewer</th>
-
-                </tr>
-            </thead>
-            <tbody>
-                {% for w in practice_metrics.staff_workload %}
-                <tr>
-                    <td class="fw-bold">{{ w.name }}</td>
-                    <td class="text-center"><span class="badge bg-primary rounded-pill">{{ w.primary }}</span></td>
-                    <td class="text-center"><span class="badge bg-info rounded-pill">{{ w.review }}</span></td>
-
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
         {% endif %}
     </div>
 </div>
-{% endif %}
 
 <div class="row g-4">
     <!-- Main Column -->

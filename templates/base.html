@@ -255,6 +255,10 @@
            href="{% url 'core:audit_library' %}">
             <i class="bi bi-shield-check"></i> Audit Library
         </a>
+        <a class="sh-nav-item {% if active_nav == 'eva_review_centre' %}active{% endif %}"
+           href="{% url 'review:dashboard' %}">
+            <i class="bi bi-clipboard2-pulse"></i> EVA Review Centre
+        </a>
         {% endif %}
 
         {% if user.is_office_admin %}

@@ -22,6 +22,7 @@ from django_ratelimit.decorators import ratelimit
 
 from config.webhook_auth import verify_webhook
 from config.authorization import get_review_job_for_user
+from .ato_due_dates import get_next_ato_due_dates
 from .models import PendingTransaction, ReviewActivity, ReviewJob, TransactionPattern
 
 logger = logging.getLogger(__name__)
@@ -447,9 +448,16 @@ def review_dashboard(request):
         }
         return render(request, "review/dashboard_office_admin.html", office_context)
 
+    ato_due_dates = []
+    try:
+        ato_due_dates = get_next_ato_due_dates(limit=3)
+    except Exception:
+        ato_due_dates = []
+
     context = {
         "greeting": greeting,
         "first_name": first_name,
+        "active_nav": "dashboard",
         # My workload
         "my_entity_count": my_entity_count,
         "my_primary_count": my_primary_count,
@@ -464,6 +472,8 @@ def review_dashboard(request):
         "practice_metrics": practice_metrics,
         # Recent activity
         "recent_audit_logs": recent_audit_logs,
+        # Live ATO due dates
+        "ato_due_dates": ato_due_dates,
     }
     return render(request, "review/dashboard.html", context)
 
