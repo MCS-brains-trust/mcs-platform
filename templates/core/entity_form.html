@@ -56,6 +56,33 @@ document.addEventListener('DOMContentLoaded', function() {
             allowEmptyOption: true,
             sortField: { field: 'text', direction: 'asc' },
             maxOptions: 600,
+            searchField: ['text', 'value', 'searchTokens'],
+            render: {
+                option: function(data, escape) {
+                    return `<div>${escape(data.text || '')}</div>`;
+                },
+                item: function(data, escape) {
+                    return `<div>${escape(data.text || '')}</div>`;
+                }
+            },
+            onInitialize: function() {
+                const aliasMap = {
+                    '94110': 'auto electrician mechanic auto electrical',
+                    '94121': 'windscreen repair mechanic glass',
+                    '94129': 'smash repair panel beater spray painter body repair',
+                    '94191': 'brake clutch mechanic',
+                    '94192': 'radiator cooling system mechanic',
+                    '94193': 'muffler exhaust mechanic',
+                    '94199': 'mechanic car mechanic automotive repair garage general automotive repair engine gearbox transmission truck motorcycle scooter',
+                    '39220': 'tyre tire tyres tires wheel alignment'
+                };
+                Object.entries(aliasMap).forEach(([code, aliases]) => {
+                    if (this.options[code]) {
+                        this.options[code].searchTokens = aliases;
+                    }
+                });
+                this.refreshOptions(false);
+            },
         });
     }
 

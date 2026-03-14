@@ -38,7 +38,14 @@ class EntityForm(forms.ModelForm):
             "address_line_1", "address_line_2", "suburb", "state", "postcode", "country",
             "assigned_accountant",
         )
-        widgets = {}
+        widgets = {
+            "tfn": forms.TextInput(attrs={
+                "autocomplete": "off",
+                "inputmode": "numeric",
+                "maxlength": "9",
+                "placeholder": "9 digit TFN",
+            }),
+        }
 
     def __init__(self, *args, user=None, **kwargs):
         super().__init__(*args, **kwargs)
@@ -51,6 +58,15 @@ class EntityForm(forms.ModelForm):
                 field.widget.attrs["class"] = "form-check-input"
             else:
                 field.widget.attrs["class"] = "form-control"
+
+        # EncryptedCharField inherits from TextField, so force single-line input
+        self.fields["tfn"].widget = forms.TextInput(attrs={
+            "class": "form-control",
+            "autocomplete": "off",
+            "inputmode": "numeric",
+            "maxlength": "9",
+            "placeholder": "9 digit TFN",
+        })
 
         # Searchable select for industry
         self.fields["industry"].widget.attrs.update({
