@@ -23,17 +23,13 @@
                     net movement for <strong>{{ fy.entity.entity_name }}</strong> (FY{{ fy.end_date|date:"Y" }}).
                 </p>
 
-                {% if linked_tenant %}
                 <div class="alert alert-success">
                     <i class="bi bi-link-45deg"></i>
-                    This entity is already linked to <strong>{{ linked_tenant.company_name }}</strong>.
+                    This entity is linked to <strong>{{ linked_tenant.company_name }}</strong>.
                     <div class="small text-muted mt-1">
-                        You can use the linked company below or choose a different one for this import.
+                        The saved QuickBooks company for this entity will be used automatically for this import.
                     </div>
                 </div>
-                <hr>
-                <p class="text-muted small">Or choose a different company:</p>
-                {% endif %}
 
                 <form method="post">
                     {% csrf_token %}
@@ -55,37 +51,16 @@
                         StatementHub will import the <strong>Net Activity__TOTAL</strong> column for the selected period and then open the mapping wizard.
                     </div>
 
-                    <div class="mb-3">
-                        <input type="text" id="tenantSearch" class="form-control" placeholder="Search companies...">
-                    </div>
-
-                    <div class="list-group mb-3" id="tenantList" style="max-height: 400px; overflow-y: auto;">
-                        {% for tenant in tenants %}
-                        <label class="list-group-item list-group-item-action tenant-item d-flex align-items-center">
-                            <input type="radio" name="tenant_id" value="{{ tenant.realm_id }}"
-                                   class="form-check-input me-3"
-                                   {% if linked_tenant and tenant.realm_id == linked_tenant.realm_id %}checked{% endif %}>
-                            <div class="flex-grow-1">
-                                <strong>{{ tenant.company_name }}</strong>
-                                {% if tenant.entity %}
-                                <br><small class="text-muted">
-                                    <i class="bi bi-link-45deg"></i> Linked to: {{ tenant.entity.entity_name }}
-                                </small>
-                                {% endif %}
+                    <div class="card border-success bg-light mb-3">
+                        <div class="card-body py-3">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <div>
+                                    <div class="fw-semibold">{{ linked_tenant.company_name }}</div>
+                                    <div class="small text-muted">Saved QuickBooks company for {{ fy.entity.entity_name }}</div>
+                                </div>
+                                <span class="badge bg-success">Linked</span>
                             </div>
-                            {% if tenant.entity and tenant.entity.pk == fy.entity.pk %}
-                            <span class="badge bg-success">This Entity</span>
-                            {% endif %}
-                        </label>
-                        {% endfor %}
-                    </div>
-
-                    <div class="form-check mb-3">
-                        <input type="checkbox" name="link_tenant" value="1" class="form-check-input" id="linkTenant"
-                               {% if not linked_tenant %}checked{% endif %}>
-                        <label class="form-check-label" for="linkTenant">
-                            Remember this selection — link the chosen company to <strong>{{ fy.entity.entity_name }}</strong>
-                        </label>
+                        </div>
                     </div>
 
                     <div class="d-flex justify-content-between">

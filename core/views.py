@@ -1281,6 +1281,9 @@ def entity_detail(request, pk):
     incoming_rels = EntityRelationship.objects.filter(to_entity=entity).select_related("from_entity")
     entity_relationships = list(outgoing_rels) + list(incoming_rels)
     software_configs = entity.software_configs.all()
+    from integrations.models import XeroTenant, QBTenant
+    linked_xero_tenant = XeroTenant.objects.filter(entity=entity).select_related("connection").first()
+    linked_qb_tenant = QBTenant.objects.filter(entity=entity).select_related("connection").first()
     meeting_notes = entity.meeting_notes.all()[:20]
     pending_followups = entity.meeting_notes.filter(
         follow_up_completed=False, follow_up_date__isnull=False
@@ -1327,6 +1330,8 @@ def entity_detail(request, pk):
         "outgoing_rels": outgoing_rels,
         "incoming_rels": incoming_rels,
         "software_configs": software_configs,
+        "linked_xero_tenant": linked_xero_tenant,
+        "linked_qb_tenant": linked_qb_tenant,
         "meeting_notes": meeting_notes,
         "pending_followups": pending_followups,
         "legal_doc_prompt": legal_doc_prompt,

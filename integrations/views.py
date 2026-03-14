@@ -321,78 +321,42 @@ def import_from_cloud(request, fy_pk):
         messages.error(request, "Cannot import into a finalised financial year.")
         return redirect("core:financial_year_detail", pk=fy_pk)
 
-    # Check for per-entity connection first
-    connections = entity.accounting_connections.filter(status="active")
-    if connections.exists():
-        connection = connections.first()
-        if not _ensure_valid_token(connection):
-            messages.error(
-                request,
-                f"Connection to {connection.get_provider_display()} has expired. "
-                "Please reconnect."
-            )
-            return redirect("integrations:connection_manage", entity_pk=entity.pk)
+    linked_xero = XeroTenant.objects.filter(entity=entity).select_related("connection").first()
+    linked_qb = QBTenant.objects.filter(entity=entity).select_related("connection").first()
 
-        provider = get_provider(connection.provider)
-        return _do_cloud_import(request, fy, entity, provider, connection.access_token, connection.tenant_id, connection)
-
-    # Collect all available global connections
-    available_providers = []
-
-    # Check Xero global
-    xero_conn = XeroGlobalConnection.objects.filter(status="active").first()
-    if xero_conn:
-        linked_xero = XeroTenant.objects.filter(connection=xero_conn, entity=entity).first()
-        available_providers.append({
+    linked_options = []
+    if linked_xero:
+        linked_options.append({
             "name": "xero",
             "display": "Xero",
-            "icon": "bi-cloud",
-            "linked": linked_xero,
-            "linked_name": linked_xero.tenant_name if linked_xero else None,
-            "tenant_count": xero_conn.tenants.count(),
+            "url": reverse("integrations:xero_select_tenant_import", kwargs={"fy_pk": fy.pk}),
         })
-
-    # Check QB global
-    qb_conn = QBGlobalConnection.objects.filter(status="active").first()
-    if qb_conn:
-        linked_qb = QBTenant.objects.filter(connection=qb_conn, entity=entity).first()
-        available_providers.append({
+    if linked_qb:
+        linked_options.append({
             "name": "quickbooks",
             "display": "QuickBooks Online",
-            "icon": "bi-cloud",
-            "linked": linked_qb,
-            "linked_name": linked_qb.company_name if linked_qb else None,
-            "tenant_count": qb_conn.tenants.count(),
+            "url": reverse("integrations:qb_select_tenant_import", kwargs={"fy_pk": fy.pk}),
         })
 
-    if not available_providers:
-        messages.warning(
-            request,
-            "No accounting platform connected. "
-            "Connect via Admin → Xero / QuickBooks Connection."
-        )
-        return redirect("integrations:connections_hub")
+    if len(linked_options) == 1:
+        return redirect(linked_options[0]["url"])
+    if len(linked_options) > 1:
+        return redirect("integrations:select_provider_import", fy_pk=fy_pk)
 
-    # If only one provider with a linked tenant, go straight to import
-    if len(available_providers) == 1 and available_providers[0]["linked"]:
-        p = available_providers[0]
-        if p["name"] == "xero":
-            if _ensure_global_xero_token(xero_conn):
-                provider = get_provider("xero")
-                return _do_cloud_import(request, fy, entity, provider, xero_conn.access_token, p["linked"].tenant_id, None)
-        elif p["name"] == "quickbooks":
-            if _ensure_qb_tenant_token(p["linked"]):
-                provider = get_provider("quickbooks")
-                return _do_cloud_import(request, fy, entity, provider, p["linked"].access_token, p["linked"].realm_id, None)
-    # If only one provider, skip provider selection and go to tenant selection
-    if len(available_providers) == 1:
-        p = available_providers[0]
-        if p["name"] == "xero":
-            return redirect("integrations:xero_select_tenant_import", fy_pk=fy_pk)
-        elif p["name"] == "quickbooks":
-            return redirect("integrations:qb_select_tenant_import", fy_pk=fy_pk)
-    # Multiple providers — show selection page
-    return redirect("integrations:select_provider_import", fy_pk=fy_pk)
+    xero_conn = XeroGlobalConnection.objects.filter(status="active").first()
+    qb_conn = QBGlobalConnection.objects.filter(status="active").first()
+    if xero_conn or qb_conn:
+        messages.error(
+            request,
+            "This entity is not linked to accounting software yet. Open the Software tab on the entity and link Xero or QuickBooks first."
+        )
+        return redirect(f"{reverse('core:entity_detail', kwargs={'pk': entity.pk})}#software")
+
+    messages.warning(
+        request,
+        "No accounting platform connected. Connect Xero or QuickBooks first."
+    )
+    return redirect(f"{reverse('core:entity_detail', kwargs={'pk': entity.pk})}#software")
 
 
 def _do_cloud_import(
@@ -487,24 +451,23 @@ def xero_select_tenant_import(request, fy_pk):
     fy = get_object_or_404(FinancialYear, pk=fy_pk)
     entity = fy.entity
 
-    global_conn = XeroGlobalConnection.objects.filter(status="active").first()
-    if not global_conn:
-        messages.error(request, "No active Xero connection. Please connect first.")
-        return redirect("integrations:xero_global_dashboard")
+    linked_tenant = XeroTenant.objects.filter(entity=entity).select_related("connection").first()
+    if not linked_tenant or not linked_tenant.connection_id:
+        messages.error(request, "This entity is not linked to a Xero organisation yet. Open the Software tab and link Xero first.")
+        return redirect(f"{reverse('core:entity_detail', kwargs={'pk': entity.pk})}#software")
 
-    tenants = global_conn.tenants.select_related("entity").all()
-    linked_tenant = tenants.filter(entity=entity).first()
+    global_conn = linked_tenant.connection
+    tenants = [linked_tenant]
 
     if request.method == "POST":
-        tenant_id = request.POST.get("tenant_id", "")
-        link_tenant = request.POST.get("link_tenant") == "1"
+        tenant_id = linked_tenant.tenant_id
         import_mode = request.POST.get("import_mode", "period_movement")
         from_date_raw = request.POST.get("from_date", "").strip()
         to_date_raw = request.POST.get("to_date", "").strip()
 
         if not tenant_id:
-            messages.error(request, "Please select an organisation.")
-            return redirect("integrations:xero_select_tenant_import", fy_pk=fy_pk)
+            messages.error(request, "This entity's saved Xero link is missing the organisation identifier.")
+            return redirect(f"{reverse('core:entity_detail', kwargs={'pk': entity.pk})}#software")
 
         from_date = None
         to_date = None
@@ -521,15 +484,6 @@ def xero_select_tenant_import(request, fy_pk):
             if from_date > to_date:
                 messages.error(request, "The from date must be on or before the to date.")
                 return redirect("integrations:xero_select_tenant_import", fy_pk=fy_pk)
-
-        # Optionally link tenant to entity
-        if link_tenant:
-            tenant_obj = tenants.filter(tenant_id=tenant_id).first()
-            if tenant_obj:
-                # Unlink any previous tenant for this entity
-                tenants.filter(entity=entity).update(entity=None)
-                tenant_obj.entity = entity
-                tenant_obj.save(update_fields=["entity"])
 
         # Ensure token is valid
         if not _ensure_global_xero_token(global_conn):
@@ -554,6 +508,7 @@ def xero_select_tenant_import(request, fy_pk):
         "fy": fy,
         "tenants": tenants,
         "linked_tenant": linked_tenant,
+        "lock_selected_tenant": True,
         "default_from_date": fy.start_date.isoformat() if fy.start_date else "",
         "default_to_date": fy.end_date.isoformat() if fy.end_date else "",
     }

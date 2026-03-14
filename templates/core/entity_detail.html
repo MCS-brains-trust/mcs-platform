@@ -63,8 +63,8 @@
     <li class="nav-item" role="presentation">
         <button class="nav-link" id="software-tab" data-bs-toggle="tab" data-bs-target="#software" type="button" role="tab">
             <i class="bi bi-laptop"></i> Software
-            {% if software_configs %}
-            <span class="badge bg-secondary">{{ software_configs|length }}</span>
+            {% if linked_xero_tenant or linked_qb_tenant or software_configs %}
+            <span class="badge bg-secondary">{% if linked_xero_tenant and linked_qb_tenant %}2{% elif linked_xero_tenant or linked_qb_tenant %}1{% else %}{{ software_configs|length }}{% endif %}</span>
             {% endif %}
         </button>
     </li>
@@ -636,55 +636,114 @@
         <div class="d-flex justify-content-between align-items-center mb-3">
             <h5 class="mb-0">Connected Software</h5>
             {% if user.can_edit %}
-            <a href="{% url 'core:software_create' entity_pk=entity.pk %}" class="btn btn-sm btn-primary">
-                <i class="bi bi-plus-lg"></i> Add Software
+            <a href="{% url 'integrations:connection_manage' entity_pk=entity.pk %}" class="btn btn-sm btn-primary">
+                <i class="bi bi-plus-lg"></i> Manage Software Connections
             </a>
             {% endif %}
         </div>
 
         <p class="text-muted mb-3">
-            Manage which accounting software this entity is connected to. API connections control trial balance imports within specific financial years.
+            Manage the primary accounting software for this entity here. Once linked, financial year imports should use the saved software connection directly without asking you to choose the organisation again.
         </p>
 
-        {% if software_configs %}
-        <div class="row">
-            {% for sw in software_configs %}
-            <div class="col-md-6 mb-3">
-                <div class="card h-100">
+        <div class="row g-3 mb-4">
+            <div class="col-md-6">
+                <div class="card h-100 {% if linked_xero_tenant %}border-success{% endif %}">
                     <div class="card-body">
-                        <div class="d-flex justify-content-between">
-                            <h6 class="card-title">
-                                {{ sw.get_software_type_display }}
-                                {% if sw.is_primary %}<span class="badge bg-success">Primary</span>{% endif %}
-                                {% if sw.is_cloud %}<span class="badge bg-info text-dark">Cloud</span>{% endif %}
-                            </h6>
+                        <div class="d-flex justify-content-between align-items-start mb-2">
                             <div>
-                                <a href="{% url 'core:software_edit' pk=sw.pk %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-pencil"></i></a>
-                                <form method="post" action="{% url 'core:software_delete' pk=sw.pk %}" class="d-inline" onsubmit="return confirm('Remove software connection?');">
-                                    {% csrf_token %}
-                                    <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
-                                </form>
+                                <h6 class="mb-1"><i class="bi bi-cloud text-primary"></i> Xero</h6>
+                                <div class="text-muted small">Primary accounting connection</div>
                             </div>
+                            {% if linked_xero_tenant %}
+                            <span class="badge bg-success">Connected</span>
+                            {% else %}
+                            <span class="badge bg-secondary">Not linked</span>
+                            {% endif %}
                         </div>
-                        {% if sw.organisation_name %}<p class="mb-1"><small class="text-muted">Org:</small> {{ sw.organisation_name }}</p>{% endif %}
-                        {% if sw.login_email %}<p class="mb-1"><small class="text-muted">Login:</small> {{ sw.login_email }}</p>{% endif %}
-                        {% if sw.subscription_level %}<p class="mb-1"><small class="text-muted">Plan:</small> {{ sw.subscription_level }}</p>{% endif %}
-                        {% if sw.has_advisor_access %}
-                        <hr class="my-2">
-                        <p class="mb-0">
-                            <span class="badge bg-success"><i class="bi bi-check-circle"></i> Advisor Access</span>
-                            {% if sw.advisor_login_email %}<small class="text-muted ms-1">{{ sw.advisor_login_email }}</small>{% endif %}
-                        </p>
+                        {% if linked_xero_tenant %}
+                        <p class="mb-2"><strong>{{ linked_xero_tenant.tenant_name }}</strong></p>
+                        <p class="small text-muted mb-3">This entity is linked to its primary Xero organisation. Financial year imports will use this saved link.</p>
+                        {% else %}
+                        <p class="small text-muted mb-3">Link this entity to its Xero organisation once, then import movement directly from financial years without repeated organisation selection.</p>
+                        {% endif %}
+                        {% if user.can_edit %}
+                        <a href="{% url 'integrations:connection_manage' entity_pk=entity.pk %}" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-link-45deg"></i> {% if linked_xero_tenant %}Manage Xero Link{% else %}Link Xero{% endif %}
+                        </a>
                         {% endif %}
                     </div>
                 </div>
             </div>
-            {% endfor %}
+            <div class="col-md-6">
+                <div class="card h-100 {% if linked_qb_tenant %}border-success{% endif %}">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-start mb-2">
+                            <div>
+                                <h6 class="mb-1"><i class="bi bi-cloud text-success"></i> QuickBooks Online</h6>
+                                <div class="text-muted small">Primary accounting connection</div>
+                            </div>
+                            {% if linked_qb_tenant %}
+                            <span class="badge bg-success">Connected</span>
+                            {% else %}
+                            <span class="badge bg-secondary">Not linked</span>
+                            {% endif %}
+                        </div>
+                        {% if linked_qb_tenant %}
+                        <p class="mb-2"><strong>{{ linked_qb_tenant.company_name }}</strong></p>
+                        <p class="small text-muted mb-3">This entity is linked to its primary QuickBooks company. Financial year imports will use this saved link.</p>
+                        {% else %}
+                        <p class="small text-muted mb-3">Link this entity to its QuickBooks company once, then import movement directly from financial years without repeated company selection.</p>
+                        {% endif %}
+                        {% if user.can_edit %}
+                        <a href="{% url 'integrations:connection_manage' entity_pk=entity.pk %}" class="btn btn-sm btn-outline-primary">
+                            <i class="bi bi-link-45deg"></i> {% if linked_qb_tenant %}Manage QuickBooks Link{% else %}Link QuickBooks{% endif %}
+                        </a>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
         </div>
-        {% else %}
-        <div class="text-center py-4 text-muted">
-            <i class="bi bi-laptop display-6"></i>
-            <p class="mt-2">No software connected. <a href="{% url 'core:software_create' entity_pk=entity.pk %}">Add software</a> to enable API-based trial balance imports.</p>
+
+        {% if software_configs %}
+        <div class="card border-0 bg-light">
+            <div class="card-body">
+                <h6 class="mb-3">Other software records</h6>
+                <div class="row">
+                    {% for sw in software_configs %}
+                    <div class="col-md-6 mb-3">
+                        <div class="card h-100">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between">
+                                    <h6 class="card-title">
+                                        {{ sw.get_software_type_display }}
+                                        {% if sw.is_primary %}<span class="badge bg-success">Primary</span>{% endif %}
+                                        {% if sw.is_cloud %}<span class="badge bg-info text-dark">Cloud</span>{% endif %}
+                                    </h6>
+                                    <div>
+                                        <a href="{% url 'core:software_edit' pk=sw.pk %}" class="btn btn-sm btn-outline-secondary"><i class="bi bi-pencil"></i></a>
+                                        <form method="post" action="{% url 'core:software_delete' pk=sw.pk %}" class="d-inline" onsubmit="return confirm('Remove software connection?');">
+                                            {% csrf_token %}
+                                            <button class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                                        </form>
+                                    </div>
+                                </div>
+                                {% if sw.organisation_name %}<p class="mb-1"><small class="text-muted">Org:</small> {{ sw.organisation_name }}</p>{% endif %}
+                                {% if sw.login_email %}<p class="mb-1"><small class="text-muted">Login:</small> {{ sw.login_email }}</p>{% endif %}
+                                {% if sw.subscription_level %}<p class="mb-1"><small class="text-muted">Plan:</small> {{ sw.subscription_level }}</p>{% endif %}
+                                {% if sw.has_advisor_access %}
+                                <hr class="my-2">
+                                <p class="mb-0">
+                                    <span class="badge bg-success"><i class="bi bi-check-circle"></i> Advisor Access</span>
+                                    {% if sw.advisor_login_email %}<small class="text-muted ms-1">{{ sw.advisor_login_email }}</small>{% endif %}
+                                </p>
+                                {% endif %}
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
         </div>
         {% endif %}
     </div>
