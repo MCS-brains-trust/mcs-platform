@@ -635,8 +635,23 @@ class QuickBooksProvider(BaseProvider):
         data = resp.json()
 
         rows_data = data.get("Rows", {}).get("Row", [])
+        columns = data.get("Columns", {}).get("Column", []) or []
         lines = []
         row_types = {}
+
+        def _normalize_header(value):
+            value = (value or "").strip().lower()
+            return re.sub(r"[^a-z0-9]+", "_", value).strip("_")
+
+        column_names = [
+            _normalize_header(
+                col.get("ColTitle")
+                or col.get("colTitle")
+                or col.get("MetaData", {}).get("Name")
+                or ""
+            )
+            for col in columns
+        ]
 
         def _col_value(col):
             if not isinstance(col, dict):
@@ -648,35 +663,41 @@ class QuickBooksProvider(BaseProvider):
                 return ""
             return ((col.get("id") or col.get("Id") or "")).strip()
 
-        def _extract_numeric_values(cols):
-            values = []
-            for col in cols or []:
-                value = _col_value(col)
-                if value == "":
-                    continue
-                if re.search(r"\d", value):
-                    values.append(value)
-            return values
+        def _col_map(cols):
+            mapped = {}
+            for idx, col in enumerate(cols or []):
+                key = column_names[idx] if idx < len(column_names) else f"col_{idx}"
+                mapped[key] = _col_value(col)
+            return mapped
 
-        def append_account_row(account_code, account_name, beginning_balance, net_activity):
+        def _extract_net_activity(mapped):
+            for key in ("net_activity_total", "net_activity", "net_change", "change"):
+                value = mapped.get(key, "")
+                if value != "":
+                    return _to_decimal(value)
+            return Decimal("0")
+
+        def _looks_like_detail_row(label):
+            label = (label or "").strip()
+            if not label:
+                return True
+            return bool(re.match(r"^\d{4}-\d{2}-\d{2}$", label)) or label.lower() in {"beginning balance", "total"}
+
+        def append_account_row(account_code, account_name, net_activity, opening_balance="0"):
             account_name = (account_name or "").strip()
             account_code = (account_code or "").strip()
-            if (
-                not account_name
-                or account_name.lower() == "total"
-                or re.match(r"^\d{4}-\d{2}-\d{2}$", account_name)
-            ):
-                return
-            beginning_balance = _to_decimal(beginning_balance)
+            opening_balance = _to_decimal(opening_balance)
             net_activity = _to_decimal(net_activity)
-            if beginning_balance == 0 and net_activity == 0:
+            if not account_name or _looks_like_detail_row(account_name):
+                return
+            if net_activity == 0:
                 return
             debit = net_activity if net_activity > 0 else Decimal("0")
             credit = -net_activity if net_activity < 0 else Decimal("0")
             lines.append({
                 "account_code": account_code,
                 "account_name": account_name,
-                "opening_balance": beginning_balance,
+                "opening_balance": opening_balance,
                 "debit": debit,
                 "credit": credit,
                 "movement_amount": net_activity,
@@ -698,32 +719,29 @@ class QuickBooksProvider(BaseProvider):
 
             header_name = _col_value(header_cols[0]) if header_cols else ""
             header_code = _col_id(header_cols[0]) if header_cols else ""
-            if header_name and not re.match(r"^\d{4}-\d{2}-\d{2}$", header_name):
+            if header_name and not _looks_like_detail_row(header_name):
                 current_account_name = header_name
             if header_code:
                 current_account_code = header_code
 
-            if summary_cols:
-                numeric_values = _extract_numeric_values(summary_cols)
-                if current_account_name and numeric_values:
-                    beginning_balance = numeric_values[0] if len(numeric_values) >= 1 else "0"
-                    net_activity = numeric_values[-2] if len(numeric_values) >= 2 else numeric_values[-1]
-                    append_account_row(current_account_code, current_account_name, beginning_balance, net_activity)
-                    return
+            if summary_cols and current_account_name:
+                mapped = _col_map(summary_cols)
+                net_activity = _extract_net_activity(mapped)
+                opening_balance = mapped.get("beginning_balance_total", mapped.get("beginning_balance", "0"))
+                append_account_row(current_account_code, current_account_name, net_activity, opening_balance)
+                return
 
             if row_type.lower() == "data" and col_data:
                 first_value = _col_value(col_data[0])
                 first_id = _col_id(col_data[0])
-                numeric_values = _extract_numeric_values(col_data)
-                looks_like_transaction_row = bool(re.match(r"^\d{4}-\d{2}-\d{2}$", first_value))
-                if not looks_like_transaction_row:
-                    candidate_name = first_value or current_account_name
-                    candidate_code = first_id or current_account_code
-                    if candidate_name and numeric_values:
-                        beginning_balance = numeric_values[0] if len(numeric_values) >= 1 else "0"
-                        net_activity = numeric_values[-2] if len(numeric_values) >= 2 else numeric_values[-1]
-                        append_account_row(candidate_code, candidate_name, beginning_balance, net_activity)
-                        return
+                candidate_name = first_value or current_account_name
+                candidate_code = first_id or current_account_code
+                if not _looks_like_detail_row(candidate_name):
+                    mapped = _col_map(col_data)
+                    net_activity = _extract_net_activity(mapped)
+                    opening_balance = mapped.get("beginning_balance_total", mapped.get("beginning_balance", "0"))
+                    append_account_row(candidate_code, candidate_name, net_activity, opening_balance)
+                    return
 
             for child in children:
                 handle_row(child, current_account_code=current_account_code, current_account_name=current_account_name)
