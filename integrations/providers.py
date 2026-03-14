@@ -675,11 +675,11 @@ class QuickBooksProvider(BaseProvider):
 
     def fetch_period_movement(self, access_token, tenant_id, from_date, to_date):
         """
-        QBO: GET /v3/company/{realmId}/reports/GeneralLedgerSummary
-
-        Imports the Net Activity total for the selected period and converts it
+        QBO: GET /v3/company/{realmId}/reports/GeneralLedger
+        Imports the net activity for the selected period and converts it
         into the debit/credit structure expected by the existing import wizard.
         """
+
         if not from_date or not to_date:
             raise ValueError("QuickBooks period movement import requires both from_date and to_date.")
 
@@ -691,7 +691,7 @@ class QuickBooksProvider(BaseProvider):
         }
 
         resp = requests.get(
-            f"{base_url}/reports/GeneralLedgerSummary",
+            f"{base_url}/reports/GeneralLedger",
             headers={
                 "Authorization": f"Bearer {access_token}",
                 "Accept": "application/json",
@@ -750,7 +750,7 @@ class QuickBooksProvider(BaseProvider):
 
         if not lines:
             logger.error(
-                "QuickBooks General Ledger Summary returned no usable account rows",
+                "QuickBooks General Ledger returned no usable account rows",
                 extra={
                     "tenant_id": tenant_id,
                     "from_date": from_date.isoformat(),
@@ -760,7 +760,7 @@ class QuickBooksProvider(BaseProvider):
                 },
             )
             raise ValueError(
-                "QuickBooks returned no usable General Ledger Summary account rows for the selected period. "
+                "QuickBooks returned no usable General Ledger account rows for the selected period. "
                 f"Period: {from_date.isoformat()} to {to_date.isoformat()}."
             )
 
