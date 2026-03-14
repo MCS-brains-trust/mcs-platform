@@ -45,11 +45,12 @@ def merge_duplicate_accounts(rows):
     merged = OrderedDict()  # code -> dict
     counts = {}             # code -> int (original row count)
 
-    for row in rows:
+    for idx, row in enumerate(rows):
         code = (row.get("account_code") or "").strip()
         if not code:
-            # Pass through rows without a code unchanged
-            merged.setdefault(code, dict(row))
+            # Preserve each blank-code row independently so malformed imports do not collapse
+            # into a single staged line and hide the underlying parser output.
+            merged[f"__blank__{idx}"] = dict(row)
             continue
 
         if code not in merged:
