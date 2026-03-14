@@ -638,9 +638,34 @@ class QuickBooksProvider(BaseProvider):
         lines = []
         row_types = {}
 
+        def _col_value(col):
+            if not isinstance(col, dict):
+                return ""
+            return ((col.get("value") or col.get("Value") or "")).strip()
+
+        def _col_id(col):
+            if not isinstance(col, dict):
+                return ""
+            return ((col.get("id") or col.get("Id") or "")).strip()
+
+        def _extract_numeric_values(cols):
+            values = []
+            for col in cols or []:
+                value = _col_value(col)
+                if value == "":
+                    continue
+                if re.search(r"\d", value):
+                    values.append(value)
+            return values
+
         def append_account_row(account_code, account_name, beginning_balance, net_activity):
             account_name = (account_name or "").strip()
-            if not account_name or account_name.lower() == "total":
+            account_code = (account_code or "").strip()
+            if (
+                not account_name
+                or account_name.lower() == "total"
+                or re.match(r"^\d{4}-\d{2}-\d{2}$", account_name)
+            ):
                 return
             beginning_balance = _to_decimal(beginning_balance)
             net_activity = _to_decimal(net_activity)
@@ -649,7 +674,7 @@ class QuickBooksProvider(BaseProvider):
             debit = net_activity if net_activity > 0 else Decimal("0")
             credit = -net_activity if net_activity < 0 else Decimal("0")
             lines.append({
-                "account_code": (account_code or "").strip(),
+                "account_code": account_code,
                 "account_name": account_name,
                 "opening_balance": beginning_balance,
                 "debit": debit,
@@ -657,7 +682,7 @@ class QuickBooksProvider(BaseProvider):
                 "movement_amount": net_activity,
             })
 
-        def handle_row(row):
+        def handle_row(row, current_account_code="", current_account_name=""):
             if not isinstance(row, dict):
                 return
 
@@ -667,38 +692,41 @@ class QuickBooksProvider(BaseProvider):
             header = row.get("Header") or {}
             header_cols = header.get("ColData") or row.get("Header", {}).get("Columns") or []
             summary = row.get("Summary") or {}
-            summary_cols = summary.get("ColData") or row.get("ColData") or summary.get("Columns") or []
+            summary_cols = summary.get("ColData") or summary.get("Columns") or []
             children = row.get("Rows", {}).get("Row", []) or row.get("Rows") or []
-            if header_cols and summary_cols:
-                account_name = (header_cols[0].get("value") or header_cols[0].get("Value") or "").strip()
-                account_code = header_cols[0].get("id", "") or header_cols[0].get("Id", "") or ""
-                summary_values = [
-                    ((col.get("value") if isinstance(col, dict) else "") or (col.get("Value") if isinstance(col, dict) else "") or "").strip()
-                    for col in summary_cols
-                    if isinstance(col, dict)
-                ]
-                numeric_values = [value for value in summary_values if value not in {"", None}]
-                beginning_balance = numeric_values[0] if len(numeric_values) >= 1 else "0"
-                net_activity = numeric_values[-2] if len(numeric_values) >= 2 else (numeric_values[-1] if numeric_values else "0")
-                append_account_row(account_code, account_name, beginning_balance, net_activity)
-                return
-
             col_data = row.get("ColData", []) or []
-            if row_type.lower() == "data" and len(col_data) >= 5:
-                first_value = (col_data[0].get("value") or "").strip()
-                first_id = (col_data[0].get("id") or "").strip()
-                looks_like_transaction_row = bool(re.match(r"^\d{4}-\d{2}-\d{2}$", first_value))
-                if not looks_like_transaction_row and (first_id or len(col_data) >= 6):
-                    append_account_row(
-                        first_id,
-                        first_value,
-                        col_data[1].get("value", "0"),
-                        col_data[4].get("value", "0"),
-                    )
+
+            header_name = _col_value(header_cols[0]) if header_cols else ""
+            header_code = _col_id(header_cols[0]) if header_cols else ""
+            if header_name and not re.match(r"^\d{4}-\d{2}-\d{2}$", header_name):
+                current_account_name = header_name
+            if header_code:
+                current_account_code = header_code
+
+            if summary_cols:
+                numeric_values = _extract_numeric_values(summary_cols)
+                if current_account_name and numeric_values:
+                    beginning_balance = numeric_values[0] if len(numeric_values) >= 1 else "0"
+                    net_activity = numeric_values[-2] if len(numeric_values) >= 2 else numeric_values[-1]
+                    append_account_row(current_account_code, current_account_name, beginning_balance, net_activity)
                     return
 
+            if row_type.lower() == "data" and col_data:
+                first_value = _col_value(col_data[0])
+                first_id = _col_id(col_data[0])
+                numeric_values = _extract_numeric_values(col_data)
+                looks_like_transaction_row = bool(re.match(r"^\d{4}-\d{2}-\d{2}$", first_value))
+                if not looks_like_transaction_row:
+                    candidate_name = first_value or current_account_name
+                    candidate_code = first_id or current_account_code
+                    if candidate_name and numeric_values:
+                        beginning_balance = numeric_values[0] if len(numeric_values) >= 1 else "0"
+                        net_activity = numeric_values[-2] if len(numeric_values) >= 2 else numeric_values[-1]
+                        append_account_row(candidate_code, candidate_name, beginning_balance, net_activity)
+                        return
+
             for child in children:
-                handle_row(child)
+                handle_row(child, current_account_code=current_account_code, current_account_name=current_account_name)
 
         for row in rows_data:
             handle_row(row)
