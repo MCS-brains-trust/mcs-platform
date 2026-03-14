@@ -80,6 +80,7 @@ urlpatterns = [
     path("qb/", views.qb_global_dashboard, name="qb_global_dashboard"),
     path("qb/connect/", views.qb_global_connect, name="qb_global_connect"),
     path("qb/callback/", views.qb_global_callback, name="qb_global_callback"),
+    path("qb-global/callback/", views.qb_global_callback, name="qb_global_callback_legacy"),
     path("qb/stop-rapid/", views.qb_stop_rapid, name="qb_stop_rapid"),
     path("qb/disconnect/", views.qb_global_disconnect, name="qb_global_disconnect"),
 
