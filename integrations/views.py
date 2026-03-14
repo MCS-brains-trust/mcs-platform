@@ -82,9 +82,12 @@ def oauth_connect(request, entity_pk, provider_name):
     request.session["oauth_entity_pk"] = str(entity_pk)
     request.session["oauth_provider"] = provider_name
 
-    redirect_uri = request.build_absolute_uri(
-        reverse("integrations:oauth_callback")
+    callback_name = (
+        "integrations:qb_global_callback"
+        if provider_name == "quickbooks"
+        else "integrations:oauth_callback"
     )
+    redirect_uri = request.build_absolute_uri(reverse(callback_name))
 
     params = provider.get_authorize_params(redirect_uri, state)
     query_string = "&".join(f"{k}={v}" for k, v in params.items())
@@ -116,9 +119,12 @@ def oauth_callback(request):
     provider = get_provider(provider_name)
     entity = get_object_or_404(Entity, pk=entity_pk)
 
-    redirect_uri = request.build_absolute_uri(
-        reverse("integrations:oauth_callback")
+    callback_name = (
+        "integrations:qb_global_callback"
+        if provider_name == "quickbooks"
+        else "integrations:oauth_callback"
     )
+    redirect_uri = request.build_absolute_uri(reverse(callback_name))
 
     try:
         tokens = provider.exchange_code(code, redirect_uri)
