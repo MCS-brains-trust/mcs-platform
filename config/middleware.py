@@ -23,7 +23,6 @@ def csrf_failure_view(request, reason=""):
             status=403,
         )
     # Fall back to Django's default HTML response for non-AJAX requests
-    from django.middleware.csrf import REASON_NO_CSRF_COOKIE, REASON_BAD_TOKEN
     from django.template.response import TemplateResponse
     from django.utils.translation import gettext as _
     c = {
