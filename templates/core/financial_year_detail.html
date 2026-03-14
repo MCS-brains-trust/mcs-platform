@@ -65,7 +65,7 @@
             <i class="bi bi-upload"></i> Import TB
         </a>
         <a href="{% url 'integrations:import_from_cloud' fy_pk=fy.pk %}" class="btn btn-outline-info btn-sm">
-            <i class="bi bi-cloud-arrow-down"></i> Import from Xero
+            <i class="bi bi-cloud-arrow-down"></i> Import from software
         </a>
         <a href="{% url 'core:adjustment_create' pk=fy.pk %}" class="btn btn-outline-primary btn-sm">
             <i class="bi bi-journal-plus"></i> New Journal Entry
@@ -797,7 +797,7 @@ function applyRerollForward() {
                     <i class="bi bi-upload"></i> Import Excel
                 </a>
                 <a href="{% url 'integrations:import_from_cloud' fy_pk=fy.pk %}" class="btn btn-info">
-                    <i class="bi bi-cloud-arrow-down"></i> Import from Xero
+                    <i class="bi bi-cloud-arrow-down"></i> Import from software
                 </a>
             </div>
             {% endif %}
