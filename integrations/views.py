@@ -81,6 +81,8 @@ def oauth_connect(request, entity_pk, provider_name):
     request.session["oauth_state"] = state
     request.session["oauth_entity_pk"] = str(entity_pk)
     request.session["oauth_provider"] = provider_name
+    if provider_name == "quickbooks":
+        request.session["qb_global_oauth_state"] = state
 
     callback_name = (
         "integrations:qb_global_callback"
@@ -1687,6 +1689,12 @@ def qb_global_callback(request):
                 connected_by=request.user,
             )
 
+        entity_pk = request.session.get("oauth_entity_pk")
+        entity = None
+        if entity_pk:
+            entity = Entity.objects.filter(pk=entity_pk).first()
+            if entity:
+                QBTenant.objects.filter(entity=entity).exclude(realm_id=realm_id).update(entity=None)
         # Create or update the tenant
         tenant, created = QBTenant.objects.update_or_create(
             connection=conn,
@@ -1696,6 +1704,7 @@ def qb_global_callback(request):
                 "access_token": tokens["access_token"],
                 "refresh_token": tokens.get("refresh_token", ""),
                 "token_expires_at": timezone.now() + timedelta(seconds=tokens.get("expires_in", 3600)),
+                "entity": entity,
             },
         )
 
@@ -1705,7 +1714,9 @@ def qb_global_callback(request):
         conn.token_expires_at = timezone.now() + timedelta(seconds=tokens.get("expires_in", 3600))
         conn.save()
 
-        if created:
+        if entity:
+            messages.success(request, f"Connected {company_name} to {entity.entity_name}.")
+        elif created:
             messages.success(request, f"Connected to {company_name}! Total: {conn.tenants.count()} companies.")
         else:
             messages.info(request, f"Refreshed connection to {company_name}. Total: {conn.tenants.count()} companies.")
@@ -1716,12 +1727,15 @@ def qb_global_callback(request):
         request.session.pop("qb_rapid_connect", None)
         request.session.pop("qb_global_oauth_state", None)
         return redirect("integrations:qb_global_dashboard")
-
+    entity_pk = request.session.get("oauth_entity_pk")
+    provider_name = request.session.get("oauth_provider")
     request.session.pop("qb_global_oauth_state", None)
-
     if rapid_mode:
         return redirect(reverse("integrations:qb_global_connect") + "?rapid=1")
-
+    if entity_pk and provider_name == "quickbooks":
+        for key in ["oauth_state", "oauth_entity_pk", "oauth_provider", "oauth_tokens", "oauth_tenants"]:
+            request.session.pop(key, None)
+        return redirect("integrations:connection_manage", entity_pk=entity_pk)
     return redirect("integrations:qb_global_dashboard")
 
 
