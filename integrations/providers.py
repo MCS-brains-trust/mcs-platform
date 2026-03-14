@@ -44,6 +44,8 @@ class BaseProvider:
     token_url = ""
     scopes = ""
 
+    supports_period_movement_import = False
+
     def get_client_id(self):
         raise NotImplementedError
 
@@ -80,6 +82,14 @@ class BaseProvider:
         """
         raise NotImplementedError
 
+    def fetch_period_movement(self, access_token, tenant_id, from_date, to_date):
+        """
+        Fetch period movement from the provider.
+        Returns a list of dicts, each with:
+            account_code, account_name, opening_balance, debit, credit, movement_amount
+        """
+        raise NotImplementedError
+
     def is_configured(self):
         """Check if the provider's API credentials are set."""
         try:
@@ -97,6 +107,7 @@ class XeroProvider(BaseProvider):
     name = "xero"
     display_name = "Xero"
     icon_class = "bi-cloud"
+    supports_period_movement_import = True
 
     authorize_url = "https://login.xero.com/identity/connect/authorize"
     token_url = "https://login.xero.com/identity/connect/token"
@@ -270,6 +281,114 @@ class XeroProvider(BaseProvider):
                 "Xero returned no account-level trial balance rows for the selected organisation and date. "
                 f"Requested date: {as_at_date.isoformat() if as_at_date else 'not supplied'}. "
                 f"Reported date: {report_date or 'unknown'}."
+            )
+
+        return lines
+
+    def fetch_period_movement(self, access_token, tenant_id, from_date, to_date):
+        """
+        Xero General Ledger Summary style period import.
+
+        Returns account movement lines derived from the provider's net movement
+        style report, normalised into the same debit/credit structure used by
+        the existing import wizard.
+        """
+        if not from_date or not to_date:
+            raise ValueError("Both from and to dates are required for a period movement import.")
+        if from_date > to_date:
+            raise ValueError("The period start date must be on or before the period end date.")
+
+        params = {
+            "fromDate": from_date.isoformat(),
+            "toDate": to_date.isoformat(),
+        }
+
+        resp = requests.get(
+            "https://api.xero.com/api.xro/2.0/Reports/GeneralLedgerSummary",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Xero-Tenant-Id": tenant_id,
+                "Accept": "application/json",
+            },
+            params=params,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        reports = data.get("Reports", [])
+        if not reports:
+            raise ValueError(f"Xero returned no General Ledger Summary report for tenant {tenant_id}.")
+
+        report = reports[0]
+        rows = report.get("Rows", [])
+        if not rows:
+            raise ValueError("Xero returned an empty General Ledger Summary report.")
+
+        lines = []
+        row_type_counts = {}
+        raw_preview = json.dumps(rows[:5], default=str)[:2000]
+
+        for row in rows:
+            row_type = row.get("RowType", "Unknown")
+            row_type_counts[row_type] = row_type_counts.get(row_type, 0) + 1
+            if row_type != "Row":
+                continue
+
+            cells = row.get("Cells", [])
+            if len(cells) < 5:
+                logger.warning(
+                    "Xero General Ledger Summary row had fewer than 5 cells",
+                    extra={
+                        "tenant_id": tenant_id,
+                        "row": row,
+                    },
+                )
+                continue
+
+            account_name = (cells[0].get("Value") or "").strip()
+            account_code = (cells[1].get("Value") or "").strip()
+            if not account_name or account_name.lower() == "total":
+                continue
+
+            debit = _to_decimal(cells[2].get("Value", "0"))
+            credit = _to_decimal(cells[3].get("Value", "0"))
+            movement = _to_decimal(cells[4].get("Value", "0"))
+            derived_debit = movement if movement > 0 else Decimal("0")
+            derived_credit = abs(movement) if movement < 0 else Decimal("0")
+
+            if debit == Decimal("0") and credit == Decimal("0") and movement == Decimal("0"):
+                continue
+
+            account_type = (cells[5].get("Value") or "").strip() if len(cells) > 5 else ""
+
+            lines.append({
+                "account_code": account_code,
+                "account_name": account_name,
+                "opening_balance": Decimal("0"),
+                "debit": derived_debit,
+                "credit": derived_credit,
+                "movement_amount": movement,
+                "source_debit": debit,
+                "source_credit": credit,
+                "account_type": account_type,
+            })
+
+        if not lines:
+            logger.error(
+                "Xero General Ledger Summary returned no usable account rows",
+                extra={
+                    "tenant_id": tenant_id,
+                    "from_date": from_date.isoformat(),
+                    "to_date": to_date.isoformat(),
+                    "report_name": report.get("ReportName", ""),
+                    "report_date": report.get("ReportDate", ""),
+                    "top_level_row_types": row_type_counts,
+                    "raw_preview": raw_preview,
+                },
+            )
+            raise ValueError(
+                "Xero returned no usable General Ledger Summary account rows for the selected period. "
+                f"Period: {from_date.isoformat()} to {to_date.isoformat()}."
             )
 
         return lines

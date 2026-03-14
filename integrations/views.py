@@ -395,12 +395,32 @@ def import_from_cloud(request, fy_pk):
     return redirect("integrations:select_provider_import", fy_pk=fy_pk)
 
 
-def _do_cloud_import(request, fy, entity, provider, access_token, tenant_id, connection_obj):
-    """Execute the trial balance import and redirect to review page."""
+def _do_cloud_import(
+    request,
+    fy,
+    entity,
+    provider,
+    access_token,
+    tenant_id,
+    connection_obj,
+    *,
+    import_mode="trial_balance",
+    from_date=None,
+    to_date=None,
+):
+    """Execute a cloud import and redirect to the review page."""
     try:
         as_at_date = fy.end_date
-        raw_lines = provider.fetch_trial_balance(access_token, tenant_id, as_at_date)
+        if import_mode == "period_movement":
+            raw_lines = provider.fetch_period_movement(access_token, tenant_id, from_date, to_date)
+        else:
+            raw_lines = provider.fetch_trial_balance(access_token, tenant_id, as_at_date)
         if not raw_lines:
+            if import_mode == "period_movement":
+                raise ValueError(
+                    f"{provider.display_name} returned no usable movement lines for "
+                    f"{from_date.isoformat()} to {to_date.isoformat()}."
+                )
             raise ValueError(
                 f"{provider.display_name} returned no usable trial balance lines for {as_at_date.isoformat()}."
             )
@@ -408,7 +428,7 @@ def _do_cloud_import(request, fy, entity, provider, access_token, tenant_id, con
         total_debit = sum((line.get("debit") or 0) for line in raw_lines)
         total_credit = sum((line.get("credit") or 0) for line in raw_lines)
         imbalance = total_debit - total_credit
-        if abs(imbalance) > Decimal("0.01"):
+        if import_mode == "trial_balance" and abs(imbalance) > Decimal("0.01"):
             raise ValueError(
                 f"{provider.display_name} trial balance does not balance for {as_at_date.isoformat()} "
                 f"(difference: {imbalance})."
@@ -427,6 +447,9 @@ def _do_cloud_import(request, fy, entity, provider, access_token, tenant_id, con
             "provider_name": provider.display_name,
             "lines": staged_lines,
             "merge_warnings": merge_warnings,
+            "import_mode": import_mode,
+            "from_date": from_date.isoformat() if from_date else "",
+            "to_date": to_date.isoformat() if to_date else "",
         }
         # Force session save to DB before redirect so the next
         # request (possibly handled by a different Gunicorn worker)
@@ -443,6 +466,9 @@ def _do_cloud_import(request, fy, entity, provider, access_token, tenant_id, con
             "tenant_id": tenant_id,
             "financial_year_id": str(fy.pk),
             "entity_id": str(entity.pk),
+            "import_mode": import_mode,
+            "from_date": from_date.isoformat() if from_date else "",
+            "to_date": to_date.isoformat() if to_date else "",
         })
         if connection_obj:
             connection_obj.last_error = str(e)
@@ -455,8 +481,8 @@ def _do_cloud_import(request, fy, entity, provider, access_token, tenant_id, con
 @login_required
 def xero_select_tenant_import(request, fy_pk):
     """
-    Show tenant selection for Xero trial balance import.
-    User picks which Xero organisation to pull data from.
+    Show tenant selection for Xero import.
+    User picks which Xero organisation and period to pull from.
     """
     fy = get_object_or_404(FinancialYear, pk=fy_pk)
     entity = fy.entity
@@ -472,10 +498,29 @@ def xero_select_tenant_import(request, fy_pk):
     if request.method == "POST":
         tenant_id = request.POST.get("tenant_id", "")
         link_tenant = request.POST.get("link_tenant") == "1"
+        import_mode = request.POST.get("import_mode", "period_movement")
+        from_date_raw = request.POST.get("from_date", "").strip()
+        to_date_raw = request.POST.get("to_date", "").strip()
 
         if not tenant_id:
             messages.error(request, "Please select an organisation.")
             return redirect("integrations:xero_select_tenant_import", fy_pk=fy_pk)
+
+        from_date = None
+        to_date = None
+        if import_mode == "period_movement":
+            if not from_date_raw or not to_date_raw:
+                messages.error(request, "Please choose both a from date and a to date.")
+                return redirect("integrations:xero_select_tenant_import", fy_pk=fy_pk)
+            try:
+                from_date = timezone.datetime.fromisoformat(from_date_raw).date()
+                to_date = timezone.datetime.fromisoformat(to_date_raw).date()
+            except ValueError:
+                messages.error(request, "Invalid import period. Please choose valid dates.")
+                return redirect("integrations:xero_select_tenant_import", fy_pk=fy_pk)
+            if from_date > to_date:
+                messages.error(request, "The from date must be on or before the to date.")
+                return redirect("integrations:xero_select_tenant_import", fy_pk=fy_pk)
 
         # Optionally link tenant to entity
         if link_tenant:
@@ -492,12 +537,25 @@ def xero_select_tenant_import(request, fy_pk):
             return redirect("integrations:xero_global_dashboard")
 
         provider = get_provider("xero")
-        return _do_cloud_import(request, fy, entity, provider, global_conn.access_token, tenant_id, None)
+        return _do_cloud_import(
+            request,
+            fy,
+            entity,
+            provider,
+            global_conn.access_token,
+            tenant_id,
+            None,
+            import_mode=import_mode,
+            from_date=from_date,
+            to_date=to_date,
+        )
 
     context = {
         "fy": fy,
         "tenants": tenants,
         "linked_tenant": linked_tenant,
+        "default_from_date": fy.start_date.isoformat() if fy.start_date else "",
+        "default_to_date": fy.end_date.isoformat() if fy.end_date else "",
     }
     return render(request, "integrations/xero_select_tenant_import.html", context)
 
@@ -549,6 +607,7 @@ def review_import(request, fy_pk):
     balance_blocked = balance_diff > TOLERANCE
     balance_warning = Decimal("0") < balance_diff <= TOLERANCE
 
+    import_mode = staged.get("import_mode", "trial_balance")
     context = {
         "fy": fy,
         "lines": lines,
@@ -559,11 +618,14 @@ def review_import(request, fy_pk):
         "unmapped": unmapped,
         "provider_name": staged.get("provider_name", "Cloud"),
         "as_at_date": staged.get("as_at_date", ""),
+        "from_date": staged.get("from_date", ""),
+        "to_date": staged.get("to_date", ""),
+        "import_mode": import_mode,
         "balance_total_dr": total_dr,
         "balance_total_cr": total_cr,
         "balance_diff": balance_diff,
-        "balance_blocked": balance_blocked,
-        "balance_warning": balance_warning,
+        "balance_blocked": balance_blocked if import_mode == "trial_balance" else False,
+        "balance_warning": balance_warning if import_mode == "trial_balance" else False,
     }
     return render(request, "integrations/review_import.html", context)
 
@@ -586,29 +648,32 @@ def commit_import(request, fy_pk):
     entity = fy.entity
     staged_lines = staged["lines"]
 
-    # Server-side balance validation — block if DR/CR differ by > $0.02
+    import_mode = staged.get("import_mode", "trial_balance")
+
+    # Server-side balance validation — only for true trial balance imports
     total_dr = sum(Decimal(str(l.get("debit", "0"))) for l in staged_lines)
     total_cr = sum(Decimal(str(l.get("credit", "0"))) for l in staged_lines)
     balance_diff = abs(total_dr - total_cr)
     TOLERANCE = Decimal("0.02")
 
-    if balance_diff > TOLERANCE:
-        messages.error(
-            request,
-            f"Import blocked \u2014 Trial Balance is out of balance. "
-            f"Total debits ${total_dr:,.2f} vs total credits ${total_cr:,.2f} "
-            f"\u2014 a difference of ${balance_diff:,.2f}. "
-            f"Please correct the source data and re-import.",
-        )
-        return redirect("integrations:review_import", fy_pk=fy_pk)
+    if import_mode == "trial_balance":
+        if balance_diff > TOLERANCE:
+            messages.error(
+                request,
+                f"Import blocked \u2014 Trial Balance is out of balance. "
+                f"Total debits ${total_dr:,.2f} vs total credits ${total_cr:,.2f} "
+                f"\u2014 a difference of ${balance_diff:,.2f}. "
+                f"Please correct the source data and re-import.",
+            )
+            return redirect("integrations:review_import", fy_pk=fy_pk)
 
-    if balance_diff > 0 and not request.POST.get("rounding_acknowledged"):
-        messages.error(
-            request,
-            f"This TB has a minor rounding difference of ${balance_diff:,.2f}. "
-            f"Please tick the rounding acknowledgement checkbox to proceed.",
-        )
-        return redirect("integrations:review_import", fy_pk=fy_pk)
+        if balance_diff > 0 and not request.POST.get("rounding_acknowledged"):
+            messages.error(
+                request,
+                f"This TB has a minor rounding difference of ${balance_diff:,.2f}. "
+                f"Please tick the rounding acknowledgement checkbox to proceed.",
+            )
+            return redirect("integrations:review_import", fy_pk=fy_pk)
 
     imported = 0
     unmapped = 0
@@ -644,6 +709,16 @@ def commit_import(request, fy_pk):
             credit = Decimal(str(line.get("credit", "0")))
             closing = opening + debit - credit
 
+            description = ""
+            if import_mode == "period_movement":
+                period_from = staged.get("from_date", "")
+                period_to = staged.get("to_date", "")
+                movement_amount = Decimal(str(line.get("movement_amount", debit - credit)))
+                description = (
+                    f"Xero General Ledger Summary movement import {period_from} to {period_to}; "
+                    f"net movement {movement_amount}"
+                )
+
             TrialBalanceLine.objects.create(
                 financial_year=fy,
                 account_code=line["account_code"],
@@ -654,6 +729,7 @@ def commit_import(request, fy_pk):
                 closing_balance=closing,
                 mapped_line_item=mapped_item,
                 is_adjustment=False,
+                description=description,
             )
 
             # Update the learning system
@@ -701,11 +777,18 @@ def commit_import(request, fy_pk):
     from core.signals import trigger_risk_recalc
     trigger_risk_recalc(fy, "cloud_import")
 
-    messages.success(
-        request,
-        f"Imported {imported} lines from cloud. "
-        f"{unmapped} unmapped accounts need attention."
-    )
+    if import_mode == "period_movement":
+        messages.success(
+            request,
+            f"Imported {imported} Xero movement lines for {staged.get('from_date')} to {staged.get('to_date')}. "
+            f"{unmapped} unmapped accounts need attention."
+        )
+    else:
+        messages.success(
+            request,
+            f"Imported {imported} lines from cloud. "
+            f"{unmapped} unmapped accounts need attention."
+        )
     if errors:
         for err in errors[:5]:
             messages.warning(request, err)
