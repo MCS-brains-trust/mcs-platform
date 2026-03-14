@@ -34,6 +34,8 @@
                 <form method="post">
                     {% csrf_token %}
                     <input type="hidden" name="import_mode" value="period_movement">
+                    <input type="hidden" name="tenant_id" value="{{ linked_tenant.realm_id }}">
+                    <input type="hidden" name="link_tenant" value="1">
 
                     <div class="row g-3 mb-3">
                         <div class="col-md-6">
