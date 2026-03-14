@@ -68,8 +68,8 @@
             <div class="col-md-2">
                 <div class="card text-center" id="balanceCard">
                     <div class="card-body py-2">
-                        <div class="text-muted small">Balance Check</div>
-                        <strong class="fs-6" id="balanceStatus">Checking...</strong>
+                        <div class="text-muted small">{% if import_mode == "period_movement" %}Movement Check{% else %}Balance Check{% endif %}</div>
+                        <strong class="fs-6" id="balanceStatus">{% if import_mode == "period_movement" %}Net{% else %}Checking...{% endif %}</strong>
                     </div>
                 </div>
             </div>
@@ -266,7 +266,7 @@ document.addEventListener('DOMContentLoaded', function() {
         suggestCodeUrl: "{% url 'core:entity_coa_suggest_code' pk=fy.pk %}",
         quickAddUrl: "{% url 'integrations:quick_add_entity_account' %}",
         csrfToken: document.querySelector('[name=csrfmiddlewaretoken]').value,
-        balanceRequired: true,
+        balanceRequired: {{ import_mode == "trial_balance"|yesno:"true,false" }},
         balanceBlocked: {{ balance_blocked|yesno:"true,false" }},
         balanceWarning: {{ balance_warning|yesno:"true,false" }}
     });
