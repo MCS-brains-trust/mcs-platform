@@ -15,25 +15,21 @@
 
         <div class="card">
             <div class="card-header">
-                <h5 class="mb-0"><i class="bi bi-cloud-arrow-down"></i> Import Trial Balance from {{ provider_name }}</h5>
+                <h5 class="mb-0"><i class="bi bi-cloud-arrow-down"></i> Import QuickBooks General Ledger Summary</h5>
             </div>
             <div class="card-body">
                 <p class="text-muted">
-                    Select the QuickBooks company to import the trial balance for
-                    <strong>{{ fy.entity.entity_name }}</strong> (FY{{ fy.end_date|date:"Y" }}).
+                    Select the QuickBooks company and period to import the General Ledger Summary
+                    net movement for <strong>{{ fy.entity.entity_name }}</strong> (FY{{ fy.end_date|date:"Y" }}).
                 </p>
 
                 {% if linked_tenant %}
                 <div class="alert alert-success">
                     <i class="bi bi-link-45deg"></i>
                     This entity is already linked to <strong>{{ linked_tenant.company_name }}</strong>.
-                    <form method="post" class="d-inline">
-                        {% csrf_token %}
-                        <input type="hidden" name="tenant_id" value="{{ linked_tenant.realm_id }}">
-                        <button type="submit" class="btn btn-success btn-sm ms-2">
-                            <i class="bi bi-cloud-arrow-down"></i> Import from {{ linked_tenant.company_name }}
-                        </button>
-                    </form>
+                    <div class="small text-muted mt-1">
+                        You can use the linked company below or choose a different one for this import.
+                    </div>
                 </div>
                 <hr>
                 <p class="text-muted small">Or choose a different company:</p>
@@ -41,6 +37,23 @@
 
                 <form method="post">
                     {% csrf_token %}
+                    <input type="hidden" name="import_mode" value="period_movement">
+
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                            <label for="fromDate" class="form-label">From date</label>
+                            <input type="date" id="fromDate" name="from_date" class="form-control" value="{{ default_from_date }}" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="toDate" class="form-label">To date</label>
+                            <input type="date" id="toDate" name="to_date" class="form-control" value="{{ default_to_date }}" required>
+                        </div>
+                    </div>
+
+                    <div class="alert alert-info py-2">
+                        <i class="bi bi-info-circle"></i>
+                        StatementHub will import the <strong>Net Activity__TOTAL</strong> column for the selected period and then open the mapping wizard.
+                    </div>
 
                     <div class="mb-3">
                         <input type="text" id="tenantSearch" class="form-control" placeholder="Search companies...">
@@ -80,7 +93,7 @@
                             <i class="bi bi-arrow-left"></i> Cancel
                         </a>
                         <button type="submit" class="btn btn-primary">
-                            <i class="bi bi-cloud-arrow-down"></i> Pull Trial Balance
+                            <i class="bi bi-cloud-arrow-down"></i> Import Net Activity
                         </button>
                     </div>
                 </form>

@@ -1789,7 +1789,7 @@ def qb_global_disconnect(request):
 
 @login_required
 def qb_select_tenant_import(request, fy_pk):
-    """Select which QBO company to import trial balance from."""
+    """Select which QBO company and period to import movement from."""
     fy = get_object_or_404(FinancialYear, pk=fy_pk)
     entity = fy.entity
 
@@ -1804,6 +1804,9 @@ def qb_select_tenant_import(request, fy_pk):
     if request.method == "POST":
         realm_id = request.POST.get("tenant_id", "")
         link_tenant = request.POST.get("link_tenant") == "1"
+        import_mode = request.POST.get("import_mode", "period_movement")
+        from_date_raw = request.POST.get("from_date", "").strip()
+        to_date_raw = request.POST.get("to_date", "").strip()
 
         if not realm_id:
             messages.error(request, "Please select a company.")
@@ -1813,6 +1816,22 @@ def qb_select_tenant_import(request, fy_pk):
         if not tenant_obj:
             messages.error(request, "Company not found.")
             return redirect("integrations:qb_select_tenant_import", fy_pk=fy_pk)
+
+        from_date = None
+        to_date = None
+        if import_mode == "period_movement":
+            if not from_date_raw or not to_date_raw:
+                messages.error(request, "Please choose both a from date and a to date.")
+                return redirect("integrations:qb_select_tenant_import", fy_pk=fy_pk)
+            try:
+                from_date = timezone.datetime.fromisoformat(from_date_raw).date()
+                to_date = timezone.datetime.fromisoformat(to_date_raw).date()
+            except ValueError:
+                messages.error(request, "Invalid import period. Please choose valid dates.")
+                return redirect("integrations:qb_select_tenant_import", fy_pk=fy_pk)
+            if from_date > to_date:
+                messages.error(request, "The from date must be on or before the to date.")
+                return redirect("integrations:qb_select_tenant_import", fy_pk=fy_pk)
 
         if link_tenant:
             tenants.filter(entity=entity).update(entity=None)
@@ -1824,13 +1843,26 @@ def qb_select_tenant_import(request, fy_pk):
             return redirect("integrations:qb_global_dashboard")
 
         provider = get_provider("quickbooks")
-        return _do_cloud_import(request, fy, entity, provider, tenant_obj.access_token, tenant_obj.realm_id, None)
+        return _do_cloud_import(
+            request,
+            fy,
+            entity,
+            provider,
+            tenant_obj.access_token,
+            tenant_obj.realm_id,
+            None,
+            import_mode=import_mode,
+            from_date=from_date,
+            to_date=to_date,
+        )
 
     context = {
         "fy": fy,
         "tenants": tenants,
         "linked_tenant": linked_tenant,
         "provider_name": "QuickBooks Online",
+        "default_from_date": fy.start_date.isoformat() if fy.start_date else "",
+        "default_to_date": fy.end_date.isoformat() if fy.end_date else "",
     }
     return render(request, "integrations/qb_select_tenant_import.html", context)
 

@@ -554,6 +554,7 @@ class QuickBooksProvider(BaseProvider):
     name = "quickbooks"
     display_name = "QuickBooks Online"
     icon_class = "bi-cloud"
+    supports_period_movement_import = True
 
     authorize_url = "https://appcenter.intuit.com/connect/oauth2"
     token_url = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
@@ -646,11 +647,9 @@ class QuickBooksProvider(BaseProvider):
         data = resp.json()
 
         lines = []
-        # QBO response: Columns and Rows
         rows_data = data.get("Rows", {}).get("Row", [])
 
         for section in rows_data:
-            # Sections have Header and Rows
             section_rows = section.get("Rows", {}).get("Row", [])
             for row in section_rows:
                 col_data = row.get("ColData", [])
@@ -660,9 +659,6 @@ class QuickBooksProvider(BaseProvider):
                 account_str = col_data[0].get("value", "")
                 debit = _to_decimal(col_data[1].get("value", "0"))
                 credit = _to_decimal(col_data[2].get("value", "0"))
-
-                # QBO account format varies; try to extract code
-                # Some have "AccountName" with id in attributes
                 account_id = col_data[0].get("id", "")
                 account_code = account_id if account_id else ""
                 account_name = account_str
@@ -674,6 +670,99 @@ class QuickBooksProvider(BaseProvider):
                     "debit": debit,
                     "credit": credit,
                 })
+
+        return lines
+
+    def fetch_period_movement(self, access_token, tenant_id, from_date, to_date):
+        """
+        QBO: GET /v3/company/{realmId}/reports/GeneralLedgerSummary
+
+        Imports the Net Activity total for the selected period and converts it
+        into the debit/credit structure expected by the existing import wizard.
+        """
+        if not from_date or not to_date:
+            raise ValueError("QuickBooks period movement import requires both from_date and to_date.")
+
+        base_url = f"https://quickbooks.api.intuit.com/v3/company/{tenant_id}"
+        params = {
+            "minorversion": "65",
+            "start_date": from_date.isoformat(),
+            "end_date": to_date.isoformat(),
+        }
+
+        resp = requests.get(
+            f"{base_url}/reports/GeneralLedgerSummary",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Accept": "application/json",
+            },
+            params=params,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        rows_data = data.get("Rows", {}).get("Row", [])
+        lines = []
+        row_types = {}
+
+        def handle_row(row):
+            if not isinstance(row, dict):
+                return
+
+            row_type = row.get("type") or row.get("RowType") or "Unknown"
+            row_types[row_type] = row_types.get(row_type, 0) + 1
+
+            col_data = row.get("ColData", []) or []
+            if len(col_data) >= 5:
+                account_name = (col_data[0].get("value") or "").strip()
+                if account_name and account_name.lower() != "total":
+                    account_code = col_data[0].get("id", "") or ""
+                    beginning_balance = _to_decimal(col_data[1].get("value", "0"))
+                    debit_value = _to_decimal(col_data[2].get("value", "0"))
+                    credit_value = _to_decimal(col_data[3].get("value", "0"))
+                    net_activity = _to_decimal(col_data[4].get("value", "0"))
+
+                    debit = net_activity if net_activity > 0 else Decimal("0")
+                    credit = -net_activity if net_activity < 0 else Decimal("0")
+
+                    if any([
+                        beginning_balance != 0,
+                        debit_value != 0,
+                        credit_value != 0,
+                        net_activity != 0,
+                    ]):
+                        lines.append({
+                            "account_code": account_code,
+                            "account_name": account_name,
+                            "opening_balance": beginning_balance,
+                            "debit": debit,
+                            "credit": credit,
+                            "movement_amount": net_activity,
+                        })
+                        return
+
+            for child in row.get("Rows", {}).get("Row", []) or []:
+                handle_row(child)
+
+        for row in rows_data:
+            handle_row(row)
+
+        if not lines:
+            logger.error(
+                "QuickBooks General Ledger Summary returned no usable account rows",
+                extra={
+                    "tenant_id": tenant_id,
+                    "from_date": from_date.isoformat(),
+                    "to_date": to_date.isoformat(),
+                    "row_types": row_types,
+                    "raw_preview": json.dumps(rows_data[:3], default=str)[:2000],
+                },
+            )
+            raise ValueError(
+                "QuickBooks returned no usable General Ledger Summary account rows for the selected period. "
+                f"Period: {from_date.isoformat()} to {to_date.isoformat()}."
+            )
 
         return lines
 

@@ -9,9 +9,9 @@ from django.test import RequestFactory, TestCase
 from django.urls import reverse
 
 from core.models import Entity, FinancialYear
-from integrations.models import XeroGlobalConnection, XeroTenant
-from integrations.providers import XeroProvider
-from integrations.views import xero_select_tenant_import
+from integrations.models import QBGlobalConnection, QBTenant, XeroGlobalConnection, XeroTenant
+from integrations.providers import QuickBooksProvider, XeroProvider
+from integrations.views import qb_select_tenant_import, xero_select_tenant_import
 
 
 class XeroProviderPeriodMovementTests(TestCase):
@@ -94,6 +94,158 @@ class XeroProviderPeriodMovementTests(TestCase):
                 date(2024, 7, 1),
                 date(2025, 6, 30),
             )
+
+
+class QuickBooksProviderPeriodMovementTests(TestCase):
+    def setUp(self):
+        self.provider = QuickBooksProvider()
+
+    @patch("integrations.providers.requests.get")
+    def test_fetch_period_movement_parses_net_activity_rows(self, mock_get):
+        response = Mock()
+        response.raise_for_status = Mock()
+        response.json.return_value = {
+            "Rows": {
+                "Row": [
+                    {
+                        "type": "Data",
+                        "ColData": [
+                            {"value": "ATO Clearing Account", "id": "1"},
+                            {"value": "104252.06"},
+                            {"value": "32825"},
+                            {"value": ""},
+                            {"value": "32825"},
+                            {"value": "137077.06"},
+                        ],
+                    },
+                    {
+                        "type": "Data",
+                        "ColData": [
+                            {"value": "Sales", "id": "2"},
+                            {"value": "0"},
+                            {"value": ""},
+                            {"value": "345304.15"},
+                            {"value": "-345304.15"},
+                            {"value": "-345304.15"},
+                        ],
+                    },
+                ]
+            }
+        }
+        mock_get.return_value = response
+
+        lines = self.provider.fetch_period_movement(
+            "token",
+            "realm-1",
+            date(2025, 7, 1),
+            date(2026, 3, 14),
+        )
+
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(lines[0]["account_code"], "1")
+        self.assertEqual(lines[0]["movement_amount"], Decimal("32825"))
+        self.assertEqual(lines[0]["debit"], Decimal("32825"))
+        self.assertEqual(lines[0]["credit"], Decimal("0"))
+        self.assertEqual(lines[1]["movement_amount"], Decimal("-345304.15"))
+        self.assertEqual(lines[1]["debit"], Decimal("0"))
+        self.assertEqual(lines[1]["credit"], Decimal("345304.15"))
+
+    @patch("integrations.providers.requests.get")
+    def test_fetch_period_movement_raises_for_empty_rows(self, mock_get):
+        response = Mock()
+        response.raise_for_status = Mock()
+        response.json.return_value = {"Rows": {"Row": [{"type": "Summary"}]}}
+        mock_get.return_value = response
+
+        with self.assertRaisesMessage(ValueError, "no usable General Ledger Summary account rows"):
+            self.provider.fetch_period_movement(
+                "token",
+                "realm-1",
+                date(2025, 7, 1),
+                date(2026, 3, 14),
+            )
+
+
+class QuickBooksPeriodImportViewTests(TestCase):
+    def setUp(self):
+        self.factory = RequestFactory()
+        self.user = get_user_model().objects.create_user(
+            username="qbtester",
+            email="qbtester@example.com",
+            password="secret123",
+        )
+        self.entity = Entity.objects.create(entity_name="Berwick Mechanical")
+        self.fy = FinancialYear.objects.create(
+            entity=self.entity,
+            start_date=date(2025, 7, 1),
+            end_date=date(2026, 6, 30),
+        )
+        self.global_conn = QBGlobalConnection.objects.create(
+            status="active",
+            access_token="token",
+            refresh_token="refresh",
+        )
+        self.tenant = QBTenant.objects.create(
+            connection=self.global_conn,
+            realm_id="realm-1",
+            company_name="Berwick Mechanical Services Pty Ltd",
+            access_token="tenant-token",
+            refresh_token="tenant-refresh",
+        )
+
+    def _add_session(self, request):
+        middleware = SessionMiddleware(lambda req: None)
+        middleware.process_request(request)
+        request.session.save()
+        return request
+
+    @patch("integrations.views._ensure_qb_tenant_token", return_value=True)
+    @patch("integrations.views._do_cloud_import")
+    def test_qb_select_tenant_import_posts_period_movement_dates(self, mock_import, mock_ensure):
+        request = self.factory.post(
+            reverse("integrations:qb_select_tenant_import", kwargs={"fy_pk": self.fy.pk}),
+            data={
+                "tenant_id": self.tenant.realm_id,
+                "link_tenant": "1",
+                "import_mode": "period_movement",
+                "from_date": "2025-07-01",
+                "to_date": "2026-03-14",
+            },
+        )
+        request.user = self.user
+        self._add_session(request)
+
+        response = qb_select_tenant_import(request, self.fy.pk)
+
+        self.assertEqual(response.status_code, 200)
+        mock_import.assert_called_once()
+        _, kwargs = mock_import.call_args
+        self.assertEqual(kwargs["import_mode"], "period_movement")
+        self.assertEqual(kwargs["from_date"], date(2025, 7, 1))
+        self.assertEqual(kwargs["to_date"], date(2026, 3, 14))
+        self.tenant.refresh_from_db()
+        self.assertEqual(self.tenant.entity_id, self.entity.pk)
+
+    @patch("integrations.views._ensure_qb_tenant_token", return_value=True)
+    def test_qb_select_tenant_import_rejects_missing_dates(self, mock_ensure):
+        request = self.factory.post(
+            reverse("integrations:qb_select_tenant_import", kwargs={"fy_pk": self.fy.pk}),
+            data={
+                "tenant_id": self.tenant.realm_id,
+                "import_mode": "period_movement",
+                "from_date": "",
+                "to_date": "2026-03-14",
+            },
+        )
+        request.user = self.user
+        self._add_session(request)
+
+        response = qb_select_tenant_import(request, self.fy.pk)
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("integrations:qb_select_tenant_import", kwargs={"fy_pk": self.fy.pk}), response.url)
+        messages = [m.message for m in get_messages(request)]
+        self.assertTrue(any("choose both a from date and a to date" in m for m in messages))
 
 
 class XeroPeriodImportViewTests(TestCase):
