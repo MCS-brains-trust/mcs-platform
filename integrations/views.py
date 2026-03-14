@@ -400,19 +400,26 @@ def _do_cloud_import(request, fy, entity, provider, access_token, tenant_id, con
     try:
         as_at_date = fy.end_date
         raw_lines = provider.fetch_trial_balance(access_token, tenant_id, as_at_date)
-
         if not raw_lines:
-            messages.warning(request, f"No trial balance data returned from {provider.display_name}.")
-            return redirect("core:financial_year_detail", pk=fy.pk)
+            raise ValueError(
+                f"{provider.display_name} returned no usable trial balance lines for {as_at_date.isoformat()}."
+            )
+
+        total_debit = sum((line.get("debit") or 0) for line in raw_lines)
+        total_credit = sum((line.get("credit") or 0) for line in raw_lines)
+        imbalance = total_debit - total_credit
+        if abs(imbalance) > Decimal("0.01"):
+            raise ValueError(
+                f"{provider.display_name} trial balance does not balance for {as_at_date.isoformat()} "
+                f"(difference: {imbalance})."
+            )
 
         # Merge duplicate account codes before mapping
         from core.tb_dedup import merge_duplicate_accounts
         raw_lines, merge_warnings = merge_duplicate_accounts(raw_lines)
         for w in merge_warnings:
             messages.warning(request, w)
-
         staged_lines = _apply_learned_mappings(entity, raw_lines)
-
         request.session["staged_import"] = {
             "fy_pk": str(fy.pk),
             "connection_pk": str(connection_obj.pk) if connection_obj else "",
@@ -426,20 +433,23 @@ def _do_cloud_import(request, fy, entity, provider, access_token, tenant_id, con
         # can read the staged data from the database backend.
         request.session.modified = True
         request.session.save()
-
         if connection_obj:
             connection_obj.last_sync_at = timezone.now()
             connection_obj.save(update_fields=["last_sync_at"])
-
         return redirect("integrations:review_import", fy_pk=fy.pk)
-
     except Exception as e:
-        logger.error(f"Cloud import failed: {e}")
+        logger.exception("Cloud import failed", extra={
+            "provider": getattr(provider, "name", "unknown"),
+            "tenant_id": tenant_id,
+            "financial_year_id": str(fy.pk),
+            "entity_id": str(entity.pk),
+        })
         if connection_obj:
             connection_obj.last_error = str(e)
             connection_obj.save(update_fields=["last_error"])
         messages.error(request, f"Import failed: {str(e)}")
         return redirect("core:financial_year_detail", pk=fy.pk)
+
 
 
 @login_required

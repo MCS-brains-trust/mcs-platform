@@ -5,6 +5,7 @@ Each provider defines its OAuth2 endpoints, scopes, and the logic
 to parse a trial balance response into a normalised list of dicts.
 """
 import re
+import json
 import logging
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
@@ -165,9 +166,11 @@ class XeroProvider(BaseProvider):
 
     def fetch_trial_balance(self, access_token, tenant_id, as_at_date):
         """
-        Xero GET /Reports/TrialBalance
-        Response has nested Rows with Sections containing Row items.
-        Each Row cell: Account (with code in parens), Debit, Credit, YTD Debit, YTD Credit
+        Xero GET /Reports/TrialBalance.
+
+        Returns a normalised list of account-level lines. Raises a clear
+        exception when the API response is structurally valid but does not
+        contain usable account rows for import.
         """
         params = {}
         if as_at_date:
@@ -186,45 +189,88 @@ class XeroProvider(BaseProvider):
         resp.raise_for_status()
         data = resp.json()
 
-        lines = []
         reports = data.get("Reports", [])
         if not reports:
-            return lines
+            raise ValueError(
+                f"Xero returned no reports for tenant {tenant_id}."
+            )
 
-        for row_group in reports[0].get("Rows", []):
-            if row_group.get("RowType") == "Section":
-                for row in row_group.get("Rows", []):
-                    if row.get("RowType") != "Row":
-                        continue
-                    cells = row.get("Cells", [])
-                    if len(cells) < 5:
-                        continue
+        report = reports[0]
+        rows = report.get("Rows", [])
+        lines = []
+        row_type_counts = {}
+        section_row_type_counts = {}
 
-                    # Parse account: "Account Name (Code)"
-                    account_str = cells[0].get("Value", "")
-                    match = re.match(r"^(.+?)\s*\((\S+)\)\s*$", account_str)
-                    if match:
-                        account_name = match.group(1).strip()
-                        account_code = match.group(2)
-                    else:
-                        account_name = account_str
-                        account_code = ""
+        for row_group in rows:
+            row_type = row_group.get("RowType", "Unknown")
+            row_type_counts[row_type] = row_type_counts.get(row_type, 0) + 1
 
-                    debit = _to_decimal(cells[1].get("Value", "0"))
-                    credit = _to_decimal(cells[2].get("Value", "0"))
-                    ytd_debit = _to_decimal(cells[3].get("Value", "0"))
-                    ytd_credit = _to_decimal(cells[4].get("Value", "0"))
+            if row_type != "Section":
+                continue
 
-                    # Opening = YTD - current month movement
-                    opening = (ytd_debit - ytd_credit) - (debit - credit)
+            for row in row_group.get("Rows", []):
+                child_type = row.get("RowType", "Unknown")
+                section_row_type_counts[child_type] = section_row_type_counts.get(child_type, 0) + 1
+                if child_type != "Row":
+                    continue
 
-                    lines.append({
-                        "account_code": account_code,
-                        "account_name": account_name,
-                        "opening_balance": opening,
-                        "debit": ytd_debit,
-                        "credit": ytd_credit,
-                    })
+                cells = row.get("Cells", [])
+                if len(cells) < 5:
+                    logger.warning(
+                        "Xero trial balance row had fewer than 5 cells",
+                        extra={
+                            "tenant_id": tenant_id,
+                            "report_name": report.get("ReportName", ""),
+                            "row": row,
+                        },
+                    )
+                    continue
+
+                account_str = cells[0].get("Value", "")
+                if not account_str or account_str.strip().lower() == "total":
+                    continue
+
+                match = re.match(r"^(.+?)\s*\((\S+)\)\s*$", account_str)
+                if match:
+                    account_name = match.group(1).strip()
+                    account_code = match.group(2)
+                else:
+                    account_name = account_str.strip()
+                    account_code = ""
+
+                debit = _to_decimal(cells[1].get("Value", "0"))
+                credit = _to_decimal(cells[2].get("Value", "0"))
+                ytd_debit = _to_decimal(cells[3].get("Value", "0"))
+                ytd_credit = _to_decimal(cells[4].get("Value", "0"))
+                opening = (ytd_debit - ytd_credit) - (debit - credit)
+
+                lines.append({
+                    "account_code": account_code,
+                    "account_name": account_name,
+                    "opening_balance": opening,
+                    "debit": ytd_debit,
+                    "credit": ytd_credit,
+                })
+
+        report_date = report.get("ReportDate", "")
+        if not lines:
+            logger.error(
+                "Xero trial balance returned no usable account rows",
+                extra={
+                    "tenant_id": tenant_id,
+                    "requested_date": as_at_date.isoformat() if as_at_date else "",
+                    "report_name": report.get("ReportName", ""),
+                    "report_date": report_date,
+                    "top_level_row_types": row_type_counts,
+                    "section_row_types": section_row_type_counts,
+                    "raw_preview": json.dumps(rows[:3], default=str)[:2000],
+                },
+            )
+            raise ValueError(
+                "Xero returned no account-level trial balance rows for the selected organisation and date. "
+                f"Requested date: {as_at_date.isoformat() if as_at_date else 'not supplied'}. "
+                f"Reported date: {report_date or 'unknown'}."
+            )
 
         return lines
 
