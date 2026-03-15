@@ -81,6 +81,7 @@ FALLBACK_MONTH_CONTENT = {
 class DueDateItem:
     due_date: date
     title: str
+    summary: str
     description: str
     source_url: str
 
@@ -126,6 +127,7 @@ def get_next_ato_due_dates(limit: int = 3) -> List[dict]:
                 DueDateItem(
                     due_date=section.due_date,
                     title=section.title,
+                    summary=_summarise_due_item(section.descriptions),
                     description=combined_description,
                     source_url=section.source_url,
                 )
@@ -138,6 +140,7 @@ def get_next_ato_due_dates(limit: int = 3) -> List[dict]:
         {
             "due_date": item.due_date,
             "title": item.title,
+            "summary": item.summary,
             "description": item.description,
             "source_url": item.source_url,
         }
@@ -236,6 +239,41 @@ def _parse_due_date(text: str, month_year: str) -> date:
     month_name = heading_match.group(2)
     year = int(heading_match.group(3) or month_year.split()[1])
     return datetime.strptime(f"{day} {month_name} {year}", "%d %B %Y").date()
+
+
+def _summarise_due_item(descriptions: List[str]) -> str:
+    if not descriptions:
+        return "ATO due date"
+
+    primary = descriptions[0].strip().rstrip('.')
+    lowered = primary.lower()
+
+    replacements = [
+        ("lodge and pay ", ""),
+        ("lodge ", ""),
+        ("payment for ", "Pay "),
+        ("tax return for ", "Tax return — "),
+        ("monthly business activity statement", "Monthly BAS"),
+        ("activity statement", "Activity statement"),
+        ("instalment activity statement", "Instalment activity statement"),
+    ]
+
+    summary = primary
+    for old, new in replacements:
+        summary = re.sub(re.escape(old), new, summary, flags=re.I)
+
+    summary = summary.replace("quarter 3, 2025-26 ", "Q3 2025–26 ")
+    summary = summary.replace("February 2026 ", "")
+    summary = summary.replace("March 2026 ", "")
+    summary = summary.replace("April 2026 ", "")
+    summary = re.sub(r"\s+", " ", summary).strip(" .")
+
+    if len(summary) > 68:
+        summary = summary[:65].rstrip() + "..."
+
+    if lowered.startswith("lodge and pay"):
+        summary = summary[0].upper() + summary[1:]
+    return summary
 
 
 def _slug_from_month_year(month_year: str) -> str:
