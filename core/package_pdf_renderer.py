@@ -50,6 +50,10 @@ def render_legal_doc_to_pdf_bytes(doc):
     Render a LegalDocument record to PDF bytes using weasyprint.
     Uses context_data stored on the record.
     Returns bytes or None on failure.
+
+    This path is used for final client package rendering so the bundle is
+    always generated from clean HTML templates rather than from any previously
+    stored draft PDFs that may contain watermarks.
     """
     import weasyprint
 
@@ -66,6 +70,8 @@ def render_legal_doc_to_pdf_bytes(doc):
     context.setdefault("document_title", doc.title or doc.get_document_type_display())
     context.setdefault("generated_at", doc.generated_at.strftime("%d %B %Y") if doc.generated_at else "")
     context.setdefault("firm_name", "MC & S Chartered Accountants")
+    context.setdefault("is_final", True)
+    context.setdefault("watermark_text", "")
 
     try:
         html_string = render_to_string(template_name, context)
@@ -133,19 +139,18 @@ def build_package_bundle(fy):
         if not doc:
             continue
 
-        pdf_bytes = None
+        # Always re-render legal documents for the final client package so any
+        # previously generated draft PDFs do not carry watermarks into the
+        # bundle downloaded after Eva clearance.
+        pdf_bytes = render_legal_doc_to_pdf_bytes(doc)
 
-        # Prefer stored pdf_file if it exists
-        if doc.pdf_file:
+        # Fall back to stored bytes only if clean re-rendering is unavailable.
+        if not pdf_bytes and doc.pdf_file:
             try:
                 doc.pdf_file.seek(0)
                 pdf_bytes = doc.pdf_file.read()
             except Exception:
                 pdf_bytes = None
-
-        # Fall back to rendering from context_data
-        if not pdf_bytes:
-            pdf_bytes = render_legal_doc_to_pdf_bytes(doc)
 
         if pdf_bytes:
             try:

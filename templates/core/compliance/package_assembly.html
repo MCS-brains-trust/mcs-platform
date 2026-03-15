@@ -133,15 +133,21 @@
                         </tbody>
                     </table>
                 </div>
-                <div class="card-footer d-flex justify-content-end gap-2">
+                <div class="card-footer d-flex justify-content-end gap-2 align-items-center flex-wrap">
+                    {% if not fy.can_assemble_package %}
+                    <small class="text-muted me-auto">
+                        Client package becomes available only after <strong>Eva has cleared</strong> this financial year.
+                    </small>
+                    {% endif %}
                     <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary">Back</a>
                     {% if fy.package_assembled %}
-                    <button class="btn btn-info" onclick="sendForSigning()">
+                    <button class="btn btn-info" onclick="sendForSigning()"
+                            {% if not fy.can_assemble_package %}disabled title="Client package is only available after Eva has cleared this financial year"{% endif %}>
                         <i class="bi bi-download"></i> Download Package Bundle
                     </button>
                     {% else %}
                     <button class="btn btn-success" onclick="assemblePackage()"
-                            {% if not all_required_present %}disabled title="All required documents must be present"{% endif %}>
+                            {% if not fy.can_assemble_package %}disabled title="Client package is only available after Eva has cleared this financial year"{% elif not all_required_present %}disabled title="All required documents must be present"{% endif %}>
                         <i class="bi bi-box-seam"></i> Assemble Package
                     </button>
                     {% endif %}

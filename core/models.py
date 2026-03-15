@@ -604,30 +604,24 @@ class FinancialYear(models.Model):
 
     @property
     def can_assemble_package(self):
-        """Package assembly available once finalised and Eva review is cleared.
+        """Package assembly available only once Eva has explicitly cleared the year.
 
         Requires:
         1. FY is finalised.
-        2. At least one completed Eva review exists (status 'cleared' or
-           'findings_raised') — a pending/in-progress review does not count.
-        3. No open EvaFindings remain on the MOST RECENT completed review.
+        2. The most recent completed Eva review has status 'cleared'.
 
-        Note: open findings on older/superseded review runs are intentionally
-        ignored — only the latest completed review is authoritative. This
-        prevents stale findings from earlier runs blocking package assembly
-        after a clean re-run.
+        A review with status 'findings_raised' does not qualify, even if all
+        findings were later resolved. The final client package is only made
+        available after Eva has re-run and formally cleared the entity.
         """
         if self.status != self.Status.FINALISED:
             return False
-        # Get the most recent completed (non-pending, non-error) Eva review
         latest_completed = self.eva_reviews.filter(
             status__in=['cleared', 'findings_raised']
         ).order_by('-triggered_at').first()
         if latest_completed is None:
             return False
-        # No open EvaFindings may remain on the latest completed review only
-        open_findings = latest_completed.findings.filter(status='open').count()
-        return open_findings == 0
+        return latest_completed.status == 'cleared'
 
     def transition_to(self, new_status):
         """Validate and execute a status transition. Returns True if valid."""

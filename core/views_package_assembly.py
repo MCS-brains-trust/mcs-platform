@@ -3,6 +3,8 @@ import json
 import logging
 from datetime import datetime
 
+from django.contrib import messages
+
 from django.contrib.auth.decorators import login_required
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, render
@@ -64,6 +66,12 @@ def package_assembly(request, pk):
     """Package assembly wizard — 5-step workflow."""
     fy = get_object_or_404(FinancialYear, pk=pk)
     entity = fy.entity
+
+    if not fy.can_assemble_package:
+        messages.warning(
+            request,
+            "The client package is only available after Eva has cleared this financial year."
+        )
 
     # Get the required documents for this entity type
     required_docs = PACKAGE_CONTENTS.get(entity.entity_type, PACKAGE_CONTENTS["individual"])
@@ -129,6 +137,12 @@ def package_assemble(request, pk):
     """Mark the package as assembled."""
     fy = get_object_or_404(FinancialYear, pk=pk)
 
+    if not fy.can_assemble_package:
+        return JsonResponse({
+            "status": "error",
+            "error": "Client package is only available after Eva has cleared this financial year.",
+        }, status=400)
+
     fy.package_assembled = True
     fy.package_assembled_at = datetime.now()
     fy.package_assembled_by = request.user
@@ -148,6 +162,13 @@ def package_download_bundle(request, pk):
     The accountant can then upload this bundle to FuseSign manually.
     """
     fy = get_object_or_404(FinancialYear, pk=pk)
+
+    if not fy.can_assemble_package:
+        return HttpResponse(
+            "Client package is only available after Eva has cleared this financial year.",
+            status=400,
+            content_type="text/plain",
+        )
 
     if not fy.package_assembled:
         return HttpResponse(
@@ -182,6 +203,11 @@ def package_send_for_signing(request, pk):
     """
     from django.http import JsonResponse as JR
     fy = get_object_or_404(FinancialYear, pk=pk)
+    if not fy.can_assemble_package:
+        return JR({
+            "status": "error",
+            "error": "Client package is only available after Eva has cleared this financial year.",
+        }, status=400)
     if not fy.package_assembled:
         return JR({"status": "error", "error": "Package must be assembled first."}, status=400)
     from django.urls import reverse
