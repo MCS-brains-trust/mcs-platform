@@ -38,7 +38,9 @@ urlpatterns = [
     # Governing Documents
     path("entities/<uuid:pk>/governing-docs/upload/", views_governing_docs.governing_doc_upload, name="governing_doc_upload"),
     path("api/governing-docs/<uuid:doc_pk>/extract/", views_governing_docs.governing_doc_extract, name="governing_doc_extract"),
+    path("api/governing-docs/<uuid:doc_pk>/status/", views_governing_docs.governing_doc_status, name="governing_doc_status"),
     path("api/governing-docs/<uuid:doc_pk>/archive/", views_governing_docs.governing_doc_archive, name="governing_doc_archive"),
+    path("api/governing-docs/<uuid:doc_pk>/delete/", views_governing_docs.governing_doc_delete, name="governing_doc_delete"),
 
     # Legal Document Generation
     path("legal-templates/", views_legal_docs.legal_template_list, name="legal_template_list"),

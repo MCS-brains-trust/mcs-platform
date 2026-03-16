@@ -8,6 +8,7 @@ from django.conf import settings
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect
+from django.db.models import ProtectedError
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
@@ -93,6 +94,45 @@ def governing_doc_extract(request, doc_pk):
         return JsonResponse({"status": "error", "error": str(e)}, status=500)
 
 
+def _governing_doc_progress_payload(doc):
+    extraction_status = doc.extraction_status or GoverningDocument.ExtractionStatus.PENDING
+    progress_map = {
+        GoverningDocument.ExtractionStatus.PENDING: 20,
+        GoverningDocument.ExtractionStatus.OCR_PENDING: 65,
+        GoverningDocument.ExtractionStatus.COMPLETED: 100,
+        GoverningDocument.ExtractionStatus.COMPLETED_WITH_WARNINGS: 100,
+        GoverningDocument.ExtractionStatus.FAILED: 100,
+    }
+    progress = progress_map.get(extraction_status, 10)
+    status_label_map = {
+        GoverningDocument.ExtractionStatus.PENDING: "Queued for extraction",
+        GoverningDocument.ExtractionStatus.OCR_PENDING: "OCR processing in AWS Textract",
+        GoverningDocument.ExtractionStatus.COMPLETED: "Text extracted successfully",
+        GoverningDocument.ExtractionStatus.COMPLETED_WITH_WARNINGS: "Extraction completed with warnings",
+        GoverningDocument.ExtractionStatus.FAILED: "Extraction failed",
+    }
+    return {
+        "doc_id": str(doc.pk),
+        "extraction_status": extraction_status,
+        "status_label": status_label_map.get(extraction_status, "Processing"),
+        "progress_percent": progress,
+        "is_finished": extraction_status in [
+            GoverningDocument.ExtractionStatus.COMPLETED,
+            GoverningDocument.ExtractionStatus.COMPLETED_WITH_WARNINGS,
+            GoverningDocument.ExtractionStatus.FAILED,
+        ],
+        "has_text": bool((doc.extracted_text or "").strip()),
+        "chunk_count": getattr(doc, "chunk_count", 0),
+    }
+
+
+@login_required
+def governing_doc_status(request, doc_pk):
+    """Return extraction progress/status for a governing document."""
+    doc = get_object_or_404(GoverningDocument, pk=doc_pk)
+    return JsonResponse({"status": "ok", "document": _governing_doc_progress_payload(doc)})
+
+
 # ---------------------------------------------------------------------------
 # Archive API
 # ---------------------------------------------------------------------------
@@ -107,6 +147,27 @@ def governing_doc_archive(request, doc_pk):
     doc.is_primary = False
     doc.save(update_fields=["status", "archived_by", "archived_at", "is_primary"])
     return JsonResponse({"status": "ok"})
+
+
+@login_required
+@require_POST
+def governing_doc_delete(request, doc_pk):
+    """Permanently delete a governing document."""
+    doc = get_object_or_404(GoverningDocument, pk=doc_pk)
+    try:
+        doc.delete()
+        return JsonResponse({"status": "ok"})
+    except ProtectedError:
+        return JsonResponse(
+            {
+                "status": "error",
+                "error": "This document is linked to other records and cannot be deleted.",
+            },
+            status=400,
+        )
+    except Exception as e:
+        logger.exception("Failed deleting governing document %s", doc_pk)
+        return JsonResponse({"status": "error", "error": str(e)}, status=500)
 
 
 # Governing document extraction is handled centrally by core.tasks.extract_governing_document
