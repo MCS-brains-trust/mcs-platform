@@ -764,8 +764,10 @@ class Command(BaseCommand):
 
                 if existing and force:
                     # Update existing
+                    # Pass just the filename — upload_to="fs_templates/"
+                    # on the model field already provides the directory prefix.
                     existing.template_file.save(
-                        f"fs_templates/{filename}",
+                        filename,
                         ContentFile(file_content),
                         save=False,
                     )
@@ -782,8 +784,10 @@ class Command(BaseCommand):
                         version="1.0",
                         is_active=True,
                     )
+                    # Pass just the filename — upload_to="fs_templates/"
+                    # on the model field already provides the directory prefix.
                     tmpl.template_file.save(
-                        f"fs_templates/{filename}",
+                        filename,
                         ContentFile(file_content),
                         save=False,
                     )

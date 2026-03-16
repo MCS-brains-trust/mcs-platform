@@ -469,9 +469,31 @@ def render_template(template_db_record, context):
     """Load .docx via DocxTemplate, render with Jinja2 context, return BytesIO."""
     from docxtpl import DocxTemplate
 
-    template_path = template_db_record.template_file.path
+    if template_db_record is None:
+        raise ValueError("render_template called with None template record")
+
+    if not template_db_record.template_file:
+        raise ValueError(
+            f"Template file not found for {template_db_record.document_type} / "
+            f"{template_db_record.entity_type}: FileField is empty "
+            f"(record pk={template_db_record.pk})"
+        )
+
+    try:
+        template_path = template_db_record.template_file.path
+    except ValueError:
+        raise ValueError(
+            f"Template file not found for {template_db_record.document_type} / "
+            f"{template_db_record.entity_type}: no file associated with FileField "
+            f"(record pk={template_db_record.pk})"
+        )
+
     if not os.path.exists(template_path):
-        raise FileNotFoundError(f"Template file not found: {template_path}")
+        raise ValueError(
+            f"Template file not found for {template_db_record.document_type} / "
+            f"{template_db_record.entity_type}: {template_path} does not exist on disk "
+            f"(record pk={template_db_record.pk})"
+        )
 
     doc = DocxTemplate(template_path)
 
