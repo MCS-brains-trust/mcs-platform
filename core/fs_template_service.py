@@ -498,8 +498,7 @@ def render_template(template_db_record, context):
             f"(record pk={template_db_record.pk})"
         )
 
-    doc = Document(template_path)
-    tpl = DocxTemplate(doc)
+    tpl = DocxTemplate(template_path)
 
     tpl.render(context)
 
