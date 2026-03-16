@@ -22,6 +22,7 @@ import tempfile
 from collections import OrderedDict
 from decimal import Decimal, ROUND_HALF_UP
 
+from docx import Document
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
@@ -497,7 +498,7 @@ def render_template(template_db_record, context):
             f"(record pk={template_db_record.pk})"
         )
 
-    doc = DocxTemplate(template_path)
+    doc = DocxTemplate(docx=Document(template_path))
 
     # Register format_amount as a Jinja2 filter
     doc.jinja_env.filters["format_amount"] = format_amount
@@ -596,8 +597,6 @@ def generate_combined_docx(financial_year_id, include_watermark=True):
     The old function returned a single BytesIO; this does the same by appending
     each rendered template's body elements into a single Word document.
     """
-    from docx import Document as DocxDocument
-
     docs = generate_financial_statements(financial_year_id, include_watermark)
 
     if not docs:
@@ -609,11 +608,11 @@ def generate_combined_docx(financial_year_id, include_watermark=True):
         raise RuntimeError("No templates rendered")
 
     first_key = ordered_keys[0]
-    combined = DocxDocument(docs[first_key])
+    combined = Document(docs[first_key])
 
     # Append remaining documents
     for key in ordered_keys[1:]:
-        sub_doc = DocxDocument(docs[key])
+        sub_doc = Document(docs[key])
         # Add a page break before appending
         combined.add_page_break()
         for element in sub_doc.element.body:
