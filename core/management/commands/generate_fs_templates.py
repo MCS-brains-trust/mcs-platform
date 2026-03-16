@@ -15,7 +15,7 @@ from django.core.files.base import ContentFile
 from django.core.management.base import BaseCommand
 
 from docx import Document
-from docx.shared import Pt, Cm, RGBColor
+from docx.shared import Inches, Pt, Cm, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 from core.models import FinancialStatementTemplate
@@ -98,7 +98,7 @@ def _add_watermark_header(doc):
     header.is_linked_to_previous = False
 
     # Use a table for left/right alignment in header
-    table = header.add_table(rows=1, cols=2)
+    table = header.add_table(rows=1, cols=2, width=Inches(6.27))
     table.autofit = True
 
     # Left cell: entity name
@@ -139,7 +139,7 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
     """Add a 4-column financial table with Jinja2 for-loop."""
     _add_para(doc, section_title, bold=True)
 
-    table = doc.add_table(rows=1, cols=4)
+    table = doc.add_table(rows=1, cols=4, width=Inches(6.27))
     table.autofit = False
     for i, width in enumerate(COL_WIDTHS):
         table.columns[i].width = width
@@ -290,7 +290,7 @@ def _build_detailed_pl(entity_type):
 
     # Net Profit
     _add_para(doc, "Net Profit / (Loss)", bold=True)
-    table = doc.add_table(rows=1, cols=4)
+    table = doc.add_table(rows=1, cols=4, width=Inches(6.27))
     table.autofit = False
     for i, width in enumerate(COL_WIDTHS):
         table.columns[i].width = width
@@ -385,7 +385,7 @@ def _build_summary_pl(entity_type):
               alignment=WD_ALIGN_PARAGRAPH.CENTER)
 
     # Summary table
-    table = doc.add_table(rows=6, cols=3)
+    table = doc.add_table(rows=6, cols=3, width=Inches(6.27))
     table.autofit = False
     table.columns[0].width = Cm(10)
     table.columns[1].width = Cm(3)
@@ -636,7 +636,7 @@ def _build_distribution(entity_type):
     doc.add_paragraph("")
 
     # Distribution table
-    table = doc.add_table(rows=1, cols=3)
+    table = doc.add_table(rows=1, cols=3, width=Inches(6.27))
     table.autofit = False
     table.columns[0].width = Cm(8)
     table.columns[1].width = Cm(4)
