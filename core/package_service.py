@@ -27,6 +27,19 @@ from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
+
+def _format_acn_abn(acn, abn):
+    """Build a combined 'ACN: xxx / ABN: xxx' display string."""
+    parts = []
+    if acn:
+        d = "".join(c for c in str(acn) if c.isdigit())
+        parts.append(f"ACN: {d[:3]} {d[3:6]} {d[6:9]}" if len(d) == 9 else f"ACN: {d}")
+    if abn:
+        d = "".join(c for c in str(abn) if c.isdigit())
+        parts.append(f"ABN: {d[:2]} {d[2:5]} {d[5:8]} {d[8:11]}" if len(d) == 11 else f"ABN: {d}")
+    return " / ".join(parts) if parts else ""
+
+
 # ---------------------------------------------------------------------------
 # Package Contents by Entity Type (mirrors views_package_assembly.py)
 # ---------------------------------------------------------------------------
@@ -410,11 +423,15 @@ def _build_compliance_context(doc_type, fy, entity):
         date_ceased__isnull=True,
     )
 
+    acn = getattr(entity, "acn", "") or ""
+    abn = getattr(entity, "abn", "") or ""
+    acn_abn = _format_acn_abn(acn, abn)
     context = {
         "entity_name": entity.entity_name,
         "entity_type": entity.entity_type,
-        "acn": getattr(entity, "acn", ""),
-        "abn": getattr(entity, "abn", ""),
+        "acn": acn,
+        "abn": abn,
+        "acn_abn": acn_abn,
         "registered_address": getattr(entity, "registered_address", ""),
         "financial_year_end": fy.end_date.strftime("%d %B %Y") if fy.end_date else "",
         "financial_year_start": fy.start_date.strftime("%d %B %Y") if fy.start_date else "",

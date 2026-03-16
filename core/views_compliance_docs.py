@@ -20,6 +20,18 @@ from core.models import (
 logger = logging.getLogger(__name__)
 
 
+def _format_acn_abn(acn, abn):
+    """Build a combined 'ACN: xxx / ABN: xxx' display string."""
+    parts = []
+    if acn:
+        d = "".join(c for c in str(acn) if c.isdigit())
+        parts.append(f"ACN: {d[:3]} {d[3:6]} {d[6:9]}" if len(d) == 9 else f"ACN: {d}")
+    if abn:
+        d = "".join(c for c in str(abn) if c.isdigit())
+        parts.append(f"ABN: {d[:2]} {d[2:5]} {d[5:8]} {d[8:11]}" if len(d) == 11 else f"ABN: {d}")
+    return " / ".join(parts) if parts else ""
+
+
 # ---------------------------------------------------------------------------
 # Dividend Wizard (covers 5.1 Dividend Statement + 5.2 Declaration Minutes)
 # ---------------------------------------------------------------------------
@@ -157,10 +169,13 @@ def generate_solvency_resolution(request, pk):
         role__in=["director", "director_shareholder"],
     )
 
+    acn = entity.acn or ""
+    abn = entity.abn or ""
     context = {
         "entity_name": entity.entity_name,
-        "acn": entity.acn or "",
-        "abn": entity.abn or "",
+        "acn": acn,
+        "abn": abn,
+        "acn_abn": _format_acn_abn(acn, abn),
         "directors": [{"name": d.full_name} for d in directors],
         "financial_year": str(fy.end_date.year),
         "financial_year_end": str(fy.end_date),
@@ -213,9 +228,13 @@ def generate_directors_declaration(request, pk):
         role__in=["director", "director_shareholder"],
     )
 
+    acn = entity.acn or ""
+    abn = entity.abn or ""
     context = {
         "entity_name": entity.entity_name,
-        "acn": entity.acn or "",
+        "acn": acn,
+        "abn": abn,
+        "acn_abn": _format_acn_abn(acn, abn),
         "variant": variant,
         "directors": [{"name": d.full_name} for d in directors],
         "financial_year": str(fy.end_date.year),

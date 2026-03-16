@@ -209,7 +209,22 @@ class FinancialTable:
         # Explicitly set cantSplit to false
         cantSplit = parse_xml(f'<w:cantSplit {nsdecls("w")} w:val="false"/>')
         trPr.append(cantSplit)
-    
+
+    def _prevent_row_split(self, row):
+        """Prevent a table row from splitting across pages (cantSplit=true)."""
+        tr = row._tr
+        trPr = tr.find(qn('w:trPr'))
+        if trPr is None:
+            trPr = parse_xml(f'<w:trPr {nsdecls("w")}/>')
+            tr.insert(0, trPr)
+        # Remove any existing cantSplit
+        existing = trPr.find(qn('w:cantSplit'))
+        if existing is not None:
+            trPr.remove(existing)
+        # Explicitly set cantSplit to true
+        cantSplit = parse_xml(f'<w:cantSplit {nsdecls("w")} w:val="true"/>')
+        trPr.append(cantSplit)
+
     def _keep_with_next(self, row):
         """Set keep-with-next on all paragraphs in a row so it stays with the following row."""
         for cell in row.cells:
@@ -247,10 +262,10 @@ class FinancialTable:
         _clear_cell_borders(cell)
     
     def add_section_heading(self, label, size=FONT_SIZE_SUBHEADING, bold=True,
-                           space_before=10, keep_with_next=False):
+                           space_before=10, keep_with_next=True):
         """Add a section heading row (e.g., 'Income', 'Current Assets')."""
         row = self.table.add_row()
-        self._allow_row_split(row)
+        self._prevent_row_split(row)
         # Merge all cells for heading
         if self.num_cols > 1:
             merged = row.cells[0].merge(row.cells[self.num_cols - 1])
@@ -270,7 +285,7 @@ class FinancialTable:
                         space_before=6):
         """Add a sub-heading row (e.g., 'Cash Assets', 'Payables')."""
         row = self.table.add_row()
-        self._allow_row_split(row)
+        self._prevent_row_split(row)
         if self.num_cols > 1:
             merged = row.cells[0].merge(row.cells[self.num_cols - 1])
             p = merged.paragraphs[0]
@@ -332,7 +347,7 @@ class FinancialTable:
         The label can be empty for inline subtotals.
         """
         row = self.table.add_row()
-        self._allow_row_split(row)
+        self._prevent_row_split(row)
         
         # Label cell
         cell = row.cells[self.label_idx]
@@ -371,7 +386,7 @@ class FinancialTable:
         If is_grand_total=True, also add double bottom border (=) on amount cells.
         """
         row = self.table.add_row()
-        self._allow_row_split(row)
+        self._prevent_row_split(row)
         
         # Label cell — bold
         cell = row.cells[self.label_idx]

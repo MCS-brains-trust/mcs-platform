@@ -23,6 +23,33 @@ from django.template.loader import render_to_string
 
 logger = logging.getLogger(__name__)
 
+
+def _format_acn(raw):
+    """Format ACN as XXX XXX XXX (9 digits in groups of 3)."""
+    digits = "".join(c for c in str(raw) if c.isdigit()) if raw else ""
+    if len(digits) != 9:
+        return digits  # return as-is if not standard length
+    return f"{digits[:3]} {digits[3:6]} {digits[6:9]}"
+
+
+def _format_abn(raw):
+    """Format ABN as XX XXX XXX XXX (11 digits: 2-3-3-3)."""
+    digits = "".join(c for c in str(raw) if c.isdigit()) if raw else ""
+    if len(digits) != 11:
+        return digits  # return as-is if not standard length
+    return f"{digits[:2]} {digits[2:5]} {digits[5:8]} {digits[8:11]}"
+
+
+def _build_acn_abn(acn, abn):
+    """Build a combined 'ACN xxx / ABN xxx' display string."""
+    parts = []
+    if acn:
+        parts.append(f"ACN: {_format_acn(acn)}")
+    if abn:
+        parts.append(f"ABN: {_format_abn(abn)}")
+    return " / ".join(parts) if parts else ""
+
+
 # Document type → (template_name, title)
 LEGAL_DOC_TEMPLATES = {
     "solvency_resolution": ("core/pdf/solvency_resolution.html", "Solvency Resolution"),
@@ -70,6 +97,9 @@ def render_legal_doc_to_pdf_bytes(doc):
     context.setdefault("document_title", doc.title or doc.get_document_type_display())
     context.setdefault("generated_at", doc.generated_at.strftime("%d %B %Y") if doc.generated_at else "")
     context.setdefault("firm_name", "MC & S Chartered Accountants")
+    # Build combined ACN/ABN display string from separate acn/abn context values
+    if "acn_abn" not in context:
+        context["acn_abn"] = _build_acn_abn(context.get("acn", ""), context.get("abn", ""))
     context.setdefault("is_final", True)
     context.setdefault("watermark_text", "")
     if doc.financial_year and doc.financial_year.end_date:
