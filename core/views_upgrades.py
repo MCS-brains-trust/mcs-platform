@@ -218,16 +218,17 @@ def regenerate_document(request, pk):
 
     # Generate the document based on type
     if doc_type == "financial_statements":
-        from .fs_template_service import generate_combined_docx
+        from .fs_template_service import generate_combined_pdf
         include_watermark = not fy.can_assemble_package
         try:
-            buffer = generate_combined_docx(fy.pk, include_watermark=include_watermark)
+            buffer = generate_combined_pdf(fy.pk, include_watermark=include_watermark)
         except Exception as e:
             messages.error(request, f"Document generation failed: {e}")
             return redirect("core:financial_year_detail", pk=pk)
         file_content = buffer.getvalue()
         entity_name = fy.entity.entity_name.replace(" ", "_")
-        filename = f"{entity_name}_Financial_Statements_{fy.year_label}_v{new_version}.{fmt}"
+        fmt = "pdf"
+        filename = f"{entity_name}_Financial_Statements_{fy.year_label}_v{new_version}.pdf"
     elif doc_type == "distribution_minutes":
         from .distmin_gen import generate_distribution_minutes as gen_distmin
         try:
@@ -316,22 +317,24 @@ def bulk_regenerate(request, pk):
 
         try:
             if doc_type == "financial_statements":
-                from .fs_template_service import generate_combined_docx
+                from .fs_template_service import generate_combined_pdf
                 include_watermark = not fy.can_assemble_package
-                buffer = generate_combined_docx(fy.pk, include_watermark=include_watermark)
+                buffer = generate_combined_pdf(fy.pk, include_watermark=include_watermark)
+                doc_file_format = "pdf"
             elif doc_type == "distribution_minutes":
                 from .distmin_gen import generate_distribution_minutes as gen_distmin
                 buffer = gen_distmin(fy.pk)
+                doc_file_format = "docx"
             else:
                 continue
 
             file_content = buffer.getvalue()
             entity_name = fy.entity.entity_name.replace(" ", "_")
-            filename = f"{entity_name}_{doc_type}_v{new_version}.docx"
+            filename = f"{entity_name}_{doc_type}_v{new_version}.{doc_file_format}"
 
             doc = GeneratedDocument(
                 financial_year=fy,
-                file_format="docx",
+                file_format=doc_file_format,
                 document_type=doc_type,
                 version=new_version,
                 status=GeneratedDocument.DocumentStatus.DRAFT,

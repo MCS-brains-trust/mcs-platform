@@ -21,7 +21,6 @@ import tempfile
 from collections import OrderedDict
 from decimal import Decimal, ROUND_HALF_UP
 
-from docx import Document
 from django.conf import settings
 
 from core.libreoffice_utils import convert_docx_to_pdf
@@ -586,16 +585,16 @@ def generate_financial_statements(financial_year_id, include_watermark=True):
 
 
 # ---------------------------------------------------------------------------
-# generate_combined_docx — view-facing helper
+# generate_combined_pdf — render each template to PDF individually, merge
 # ---------------------------------------------------------------------------
-def generate_combined_docx(financial_year_id, include_watermark=True):
-    """Generate all templates and combine into a single DOCX BytesIO.
+def generate_combined_pdf(financial_year_id, include_watermark=True):
+    """Generate all templates, convert each to PDF, merge into single PDF BytesIO.
 
-    This is the drop-in replacement for the old docgen.generate_financial_statements.
-    The old function returned a single BytesIO; this does the same by appending
-    each rendered template's body elements into a single Word document.
+    Returns a BytesIO containing the merged PDF bytes.
     """
-    logger.info("generate_combined_docx called for FY %s (watermark=%s)",
+    from pypdf import PdfWriter, PdfReader
+
+    logger.info("generate_combined_pdf called for FY %s (watermark=%s)",
                 financial_year_id, include_watermark)
 
     docs = generate_financial_statements(financial_year_id, include_watermark)
@@ -606,31 +605,51 @@ def generate_combined_docx(financial_year_id, include_watermark=True):
     if not docs:
         raise RuntimeError("No templates rendered — check template registration")
 
-    # Start with the first document as the base
     ordered_keys = [dt for dt in DOCUMENT_TYPE_ORDER if dt in docs]
-    logger.info("Ordered keys for combine: %s", ordered_keys)
+    logger.info("Ordered keys for PDF merge: %s", ordered_keys)
 
     if not ordered_keys:
         raise RuntimeError("No templates rendered")
 
-    first_key = ordered_keys[0]
-    logger.info("Base document: %s (%d bytes)", first_key, docs[first_key].getbuffer().nbytes)
-    combined = Document(docs[first_key])
+    writer = PdfWriter()
+    tmpdir = tempfile.mkdtemp(prefix="shub_combined_pdf_")
+    pdfs_merged = 0
 
-    # Append remaining documents
-    for key in ordered_keys[1:]:
-        logger.info("Appending document: %s (%d bytes)", key, docs[key].getbuffer().nbytes)
-        sub_doc = Document(docs[key])
-        # Add a page break before appending
-        combined.add_page_break()
-        for element in sub_doc.element.body:
-            combined.element.body.append(element)
+    try:
+        for doc_type in ordered_keys:
+            buffer = docs[doc_type]
+            docx_path = os.path.join(tmpdir, f"{doc_type}.docx")
+            with open(docx_path, "wb") as f:
+                f.write(buffer.read())
 
-    buffer = io.BytesIO()
-    combined.save(buffer)
-    buffer.seek(0)
-    logger.info("generate_combined_docx complete: %d bytes", buffer.getbuffer().nbytes)
-    return buffer
+            try:
+                convert_docx_to_pdf(docx_path, tmpdir, timeout=60)
+            except RuntimeError:
+                logger.error("LibreOffice not available — skipping %s", doc_type)
+                continue
+
+            pdf_path = os.path.join(tmpdir, f"{doc_type}.pdf")
+            if os.path.exists(pdf_path):
+                reader = PdfReader(pdf_path)
+                for page in reader.pages:
+                    writer.add_page(page)
+                pdfs_merged += 1
+                logger.info("Merged %s into combined PDF (%d pages)", doc_type, len(reader.pages))
+            else:
+                logger.warning("PDF conversion produced no output for %s", doc_type)
+
+        if pdfs_merged == 0:
+            raise RuntimeError("No templates could be converted to PDF")
+
+        output = io.BytesIO()
+        writer.write(output)
+        output.seek(0)
+        logger.info("generate_combined_pdf complete: %d documents, %d bytes",
+                    pdfs_merged, output.getbuffer().nbytes)
+        return output
+    finally:
+        import shutil
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------

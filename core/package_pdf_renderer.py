@@ -115,38 +115,20 @@ def build_package_bundle(fy):
             # service with include_watermark=False, then convert to PDF.
             fs_added = False
             try:
-                from core.fs_template_service import generate_combined_docx
-                from core.libreoffice_utils import convert_docx_to_pdf
-                import tempfile, os as _os
+                from core.fs_template_service import generate_combined_pdf
 
                 logger.info("Regenerating clean FS for package bundle FY %s", fy.pk)
-                buffer = generate_combined_docx(fy.pk, include_watermark=False)
+                pdf_buffer = generate_combined_pdf(fy.pk, include_watermark=False)
 
-                tmpdir = tempfile.mkdtemp(prefix="shub_bundle_fs_")
-                docx_path = _os.path.join(tmpdir, "fs.docx")
-                with open(docx_path, "wb") as f:
-                    f.write(buffer.read())
-
-                convert_docx_to_pdf(docx_path, tmpdir, timeout=120)
-                pdf_path = _os.path.join(tmpdir, "fs.pdf")
-                if _os.path.exists(pdf_path):
-                    with open(pdf_path, "rb") as f:
-                        pdf_bytes_fs = f.read()
-                    reader = PdfReader(io.BytesIO(pdf_bytes_fs))
-                    for page in reader.pages:
-                        writer.add_page(page)
-                    docs_added += 1
-                    fs_added = True
-                    logger.info(
-                        "Added Financial Statements from NEW template render (%d pages)",
-                        len(reader.pages),
-                    )
-                else:
-                    lo_stderr = lo_result.stderr.decode("utf-8", errors="replace")[:500]
-                    logger.error(
-                        "LibreOffice PDF conversion failed for FS bundle FY %s: %s",
-                        fy.pk, lo_stderr,
-                    )
+                reader = PdfReader(pdf_buffer)
+                for page in reader.pages:
+                    writer.add_page(page)
+                docs_added += 1
+                fs_added = True
+                logger.info(
+                    "Added Financial Statements from template render (%d pages)",
+                    len(reader.pages),
+                )
             except Exception as e:
                 logger.error(
                     "FALLBACK TRIGGERED for FS in package bundle FY %s: %s",

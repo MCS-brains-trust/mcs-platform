@@ -552,35 +552,23 @@ def _regenerate_fs_for_package(fy):
     inclusion in the client package.  Returns the path to a temporary PDF
     file, or None on failure.
     """
-    import subprocess
     import tempfile
 
-    from core.fs_template_service import generate_combined_docx
+    from core.fs_template_service import generate_combined_pdf
 
     logger.info("_regenerate_fs_for_package: starting for FY %s", fy.pk)
 
-    # Generate DOCX with include_watermark=False (no DRAFT watermark)
-    # for inclusion in client package.
-    buffer = generate_combined_docx(
-        fy.pk, include_watermark=False
-    )
-    logger.info("_regenerate_fs_for_package: DOCX generated, %d bytes", buffer.getbuffer().nbytes)
+    pdf_buffer = generate_combined_pdf(fy.pk, include_watermark=False)
+    logger.info("_regenerate_fs_for_package: PDF generated, %d bytes",
+                pdf_buffer.getbuffer().nbytes)
 
-    # Write to temp DOCX then convert to PDF via LibreOffice
+    # Write to temp PDF file (caller expects a file path)
     tmpdir = tempfile.mkdtemp(prefix="shub_pkg_")
-    docx_path = os.path.join(tmpdir, "fs.docx")
-    with open(docx_path, "wb") as f:
-        f.write(buffer.read())
-
-    from core.libreoffice_utils import convert_docx_to_pdf
-    convert_docx_to_pdf(docx_path, tmpdir, timeout=120)
-
     pdf_path = os.path.join(tmpdir, "fs.pdf")
-    if os.path.exists(pdf_path):
-        return pdf_path
+    with open(pdf_path, "wb") as f:
+        f.write(pdf_buffer.read())
 
-    logger.warning("LibreOffice PDF conversion produced no output for FY %s", fy.pk)
-    return None
+    return pdf_path
 
 
 def _has_director_loan_over_10k(fy):

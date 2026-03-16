@@ -5643,72 +5643,49 @@ def generate_document(request, pk):
     if fmt not in ("docx", "pdf"):
         fmt = "docx"
 
-    from .fs_template_service import generate_combined_docx
-
     # include_watermark: suppress DRAFT watermark once Eva has cleared the year
     include_watermark = not fy.can_assemble_package
-
-    try:
-        buffer = generate_combined_docx(fy.pk, include_watermark=include_watermark)
-    except Exception as e:
-        messages.error(request, f"Document generation failed: {e}")
-        return redirect("core:financial_year_detail", pk=pk)
 
     # Build filename
     entity_name = fy.entity.entity_name.replace(" ", "_")
     base_filename = f"{entity_name}_Financial_Statements_{fy.year_label}"
 
     if fmt == "pdf":
-        # Convert DOCX buffer to PDF via LibreOffice (soffice)
-        import subprocess, tempfile, os
+        from .fs_template_service import generate_combined_pdf
         try:
-            with tempfile.TemporaryDirectory() as tmpdir:
-                docx_path = os.path.join(tmpdir, f"{base_filename}.docx")
-                with open(docx_path, "wb") as f:
-                    f.write(buffer.getvalue())
-
-                from core.libreoffice_utils import convert_docx_to_pdf
-                convert_docx_to_pdf(docx_path, tmpdir, timeout=120)
-                pdf_path = os.path.join(tmpdir, f"{base_filename}.pdf")
-                if not os.path.exists(pdf_path):
-                    stderr = ""
-                    stdout = ""
-                    raise RuntimeError(
-                        f"PDF conversion failed (exit code {result.returncode}).\n"
-                        f"stdout: {stdout[:500]}\nstderr: {stderr[:500]}"
-                    )
-                with open(pdf_path, "rb") as f:
-                    pdf_bytes = f.read()
+            pdf_buffer = generate_combined_pdf(fy.pk, include_watermark=include_watermark)
+            pdf_bytes = pdf_buffer.getvalue()
 
             filename = f"{base_filename}.pdf"
-            response = HttpResponse(
-                pdf_bytes,
-                content_type="application/pdf",
-            )
+            response = HttpResponse(pdf_bytes, content_type="application/pdf")
             response["Content-Disposition"] = f'attachment; filename="{filename}"'
             file_content = pdf_bytes
             file_format = "pdf"
         except Exception as e:
             import logging
-            logging.getLogger(__name__).error(f"PDF conversion failed: {e}")
-            messages.error(request, f"PDF conversion failed: {e}. Falling back to DOCX.")
+            logging.getLogger(__name__).error(f"PDF generation failed: {e}")
+            messages.error(request, f"PDF generation failed: {e}")
+            return redirect("core:financial_year_detail", pk=pk)
+    else:
+        from .fs_template_service import generate_financial_statements, DOCUMENT_TYPE_ORDER
+        try:
+            docs = generate_financial_statements(fy.pk, include_watermark=include_watermark)
+            if not docs:
+                raise RuntimeError("No templates rendered")
+            # Serve the first rendered template as individual docx
+            first_key = next(dt for dt in DOCUMENT_TYPE_ORDER if dt in docs)
+            docx_buffer = docs[first_key]
             filename = f"{base_filename}.docx"
             response = HttpResponse(
-                buffer.getvalue(),
+                docx_buffer.getvalue(),
                 content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             )
             response["Content-Disposition"] = f'attachment; filename="{filename}"'
-            file_content = buffer.getvalue()
+            file_content = docx_buffer.getvalue()
             file_format = "docx"
-    else:
-        filename = f"{base_filename}.docx"
-        response = HttpResponse(
-            buffer.getvalue(),
-            content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        )
-        response["Content-Disposition"] = f'attachment; filename="{filename}"'
-        file_content = buffer.getvalue()
-        file_format = "docx"
+        except Exception as e:
+            messages.error(request, f"Document generation failed: {e}")
+            return redirect("core:financial_year_detail", pk=pk)
 
     # Log the generation
     _log_action(request, "generate", f"Generated financial statements ({file_format.upper()}) for {fy}", fy)
