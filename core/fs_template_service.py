@@ -123,6 +123,7 @@ def _get_tb_sections(fy):
         cy = line.debit - line.credit
         py = line.prior_debit - line.prior_credit
         entry = {
+            "account_code": line.account_code,
             "account_name": line.account_name,
             "cy_amount": cy,
             "py_amount": py,
@@ -167,7 +168,11 @@ def _get_tb_sections(fy):
         elif code_num < 6000:
             sections["cogs"].append(entry)
 
-    # Aggregate within each section
+    # Aggregate lines with the same account within each section.
+    # Primary merge key: account_code (stable across renames in Xero/QBO).
+    # Fallback for blank codes: case-insensitive, whitespace-normalised name.
+    # Display name preference: names from lines with non-zero CY data are
+    # weighted higher so that renamed accounts show the current-year name.
     for key in sections:
         raw = sections[key]
         if not raw:
@@ -175,23 +180,25 @@ def _get_tb_sections(fy):
         agg = OrderedDict()
         name_counts = {}
         for entry in raw:
-            norm = entry["account_name"].strip().lower()
-            if norm in agg:
-                agg[norm]["cy_amount"] += entry["cy_amount"]
-                agg[norm]["py_amount"] += entry["py_amount"]
-                name_counts[norm][entry["account_name"]] = (
-                    name_counts[norm].get(entry["account_name"], 0) + 1
+            code = entry.get("account_code", "").strip()
+            merge_key = code if code else entry["account_name"].strip().lower()
+            weight = 10 if entry["cy_amount"] != 0 else 1
+            if merge_key in agg:
+                agg[merge_key]["cy_amount"] += entry["cy_amount"]
+                agg[merge_key]["py_amount"] += entry["py_amount"]
+                name_counts[merge_key][entry["account_name"]] = (
+                    name_counts[merge_key].get(entry["account_name"], 0) + weight
                 )
             else:
-                agg[norm] = {
+                agg[merge_key] = {
                     "account_name": entry["account_name"],
                     "cy_amount": entry["cy_amount"],
                     "py_amount": entry["py_amount"],
                 }
-                name_counts[norm] = {entry["account_name"]: 1}
-        for norm in agg:
-            best = max(name_counts[norm], key=name_counts[norm].get)
-            agg[norm]["account_name"] = best
+                name_counts[merge_key] = {entry["account_name"]: weight}
+        for mk in agg:
+            best = max(name_counts[mk], key=name_counts[mk].get)
+            agg[mk]["account_name"] = best
         sections[key] = list(agg.values())
         logger.debug(
             "_get_tb_sections [%s]: %d raw -> %d aggregated",
