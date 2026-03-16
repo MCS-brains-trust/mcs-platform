@@ -24,7 +24,6 @@ logger = logging.getLogger(__name__)
 PROVIDERS = {}
 
 
-
 def register_provider(name):
     """Decorator to register a provider class."""
     def decorator(cls):
@@ -38,9 +37,8 @@ class BaseProvider:
 
     name = ""
     display_name = ""
-    icon_class = ""  # Bootstrap icon class
+    icon_class = ""
 
-    # OAuth2 endpoints
     authorize_url = ""
     token_url = ""
     scopes = ""
@@ -54,7 +52,6 @@ class BaseProvider:
         raise NotImplementedError
 
     def get_authorize_params(self, redirect_uri, state):
-        """Return the query params for the OAuth2 authorization URL."""
         return {
             "response_type": "code",
             "client_id": self.get_client_id(),
@@ -64,21 +61,225 @@ class BaseProvider:
         }
 
     def exchange_code(self, code, redirect_uri):
-        """Exchange authorization code for tokens. Returns dict with tokens."""
         raise NotImplementedError
 
     def refresh_tokens(self, refresh_token):
-        """Refresh an expired access token. Returns dict with new tokens."""
         raise NotImplementedError
 
     def get_tenants(self, access_token):
-        """Return list of available tenants/organisations. Each is a dict with id and name."""
         raise NotImplementedError
 
     def fetch_trial_balance(self, access_token, tenant_id, as_at_date):
-        """
-        QBO: GET /v3/company/{realmId}/reports/TrialBalance
-        """
+        raise NotImplementedError
+
+    def fetch_period_movement(self, access_token, tenant_id, from_date, to_date):
+        raise NotImplementedError
+
+    def is_configured(self):
+        return bool(self.get_client_id() and self.get_client_secret())
+
+
+@register_provider("xero")
+class XeroProvider(BaseProvider):
+    name = "xero"
+    display_name = "Xero"
+    icon_class = "bi bi-cloud"
+    authorize_url = "https://login.xero.com/identity/connect/authorize"
+    token_url = "https://identity.xero.com/connect/token"
+    scopes = "offline_access accounting.reports.read"
+    supports_period_movement_import = True
+
+    def get_client_id(self):
+        return getattr(settings, "XERO_CLIENT_ID", "")
+
+    def get_client_secret(self):
+        return getattr(settings, "XERO_CLIENT_SECRET", "")
+
+    def exchange_code(self, code, redirect_uri):
+        resp = requests.post(
+            self.token_url,
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": redirect_uri,
+                "client_id": self.get_client_id(),
+                "client_secret": self.get_client_secret(),
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def refresh_tokens(self, refresh_token):
+        resp = requests.post(
+            self.token_url,
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+                "client_id": self.get_client_id(),
+                "client_secret": self.get_client_secret(),
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_tenants(self, access_token):
+        resp = requests.get(
+            "https://api.xero.com/connections",
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return [
+            {
+                "id": t.get("tenantId"),
+                "name": t.get("tenantName"),
+                "raw": t,
+            }
+            for t in data
+        ]
+
+    def fetch_trial_balance(self, access_token, tenant_id, as_at_date):
+        url = "https://api.xero.com/api.xro/2.0/Reports/TrialBalance"
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Xero-tenant-id": tenant_id,
+            "Accept": "application/json",
+        }
+        params = {"date": as_at_date.isoformat()}
+        resp = requests.get(url, headers=headers, params=params, timeout=30)
+        resp.raise_for_status()
+        report = (resp.json().get("Reports") or [{}])[0]
+        rows = report.get("Rows", [])
+        lines = []
+        for row in rows:
+            if row.get("RowType") != "Row":
+                continue
+            cells = row.get("Cells", [])
+            if len(cells) < 4:
+                continue
+            account_name = (cells[0].get("Value") or "").strip()
+            if not account_name:
+                continue
+            code = (cells[0].get("Attributes") or [{}])[0].get("Value", "") if cells[0].get("Attributes") else ""
+            debit = _to_decimal(cells[1].get("Value"))
+            credit = _to_decimal(cells[2].get("Value"))
+            lines.append({
+                "account_code": code,
+                "account_name": account_name,
+                "opening_balance": Decimal("0"),
+                "debit": debit,
+                "credit": credit,
+            })
+        return lines
+
+    def fetch_period_movement(self, access_token, tenant_id, from_date, to_date):
+        url = "https://api.xero.com/api.xro/2.0/Reports/GeneralLedger"
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Xero-tenant-id": tenant_id,
+            "Accept": "application/json",
+        }
+        params = {
+            "fromDate": from_date.isoformat(),
+            "toDate": to_date.isoformat(),
+        }
+        resp = requests.get(url, headers=headers, params=params, timeout=30)
+        resp.raise_for_status()
+        report = (resp.json().get("Reports") or [{}])[0]
+        rows = report.get("Rows", [])
+        lines = []
+        current_section = ""
+        for row in rows:
+            row_type = row.get("RowType")
+            if row_type == "Header":
+                continue
+            if row_type == "Section":
+                section_rows = row.get("Rows", [])
+                header = row.get("Title", "")
+                if header:
+                    current_section = header
+                for child in section_rows:
+                    if child.get("RowType") != "Row":
+                        continue
+                    cells = child.get("Cells", [])
+                    if len(cells) < 6:
+                        continue
+                    account_name = (cells[0].get("Value") or current_section or "").strip()
+                    if not account_name:
+                        continue
+                    movement = _to_decimal(cells[4].get("Value"))
+                    if movement == 0:
+                        continue
+                    debit = movement if movement > 0 else Decimal("0")
+                    credit = -movement if movement < 0 else Decimal("0")
+                    lines.append({
+                        "account_code": "",
+                        "account_name": account_name,
+                        "opening_balance": _to_decimal(cells[1].get("Value")),
+                        "debit": debit,
+                        "credit": credit,
+                        "movement_amount": movement,
+                    })
+        return lines
+
+
+@register_provider("quickbooks")
+class QuickBooksProvider(BaseProvider):
+    name = "quickbooks"
+    display_name = "QuickBooks"
+    icon_class = "bi bi-quickbooks"
+    authorize_url = "https://appcenter.intuit.com/connect/oauth2"
+    token_url = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
+    scopes = "com.intuit.quickbooks.accounting"
+    supports_period_movement_import = True
+
+    def get_client_id(self):
+        return getattr(settings, "QB_CLIENT_ID", "")
+
+    def get_client_secret(self):
+        return getattr(settings, "QB_CLIENT_SECRET", "")
+
+    def get_authorize_params(self, redirect_uri, state):
+        params = super().get_authorize_params(redirect_uri, state)
+        params["response_type"] = "code"
+        return params
+
+    def exchange_code(self, code, redirect_uri):
+        resp = requests.post(
+            self.token_url,
+            auth=(self.get_client_id(), self.get_client_secret()),
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": redirect_uri,
+            },
+            headers={"Accept": "application/json"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def refresh_tokens(self, refresh_token):
+        resp = requests.post(
+            self.token_url,
+            auth=(self.get_client_id(), self.get_client_secret()),
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+            },
+            headers={"Accept": "application/json"},
+            timeout=30,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_tenants(self, access_token):
+        return []
+
+    def fetch_trial_balance(self, access_token, tenant_id, as_at_date):
         base_url = f"https://quickbooks.api.intuit.com/v3/company/{tenant_id}"
         params = {"minorversion": "65"}
         if as_at_date:
@@ -139,10 +340,6 @@ class BaseProvider:
         return lines
 
     def fetch_period_movement(self, access_token, tenant_id, from_date, to_date):
-        """
-        QBO: GET /v3/company/{realmId}/reports/GeneralLedger
-        Import net movement only from the report's Net Activity column.
-        """
         base_url = f"https://quickbooks.api.intuit.com/v3/company/{tenant_id}"
         params = {
             "minorversion": "65",
@@ -337,11 +534,6 @@ class BaseProvider:
                 f"Period: {from_date.isoformat()} to {to_date.isoformat()}."
             )
         return lines
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def _to_decimal(value):
     """Safely convert a value to Decimal."""
