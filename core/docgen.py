@@ -202,6 +202,27 @@ def _start_report_section(doc, entity, report_title, footer_type="statement",
     section.bottom_margin = Cm(2.54)
     section.left_margin = Cm(2.54)
     section.right_margin = Cm(2.54)
+
+    # Remove any paragraph borders from the section-break paragraph that
+    # python-docx inserts.  Without this, the last paragraph of the
+    # previous section can carry over a bottom-border (e.g. from a
+    # subtotal row), producing a spurious double horizontal line at the
+    # top of the next page alongside the header underline.
+    body = doc.element.body
+    # The section-break paragraph is the last <w:p> before this section's
+    # <w:sectPr>.  Walk backwards from the new sectPr to find it.
+    sect_prs = body.findall(qn('w:sectPr'))
+    if len(sect_prs) >= 2:
+        # The second-to-last sectPr belongs to the previous section; the
+        # section-break paragraph is the <w:p> immediately before it.
+        prev_sectPr = sect_prs[-2]
+        prev_el = prev_sectPr.getprevious()
+        if prev_el is not None and prev_el.tag == qn('w:p'):
+            pPr = prev_el.find(qn('w:pPr'))
+            if pPr is not None:
+                pBdr = pPr.find(qn('w:pBdr'))
+                if pBdr is not None:
+                    pPr.remove(pBdr)
     
     # Use explicit A4 dimensions to avoid swap-based bugs when consecutive
     # sections share the same orientation (e.g., multiple landscape depreciation pages).
@@ -252,16 +273,21 @@ def _start_report_section(doc, entity, report_title, footer_type="statement",
         p.paragraph_format.space_before = Pt(6)
         p.paragraph_format.space_after = Pt(0)
         tab_stops = p.paragraph_format.tab_stops
+        # Tab positions must match FinancialTable column right edges
+        # (from left margin): with note+prior: note@11, current@13.5, prior@16
+        # with prior no note: current@13.5, prior@16
+        # no prior with note: note@12.5, current@16
+        # no prior no note: current@16
         if has_prior:
             if include_note:
-                tab_stops.add_tab_stop(Cm(12), WD_ALIGN_PARAGRAPH.RIGHT)
-            tab_stops.add_tab_stop(Cm(14), WD_ALIGN_PARAGRAPH.RIGHT)
-            tab_stops.add_tab_stop(Cm(16.5), WD_ALIGN_PARAGRAPH.RIGHT)
+                tab_stops.add_tab_stop(Cm(11), WD_ALIGN_PARAGRAPH.RIGHT)
+            tab_stops.add_tab_stop(Cm(13.5), WD_ALIGN_PARAGRAPH.RIGHT)
+            tab_stops.add_tab_stop(Cm(16), WD_ALIGN_PARAGRAPH.RIGHT)
         else:
             if include_note:
-                tab_stops.add_tab_stop(Cm(12), WD_ALIGN_PARAGRAPH.RIGHT)
+                tab_stops.add_tab_stop(Cm(12.5), WD_ALIGN_PARAGRAPH.RIGHT)
             tab_stops.add_tab_stop(Cm(16), WD_ALIGN_PARAGRAPH.RIGHT)
-        
+
         if include_note:
             run = p.add_run("\tNote")
             _set_run_font(run, size=FONT_SIZE_BODY, bold=True)
@@ -270,15 +296,15 @@ def _start_report_section(doc, entity, report_title, footer_type="statement",
         if has_prior and prior_year:
             run = p.add_run(f"\t{prior_year}")
             _set_run_font(run, size=FONT_SIZE_BODY, bold=True)
-        
+
         # Dollar sign line
         p2 = header.add_paragraph()
         p2.paragraph_format.space_before = Pt(0)
         p2.paragraph_format.space_after = Pt(0)
         tab_stops2 = p2.paragraph_format.tab_stops
         if has_prior:
-            tab_stops2.add_tab_stop(Cm(14), WD_ALIGN_PARAGRAPH.RIGHT)
-            tab_stops2.add_tab_stop(Cm(16.5), WD_ALIGN_PARAGRAPH.RIGHT)
+            tab_stops2.add_tab_stop(Cm(13.5), WD_ALIGN_PARAGRAPH.RIGHT)
+            tab_stops2.add_tab_stop(Cm(16), WD_ALIGN_PARAGRAPH.RIGHT)
             run = p2.add_run(f"\t$\t$")
         else:
             tab_stops2.add_tab_stop(Cm(16), WD_ALIGN_PARAGRAPH.RIGHT)
@@ -530,6 +556,26 @@ def _get_tb_sections(fy):
         elif code_num < 6000:
             # 5000-5999 range: COGS/trading (alternative code range)
             sections["cogs"].append(entry)
+
+    # Aggregate lines with the same account name within each section.
+    # Multiple TB lines for the same account (original + adjustments) should
+    # appear as a single consolidated row in the financial statements.
+    for key in sections:
+        raw = sections[key]
+        if not raw:
+            continue
+        agg = OrderedDict()
+        for code, name, current, prior in raw:
+            if name in agg:
+                agg[name] = (
+                    agg[name][0],            # keep first code seen
+                    name,
+                    agg[name][2] + current,  # sum current
+                    agg[name][3] + prior,    # sum prior
+                )
+            else:
+                agg[name] = (code, name, current, prior)
+        sections[key] = list(agg.values())
 
     return sections
 

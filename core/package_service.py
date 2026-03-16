@@ -465,18 +465,38 @@ def _combine_pdfs(fy, entity, existing_types):
             continue
 
         if doc_type == "financial_statements":
-            # Financial statements come from the GeneratedDocument model
-            fs_docs = GeneratedDocument.objects.filter(
-                financial_year=fy,
-                document_type=GeneratedDocument.DocumentType.FINANCIAL_STATEMENTS,
-            ).order_by("-generated_at")
-            for fs_doc in fs_docs[:1]:
-                if fs_doc.file and os.path.exists(fs_doc.file.path):
-                    try:
-                        merger.append(fs_doc.file.path)
-                        docs_added += 1
-                    except Exception as e:
-                        logger.warning("Failed to add FS PDF: %s", e)
+            # Regenerate financial statements without watermarks for the
+            # client package.  Package assembly only runs after Eva has
+            # cleared the year, so DRAFT / AUDIT RISK watermarks must
+            # never appear in the bundled PDF.
+            try:
+                fs_pdf_path = _regenerate_fs_for_package(fy)
+                if fs_pdf_path and os.path.exists(fs_pdf_path):
+                    merger.append(fs_pdf_path)
+                    docs_added += 1
+                else:
+                    # Fallback: use latest stored FS document
+                    fs_docs = GeneratedDocument.objects.filter(
+                        financial_year=fy,
+                        document_type=GeneratedDocument.DocumentType.FINANCIAL_STATEMENTS,
+                    ).order_by("-generated_at")
+                    for fs_doc in fs_docs[:1]:
+                        if fs_doc.file and os.path.exists(fs_doc.file.path):
+                            merger.append(fs_doc.file.path)
+                            docs_added += 1
+            except Exception as e:
+                logger.warning("Failed to regenerate FS for package, using stored copy: %s", e)
+                fs_docs = GeneratedDocument.objects.filter(
+                    financial_year=fy,
+                    document_type=GeneratedDocument.DocumentType.FINANCIAL_STATEMENTS,
+                ).order_by("-generated_at")
+                for fs_doc in fs_docs[:1]:
+                    if fs_doc.file and os.path.exists(fs_doc.file.path):
+                        try:
+                            merger.append(fs_doc.file.path)
+                            docs_added += 1
+                        except Exception as e2:
+                            logger.warning("Failed to add stored FS PDF: %s", e2)
         else:
             # Other documents come from LegalDocument
             legal_docs = LegalDocument.objects.filter(
@@ -521,6 +541,55 @@ def _combine_pdfs(fy, entity, existing_types):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+def _regenerate_fs_for_package(fy):
+    """
+    Regenerate financial statements as a clean PDF (no watermarks) for
+    inclusion in the client package.  Returns the path to a temporary PDF
+    file, or None on failure.
+    """
+    import subprocess
+    import tempfile
+
+    from core.docgen import generate_financial_statements
+
+    # Generate DOCX with is_final=True (no DRAFT watermark) and
+    # has_open_risks=False (no AUDIT RISK watermark).
+    buffer = generate_financial_statements(
+        fy.pk, has_open_risks=False, is_final=True
+    )
+
+    # Write to temp DOCX then convert to PDF via LibreOffice
+    tmpdir = tempfile.mkdtemp(prefix="shub_pkg_")
+    docx_path = os.path.join(tmpdir, "fs.docx")
+    with open(docx_path, "wb") as f:
+        f.write(buffer.read())
+
+    try:
+        subprocess.run(
+            ["libreoffice", "--headless", "--convert-to", "pdf", docx_path,
+             "--outdir", tmpdir],
+            check=True,
+            timeout=120,
+            capture_output=True,
+        )
+    except FileNotFoundError:
+        # LibreOffice not available — try soffice
+        subprocess.run(
+            ["soffice", "--headless", "--convert-to", "pdf", docx_path,
+             "--outdir", tmpdir],
+            check=True,
+            timeout=120,
+            capture_output=True,
+        )
+
+    pdf_path = os.path.join(tmpdir, "fs.pdf")
+    if os.path.exists(pdf_path):
+        return pdf_path
+
+    logger.warning("LibreOffice PDF conversion produced no output for FY %s", fy.pk)
+    return None
+
+
 def _has_director_loan_over_10k(fy):
     """Check if there's a director/shareholder loan balance exceeding $10,000."""
     from core.models import TrialBalanceLine
