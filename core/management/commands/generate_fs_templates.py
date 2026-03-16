@@ -172,26 +172,12 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
                 run.bold = True
 
     # Add Jinja2 for-loop row
-    # docxtpl uses {%tr for item in items %} ... {%tr endfor %}
+    # docxtpl {%tr %} repeats the entire table row
     row = table.add_row()
-    row.cells[0].text = "{%tr for item in " + items_tag + " %}\n{{ item.account_name }}"
+    row.cells[0].text = "{%tr for item in " + items_tag + " %}{{ item.account_name }}"
     row.cells[1].text = ""
     row.cells[2].text = "{{ item.cy_formatted }}"
-    row.cells[3].text = "{%tr endfor %}\n{{ item.py_formatted }}"
-
-    # Fix: docxtpl needs the for/endfor in the first cell
-    # Restructure to use proper docxtpl table row syntax
-    # Clear and redo
-    for cell in row.cells:
-        cell.text = ""
-
-    p0 = row.cells[0].paragraphs[0]
-    p0.text = ""
-
-    # We'll use the simpler approach: just put template tags as text
-    row.cells[0].text = "{{ item.account_name }}"
-    row.cells[2].text = "{{ item.cy_formatted }}"
-    row.cells[3].text = "{{ item.py_formatted }}"
+    row.cells[3].text = "{{ item.py_formatted }}{%tr endfor %}"
 
     for i in range(4):
         for p in row.cells[i].paragraphs:
