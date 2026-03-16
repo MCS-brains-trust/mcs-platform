@@ -478,14 +478,17 @@ def _combine_pdfs(fy, entity, existing_types):
                     fs_added = True
                     logger.info("Package FS: regenerated clean PDF for FY %s", fy.pk)
             except Exception as e:
-                logger.warning("Failed to regenerate FS for package FY %s: %s", fy.pk, e)
+                logger.error(
+                    "FALLBACK TRIGGERED in _combine_pdfs for FY %s: %s",
+                    fy.pk, str(e), exc_info=True,
+                )
 
             if not fs_added:
                 # Fallback: use latest stored FS document.
                 # NOTE: this copy may contain DRAFT watermarks if it was
                 # generated before the FY was finalised.
                 logger.warning(
-                    "Package FS fallback: using stored document for FY %s "
+                    "Package FS fallback (_combine_pdfs): using stored document for FY %s "
                     "(may contain watermarks)", fy.pk
                 )
                 fs_docs = GeneratedDocument.objects.filter(
@@ -554,11 +557,14 @@ def _regenerate_fs_for_package(fy):
 
     from core.fs_template_service import generate_combined_docx
 
+    logger.info("_regenerate_fs_for_package: starting for FY %s", fy.pk)
+
     # Generate DOCX with include_watermark=False (no DRAFT watermark)
     # for inclusion in client package.
     buffer = generate_combined_docx(
         fy.pk, include_watermark=False
     )
+    logger.info("_regenerate_fs_for_package: DOCX generated, %d bytes", buffer.getbuffer().nbytes)
 
     # Write to temp DOCX then convert to PDF via LibreOffice
     tmpdir = tempfile.mkdtemp(prefix="shub_pkg_")

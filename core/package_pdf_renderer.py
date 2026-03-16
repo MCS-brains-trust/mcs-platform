@@ -108,25 +108,77 @@ def build_package_bundle(fy):
 
     for doc_type in DOCUMENT_ORDER:
         if doc_type == "financial_statements":
-            fs_doc = GeneratedDocument.objects.filter(
-                financial_year=fy,
-                document_type=GeneratedDocument.DocumentType.FINANCIAL_STATEMENTS,
-                file_format="pdf",
-            ).order_by("-generated_at").first()
-
-            if not fs_doc:
-                logger.warning("No generated financial statements PDF found for FY %s", fy.pk)
-                continue
-
+            # Primary path: regenerate clean FS via the docxtpl template
+            # service with include_watermark=False, then convert to PDF.
+            fs_added = False
             try:
-                fs_doc.file.seek(0)
-                reader = PdfReader(io.BytesIO(fs_doc.file.read()))
-                for page in reader.pages:
-                    writer.add_page(page)
-                docs_added += 1
-                logger.info("Added Financial Statements from stored PDF (%d pages)", len(reader.pages))
+                from core.fs_template_service import generate_combined_docx
+                import subprocess, tempfile, os as _os
+
+                logger.info("Regenerating clean FS for package bundle FY %s", fy.pk)
+                buffer = generate_combined_docx(fy.pk, include_watermark=False)
+
+                tmpdir = tempfile.mkdtemp(prefix="shub_bundle_fs_")
+                docx_path = _os.path.join(tmpdir, "fs.docx")
+                with open(docx_path, "wb") as f:
+                    f.write(buffer.read())
+
+                lo_result = subprocess.run(
+                    ["libreoffice", "--headless", "--convert-to", "pdf",
+                     "--outdir", tmpdir, docx_path],
+                    capture_output=True, timeout=120,
+                )
+                pdf_path = _os.path.join(tmpdir, "fs.pdf")
+                if _os.path.exists(pdf_path):
+                    with open(pdf_path, "rb") as f:
+                        pdf_bytes_fs = f.read()
+                    reader = PdfReader(io.BytesIO(pdf_bytes_fs))
+                    for page in reader.pages:
+                        writer.add_page(page)
+                    docs_added += 1
+                    fs_added = True
+                    logger.info(
+                        "Added Financial Statements from NEW template render (%d pages)",
+                        len(reader.pages),
+                    )
+                else:
+                    lo_stderr = lo_result.stderr.decode("utf-8", errors="replace")[:500]
+                    logger.error(
+                        "LibreOffice PDF conversion failed for FS bundle FY %s: %s",
+                        fy.pk, lo_stderr,
+                    )
             except Exception as e:
-                logger.warning("Could not add Financial Statements: %s", e)
+                logger.error(
+                    "FALLBACK TRIGGERED for FS in package bundle FY %s: %s",
+                    fy.pk, str(e), exc_info=True,
+                )
+
+            # Fallback: use latest stored FS document.
+            if not fs_added:
+                logger.warning(
+                    "Package bundle FS fallback: using stored PDF for FY %s "
+                    "(may contain DRAFT watermarks)", fy.pk,
+                )
+                fs_doc = GeneratedDocument.objects.filter(
+                    financial_year=fy,
+                    document_type=GeneratedDocument.DocumentType.FINANCIAL_STATEMENTS,
+                ).order_by("-generated_at").first()
+
+                if fs_doc and fs_doc.file:
+                    try:
+                        fs_doc.file.seek(0)
+                        reader = PdfReader(io.BytesIO(fs_doc.file.read()))
+                        for page in reader.pages:
+                            writer.add_page(page)
+                        docs_added += 1
+                        logger.warning(
+                            "Added Financial Statements from STORED PDF fallback (%d pages)",
+                            len(reader.pages),
+                        )
+                    except Exception as e2:
+                        logger.error("Could not add stored FS PDF: %s", e2)
+                else:
+                    logger.error("No stored FS document found for fallback FY %s", fy.pk)
             continue
 
         # LegalDocument types
