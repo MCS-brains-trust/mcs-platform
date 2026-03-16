@@ -94,10 +94,11 @@ def _render_final_financial_statements_pdf_bytes(fy):
     with tempfile.TemporaryDirectory() as tmpdir:
         docx_path = os.path.join(tmpdir, "financial_statements.docx")
         pdf_path = os.path.join(tmpdir, "financial_statements.pdf")
+        lo_profile_dir = os.path.join(tmpdir, "libreoffice-profile")
+        os.makedirs(lo_profile_dir, exist_ok=True)
 
         with open(docx_path, "wb") as f:
             f.write(buffer.getvalue())
-
         lo_bin = None
         for candidate in ["soffice", "libreoffice", "/usr/bin/soffice", "/usr/bin/libreoffice"]:
             try:
@@ -106,12 +107,19 @@ def _render_final_financial_statements_pdf_bytes(fy):
                 break
             except Exception:
                 continue
-
         if not lo_bin:
             raise RuntimeError("LibreOffice is required to generate final financial statements PDF for the client package.")
-
         result = subprocess.run(
-            [lo_bin, "--headless", "--convert-to", "pdf", "--outdir", tmpdir, docx_path],
+            [
+                lo_bin,
+                "--headless",
+                f"-env:UserInstallation=file://{lo_profile_dir}",
+                "--convert-to",
+                "pdf",
+                "--outdir",
+                tmpdir,
+                docx_path,
+            ],
             capture_output=True,
             text=True,
             timeout=120,
