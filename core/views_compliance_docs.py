@@ -162,6 +162,7 @@ def generate_solvency_resolution(request, pk):
         "acn": entity.acn or "",
         "abn": entity.abn or "",
         "directors": [{"name": d.full_name} for d in directors],
+        "financial_year": str(fy.end_date.year),
         "financial_year_end": str(fy.end_date),
         "resolution_date": str(fy.end_date),
     }
@@ -217,6 +218,7 @@ def generate_directors_declaration(request, pk):
         "acn": entity.acn or "",
         "variant": variant,
         "directors": [{"name": d.full_name} for d in directors],
+        "financial_year": str(fy.end_date.year),
         "financial_year_end": str(fy.end_date),
         "signing_director": directors.first().full_name if directors.exists() else "",
     }
@@ -345,6 +347,7 @@ def generate_loan_acknowledgment(request, pk):
         "abn": entity.abn or "",
         "shareholder_name": data.get("shareholder_name", ""),
         "loan_balance": data.get("loan_balance", ""),
+        "financial_year": str(fy.end_date.year),
         "financial_year_end": str(fy.end_date),
         "acknowledgment_date": data.get("acknowledgment_date", str(fy.end_date)),
         "loan_terms": data.get("loan_terms", ""),
@@ -387,6 +390,7 @@ def generate_management_rep_letter(request, pk):
         "entity_type": entity.entity_type,
         "abn": entity.abn or "",
         "acn": entity.acn or "",
+        "financial_year": str(fy.end_date.year),
         "financial_year_end": str(fy.end_date),
         "signatories": [{"name": d.full_name, "role": d.get_role_display()} for d in directors],
     }
@@ -443,6 +447,7 @@ def generate_cover_letter(request, pk):
         "entity_name": entity.entity_name,
         "entity_type": entity.entity_type,
         "abn": entity.abn or "",
+        "financial_year": str(fy.end_date.year),
         "financial_year_end": str(fy.end_date),
         "enclosed_documents": enclosed_list,
         "document_count": len(enclosed_list),

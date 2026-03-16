@@ -11,7 +11,6 @@ Usage:
 import os
 
 from django.conf import settings
-from django.core.files.base import ContentFile
 from django.core.management.base import BaseCommand
 
 from docx import Document
@@ -758,19 +757,12 @@ class Command(BaseCommand):
                 filepath = os.path.join(output_dir, filename)
                 doc.save(filepath)
 
-                # Read file content for Django FileField
-                with open(filepath, "rb") as f:
-                    file_content = f.read()
+                # Relative path from MEDIA_ROOT to the file on disk
+                relative_path = f"fs_templates/defaults/{filename}"
 
                 if existing and force:
                     # Update existing
-                    # Pass just the filename — upload_to="fs_templates/"
-                    # on the model field already provides the directory prefix.
-                    existing.template_file.save(
-                        filename,
-                        ContentFile(file_content),
-                        save=False,
-                    )
+                    existing.template_file = relative_path
                     existing.name = f"{doc_label} — {entity_type.replace('_', ' ').title()}"
                     existing.version = "1.0"
                     existing.save()
@@ -783,13 +775,7 @@ class Command(BaseCommand):
                         entity_type=entity_type,
                         version="1.0",
                         is_active=True,
-                    )
-                    # Pass just the filename — upload_to="fs_templates/"
-                    # on the model field already provides the directory prefix.
-                    tmpl.template_file.save(
-                        filename,
-                        ContentFile(file_content),
-                        save=False,
+                        template_file=relative_path,
                     )
                     tmpl.save()
                     action = "CREATED"
