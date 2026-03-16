@@ -16,6 +16,9 @@ from django.http import JsonResponse
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
 
+from core.governing_doc_retrieval import format_governing_document_context, search_governing_document_chunks
+from core.governing_doc_text import build_chat_excerpt
+
 logger = logging.getLogger(__name__)
 
 
@@ -119,13 +122,11 @@ def _truncate_for_chat(text, limit=12000):
         excerpt += "\n\n[Document truncated for chat context]"
     return excerpt
 
-
 def _safe_file_name(file_field):
     try:
         return Path(file_field.name).name if getattr(file_field, "name", "") else ""
     except Exception:
         return ""
-
 
 def _extract_file_text(file_field):
     try:
@@ -152,7 +153,6 @@ def _extract_file_text(file_field):
         logger.warning(f"Eva context: failed to parse file text: {e}")
         return ""
 
-
 def _append_document_section(sections, heading, metadata_lines, body_text):
     excerpt = _truncate_for_chat(body_text)
     if not excerpt:
@@ -163,8 +163,7 @@ def _append_document_section(sections, heading, metadata_lines, body_text):
     block.append(excerpt)
     sections.append("\n".join(block))
 
-
-def build_context_payload(financial_year):
+def build_context_payload(financial_year, user_query=""):
     """
     Build the full context payload for Eva's chat, including:
     - Entity details (type, name, ABN, FY period)
@@ -268,23 +267,31 @@ Status: {fy.get_status_display()}
             status="active",
             extraction_status__in=["completed", "completed_with_warnings"],
         ).order_by("-is_primary", "-uploaded_at")[:5]
-        for idx, doc in enumerate(governing_docs, start=1):
-            extracted_text = (doc.extracted_text or "").strip()
-            if not extracted_text:
-                continue
-            document_label = doc.original_filename or _safe_file_name(doc.file) or doc.get_document_type_display()
-            heading = "=== PRIMARY GOVERNING DOCUMENT ===" if doc.is_primary and idx == 1 else f"=== GOVERNING DOCUMENT {idx} ==="
-            _append_document_section(
-                sections,
-                heading,
-                [
-                    f"Document Type: {doc.get_document_type_display()}",
-                    f"Filename: {document_label}",
-                    f"Extraction Status: {doc.get_extraction_status_display()}",
-                    f"Status: {doc.get_status_display()}",
-                ],
-                extracted_text,
-            )
+
+        if user_query:
+            retrieved_chunks = search_governing_document_chunks(entity, user_query)
+            if retrieved_chunks:
+                sections.append(format_governing_document_context(retrieved_chunks))
+
+        if not user_query or not retrieved_chunks:
+            for idx, doc in enumerate(governing_docs, start=1):
+                extracted_text = (doc.extracted_text or "").strip()
+                if not extracted_text:
+                    continue
+                document_label = doc.original_filename or _safe_file_name(doc.file) or doc.get_document_type_display()
+                heading = "=== PRIMARY GOVERNING DOCUMENT ===" if doc.is_primary and idx == 1 else f"=== GOVERNING DOCUMENT {idx} ==="
+                _append_document_section(
+                    sections,
+                    heading,
+                    [
+                        f"Document Type: {doc.get_document_type_display()}",
+                        f"Filename: {document_label}",
+                        f"Extraction Status: {doc.get_extraction_status_display()}",
+                        f"Status: {doc.get_status_display()}",
+                        f"Stored Chunks: {getattr(doc, 'chunk_count', 0)}",
+                    ],
+                    extracted_text,
+                )
     except Exception as e:
         logger.warning(f"Eva context: failed to load governing document text: {e}")
 
@@ -428,7 +435,7 @@ def eva_chat_send(request, pk):
     conversation.save(update_fields=["message_count", "last_active_at"])
 
     # Build context
-    entity_context = build_context_payload(fy)
+    entity_context = build_context_payload(fy, user_query=user_message)
 
     # RAG retrieval
     rag_chunks = retrieve_relevant_chunks(user_message, top_k=8)

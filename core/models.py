@@ -4278,6 +4278,11 @@ class GoverningDocument(models.Model):
         help_text="AWS Textract job ID for async OCR processing",
     )
 
+    chunk_count = models.PositiveIntegerField(
+        default=0,
+        help_text="Number of retrieval chunks indexed from the extracted governing document text",
+    )
+
     class Meta:
         ordering = ["-uploaded_at"]
         indexes = [
@@ -4286,6 +4291,36 @@ class GoverningDocument(models.Model):
 
     def __str__(self):
         return f"{self.get_document_type_display()} — {self.entity}"
+
+
+class GoverningDocumentChunk(models.Model):
+    """A retrieval chunk derived from a governing document for EVA chat access."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    governing_document = models.ForeignKey(
+        GoverningDocument, on_delete=models.CASCADE, related_name="chunks"
+    )
+    entity = models.ForeignKey(
+        Entity, on_delete=models.CASCADE, related_name="governing_document_chunks"
+    )
+    chunk_index = models.IntegerField(help_text="Position of this chunk within the governing document")
+    heading = models.CharField(max_length=255, blank=True, default="")
+    text = models.TextField(help_text="Chunk text used for governing-document retrieval")
+    start_char = models.IntegerField(default=0)
+    end_char = models.IntegerField(default=0)
+    token_count = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["governing_document", "chunk_index"]
+        indexes = [
+            models.Index(fields=["entity", "governing_document"]),
+            models.Index(fields=["governing_document", "chunk_index"]),
+        ]
+        unique_together = [("governing_document", "chunk_index")]
+
+    def __str__(self):
+        return f"Chunk {self.chunk_index} of {self.governing_document}"
 
 
 # ---------------------------------------------------------------------------

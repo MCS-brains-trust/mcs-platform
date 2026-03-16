@@ -18,6 +18,9 @@ from pathlib import Path
 from django.core.files.base import ContentFile
 from django.utils import timezone
 
+from core.governing_doc_text import normalize_governing_doc_text
+from core.governing_doc_retrieval import refresh_governing_document_chunks
+
 logger = logging.getLogger(__name__)
 
 # Minimum character threshold before falling back to OCR
@@ -57,15 +60,20 @@ def extract_document_text(governing_document_id):
         text = ""
 
     # Step 2: Check if we got enough text
-    if len(text.strip()) >= MIN_TEXT_THRESHOLD:
-        doc.extracted_text = text
+    normalized_text = normalize_governing_doc_text(text)
+
+    if len(normalized_text) >= MIN_TEXT_THRESHOLD:
+        doc.extracted_text = normalized_text
         doc.extraction_status = "completed"
         doc.save(update_fields=["extracted_text", "extraction_status"])
+        chunk_count = refresh_governing_document_chunks(doc)
+        doc.chunk_count = chunk_count
+        doc.save(update_fields=["chunk_count"])
         logger.info(
             "Native extraction successful for %s: %d chars",
-            governing_document_id, len(text),
+            governing_document_id, len(normalized_text),
         )
-        return {"status": "completed", "chars": len(text), "method": "native"}
+        return {"status": "completed", "chars": len(normalized_text), "method": "native"}
 
     # Step 3: Fall back to AWS Textract (async)
     logger.info(
@@ -93,8 +101,9 @@ def process_textract_callback(governing_document_id, textract_job_id):
 
     try:
         text, low_confidence_pages = _get_textract_result(textract_job_id)
+        normalized_text = normalize_governing_doc_text(text)
 
-        doc.extracted_text = text
+        doc.extracted_text = normalized_text
         doc.low_confidence_pages = low_confidence_pages
 
         if low_confidence_pages:
@@ -105,14 +114,17 @@ def process_textract_callback(governing_document_id, textract_job_id):
         doc.save(update_fields=[
             "extracted_text", "extraction_status", "low_confidence_pages",
         ])
+        chunk_count = refresh_governing_document_chunks(doc)
+        doc.chunk_count = chunk_count
+        doc.save(update_fields=["chunk_count"])
 
         logger.info(
             "Textract processing complete for %s: %d chars, %d low-confidence pages",
-            governing_document_id, len(text), len(low_confidence_pages),
+            governing_document_id, len(normalized_text), len(low_confidence_pages),
         )
         return {
             "status": doc.extraction_status,
-            "chars": len(text),
+            "chars": len(normalized_text),
             "low_confidence_pages": low_confidence_pages,
             "method": "textract",
         }
