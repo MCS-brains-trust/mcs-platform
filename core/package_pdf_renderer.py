@@ -17,6 +17,9 @@ Document order follows DOCUMENT_ORDER in package_service.py:
 """
 import io
 import logging
+import os
+import subprocess
+import tempfile
 from datetime import date
 
 from django.template.loader import render_to_string
@@ -82,13 +85,54 @@ def render_legal_doc_to_pdf_bytes(doc):
         return None
 
 
+def _render_final_financial_statements_pdf_bytes(fy):
+    """Generate fresh final financial statements PDF bytes for bundle assembly."""
+    from core.docgen import generate_financial_statements
+
+    buffer = generate_financial_statements(fy.pk, has_open_risks=False, is_final=True)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        docx_path = os.path.join(tmpdir, "financial_statements.docx")
+        pdf_path = os.path.join(tmpdir, "financial_statements.pdf")
+
+        with open(docx_path, "wb") as f:
+            f.write(buffer.getvalue())
+
+        lo_bin = None
+        for candidate in ["soffice", "libreoffice", "/usr/bin/soffice", "/usr/bin/libreoffice"]:
+            try:
+                subprocess.run([candidate, "--version"], capture_output=True, timeout=5)
+                lo_bin = candidate
+                break
+            except Exception:
+                continue
+
+        if not lo_bin:
+            raise RuntimeError("LibreOffice is required to generate final financial statements PDF for the client package.")
+
+        result = subprocess.run(
+            [lo_bin, "--headless", "--convert-to", "pdf", "--outdir", tmpdir, docx_path],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if result.returncode != 0 or not os.path.exists(pdf_path):
+            raise RuntimeError(
+                f"Failed to convert final financial statements to PDF: {result.stderr.strip() or result.stdout.strip() or 'unknown error'}"
+            )
+
+        with open(pdf_path, "rb") as f:
+            return f.read()
+
+
+
 def build_package_bundle(fy):
     """
     Build a single merged PDF bundle for the given FinancialYear.
     Returns (pdf_bytes, filename) or raises an exception.
     """
     from pypdf import PdfWriter, PdfReader
-    from core.models import LegalDocument, GeneratedDocument
+    from core.models import LegalDocument
 
     writer = PdfWriter()
     docs_added = 0
@@ -108,30 +152,15 @@ def build_package_bundle(fy):
 
     for doc_type in DOCUMENT_ORDER:
         if doc_type == "financial_statements":
-            # Pull from GeneratedDocument
-            fs_doc = GeneratedDocument.objects.filter(
-                financial_year=fy,
-                document_type=GeneratedDocument.DocumentType.FINANCIAL_STATEMENTS,
-                file_format="pdf",
-            ).order_by("-generated_at").first()
-
-            if not fs_doc:
-                # Try any format — may be a docx
-                fs_doc = GeneratedDocument.objects.filter(
-                    financial_year=fy,
-                    document_type=GeneratedDocument.DocumentType.FINANCIAL_STATEMENTS,
-                ).order_by("-generated_at").first()
-
-            if fs_doc and fs_doc.file:
-                try:
-                    fs_doc.file.seek(0)
-                    reader = PdfReader(io.BytesIO(fs_doc.file.read()))
-                    for page in reader.pages:
-                        writer.add_page(page)
-                    docs_added += 1
-                    logger.info("Added Financial Statements (%d pages)", len(reader.pages))
-                except Exception as e:
-                    logger.warning("Could not add Financial Statements: %s", e)
+            try:
+                fs_pdf_bytes = _render_final_financial_statements_pdf_bytes(fy)
+                reader = PdfReader(io.BytesIO(fs_pdf_bytes))
+                for page in reader.pages:
+                    writer.add_page(page)
+                docs_added += 1
+                logger.info("Added Financial Statements (%d pages)", len(reader.pages))
+            except Exception as e:
+                logger.warning("Could not add Financial Statements: %s", e)
             continue
 
         # LegalDocument types
