@@ -469,23 +469,25 @@ def _combine_pdfs(fy, entity, existing_types):
             # client package.  Package assembly only runs after Eva has
             # cleared the year, so DRAFT / AUDIT RISK watermarks must
             # never appear in the bundled PDF.
+            fs_added = False
             try:
                 fs_pdf_path = _regenerate_fs_for_package(fy)
                 if fs_pdf_path and os.path.exists(fs_pdf_path):
                     merger.append(fs_pdf_path)
                     docs_added += 1
-                else:
-                    # Fallback: use latest stored FS document
-                    fs_docs = GeneratedDocument.objects.filter(
-                        financial_year=fy,
-                        document_type=GeneratedDocument.DocumentType.FINANCIAL_STATEMENTS,
-                    ).order_by("-generated_at")
-                    for fs_doc in fs_docs[:1]:
-                        if fs_doc.file and os.path.exists(fs_doc.file.path):
-                            merger.append(fs_doc.file.path)
-                            docs_added += 1
+                    fs_added = True
+                    logger.info("Package FS: regenerated clean PDF for FY %s", fy.pk)
             except Exception as e:
-                logger.warning("Failed to regenerate FS for package, using stored copy: %s", e)
+                logger.warning("Failed to regenerate FS for package FY %s: %s", fy.pk, e)
+
+            if not fs_added:
+                # Fallback: use latest stored FS document.
+                # NOTE: this copy may contain DRAFT watermarks if it was
+                # generated before the FY was finalised.
+                logger.warning(
+                    "Package FS fallback: using stored document for FY %s "
+                    "(may contain watermarks)", fy.pk
+                )
                 fs_docs = GeneratedDocument.objects.filter(
                     financial_year=fy,
                     document_type=GeneratedDocument.DocumentType.FINANCIAL_STATEMENTS,

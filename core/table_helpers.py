@@ -59,12 +59,12 @@ def _clear_cell_borders(cell):
     tcBorders = tcPr.find(qn('w:tcBorders'))
     if tcBorders is not None:
         tcPr.remove(tcBorders)
-    # Set all borders to none explicitly
+    # Set all borders to nil explicitly
     _set_cell_border(cell,
-                     top={"val": "none", "sz": 0, "color": "auto"},
-                     bottom={"val": "none", "sz": 0, "color": "auto"},
-                     start={"val": "none", "sz": 0, "color": "auto"},
-                     end={"val": "none", "sz": 0, "color": "auto"})
+                     top={"val": "nil", "sz": 0, "color": "auto"},
+                     bottom={"val": "nil", "sz": 0, "color": "auto"},
+                     start={"val": "nil", "sz": 0, "color": "auto"},
+                     end={"val": "nil", "sz": 0, "color": "auto"})
 
 
 def _set_run_font(run, size=FONT_SIZE_BODY, bold=False, italic=False, name=FONT_NAME):
@@ -168,18 +168,18 @@ class FinancialTable:
         self.table.alignment = WD_TABLE_ALIGNMENT.CENTER
         self.table.autofit = False
         
-        # Remove all table borders
+        # Remove all table borders — use "nil" (not "none") to ensure
+        # no borders render in any Word implementation or PDF converter.
         tbl = self.table._tbl
         tblPr = tbl.tblPr if tbl.tblPr is not None else parse_xml(f'<w:tblPr {nsdecls("w")}/>')
-        # Set table borders to none
         tblBorders = parse_xml(
             f'<w:tblBorders {nsdecls("w")}>'
-            f'  <w:top w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
-            f'  <w:left w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
-            f'  <w:bottom w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
-            f'  <w:right w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
-            f'  <w:insideH w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
-            f'  <w:insideV w:val="none" w:sz="0" w:space="0" w:color="auto"/>'
+            f'  <w:top w:val="nil"/>'
+            f'  <w:left w:val="nil"/>'
+            f'  <w:bottom w:val="nil"/>'
+            f'  <w:right w:val="nil"/>'
+            f'  <w:insideH w:val="nil"/>'
+            f'  <w:insideV w:val="nil"/>'
             f'</w:tblBorders>'
         )
         # Remove existing borders if any

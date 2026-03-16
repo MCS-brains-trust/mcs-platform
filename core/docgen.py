@@ -28,11 +28,15 @@ from docx.enum.section import WD_ORIENT
 from docx.oxml.ns import qn, nsdecls
 from docx.oxml import parse_xml
 
+import logging
+
 from .models import (
     Entity, FinancialYear, TrialBalanceLine, AccountMapping,
     EntityOfficer, NoteTemplate, DepreciationAsset,
 )
 from .table_helpers import FinancialTable
+
+logger = logging.getLogger(__name__)
 
 # =============================================================================
 # Constants
@@ -203,26 +207,25 @@ def _start_report_section(doc, entity, report_title, footer_type="statement",
     section.left_margin = Cm(2.54)
     section.right_margin = Cm(2.54)
 
-    # Remove any paragraph borders from the section-break paragraph that
-    # python-docx inserts.  Without this, the last paragraph of the
-    # previous section can carry over a bottom-border (e.g. from a
-    # subtotal row), producing a spurious double horizontal line at the
-    # top of the next page alongside the header underline.
+    # Remove paragraph borders from the section-break paragraph that
+    # python-docx inserts.  When add_section() is called, the previous
+    # section's <w:sectPr> is embedded inside the last paragraph's
+    # <w:pPr>.  If that paragraph (or one just before it) carries a
+    # bottom-border from a subtotal/total, it produces a spurious double
+    # horizontal line at the top of the next page alongside the header
+    # underline.  Walk backwards from the end of the body and strip
+    # paragraph borders from the section-break paragraph.
     body = doc.element.body
-    # The section-break paragraph is the last <w:p> before this section's
-    # <w:sectPr>.  Walk backwards from the new sectPr to find it.
-    sect_prs = body.findall(qn('w:sectPr'))
-    if len(sect_prs) >= 2:
-        # The second-to-last sectPr belongs to the previous section; the
-        # section-break paragraph is the <w:p> immediately before it.
-        prev_sectPr = sect_prs[-2]
-        prev_el = prev_sectPr.getprevious()
-        if prev_el is not None and prev_el.tag == qn('w:p'):
-            pPr = prev_el.find(qn('w:pPr'))
-            if pPr is not None:
+    # Find the last <w:p> in the body that contains a <w:pPr>/<w:sectPr>
+    # — that is the section-break paragraph for the section we just created.
+    for el in reversed(list(body)):
+        if el.tag == qn('w:p'):
+            pPr = el.find(qn('w:pPr'))
+            if pPr is not None and pPr.find(qn('w:sectPr')) is not None:
                 pBdr = pPr.find(qn('w:pBdr'))
                 if pBdr is not None:
                     pPr.remove(pBdr)
+                break
     
     # Use explicit A4 dimensions to avoid swap-based bugs when consecutive
     # sections share the same orientation (e.g., multiple landscape depreciation pages).
@@ -560,22 +563,34 @@ def _get_tb_sections(fy):
     # Aggregate lines with the same account name within each section.
     # Multiple TB lines for the same account (original + adjustments) should
     # appear as a single consolidated row in the financial statements.
+    # Uses case-insensitive, whitespace-normalised key so that e.g.
+    # "Computer expenses" and "Computer Expenses" merge into one row.
     for key in sections:
         raw = sections[key]
         if not raw:
             continue
-        agg = OrderedDict()
+        agg = OrderedDict()          # norm_key -> (code, display_name, current, prior)
+        name_counts = {}             # norm_key -> {original_name: count}
         for code, name, current, prior in raw:
-            if name in agg:
-                agg[name] = (
-                    agg[name][0],            # keep first code seen
-                    name,
-                    agg[name][2] + current,  # sum current
-                    agg[name][3] + prior,    # sum prior
+            norm = name.strip().lower()
+            if norm in agg:
+                agg[norm] = (
+                    agg[norm][0],            # keep first code seen
+                    agg[norm][1],            # keep display name (updated below)
+                    agg[norm][2] + current,  # sum current
+                    agg[norm][3] + prior,    # sum prior
                 )
+                name_counts[norm][name] = name_counts[norm].get(name, 0) + 1
             else:
-                agg[name] = (code, name, current, prior)
+                agg[norm] = (code, name, current, prior)
+                name_counts[norm] = {name: 1}
+        # Pick the most-frequently-occurring original name as the display name
+        for norm in agg:
+            best_name = max(name_counts[norm], key=name_counts[norm].get)
+            agg[norm] = (agg[norm][0], best_name, agg[norm][2], agg[norm][3])
         sections[key] = list(agg.values())
+        logger.debug("_get_tb_sections [%s]: %d raw lines -> %d aggregated rows",
+                      key, len(raw), len(agg))
 
     return sections
 
@@ -718,14 +733,15 @@ def _add_amount_line(doc, label, current, prior=None, has_prior=False,
     if is_total:
         bold = True
 
-    # Tab stops for alignment
+    # Tab stops for alignment — must match FinancialTable column right edges
+    # and the repeating-header tab stops set in _start_report_section().
     tab_stops = pf.tab_stops
     if has_prior:
-        tab_stops.add_tab_stop(Cm(12), WD_ALIGN_PARAGRAPH.RIGHT)
-        tab_stops.add_tab_stop(Cm(14), WD_ALIGN_PARAGRAPH.RIGHT)
-        tab_stops.add_tab_stop(Cm(16.5), WD_ALIGN_PARAGRAPH.RIGHT)
+        tab_stops.add_tab_stop(Cm(11), WD_ALIGN_PARAGRAPH.RIGHT)
+        tab_stops.add_tab_stop(Cm(13.5), WD_ALIGN_PARAGRAPH.RIGHT)
+        tab_stops.add_tab_stop(Cm(16), WD_ALIGN_PARAGRAPH.RIGHT)
     else:
-        tab_stops.add_tab_stop(Cm(12), WD_ALIGN_PARAGRAPH.RIGHT)
+        tab_stops.add_tab_stop(Cm(11), WD_ALIGN_PARAGRAPH.RIGHT)
         tab_stops.add_tab_stop(Cm(16), WD_ALIGN_PARAGRAPH.RIGHT)
 
     # Indent
@@ -762,15 +778,16 @@ def _add_column_headers(doc, year, has_prior=False, prior_year=None, include_not
     pf = p.paragraph_format
     pf.space_after = Pt(0)
 
+    # Tab stops must match FinancialTable column right edges and header tab stops
     tab_stops = pf.tab_stops
     if has_prior:
         if include_note:
-            tab_stops.add_tab_stop(Cm(12), WD_ALIGN_PARAGRAPH.RIGHT)
-        tab_stops.add_tab_stop(Cm(14), WD_ALIGN_PARAGRAPH.RIGHT)
-        tab_stops.add_tab_stop(Cm(16.5), WD_ALIGN_PARAGRAPH.RIGHT)
+            tab_stops.add_tab_stop(Cm(11), WD_ALIGN_PARAGRAPH.RIGHT)
+        tab_stops.add_tab_stop(Cm(13.5), WD_ALIGN_PARAGRAPH.RIGHT)
+        tab_stops.add_tab_stop(Cm(16), WD_ALIGN_PARAGRAPH.RIGHT)
     else:
         if include_note:
-            tab_stops.add_tab_stop(Cm(12), WD_ALIGN_PARAGRAPH.RIGHT)
+            tab_stops.add_tab_stop(Cm(12.5), WD_ALIGN_PARAGRAPH.RIGHT)
         tab_stops.add_tab_stop(Cm(16), WD_ALIGN_PARAGRAPH.RIGHT)
 
     if include_note:
@@ -790,8 +807,8 @@ def _add_column_headers(doc, year, has_prior=False, prior_year=None, include_not
     pf2.space_after = Pt(0)
     tab_stops2 = pf2.tab_stops
     if has_prior:
-        tab_stops2.add_tab_stop(Cm(14), WD_ALIGN_PARAGRAPH.RIGHT)
-        tab_stops2.add_tab_stop(Cm(16.5), WD_ALIGN_PARAGRAPH.RIGHT)
+        tab_stops2.add_tab_stop(Cm(13.5), WD_ALIGN_PARAGRAPH.RIGHT)
+        tab_stops2.add_tab_stop(Cm(16), WD_ALIGN_PARAGRAPH.RIGHT)
         run = p2.add_run(f"\t$\t$")
     else:
         tab_stops2.add_tab_stop(Cm(16), WD_ALIGN_PARAGRAPH.RIGHT)
