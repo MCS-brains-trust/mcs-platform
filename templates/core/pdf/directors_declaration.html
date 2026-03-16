@@ -13,8 +13,8 @@
   table.meta td:first-child { font-weight: bold; background: #ffffff; width: 35%; }
   h2 { font-size: 11pt; color: #000000; border-bottom: 1px solid #000000; padding-bottom: 3px; margin-top: 18px; }
   p { margin: 6px 0; }
-  ol { margin: 8px 0; padding-left: 22px; }
-  li { margin-bottom: 6px; }
+  .numbered { margin: 4px 0 4px 22px; text-indent: -22px; }
+  .sub-numbered { margin: 4px 0 4px 44px; text-indent: -22px; }
   .sig-block { margin-top: 36px; page-break-inside: avoid; }
   .sig-line { border-top: 1px solid #333; width: 55%; margin-top: 38px; margin-bottom: 4px; }
   .disclaimer { margin-top: 28px; padding: 9px; background: #ffffff; border-left: 3px solid #000000; font-size: 8pt; color: #000000; }
@@ -38,16 +38,11 @@
 
 <p>The directors of <strong>{{ entity_name }}</strong> declare that:</p>
 
-<ol>
-  <li>The financial statements and notes set out on the following pages are in accordance with the <em>Corporations Act 2001</em> (Cth), including:
-    <ol type="a">
-      <li>complying with Accounting Standards and the <em>Corporations Regulations 2001</em>; and</li>
-      <li>giving a true and fair view of the financial position of the Company as at {{ financial_year_end|default:financial_year }} and of its performance for the financial year ended on that date.</li>
-    </ol>
-  </li>
-  <li>In the directors' opinion, there are reasonable grounds to believe that the Company will be able to pay its debts as and when they become due and payable.</li>
-  {% if small_company_relief %}<li>The Company has applied the relief available to it under ASIC Corporations (Audit Relief) Instrument 2016/784 and accordingly the financial statements have not been audited.</li>{% endif %}
-</ol>
+<p class="numbered">1. The financial statements and notes set out on the following pages are in accordance with the <em>Corporations Act 2001</em> (Cth), including:</p>
+<p class="sub-numbered">(a) complying with Accounting Standards and the <em>Corporations Regulations 2001</em>; and</p>
+<p class="sub-numbered">(b) giving a true and fair view of the financial position of the Company as at {{ financial_year_end|default:financial_year }} and of its performance for the financial year ended on that date.</p>
+<p class="numbered">2. In the directors' opinion, there are reasonable grounds to believe that the Company will be able to pay its debts as and when they become due and payable.</p>
+{% if small_company_relief %}<p class="numbered">3. The Company has applied the relief available to it under ASIC Corporations (Audit Relief) Instrument 2016/784 and accordingly the financial statements have not been audited.</p>{% endif %}
 
 <p>This declaration is made in accordance with a resolution of the Board of Directors.</p>
 

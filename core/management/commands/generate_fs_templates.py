@@ -102,6 +102,28 @@ def _set_table_full_width(table):
     tblPr.append(tblW)
 
 
+def _add_total_row(doc, label, cy_tag, py_tag, size=None, grand_total=False):
+    """Add a single-row 4-column table for a total/summary line (label, note, CY, PY)."""
+    font_size = size or FONT_SIZE
+    table = doc.add_table(rows=1, cols=4)
+    _set_table_full_width(table)
+    table.autofit = False
+    for i, width in enumerate(COL_WIDTHS):
+        table.columns[i].width = width
+    row = table.rows[0]
+    row.cells[0].text = label
+    row.cells[1].text = ""
+    row.cells[2].text = cy_tag
+    row.cells[3].text = py_tag
+    for i in range(4):
+        for p in row.cells[i].paragraphs:
+            p.alignment = WD_ALIGN_PARAGRAPH.RIGHT if i >= 2 else WD_ALIGN_PARAGRAPH.LEFT
+            for run in p.runs:
+                run.font.name = FONT_NAME
+                run.font.size = font_size
+                run.bold = True
+
+
 def _add_watermark_header(doc):
     """Add a header with entity name left, DRAFT watermark right."""
     section = doc.sections[0]
@@ -342,7 +364,7 @@ def _build_balance_sheet(entity_type):
     doc.add_paragraph("")
 
     # Total Assets
-    _add_para(doc, "Total Assets: {{ total_assets_cy }}  (PY: {{ total_assets_py }})", bold=True)
+    _add_total_row(doc, "Total Assets", "{{ total_assets_cy }}", "{{ total_assets_py }}")
     doc.add_paragraph("")
 
     # Current Liabilities
@@ -358,11 +380,11 @@ def _build_balance_sheet(entity_type):
     doc.add_paragraph("")
 
     # Total Liabilities
-    _add_para(doc, "Total Liabilities: {{ total_liabilities_cy }}  (PY: {{ total_liabilities_py }})", bold=True)
+    _add_total_row(doc, "Total Liabilities", "{{ total_liabilities_cy }}", "{{ total_liabilities_py }}")
     doc.add_paragraph("")
 
     # Net Assets
-    _add_para(doc, "Net Assets: {{ net_assets_cy }}  (PY: {{ net_assets_py }})", bold=True, size=Pt(12))
+    _add_total_row(doc, "Net Assets", "{{ net_assets_cy }}", "{{ net_assets_py }}", size=Pt(12))
     doc.add_paragraph("")
 
     # Equity

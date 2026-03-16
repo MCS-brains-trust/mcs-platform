@@ -13,8 +13,7 @@
   table.meta td:first-child { font-weight: bold; background: #ffffff; width: 35%; }
   h2 { font-size: 11pt; color: #000000; border-bottom: 1px solid #000000; padding-bottom: 3px; margin-top: 18px; }
   p { margin: 6px 0; }
-  ol { margin: 8px 0; padding-left: 22px; }
-  li { margin-bottom: 5px; }
+  .numbered { margin: 4px 0 4px 22px; text-indent: -22px; }
   .sig-block { margin-top: 36px; page-break-inside: avoid; }
   .sig-line { border-top: 1px solid #333; width: 55%; margin-top: 38px; margin-bottom: 4px; }
   .disclaimer { margin-top: 28px; padding: 9px; background: #ffffff; border-left: 3px solid #000000; font-size: 8pt; color: #000000; }
@@ -39,27 +38,21 @@
 <p>This letter is provided in connection with your preparation of the financial statements of <strong>{{ entity_name }}</strong> for the year ended {{ financial_year_end|default:financial_year }}. We confirm, to the best of our knowledge and belief, the following representations:</p>
 
 <h2>Financial Statements</h2>
-<ol>
-  <li>The financial statements give a true and fair view of the financial position of the entity and of its financial performance and cash flows for the year in accordance with applicable accounting standards.</li>
-  <li>All transactions have been recorded in the accounting records and are reflected in the financial statements.</li>
-  <li>We have disclosed to you all information relevant to the preparation of the financial statements.</li>
-</ol>
+<p class="numbered">1. The financial statements give a true and fair view of the financial position of the entity and of its financial performance and cash flows for the year in accordance with applicable accounting standards.</p>
+<p class="numbered">2. All transactions have been recorded in the accounting records and are reflected in the financial statements.</p>
+<p class="numbered">3. We have disclosed to you all information relevant to the preparation of the financial statements.</p>
 
 <h2>Completeness of Information</h2>
-<ol>
-  <li>There are no material transactions that have not been properly recorded in the accounting records underlying the financial statements.</li>
-  <li>We have no plans or intentions that may materially affect the carrying value or classification of assets and liabilities.</li>
-  <li>All related party relationships and transactions have been disclosed.</li>
-  <li>All subsequent events requiring adjustment or disclosure in the financial statements have been adjusted or disclosed.</li>
-</ol>
+<p class="numbered">1. There are no material transactions that have not been properly recorded in the accounting records underlying the financial statements.</p>
+<p class="numbered">2. We have no plans or intentions that may materially affect the carrying value or classification of assets and liabilities.</p>
+<p class="numbered">3. All related party relationships and transactions have been disclosed.</p>
+<p class="numbered">4. All subsequent events requiring adjustment or disclosure in the financial statements have been adjusted or disclosed.</p>
 
 <h2>Compliance</h2>
-<ol>
-  <li>The entity has complied with all aspects of contractual agreements that could have a material effect on the financial statements.</li>
-  <li>We are not aware of any actual or possible litigation and claims whose effects should be considered when preparing the financial statements.</li>
-  {% if div7a_applicable %}<li>All Division 7A loan agreements are complying loans under the <em>Income Tax Assessment Act 1936</em> (Cth), and minimum yearly repayments have been made.</li>{% endif %}
-  {% if superannuation_applicable %}<li>All superannuation guarantee obligations have been met in full and on time for the financial year.</li>{% endif %}
-</ol>
+<p class="numbered">1. The entity has complied with all aspects of contractual agreements that could have a material effect on the financial statements.</p>
+<p class="numbered">2. We are not aware of any actual or possible litigation and claims whose effects should be considered when preparing the financial statements.</p>
+{% if div7a_applicable %}<p class="numbered">3. All Division 7A loan agreements are complying loans under the <em>Income Tax Assessment Act 1936</em> (Cth), and minimum yearly repayments have been made.</p>{% endif %}
+{% if superannuation_applicable %}<p class="numbered">{% if div7a_applicable %}4{% else %}3{% endif %}. All superannuation guarantee obligations have been met in full and on time for the financial year.</p>{% endif %}
 
 <h2>Authorised Signatures</h2>
 {% if signatories %}
