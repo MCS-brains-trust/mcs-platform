@@ -5643,16 +5643,13 @@ def generate_document(request, pk):
     if fmt not in ("docx", "pdf"):
         fmt = "docx"
 
-    from .docgen import generate_financial_statements
+    from .fs_template_service import generate_combined_docx
 
-    # is_final: suppress DRAFT watermark once Eva has cleared the year for package assembly
-    is_final = fy.can_assemble_package
-    # has_open_risks: only apply AUDIT RISK watermark if there are open risk flags
-    # AND Eva has not yet cleared the year (a cleared review means all risks resolved)
-    has_open_risks = (not is_final) and fy.risk_flags.filter(status="open").exists()
+    # include_watermark: suppress DRAFT watermark once Eva has cleared the year
+    include_watermark = not fy.can_assemble_package
 
     try:
-        buffer = generate_financial_statements(fy.pk, has_open_risks=has_open_risks, is_final=is_final)
+        buffer = generate_combined_docx(fy.pk, include_watermark=include_watermark)
     except Exception as e:
         messages.error(request, f"Document generation failed: {e}")
         return redirect("core:financial_year_detail", pk=pk)

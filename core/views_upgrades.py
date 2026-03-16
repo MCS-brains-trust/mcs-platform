@@ -218,11 +218,10 @@ def regenerate_document(request, pk):
 
     # Generate the document based on type
     if doc_type == "financial_statements":
-        from .docgen import generate_financial_statements
-        is_final = fy.can_assemble_package
-        has_open_risks = (not is_final) and fy.risk_flags.filter(status="open").exists()
+        from .fs_template_service import generate_combined_docx
+        include_watermark = not fy.can_assemble_package
         try:
-            buffer = generate_financial_statements(fy.pk, has_open_risks=has_open_risks, is_final=is_final)
+            buffer = generate_combined_docx(fy.pk, include_watermark=include_watermark)
         except Exception as e:
             messages.error(request, f"Document generation failed: {e}")
             return redirect("core:financial_year_detail", pk=pk)
@@ -317,10 +316,9 @@ def bulk_regenerate(request, pk):
 
         try:
             if doc_type == "financial_statements":
-                from .docgen import generate_financial_statements
-                is_final = fy.can_assemble_package
-                has_open_risks = (not is_final) and fy.risk_flags.filter(status="open").exists()
-                buffer = generate_financial_statements(fy.pk, has_open_risks=has_open_risks, is_final=is_final)
+                from .fs_template_service import generate_combined_docx
+                include_watermark = not fy.can_assemble_package
+                buffer = generate_combined_docx(fy.pk, include_watermark=include_watermark)
             elif doc_type == "distribution_minutes":
                 from .distmin_gen import generate_distribution_minutes as gen_distmin
                 buffer = gen_distmin(fy.pk)

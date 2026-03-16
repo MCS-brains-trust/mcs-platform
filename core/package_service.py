@@ -552,12 +552,12 @@ def _regenerate_fs_for_package(fy):
     import subprocess
     import tempfile
 
-    from core.docgen import generate_financial_statements
+    from core.fs_template_service import generate_combined_docx
 
-    # Generate DOCX with is_final=True (no DRAFT watermark) and
-    # has_open_risks=False (no AUDIT RISK watermark).
-    buffer = generate_financial_statements(
-        fy.pk, has_open_risks=False, is_final=True
+    # Generate DOCX with include_watermark=False (no DRAFT watermark)
+    # for inclusion in client package.
+    buffer = generate_combined_docx(
+        fy.pk, include_watermark=False
     )
 
     # Write to temp DOCX then convert to PDF via LibreOffice

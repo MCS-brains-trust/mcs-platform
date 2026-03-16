@@ -1462,17 +1462,29 @@ class JournalLine(models.Model):
 # ---------------------------------------------------------------------------
 class FinancialStatementTemplate(models.Model):
     """
-    LEGACY — A Word document template for a specific entity type.
-    Retained for backward compatibility. See DocumentTemplate for the new
-    JSON-driven architecture.
+    Stores uploaded .docx templates for document generation via docxtpl.
+    One active template per (document_type, entity_type) combination.
     """
+
+    class DocumentType(models.TextChoices):
+        COVER = "COVER", "Cover Page"
+        DETAILED_PL = "DETAILED_PL", "Detailed Profit and Loss"
+        BALANCE_SHEET = "BALANCE_SHEET", "Balance Sheet"
+        SUMMARY_PL = "SUMMARY_PL", "Summary P&L"
+        NOTES = "NOTES", "Notes to Financial Statements"
+        DECLARATION = "DECLARATION", "Declaration"
+        COMPILATION = "COMPILATION", "Compilation Report"
+        DISTRIBUTION = "DISTRIBUTION", "Distribution Summary"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255)
-    entity_type = models.CharField(
-        max_length=20, choices=Entity.EntityType.choices
+    document_type = models.CharField(
+        max_length=20, choices=DocumentType.choices, default="COVER",
     )
-    template_file = models.FileField(upload_to="templates/")
+    entity_type = models.CharField(
+        max_length=20, choices=Entity.EntityType.choices,
+    )
+    template_file = models.FileField(upload_to="fs_templates/")
     description = models.TextField(blank=True)
     version = models.CharField(max_length=20, default="1.0")
     is_active = models.BooleanField(default=True)
@@ -1480,10 +1492,11 @@ class FinancialStatementTemplate(models.Model):
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        ordering = ["entity_type", "name"]
+        ordering = ["entity_type", "document_type"]
+        unique_together = [("document_type", "entity_type", "is_active")]
 
     def __str__(self):
-        return f"{self.name} (v{self.version})"
+        return f"{self.get_document_type_display()} — {self.get_entity_type_display()} (v{self.version})"
 
 
 class DocumentTemplate(models.Model):
