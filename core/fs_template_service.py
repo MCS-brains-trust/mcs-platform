@@ -594,21 +594,31 @@ def generate_combined_docx(financial_year_id, include_watermark=True):
     The old function returned a single BytesIO; this does the same by appending
     each rendered template's body elements into a single Word document.
     """
+    logger.info("generate_combined_docx called for FY %s (watermark=%s)",
+                financial_year_id, include_watermark)
+
     docs = generate_financial_statements(financial_year_id, include_watermark)
+
+    logger.info("generate_financial_statements returned %d documents: %s",
+                len(docs), list(docs.keys()))
 
     if not docs:
         raise RuntimeError("No templates rendered — check template registration")
 
     # Start with the first document as the base
     ordered_keys = [dt for dt in DOCUMENT_TYPE_ORDER if dt in docs]
+    logger.info("Ordered keys for combine: %s", ordered_keys)
+
     if not ordered_keys:
         raise RuntimeError("No templates rendered")
 
     first_key = ordered_keys[0]
+    logger.info("Base document: %s (%d bytes)", first_key, docs[first_key].getbuffer().nbytes)
     combined = Document(docs[first_key])
 
     # Append remaining documents
     for key in ordered_keys[1:]:
+        logger.info("Appending document: %s (%d bytes)", key, docs[key].getbuffer().nbytes)
         sub_doc = Document(docs[key])
         # Add a page break before appending
         combined.add_page_break()
@@ -618,6 +628,7 @@ def generate_combined_docx(financial_year_id, include_watermark=True):
     buffer = io.BytesIO()
     combined.save(buffer)
     buffer.seek(0)
+    logger.info("generate_combined_docx complete: %d bytes", buffer.getbuffer().nbytes)
     return buffer
 
 
