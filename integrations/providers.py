@@ -585,56 +585,6 @@ class QuickBooksProvider(BaseProvider):
         data = resp.json()
         lines = []
         rows_data = data.get("Rows", {}).get("Row", [])
-        for section in rows_data:
-            section_rows = section.get("Rows", {}).get("Row", [])
-            for row in section_rows:
-                col_data = row.get("ColData", [])
-                if len(col_data) < 3:
-                    continue
-                account_str = col_data[0].get("value", "")
-                debit = _to_decimal(col_data[1].get("value", "0"))
-                credit = _to_decimal(col_data[2].get("value", "0"))
-                account_id = col_data[0].get("id", "")
-                account_code = account_id if account_id else ""
-                account_name = account_str
-                lines.append({
-                    "account_code": account_code,
-                    "account_name": account_name,
-                    "opening_balance": Decimal("0"),
-                    "debit": debit,
-                    "credit": credit,
-                })
-        return lines
-
-    def fetch_period_movement(self, access_token, tenant_id, from_date, to_date):
-        """
-        QBO: GET /v3/company/{realmId}/reports/GeneralLedger
-        Extract account-level net movements from summary rows in the report and
-        convert them into the debit/credit structure expected by the import wizard.
-        """
-        if not from_date or not to_date:
-            raise ValueError("QuickBooks period movement import requires both from_date and to_date.")
-
-        base_url = f"https://quickbooks.api.intuit.com/v3/company/{tenant_id}"
-        params = {
-            "minorversion": "65",
-            "start_date": from_date.isoformat(),
-            "end_date": to_date.isoformat(),
-        }
-
-        resp = requests.get(
-            f"{base_url}/reports/GeneralLedger",
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "Accept": "application/json",
-            },
-            params=params,
-            timeout=30,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-
-        rows_data = data.get("Rows", {}).get("Row", [])
         columns = data.get("Columns", {}).get("Column", []) or []
         lines = []
         row_types = {}
@@ -660,7 +610,7 @@ class QuickBooksProvider(BaseProvider):
 
         def _col_id(col):
             if not isinstance(col, dict):
-                return ""
+                return ((col.get("id") or col.get("Id") or "")).strip()
             return ((col.get("id") or col.get("Id") or "")).strip()
 
         def _col_map(cols):
@@ -670,18 +620,58 @@ class QuickBooksProvider(BaseProvider):
                 mapped[key] = _col_value(col)
             return mapped
 
-        def _extract_net_activity(mapped):
-            for key in ("net_activity_total", "net_activity", "net_change", "change"):
+        def _extract_numeric_values(cols):
+            values = []
+            for col in cols or []:
+                raw = _col_value(col)
+                if raw == "":
+                    continue
+                try:
+                    values.append(_to_decimal(raw))
+                except Exception:
+                    continue
+            return values
+
+        def _extract_net_activity(mapped, numeric_values=None):
+            for key in (
+                "net_activity_total",
+                "net_activity",
+                "net_change",
+                "change",
+                "amount",
+            ):
                 value = mapped.get(key, "")
                 if value != "":
                     return _to_decimal(value)
+            numeric_values = numeric_values or []
+            if len(numeric_values) >= 4:
+                return numeric_values[-2]
+            if len(numeric_values) >= 3:
+                return numeric_values[-2]
+            if len(numeric_values) == 2:
+                return numeric_values[-1]
+            if len(numeric_values) == 1:
+                return numeric_values[0]
+            return Decimal("0")
+
+        def _extract_opening_balance(mapped, numeric_values=None):
+            for key in ("beginning_balance_total", "beginning_balance", "opening_balance"):
+                value = mapped.get(key, "")
+                if value != "":
+                    return _to_decimal(value)
+            numeric_values = numeric_values or []
+            if numeric_values:
+                return numeric_values[0]
             return Decimal("0")
 
         def _looks_like_detail_row(label):
             label = (label or "").strip()
             if not label:
                 return True
-            return bool(re.match(r"^\d{4}-\d{2}-\d{2}$", label)) or label.lower() in {"beginning balance", "total"}
+            lowered = label.lower()
+            if re.match(r"^\d{4}-\d{2}-\d{2}$", label):
+                return True
+            return lowered in {"beginning balance", "total", "subtotal", "ending balance"}
 
         def append_account_row(account_code, account_name, net_activity, opening_balance="0"):
             account_name = (account_name or "").strip()
@@ -726,8 +716,9 @@ class QuickBooksProvider(BaseProvider):
 
             if summary_cols and current_account_name:
                 mapped = _col_map(summary_cols)
-                net_activity = _extract_net_activity(mapped)
-                opening_balance = mapped.get("beginning_balance_total", mapped.get("beginning_balance", "0"))
+                numeric_values = _extract_numeric_values(summary_cols)
+                net_activity = _extract_net_activity(mapped, numeric_values)
+                opening_balance = _extract_opening_balance(mapped, numeric_values)
                 append_account_row(current_account_code, current_account_name, net_activity, opening_balance)
                 return
 
@@ -738,8 +729,9 @@ class QuickBooksProvider(BaseProvider):
                 candidate_code = first_id or current_account_code
                 if not _looks_like_detail_row(candidate_name):
                     mapped = _col_map(col_data)
-                    net_activity = _extract_net_activity(mapped)
-                    opening_balance = mapped.get("beginning_balance_total", mapped.get("beginning_balance", "0"))
+                    numeric_values = _extract_numeric_values(col_data)
+                    net_activity = _extract_net_activity(mapped, numeric_values)
+                    opening_balance = _extract_opening_balance(mapped, numeric_values)
                     append_account_row(candidate_code, candidate_name, net_activity, opening_balance)
                     return
 
@@ -771,6 +763,7 @@ class QuickBooksProvider(BaseProvider):
                     "to_date": to_date.isoformat(),
                     "row_types": row_types,
                     "raw_preview": json.dumps(rows_data[:3], default=str)[:2000],
+                    "column_names": column_names,
                 },
             )
             raise ValueError(
