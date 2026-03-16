@@ -498,15 +498,16 @@ def render_template(template_db_record, context):
             f"(record pk={template_db_record.pk})"
         )
 
-    doc = DocxTemplate(docx=Document(template_path))
+    doc = Document(template_path)
+    tpl = DocxTemplate(doc)
 
     # Register format_amount as a Jinja2 filter
-    doc.jinja_env.filters["format_amount"] = format_amount
+    tpl.jinja_env.filters["format_amount"] = format_amount
 
-    doc.render(context)
+    tpl.render(context)
 
     buffer = io.BytesIO()
-    doc.save(buffer)
+    tpl.save(buffer)
     buffer.seek(0)
     return buffer
 
