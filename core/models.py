@@ -5226,6 +5226,142 @@ class WorkPaperTemplate(models.Model):
 from .models_office_admin import *  # noqa: F401, F403
 
 
+# ---------------------------------------------------------------------------
+# Crypto Portfolio
+# ---------------------------------------------------------------------------
+class CryptoPortfolio(models.Model):
+    """A named crypto investment portfolio owned by a user."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    owner = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="crypto_portfolios",
+    )
+    name = models.CharField(max_length=255, default="My Crypto Portfolio")
+    exchange = models.CharField(max_length=100, default="Bybit")
+    base_currency = models.CharField(max_length=10, default="USDT")
+    is_active = models.BooleanField(default=True)
+    notes = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["name"]
+        verbose_name = "Crypto Portfolio"
+        verbose_name_plural = "Crypto Portfolios"
+
+    def __str__(self):
+        return f"{self.name} ({self.exchange})"
+
+
+class CryptoTradeImport(models.Model):
+    """Stores uploaded source files for crypto trade history imports."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    portfolio = models.ForeignKey(
+        CryptoPortfolio,
+        on_delete=models.CASCADE,
+        related_name="imports",
+    )
+    source_file = models.FileField(upload_to="crypto_portfolio/imports/")
+    original_filename = models.CharField(max_length=500, blank=True, default="")
+    exchange = models.CharField(max_length=100, default="Bybit")
+    imported_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="crypto_trade_imports",
+    )
+    imported_at = models.DateTimeField(auto_now_add=True)
+    rows_processed = models.PositiveIntegerField(default=0)
+    notes = models.TextField(blank=True, default="")
+
+    class Meta:
+        ordering = ["-imported_at"]
+        verbose_name = "Crypto Trade Import"
+        verbose_name_plural = "Crypto Trade Imports"
+
+    def __str__(self):
+        return self.original_filename or self.source_file.name
+
+
+class CryptoTrade(models.Model):
+    """Normalised trade rows imported from exchange CSV history."""
+
+    class Direction(models.TextChoices):
+        BUY = "BUY", "Buy"
+        SELL = "SELL", "Sell"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    portfolio = models.ForeignKey(
+        CryptoPortfolio,
+        on_delete=models.CASCADE,
+        related_name="trades",
+    )
+    trade_import = models.ForeignKey(
+        CryptoTradeImport,
+        on_delete=models.CASCADE,
+        related_name="trades",
+    )
+    spot_pair = models.CharField(max_length=50)
+    base_asset = models.CharField(max_length=20)
+    quote_asset = models.CharField(max_length=20)
+    order_type = models.CharField(max_length=50, blank=True, default="")
+    direction = models.CharField(max_length=10, choices=Direction.choices)
+    fee_coin = models.CharField(max_length=20, blank=True, default="")
+    exec_fee = models.DecimalField(max_digits=24, decimal_places=12, default=0)
+    filled_value = models.DecimalField(max_digits=24, decimal_places=12, default=0)
+    filled_price = models.DecimalField(max_digits=24, decimal_places=12, default=0)
+    filled_quantity = models.DecimalField(max_digits=24, decimal_places=12, default=0)
+    transaction_id = models.CharField(max_length=100)
+    order_no = models.CharField(max_length=100, blank=True, default="")
+    executed_at = models.DateTimeField()
+    raw_payload = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["executed_at", "created_at"]
+        indexes = [
+            models.Index(fields=["portfolio", "executed_at"]),
+            models.Index(fields=["portfolio", "base_asset"]),
+            models.Index(fields=["transaction_id"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["portfolio", "transaction_id"],
+                name="uniq_crypto_trade_portfolio_txn",
+            )
+        ]
+        verbose_name = "Crypto Trade"
+        verbose_name_plural = "Crypto Trades"
+
+    def __str__(self):
+        return f"{self.base_asset} {self.direction} {self.filled_quantity} @ {self.filled_price}"
+
+
+class CryptoPerformanceSnapshot(models.Model):
+    """Caches the most recently calculated portfolio metrics."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    portfolio = models.OneToOneField(
+        CryptoPortfolio,
+        on_delete=models.CASCADE,
+        related_name="snapshot",
+    )
+    holdings_json = models.JSONField(default=list, blank=True)
+    metrics_json = models.JSONField(default=dict, blank=True)
+    priced_at = models.DateTimeField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Crypto Performance Snapshot"
+        verbose_name_plural = "Crypto Performance Snapshots"
+
+    def __str__(self):
+        return f"Snapshot for {self.portfolio.name}"
+
 
 # ---------------------------------------------------------------------------
 # Engagement Letters

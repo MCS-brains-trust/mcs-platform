@@ -21,14 +21,15 @@ from .models import (
     ClientAssociate, AccountingSoftware, MeetingNote,
     DepreciationAsset, RiskFlag, StockItem, ActivityLog, EntityChartOfAccount,
     BulkJournalUpload, BASPeriod, BankAccountMapping, BASPeriodCommentary,
-    EvaReview, EngagementLetter,
+    EvaReview, EngagementLetter, CryptoPortfolio, CryptoTradeImport,
+    CryptoTrade, CryptoPerformanceSnapshot,
 )
 from .forms import (
     ClientForm, EntityForm, FinancialYearForm,
     TrialBalanceUploadForm, AccountMappingForm,
     AdjustingJournalForm, JournalLineFormSet, JournalLineForm,
     EntityOfficerForm, ClientAssociateForm, AccountingSoftwareForm,
-    MeetingNoteForm,
+    MeetingNoteForm, CryptoTradeImportForm, CryptoPortfolioForm,
 )
 from django import forms
 from config.authorization import get_entity_for_user, get_financial_year_for_user
@@ -57,6 +58,205 @@ def _compute_amber_indicators(fy):
         return compute_amber_indicators_for_context(fy)
     except Exception:
         return {}
+
+
+def _coerce_decimal(value, default="0"):
+    try:
+        raw = str(value).replace(",", "").strip()
+        if not raw or raw == "--":
+            raw = default
+        return Decimal(raw)
+    except (InvalidOperation, TypeError, ValueError):
+        return Decimal(default)
+
+
+def _parse_bybit_timestamp(value):
+    from datetime import datetime
+
+    return timezone.make_aware(datetime.strptime(value.strip(), "%H:%M %Y-%m-%d"))
+
+
+def _split_spot_pair(spot_pair, quote_asset="USDT"):
+    pair = (spot_pair or "").strip().upper()
+    quote = (quote_asset or "USDT").strip().upper()
+    if pair.endswith(quote) and len(pair) > len(quote):
+        return pair[:-len(quote)], quote
+    return pair, quote
+
+
+def _fetch_live_prices_usdt(symbols):
+    import requests
+
+    cleaned = sorted({(symbol or "").upper() for symbol in symbols if symbol})
+    if not cleaned:
+        return {}
+    prices = {}
+    try:
+        response = requests.get(
+            "https://api.binance.com/api/v3/ticker/price",
+            timeout=10,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        lookup = {row.get("symbol"): row.get("price") for row in payload if isinstance(row, dict)}
+        for symbol in cleaned:
+            if symbol == "USDT":
+                prices[symbol] = Decimal("1")
+                continue
+            ticker = f"{symbol}USDT"
+            if lookup.get(ticker):
+                prices[symbol] = _coerce_decimal(lookup[ticker], "0")
+    except Exception as exc:
+        logger.warning("Live crypto pricing fetch failed: %s", exc)
+    return prices
+
+
+def _calculate_portfolio_snapshot(portfolio):
+    trades = portfolio.trades.order_by("executed_at", "created_at")
+    asset_state = {}
+    totals = {
+        "invested": Decimal("0"),
+        "realised_pnl": Decimal("0"),
+        "buy_fees_quote": Decimal("0"),
+        "sell_fees_quote": Decimal("0"),
+    }
+    for trade in trades:
+        asset = trade.base_asset.upper()
+        state = asset_state.setdefault(asset, {
+            "quantity": Decimal("0"),
+            "cost_basis": Decimal("0"),
+            "buy_value": Decimal("0"),
+            "sell_value": Decimal("0"),
+            "buy_fees_asset": Decimal("0"),
+            "buy_fees_quote": Decimal("0"),
+            "sell_fees_quote": Decimal("0"),
+            "realised_pnl": Decimal("0"),
+        })
+        qty = trade.filled_quantity or Decimal("0")
+        value = trade.filled_value or Decimal("0")
+        fee = trade.exec_fee or Decimal("0")
+        if trade.direction == "BUY":
+            net_qty = qty
+            if (trade.fee_coin or "").upper() == asset:
+                net_qty = max(Decimal("0"), qty - fee)
+                state["buy_fees_asset"] += fee
+            elif (trade.fee_coin or "").upper() == trade.quote_asset.upper():
+                state["buy_fees_quote"] += fee
+                totals["buy_fees_quote"] += fee
+            state["quantity"] += net_qty
+            state["cost_basis"] += value + (fee if (trade.fee_coin or "").upper() == trade.quote_asset.upper() else Decimal("0"))
+            state["buy_value"] += value
+            totals["invested"] += value
+        else:
+            fee_quote = fee if (trade.fee_coin or "").upper() == trade.quote_asset.upper() else Decimal("0")
+            proceeds = value - fee_quote
+            avg_cost = (state["cost_basis"] / state["quantity"]) if state["quantity"] > 0 else Decimal("0")
+            cost_removed = avg_cost * qty
+            state["quantity"] = max(Decimal("0"), state["quantity"] - qty)
+            state["cost_basis"] = max(Decimal("0"), state["cost_basis"] - cost_removed)
+            pnl = proceeds - cost_removed
+            state["realised_pnl"] += pnl
+            state["sell_value"] += value
+            state["sell_fees_quote"] += fee_quote
+            totals["sell_fees_quote"] += fee_quote
+            totals["realised_pnl"] += pnl
+    prices = _fetch_live_prices_usdt(asset_state.keys())
+    holdings = []
+    total_market_value = Decimal("0")
+    total_cost_basis_open = Decimal("0")
+    total_unrealised = Decimal("0")
+    for asset, state in sorted(asset_state.items()):
+        qty = state["quantity"]
+        price = prices.get(asset, Decimal("0"))
+        market_value = qty * price
+        unrealised = market_value - state["cost_basis"]
+        total_market_value += market_value
+        total_cost_basis_open += state["cost_basis"]
+        total_unrealised += unrealised
+        holdings.append({
+            "asset": asset,
+            "quantity": float(qty),
+            "avg_cost": float((state["cost_basis"] / qty) if qty > 0 else Decimal("0")),
+            "cost_basis": float(state["cost_basis"]),
+            "price": float(price),
+            "market_value": float(market_value),
+            "realised_pnl": float(state["realised_pnl"]),
+            "unrealised_pnl": float(unrealised),
+            "buy_value": float(state["buy_value"]),
+            "sell_value": float(state["sell_value"]),
+        })
+    total_pnl = totals["realised_pnl"] + total_unrealised
+    total_return_pct = (total_pnl / totals["invested"] * Decimal("100")) if totals["invested"] > 0 else Decimal("0")
+    metrics = {
+        "invested": float(totals["invested"]),
+        "open_cost_basis": float(total_cost_basis_open),
+        "market_value": float(total_market_value),
+        "realised_pnl": float(totals["realised_pnl"]),
+        "unrealised_pnl": float(total_unrealised),
+        "total_pnl": float(total_pnl),
+        "total_return_pct": float(total_return_pct),
+        "buy_fees_quote": float(totals["buy_fees_quote"]),
+        "sell_fees_quote": float(totals["sell_fees_quote"]),
+        "trade_count": trades.count(),
+        "asset_count": len([h for h in holdings if h["quantity"] > 0]),
+    }
+    snapshot, _ = CryptoPerformanceSnapshot.objects.update_or_create(
+        portfolio=portfolio,
+        defaults={
+            "holdings_json": holdings,
+            "metrics_json": metrics,
+            "priced_at": timezone.now(),
+        },
+    )
+    return snapshot
+
+
+def _import_bybit_csv_to_portfolio(*, portfolio, uploaded_file, user):
+    import csv
+    from django.core.files.base import ContentFile
+
+    trade_import = CryptoTradeImport(
+        portfolio=portfolio,
+        original_filename=uploaded_file.name,
+        exchange="Bybit",
+        imported_by=user,
+    )
+    uploaded_file.seek(0)
+    trade_import.source_file.save(uploaded_file.name, ContentFile(uploaded_file.read()), save=False)
+    trade_import.save()
+    uploaded_file.seek(0)
+    decoded = uploaded_file.read().decode("utf-8-sig").splitlines()
+    reader = csv.DictReader(decoded)
+    rows_processed = 0
+    for row in reader:
+        spot_pair = (row.get("Spot Pairs") or "").strip().upper()
+        if not spot_pair:
+            continue
+        base_asset, quote_asset = _split_spot_pair(spot_pair, "USDT")
+        CryptoTrade.objects.update_or_create(
+            portfolio=portfolio,
+            transaction_id=(row.get("Transaction ID") or "").strip(),
+            defaults={
+                "trade_import": trade_import,
+                "spot_pair": spot_pair,
+                "base_asset": base_asset,
+                "quote_asset": quote_asset,
+                "order_type": (row.get("Order Type") or "").strip().upper(),
+                "direction": (row.get("Direction") or "").strip().upper(),
+                "fee_coin": (row.get("feeCoin") or "").strip().upper(),
+                "exec_fee": _coerce_decimal(row.get("ExecFeeV2")),
+                "filled_value": _coerce_decimal(row.get("Filled Value")),
+                "filled_price": _coerce_decimal(row.get("Filled Price")),
+                "filled_quantity": _coerce_decimal(row.get("Filled Quantity")),
+                "order_no": (row.get("Order No.") or "").strip(),
+                "executed_at": _parse_bybit_timestamp(row.get("Timestamp (UTC)")),
+                "raw_payload": row,
+            },
+        )
+        rows_processed += 1
+    trade_import.rows_processed = rows_processed
+    trade_import.save(update_fields=["rows_processed"])
+    return trade_import, _calculate_portfolio_snapshot(portfolio)
 
 
 def _resolve_account_name(entity, account_code, raw_name):
@@ -12981,3 +13181,76 @@ def review_export_pdf(request, pk):
     response = HttpResponse(pdf_bytes, content_type="application/pdf")
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
     return response
+
+
+@login_required
+def crypto_portfolio_dashboard(request):
+    portfolio = CryptoPortfolio.objects.filter(owner=request.user, is_active=True).order_by("name").first()
+    portfolios = CryptoPortfolio.objects.filter(owner=request.user).order_by("name")
+    selected_id = request.GET.get("portfolio")
+    if selected_id:
+        portfolio = get_object_or_404(CryptoPortfolio, pk=selected_id, owner=request.user)
+    snapshot = None
+    imports = []
+    trades = []
+    if portfolio:
+        snapshot = _calculate_portfolio_snapshot(portfolio)
+        imports = portfolio.imports.order_by("-imported_at")[:10]
+        trades = portfolio.trades.order_by("-executed_at")[:50]
+    context = {
+        "portfolio": portfolio,
+        "portfolios": portfolios,
+        "snapshot": snapshot,
+        "holdings": snapshot.holdings_json if snapshot else [],
+        "metrics": snapshot.metrics_json if snapshot else {},
+        "imports": imports,
+        "recent_trades": trades,
+        "form": CryptoTradeImportForm(user=request.user),
+        "active_nav": "crypto_portfolio",
+    }
+    return render(request, "core/crypto_portfolio_dashboard.html", context)
+
+
+@login_required
+def crypto_portfolio_import(request):
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    form = CryptoTradeImportForm(request.POST, request.FILES, user=request.user)
+    if not form.is_valid():
+        for field, errs in form.errors.items():
+            for err in errs:
+                messages.error(request, f"{field}: {err}")
+        return redirect("core:crypto_portfolio_dashboard")
+    uploaded_file = request.FILES.get("file")
+    if not uploaded_file:
+        messages.error(request, "Please choose a Bybit CSV file to import.")
+        return redirect("core:crypto_portfolio_dashboard")
+    if uploaded_file.size > 20 * 1024 * 1024:
+        messages.error(request, "File too large. Maximum size is 20MB.")
+        return redirect("core:crypto_portfolio_dashboard")
+    portfolio = form.cleaned_data.get("portfolio")
+    if not portfolio:
+        portfolio = CryptoPortfolio.objects.create(
+            owner=request.user,
+            name=form.cleaned_data.get("portfolio_name") or "My Crypto Portfolio",
+            exchange="Bybit",
+            base_currency="USDT",
+        )
+    try:
+        with db_transaction.atomic():
+            trade_import, snapshot = _import_bybit_csv_to_portfolio(
+                portfolio=portfolio,
+                uploaded_file=uploaded_file,
+                user=request.user,
+            )
+        _log_action(
+            request,
+            "crypto_portfolio_import",
+            f"Imported {trade_import.rows_processed} crypto trades into {portfolio.name}",
+            portfolio,
+        )
+        messages.success(request, f"Imported {trade_import.rows_processed} trade rows into {portfolio.name}.")
+    except Exception as exc:
+        logger.exception("Crypto portfolio import failed")
+        messages.error(request, f"Crypto trade import failed: {exc}")
+    return redirect(f"{reverse('core:crypto_portfolio_dashboard')}?portfolio={portfolio.pk}")

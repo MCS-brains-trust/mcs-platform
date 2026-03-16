@@ -1,0 +1,253 @@
+{% extends 'base.html' %}
+
+{% block title %}Crypto Portfolio{% endblock %}
+
+{% block extra_css %}
+<style>
+    .metric-card {
+        border: 1px solid #e6eaf0;
+        border-radius: 16px;
+        background: #fff;
+        box-shadow: 0 8px 24px rgba(16, 24, 40, 0.04);
+        height: 100%;
+    }
+    .metric-label {
+        color: #667085;
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+    }
+    .metric-value {
+        font-size: 1.8rem;
+        font-weight: 700;
+        color: #101828;
+    }
+    .table-card {
+        border: 1px solid #e6eaf0;
+        border-radius: 16px;
+        background: #fff;
+        overflow: hidden;
+    }
+    .section-title {
+        font-size: 1.1rem;
+        font-weight: 700;
+        color: #101828;
+        margin-bottom: 0;
+    }
+    .subtle {
+        color: #667085;
+    }
+    .pnl-positive { color: #067647; }
+    .pnl-negative { color: #b42318; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
+    <div>
+        <h2 class="mb-1">Crypto Portfolio</h2>
+        <p class="text-muted mb-0">Store your Bybit trade logs, preserve the uploaded files, and monitor live strategy performance in one place.</p>
+    </div>
+    {% if portfolios %}
+    <form method="get" class="d-flex align-items-center gap-2">
+        <label for="portfolio" class="text-muted small mb-0">Portfolio</label>
+        <select id="portfolio" name="portfolio" class="form-select" onchange="this.form.submit()">
+            {% for item in portfolios %}
+            <option value="{{ item.pk }}" {% if portfolio and item.pk == portfolio.pk %}selected{% endif %}>{{ item.name }}</option>
+            {% endfor %}
+        </select>
+    </form>
+    {% endif %}
+</div>
+
+<div class="row g-4 mb-4">
+    <div class="col-lg-4">
+        <div class="table-card p-4 h-100">
+            <h3 class="section-title mb-3">Import Bybit Trade Log</h3>
+            <p class="subtle">Upload your CSV and store the file in the platform so the portfolio section can recalculate live holdings and performance.</p>
+            <form method="post" action="{% url 'core:crypto_portfolio_import' %}" enctype="multipart/form-data" class="mt-3">
+                {% csrf_token %}
+                <div class="mb-3">
+                    <label class="form-label">Existing portfolio</label>
+                    {{ form.portfolio }}
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">New portfolio name</label>
+                    {{ form.portfolio_name }}
+                    <div class="form-text">Use this when creating a new portfolio.</div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label">Bybit CSV file</label>
+                    {{ form.file }}
+                </div>
+                <button type="submit" class="btn btn-primary w-100">Upload and refresh performance</button>
+            </form>
+        </div>
+    </div>
+    <div class="col-lg-8">
+        {% if portfolio %}
+        <div class="row g-3">
+            <div class="col-md-6 col-xl-4">
+                <div class="metric-card p-3">
+                    <div class="metric-label">Portfolio</div>
+                    <div class="metric-value" style="font-size: 1.25rem;">{{ portfolio.name }}</div>
+                    <div class="subtle small">{{ portfolio.exchange }} · Base {{ portfolio.base_currency }}</div>
+                </div>
+            </div>
+            <div class="col-md-6 col-xl-4">
+                <div class="metric-card p-3">
+                    <div class="metric-label">Market Value</div>
+                    <div class="metric-value">${{ metrics.market_value|floatformat:2 }}</div>
+                    <div class="subtle small">Live valuation from current prices</div>
+                </div>
+            </div>
+            <div class="col-md-6 col-xl-4">
+                <div class="metric-card p-3">
+                    <div class="metric-label">Total P&amp;L</div>
+                    <div class="metric-value {% if metrics.total_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">${{ metrics.total_pnl|floatformat:2 }}</div>
+                    <div class="subtle small">{{ metrics.total_return_pct|floatformat:2 }}% total return</div>
+                </div>
+            </div>
+            <div class="col-md-6 col-xl-3">
+                <div class="metric-card p-3">
+                    <div class="metric-label">Capital Deployed</div>
+                    <div class="metric-value" style="font-size: 1.35rem;">${{ metrics.invested|floatformat:2 }}</div>
+                </div>
+            </div>
+            <div class="col-md-6 col-xl-3">
+                <div class="metric-card p-3">
+                    <div class="metric-label">Open Cost Basis</div>
+                    <div class="metric-value" style="font-size: 1.35rem;">${{ metrics.open_cost_basis|floatformat:2 }}</div>
+                </div>
+            </div>
+            <div class="col-md-6 col-xl-3">
+                <div class="metric-card p-3">
+                    <div class="metric-label">Realised P&amp;L</div>
+                    <div class="metric-value {% if metrics.realised_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}" style="font-size: 1.35rem;">${{ metrics.realised_pnl|floatformat:2 }}</div>
+                </div>
+            </div>
+            <div class="col-md-6 col-xl-3">
+                <div class="metric-card p-3">
+                    <div class="metric-label">Unrealised P&amp;L</div>
+                    <div class="metric-value {% if metrics.unrealised_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}" style="font-size: 1.35rem;">${{ metrics.unrealised_pnl|floatformat:2 }}</div>
+                </div>
+            </div>
+        </div>
+        {% else %}
+        <div class="table-card p-5 text-center h-100 d-flex flex-column justify-content-center">
+            <h3 class="section-title mb-2">No portfolio yet</h3>
+            <p class="subtle mb-0">Upload your first Bybit trade history CSV to create the portfolio section and start tracking live strategy performance.</p>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+{% if portfolio %}
+<div class="row g-4">
+    <div class="col-xl-7">
+        <div class="table-card">
+            <div class="p-4 border-bottom d-flex justify-content-between align-items-center">
+                <div>
+                    <h3 class="section-title">Live Holdings</h3>
+                    <p class="subtle mb-0">Current positions derived from stored trade history and refreshed with live prices.</p>
+                </div>
+                <span class="badge bg-light text-dark">{{ metrics.asset_count|default:0 }} active assets</span>
+            </div>
+            <div class="table-responsive">
+                <table class="table table-hover align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Asset</th>
+                            <th>Quantity</th>
+                            <th>Average Cost</th>
+                            <th>Live Price</th>
+                            <th>Market Value</th>
+                            <th>Unrealised P&amp;L</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for holding in holdings %}
+                        <tr>
+                            <td><strong>{{ holding.asset }}</strong></td>
+                            <td>{{ holding.quantity|floatformat:8 }}</td>
+                            <td>${{ holding.avg_cost|floatformat:2 }}</td>
+                            <td>${{ holding.price|floatformat:2 }}</td>
+                            <td>${{ holding.market_value|floatformat:2 }}</td>
+                            <td class="{% if holding.unrealised_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">${{ holding.unrealised_pnl|floatformat:2 }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="6" class="text-center text-muted py-4">No holdings available yet.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-5">
+        <div class="table-card mb-4">
+            <div class="p-4 border-bottom">
+                <h3 class="section-title">Stored Imports</h3>
+                <p class="subtle mb-0">Uploaded source files retained in platform storage for audit and reprocessing.</p>
+            </div>
+            <div class="table-responsive">
+                <table class="table align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>File</th>
+                            <th>Rows</th>
+                            <th>Imported</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in imports %}
+                        <tr>
+                            <td>
+                                <div class="fw-semibold">{{ item.original_filename }}</div>
+                                <div class="small text-muted"><a href="{{ item.source_file.url }}" target="_blank">Open stored file</a></div>
+                            </td>
+                            <td>{{ item.rows_processed }}</td>
+                            <td>{{ item.imported_at|date:"d M Y H:i" }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="3" class="text-center text-muted py-4">No stored imports yet.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <div class="table-card">
+            <div class="p-4 border-bottom">
+                <h3 class="section-title">Recent Trades</h3>
+                <p class="subtle mb-0">Latest transactions loaded from the stored trade log.</p>
+            </div>
+            <div class="table-responsive">
+                <table class="table align-middle mb-0">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Time</th>
+                            <th>Pair</th>
+                            <th>Side</th>
+                            <th>Qty</th>
+                            <th>Price</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for trade in recent_trades %}
+                        <tr>
+                            <td>{{ trade.executed_at|date:"d M H:i" }}</td>
+                            <td>{{ trade.spot_pair }}</td>
+                            <td><span class="badge {% if trade.direction == 'BUY' %}text-bg-success{% else %}text-bg-danger{% endif %}">{{ trade.direction }}</span></td>
+                            <td>{{ trade.filled_quantity|floatformat:8 }}</td>
+                            <td>${{ trade.filled_price|floatformat:2 }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr><td colspan="5" class="text-center text-muted py-4">No trades imported yet.</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

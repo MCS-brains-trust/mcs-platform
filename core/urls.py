@@ -28,6 +28,10 @@ app_name = "core"
 
 urlpatterns = [
 
+    # Crypto Portfolio
+    path("portfolio/", views.crypto_portfolio_dashboard, name="crypto_portfolio_dashboard"),
+    path("portfolio/import/", views.crypto_portfolio_import, name="crypto_portfolio_import"),
+
     # Entities (top-level — replaces old Clients)
     path("entities/", views.entity_list, name="entity_list"),
     path("entities/create/", views.entity_create, name="entity_create"),

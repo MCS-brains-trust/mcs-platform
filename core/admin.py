@@ -4,7 +4,8 @@ from .models import (
     AccountMapping, ClientAccountMapping, NoteTemplate,
     AdjustingJournal, JournalLine, FinancialStatementTemplate,
     GeneratedDocument, AuditLog, EntityOfficer, DepreciationAsset,
-    BankAccountMapping,
+    BankAccountMapping, CryptoPortfolio, CryptoTradeImport,
+    CryptoTrade, CryptoPerformanceSnapshot,
 )
 
 
@@ -89,6 +90,36 @@ class DepreciationAssetAdmin(admin.ModelAdmin):
     list_display = ("asset_name", "category", "financial_year", "opening_wdv", "depreciation_amount", "closing_wdv")
     list_filter = ("category", "method")
     search_fields = ("asset_name", "category")
+
+
+@admin.register(CryptoPortfolio)
+class CryptoPortfolioAdmin(admin.ModelAdmin):
+    list_display = ("name", "owner", "exchange", "base_currency", "is_active", "updated_at")
+    list_filter = ("exchange", "is_active")
+    search_fields = ("name", "owner__email", "owner__username")
+
+
+@admin.register(CryptoTradeImport)
+class CryptoTradeImportAdmin(admin.ModelAdmin):
+    list_display = ("original_filename", "portfolio", "exchange", "rows_processed", "imported_by", "imported_at")
+    list_filter = ("exchange", "imported_at")
+    search_fields = ("original_filename", "portfolio__name")
+    readonly_fields = ("imported_at",)
+
+
+@admin.register(CryptoTrade)
+class CryptoTradeAdmin(admin.ModelAdmin):
+    list_display = ("spot_pair", "portfolio", "direction", "filled_quantity", "filled_price", "executed_at")
+    list_filter = ("direction", "base_asset", "quote_asset")
+    search_fields = ("spot_pair", "transaction_id", "order_no", "portfolio__name")
+    readonly_fields = ("created_at",)
+
+
+@admin.register(CryptoPerformanceSnapshot)
+class CryptoPerformanceSnapshotAdmin(admin.ModelAdmin):
+    list_display = ("portfolio", "priced_at", "updated_at")
+    search_fields = ("portfolio__name",)
+    readonly_fields = ("updated_at",)
 
 
 @admin.register(AuditLog)

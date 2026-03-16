@@ -4,6 +4,7 @@ from .models import (
     Client, Entity, FinancialYear, AccountMapping,
     AdjustingJournal, JournalLine, ClientAccountMapping,
     EntityOfficer, ClientAssociate, AccountingSoftware, MeetingNote,
+    CryptoPortfolio,
 )
 
 
@@ -152,6 +153,54 @@ class TrialBalanceUploadForm(forms.Form):
         help_text="Upload a .xlsx file with columns: Account Code, Account Name, Opening Balance, Debit, Credit",
         widget=forms.FileInput(attrs={"class": "form-control", "accept": ".xlsx"}),
     )
+
+
+class CryptoPortfolioForm(forms.ModelForm):
+    class Meta:
+        model = CryptoPortfolio
+        fields = ("name", "exchange", "base_currency", "notes")
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for name, field in self.fields.items():
+            if isinstance(field.widget, forms.Textarea):
+                field.widget.attrs["class"] = "form-control"
+                field.widget.attrs.setdefault("rows", 3)
+            else:
+                field.widget.attrs["class"] = "form-control"
+
+
+class CryptoTradeImportForm(forms.Form):
+    portfolio_name = forms.CharField(
+        required=False,
+        max_length=255,
+        help_text="Optional. If no existing portfolio is selected, a new one will be created with this name.",
+        widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "My Crypto Portfolio"}),
+    )
+    portfolio = forms.ModelChoiceField(
+        queryset=CryptoPortfolio.objects.none(),
+        required=False,
+        empty_label="Create new portfolio",
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+    file = forms.FileField(
+        help_text="Upload a Bybit spot trade history CSV file.",
+        widget=forms.FileInput(attrs={"class": "form-control", "accept": ".csv,text/csv"}),
+    )
+
+    def __init__(self, *args, user=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if user and getattr(user, "is_authenticated", False):
+            self.fields["portfolio"].queryset = CryptoPortfolio.objects.filter(owner=user, is_active=True)
+        self.user = user
+
+    def clean(self):
+        cleaned = super().clean()
+        portfolio = cleaned.get("portfolio")
+        portfolio_name = (cleaned.get("portfolio_name") or "").strip()
+        if not portfolio and not portfolio_name:
+            self.add_error("portfolio_name", "Provide a portfolio name or choose an existing portfolio.")
+        return cleaned
 
 
 class AccountMappingForm(forms.ModelForm):

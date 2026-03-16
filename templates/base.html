@@ -247,6 +247,10 @@
            href="{% url 'core:entity_list' %}">
             <i class="bi bi-building"></i> Entity Hub
         </a>
+        <a class="sh-nav-item {% if active_nav == 'crypto_portfolio' %}active{% endif %}"
+           href="{% url 'core:crypto_portfolio_dashboard' %}">
+            <i class="bi bi-graph-up-arrow"></i> Portfolio
+        </a>
 
         {% if user.can_do_accounting %}
         <!-- ── ACCOUNTING (accountants, seniors, admin only) ── -->
