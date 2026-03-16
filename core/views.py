@@ -13183,30 +13183,173 @@ def review_export_pdf(request, pk):
     return response
 
 
+def _load_json_file_safely(path):
+    file_path = Path(path)
+    if not file_path.exists():
+        return None
+    try:
+        with file_path.open("r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except Exception:
+        logger.exception("Failed to load crypto dashboard JSON file: %s", file_path)
+        return None
+
+
+def _coerce_float(value, default=0.0):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _coerce_int(value, default=0):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _format_pct(value):
+    try:
+        return float(value) * 100.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _build_crypto_dashboard_context():
+    fixed_capital = float(getattr(settings, "CRYPTO_DASHBOARD_FIXED_CAPITAL_USD", 71000.0))
+    strategy_data = _load_json_file_safely(getattr(settings, "CRYPTO_DASHBOARD_STRATEGY_FILE")) or {}
+    state_data = _load_json_file_safely(getattr(settings, "CRYPTO_DASHBOARD_STATE_FILE")) or {}
+    signal_history = _load_json_file_safely(getattr(settings, "CRYPTO_DASHBOARD_SIGNAL_HISTORY_FILE")) or []
+    analytics_data = _load_json_file_safely(getattr(settings, "CRYPTO_DASHBOARD_ANALYTICS_FILE")) or {}
+
+    latest_signal = strategy_data.get("latest_signal", {}) or {}
+    performance = strategy_data.get("performance", {}) or {}
+    btc_health = strategy_data.get("btc_health", {}) or {}
+    parameters = strategy_data.get("parameters", {}) or {}
+    portfolio_data = strategy_data.get("portfolio", {}) or {}
+
+    current_value = _coerce_float(
+        portfolio_data.get("current_value", state_data.get("current_value", strategy_data.get("current_value", fixed_capital))),
+        fixed_capital,
+    )
+    pnl = current_value - fixed_capital
+    pnl_pct = (pnl / fixed_capital * 100.0) if fixed_capital else 0.0
+
+    current_positions = latest_signal.get("current_positions") or state_data.get("positions") or {}
+    target_positions = latest_signal.get("target_positions") or {}
+    entry_prices = state_data.get("entry_prices") or {}
+    entry_dates = state_data.get("entry_dates") or {}
+    momentum_scores = latest_signal.get("momentum_scores") or analytics_data.get("momentum_scores") or {}
+
+    symbols = []
+    for source in [current_positions, target_positions, momentum_scores]:
+        for key in source.keys():
+            if key not in symbols:
+                symbols.append(key)
+
+    positions_table = []
+    for symbol in symbols:
+        current_alloc = _coerce_float(current_positions.get(symbol))
+        target_alloc = _coerce_float(target_positions.get(symbol))
+        positions_table.append({
+            "asset": symbol,
+            "current_weight_pct": current_alloc * 100.0,
+            "target_weight_pct": target_alloc * 100.0,
+            "current_value": fixed_capital * current_alloc,
+            "target_value": fixed_capital * target_alloc,
+            "entry_price": _coerce_float(entry_prices.get(symbol)),
+            "entry_date": entry_dates.get(symbol, ""),
+            "momentum_pct": _format_pct(momentum_scores.get(symbol)),
+        })
+
+    recent_signals = []
+    if isinstance(signal_history, list):
+        for item in reversed(signal_history[-50:]):
+            if not isinstance(item, dict):
+                continue
+            recent_signals.append({
+                "date": item.get("date") or item.get("timestamp") or item.get("time") or "",
+                "action": item.get("action") or "HOLD",
+                "top_asset": item.get("top_asset") or "-",
+                "rule_fired": item.get("rule_fired") or "-",
+                "reason": item.get("reason") or "",
+                "confidence_label": item.get("confidence_label") or latest_signal.get("confidence_label") or "",
+                "all_negative": bool(item.get("all_negative", False)),
+                "in_cash": bool(item.get("in_cash", False)),
+            })
+
+    metrics = {
+        "fixed_capital": fixed_capital,
+        "current_value": current_value,
+        "total_pnl": pnl,
+        "total_return_pct": pnl_pct,
+        "cash_allocation_pct": max(0.0, 100.0 - sum(_coerce_float(v) * 100.0 for v in current_positions.values())),
+        "hold_days": _coerce_int(state_data.get("hold_days", performance.get("hold_days", 0))),
+        "trades_executed": _coerce_int(state_data.get("trades_executed", performance.get("trades_executed", 0))),
+        "rotations": _coerce_int(state_data.get("rotations", performance.get("rotations", 0))),
+        "cash_exits": _coerce_int(state_data.get("cash_exits", performance.get("cash_exits", 0))),
+        "all_neg_exits": _coerce_int(state_data.get("all_neg_exits", performance.get("all_neg_exits", 0))),
+        "all_neg_blocked": _coerce_int(state_data.get("all_neg_blocked", performance.get("all_neg_blocked", 0))),
+        "partial_cash_days": _coerce_int(state_data.get("partial_cash_days", performance.get("partial_cash_days", 0))),
+        "rule2_blocks": _coerce_int(state_data.get("rule2_blocks", performance.get("rule2_blocks", 0))),
+        "rule3_blocks": _coerce_int(state_data.get("rule3_blocks", performance.get("rule3_blocks", 0))),
+        "rule4_blocks": _coerce_int(state_data.get("rule4_blocks", performance.get("rule4_blocks", 0))),
+    }
+
+    btc_summary = {
+        "drawdown_pct": _format_pct(btc_health.get("drawdown_pct", latest_signal.get("btc_drawdown", 0.0))),
+        "btc_30d_high": _coerce_float(btc_health.get("btc_30d_high", latest_signal.get("btc_30d_high", 0.0))),
+        "reentry_trigger": _coerce_float(btc_health.get("reentry_trigger", latest_signal.get("reentry_trigger", 0.0))),
+        "reentry_gap_pct": _format_pct(btc_health.get("reentry_gap_pct", latest_signal.get("reentry_gap_pct", 0.0))),
+        "all_negative": bool(btc_health.get("all_negative", latest_signal.get("all_negative", False))),
+        "in_cash": bool(latest_signal.get("in_cash", state_data.get("in_full_cash", False))),
+        "btc_above_200ma": bool(latest_signal.get("btc_above_200ma", btc_health.get("btc_above_200ma", False))),
+    }
+
+    latest_summary = {
+        "action": latest_signal.get("action", "UNKNOWN"),
+        "top_asset": latest_signal.get("top_asset") or state_data.get("asset") or "CASH",
+        "top_score_pct": _format_pct(latest_signal.get("top_score", 0.0)),
+        "allocation_mode": latest_signal.get("allocation_mode", "SINGLE"),
+        "reason": latest_signal.get("reason", "No reason available."),
+        "rule_fired": latest_signal.get("rule_fired", "-"),
+        "confidence_v3_pct": _format_pct(latest_signal.get("confidence_v3", 0.0)),
+        "confidence_label": latest_signal.get("confidence_label", "LOW"),
+        "fg_value": latest_signal.get("fg_value", analytics_data.get("fg_value", 50)),
+        "sth_proxy_pct": _format_pct(latest_signal.get("sth_proxy", analytics_data.get("sth_proxy", 0.0))),
+        "date": latest_signal.get("date", ""),
+    }
+
+    parameter_rows = [
+        ("Momentum period", parameters.get("momentum_period", 30)),
+        ("BTC partial-cash trigger", parameters.get("partial_cash_dd", "12% below 30d high")),
+        ("BTC full-cash trigger", parameters.get("full_cash_dd", "25% below 30d high")),
+        ("Minimum hold period", parameters.get("min_hold_days", "7 days")),
+        ("Rally block window", parameters.get("rally_block_days", "3 days")),
+        ("Breakout threshold", parameters.get("breakout_threshold", "5% below 30d high")),
+        ("All-negative exit", parameters.get("all_negative_exit", True)),
+    ]
+
+    return {
+        "metrics": metrics,
+        "positions_table": positions_table,
+        "recent_signals": recent_signals,
+        "latest_summary": latest_summary,
+        "btc_summary": btc_summary,
+        "parameter_rows": parameter_rows,
+        "strategy_data": strategy_data,
+        "state_data": state_data,
+        "analytics_data": analytics_data,
+    }
+
+
 @login_required
 def crypto_portfolio_dashboard(request):
-    portfolio = CryptoPortfolio.objects.filter(owner=request.user, is_active=True).order_by("name").first()
-    portfolios = CryptoPortfolio.objects.filter(owner=request.user).order_by("name")
-    selected_id = request.GET.get("portfolio")
-    if selected_id:
-        portfolio = get_object_or_404(CryptoPortfolio, pk=selected_id, owner=request.user)
-    snapshot = None
-    imports = []
-    trades = []
-    if portfolio:
-        snapshot = _calculate_portfolio_snapshot(portfolio)
-        imports = portfolio.imports.order_by("-imported_at")[:10]
-        trades = portfolio.trades.order_by("-executed_at")[:50]
+    dashboard = _build_crypto_dashboard_context()
     context = {
-        "portfolio": portfolio,
-        "portfolios": portfolios,
-        "snapshot": snapshot,
-        "holdings": snapshot.holdings_json if snapshot else [],
-        "metrics": snapshot.metrics_json if snapshot else {},
-        "imports": imports,
-        "recent_trades": trades,
-        "form": CryptoTradeImportForm(user=request.user),
         "active_nav": "crypto_portfolio",
+        **dashboard,
     }
     return render(request, "core/crypto_portfolio_dashboard.html", context)
 

@@ -336,3 +336,11 @@ AWS_TEXTRACT_ROLE_ARN = os.environ.get("AWS_TEXTRACT_ROLE_ARN", "")
 # ── FuseSign Integration ────────────────────────────────────────────────────
 FUSESIGN_API_KEY = os.environ.get("FUSESIGN_API_KEY", "")
 FUSESIGN_API_URL = os.environ.get("FUSESIGN_API_URL", "https://api.fusesign.com")
+
+# ── Crypto Strategy Dashboard (droplet-local files) ─────────────────────────
+CRYPTO_DASHBOARD_FIXED_CAPITAL_USD = float(os.environ.get("CRYPTO_DASHBOARD_FIXED_CAPITAL_USD", "71000"))
+CRYPTO_DASHBOARD_ROOT = Path(os.environ.get("CRYPTO_DASHBOARD_ROOT", "/root/crypto_dashboard"))
+CRYPTO_DASHBOARD_STATE_FILE = Path(os.environ.get("CRYPTO_DASHBOARD_STATE_FILE", str(CRYPTO_DASHBOARD_ROOT / "optimized_trading_state.json")))
+CRYPTO_DASHBOARD_STRATEGY_FILE = Path(os.environ.get("CRYPTO_DASHBOARD_STRATEGY_FILE", str(CRYPTO_DASHBOARD_ROOT / "optimized_strategy_data.json")))
+CRYPTO_DASHBOARD_SIGNAL_HISTORY_FILE = Path(os.environ.get("CRYPTO_DASHBOARD_SIGNAL_HISTORY_FILE", str(CRYPTO_DASHBOARD_ROOT / "optimized_signal_history.json")))
+CRYPTO_DASHBOARD_ANALYTICS_FILE = Path(os.environ.get("CRYPTO_DASHBOARD_ANALYTICS_FILE", str(CRYPTO_DASHBOARD_ROOT / "paleologo_analytics.json")))

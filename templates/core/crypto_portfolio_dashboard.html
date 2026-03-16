@@ -34,11 +34,10 @@
         color: #101828;
         margin-bottom: 0;
     }
-    .subtle {
-        color: #667085;
-    }
+    .subtle { color: #667085; }
     .pnl-positive { color: #067647; }
     .pnl-negative { color: #b42318; }
+    .mono { font-variant-numeric: tabular-nums; }
 </style>
 {% endblock %}
 
@@ -46,137 +45,138 @@
 <div class="d-flex flex-wrap justify-content-between align-items-center gap-3 mb-4">
     <div>
         <h2 class="mb-1">Crypto Portfolio</h2>
-        <p class="text-muted mb-0">Store your Bybit trade logs, preserve the uploaded files, and monitor live strategy performance in one place.</p>
+        <p class="text-muted mb-0">Live TREND_CONFIRM strategy dashboard sourced from droplet files. Capital is fixed at <strong>71,000 USD</strong> and signal history remains on the droplet.</p>
     </div>
-    {% if portfolios %}
-    <form method="get" class="d-flex align-items-center gap-2">
-        <label for="portfolio" class="text-muted small mb-0">Portfolio</label>
-        <select id="portfolio" name="portfolio" class="form-select" onchange="this.form.submit()">
-            {% for item in portfolios %}
-            <option value="{{ item.pk }}" {% if portfolio and item.pk == portfolio.pk %}selected{% endif %}>{{ item.name }}</option>
-            {% endfor %}
-        </select>
-    </form>
-    {% endif %}
 </div>
 
 <div class="row g-4 mb-4">
-    <div class="col-lg-4">
-        <div class="table-card p-4 h-100">
-            <h3 class="section-title mb-3">Import Bybit Trade Log</h3>
-            <p class="subtle">Upload your CSV and store the file in the platform so the portfolio section can recalculate live holdings and performance.</p>
-            <form method="post" action="{% url 'core:crypto_portfolio_import' %}" enctype="multipart/form-data" class="mt-3">
-                {% csrf_token %}
-                <div class="mb-3">
-                    <label class="form-label">Existing portfolio</label>
-                    {{ form.portfolio }}
-                </div>
-                <div class="mb-3">
-                    <label class="form-label">New portfolio name</label>
-                    {{ form.portfolio_name }}
-                    <div class="form-text">Use this when creating a new portfolio.</div>
-                </div>
-                <div class="mb-3">
-                    <label class="form-label">Bybit CSV file</label>
-                    {{ form.file }}
-                </div>
-                <button type="submit" class="btn btn-primary w-100">Upload and refresh performance</button>
-            </form>
+    <div class="col-md-6 col-xl-3">
+        <div class="metric-card p-3">
+            <div class="metric-label">Fixed Capital</div>
+            <div class="metric-value mono">${{ metrics.fixed_capital|floatformat:2 }}</div>
+            <div class="subtle small">Presentation base capital</div>
         </div>
     </div>
-    <div class="col-lg-8">
-        {% if portfolio %}
-        <div class="row g-3">
-            <div class="col-md-6 col-xl-4">
-                <div class="metric-card p-3">
-                    <div class="metric-label">Portfolio</div>
-                    <div class="metric-value" style="font-size: 1.25rem;">{{ portfolio.name }}</div>
-                    <div class="subtle small">{{ portfolio.exchange }} · Base {{ portfolio.base_currency }}</div>
-                </div>
-            </div>
-            <div class="col-md-6 col-xl-4">
-                <div class="metric-card p-3">
-                    <div class="metric-label">Market Value</div>
-                    <div class="metric-value">${{ metrics.market_value|floatformat:2 }}</div>
-                    <div class="subtle small">Live valuation from current prices</div>
-                </div>
-            </div>
-            <div class="col-md-6 col-xl-4">
-                <div class="metric-card p-3">
-                    <div class="metric-label">Total P&amp;L</div>
-                    <div class="metric-value {% if metrics.total_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">${{ metrics.total_pnl|floatformat:2 }}</div>
-                    <div class="subtle small">{{ metrics.total_return_pct|floatformat:2 }}% total return</div>
-                </div>
-            </div>
-            <div class="col-md-6 col-xl-3">
-                <div class="metric-card p-3">
-                    <div class="metric-label">Capital Deployed</div>
-                    <div class="metric-value" style="font-size: 1.35rem;">${{ metrics.invested|floatformat:2 }}</div>
-                </div>
-            </div>
-            <div class="col-md-6 col-xl-3">
-                <div class="metric-card p-3">
-                    <div class="metric-label">Open Cost Basis</div>
-                    <div class="metric-value" style="font-size: 1.35rem;">${{ metrics.open_cost_basis|floatformat:2 }}</div>
-                </div>
-            </div>
-            <div class="col-md-6 col-xl-3">
-                <div class="metric-card p-3">
-                    <div class="metric-label">Realised P&amp;L</div>
-                    <div class="metric-value {% if metrics.realised_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}" style="font-size: 1.35rem;">${{ metrics.realised_pnl|floatformat:2 }}</div>
-                </div>
-            </div>
-            <div class="col-md-6 col-xl-3">
-                <div class="metric-card p-3">
-                    <div class="metric-label">Unrealised P&amp;L</div>
-                    <div class="metric-value {% if metrics.unrealised_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}" style="font-size: 1.35rem;">${{ metrics.unrealised_pnl|floatformat:2 }}</div>
-                </div>
-            </div>
+    <div class="col-md-6 col-xl-3">
+        <div class="metric-card p-3">
+            <div class="metric-label">Portfolio Value</div>
+            <div class="metric-value mono">${{ metrics.current_value|floatformat:2 }}</div>
+            <div class="subtle small">Live strategy value from droplet state</div>
         </div>
-        {% else %}
-        <div class="table-card p-5 text-center h-100 d-flex flex-column justify-content-center">
-            <h3 class="section-title mb-2">No portfolio yet</h3>
-            <p class="subtle mb-0">Upload your first Bybit trade history CSV to create the portfolio section and start tracking live strategy performance.</p>
+    </div>
+    <div class="col-md-6 col-xl-3">
+        <div class="metric-card p-3">
+            <div class="metric-label">Total P&amp;L</div>
+            <div class="metric-value mono {% if metrics.total_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">${{ metrics.total_pnl|floatformat:2 }}</div>
+            <div class="subtle small">{{ metrics.total_return_pct|floatformat:2 }}% vs fixed capital</div>
         </div>
-        {% endif %}
+    </div>
+    <div class="col-md-6 col-xl-3">
+        <div class="metric-card p-3">
+            <div class="metric-label">Current Signal</div>
+            <div class="metric-value" style="font-size: 1.35rem;">{{ latest_summary.action }}</div>
+            <div class="subtle small">Rule {{ latest_summary.rule_fired }} · {{ latest_summary.top_asset }}</div>
+        </div>
     </div>
 </div>
 
-{% if portfolio %}
-<div class="row g-4">
+<div class="row g-4 mb-4">
+    <div class="col-xl-8">
+        <div class="table-card">
+            <div class="p-4 border-bottom">
+                <h3 class="section-title">Current Strategy State</h3>
+                <p class="subtle mb-0">This panel reflects the live daily strategy output written on the droplet.</p>
+            </div>
+            <div class="p-4">
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <div class="metric-label">Top Asset</div>
+                        <div class="fw-semibold">{{ latest_summary.top_asset }}</div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="metric-label">Top Score</div>
+                        <div class="fw-semibold mono">{{ latest_summary.top_score_pct|floatformat:2 }}%</div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="metric-label">Allocation Mode</div>
+                        <div class="fw-semibold">{{ latest_summary.allocation_mode }}</div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="metric-label">Confidence</div>
+                        <div class="fw-semibold">{{ latest_summary.confidence_label }} <span class="subtle mono">({{ latest_summary.confidence_v3_pct|floatformat:2 }}%)</span></div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="metric-label">Fear &amp; Greed</div>
+                        <div class="fw-semibold mono">{{ latest_summary.fg_value }}</div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="metric-label">STH Proxy</div>
+                        <div class="fw-semibold mono">{{ latest_summary.sth_proxy_pct|floatformat:2 }}%</div>
+                    </div>
+                    <div class="col-12">
+                        <div class="metric-label">Reason</div>
+                        <div class="subtle">{{ latest_summary.reason }}</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-xl-4">
+        <div class="table-card h-100">
+            <div class="p-4 border-bottom">
+                <h3 class="section-title">BTC Health &amp; Re-entry</h3>
+                <p class="subtle mb-0">Protection and re-entry fields from the strategy contract.</p>
+            </div>
+            <div class="p-4">
+                <table class="table table-sm align-middle mb-0">
+                    <tbody>
+                        <tr><th class="ps-0">BTC drawdown</th><td class="text-end mono">{{ btc_summary.drawdown_pct|floatformat:2 }}%</td></tr>
+                        <tr><th class="ps-0">BTC 30d high</th><td class="text-end mono">${{ btc_summary.btc_30d_high|floatformat:2 }}</td></tr>
+                        <tr><th class="ps-0">Re-entry trigger</th><td class="text-end mono">${{ btc_summary.reentry_trigger|floatformat:2 }}</td></tr>
+                        <tr><th class="ps-0">Re-entry gap</th><td class="text-end mono">{{ btc_summary.reentry_gap_pct|floatformat:2 }}%</td></tr>
+                        <tr><th class="ps-0">All negative</th><td class="text-end">{% if btc_summary.all_negative %}Yes{% else %}No{% endif %}</td></tr>
+                        <tr><th class="ps-0">In cash</th><td class="text-end">{% if btc_summary.in_cash %}Yes{% else %}No{% endif %}</td></tr>
+                        <tr><th class="ps-0">BTC above 200MA</th><td class="text-end">{% if btc_summary.btc_above_200ma %}Yes{% else %}No{% endif %}</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row g-4 mb-4">
     <div class="col-xl-7">
         <div class="table-card">
             <div class="p-4 border-bottom d-flex justify-content-between align-items-center">
                 <div>
-                    <h3 class="section-title">Live Holdings</h3>
-                    <p class="subtle mb-0">Current positions derived from stored trade history and refreshed with live prices.</p>
+                    <h3 class="section-title">Current vs Target Positions</h3>
+                    <p class="subtle mb-0">Current and target weights translated onto the fixed 71,000 USD base.</p>
                 </div>
-                <span class="badge bg-light text-dark">{{ metrics.asset_count|default:0 }} active assets</span>
             </div>
             <div class="table-responsive">
                 <table class="table table-hover align-middle mb-0">
                     <thead class="table-light">
                         <tr>
                             <th>Asset</th>
-                            <th>Quantity</th>
-                            <th>Average Cost</th>
-                            <th>Live Price</th>
-                            <th>Market Value</th>
-                            <th>Unrealised P&amp;L</th>
+                            <th>Current Weight</th>
+                            <th>Target Weight</th>
+                            <th>Current Value</th>
+                            <th>Target Value</th>
+                            <th>Momentum</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {% for holding in holdings %}
+                        {% for row in positions_table %}
                         <tr>
-                            <td><strong>{{ holding.asset }}</strong></td>
-                            <td>{{ holding.quantity|floatformat:8 }}</td>
-                            <td>${{ holding.avg_cost|floatformat:2 }}</td>
-                            <td>${{ holding.price|floatformat:2 }}</td>
-                            <td>${{ holding.market_value|floatformat:2 }}</td>
-                            <td class="{% if holding.unrealised_pnl >= 0 %}pnl-positive{% else %}pnl-negative{% endif %}">${{ holding.unrealised_pnl|floatformat:2 }}</td>
+                            <td><strong>{{ row.asset }}</strong></td>
+                            <td class="mono">{{ row.current_weight_pct|floatformat:2 }}%</td>
+                            <td class="mono">{{ row.target_weight_pct|floatformat:2 }}%</td>
+                            <td class="mono">${{ row.current_value|floatformat:2 }}</td>
+                            <td class="mono">${{ row.target_value|floatformat:2 }}</td>
+                            <td class="mono">{{ row.momentum_pct|floatformat:2 }}%</td>
                         </tr>
                         {% empty %}
-                        <tr><td colspan="6" class="text-center text-muted py-4">No holdings available yet.</td></tr>
+                        <tr><td colspan="6" class="text-center text-muted py-4">No strategy positions available yet.</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>
@@ -186,62 +186,38 @@
     <div class="col-xl-5">
         <div class="table-card mb-4">
             <div class="p-4 border-bottom">
-                <h3 class="section-title">Stored Imports</h3>
-                <p class="subtle mb-0">Uploaded source files retained in platform storage for audit and reprocessing.</p>
+                <h3 class="section-title">Performance Counters</h3>
+                <p class="subtle mb-0">Counters persisted by the live strategy state on the droplet.</p>
             </div>
-            <div class="table-responsive">
-                <table class="table align-middle mb-0">
-                    <thead class="table-light">
-                        <tr>
-                            <th>File</th>
-                            <th>Rows</th>
-                            <th>Imported</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for item in imports %}
-                        <tr>
-                            <td>
-                                <div class="fw-semibold">{{ item.original_filename }}</div>
-                                <div class="small text-muted"><a href="{{ item.source_file.url }}" target="_blank">Open stored file</a></div>
-                            </td>
-                            <td>{{ item.rows_processed }}</td>
-                            <td>{{ item.imported_at|date:"d M Y H:i" }}</td>
-                        </tr>
-                        {% empty %}
-                        <tr><td colspan="3" class="text-center text-muted py-4">No stored imports yet.</td></tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+            <div class="p-4">
+                <div class="row g-3">
+                    <div class="col-6"><div class="metric-label">Hold days</div><div class="fw-semibold mono">{{ metrics.hold_days }}</div></div>
+                    <div class="col-6"><div class="metric-label">Trades executed</div><div class="fw-semibold mono">{{ metrics.trades_executed }}</div></div>
+                    <div class="col-6"><div class="metric-label">Rotations</div><div class="fw-semibold mono">{{ metrics.rotations }}</div></div>
+                    <div class="col-6"><div class="metric-label">Cash exits</div><div class="fw-semibold mono">{{ metrics.cash_exits }}</div></div>
+                    <div class="col-6"><div class="metric-label">All-neg exits</div><div class="fw-semibold mono">{{ metrics.all_neg_exits }}</div></div>
+                    <div class="col-6"><div class="metric-label">All-neg blocked</div><div class="fw-semibold mono">{{ metrics.all_neg_blocked }}</div></div>
+                    <div class="col-6"><div class="metric-label">Partial cash days</div><div class="fw-semibold mono">{{ metrics.partial_cash_days }}</div></div>
+                    <div class="col-6"><div class="metric-label">Cash allocation</div><div class="fw-semibold mono">{{ metrics.cash_allocation_pct|floatformat:2 }}%</div></div>
+                    <div class="col-6"><div class="metric-label">Rule 2 blocks</div><div class="fw-semibold mono">{{ metrics.rule2_blocks }}</div></div>
+                    <div class="col-6"><div class="metric-label">Rule 3 blocks</div><div class="fw-semibold mono">{{ metrics.rule3_blocks }}</div></div>
+                    <div class="col-6"><div class="metric-label">Rule 4 blocks</div><div class="fw-semibold mono">{{ metrics.rule4_blocks }}</div></div>
+                </div>
             </div>
         </div>
         <div class="table-card">
             <div class="p-4 border-bottom">
-                <h3 class="section-title">Recent Trades</h3>
-                <p class="subtle mb-0">Latest transactions loaded from the stored trade log.</p>
+                <h3 class="section-title">Strategy Parameters</h3>
+                <p class="subtle mb-0">Live parameter values shown for website-to-script alignment.</p>
             </div>
             <div class="table-responsive">
                 <table class="table align-middle mb-0">
-                    <thead class="table-light">
-                        <tr>
-                            <th>Time</th>
-                            <th>Pair</th>
-                            <th>Side</th>
-                            <th>Qty</th>
-                            <th>Price</th>
-                        </tr>
-                    </thead>
                     <tbody>
-                        {% for trade in recent_trades %}
+                        {% for label, value in parameter_rows %}
                         <tr>
-                            <td>{{ trade.executed_at|date:"d M H:i" }}</td>
-                            <td>{{ trade.spot_pair }}</td>
-                            <td><span class="badge {% if trade.direction == 'BUY' %}text-bg-success{% else %}text-bg-danger{% endif %}">{{ trade.direction }}</span></td>
-                            <td>{{ trade.filled_quantity|floatformat:8 }}</td>
-                            <td>${{ trade.filled_price|floatformat:2 }}</td>
+                            <th>{{ label }}</th>
+                            <td class="text-end">{{ value }}</td>
                         </tr>
-                        {% empty %}
-                        <tr><td colspan="5" class="text-center text-muted py-4">No trades imported yet.</td></tr>
                         {% endfor %}
                     </tbody>
                 </table>
@@ -249,5 +225,43 @@
         </div>
     </div>
 </div>
-{% endif %}
+
+<div class="table-card">
+    <div class="p-4 border-bottom">
+        <h3 class="section-title">Recent Signal History</h3>
+        <p class="subtle mb-0">Strategy history is read from droplet-local files and remains stored on the droplet.</p>
+    </div>
+    <div class="table-responsive">
+        <table class="table align-middle mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Date</th>
+                    <th>Action</th>
+                    <th>Top Asset</th>
+                    <th>Rule</th>
+                    <th>Confidence</th>
+                    <th>Cash</th>
+                    <th>All Negative</th>
+                    <th>Reason</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in recent_signals %}
+                <tr>
+                    <td class="mono">{{ item.date }}</td>
+                    <td><strong>{{ item.action }}</strong></td>
+                    <td>{{ item.top_asset }}</td>
+                    <td>{{ item.rule_fired }}</td>
+                    <td>{{ item.confidence_label }}</td>
+                    <td>{% if item.in_cash %}Yes{% else %}No{% endif %}</td>
+                    <td>{% if item.all_negative %}Yes{% else %}No{% endif %}</td>
+                    <td class="subtle">{{ item.reason }}</td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="8" class="text-center text-muted py-4">No signal history file found yet on the droplet path.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
 {% endblock %}
