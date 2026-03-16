@@ -82,15 +82,3 @@
 </div>
 {% endblock %}
 
-{% block extra_js %}
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    document.getElementById('tenantSearch').addEventListener('input', function() {
-        const q = this.value.toLowerCase();
-        document.querySelectorAll('.tenant-item').forEach(function(item) {
-            item.style.display = item.textContent.toLowerCase().includes(q) ? '' : 'none';
-        });
-    });
-});
-</script>
-{% endblock %}
