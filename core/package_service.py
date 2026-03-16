@@ -84,18 +84,18 @@ PACKAGE_CONTENTS = {
 
 # Document order for the combined PDF
 DOCUMENT_ORDER = [
-    "cover_letter",
-    "engagement_letter",
     "financial_statements",
     "directors_declaration",
-    "directors_report",
     "solvency_resolution",
+    "directors_report",
     "dividend_statement",
     "trust_distribution_minutes",
     "partner_statement",
     "partnership_tax_summary",
     "shareholder_loan_acknowledgment",
     "management_representation_letter",
+    "engagement_letter",
+    "cover_letter",
 ]
 
 
@@ -442,6 +442,13 @@ def _build_compliance_context(doc_type, fy, entity):
             }
             for d in directors
         ],
+        "signatories": [
+            {
+                "name": d.full_name,
+                "role": d.get_role_display() if hasattr(d, "get_role_display") else "Director",
+            }
+            for d in directors
+        ],
         "date": timezone.now().strftime("%d %B %Y"),
     }
 
@@ -575,7 +582,11 @@ def _regenerate_fs_for_package(fy):
 
     logger.info("_regenerate_fs_for_package: starting for FY %s", fy.pk)
 
-    pdf_buffer = generate_combined_pdf(fy.pk, include_watermark=False)
+    # Exclude embedded DECLARATION — the standalone directors_declaration
+    # legal document is included separately in the package.
+    pdf_buffer = generate_combined_pdf(
+        fy.pk, include_watermark=False, exclude_types={"DECLARATION"},
+    )
     logger.info("_regenerate_fs_for_package: PDF generated, %d bytes",
                 pdf_buffer.getbuffer().nbytes)
 

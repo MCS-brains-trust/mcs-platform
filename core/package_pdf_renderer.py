@@ -5,10 +5,10 @@ Renders all LegalDocument records for a FinancialYear into individual PDFs
 using weasyprint (from context_data), then merges them with the Financial
 Statements PDF into a single client package bundle using pypdf.
 
-Document order follows DOCUMENT_ORDER in package_service.py:
-  1. Financial Statements (from GeneratedDocument.file)
-  2. Solvency Resolution
-  3. Director's Declaration
+Document order:
+  1. Financial Statements (Compilation Report, P&L, Balance Sheet, Notes)
+  2. Director's Declaration (standalone)
+  3. Solvency Resolution
   4. Director's Report
   5. Management Representation Letter
   6. Cover Letter (Transmittal)
@@ -62,8 +62,8 @@ LEGAL_DOC_TEMPLATES = {
 
 DOCUMENT_ORDER = [
     "financial_statements",
-    "solvency_resolution",
     "directors_declaration",
+    "solvency_resolution",
     "directors_report",
     "management_representation_letter",
     "cover_letter",
@@ -148,7 +148,11 @@ def build_package_bundle(fy):
                 from core.fs_template_service import generate_combined_pdf
 
                 logger.info("Regenerating clean FS for package bundle FY %s", fy.pk)
-                pdf_buffer = generate_combined_pdf(fy.pk, include_watermark=False)
+                # Exclude embedded DECLARATION — the standalone directors_declaration
+                # legal document is included separately in the package.
+                pdf_buffer = generate_combined_pdf(
+                    fy.pk, include_watermark=False, exclude_types={"DECLARATION"},
+                )
 
                 reader = PdfReader(pdf_buffer)
                 for page in reader.pages:

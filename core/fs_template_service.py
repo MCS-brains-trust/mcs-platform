@@ -533,12 +533,12 @@ def render_template(template_db_record, context):
 # ---------------------------------------------------------------------------
 DOCUMENT_TYPE_ORDER = [
     "COVER",
+    "COMPILATION",
     "DETAILED_PL",
     "BALANCE_SHEET",
     "SUMMARY_PL",
     "NOTES",
     "DECLARATION",
-    "COMPILATION",
     "DISTRIBUTION",
 ]
 
@@ -607,8 +607,11 @@ def generate_financial_statements(financial_year_id, include_watermark=True):
 # ---------------------------------------------------------------------------
 # generate_combined_pdf — render each template to PDF individually, merge
 # ---------------------------------------------------------------------------
-def generate_combined_pdf(financial_year_id, include_watermark=True):
+def generate_combined_pdf(financial_year_id, include_watermark=True, exclude_types=None):
     """Generate all templates, convert each to PDF, merge into single PDF BytesIO.
+
+    Args:
+        exclude_types: optional set of document type keys to skip (e.g. {"DECLARATION"})
 
     Returns a BytesIO containing the merged PDF bytes.
     """
@@ -625,7 +628,8 @@ def generate_combined_pdf(financial_year_id, include_watermark=True):
     if not docs:
         raise RuntimeError("No templates rendered — check template registration")
 
-    ordered_keys = [dt for dt in DOCUMENT_TYPE_ORDER if dt in docs]
+    excluded = exclude_types or set()
+    ordered_keys = [dt for dt in DOCUMENT_TYPE_ORDER if dt in docs and dt not in excluded]
     logger.info("Ordered keys for PDF merge: %s", ordered_keys)
 
     if not ordered_keys:
