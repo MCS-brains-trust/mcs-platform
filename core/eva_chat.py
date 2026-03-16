@@ -121,7 +121,7 @@ def build_context_payload(financial_year):
         Formatted context string
     """
     from core.models import (
-        AdjustingJournal, EvaFinding, EvaReview,
+        AdjustingJournal, EvaReview,
     )
 
     fy = financial_year
@@ -204,6 +204,32 @@ Status: {fy.get_status_display()}
             sections.append("\n".join(officer_text))
     except Exception as e:
         logger.warning(f"Eva context: failed to load officers: {e}")
+
+    # ── Primary Governing Document ─────────────────────────────────────
+    try:
+        primary_doc = entity.governing_documents.filter(
+            is_primary=True,
+            status="active",
+            extraction_status__in=["completed", "completed_with_warnings"],
+        ).first()
+        if primary_doc and primary_doc.extracted_text:
+            document_label = primary_doc.original_filename or primary_doc.get_document_type_display()
+            extracted_text = primary_doc.extracted_text.strip()
+            excerpt = extracted_text[:12000]
+            if len(extracted_text) > len(excerpt):
+                excerpt += "\n\n[Document truncated for chat context]"
+            sections.append(
+                "\n".join([
+                    "=== PRIMARY GOVERNING DOCUMENT ===",
+                    f"Document Type: {primary_doc.get_document_type_display()}",
+                    f"Filename: {document_label}",
+                    f"Extraction Status: {primary_doc.get_extraction_status_display()}",
+                    "Extracted Text:",
+                    excerpt,
+                ])
+            )
+    except Exception as e:
+        logger.warning(f"Eva context: failed to load governing document text: {e}")
 
     # ── Eva Findings ──────────────────────────────────────────────────
     latest_review = EvaReview.objects.filter(
