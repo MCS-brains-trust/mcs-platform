@@ -268,10 +268,7 @@ def _summarise_due_item(descriptions: List[str]) -> str:
     summary = summary.replace("April 2026 ", "")
     summary = re.sub(r"\s+", " ", summary).strip(" .")
 
-    if len(summary) > 68:
-        summary = summary[:65].rstrip() + "..."
-
-    if lowered.startswith("lodge and pay"):
+    if lowered.startswith("lodge and pay") and summary:
         summary = summary[0].upper() + summary[1:]
     return summary
 

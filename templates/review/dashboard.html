@@ -185,7 +185,7 @@
                 <div class="border rounded-3 h-100 p-3 bg-white d-flex flex-column justify-content-between">
                     <div>
                         <div class="fw-bold text-dark mb-2">{{ item.due_date|date:"j M Y" }}</div>
-                        <div class="text-primary fw-semibold small">{{ item.summary }}</div>
+                        <div class="text-primary fw-semibold small" style="white-space: normal; overflow-wrap: anywhere; word-break: break-word; line-height: 1.4;">{{ item.summary }}</div>
                     </div>
                     <a href="{{ item.source_url }}" target="_blank" rel="noopener" class="small text-decoration-none mt-3">
                         View ATO source <i class="bi bi-box-arrow-up-right"></i>
