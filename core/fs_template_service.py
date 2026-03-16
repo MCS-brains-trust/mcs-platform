@@ -65,7 +65,7 @@ def aggregate_tb_lines(queryset):
     for line in queryset:
         raw_count += 1
         norm = line.account_name.strip().lower()
-        cy = line.debit - line.credit
+        cy = line.closing_balance
         py = line.prior_debit - line.prior_credit
         if norm in agg:
             agg[norm]["cy"] += cy
@@ -120,7 +120,7 @@ def _get_tb_sections(fy):
         except (ValueError, TypeError):
             continue
 
-        cy = line.debit - line.credit
+        cy = line.closing_balance
         py = line.prior_debit - line.prior_credit
         entry = {
             "account_code": line.account_code,
@@ -250,7 +250,7 @@ def build_company_context(financial_year, include_watermark=True):
     entity = fy.entity
     sections = _get_tb_sections(fy)
     has_prior = _has_prior_year(fy)
-    has_trading = len(sections["cogs"]) > 0
+    has_trading = len(sections["trading_income"]) > 0 or len(sections["cogs"]) > 0
 
     # P&L calculations
     # Trading income, other income are credit-normal (raw TB value is negative)
