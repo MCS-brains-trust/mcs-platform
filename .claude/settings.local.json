@@ -41,7 +41,8 @@
       "Bash(python:*)",
       "Bash(cd:*)",
       "Bash(pip show:*)",
-      "Bash(rm:*)"
+      "Bash(rm:*)",
+      "Bash(git stash:*)"
     ]
   }
 }

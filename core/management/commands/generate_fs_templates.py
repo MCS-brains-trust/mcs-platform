@@ -171,20 +171,26 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
                 run.font.size = FONT_SIZE
                 run.bold = True
 
-    # Add Jinja2 for-loop row
-    # docxtpl {%tr %} repeats the entire table row
-    row = table.add_row()
-    row.cells[0].text = "{%tr for item in " + items_tag + " %}{{ item.account_name }}"
-    row.cells[1].text = ""
-    row.cells[2].text = "{{ item.cy_formatted }}"
-    row.cells[3].text = "{{ item.py_formatted }}{%tr endfor %}"
+    # Row 1 — {%tr for %} tag in its own row (docxtpl requirement)
+    for_row = table.add_row()
+    for_row.cells[0].text = "{%tr for item in " + items_tag + " %}"
 
+    # Row 2 — data row with item fields
+    data_row = table.add_row()
+    data_row.cells[0].text = "{{ item.account_name }}"
+    data_row.cells[1].text = ""
+    data_row.cells[2].text = "{{ item.cy_formatted }}"
+    data_row.cells[3].text = "{{ item.py_formatted }}"
     for i in range(4):
-        for p in row.cells[i].paragraphs:
+        for p in data_row.cells[i].paragraphs:
             p.alignment = WD_ALIGN_PARAGRAPH.RIGHT if i >= 2 else WD_ALIGN_PARAGRAPH.LEFT
             for run in p.runs:
                 run.font.name = FONT_NAME
                 run.font.size = FONT_SIZE
+
+    # Row 3 — {%tr endfor %} tag in its own row
+    endfor_row = table.add_row()
+    endfor_row.cells[0].text = "{%tr endfor %}"
 
     # Total row
     total_row = table.add_row()
