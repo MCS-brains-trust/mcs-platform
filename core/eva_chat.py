@@ -8,6 +8,7 @@ Endpoints:
 import json
 import logging
 from decimal import Decimal
+from pathlib import Path
 
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
@@ -29,17 +30,19 @@ Your role:
 - Provide guidance on Australian tax law, accounting standards (AASB), and ATO compliance
 - Reference the Knowledge Brain context when available (cite sources as [Source N])
 - Flag potential compliance risks and suggest next steps
+- Before asking the accountant for more information, first use the provided entity details, financial data, and attached StatementHub document extracts to see whether the answer is already available
 
 ═══════════════════════════════════════════════════════
 CORE RULES
 ═══════════════════════════════════════════════════════
 
-1. Always ground your answers in the provided financial data and Knowledge Brain context.
-2. If you don't have enough information, say so clearly — do NOT guess.
-3. Never fabricate financial figures — only reference what's in the context.
-4. Use Australian English spelling and conventions.
-5. Format monetary values as **$X,XXX** with AUD assumed.
-6. When discussing legislation, cite the specific section (e.g. s.109D ITAA 1936).
+1. Always ground your answers in the provided financial data, entity details, attached document extracts, and Knowledge Brain context.
+2. Before asking a follow-up question, check whether the answer is already contained in the supplied entity context or attached documents. If it is, answer directly instead of asking.
+3. If you still do not have enough information after reviewing that context, say so clearly — do NOT guess.
+4. Never fabricate financial figures — only reference what's in the context.
+5. Use Australian English spelling and conventions.
+6. Format monetary values as **$X,XXX** with AUD assumed.
+7. When discussing legislation, cite the specific section (e.g. s.109D ITAA 1936).
 
 ═══════════════════════════════════════════════════════
 RESPONSE FORMAT — THREE-LAYER CHAT ARCHITECTURE
@@ -105,6 +108,60 @@ def _decimal_to_str(val):
     if isinstance(val, Decimal):
         return str(val)
     return val
+
+
+def _truncate_for_chat(text, limit=12000):
+    text = (text or "").strip()
+    if not text:
+        return ""
+    excerpt = text[:limit]
+    if len(text) > limit:
+        excerpt += "\n\n[Document truncated for chat context]"
+    return excerpt
+
+
+def _safe_file_name(file_field):
+    try:
+        return Path(file_field.name).name if getattr(file_field, "name", "") else ""
+    except Exception:
+        return ""
+
+
+def _extract_file_text(file_field):
+    try:
+        if not file_field or not getattr(file_field, "name", ""):
+            return ""
+        file_path = file_field.path
+        suffix = Path(file_field.name).suffix.lower()
+        from core.eva_service import _parse_docx, _parse_pdf, _parse_txt, _parse_xlsx, _parse_pptx, _parse_msg
+        parsers = {
+            ".docx": _parse_docx,
+            ".pdf": _parse_pdf,
+            ".txt": _parse_txt,
+            ".md": _parse_txt,
+            ".csv": _parse_txt,
+            ".xlsx": _parse_xlsx,
+            ".pptx": _parse_pptx,
+            ".msg": _parse_msg,
+        }
+        parser = parsers.get(suffix)
+        if not parser:
+            return ""
+        return (parser(file_path) or "").strip()
+    except Exception as e:
+        logger.warning(f"Eva context: failed to parse file text: {e}")
+        return ""
+
+
+def _append_document_section(sections, heading, metadata_lines, body_text):
+    excerpt = _truncate_for_chat(body_text)
+    if not excerpt:
+        return
+    block = [heading]
+    block.extend(metadata_lines)
+    block.append("Extracted Text:")
+    block.append(excerpt)
+    sections.append("\n".join(block))
 
 
 def build_context_payload(financial_year):
@@ -205,31 +262,85 @@ Status: {fy.get_status_display()}
     except Exception as e:
         logger.warning(f"Eva context: failed to load officers: {e}")
 
-    # ── Primary Governing Document ─────────────────────────────────────
+    # ── Entity-Level Governing Documents ─────────────────────────────────
     try:
-        primary_doc = entity.governing_documents.filter(
-            is_primary=True,
+        governing_docs = entity.governing_documents.filter(
             status="active",
             extraction_status__in=["completed", "completed_with_warnings"],
-        ).first()
-        if primary_doc and primary_doc.extracted_text:
-            document_label = primary_doc.original_filename or primary_doc.get_document_type_display()
-            extracted_text = primary_doc.extracted_text.strip()
-            excerpt = extracted_text[:12000]
-            if len(extracted_text) > len(excerpt):
-                excerpt += "\n\n[Document truncated for chat context]"
-            sections.append(
-                "\n".join([
-                    "=== PRIMARY GOVERNING DOCUMENT ===",
-                    f"Document Type: {primary_doc.get_document_type_display()}",
+        ).order_by("-is_primary", "-uploaded_at")[:5]
+        for idx, doc in enumerate(governing_docs, start=1):
+            extracted_text = (doc.extracted_text or "").strip()
+            if not extracted_text:
+                continue
+            document_label = doc.original_filename or _safe_file_name(doc.file) or doc.get_document_type_display()
+            heading = "=== PRIMARY GOVERNING DOCUMENT ===" if doc.is_primary and idx == 1 else f"=== GOVERNING DOCUMENT {idx} ==="
+            _append_document_section(
+                sections,
+                heading,
+                [
+                    f"Document Type: {doc.get_document_type_display()}",
                     f"Filename: {document_label}",
-                    f"Extraction Status: {primary_doc.get_extraction_status_display()}",
-                    "Extracted Text:",
-                    excerpt,
-                ])
+                    f"Extraction Status: {doc.get_extraction_status_display()}",
+                    f"Status: {doc.get_status_display()}",
+                ],
+                extracted_text,
             )
     except Exception as e:
         logger.warning(f"Eva context: failed to load governing document text: {e}")
+
+    # ── Financial Year Generated Documents (Documents tab) ───────────────
+    try:
+        generated_docs = fy.generated_documents.all().order_by("-version", "-generated_at")[:8]
+        for idx, doc in enumerate(generated_docs, start=1):
+            doc_text = _extract_file_text(doc.file)
+            if not doc_text:
+                continue
+            _append_document_section(
+                sections,
+                f"=== GENERATED DOCUMENT {idx} ===",
+                [
+                    f"Document Type: {doc.get_document_type_display()}",
+                    f"Filename: {_safe_file_name(doc.file) or doc.get_document_type_display()}",
+                    f"Version: {doc.version}",
+                    f"Status: {doc.get_status_display()}",
+                ],
+                doc_text,
+            )
+    except Exception as e:
+        logger.warning(f"Eva context: failed to load generated documents: {e}")
+
+    # ── Financial Year Legal Documents / Attached Outputs ────────────────
+    try:
+        legal_docs = entity.legal_documents.filter(financial_year=fy).order_by("-generated_at")[:8]
+        for idx, doc in enumerate(legal_docs, start=1):
+            doc_text = _extract_file_text(doc.generated_file) or _extract_file_text(doc.pdf_file)
+            if not doc_text and getattr(doc, "context_data", None):
+                try:
+                    doc_text = json.dumps(doc.context_data, indent=2, default=str)
+                except Exception:
+                    doc_text = str(doc.context_data)
+            if not doc_text and getattr(doc, "parameters", None):
+                try:
+                    doc_text = json.dumps(doc.parameters, indent=2, default=str)
+                except Exception:
+                    doc_text = str(doc.parameters)
+            if not doc_text:
+                continue
+            filename = _safe_file_name(doc.generated_file) or _safe_file_name(doc.pdf_file) or doc.title or doc.get_document_type_display()
+            _append_document_section(
+                sections,
+                f"=== LEGAL DOCUMENT {idx} ===",
+                [
+                    f"Document Type: {doc.get_document_type_display()}",
+                    f"Title: {doc.title or doc.get_document_type_display()}",
+                    f"Filename: {filename}",
+                    f"Status: {doc.get_status_display()}",
+                    f"FuseSign Status: {doc.get_fusesign_status_display()}",
+                ],
+                doc_text,
+            )
+    except Exception as e:
+        logger.warning(f"Eva context: failed to load legal documents: {e}")
 
     # ── Eva Findings ──────────────────────────────────────────────────
     latest_review = EvaReview.objects.filter(
