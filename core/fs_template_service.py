@@ -17,13 +17,14 @@ Functions:
 import io
 import logging
 import os
-import subprocess
 import tempfile
 from collections import OrderedDict
 from decimal import Decimal, ROUND_HALF_UP
 
 from docx import Document
 from django.conf import settings
+
+from core.libreoffice_utils import convert_docx_to_pdf
 
 logger = logging.getLogger(__name__)
 
@@ -670,27 +671,10 @@ def assemble_pdf_package(financial_year_id):
         # Convert to PDF via LibreOffice
         pdf_path = os.path.join(tmpdir, f"{doc_type}.pdf")
         try:
-            subprocess.run(
-                [
-                    "libreoffice", "--headless", "--convert-to", "pdf",
-                    "--outdir", tmpdir, docx_path,
-                ],
-                capture_output=True,
-                timeout=60,
-            )
-        except FileNotFoundError:
-            try:
-                subprocess.run(
-                    [
-                        "soffice", "--headless", "--convert-to", "pdf",
-                        "--outdir", tmpdir, docx_path,
-                    ],
-                    capture_output=True,
-                    timeout=60,
-                )
-            except FileNotFoundError:
-                logger.error("LibreOffice not available — skipping PDF conversion for %s", doc_type)
-                continue
+            convert_docx_to_pdf(docx_path, tmpdir, timeout=60)
+        except RuntimeError:
+            logger.error("LibreOffice not available — skipping PDF conversion for %s", doc_type)
+            continue
 
         if os.path.exists(pdf_path):
             try:

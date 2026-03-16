@@ -5667,31 +5667,12 @@ def generate_document(request, pk):
                 with open(docx_path, "wb") as f:
                     f.write(buffer.getvalue())
 
-                # Try multiple LibreOffice binary names
-                lo_bin = None
-                for candidate in ["soffice", "libreoffice", "/usr/bin/soffice", "/usr/bin/libreoffice"]:
-                    try:
-                        subprocess.run([candidate, "--version"], capture_output=True, timeout=5)
-                        lo_bin = candidate
-                        break
-                    except (FileNotFoundError, subprocess.TimeoutExpired):
-                        continue
-
-                if not lo_bin:
-                    raise RuntimeError(
-                        "LibreOffice is not installed. Install with: sudo apt-get install -y libreoffice-writer"
-                    )
-
-                result = subprocess.run(
-                    [lo_bin, "--headless", "--norestore", "--convert-to", "pdf",
-                     "--outdir", tmpdir, docx_path],
-                    capture_output=True, timeout=120,
-                    env={**os.environ, "HOME": tmpdir},
-                )
+                from core.libreoffice_utils import convert_docx_to_pdf
+                convert_docx_to_pdf(docx_path, tmpdir, timeout=120)
                 pdf_path = os.path.join(tmpdir, f"{base_filename}.pdf")
                 if not os.path.exists(pdf_path):
-                    stderr = result.stderr.decode('utf-8', errors='replace')
-                    stdout = result.stdout.decode('utf-8', errors='replace')
+                    stderr = ""
+                    stdout = ""
                     raise RuntimeError(
                         f"PDF conversion failed (exit code {result.returncode}).\n"
                         f"stdout: {stdout[:500]}\nstderr: {stderr[:500]}"
@@ -5805,30 +5786,11 @@ def generate_management_accounts_view(request, pk):
                 with open(docx_path, 'wb') as f:
                     f.write(buffer.getvalue())
 
-                lo_bin = None
-                for candidate in ['soffice', 'libreoffice', '/usr/bin/soffice', '/usr/bin/libreoffice']:
-                    try:
-                        subprocess.run([candidate, '--version'], capture_output=True, timeout=5)
-                        lo_bin = candidate
-                        break
-                    except (FileNotFoundError, subprocess.TimeoutExpired):
-                        continue
-
-                if not lo_bin:
-                    raise RuntimeError(
-                        'LibreOffice is not installed. Install with: sudo apt-get install -y libreoffice-writer'
-                    )
-
-                result = subprocess.run(
-                    [lo_bin, '--headless', '--norestore', '--convert-to', 'pdf',
-                     '--outdir', tmpdir, docx_path],
-                    capture_output=True, timeout=120,
-                    env={**os.environ, 'HOME': tmpdir},
-                )
+                from core.libreoffice_utils import convert_docx_to_pdf
+                convert_docx_to_pdf(docx_path, tmpdir, timeout=120)
                 pdf_path = os.path.join(tmpdir, f"{base_filename}.pdf")
                 if not os.path.exists(pdf_path):
-                    stderr = result.stderr.decode('utf-8', errors='replace')
-                    raise RuntimeError(f'PDF conversion failed: {stderr[:500]}')
+                    raise RuntimeError('PDF conversion failed')
                 with open(pdf_path, 'rb') as f:
                     pdf_bytes = f.read()
 
@@ -5938,24 +5900,8 @@ def generate_distribution_minutes(request, pk):
                 with open(docx_path, "wb") as f:
                     f.write(buffer.getvalue())
 
-                lo_bin = None
-                for candidate in ["soffice", "libreoffice", "/usr/bin/soffice", "/usr/bin/libreoffice"]:
-                    try:
-                        subprocess.run([candidate, "--version"], capture_output=True, timeout=5)
-                        lo_bin = candidate
-                        break
-                    except (FileNotFoundError, subprocess.TimeoutExpired):
-                        continue
-
-                if not lo_bin:
-                    raise RuntimeError("LibreOffice is not installed.")
-
-                result = subprocess.run(
-                    [lo_bin, "--headless", "--norestore", "--convert-to", "pdf",
-                     "--outdir", tmpdir, docx_path],
-                    capture_output=True, timeout=120,
-                    env={**os.environ, "HOME": tmpdir},
-                )
+                from core.libreoffice_utils import convert_docx_to_pdf
+                convert_docx_to_pdf(docx_path, tmpdir, timeout=120)
                 pdf_path = os.path.join(tmpdir, f"{base_filename}.pdf")
                 if not os.path.exists(pdf_path):
                     raise RuntimeError("PDF conversion failed.")

@@ -116,7 +116,8 @@ def build_package_bundle(fy):
             fs_added = False
             try:
                 from core.fs_template_service import generate_combined_docx
-                import subprocess, tempfile, os as _os
+                from core.libreoffice_utils import convert_docx_to_pdf
+                import tempfile, os as _os
 
                 logger.info("Regenerating clean FS for package bundle FY %s", fy.pk)
                 buffer = generate_combined_docx(fy.pk, include_watermark=False)
@@ -126,11 +127,7 @@ def build_package_bundle(fy):
                 with open(docx_path, "wb") as f:
                     f.write(buffer.read())
 
-                lo_result = subprocess.run(
-                    ["libreoffice", "--headless", "--convert-to", "pdf",
-                     "--outdir", tmpdir, docx_path],
-                    capture_output=True, timeout=120,
-                )
+                convert_docx_to_pdf(docx_path, tmpdir, timeout=120)
                 pdf_path = _os.path.join(tmpdir, "fs.pdf")
                 if _os.path.exists(pdf_path):
                     with open(pdf_path, "rb") as f:

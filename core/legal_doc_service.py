@@ -288,36 +288,15 @@ def _convert_to_pdf(docx_bytes):
             with open(docx_path, "wb") as f:
                 f.write(docx_bytes)
 
-            # Try multiple LibreOffice binary names
-            lo_bin = None
-            for candidate in ["soffice", "libreoffice", "/usr/bin/soffice", "/usr/bin/libreoffice"]:
-                try:
-                    subprocess.run([candidate, "--version"], capture_output=True, timeout=5)
-                    lo_bin = candidate
-                    break
-                except (FileNotFoundError, subprocess.TimeoutExpired):
-                    continue
-
-            if not lo_bin:
+            from core.libreoffice_utils import convert_docx_to_pdf
+            try:
+                convert_docx_to_pdf(docx_path, tmpdir, timeout=120)
+            except RuntimeError:
                 logger.error(
                     "LibreOffice not installed — PDF conversion unavailable. "
                     "Install with: sudo apt-get install -y libreoffice-writer"
                 )
                 return None
-
-            result = subprocess.run(
-                [
-                    lo_bin,
-                    "--headless",
-                    "--norestore",
-                    "--convert-to", "pdf",
-                    "--outdir", tmpdir,
-                    docx_path,
-                ],
-                capture_output=True,
-                timeout=120,
-                env={**os.environ, "HOME": tmpdir},
-            )
 
             pdf_path = os.path.join(tmpdir, "document.pdf")
             if os.path.exists(pdf_path):

@@ -572,23 +572,8 @@ def _regenerate_fs_for_package(fy):
     with open(docx_path, "wb") as f:
         f.write(buffer.read())
 
-    try:
-        subprocess.run(
-            ["libreoffice", "--headless", "--convert-to", "pdf", docx_path,
-             "--outdir", tmpdir],
-            check=True,
-            timeout=120,
-            capture_output=True,
-        )
-    except FileNotFoundError:
-        # LibreOffice not available — try soffice
-        subprocess.run(
-            ["soffice", "--headless", "--convert-to", "pdf", docx_path,
-             "--outdir", tmpdir],
-            check=True,
-            timeout=120,
-            capture_output=True,
-        )
+    from core.libreoffice_utils import convert_docx_to_pdf
+    convert_docx_to_pdf(docx_path, tmpdir, timeout=120)
 
     pdf_path = os.path.join(tmpdir, "fs.pdf")
     if os.path.exists(pdf_path):
