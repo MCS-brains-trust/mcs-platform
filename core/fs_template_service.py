@@ -206,11 +206,22 @@ def _sum_section(items, field="cy_amount"):
     return sum(item[field] for item in items)
 
 
-def _format_lines(items):
-    """Add formatted amount strings to each item dict."""
+def _format_lines(items, credit_normal=False):
+    """Add formatted amount strings to each item dict.
+
+    For credit-normal accounts (liabilities, equity, income/revenue),
+    the raw TB amount is negative (debit - credit).  Setting
+    ``credit_normal=True`` negates the value before formatting so these
+    accounts display as positive numbers in the financial statements.
+    """
     for item in items:
-        item["cy_formatted"] = format_amount(item["cy_amount"])
-        item["py_formatted"] = format_amount(item["py_amount"])
+        cy = item["cy_amount"]
+        py = item["py_amount"]
+        if credit_normal:
+            cy = -cy if cy else cy
+            py = -py if py else py
+        item["cy_formatted"] = format_amount(cy)
+        item["py_formatted"] = format_amount(py)
     return items
 
 
@@ -235,9 +246,10 @@ def build_company_context(financial_year, include_watermark=True):
     has_trading = len(sections["cogs"]) > 0
 
     # P&L calculations
-    trading_income = _format_lines(sections["trading_income"])
+    # Trading income, other income are credit-normal (raw TB value is negative)
+    trading_income = _format_lines(sections["trading_income"], credit_normal=True)
     cogs = _format_lines(sections["cogs"])
-    income = _format_lines(sections["income"])
+    income = _format_lines(sections["income"], credit_normal=True)
     expenses = _format_lines(sections["expenses"])
 
     total_trading_income_cy = abs(_sum_section(sections["trading_income"]))
@@ -262,9 +274,10 @@ def build_company_context(financial_year, include_watermark=True):
     # Balance Sheet
     current_assets = _format_lines(sections["current_assets"])
     noncurrent_assets = _format_lines(sections["noncurrent_assets"])
-    current_liabilities = _format_lines(sections["current_liabilities"])
-    noncurrent_liabilities = _format_lines(sections["noncurrent_liabilities"])
-    equity = _format_lines(sections["equity"])
+    # Liabilities and equity are credit-normal (raw TB value is negative)
+    current_liabilities = _format_lines(sections["current_liabilities"], credit_normal=True)
+    noncurrent_liabilities = _format_lines(sections["noncurrent_liabilities"], credit_normal=True)
+    equity = _format_lines(sections["equity"], credit_normal=True)
 
     total_current_assets_cy = _sum_section(sections["current_assets"])
     total_current_assets_py = _sum_section(sections["current_assets"], "py_amount")
