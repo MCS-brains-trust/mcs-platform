@@ -1131,7 +1131,23 @@ _NOTES_MARGIN_TOP = Cm(2)
 _NOTES_MARGIN_BOTTOM = Cm(2)
 _NOTES_MARGIN_LEFT = Cm(2.5)
 _NOTES_MARGIN_RIGHT = Cm(2)
-_NOTES_COL_WIDTHS_3 = [Cm(8.5), Cm(3.5), Cm(3.5)]  # label, CY, PY
+_NOTES_COL_WIDTHS_3 = [Cm(10), Cm(3), Cm(3)]  # label, CY, PY
+
+
+def _notes_spacer(doc, size_pt=8):
+    """Insert a blank paragraph as a visual spacer.
+
+    More reliable than space_before/space_after when LibreOffice is in
+    the PDF conversion chain — LO sometimes strips paragraph spacing
+    from python-docx documents.
+    """
+    p = doc.add_paragraph()
+    run = p.add_run("")
+    run.font.name = _NOTES_FONT
+    run.font.size = Pt(size_pt)
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after = Pt(0)
+    return p
 
 
 def _notes_add_para(doc, text, bold=False, italic=False, size=None,
@@ -1220,7 +1236,11 @@ def _notes_apply_grand_total_border(row):
 
 
 def _notes_create_table(doc, has_prior=True):
-    """Create a 3-column borderless table for notes (label, CY, PY)."""
+    """Create a 3-column borderless table for notes (label, CY, PY).
+
+    Column widths are set explicitly so the label column is wide enough
+    to fit 'Less: Accumulated depreciation' on a single line.
+    """
     from docx.oxml.ns import qn
     from docx.oxml import OxmlElement
     cols = 3 if has_prior else 2
@@ -1233,6 +1253,27 @@ def _notes_create_table(doc, has_prior=True):
     tblW.set(qn('w:w'), '9356')
     tblW.set(qn('w:type'), 'dxa')
     tblPr.append(tblW)
+    # Fixed layout so Word/LO respects our column widths
+    tblLayout = OxmlElement('w:tblLayout')
+    tblLayout.set(qn('w:type'), 'fixed')
+    existing_layout = tblPr.find(qn('w:tblLayout'))
+    if existing_layout is not None:
+        tblPr.remove(existing_layout)
+    tblPr.append(tblLayout)
+    # Set column widths via tblGrid
+    tblGrid = OxmlElement('w:tblGrid')
+    widths = _NOTES_COL_WIDTHS_3 if has_prior else _NOTES_COL_WIDTHS_3[:2]
+    for w in widths:
+        gridCol = OxmlElement('w:gridCol')
+        # Convert Cm to twips (1 cm = 567 twips)
+        twips = int(w.cm * 567)
+        gridCol.set(qn('w:w'), str(twips))
+        tblGrid.append(gridCol)
+    existing_grid = tbl.find(qn('w:tblGrid'))
+    if existing_grid is not None:
+        tbl.remove(existing_grid)
+    # tblGrid must come after tblPr
+    tbl.insert(list(tbl).index(tblPr) + 1, tblGrid)
     # Remove all borders
     tblBorders = OxmlElement('w:tblBorders')
     for edge in ['top', 'left', 'bottom', 'right', 'insideH', 'insideV']:
@@ -1576,6 +1617,7 @@ def _generate_notes_document(context):
     policy_letter = ord("a")
 
     # (a) Revenue Recognition — always
+    _notes_spacer(doc, 4)
     _notes_add_para(doc, f"{chr(policy_letter)}) Revenue Recognition",
                     bold=True, space_before=10, space_after=2)
     _notes_add_para(
@@ -1587,6 +1629,7 @@ def _generate_notes_document(context):
 
     # Income Tax — companies only
     if is_company:
+        _notes_spacer(doc, 4)
         _notes_add_para(doc, f"{chr(policy_letter)}) Income Tax",
                         bold=True, space_before=10, space_after=2)
         _notes_add_para(
@@ -1598,6 +1641,7 @@ def _generate_notes_document(context):
         policy_letter += 1
 
     # GST — always
+    _notes_spacer(doc, 4)
     _notes_add_para(doc, f"{chr(policy_letter)}) Goods and Services Tax (GST)",
                     bold=True, space_before=10, space_after=2)
     _notes_add_para(
@@ -1609,6 +1653,7 @@ def _generate_notes_document(context):
 
     # PPE — only if has_ppe
     if has_ppe:
+        _notes_spacer(doc, 4)
         _notes_add_para(doc, f"{chr(policy_letter)}) Property, Plant and Equipment",
                         bold=True, space_before=10, space_after=2)
         _notes_add_para(
@@ -1623,6 +1668,7 @@ def _generate_notes_document(context):
     # NOTE 2: Trade Receivables
     # ==================================================================
     if has_trade_debtors:
+        _notes_spacer(doc, 8)
         n = _note_num_for("receivables")
         _notes_add_para(doc, f"Note {n}: Trade Receivables",
                         bold=True, space_before=18, space_after=6)
@@ -1666,6 +1712,7 @@ def _generate_notes_document(context):
     # NOTE 3: Property, Plant and Equipment
     # ==================================================================
     if has_ppe:
+        _notes_spacer(doc, 8)
         n = _note_num_for("ppe")
         _notes_add_para(doc, f"Note {n}: Property, Plant and Equipment",
                         bold=True, space_before=18, space_after=6)
@@ -1725,6 +1772,7 @@ def _generate_notes_document(context):
     # NOTE 4: Related Party Transactions
     # ==================================================================
     if has_related_party:
+        _notes_spacer(doc, 8)
         n = _note_num_for("related_party")
         _notes_add_para(doc, f"Note {n}: Related Party Transactions",
                         bold=True, space_before=18, space_after=6)
@@ -1854,6 +1902,7 @@ def _generate_notes_document(context):
     # NOTE 5: Income Tax (companies only)
     # ==================================================================
     if has_income_tax:
+        _notes_spacer(doc, 8)
         n = _note_num_for("income_tax")
         _notes_add_para(doc, f"Note {n}: Income Tax",
                         bold=True, space_before=18, space_after=6)
@@ -1891,6 +1940,7 @@ def _generate_notes_document(context):
     # NOTE 6: Events After the Reporting Date (companies only)
     # ==================================================================
     if is_company:
+        _notes_spacer(doc, 8)
         n = _note_num_for("events")
         _notes_add_para(doc, f"Note {n}: Events After the Reporting Date",
                         bold=True, space_before=18, space_after=6)
