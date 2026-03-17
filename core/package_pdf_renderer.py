@@ -98,11 +98,22 @@ def render_legal_doc_to_pdf_bytes(doc):
     context.setdefault("document_title", doc.title or doc.get_document_type_display())
     context.setdefault("generated_at", doc.generated_at.strftime("%d %B %Y") if doc.generated_at else "")
     context.setdefault("firm_name", "MC & S Chartered Accountants")
-    # Always rebuild ACN/ABN from current entity data so stale context_data
-    # (e.g. generated before ABN was entered) is corrected at render time.
+    # Always rebuild ACN/ABN from current entity data, formatted with spaces.
     if doc.entity:
-        context["acn"] = doc.entity.acn or context.get("acn", "")
-        context["abn"] = doc.entity.abn or context.get("abn", "")
+        acn_raw = doc.entity.acn or context.get("acn", "")
+        abn_raw = doc.entity.abn or context.get("abn", "")
+        # Format ACN as XXX XXX XXX
+        acn_digits = "".join(c for c in str(acn_raw) if c.isdigit())
+        context["acn"] = (
+            f"{acn_digits[:3]} {acn_digits[3:6]} {acn_digits[6:]}"
+            if len(acn_digits) == 9 else acn_raw
+        )
+        # Format ABN as XX XXX XXX XXX
+        abn_digits = "".join(c for c in str(abn_raw) if c.isdigit())
+        context["abn"] = (
+            f"{abn_digits[:2]} {abn_digits[2:5]} {abn_digits[5:8]} {abn_digits[8:]}"
+            if len(abn_digits) == 11 else abn_raw
+        )
     context["acn_abn"] = _build_acn_abn(context.get("acn", ""), context.get("abn", ""))
     context.setdefault("is_final", True)
     context.setdefault("watermark_text", "")
@@ -252,12 +263,28 @@ def build_package_bundle(fy):
                     is_active=True,
                 ).first()
 
-                if not comp_tmpl:
-                    logger.error("No COMPILATION template found for %s", entity.entity_type)
-                    continue
+                if comp_tmpl:
+                    # Render from registered DB template
+                    comp_buffer = render_template(comp_tmpl, context)
+                else:
+                    # Self-healing: build template on-the-fly if DB record missing
+                    logger.warning(
+                        "No COMPILATION template in DB for %s — building on-the-fly",
+                        entity.entity_type,
+                    )
+                    from core.management.commands.generate_fs_templates import _build_compilation
+                    from docxtpl import DocxTemplate
 
-                # Render the single template
-                comp_buffer = render_template(comp_tmpl, context)
+                    comp_doc = _build_compilation(entity.entity_type)
+                    tmp_tmpl = io.BytesIO()
+                    comp_doc.save(tmp_tmpl)
+                    tmp_tmpl.seek(0)
+                    tpl = DocxTemplate(tmp_tmpl)
+                    tpl.render(context)
+                    comp_buffer = io.BytesIO()
+                    tpl.save(comp_buffer)
+                    comp_buffer.seek(0)
+
                 comp_buffer = _post_process_fs_doc(comp_buffer, "COMPILATION")
 
                 # Convert .docx to PDF
