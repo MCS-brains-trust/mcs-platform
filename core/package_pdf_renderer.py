@@ -106,11 +106,28 @@ def render_legal_doc_to_pdf_bytes(doc):
     context.setdefault("is_final", True)
     context.setdefault("watermark_text", "")
     if doc.financial_year and doc.financial_year.end_date:
-        context.setdefault("financial_year", str(doc.financial_year.end_date.year))
-        context.setdefault(
-            "financial_year_end",
-            doc.financial_year.end_date.strftime("%-d %B %Y"),
-        )
+        fy_end = doc.financial_year.end_date
+        context["financial_year"] = str(fy_end.year)
+        # Always override — stored context_data may contain stale ISO format
+        context["financial_year_end"] = fy_end.strftime("%-d %B %Y")
+        context.setdefault("resolution_date", fy_end.strftime("%-d %B %Y"))
+
+    # Always rebuild signatories from current entity officers so stale
+    # context_data (e.g. generated before directors were entered) is corrected.
+    if doc.entity and doc.document_type in (
+        "directors_declaration", "solvency_resolution", "management_representation_letter",
+    ):
+        from core.models import EntityOfficer
+        officers = EntityOfficer.objects.filter(
+            entity=doc.entity,
+            role__in=["director", "director_shareholder", "trustee", "partner"],
+            date_ceased__isnull=True,
+        ).order_by("display_order", "full_name")
+        if officers.exists():
+            context["signatories"] = [
+                {"name": o.full_name, "role": o.get_role_display()}
+                for o in officers
+            ]
 
     try:
         html_string = render_to_string(template_name, context)
