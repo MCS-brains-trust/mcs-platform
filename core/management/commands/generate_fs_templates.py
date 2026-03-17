@@ -161,36 +161,17 @@ def _apply_grand_total_borders(row, amount_col_indices=None):
 # Page number footer helper
 # ---------------------------------------------------------------------------
 def _add_page_number_footer(doc):
-    """Add a centred page-number-only footer using a PAGE field."""
+    """Placeholder — page numbers are stamped on the final merged PDF.
+
+    This sets up a minimal footer so the section knows it has one,
+    but does NOT embed a PAGE field (those restart per-document).
+    """
     section = doc.sections[0]
     footer = section.footer
     footer.is_linked_to_previous = False
+    # Empty footer — page number will be stamped by _stamp_page_numbers()
     p = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
     p.text = ""
-    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-
-    # PAGE field: begin → instrText → end
-    run1 = p.add_run()
-    run1.font.name = FONT_NAME
-    run1.font.size = Pt(9)
-    fld_begin = OxmlElement('w:fldChar')
-    fld_begin.set(qn('w:fldCharType'), 'begin')
-    run1._r.append(fld_begin)
-
-    run2 = p.add_run()
-    run2.font.name = FONT_NAME
-    run2.font.size = Pt(9)
-    instrText = OxmlElement('w:instrText')
-    instrText.set(qn('xml:space'), 'preserve')
-    instrText.text = ' PAGE '
-    run2._r.append(instrText)
-
-    run3 = p.add_run()
-    run3.font.name = FONT_NAME
-    run3.font.size = Pt(9)
-    fld_end = OxmlElement('w:fldChar')
-    fld_end.set(qn('w:fldCharType'), 'end')
-    run3._r.append(fld_end)
 
 
 def _add_total_row(doc, label, cy_tag, py_tag, size=None, grand_total=False):
@@ -241,12 +222,16 @@ def _add_watermark_header(doc):
 
 
 def _add_footer(doc, text="These financial statements are unaudited."):
-    """Add standard footer with 'unaudited' text left-aligned and centred page number."""
+    """Add standard footer with 'unaudited' text only.
+
+    Page numbers are NOT added here — they are stamped on the final
+    merged PDF by _stamp_page_numbers() so numbering runs continuously
+    across the entire assembled package.
+    """
     section = doc.sections[0]
     footer = section.footer
     footer.is_linked_to_previous = False
 
-    # Line 1: "These financial statements are unaudited." (left, italic, 8pt)
     p = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
     p.text = ""
     p.alignment = WD_ALIGN_PARAGRAPH.LEFT
@@ -254,29 +239,6 @@ def _add_footer(doc, text="These financial statements are unaudited."):
     run.font.name = FONT_NAME
     run.font.size = Pt(8)
     run.font.italic = True
-
-    # Line 2: centred page number
-    p2 = footer.add_paragraph()
-    p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run1 = p2.add_run()
-    run1.font.name = FONT_NAME
-    run1.font.size = Pt(9)
-    fld_begin = OxmlElement('w:fldChar')
-    fld_begin.set(qn('w:fldCharType'), 'begin')
-    run1._r.append(fld_begin)
-    run2 = p2.add_run()
-    run2.font.name = FONT_NAME
-    run2.font.size = Pt(9)
-    instrText = OxmlElement('w:instrText')
-    instrText.set(qn('xml:space'), 'preserve')
-    instrText.text = ' PAGE '
-    run2._r.append(instrText)
-    run3 = p2.add_run()
-    run3.font.name = FONT_NAME
-    run3.font.size = Pt(9)
-    fld_end = OxmlElement('w:fldChar')
-    fld_end.set(qn('w:fldCharType'), 'end')
-    run3._r.append(fld_end)
 
 
 def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_tag, total_py_tag):

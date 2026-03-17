@@ -231,10 +231,13 @@ def build_package_bundle(fy):
     if docs_added == 0:
         raise ValueError("No documents could be added to the bundle.")
 
-    # Write to bytes
+    # Write to bytes and stamp continuous page numbers
     output = io.BytesIO()
     writer.write(output)
-    pdf_bytes = output.getvalue()
+    raw_bytes = output.getvalue()
+
+    from core.fs_template_service import _stamp_page_numbers
+    pdf_bytes = _stamp_page_numbers(raw_bytes)
 
     safe_name = entity_name.replace(" ", "_").replace("/", "_")
     filename = f"Client_Package_{safe_name}_{fy_year}.pdf"

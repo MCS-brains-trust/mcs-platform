@@ -613,35 +613,21 @@ def _post_process_fs_doc(buffer, doc_type):
                             run.text = run.text.replace("MC S Pty Ltd", "MC & S Pty Ltd")
 
     # ------------------------------------------------------------------
-    # Add page number to footer if not already present.
+    # Remove any existing PAGE field footers — page numbers are stamped
+    # on the final merged PDF so they run continuously.
     # ------------------------------------------------------------------
     for section in doc.sections:
         footer = section.footer
-        has_page_field = False
+        paras_to_remove = []
         for p in footer.paragraphs:
-            if any(
+            has_page_field = any(
                 el.tag == qn('w:fldChar') or el.tag == qn('w:instrText')
                 for el in p._p.iter()
-            ):
-                has_page_field = True
-                break
-        if not has_page_field:
-            p_num = footer.add_paragraph()
-            p_num.alignment = WD_ALIGN_PARAGRAPH.CENTER
-            run1 = p_num.add_run()
-            run1.font.size = 72000  # ~8pt in EMU (Pt(9))
-            fld_begin = OxmlElement('w:fldChar')
-            fld_begin.set(qn('w:fldCharType'), 'begin')
-            run1._r.append(fld_begin)
-            run2 = p_num.add_run()
-            instrText = OxmlElement('w:instrText')
-            instrText.set(qn('xml:space'), 'preserve')
-            instrText.text = ' PAGE '
-            run2._r.append(instrText)
-            run3 = p_num.add_run()
-            fld_end = OxmlElement('w:fldChar')
-            fld_end.set(qn('w:fldCharType'), 'end')
-            run3._r.append(fld_end)
+            )
+            if has_page_field:
+                paras_to_remove.append(p._p)
+        for p_el in paras_to_remove:
+            p_el.getparent().remove(p_el)
 
     # ------------------------------------------------------------------
     # P&L / BS / Summary: borders, page-break fixes, duplicate removal
@@ -693,7 +679,25 @@ def _post_process_fs_doc(buffer, doc_type):
                             keepNext.set(qn('w:val'), '1')
                             pPr.append(keepNext)
 
-        # Process table rows: borders + cantSplit + keepNext + inline PY fix
+        # Fix 8: Section integrity — set keepWithNext on every row in each
+        # table EXCEPT the last row.  This chains all rows together so the
+        # entire section moves to the next page if it does not fit.
+        for table in doc.tables:
+            rows = list(table.rows)
+            for idx, row in enumerate(rows):
+                is_last = (idx == len(rows) - 1)
+                for cell in row.cells:
+                    for para in cell.paragraphs:
+                        ppPr = para._p.get_or_add_pPr()
+                        # Remove existing keepNext first
+                        for existing_kn in ppPr.findall(qn('w:keepNext')):
+                            ppPr.remove(existing_kn)
+                        if not is_last:
+                            kn = OxmlElement('w:keepNext')
+                            kn.set(qn('w:val'), '1')
+                            ppPr.append(kn)
+
+        # Process table rows: borders + cantSplit + inline PY fix
         for table in doc.tables:
             for row in table.rows:
                 if not row.cells:
@@ -705,7 +709,7 @@ def _post_process_fs_doc(buffer, doc_type):
                 is_summary = is_grand or is_sub
 
                 if is_summary:
-                    # cantSplit
+                    # cantSplit — prevent the row itself from splitting
                     tr = row._tr
                     trPr = tr.get_or_add_trPr()
                     for existing in trPr.findall(qn('w:cantSplit')):
@@ -713,15 +717,6 @@ def _post_process_fs_doc(buffer, doc_type):
                     cantSplit = OxmlElement('w:cantSplit')
                     cantSplit.set(qn('w:val'), '1')
                     trPr.append(cantSplit)
-
-                    # keepNext on paragraphs in the row
-                    for cell in row.cells:
-                        for para in cell.paragraphs:
-                            ppPr = para._p.get_or_add_pPr()
-                            if ppPr.find(qn('w:keepNext')) is None:
-                                kn = OxmlElement('w:keepNext')
-                                kn.set(qn('w:val'), '1')
-                                ppPr.append(kn)
 
                     # Apply borders to ALL cells in the row
                     for cell in row.cells:
@@ -762,6 +757,23 @@ def _post_process_fs_doc(buffer, doc_type):
                 # Fix inline PY values in Balance Sheet totals
                 if doc_type == "BALANCE_SHEET":
                     _fix_inline_py_in_row(row, qn, OxmlElement, copy, re)
+
+    # ------------------------------------------------------------------
+    # Fix 8: Section integrity for short documents — keep all paragraphs
+    # together so they never split across pages.
+    # ------------------------------------------------------------------
+    if doc_type in ("DECLARATION", "COMPILATION", "NOTES"):
+        body_paras = doc.paragraphs
+        for idx, para in enumerate(body_paras):
+            is_last = (idx == len(body_paras) - 1)
+            ppPr = para._p.get_or_add_pPr()
+            # Remove existing keepNext
+            for existing_kn in ppPr.findall(qn('w:keepNext')):
+                ppPr.remove(existing_kn)
+            if not is_last:
+                kn = OxmlElement('w:keepNext')
+                kn.set(qn('w:val'), '1')
+                ppPr.append(kn)
 
     output = io.BytesIO()
     doc.save(output)
@@ -956,6 +968,51 @@ def generate_financial_statements(financial_year_id, include_watermark=True):
 
 
 # ---------------------------------------------------------------------------
+# Page-number stamping — absolute numbering on the final merged PDF
+# ---------------------------------------------------------------------------
+def _stamp_page_numbers(pdf_bytes):
+    """Stamp centred page numbers at the bottom of every page of a merged PDF.
+
+    Uses reportlab to create a transparent overlay with just the page number,
+    then merges it onto each page using pypdf.  Falls back gracefully if
+    reportlab is not installed.
+    """
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfgen import canvas as rl_canvas
+    except ImportError:
+        logger.warning(
+            "reportlab not installed — skipping page number stamping. "
+            "Install with: pip install reportlab"
+        )
+        return pdf_bytes
+
+    from pypdf import PdfWriter, PdfReader
+
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    writer = PdfWriter()
+
+    for page_num, page in enumerate(reader.pages, 1):
+        # Create a single-page overlay with the page number
+        packet = io.BytesIO()
+        page_width = float(page.mediabox.width)
+        page_height = float(page.mediabox.height)
+        c = rl_canvas.Canvas(packet, pagesize=(page_width, page_height))
+        c.setFont("Helvetica", 9)
+        c.drawCentredString(page_width / 2, 28, str(page_num))
+        c.save()
+        packet.seek(0)
+
+        overlay = PdfReader(packet)
+        page.merge_page(overlay.pages[0])
+        writer.add_page(page)
+
+    output = io.BytesIO()
+    writer.write(output)
+    return output.getvalue()
+
+
+# ---------------------------------------------------------------------------
 # generate_combined_pdf — render each template to PDF individually, merge
 # ---------------------------------------------------------------------------
 def generate_combined_pdf(financial_year_id, include_watermark=True, exclude_types=None):
@@ -1018,10 +1075,16 @@ def generate_combined_pdf(financial_year_id, include_watermark=True, exclude_typ
 
         output = io.BytesIO()
         writer.write(output)
-        output.seek(0)
+        raw_bytes = output.getvalue()
+
+        # Stamp continuous page numbers on the merged PDF
+        stamped = _stamp_page_numbers(raw_bytes)
+
+        result = io.BytesIO(stamped)
+        result.seek(0)
         logger.info("generate_combined_pdf complete: %d documents, %d bytes",
-                    pdfs_merged, output.getbuffer().nbytes)
-        return output
+                    pdfs_merged, len(stamped))
+        return result
     finally:
         import shutil
         shutil.rmtree(tmpdir, ignore_errors=True)
