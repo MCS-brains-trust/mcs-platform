@@ -407,10 +407,11 @@ def build_company_context(financial_year, include_watermark=True):
             kw in name_lower for kw in ["income tax", "tax on profit", "tax expense"]
         )
         if is_tax:
-            # Tax is stored credit-normal (negative = debit balance = expense)
-            # Negate to get the expense amount as a positive figure
-            income_tax_cy += -item["cy_amount"] if item["cy_amount"] else Decimal("0")
-            income_tax_py += -item["py_amount"] if item["py_amount"] else Decimal("0")
+            # Income tax is a debit balance in the equity TB range (4100-4149).
+            # Raw cy_amount is POSITIVE for a debit balance. Store as-is —
+            # it represents the tax expense amount (e.g. 13,488).
+            income_tax_cy += item["cy_amount"] if item["cy_amount"] else Decimal("0")
+            income_tax_py += item["py_amount"] if item["py_amount"] else Decimal("0")
         else:
             equity_without_tax.append(item)
     sections["equity"] = equity_without_tax
