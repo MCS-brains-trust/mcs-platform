@@ -204,21 +204,79 @@ def _add_total_row(doc, label, cy_tag, py_tag, size=None, grand_total=False):
     _apply_grand_total_borders(row, [2, 3])
 
 
-def _add_watermark_header(doc):
-    """Add a header with DRAFT watermark only (entity name is in the document body)."""
+def _add_repeating_header(doc, document_title, date_field="{{ date_text }}"):
+    """Add a repeating page header: entity name, ABN, doc title, date, horizontal rule.
+
+    Uses Jinja2 variables rendered by docxtpl. Repeats on every page.
+    Also includes the DRAFT watermark (hidden when context is empty).
+    """
     section = doc.sections[0]
+    section.different_first_page_header_footer = False
     header = section.header
     header.is_linked_to_previous = False
 
-    # Watermark text right-aligned — only visible when watermark context is non-empty
-    p = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
-    p.text = ""
-    p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    run = p.add_run("{{ watermark }}")
+    # Clear any existing header content
+    for para in list(header.paragraphs):
+        para.clear()
+
+    # Entity name — bold, 11pt, left-aligned
+    p1 = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
+    p1.text = ""
+    p1.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    run = p1.add_run("{{ entity_name }}")
     run.font.name = FONT_NAME
-    run.font.size = Pt(16)
-    run.font.color.rgb = RGBColor(0xFF, 0x00, 0x00)
+    run.font.size = Pt(11)
     run.bold = True
+    p1.paragraph_format.space_after = Pt(0)
+    p1.paragraph_format.space_before = Pt(0)
+
+    # ABN — 9pt
+    p2 = header.add_paragraph()
+    p2.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    run2 = p2.add_run("ABN {{ abn }}")
+    run2.font.name = FONT_NAME
+    run2.font.size = Pt(9)
+    p2.paragraph_format.space_after = Pt(0)
+    p2.paragraph_format.space_before = Pt(0)
+
+    # Document title — 9pt
+    p3 = header.add_paragraph()
+    p3.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    run3 = p3.add_run(document_title)
+    run3.font.name = FONT_NAME
+    run3.font.size = Pt(9)
+    p3.paragraph_format.space_after = Pt(0)
+    p3.paragraph_format.space_before = Pt(0)
+
+    # Date / period — 9pt, with bottom border (horizontal rule)
+    p4 = header.add_paragraph()
+    p4.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    run4 = p4.add_run(date_field)
+    run4.font.name = FONT_NAME
+    run4.font.size = Pt(9)
+    p4.paragraph_format.space_after = Pt(4)
+    p4.paragraph_format.space_before = Pt(0)
+    # Horizontal rule — bottom border on this paragraph
+    pPr = p4._p.get_or_add_pPr()
+    pBdr = OxmlElement('w:pBdr')
+    bottom_border = OxmlElement('w:bottom')
+    bottom_border.set(qn('w:val'), 'single')
+    bottom_border.set(qn('w:sz'), '6')
+    bottom_border.set(qn('w:space'), '1')
+    bottom_border.set(qn('w:color'), '000000')
+    pBdr.append(bottom_border)
+    pPr.append(pBdr)
+
+    # DRAFT watermark — right-aligned, red, only visible when non-empty
+    pw = header.add_paragraph()
+    pw.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    runw = pw.add_run("{{ watermark }}")
+    runw.font.name = FONT_NAME
+    runw.font.size = Pt(14)
+    runw.font.color.rgb = RGBColor(0xFF, 0x00, 0x00)
+    runw.bold = True
+    pw.paragraph_format.space_after = Pt(0)
+    pw.paragraph_format.space_before = Pt(0)
 
 
 def _add_footer(doc, text="These financial statements are unaudited."):
@@ -377,17 +435,8 @@ def _build_detailed_pl(entity_type):
     doc = Document()
     _set_default_font(doc)
     _set_page_setup(doc)
-    _add_watermark_header(doc)
+    _add_repeating_header(doc, "Detailed Profit and Loss Statement", "{{ date_text }}")
     _add_footer(doc)
-
-    _add_para(doc, "{{ entity_name }}", bold=True, size=Pt(14),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "ABN {{ abn }}", bold=True, size=Pt(11),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "Detailed Profit and Loss Statement", bold=True, size=Pt(12),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "{{ date_text }}", bold=True, size=Pt(11),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
 
     # Income section
     _add_financial_table(doc, "Income", "income", "Total Income",
@@ -413,17 +462,8 @@ def _build_balance_sheet(entity_type):
     doc = Document()
     _set_default_font(doc)
     _set_page_setup(doc)
-    _add_watermark_header(doc)
+    _add_repeating_header(doc, "Detailed Balance Sheet", "As at {{ year_end_date }}")
     _add_footer(doc)
-
-    _add_para(doc, "{{ entity_name }}", bold=True, size=Pt(14),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "ABN {{ abn }}", bold=True, size=Pt(11),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "Detailed Balance Sheet", bold=True, size=Pt(12),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "As at {{ year_end_date }}", bold=True, size=Pt(11),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
 
     # Current Assets
     _add_financial_table(doc, "Current Assets", "current_assets", "Total Current Assets",
@@ -471,17 +511,8 @@ def _build_summary_pl(entity_type):
     doc = Document()
     _set_default_font(doc)
     _set_page_setup(doc)
-    _add_watermark_header(doc)
+    _add_repeating_header(doc, "Summary Profit and Loss Statement", "{{ date_text }}")
     _add_footer(doc)
-
-    _add_para(doc, "{{ entity_name }}", bold=True, size=Pt(14),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "ABN {{ abn }}", bold=True, size=Pt(11),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "Summary Profit and Loss Statement", bold=True, size=Pt(12),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "{{ date_text }}", bold=True, size=Pt(11),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
 
     # Summary table
     table = doc.add_table(rows=6, cols=3)
@@ -527,19 +558,9 @@ def _build_notes(entity_type):
     doc = Document()
     _set_default_font(doc)
     _set_page_setup(doc)
-    _add_watermark_header(doc)
+    _add_repeating_header(doc, "Notes to the Financial Statements", "{{ date_text }}")
     _add_footer(doc)
 
-    _add_para(doc, "{{ entity_name }}", bold=True, size=Pt(14),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "ABN {{ abn }}", bold=True, size=Pt(11),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "Notes to the Financial Statements", bold=True, size=Pt(12),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "{{ date_text }}", bold=True, size=Pt(11),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-
-    doc.add_paragraph("")
 
     _add_para(doc, "Note 1: Statement of Significant Accounting Policies",
               bold=True, keep_with_next=True)
@@ -578,17 +599,9 @@ def _build_declaration(entity_type):
     doc = Document()
     _set_default_font(doc)
     _set_page_setup(doc)
-    # No watermark header on declaration
+    _add_repeating_header(doc, "{{ declaration_title }}", "{{ date_text }}")
     _add_page_number_footer(doc)
 
-    _add_para(doc, "{{ entity_name }}", bold=True, size=Pt(14),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "ABN {{ abn }}", bold=True, size=Pt(11),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "{{ declaration_title }}", bold=True, size=Pt(12),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-
-    doc.add_paragraph("")
 
     if entity_type == "company":
         _add_para(doc,
@@ -645,19 +658,9 @@ def _build_compilation(entity_type):
     doc = Document()
     _set_default_font(doc)
     _set_page_setup(doc)
-    # No watermark header on compilation
+    _add_repeating_header(doc, "Compilation Report", "{{ date_text }}")
     _add_page_number_footer(doc)
 
-    _add_para(doc, "{{ entity_name }}", bold=True, size=Pt(14),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "ABN {{ abn }}", bold=True, size=Pt(11),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "Compilation Report", bold=True, size=Pt(12),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "{{ date_text }}", bold=True, size=Pt(11),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-
-    doc.add_paragraph("")
 
     _add_para(doc, "To the {{ compilation_responsible_party }} of {{ entity_name }}")
     doc.add_paragraph("")
@@ -724,19 +727,9 @@ def _build_distribution(entity_type):
     doc = Document()
     _set_default_font(doc)
     _set_page_setup(doc)
-    _add_watermark_header(doc)
+    _add_repeating_header(doc, "Beneficiaries Distribution Summary", "{{ date_text }}")
     _add_footer(doc)
 
-    _add_para(doc, "{{ entity_name }}", bold=True, size=Pt(14),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "ABN {{ abn }}", bold=True, size=Pt(11),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "Beneficiaries Distribution Summary", bold=True, size=Pt(12),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "{{ date_text }}", bold=True, size=Pt(11),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-
-    doc.add_paragraph("")
 
     _add_para(doc, "Net Income Available for Distribution: {{ total_distribution }}", bold=True)
     doc.add_paragraph("")

@@ -22,8 +22,10 @@
 </head>
 <body>
 <div class="header">
-  <div class="firm">MC &amp; S Chartered Accountants</div>
+  <div class="firm"><strong>{{ entity_name }}</strong></div>
+  <div style="font-size:9pt;">ABN {{ abn }}</div>
   <div class="doc-title">Director's Declaration</div>
+  <div style="font-size:9pt;">For the Year Ended {{ financial_year_end|default:financial_year }}</div>
 </div>
 
 <table class="meta">
