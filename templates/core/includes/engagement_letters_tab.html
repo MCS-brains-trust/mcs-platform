@@ -1,14 +1,6 @@
 {% load humanize %}
-{# ============================================================
-   Engagement Letters Tab
-   Displays all engagement letters for this entity, grouped by
-   financial year.  Accountants must select the year when
-   uploading — one letter per year is the expected pattern.
-   ============================================================ #}
 
 <div class="p-3">
-
-    {# ── Header row ── #}
     <div class="d-flex justify-content-between align-items-start mb-3 gap-3 flex-wrap">
         <div>
             <h5 class="mb-1"><i class="bi bi-envelope-paper me-2"></i>Engagement Letters</h5>
@@ -115,11 +107,6 @@
 
 </div>
 
-{# ============================================================
-   Upload Modal
-   Forces the accountant to select the financial year before
-   the upload is accepted.
-   ============================================================ #}
 <div class="modal fade" id="uploadEngagementLetterModal" tabindex="-1"
      aria-labelledby="uploadEngagementLetterModalLabel" aria-hidden="true">
     <div class="modal-dialog">
@@ -136,8 +123,6 @@
                   id="engagementLetterUploadForm">
                 {% csrf_token %}
                 <div class="modal-body">
-
-                    {# Year selector — REQUIRED #}
                     <div class="mb-3">
                         <label for="el_financial_year_id" class="form-label fw-semibold">
                             Financial Year <span class="text-danger">*</span>
@@ -159,7 +144,6 @@
                         </div>
                     </div>
 
-                    {# File upload #}
                     <div class="mb-3">
                         <label for="el_file" class="form-label fw-semibold">
                             File (PDF or DOCX) <span class="text-danger">*</span>
@@ -168,7 +152,6 @@
                                class="form-control" accept=".pdf,.docx,.doc" required>
                     </div>
 
-                    {# Status #}
                     <div class="mb-3">
                         <label for="el_status" class="form-label fw-semibold">Status</label>
                         <select name="status" id="el_status" class="form-select">
@@ -178,7 +161,6 @@
                         </select>
                     </div>
 
-                    {# Notes #}
                     <div class="mb-3">
                         <label for="el_notes" class="form-label">Notes (optional)</label>
                         <textarea name="notes" id="el_notes" class="form-control" rows="2"
