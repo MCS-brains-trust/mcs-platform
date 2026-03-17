@@ -386,13 +386,41 @@ def build_company_context(financial_year, include_watermark=True):
     total_expenses_py = _sum_section(sections["expenses"], "py_amount")
 
     if has_trading:
-        net_profit_cy = gross_profit_cy + total_income_cy - total_expenses_cy
-        net_profit_py = gross_profit_py + total_income_py - total_expenses_py
+        net_profit_pretax_cy = gross_profit_cy + total_income_cy - total_expenses_cy
+        net_profit_pretax_py = gross_profit_py + total_income_py - total_expenses_py
     else:
-        net_profit_cy = total_income_cy - total_expenses_cy
-        net_profit_py = total_income_py - total_expenses_py
+        net_profit_pretax_cy = total_income_cy - total_expenses_cy
+        net_profit_pretax_py = total_income_py - total_expenses_py
 
-    # Pre-closing TB: add current year profit to equity if BS won't balance
+    # Extract income tax from equity section — it belongs in the P&L
+    income_tax_cy = Decimal("0")
+    income_tax_py = Decimal("0")
+    equity_without_tax = []
+    for item in sections["equity"]:
+        code_str = item.get("account_code", "")
+        name_lower = item.get("account_name", "").lower()
+        try:
+            code_num = int(code_str.split(".")[0]) if code_str else 0
+        except (ValueError, TypeError):
+            code_num = 0
+        is_tax = (4100 <= code_num <= 4149) or any(
+            kw in name_lower for kw in ["income tax", "tax on profit", "tax expense"]
+        )
+        if is_tax:
+            # Tax is stored credit-normal (negative = debit balance = expense)
+            # Negate to get the expense amount as a positive figure
+            income_tax_cy += -item["cy_amount"] if item["cy_amount"] else Decimal("0")
+            income_tax_py += -item["py_amount"] if item["py_amount"] else Decimal("0")
+        else:
+            equity_without_tax.append(item)
+    sections["equity"] = equity_without_tax
+
+    # After-tax profit
+    net_profit_cy = net_profit_pretax_cy - income_tax_cy
+    net_profit_py = net_profit_pretax_py - income_tax_py
+    has_income_tax = income_tax_cy != 0 or income_tax_py != 0
+
+    # Pre-closing TB: add current year profit (after tax) to equity if BS won't balance
     _test_equity = -_sum_section(sections["equity"])
     _test_liab = -(_sum_section(sections["current_liabilities"])
                     + _sum_section(sections["noncurrent_liabilities"]))
@@ -400,7 +428,7 @@ def build_company_context(financial_year, include_watermark=True):
                     + _sum_section(sections["noncurrent_assets"]))
     _test_net_assets = _test_assets - _test_liab
     if abs(_test_net_assets - _test_equity) > 1:
-        # TB not yet closed — inject current year profit / (loss) line
+        # TB not yet closed — inject current year profit / (loss) (after tax)
         sections["equity"].append({
             "account_name": "Current year profit / (loss)",
             "cy_amount": -net_profit_cy,   # credit-normal convention
@@ -518,6 +546,11 @@ def build_company_context(financial_year, include_watermark=True):
         "total_income_py": format_amount(rendered_total_income_py),
         "total_expenses_cy": format_amount(rendered_total_expenses_cy),
         "total_expenses_py": format_amount(rendered_total_expenses_py),
+        "net_profit_pretax_cy": format_amount(net_profit_pretax_cy),
+        "net_profit_pretax_py": format_amount(net_profit_pretax_py),
+        "has_income_tax": has_income_tax,
+        "income_tax_cy": format_amount(-income_tax_cy) if income_tax_cy else "-",
+        "income_tax_py": format_amount(-income_tax_py) if income_tax_py else "-",
         "net_profit_cy": format_amount(net_profit_cy),
         "net_profit_py": format_amount(net_profit_py),
         # Balance Sheet
@@ -897,16 +930,18 @@ def _post_process_fs_doc(buffer, doc_type):
                                 run.bold = True
 
                 # Sub-group subtotal rows — empty label, amounts present,
-                # single top border on amount cells
+                # single top border on AMOUNT columns only
                 if (not first_cell_text
                         and len(row.cells) >= 3
                         and row.cells[2].text.strip()):
+                    num_cells = len(row.cells)
                     for cell in row.cells:
                         for para in cell.paragraphs:
                             for run in para.runs:
                                 run.bold = True
-                        # Single top border only
-                        tc = cell._tc
+                    # Border on last 2 cells (amount columns) only
+                    for cell_idx in range(max(0, num_cells - 2), num_cells):
+                        tc = row.cells[cell_idx]._tc
                         tcPr = tc.get_or_add_tcPr()
                         tcBorders = tcPr.find(qn('w:tcBorders'))
                         if tcBorders is None:
@@ -920,6 +955,12 @@ def _post_process_fs_doc(buffer, doc_type):
                         top_el.set(qn('w:sz'), '4')
                         top_el.set(qn('w:space'), '0')
                         top_el.set(qn('w:color'), '000000')
+
+                # Indent "Less:" rows (accumulated depreciation/amortisation)
+                if first_cell_text.startswith("less:"):
+                    label_para = row.cells[0].paragraphs[0]
+                    from docx.shared import Cm as _Cm
+                    label_para.paragraph_format.left_indent = _Cm(0.5)
 
                 # Fix inline PY values in Balance Sheet totals
                 if doc_type == "BALANCE_SHEET":

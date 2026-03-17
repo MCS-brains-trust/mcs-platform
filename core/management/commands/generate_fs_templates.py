@@ -415,36 +415,36 @@ def _build_cover(entity_type):
         run_logo.add_picture(logo_path, width=Cm(6))
 
     # --- Entity details (NO ACN on cover — only ABN) ---
-    _add_para(doc, "", size=Pt(20))  # spacer after logo
+    _add_para(doc, "", size=Pt(16))  # spacer after logo
 
-    _add_para(doc, "{{ entity_name }}", bold=True, size=Pt(18),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "ABN {{ abn }}", size=Pt(11),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    p_name = _add_para(doc, "{{ entity_name }}", bold=True, size=Pt(18),
+                        alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    p_name.paragraph_format.space_after = Pt(4)
 
-    _add_para(doc, "", size=Pt(18))  # spacer
+    p_abn = _add_para(doc, "ABN {{ abn }}", size=Pt(11),
+                       alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    p_abn.paragraph_format.space_after = Pt(16)
 
-    _add_para(doc, "Financial Statements", size=Pt(11),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "{{ date_text }}", size=Pt(11),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    p_fs = _add_para(doc, "Financial Statements", size=Pt(11),
+                     alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    p_fs.paragraph_format.space_after = Pt(4)
 
-    # --- Firm contact details — bottom of cover page (page 1) ---
-    _add_para(doc, "", size=Pt(80))  # push firm block toward bottom
+    p_date = _add_para(doc, "{{ date_text }}", size=Pt(11),
+                       alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    p_date.paragraph_format.space_after = Pt(0)
 
-    _add_para(doc, "{{ firm_name }}", size=Pt(9),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "{{ firm_address_1 }}", size=Pt(9),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "{{ firm_address_2 }}", size=Pt(9),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "", size=Pt(4))
-    _add_para(doc, "Phone: {{ firm_phone }}", size=Pt(9),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "Email: {{ firm_email }}", size=Pt(9),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "Website: www.mcands.com.au", size=Pt(9),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    # --- Firm contact details — pushed to lower portion of page ---
+    p_spacer = _add_para(doc, "", size=Pt(8))
+    p_spacer.paragraph_format.space_before = Pt(160)  # push to ~60% down
+
+    # Single continuous block — no gap between address and contact details
+    for line in ["{{ firm_name }}", "{{ firm_address_1 }}",
+                 "{{ firm_address_2 }}", "",
+                 "Phone: {{ firm_phone }}", "Email: {{ firm_email }}",
+                 "Website: www.mcands.com.au"]:
+        p = _add_para(doc, line, size=Pt(9), alignment=WD_ALIGN_PARAGRAPH.CENTER)
+        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.space_after = Pt(2)
 
     # --- Page break: Contents starts on page 2 ---
     doc.add_page_break()
@@ -499,9 +499,36 @@ def _build_detailed_pl(entity_type):
 
     doc.add_paragraph("")  # spacer
 
-    # Net Profit — single row table with grand total borders (no duplicate heading)
-    _add_total_row(doc, "Net Profit / (Loss)",
+    # Net Profit section — shows tax breakdown when income tax exists
+    # Pre-tax profit (subtotal)
+    _add_total_row(doc, "{% if has_income_tax %}Operating profit before income tax{% else %}Net Profit / (Loss){% endif %}",
+                   "{{ net_profit_pretax_cy }}", "{{ net_profit_pretax_py }}")
+
+    # Income tax line (only when tax exists) — use conditional Jinja2 block
+    _add_para(doc, "{% if has_income_tax %}", size=Pt(1))
+
+    # Income tax row
+    tax_table = doc.add_table(rows=1, cols=4)
+    _set_table_full_width(tax_table)
+    tax_table.autofit = False
+    for i, width in enumerate(COL_WIDTHS):
+        tax_table.columns[i].width = width
+    tax_row = tax_table.rows[0]
+    tax_row.cells[0].text = "Income tax attributable to operating profit (loss)"
+    tax_row.cells[2].text = "{{ income_tax_cy }}"
+    tax_row.cells[3].text = "{{ income_tax_py }}"
+    for i in range(4):
+        for p in tax_row.cells[i].paragraphs:
+            p.alignment = WD_ALIGN_PARAGRAPH.RIGHT if i >= 2 else WD_ALIGN_PARAGRAPH.LEFT
+            for run in p.runs:
+                run.font.name = FONT_NAME
+                run.font.size = FONT_SIZE
+
+    # After-tax profit (grand total)
+    _add_total_row(doc, "Operating profit after income tax",
                    "{{ net_profit_cy }}", "{{ net_profit_py }}")
+
+    _add_para(doc, "{% endif %}", size=Pt(1))
 
     return doc
 
@@ -575,9 +602,9 @@ def _build_summary_pl(entity_type):
         ("", "{{ year }}\n$", "{{ prior_year }}\n$"),
         ("Total Income", "{{ total_income_cy }}", "{{ total_income_py }}"),
         ("Total Expenses", "{{ total_expenses_cy }}", "{{ total_expenses_py }}"),
-        ("Net Profit / (Loss) Before Tax", "{{ net_profit_cy }}", "{{ net_profit_py }}"),
-        ("Income Tax Expense", "-", "-"),
-        ("Net Profit / (Loss) After Tax", "{{ net_profit_cy }}", "{{ net_profit_py }}"),
+        ("Operating profit before income tax", "{{ net_profit_pretax_cy }}", "{{ net_profit_pretax_py }}"),
+        ("Income tax attributable to operating profit (loss)", "{{ income_tax_cy }}", "{{ income_tax_py }}"),
+        ("Operating profit after income tax", "{{ net_profit_cy }}", "{{ net_profit_py }}"),
     ]
 
     for r, (label, cy, py) in enumerate(rows_data):
