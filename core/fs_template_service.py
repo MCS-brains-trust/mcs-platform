@@ -845,8 +845,13 @@ def _post_process_fs_doc(buffer, doc_type):
                     cantSplit.set(qn('w:val'), '1')
                     trPr.append(cantSplit)
 
-                    # Apply borders to ALL cells in the row
-                    for cell in row.cells:
+                    # Apply borders to AMOUNT columns only (last 2 cells).
+                    # Account name and Note columns get no border.
+                    num_cells = len(row.cells)
+                    for cell_idx, cell in enumerate(row.cells):
+                        is_amount_col = cell_idx >= num_cells - 2
+                        if not is_amount_col:
+                            continue
                         tc = cell._tc
                         tcPr = tc.get_or_add_tcPr()
                         tcBorders = tcPr.find(qn('w:tcBorders'))

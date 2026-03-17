@@ -130,13 +130,15 @@ def _apply_cell_border(cell, **kwargs):
 
 
 def _apply_subtotal_borders(row, amount_col_indices=None):
-    """Subtotal row: single thin top + single thin bottom on ALL cells. Bold text."""
-    for cell in row.cells:
-        _apply_cell_border(
-            cell,
-            top={"val": "single", "sz": "6", "color": "000000"},
-            bottom={"val": "single", "sz": "6", "color": "000000"},
-        )
+    """Subtotal row: single thin top + bottom on AMOUNT columns only. Bold all text."""
+    num_cells = len(row.cells)
+    for idx, cell in enumerate(row.cells):
+        if idx >= num_cells - 2:  # last 2 columns = CY, PY amounts
+            _apply_cell_border(
+                cell,
+                top={"val": "single", "sz": "6", "color": "000000"},
+                bottom={"val": "single", "sz": "6", "color": "000000"},
+            )
     for cell in row.cells:
         for para in cell.paragraphs:
             for run in para.runs:
@@ -144,13 +146,15 @@ def _apply_subtotal_borders(row, amount_col_indices=None):
 
 
 def _apply_grand_total_borders(row, amount_col_indices=None):
-    """Grand total row: single thin top + double bottom on ALL cells. Bold text."""
-    for cell in row.cells:
-        _apply_cell_border(
-            cell,
-            top={"val": "single", "sz": "6", "color": "000000"},
-            bottom={"val": "double", "sz": "12", "color": "000000"},
-        )
+    """Grand total row: single thin top + double bottom on AMOUNT columns only. Bold all text."""
+    num_cells = len(row.cells)
+    for idx, cell in enumerate(row.cells):
+        if idx >= num_cells - 2:  # last 2 columns = CY, PY amounts
+            _apply_cell_border(
+                cell,
+                top={"val": "single", "sz": "6", "color": "000000"},
+                bottom={"val": "double", "sz": "12", "color": "000000"},
+            )
     for cell in row.cells:
         for para in cell.paragraphs:
             for run in para.runs:
@@ -219,10 +223,10 @@ def _add_repeating_header(doc, document_title, date_field="{{ date_text }}"):
     for para in list(header.paragraphs):
         para.clear()
 
-    # Entity name — bold, 11pt, left-aligned
+    # Entity name — bold, 11pt, centred
     p1 = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
     p1.text = ""
-    p1.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    p1.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = p1.add_run("{{ entity_name }}")
     run.font.name = FONT_NAME
     run.font.size = Pt(11)
@@ -230,27 +234,27 @@ def _add_repeating_header(doc, document_title, date_field="{{ date_text }}"):
     p1.paragraph_format.space_after = Pt(0)
     p1.paragraph_format.space_before = Pt(0)
 
-    # ABN — 9pt
+    # ABN — 9pt, centred
     p2 = header.add_paragraph()
-    p2.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run2 = p2.add_run("ABN {{ abn }}")
     run2.font.name = FONT_NAME
     run2.font.size = Pt(9)
     p2.paragraph_format.space_after = Pt(0)
     p2.paragraph_format.space_before = Pt(0)
 
-    # Document title — 9pt
+    # Document title — 9pt, centred
     p3 = header.add_paragraph()
-    p3.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    p3.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run3 = p3.add_run(document_title)
     run3.font.name = FONT_NAME
     run3.font.size = Pt(9)
     p3.paragraph_format.space_after = Pt(0)
     p3.paragraph_format.space_before = Pt(0)
 
-    # Date / period — 9pt, with bottom border (horizontal rule)
+    # Date / period — 9pt, centred, with bottom border (horizontal rule)
     p4 = header.add_paragraph()
-    p4.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    p4.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run4 = p4.add_run(date_field)
     run4.font.name = FONT_NAME
     run4.font.size = Pt(9)
