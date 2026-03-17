@@ -537,9 +537,8 @@ def build_sole_trader_context(financial_year, include_watermark=True):
 
 
 # ---------------------------------------------------------------------------
-# Post-processing — page-break prevention, inline PY fix, ampersand fix
+# Post-processing — borders, page numbers, page-break prevention, ampersand
 # ---------------------------------------------------------------------------
-# Summary row labels that must not split across page breaks.
 _SUMMARY_LABELS = [
     "net profit", "net loss", "net profit / (loss)", "net profit/(loss)",
     "total income", "total expenses", "total revenue",
@@ -549,14 +548,29 @@ _SUMMARY_LABELS = [
     "gross profit",
 ]
 
+_GRAND_TOTAL_LABELS = [
+    "net profit", "net loss", "net profit / (loss)", "net profit/(loss)",
+    "total assets", "total liabilities", "net assets", "total equity",
+]
+
+_SUBTOTAL_LABELS = [
+    "total income", "total expenses", "total revenue",
+    "total current assets", "total non-current assets",
+    "total current liabilities", "total non-current liabilities",
+    "gross profit",
+]
+
 
 def _post_process_fs_doc(buffer, doc_type):
     """Post-process a rendered financial statement .docx.
 
     Applied to ALL document types to fix:
       - Firm-name ampersand stripped by XML rendering (all doc types).
-      - cantSplit + keepNext on summary rows (P&L, BS, Summary).
-      - keepNext on standalone paragraphs before summary tables (P&L, BS).
+      - Page number in footer (all doc types).
+      - Ruling lines / borders on summary rows (P&L, BS, Summary).
+      - Duplicate "Net Profit / (Loss)" standalone paragraph (P&L).
+      - cantSplit + keepNext on summary rows (P&L, BS).
+      - keepNext on section heading paragraphs before tables.
       - Inline "(PY: xxx)" values in totals rows (BS).
     """
     import copy
@@ -564,13 +578,12 @@ def _post_process_fs_doc(buffer, doc_type):
     from docx import Document
     from docx.oxml.ns import qn
     from docx.oxml import OxmlElement
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
 
     doc = Document(buffer)
 
     # ------------------------------------------------------------------
-    # Fix C: Restore ampersand in firm name across ALL runs in document.
-    # docxtpl Jinja2 rendering can strip the "&" from "MC & S" because
-    # the raw ampersand creates an invalid XML entity reference.
+    # Restore ampersand in firm name across ALL runs.
     # ------------------------------------------------------------------
     for paragraph in doc.paragraphs:
         for run in paragraph.runs:
@@ -587,41 +600,77 @@ def _post_process_fs_doc(buffer, doc_type):
                             run.text = run.text.replace("MC S Pty Ltd", "MC & S Pty Ltd")
 
     # ------------------------------------------------------------------
-    # Issues A & B apply only to financial statement body pages.
+    # Add page number to footer if not already present.
+    # ------------------------------------------------------------------
+    for section in doc.sections:
+        footer = section.footer
+        has_page_field = False
+        for p in footer.paragraphs:
+            if any(
+                el.tag == qn('w:fldChar') or el.tag == qn('w:instrText')
+                for el in p._p.iter()
+            ):
+                has_page_field = True
+                break
+        if not has_page_field:
+            p_num = footer.add_paragraph()
+            p_num.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run1 = p_num.add_run()
+            run1.font.size = 72000  # ~8pt in EMU (Pt(9))
+            fld_begin = OxmlElement('w:fldChar')
+            fld_begin.set(qn('w:fldCharType'), 'begin')
+            run1._r.append(fld_begin)
+            run2 = p_num.add_run()
+            instrText = OxmlElement('w:instrText')
+            instrText.set(qn('xml:space'), 'preserve')
+            instrText.text = ' PAGE '
+            run2._r.append(instrText)
+            run3 = p_num.add_run()
+            fld_end = OxmlElement('w:fldChar')
+            fld_end.set(qn('w:fldCharType'), 'end')
+            run3._r.append(fld_end)
+
+    # ------------------------------------------------------------------
+    # P&L / BS / Summary: borders, page-break fixes, duplicate removal
     # ------------------------------------------------------------------
     if doc_type in ("DETAILED_PL", "BALANCE_SHEET", "SUMMARY_PL"):
 
-        # --- Issue A (part 1): keepNext on standalone paragraphs that
-        #     precede a summary table (e.g. the "Net Profit / (Loss)"
-        #     heading paragraph that sits above the values table). ---
+        # Remove duplicate standalone "Net Profit / (Loss)" paragraph
+        # that precedes the table containing the same label + values.
+        if doc_type == "DETAILED_PL":
+            body = doc.element.body
+            paragraphs_to_remove = []
+            all_elements = list(body)
+            for i, el in enumerate(all_elements):
+                if el.tag != qn('w:p'):
+                    continue
+                para_text = ''.join(
+                    t.text or '' for t in el.iter(qn('w:t'))
+                ).strip()
+                if para_text == "Net Profit / (Loss)":
+                    # Only remove if followed by a table that also has this label
+                    for j in range(i + 1, min(i + 3, len(all_elements))):
+                        if all_elements[j].tag == qn('w:tbl'):
+                            tbl_text = ''.join(
+                                t.text or '' for t in all_elements[j].iter(qn('w:t'))
+                            )
+                            if "Net Profit" in tbl_text:
+                                paragraphs_to_remove.append(el)
+                            break
+            for el in paragraphs_to_remove:
+                body.remove(el)
+
+        # keepNext on section heading paragraphs before tables
         body = doc.element.body
         all_elements = list(body)
         for i, el in enumerate(all_elements):
-            if el.tag == qn('w:p'):
-                para_text = ''.join(
-                    t.text or '' for t in el.iter(qn('w:t'))
-                ).strip().lower()
-                if any(lbl in para_text for lbl in _SUMMARY_LABELS):
-                    # Set keepNext so this paragraph stays with the next element
-                    pPr = el.find(qn('w:pPr'))
-                    if pPr is None:
-                        pPr = OxmlElement('w:pPr')
-                        el.insert(0, pPr)
-                    for existing in pPr.findall(qn('w:keepNext')):
-                        pPr.remove(existing)
-                    keepNext = OxmlElement('w:keepNext')
-                    keepNext.set(qn('w:val'), '1')
-                    pPr.append(keepNext)
-
-            # Also set keepNext on section heading paragraphs ("Income",
-            # "Expenses", "Current Assets", etc.) that precede tables.
             if el.tag == qn('w:p') and i + 1 < len(all_elements):
                 next_el = all_elements[i + 1]
                 if next_el.tag == qn('w:tbl'):
                     para_text = ''.join(
                         t.text or '' for t in el.iter(qn('w:t'))
                     ).strip()
-                    if para_text and len(para_text) < 40:
+                    if para_text and len(para_text) < 50:
                         pPr = el.find(qn('w:pPr'))
                         if pPr is None:
                             pPr = OxmlElement('w:pPr')
@@ -631,14 +680,19 @@ def _post_process_fs_doc(buffer, doc_type):
                             keepNext.set(qn('w:val'), '1')
                             pPr.append(keepNext)
 
-        # --- Issue A (part 2) + Issue B: process table rows ---
+        # Process table rows: borders + cantSplit + keepNext + inline PY fix
         for table in doc.tables:
             for row in table.rows:
-                first_cell_text = row.cells[0].text.strip().lower() if row.cells else ""
+                if not row.cells:
+                    continue
+                first_cell_text = row.cells[0].text.strip().lower()
 
-                # cantSplit + keepNext on summary rows
-                is_summary = any(label in first_cell_text for label in _SUMMARY_LABELS)
+                is_grand = any(lbl in first_cell_text for lbl in _GRAND_TOTAL_LABELS)
+                is_sub = any(lbl in first_cell_text for lbl in _SUBTOTAL_LABELS)
+                is_summary = is_grand or is_sub
+
                 if is_summary:
+                    # cantSplit
                     tr = row._tr
                     trPr = tr.get_or_add_trPr()
                     for existing in trPr.findall(qn('w:cantSplit')):
@@ -646,7 +700,8 @@ def _post_process_fs_doc(buffer, doc_type):
                     cantSplit = OxmlElement('w:cantSplit')
                     cantSplit.set(qn('w:val'), '1')
                     trPr.append(cantSplit)
-                    # Also set keepNext on paragraphs in the row
+
+                    # keepNext on paragraphs in the row
                     for cell in row.cells:
                         for para in cell.paragraphs:
                             ppPr = para._p.get_or_add_pPr()
@@ -654,6 +709,45 @@ def _post_process_fs_doc(buffer, doc_type):
                                 kn = OxmlElement('w:keepNext')
                                 kn.set(qn('w:val'), '1')
                                 ppPr.append(kn)
+
+                    # Apply borders to amount cells (indices 2, 3 in 4-col tables)
+                    num_cells = len(row.cells)
+                    if num_cells >= 4:
+                        amt_indices = [2, 3]
+                    elif num_cells >= 3:
+                        amt_indices = [1, 2]
+                    else:
+                        amt_indices = []
+
+                    for ci in amt_indices:
+                        tc = row.cells[ci]._tc
+                        tcPr = tc.get_or_add_tcPr()
+                        tcBorders = tcPr.find(qn('w:tcBorders'))
+                        if tcBorders is None:
+                            tcBorders = OxmlElement('w:tcBorders')
+                            tcPr.append(tcBorders)
+                        # Top border: single thin
+                        top_el = tcBorders.find(qn('w:top'))
+                        if top_el is None:
+                            top_el = OxmlElement('w:top')
+                            tcBorders.append(top_el)
+                        top_el.set(qn('w:val'), 'single')
+                        top_el.set(qn('w:sz'), '6')
+                        top_el.set(qn('w:space'), '0')
+                        top_el.set(qn('w:color'), '000000')
+                        # Bottom border
+                        bot_el = tcBorders.find(qn('w:bottom'))
+                        if bot_el is None:
+                            bot_el = OxmlElement('w:bottom')
+                            tcBorders.append(bot_el)
+                        if is_grand:
+                            bot_el.set(qn('w:val'), 'double')
+                            bot_el.set(qn('w:sz'), '6')
+                        else:
+                            bot_el.set(qn('w:val'), 'single')
+                            bot_el.set(qn('w:sz'), '6')
+                        bot_el.set(qn('w:space'), '0')
+                        bot_el.set(qn('w:color'), '000000')
 
                 # Fix inline PY values in Balance Sheet totals
                 if doc_type == "BALANCE_SHEET":

@@ -107,6 +107,84 @@ def _set_table_full_width(table):
     tblPr.append(tblW)
 
 
+# ---------------------------------------------------------------------------
+# Border helpers — Australian special-purpose FS presentation
+# ---------------------------------------------------------------------------
+def _apply_cell_border(cell, **kwargs):
+    """Apply borders to a cell. kwargs: top, bottom with {val, sz, color} dicts."""
+    tc = cell._tc
+    tcPr = tc.get_or_add_tcPr()
+    tcBorders = tcPr.find(qn('w:tcBorders'))
+    if tcBorders is None:
+        tcBorders = OxmlElement('w:tcBorders')
+        tcPr.append(tcBorders)
+    for edge, attrs in kwargs.items():
+        el = tcBorders.find(qn(f'w:{edge}'))
+        if el is None:
+            el = OxmlElement(f'w:{edge}')
+            tcBorders.append(el)
+        el.set(qn('w:val'), attrs.get('val', 'single'))
+        el.set(qn('w:sz'), str(attrs.get('sz', 6)))
+        el.set(qn('w:space'), '0')
+        el.set(qn('w:color'), attrs.get('color', '000000'))
+
+
+def _apply_subtotal_borders(row, amount_col_indices):
+    """Subtotal row: single thin top border + single thin bottom border on amount cells."""
+    for i in amount_col_indices:
+        _apply_cell_border(
+            row.cells[i],
+            top={"val": "single", "sz": "6", "color": "000000"},
+            bottom={"val": "single", "sz": "6", "color": "000000"},
+        )
+
+
+def _apply_grand_total_borders(row, amount_col_indices):
+    """Grand total row: single thin top border + double bottom border on amount cells."""
+    for i in amount_col_indices:
+        _apply_cell_border(
+            row.cells[i],
+            top={"val": "single", "sz": "6", "color": "000000"},
+            bottom={"val": "double", "sz": "6", "color": "000000"},
+        )
+
+
+# ---------------------------------------------------------------------------
+# Page number footer helper
+# ---------------------------------------------------------------------------
+def _add_page_number_footer(doc):
+    """Add a centred page-number-only footer using a PAGE field."""
+    section = doc.sections[0]
+    footer = section.footer
+    footer.is_linked_to_previous = False
+    p = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
+    p.text = ""
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    # PAGE field: begin → instrText → end
+    run1 = p.add_run()
+    run1.font.name = FONT_NAME
+    run1.font.size = Pt(9)
+    fld_begin = OxmlElement('w:fldChar')
+    fld_begin.set(qn('w:fldCharType'), 'begin')
+    run1._r.append(fld_begin)
+
+    run2 = p.add_run()
+    run2.font.name = FONT_NAME
+    run2.font.size = Pt(9)
+    instrText = OxmlElement('w:instrText')
+    instrText.set(qn('xml:space'), 'preserve')
+    instrText.text = ' PAGE '
+    run2._r.append(instrText)
+
+    run3 = p.add_run()
+    run3.font.name = FONT_NAME
+    run3.font.size = Pt(9)
+    fld_end = OxmlElement('w:fldChar')
+    fld_end.set(qn('w:fldCharType'), 'end')
+    run3._r.append(fld_end)
+
+
 def _add_total_row(doc, label, cy_tag, py_tag, size=None, grand_total=False):
     """Add a single-row 4-column table for a total/summary line (label, note, CY, PY)."""
     font_size = size or FONT_SIZE
@@ -133,6 +211,8 @@ def _add_total_row(doc, label, cy_tag, py_tag, size=None, grand_total=False):
                 run.font.name = FONT_NAME
                 run.font.size = font_size
                 run.bold = True
+    # Fix 5: grand total borders (single top + double bottom on amount cells)
+    _apply_grand_total_borders(row, [2, 3])
 
 
 def _add_watermark_header(doc):
@@ -167,16 +247,42 @@ def _add_watermark_header(doc):
 
 
 def _add_footer(doc, text="These financial statements are unaudited."):
-    """Add standard footer."""
+    """Add standard footer with 'unaudited' text left-aligned and centred page number."""
     section = doc.sections[0]
     footer = section.footer
     footer.is_linked_to_previous = False
+
+    # Line 1: "These financial statements are unaudited." (left, italic, 8pt)
     p = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
     p.text = ""
+    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
     run = p.add_run(text)
     run.font.name = FONT_NAME
     run.font.size = Pt(8)
     run.font.italic = True
+
+    # Line 2: centred page number
+    p2 = footer.add_paragraph()
+    p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run1 = p2.add_run()
+    run1.font.name = FONT_NAME
+    run1.font.size = Pt(9)
+    fld_begin = OxmlElement('w:fldChar')
+    fld_begin.set(qn('w:fldCharType'), 'begin')
+    run1._r.append(fld_begin)
+    run2 = p2.add_run()
+    run2.font.name = FONT_NAME
+    run2.font.size = Pt(9)
+    instrText = OxmlElement('w:instrText')
+    instrText.set(qn('xml:space'), 'preserve')
+    instrText.text = ' PAGE '
+    run2._r.append(instrText)
+    run3 = p2.add_run()
+    run3.font.name = FONT_NAME
+    run3.font.size = Pt(9)
+    fld_end = OxmlElement('w:fldChar')
+    fld_end.set(qn('w:fldCharType'), 'end')
+    run3._r.append(fld_end)
 
 
 def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_tag, total_py_tag):
@@ -189,7 +295,6 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
     for i, width in enumerate(COL_WIDTHS):
         table.columns[i].width = width
 
-    # Template row with Jinja2 for-loop markers
     # Header row
     hdr = table.rows[0]
     hdr.cells[0].text = ""
@@ -203,6 +308,19 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
                 run.font.name = FONT_NAME
                 run.font.size = FONT_SIZE
                 run.bold = True
+
+    # Fix 7a: Mark header row to repeat on each page (tblHeader)
+    tr = hdr._tr
+    trPr = tr.get_or_add_trPr()
+    tblHeader = OxmlElement('w:tblHeader')
+    trPr.append(tblHeader)
+    # Fix 7a: Keep header with first data row
+    for cell in hdr.cells:
+        for p in cell.paragraphs:
+            pPr = p._p.get_or_add_pPr()
+            kn = OxmlElement('w:keepNext')
+            kn.set(qn('w:val'), '1')
+            pPr.append(kn)
 
     # Row 1 — {%tr for %} tag in its own row (docxtpl requirement)
     for_row = table.add_row()
@@ -225,7 +343,7 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
     endfor_row = table.add_row()
     endfor_row.cells[0].text = "{%tr endfor %}"
 
-    # Total row
+    # Total row — subtotal borders (single top + single bottom on amount cells)
     total_row = table.add_row()
     total_row.cells[0].text = total_label
     total_row.cells[2].text = total_cy_tag
@@ -237,6 +355,8 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
                 run.font.name = FONT_NAME
                 run.font.size = FONT_SIZE
                 run.bold = True
+    # Fix 5: subtotal borders on amount cells
+    _apply_subtotal_borders(total_row, [2, 3])
 
     return table
 
@@ -325,29 +445,9 @@ def _build_detailed_pl(entity_type):
 
     doc.add_paragraph("")  # spacer
 
-    # Net Profit — keepNext ensures heading stays with the values table
-    _add_para(doc, "Net Profit / (Loss)", bold=True, keep_with_next=True)
-    table = doc.add_table(rows=1, cols=4)
-    _set_table_full_width(table)
-    table.autofit = False
-    for i, width in enumerate(COL_WIDTHS):
-        table.columns[i].width = width
-    # Prevent row from splitting across pages
-    _np_tr = table.rows[0]._tr
-    _np_trPr = _np_tr.get_or_add_trPr()
-    _np_cantSplit = OxmlElement('w:cantSplit')
-    _np_cantSplit.set(qn('w:val'), '1')
-    _np_trPr.append(_np_cantSplit)
-    table.rows[0].cells[0].text = "Net Profit / (Loss)"
-    table.rows[0].cells[2].text = "{{ net_profit_cy }}"
-    table.rows[0].cells[3].text = "{{ net_profit_py }}"
-    for i in range(4):
-        for p in table.rows[0].cells[i].paragraphs:
-            p.alignment = WD_ALIGN_PARAGRAPH.RIGHT if i >= 2 else WD_ALIGN_PARAGRAPH.LEFT
-            for run in p.runs:
-                run.font.name = FONT_NAME
-                run.font.size = FONT_SIZE
-                run.bold = True
+    # Net Profit — single row table with grand total borders (no duplicate heading)
+    _add_total_row(doc, "Net Profit / (Loss)",
+                   "{{ net_profit_cy }}", "{{ net_profit_py }}")
 
     return doc
 
@@ -480,7 +580,8 @@ def _build_notes(entity_type):
 
     doc.add_paragraph("")
 
-    _add_para(doc, "Note 1: Statement of Significant Accounting Policies", bold=True)
+    _add_para(doc, "Note 1: Statement of Significant Accounting Policies",
+              bold=True, keep_with_next=True)
     _add_para(doc, "The financial statements are special purpose financial statements "
               "prepared in order to satisfy the financial reporting requirements of the "
               "Corporations Act 2001 or relevant trust deed. The directors/trustees have "
@@ -493,18 +594,18 @@ def _build_notes(entity_type):
               "the preparation and presentation of the financial statements:")
     doc.add_paragraph("")
 
-    _add_para(doc, "a) Revenue Recognition", bold=True)
+    _add_para(doc, "a) Revenue Recognition", bold=True, keep_with_next=True)
     _add_para(doc, "Revenue is recognised when the entity satisfies a performance obligation "
               "by transferring a promised good or service to a customer.")
     doc.add_paragraph("")
 
-    _add_para(doc, "b) Income Tax", bold=True)
+    _add_para(doc, "b) Income Tax", bold=True, keep_with_next=True)
     _add_para(doc, "The income tax expense for the year comprises current income tax expense. "
               "Current income tax expense reflects the current year tax payable based on "
               "taxable income for the year.")
     doc.add_paragraph("")
 
-    _add_para(doc, "c) Goods and Services Tax (GST)", bold=True)
+    _add_para(doc, "c) Goods and Services Tax (GST)", bold=True, keep_with_next=True)
     _add_para(doc, "Revenues, expenses and assets are recognised net of the amount of GST. "
               "Receivables and payables are stated with the amount of GST included.")
 
@@ -517,7 +618,7 @@ def _build_declaration(entity_type):
     _set_default_font(doc)
     _set_page_setup(doc)
     # No watermark header on declaration
-    # No footer on declaration
+    _add_page_number_footer(doc)
 
     _add_para(doc, "{{ entity_name }}", bold=True, size=Pt(14),
               alignment=WD_ALIGN_PARAGRAPH.CENTER)
@@ -584,7 +685,7 @@ def _build_compilation(entity_type):
     _set_default_font(doc)
     _set_page_setup(doc)
     # No watermark header on compilation
-    # No footer on compilation
+    _add_page_number_footer(doc)
 
     _add_para(doc, "{{ entity_name }}", bold=True, size=Pt(14),
               alignment=WD_ALIGN_PARAGRAPH.CENTER)

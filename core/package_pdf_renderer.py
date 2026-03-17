@@ -66,7 +66,7 @@ DOCUMENT_ORDER = [
     "solvency_resolution",
     "directors_report",
     "management_representation_letter",
-    "cover_letter",
+    # "cover_letter" excluded — transmittal letter is not part of the client package
     "dividend_statement",
     "shareholder_loan_acknowledgment",
 ]
