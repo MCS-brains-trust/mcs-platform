@@ -403,25 +403,22 @@ def _build_cover(entity_type):
             logo_path = candidate
             break
 
-    _add_para(doc, "", size=Pt(20))  # small top spacer
+    _add_para(doc, "", size=Pt(12))  # small top spacer
     if logo_path:
         p_logo = doc.add_paragraph()
         p_logo.alignment = WD_ALIGN_PARAGRAPH.CENTER
         run_logo = p_logo.add_run()
-        run_logo.add_picture(logo_path, width=Cm(4))
+        run_logo.add_picture(logo_path, width=Cm(6))
 
-    # --- Entity details ---
-    _add_para(doc, "", size=Pt(30))  # spacer after logo
+    # --- Entity details (NO ACN on cover — only ABN) ---
+    _add_para(doc, "", size=Pt(20))  # spacer after logo
 
     _add_para(doc, "{{ entity_name }}", bold=True, size=Pt(18),
               alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    if entity_type in ("company",):
-        _add_para(doc, "ACN {{ acn }}", size=Pt(11),
-                  alignment=WD_ALIGN_PARAGRAPH.CENTER)
     _add_para(doc, "ABN {{ abn }}", size=Pt(11),
               alignment=WD_ALIGN_PARAGRAPH.CENTER)
 
-    _add_para(doc, "", size=Pt(24))  # spacer
+    _add_para(doc, "", size=Pt(18))  # spacer
 
     _add_para(doc, "Financial Statements", size=Pt(11),
               alignment=WD_ALIGN_PARAGRAPH.CENTER)
@@ -456,8 +453,22 @@ def _build_cover(entity_type):
     for i, item in enumerate(contents, 1):
         _add_para(doc, f"{i}.\t{item}", size=Pt(11))
 
-    # Firm details are on the Compilation Report signature page — not
-    # duplicated here.  Keeping cover page to one A4 page exactly.
+    # --- Firm contact details at bottom of cover page ---
+    _add_para(doc, "", size=Pt(24))  # spacer before firm block
+
+    _add_para(doc, "{{ firm_name }}", size=Pt(9),
+              alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    _add_para(doc, "{{ firm_address_1 }}", size=Pt(9),
+              alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    _add_para(doc, "{{ firm_address_2 }}", size=Pt(9),
+              alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    _add_para(doc, "", size=Pt(4))
+    _add_para(doc, "Phone: {{ firm_phone }}", size=Pt(9),
+              alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    _add_para(doc, "Email: {{ firm_email }}", size=Pt(9),
+              alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    _add_para(doc, "Website: www.mcands.com.au", size=Pt(9),
+              alignment=WD_ALIGN_PARAGRAPH.CENTER)
 
     return doc
 

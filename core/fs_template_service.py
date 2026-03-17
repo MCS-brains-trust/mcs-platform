@@ -217,6 +217,20 @@ def _sum_section(items, field="cy_amount"):
     return sum(item[field] for item in items)
 
 
+# Placeholder for ampersand to survive docxtpl XML rendering.
+# docxtpl's Jinja2→XML pipeline strips bare "&" from values.
+# We replace "&" with this placeholder before template rendering,
+# then restore it in _post_process_fs_doc.
+_AMP_PLACEHOLDER = "\u00a7AMP\u00a7"  # §AMP§ — won't appear in real data
+
+
+def _safe_amp(text):
+    """Replace '&' with a placeholder that survives docxtpl rendering."""
+    if text and "&" in str(text):
+        return str(text).replace("&", _AMP_PLACEHOLDER)
+    return text
+
+
 def _format_lines(items, credit_normal=False):
     """Add formatted amount strings to each item dict.
 
@@ -233,6 +247,8 @@ def _format_lines(items, credit_normal=False):
             py = -py if py else py
         item["cy_formatted"] = format_amount(cy)
         item["py_formatted"] = format_amount(py)
+        # Protect ampersand in account names from XML stripping
+        item["account_name"] = _safe_amp(item.get("account_name", ""))
     return items
 
 
@@ -457,12 +473,26 @@ def build_company_context(financial_year, include_watermark=True):
     else:
         signing_date = _date.today().strftime("%-d %B %Y")
 
+    # Format ACN/ABN with proper spacing for display
+    abn_raw = entity.abn or ""
+    acn_raw = entity.acn or ""
+    abn_digits = "".join(c for c in str(abn_raw) if c.isdigit())
+    acn_digits = "".join(c for c in str(acn_raw) if c.isdigit())
+    abn_formatted = (
+        f"{abn_digits[:2]} {abn_digits[2:5]} {abn_digits[5:8]} {abn_digits[8:]}"
+        if len(abn_digits) == 11 else abn_raw
+    )
+    acn_formatted = (
+        f"{acn_digits[:3]} {acn_digits[3:6]} {acn_digits[6:]}"
+        if len(acn_digits) == 9 else acn_raw
+    )
+
     context = {
-        "entity_name": entity.entity_name,
-        "trading_as": entity.trading_as or "",
-        "abn": entity.abn or "",
-        "acn": entity.acn or "",
-        "acn_abn": _format_acn_abn(entity.acn or "", entity.abn or ""),
+        "entity_name": _safe_amp(entity.entity_name),
+        "trading_as": _safe_amp(entity.trading_as or ""),
+        "abn": abn_formatted,
+        "acn": acn_formatted,
+        "acn_abn": _safe_amp(_format_acn_abn(acn_raw, abn_raw)),
         "entity_type": entity.entity_type,
         "year": year_str,
         "financial_year": year_str,
@@ -521,8 +551,8 @@ def build_company_context(financial_year, include_watermark=True):
         ],
         # Signing / declaration date (for Compilation Report "Dated:" line)
         "signing_date": signing_date,
-        # Firm details
-        "firm_name": "MC & S Pty Ltd",
+        # Firm details — protect ampersand from XML stripping
+        "firm_name": _safe_amp("MC & S Pty Ltd"),
         "firm_address_1": "PO Box 4440",
         "firm_address_2": "Dandenong South VIC 3164",
         "firm_phone": "(03) 9794 0000",
@@ -679,21 +709,35 @@ def _post_process_fs_doc(buffer, doc_type):
     doc = Document(buffer)
 
     # ------------------------------------------------------------------
-    # Restore ampersand in firm name across ALL runs.
+    # Restore ampersands: both the §AMP§ placeholder (from _safe_amp)
+    # and the firm-name "MC S" pattern (from direct XML stripping).
     # ------------------------------------------------------------------
+    def _restore_amps(text):
+        if not text:
+            return text
+        text = text.replace(_AMP_PLACEHOLDER, "&")
+        text = text.replace("MC  S Pty Ltd", "MC & S Pty Ltd")
+        text = text.replace("MC S Pty Ltd", "MC & S Pty Ltd")
+        return text
+
     for paragraph in doc.paragraphs:
         for run in paragraph.runs:
-            if run.text and ("MC S" in run.text or "MC  S" in run.text):
-                run.text = run.text.replace("MC  S Pty Ltd", "MC & S Pty Ltd")
-                run.text = run.text.replace("MC S Pty Ltd", "MC & S Pty Ltd")
+            if run.text:
+                run.text = _restore_amps(run.text)
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
                 for paragraph in cell.paragraphs:
                     for run in paragraph.runs:
-                        if run.text and ("MC S" in run.text or "MC  S" in run.text):
-                            run.text = run.text.replace("MC  S Pty Ltd", "MC & S Pty Ltd")
-                            run.text = run.text.replace("MC S Pty Ltd", "MC & S Pty Ltd")
+                        if run.text:
+                            run.text = _restore_amps(run.text)
+    # Also restore in headers
+    for section in doc.sections:
+        for hdr in [section.header, section.footer]:
+            for paragraph in hdr.paragraphs:
+                for run in paragraph.runs:
+                    if run.text:
+                        run.text = _restore_amps(run.text)
 
     # ------------------------------------------------------------------
     # Remove any existing PAGE field footers — page numbers are stamped
