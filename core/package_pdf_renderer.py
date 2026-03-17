@@ -107,7 +107,10 @@ def render_legal_doc_to_pdf_bytes(doc):
     context.setdefault("watermark_text", "")
     if doc.financial_year and doc.financial_year.end_date:
         context.setdefault("financial_year", str(doc.financial_year.end_date.year))
-        context.setdefault("financial_year_end", str(doc.financial_year.end_date))
+        context.setdefault(
+            "financial_year_end",
+            doc.financial_year.end_date.strftime("%-d %B %Y"),
+        )
 
     try:
         html_string = render_to_string(template_name, context)

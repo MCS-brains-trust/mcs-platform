@@ -372,6 +372,13 @@ def build_company_context(financial_year, include_watermark=True):
     prior_year_str = str(year_end.year - 1) if year_end else ""
     date_text = f"For the Year Ended {year_end.strftime('%d %B %Y')}" if year_end else ""
 
+    # Signing / declaration date — use finalised_at if available, else today
+    from datetime import date as _date
+    if fy.finalised_at:
+        signing_date = fy.finalised_at.date().strftime("%-d %B %Y")
+    else:
+        signing_date = _date.today().strftime("%-d %B %Y")
+
     context = {
         "entity_name": entity.entity_name,
         "trading_as": entity.trading_as or "",
@@ -434,6 +441,8 @@ def build_company_context(financial_year, include_watermark=True):
             {"name": d.full_name, "title": d.title or "Director"}
             for d in directors
         ],
+        # Signing / declaration date (for Compilation Report "Dated:" line)
+        "signing_date": signing_date,
         # Firm details
         "firm_name": "MC & S Pty Ltd",
         "firm_address_1": "PO Box 4440",

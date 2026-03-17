@@ -675,7 +675,7 @@ def _build_declaration(entity_type):
     _add_para(doc, "")
     _add_para(doc, "{% endfor %}")
 
-    _add_para(doc, "Dated: {{ year_end_date }}")
+    _add_para(doc, "Dated: {{ signing_date }}")
 
     return doc
 
@@ -744,7 +744,7 @@ def _build_compilation(entity_type):
     _add_para(doc, "{{ firm_address_1 }}", keep_with_next=True)
     _add_para(doc, "{{ firm_address_2 }}", keep_with_next=True)
     doc.add_paragraph("")
-    _add_para(doc, "Dated: {{ year_end_date }}")
+    _add_para(doc, "Dated: {{ signing_date }}")
 
     return doc
 

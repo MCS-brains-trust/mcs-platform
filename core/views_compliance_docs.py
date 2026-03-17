@@ -171,6 +171,7 @@ def generate_solvency_resolution(request, pk):
 
     acn = entity.acn or ""
     abn = entity.abn or ""
+    fy_end_formatted = fy.end_date.strftime("%-d %B %Y") if fy.end_date else ""
     context = {
         "entity_name": entity.entity_name,
         "acn": acn,
@@ -179,8 +180,8 @@ def generate_solvency_resolution(request, pk):
         "directors": [{"name": d.full_name} for d in directors],
         "signatories": [{"name": d.full_name, "role": "Director"} for d in directors],
         "financial_year": str(fy.end_date.year),
-        "financial_year_end": str(fy.end_date),
-        "resolution_date": str(fy.end_date),
+        "financial_year_end": fy_end_formatted,
+        "resolution_date": fy_end_formatted,
     }
 
     doc = LegalDocument.objects.create(
@@ -231,6 +232,7 @@ def generate_directors_declaration(request, pk):
 
     acn = entity.acn or ""
     abn = entity.abn or ""
+    fy_end_formatted = fy.end_date.strftime("%-d %B %Y") if fy.end_date else ""
     context = {
         "entity_name": entity.entity_name,
         "acn": acn,
@@ -240,7 +242,7 @@ def generate_directors_declaration(request, pk):
         "directors": [{"name": d.full_name} for d in directors],
         "signatories": [{"name": d.full_name, "role": "Director"} for d in directors],
         "financial_year": str(fy.end_date.year),
-        "financial_year_end": str(fy.end_date),
+        "financial_year_end": fy_end_formatted,
         "signing_director": directors.first().full_name if directors.exists() else "",
     }
 
@@ -406,13 +408,14 @@ def generate_management_rep_letter(request, pk):
         role__in=["director", "director_shareholder", "trustee", "partner"],
     )
 
+    fy_end_formatted = fy.end_date.strftime("%-d %B %Y") if fy.end_date else ""
     context = {
         "entity_name": entity.entity_name,
         "entity_type": entity.entity_type,
         "abn": entity.abn or "",
         "acn": entity.acn or "",
         "financial_year": str(fy.end_date.year),
-        "financial_year_end": str(fy.end_date),
+        "financial_year_end": fy_end_formatted,
         "signatories": [{"name": d.full_name, "role": d.get_role_display()} for d in directors],
     }
 
