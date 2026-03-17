@@ -225,30 +225,64 @@ def build_package_bundle(fy):
         # Compilation Report — docxtpl template, not an HTML legal doc.
         # Rendered separately so it appears after all legal documents.
         if doc_type == "compilation_report":
+            logger.info("Generating Compilation Report for package FY %s", fy.pk)
             try:
-                from core.fs_template_service import generate_financial_statements
+                from core.fs_template_service import (
+                    build_company_context, build_trust_context,
+                    build_sole_trader_context, render_template,
+                    _post_process_fs_doc,
+                )
+                from core.models import FinancialStatementTemplate
                 from core.libreoffice_utils import convert_docx_to_pdf
                 import tempfile as _tmpfile
 
-                comp_docs = generate_financial_statements(fy.pk, include_watermark=False)
-                comp_buffer = comp_docs.get("COMPILATION")
-                if comp_buffer:
-                    _tmpdir = _tmpfile.mkdtemp(prefix="shub_comp_")
-                    comp_docx = os.path.join(_tmpdir, "COMPILATION.docx")
-                    with open(comp_docx, "wb") as _f:
-                        _f.write(comp_buffer.read())
-                    convert_docx_to_pdf(comp_docx, _tmpdir, timeout=60)
-                    comp_pdf = os.path.join(_tmpdir, "COMPILATION.pdf")
-                    if os.path.exists(comp_pdf):
-                        comp_reader = PdfReader(comp_pdf)
-                        for page in comp_reader.pages:
-                            writer.add_page(page)
-                        docs_added += 1
-                        logger.info("Added Compilation Report (%d pages)", len(comp_reader.pages))
-                    import shutil
-                    shutil.rmtree(_tmpdir, ignore_errors=True)
+                # Build context for this entity type
+                ctx_builders = {
+                    "company": build_company_context,
+                    "trust": build_trust_context,
+                    "sole_trader": build_sole_trader_context,
+                }
+                ctx_builder = ctx_builders.get(entity.entity_type, build_company_context)
+                context = ctx_builder(fy, include_watermark=False)
+
+                # Find the COMPILATION template
+                comp_tmpl = FinancialStatementTemplate.objects.filter(
+                    document_type="COMPILATION",
+                    entity_type=entity.entity_type,
+                    is_active=True,
+                ).first()
+
+                if not comp_tmpl:
+                    logger.error("No COMPILATION template found for %s", entity.entity_type)
+                    continue
+
+                # Render the single template
+                comp_buffer = render_template(comp_tmpl, context)
+                comp_buffer = _post_process_fs_doc(comp_buffer, "COMPILATION")
+
+                # Convert .docx to PDF
+                _tmpdir = _tmpfile.mkdtemp(prefix="shub_comp_")
+                comp_docx = os.path.join(_tmpdir, "COMPILATION.docx")
+                with open(comp_docx, "wb") as _f:
+                    _f.write(comp_buffer.read())
+
+                convert_docx_to_pdf(comp_docx, _tmpdir, timeout=60)
+                comp_pdf = os.path.join(_tmpdir, "COMPILATION.pdf")
+
+                if os.path.exists(comp_pdf):
+                    comp_reader = PdfReader(comp_pdf)
+                    for page in comp_reader.pages:
+                        writer.add_page(page)
+                    docs_added += 1
+                    logger.info("Added Compilation Report (%d pages)", len(comp_reader.pages))
+                else:
+                    logger.error("Compilation Report PDF conversion produced no output")
+
+                import shutil
+                shutil.rmtree(_tmpdir, ignore_errors=True)
+
             except Exception as e:
-                logger.error("Failed to add Compilation Report: %s", e)
+                logger.error("Failed to add Compilation Report: %s", e, exc_info=True)
             continue
 
         # LegalDocument types

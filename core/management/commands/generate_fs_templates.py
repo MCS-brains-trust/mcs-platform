@@ -456,22 +456,8 @@ def _build_cover(entity_type):
     for i, item in enumerate(contents, 1):
         _add_para(doc, f"{i}.\t{item}", size=Pt(11))
 
-    # --- Push firm details toward bottom of page ---
-    # Reduced spacer count to prevent overflow onto page 2
-    for _ in range(4):
-        _add_para(doc, "", size=Pt(11))
-
-    # Firm contact details at bottom
-    _add_para(doc, "{{ firm_name }}", size=Pt(9),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "{{ firm_address_1 }}", size=Pt(9),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "{{ firm_address_2 }}", size=Pt(9),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "{{ firm_phone }}", size=Pt(9),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "{{ firm_email }}", size=Pt(9),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    # Firm details are on the Compilation Report signature page — not
+    # duplicated here.  Keeping cover page to one A4 page exactly.
 
     return doc
 
