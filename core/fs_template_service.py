@@ -2039,19 +2039,25 @@ def _generate_notes_document(context):
         note_ranges.append((actual_start, end))
 
     def _estimate_element_height(el):
-        """Estimate height of a body element in cm."""
+        """Estimate height of a body element in cm.
+
+        Deliberately conservative (overestimates) so that page breaks
+        are inserted early rather than late — a note that starts on a
+        fresh page with room to spare is better than one that splits.
+        """
         if el.tag == qn('w:tbl'):
-            # Count rows in the table
             rows = el.findall(qn('w:tr'))
-            return len(rows) * 0.5
+            # 0.55cm per row accounts for cell padding and borders
+            return len(rows) * 0.55
         elif el.tag == qn('w:p'):
             text = ''.join(t.text or '' for t in el.iter(qn('w:t'))).strip()
             if not text:
-                return 0.3  # spacer
-            # Rough estimate: ~0.4cm per line, ~80 chars per line
-            lines = max(1, len(text) / 80)
-            return lines * 0.4
-        return 0.5
+                return 0.4  # spacer paragraph
+            # Page text width ~16cm, but Calibri 10pt renders ~60 chars
+            # per line at that width.  Add extra for paragraph spacing.
+            lines = max(1, len(text) / 60)
+            return lines * 0.45 + 0.3  # +0.3cm for space_before/after
+        return 0.6
 
     def _set_keep_on_paragraph_element(p_el):
         """Set keepNext and keepLines on a w:p element."""
@@ -2100,8 +2106,10 @@ def _generate_notes_document(context):
                             for p in tc.findall(qn('w:p')):
                                 _remove_keep_next(p)
 
-    # Height-based page break insertion
-    USABLE_HEIGHT_CM = 24.0
+    # Height-based page break insertion.
+    # A4 = 29.7cm, margins top+bottom = 4cm, header ~2.5cm, footer ~1.5cm
+    # → usable body height ≈ 21.7cm.  Use 21cm as a conservative limit.
+    USABLE_HEIGHT_CM = 21.0
     page_pos = 0.0
 
     for i, (start, end) in enumerate(note_ranges):
