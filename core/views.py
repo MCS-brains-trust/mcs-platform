@@ -10063,23 +10063,8 @@ def delete_unfinalised_fy(request, pk):
     for fy in unfinalised:
         _log_action(request, "delete", f"Deleted unfinalised FY: {fy.year_label} for {entity.entity_name}", fy)
 
-    # Note: ReviewJob records (bank statement processing) are linked to Entity
-    # only, not to FinancialYear. They cannot be selectively deleted per-FY.
-    # If ReviewJob cleanup is needed, it must be done manually or a
-    # financial_year FK should be added to ReviewJob in a future migration.
-    try:
-        from review.models import ReviewJob
-        orphan_jobs = ReviewJob.objects.filter(entity=entity).count()
-        if orphan_jobs:
-            logger.warning(
-                "Entity %s has %d ReviewJob(s) that are not linked to a "
-                "FinancialYear — not deleted with FY cleanup. ReviewJob has "
-                "no FinancialYear FK; manual cleanup may be needed.",
-                entity.entity_name, orphan_jobs,
-            )
-    except ImportError:
-        pass
-
+    # ReviewJob.financial_year FK has on_delete=CASCADE, so associated
+    # ReviewJobs (and their PendingTransactions) are deleted automatically.
     unfinalised.delete()
     messages.success(request, f"Deleted {count} unfinalised financial year(s) and all associated data.")
     return redirect("core:entity_detail", pk=pk)

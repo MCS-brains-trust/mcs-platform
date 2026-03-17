@@ -1003,6 +1003,15 @@ def upload_bank_statement(request):
         except Exception:
             pass
 
+    # Resolve financial year for cascade-delete linkage
+    fy_obj = None
+    if financial_year_id:
+        from core.models import FinancialYear
+        try:
+            fy_obj = FinancialYear.objects.get(pk=financial_year_id)
+        except Exception:
+            pass
+
     # Process each uploaded file
     created_jobs = []
     errors = []
@@ -1111,6 +1120,7 @@ def upload_bank_statement(request):
 
         job = ReviewJob.objects.create(
             entity=entity,
+            financial_year=fy_obj,
             client_name=client_name,
             file_name=filename,
             submitted_by=request.user.get_full_name() or request.user.username,
@@ -2320,6 +2330,7 @@ def confirm_import(request):
         # Create ReviewJob
         job = ReviewJob.objects.create(
             entity=entity,
+            financial_year=fy,
             client_name=client_name,
             file_name=filename,
             submitted_by=request.user.get_full_name() or request.user.username,

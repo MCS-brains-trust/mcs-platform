@@ -41,6 +41,11 @@ class ReviewJob(models.Model):
         related_name="review_jobs",
         help_text="Linked entity for GST registration lookup",
     )
+    financial_year = models.ForeignKey(
+        "core.FinancialYear", on_delete=models.CASCADE, null=True, blank=True,
+        related_name="review_jobs",
+        help_text="Financial year this review job belongs to (enables cascade delete)",
+    )
     client_name = models.CharField(max_length=255)
     file_name = models.CharField(max_length=500, blank=True, default="")
     submitted_by = models.CharField(max_length=255, blank=True, default="")
