@@ -443,26 +443,35 @@ def generate_cover_letter(request, pk):
     fy = get_object_or_404(FinancialYear, pk=pk)
     entity = fy.entity
 
-    # Gather all existing documents for this FY
+    # Build a clean, deduplicated list of enclosed document display names.
+    # Only include standard package documents, in the correct order.
+    from core.models import GeneratedDocument
+
+    STANDARD_PACKAGE = [
+        ("financial_statements", "Financial Statements"),
+        ("directors_declaration", "Director's Declaration"),
+        ("solvency_resolution", "Solvency Resolution"),
+        ("management_representation_letter", "Management Representation Letter"),
+    ]
+
     existing_docs = LegalDocument.objects.filter(
         financial_year=fy,
         status__in=["generated", "signed"],
-    ).order_by("document_type")
+    )
+    existing_types = set(existing_docs.values_list("document_type", flat=True))
 
-    enclosed_list = [
-        {"type": doc.get_document_type_display(), "title": doc.title}
-        for doc in existing_docs
-        if doc.document_type != "cover_letter"
-    ]
-
-    # Check for financial statements
-    from core.models import GeneratedDocument
-    fs_docs = GeneratedDocument.objects.filter(
+    fs_exists = GeneratedDocument.objects.filter(
         financial_year=fy,
         document_type=GeneratedDocument.DocumentType.FINANCIAL_STATEMENTS,
     ).exists()
-    if fs_docs:
-        enclosed_list.insert(0, {"type": "Financial Statements", "title": f"Financial Statements — {entity.entity_name}"})
+
+    enclosed_list = []
+    for doc_type, display_name in STANDARD_PACKAGE:
+        if doc_type == "financial_statements":
+            if fs_exists:
+                enclosed_list.append(display_name)
+        elif doc_type in existing_types:
+            enclosed_list.append(display_name)
 
     context = {
         "entity_name": entity.entity_name,

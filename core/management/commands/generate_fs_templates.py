@@ -78,7 +78,7 @@ def _set_default_font(doc):
 
 
 def _add_para(doc, text, bold=False, italic=False, alignment=WD_ALIGN_PARAGRAPH.LEFT,
-              size=None, color=None):
+              size=None, color=None, keep_with_next=False):
     """Add a styled paragraph."""
     p = doc.add_paragraph()
     p.alignment = alignment
@@ -89,6 +89,11 @@ def _add_para(doc, text, bold=False, italic=False, alignment=WD_ALIGN_PARAGRAPH.
     run.font.italic = italic
     if color:
         run.font.color.rgb = color
+    if keep_with_next:
+        pPr = p._p.get_or_add_pPr()
+        keepNext = OxmlElement('w:keepNext')
+        keepNext.set(qn('w:val'), '1')
+        pPr.append(keepNext)
     return p
 
 
@@ -111,6 +116,12 @@ def _add_total_row(doc, label, cy_tag, py_tag, size=None, grand_total=False):
     for i, width in enumerate(COL_WIDTHS):
         table.columns[i].width = width
     row = table.rows[0]
+    # Prevent this summary row from splitting across pages
+    tr = row._tr
+    trPr = tr.get_or_add_trPr()
+    cantSplit = OxmlElement('w:cantSplit')
+    cantSplit.set(qn('w:val'), '1')
+    trPr.append(cantSplit)
     row.cells[0].text = label
     row.cells[1].text = ""
     row.cells[2].text = cy_tag
@@ -170,7 +181,7 @@ def _add_footer(doc, text="These financial statements are unaudited."):
 
 def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_tag, total_py_tag):
     """Add a 4-column financial table with Jinja2 for-loop."""
-    _add_para(doc, section_title, bold=True)
+    _add_para(doc, section_title, bold=True, keep_with_next=True)
 
     table = doc.add_table(rows=1, cols=4)
     _set_table_full_width(table)
@@ -314,13 +325,19 @@ def _build_detailed_pl(entity_type):
 
     doc.add_paragraph("")  # spacer
 
-    # Net Profit
-    _add_para(doc, "Net Profit / (Loss)", bold=True)
+    # Net Profit — keepNext ensures heading stays with the values table
+    _add_para(doc, "Net Profit / (Loss)", bold=True, keep_with_next=True)
     table = doc.add_table(rows=1, cols=4)
     _set_table_full_width(table)
     table.autofit = False
     for i, width in enumerate(COL_WIDTHS):
         table.columns[i].width = width
+    # Prevent row from splitting across pages
+    _np_tr = table.rows[0]._tr
+    _np_trPr = _np_tr.get_or_add_trPr()
+    _np_cantSplit = OxmlElement('w:cantSplit')
+    _np_cantSplit.set(qn('w:val'), '1')
+    _np_trPr.append(_np_cantSplit)
     table.rows[0].cells[0].text = "Net Profit / (Loss)"
     table.rows[0].cells[2].text = "{{ net_profit_cy }}"
     table.rows[0].cells[3].text = "{{ net_profit_py }}"

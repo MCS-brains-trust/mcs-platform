@@ -12,8 +12,12 @@
   .date-line { margin-bottom: 16px; }
   h2 { font-size: 11pt; color: #000000; border-bottom: 1px solid #000000; padding-bottom: 3px; margin-top: 18px; }
   p { margin: 6px 0; }
-  ul { margin: 8px 0; padding-left: 22px; }
-  li { margin-bottom: 4px; }
+  .doc-list { margin: 8px 0; padding-left: 0; list-style-type: none; }
+  .doc-list li { margin-bottom: 4px; padding-left: 18px; text-indent: -12px; }
+  .doc-list li::before { content: "\2013\00a0"; }
+  .action-list { margin: 8px 0; padding-left: 0; list-style-type: none; }
+  .action-list li { margin-bottom: 4px; padding-left: 18px; text-indent: -12px; }
+  .action-list li::before { content: "\2013\00a0"; }
   .sig-block { margin-top: 36px; page-break-inside: avoid; }
   .sig-line { border-top: 1px solid #333; width: 55%; margin-top: 38px; margin-bottom: 4px; }
   .disclaimer { margin-top: 28px; padding: 9px; background: #ffffff; border-left: 3px solid #000000; font-size: 8pt; color: #000000; }
@@ -39,10 +43,10 @@
 <p>Please find enclosed the financial statements and associated documents for <strong>{{ entity_name }}</strong> for the financial year ended {{ financial_year_end|default:financial_year }}.</p>
 
 <h2>Enclosed Documents</h2>
-<ul>
+<ul class="doc-list">
   {% if enclosed_documents %}
     {% for doc in enclosed_documents %}
-    <li>{{ doc.type }}{% if doc.title %} &mdash; {{ doc.title }}{% endif %}</li>
+    <li>{{ doc }}</li>
     {% endfor %}
   {% else %}
     <li>Financial Statements</li>
@@ -54,7 +58,7 @@
 
 <h2>Action Required</h2>
 <p>Please review the enclosed documents carefully. We ask that you:</p>
-<ul>
+<ul class="action-list">
   <li>Review the financial statements and confirm they accurately reflect the financial position and performance of the entity.</li>
   <li>Sign and return the <strong>Director's Declaration</strong> and <strong>Solvency Resolution</strong> at your earliest convenience.</li>
   <li>Sign and return the <strong>Management Representation Letter</strong>.</li>

@@ -537,7 +537,7 @@ def build_sole_trader_context(financial_year, include_watermark=True):
 
 
 # ---------------------------------------------------------------------------
-# Post-processing — cantSplit and inline PY fix
+# Post-processing — page-break prevention, inline PY fix, ampersand fix
 # ---------------------------------------------------------------------------
 # Summary row labels that must not split across page breaks.
 _SUMMARY_LABELS = [
@@ -553,13 +553,12 @@ _SUMMARY_LABELS = [
 def _post_process_fs_doc(buffer, doc_type):
     """Post-process a rendered financial statement .docx.
 
-    - Issue A: set cantSplit on summary rows to prevent page-break splitting.
-    - Issue B: fix inline "(PY: xxx)" values in totals rows by splitting
-      merged cells into separate CY and PY columns.
+    Applied to ALL document types to fix:
+      - Firm-name ampersand stripped by XML rendering (all doc types).
+      - cantSplit + keepNext on summary rows (P&L, BS, Summary).
+      - keepNext on standalone paragraphs before summary tables (P&L, BS).
+      - Inline "(PY: xxx)" values in totals rows (BS).
     """
-    if doc_type not in ("DETAILED_PL", "BALANCE_SHEET", "SUMMARY_PL"):
-        return buffer
-
     import copy
     import re
     from docx import Document
@@ -568,24 +567,97 @@ def _post_process_fs_doc(buffer, doc_type):
 
     doc = Document(buffer)
 
+    # ------------------------------------------------------------------
+    # Fix C: Restore ampersand in firm name across ALL runs in document.
+    # docxtpl Jinja2 rendering can strip the "&" from "MC & S" because
+    # the raw ampersand creates an invalid XML entity reference.
+    # ------------------------------------------------------------------
+    for paragraph in doc.paragraphs:
+        for run in paragraph.runs:
+            if run.text and ("MC S" in run.text or "MC  S" in run.text):
+                run.text = run.text.replace("MC  S Pty Ltd", "MC & S Pty Ltd")
+                run.text = run.text.replace("MC S Pty Ltd", "MC & S Pty Ltd")
     for table in doc.tables:
         for row in table.rows:
-            first_cell_text = row.cells[0].text.strip().lower() if row.cells else ""
+            for cell in row.cells:
+                for paragraph in cell.paragraphs:
+                    for run in paragraph.runs:
+                        if run.text and ("MC S" in run.text or "MC  S" in run.text):
+                            run.text = run.text.replace("MC  S Pty Ltd", "MC & S Pty Ltd")
+                            run.text = run.text.replace("MC S Pty Ltd", "MC & S Pty Ltd")
 
-            # --- Issue A: cantSplit on summary rows ---
-            is_summary = any(label in first_cell_text for label in _SUMMARY_LABELS)
-            if is_summary:
-                tr = row._tr
-                trPr = tr.get_or_add_trPr()
-                for existing in trPr.findall(qn('w:cantSplit')):
-                    trPr.remove(existing)
-                cantSplit = OxmlElement('w:cantSplit')
-                cantSplit.set(qn('w:val'), '1')
-                trPr.append(cantSplit)
+    # ------------------------------------------------------------------
+    # Issues A & B apply only to financial statement body pages.
+    # ------------------------------------------------------------------
+    if doc_type in ("DETAILED_PL", "BALANCE_SHEET", "SUMMARY_PL"):
 
-            # --- Issue B: fix inline PY values in Balance Sheet totals ---
-            if doc_type == "BALANCE_SHEET":
-                _fix_inline_py_in_row(row, qn, OxmlElement, copy, re)
+        # --- Issue A (part 1): keepNext on standalone paragraphs that
+        #     precede a summary table (e.g. the "Net Profit / (Loss)"
+        #     heading paragraph that sits above the values table). ---
+        body = doc.element.body
+        all_elements = list(body)
+        for i, el in enumerate(all_elements):
+            if el.tag == qn('w:p'):
+                para_text = ''.join(
+                    t.text or '' for t in el.iter(qn('w:t'))
+                ).strip().lower()
+                if any(lbl in para_text for lbl in _SUMMARY_LABELS):
+                    # Set keepNext so this paragraph stays with the next element
+                    pPr = el.find(qn('w:pPr'))
+                    if pPr is None:
+                        pPr = OxmlElement('w:pPr')
+                        el.insert(0, pPr)
+                    for existing in pPr.findall(qn('w:keepNext')):
+                        pPr.remove(existing)
+                    keepNext = OxmlElement('w:keepNext')
+                    keepNext.set(qn('w:val'), '1')
+                    pPr.append(keepNext)
+
+            # Also set keepNext on section heading paragraphs ("Income",
+            # "Expenses", "Current Assets", etc.) that precede tables.
+            if el.tag == qn('w:p') and i + 1 < len(all_elements):
+                next_el = all_elements[i + 1]
+                if next_el.tag == qn('w:tbl'):
+                    para_text = ''.join(
+                        t.text or '' for t in el.iter(qn('w:t'))
+                    ).strip()
+                    if para_text and len(para_text) < 40:
+                        pPr = el.find(qn('w:pPr'))
+                        if pPr is None:
+                            pPr = OxmlElement('w:pPr')
+                            el.insert(0, pPr)
+                        if pPr.find(qn('w:keepNext')) is None:
+                            keepNext = OxmlElement('w:keepNext')
+                            keepNext.set(qn('w:val'), '1')
+                            pPr.append(keepNext)
+
+        # --- Issue A (part 2) + Issue B: process table rows ---
+        for table in doc.tables:
+            for row in table.rows:
+                first_cell_text = row.cells[0].text.strip().lower() if row.cells else ""
+
+                # cantSplit + keepNext on summary rows
+                is_summary = any(label in first_cell_text for label in _SUMMARY_LABELS)
+                if is_summary:
+                    tr = row._tr
+                    trPr = tr.get_or_add_trPr()
+                    for existing in trPr.findall(qn('w:cantSplit')):
+                        trPr.remove(existing)
+                    cantSplit = OxmlElement('w:cantSplit')
+                    cantSplit.set(qn('w:val'), '1')
+                    trPr.append(cantSplit)
+                    # Also set keepNext on paragraphs in the row
+                    for cell in row.cells:
+                        for para in cell.paragraphs:
+                            ppPr = para._p.get_or_add_pPr()
+                            if ppPr.find(qn('w:keepNext')) is None:
+                                kn = OxmlElement('w:keepNext')
+                                kn.set(qn('w:val'), '1')
+                                ppPr.append(kn)
+
+                # Fix inline PY values in Balance Sheet totals
+                if doc_type == "BALANCE_SHEET":
+                    _fix_inline_py_in_row(row, qn, OxmlElement, copy, re)
 
     output = io.BytesIO()
     doc.save(output)
