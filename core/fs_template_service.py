@@ -1704,7 +1704,6 @@ def _generate_notes_document(context):
         n = _note_num_for("receivables")
         heading_p = _notes_add_para(doc, f"Note {n}: Trade Receivables",
                                     bold=True, space_before=18, space_after=6)
-        _notes_keep_with_next(heading_p)
 
         tbl = _notes_create_table(doc, has_prior)
         total_cy = Decimal("0")
@@ -1733,15 +1732,13 @@ def _generate_notes_document(context):
         total_row = _notes_add_table_row(tbl, "Total", _fmt_note_amount(total_cy),
                                          _fmt_note_amount(total_py), bold=True)
         _notes_apply_grand_total_border(total_row)
-        _notes_table_keep_with_next(tbl)
 
-        trailing_p = _notes_add_para(
+        _notes_add_para(
             doc,
             "Trade receivables are non-interest bearing and are generally on 30 to "
             "90 day terms. An allowance for doubtful debts is made when there is "
             "objective evidence that a trade receivable is impaired.",
             space_before=4, space_after=6)
-        _notes_keep_together(trailing_p)
 
     # ==================================================================
     # NOTE 3: Property, Plant and Equipment
@@ -1749,9 +1746,8 @@ def _generate_notes_document(context):
     if has_ppe:
         _notes_spacer(doc, 8)
         n = _note_num_for("ppe")
-        heading_p = _notes_add_para(doc, f"Note {n}: Property, Plant and Equipment",
-                                    bold=True, space_before=18, space_after=6)
-        _notes_keep_with_next(heading_p)
+        _notes_add_para(doc, f"Note {n}: Property, Plant and Equipment",
+                        bold=True, space_before=18, space_after=6)
 
         tbl = _notes_create_table(doc, has_prior)
 
@@ -1797,15 +1793,12 @@ def _generate_notes_document(context):
             _notes_add_table_row(tbl, item["account_name"],
                                  _fmt_note_amount(val_cy), _fmt_note_amount(val_py))
 
-        _notes_table_keep_with_next(tbl)
-
-        trailing_p = _notes_add_para(
+        _notes_add_para(
             doc,
             "All plant and equipment is stated at historical cost less depreciation. "
             "Depreciation is calculated on a diminishing value basis at rates determined "
             "by the Australian Taxation Office.",
             space_before=4, space_after=6)
-        _notes_keep_together(trailing_p)
 
     # ==================================================================
     # NOTE 4: Related Party Transactions
@@ -1946,9 +1939,8 @@ def _generate_notes_document(context):
         _notes_add_para(doc, f"Note {n}: Income Tax",
                         bold=True, space_before=18, space_after=6)
 
-        leadin_p = _notes_add_para(doc, "The income tax expense for the year comprises:",
-                                    space_after=6)
-        _notes_keep_with_next(leadin_p)
+        _notes_add_para(doc, "The income tax expense for the year comprises:",
+                        space_after=6)
 
         tbl = _notes_create_table(doc, has_prior)
         cte_row = _notes_add_table_row(tbl, "Current tax expense",
@@ -1959,26 +1951,22 @@ def _generate_notes_document(context):
                                          _fmt_note_amount(income_tax_cy),
                                          _fmt_note_amount(income_tax_py), bold=True)
         _notes_apply_grand_total_border(total_row)
-        _notes_table_keep_with_next(tbl)
 
         # Tax rate
         rate_cy = 25 if abs(total_revenue_cy) < 50_000_000 else 30
         rate_py = 25 if abs(total_revenue_py) < 50_000_000 else 30
 
-        rate_p1 = _notes_add_para(
+        _notes_add_para(
             doc,
             f"The income tax provision has been calculated at the applicable corporate "
             f"tax rate of {rate_cy}% on the estimated taxable profit for the year.",
             space_before=4, space_after=6)
-        _notes_keep_together(rate_p1)
-        _notes_keep_with_next(rate_p1)
 
-        rate_p2 = _notes_add_para(
+        _notes_add_para(
             doc,
             f"The applicable tax rate is {rate_cy}% ({prior_year_str}: {rate_py}%) "
             f"being the corporate tax rate for base rate entities.",
             space_after=6)
-        _notes_keep_together(rate_p2)
 
     # ==================================================================
     # NOTE 6: Events After the Reporting Date (companies only)
@@ -1997,6 +1985,151 @@ def _generate_notes_document(context):
             "the results of those operations, or the state of affairs of the "
             "entity in future years.",
             space_before=4, space_after=6)
+
+    # ==================================================================
+    # POST-PROCESSING: Keep each note together on a single page.
+    # Scan the document body, identify note boundaries, estimate heights,
+    # and insert explicit page breaks where a note would overflow.
+    # Also apply keepNext + keepLines on every element within each note.
+    # ==================================================================
+    import re as _re
+
+    body = doc.element.body
+    all_elements = list(body)
+
+    # Identify note boundary indices — each "Note N:" heading starts a note
+    note_heading_pattern = _re.compile(r'^Note \d+:')
+    note_start_indices = []
+    for idx, el in enumerate(all_elements):
+        if el.tag == qn('w:p'):
+            text = ''.join(t.text or '' for t in el.iter(qn('w:t'))).strip()
+            if note_heading_pattern.match(text):
+                note_start_indices.append(idx)
+
+    # Build list of (start_idx, end_idx) for each note
+    note_ranges = []
+    for i, start in enumerate(note_start_indices):
+        # Include the spacer paragraph immediately before the heading (if any)
+        actual_start = start
+        if start > 0:
+            prev_el = all_elements[start - 1]
+            if prev_el.tag == qn('w:p'):
+                prev_text = ''.join(t.text or '' for t in prev_el.iter(qn('w:t'))).strip()
+                if prev_text == '':
+                    actual_start = start - 1
+
+        if i + 1 < len(note_start_indices):
+            # End at the element before the next note's spacer/heading
+            next_start = note_start_indices[i + 1]
+            # Check if the element before the next heading is a spacer
+            if next_start > 0:
+                prev_next = all_elements[next_start - 1]
+                if prev_next.tag == qn('w:p'):
+                    prev_text = ''.join(t.text or '' for t in prev_next.iter(qn('w:t'))).strip()
+                    if prev_text == '':
+                        end = next_start - 1
+                    else:
+                        end = next_start
+                else:
+                    end = next_start
+            else:
+                end = next_start
+        else:
+            end = len(all_elements)
+        note_ranges.append((actual_start, end))
+
+    def _estimate_element_height(el):
+        """Estimate height of a body element in cm."""
+        if el.tag == qn('w:tbl'):
+            # Count rows in the table
+            rows = el.findall(qn('w:tr'))
+            return len(rows) * 0.5
+        elif el.tag == qn('w:p'):
+            text = ''.join(t.text or '' for t in el.iter(qn('w:t'))).strip()
+            if not text:
+                return 0.3  # spacer
+            # Rough estimate: ~0.4cm per line, ~80 chars per line
+            lines = max(1, len(text) / 80)
+            return lines * 0.4
+        return 0.5
+
+    def _set_keep_on_paragraph_element(p_el):
+        """Set keepNext and keepLines on a w:p element."""
+        pPr = p_el.find(qn('w:pPr'))
+        if pPr is None:
+            pPr = OxmlElement('w:pPr')
+            p_el.insert(0, pPr)
+        # keepLines
+        if pPr.find(qn('w:keepLines')) is None:
+            kl = OxmlElement('w:keepLines')
+            kl.set(qn('w:val'), '1')
+            pPr.append(kl)
+        # keepNext
+        if pPr.find(qn('w:keepNext')) is None:
+            kn = OxmlElement('w:keepNext')
+            kn.set(qn('w:val'), '1')
+            pPr.append(kn)
+
+    def _remove_keep_next(p_el):
+        """Remove keepNext from the last element so it can break after."""
+        pPr = p_el.find(qn('w:pPr'))
+        if pPr is not None:
+            for kn in pPr.findall(qn('w:keepNext')):
+                pPr.remove(kn)
+
+    # Apply keep-together to each note block
+    for start, end in note_ranges:
+        note_elements = all_elements[start:end]
+        for i_el, el in enumerate(note_elements):
+            is_last = (i_el == len(note_elements) - 1)
+            if el.tag == qn('w:p'):
+                _set_keep_on_paragraph_element(el)
+                if is_last:
+                    _remove_keep_next(el)
+            elif el.tag == qn('w:tbl'):
+                # Apply to every cell paragraph in every row
+                for tr in el.findall(qn('w:tr')):
+                    for tc in tr.findall(qn('w:tc')):
+                        for p in tc.findall(qn('w:p')):
+                            _set_keep_on_paragraph_element(p)
+                # Remove keepNext from last row's paragraphs if this is the last element
+                if is_last:
+                    last_tr = el.findall(qn('w:tr'))
+                    if last_tr:
+                        for tc in last_tr[-1].findall(qn('w:tc')):
+                            for p in tc.findall(qn('w:p')):
+                                _remove_keep_next(p)
+
+    # Height-based page break insertion
+    USABLE_HEIGHT_CM = 24.0
+    page_pos = 0.0
+
+    for i, (start, end) in enumerate(note_ranges):
+        note_height = sum(
+            _estimate_element_height(all_elements[j])
+            for j in range(start, end)
+        )
+
+        if page_pos > 0 and (page_pos + note_height) > USABLE_HEIGHT_CM:
+            # Insert page break before this note's first element
+            target_el = all_elements[start]
+            br_para = OxmlElement('w:p')
+            br_pPr = OxmlElement('w:pPr')
+            # Minimal spacing on the break paragraph
+            sp_before = OxmlElement('w:spacing')
+            sp_before.set(qn('w:before'), '0')
+            sp_before.set(qn('w:after'), '0')
+            br_pPr.append(sp_before)
+            br_para.append(br_pPr)
+            br_r = OxmlElement('w:r')
+            br_el = OxmlElement('w:br')
+            br_el.set(qn('w:type'), 'page')
+            br_r.append(br_el)
+            br_para.append(br_r)
+            body.insert(list(body).index(target_el), br_para)
+            page_pos = note_height
+        else:
+            page_pos += note_height
 
     # Save to buffer
     buf = io.BytesIO()
