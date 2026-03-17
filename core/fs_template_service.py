@@ -1166,6 +1166,8 @@ def _notes_add_table_row(table, label, cy_str, py_str, bold=False,
         run.font.name = _NOTES_FONT
         run.font.size = _NOTES_FONT_SIZE
         run.bold = bold
+        p.paragraph_format.space_after = Pt(2)
+        p.paragraph_format.space_before = Pt(0)
         if i >= 1:
             p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     if indent:
@@ -1310,11 +1312,15 @@ def _generate_notes_document(context):
         i["cy_amount"] != 0 or i["py_amount"] != 0 for i in trade_debtors
     )
 
-    # PPE
-    ppe_cost = []
-    ppe_depr = []
+    # PPE — group into asset classes by TB proximity.
+    # In the TB, a cost account is immediately followed by its depreciation
+    # account. Walk the NCA list in order and build (cost, depr) pairs.
+    ppe_classes = []       # list of {"cost": item, "depr": item_or_None}
     ppe_deposit = []
-    for item in sections["noncurrent_assets"]:
+    nca_items = sections["noncurrent_assets"]
+    i_nca = 0
+    while i_nca < len(nca_items):
+        item = nca_items[i_nca]
         nl = item["account_name"].lower()
         is_depr = any(kw in nl for kw in [
             "accumulated", "amortisation", "depreciation",
@@ -1324,15 +1330,42 @@ def _generate_notes_document(context):
             "equipment", "vehicle", "furniture", "building", "fixture",
             "plant", "motor", "computer", "office", "at cost",
         ]) or is_depr or is_deposit
+
         if not is_ppe:
+            i_nca += 1
             continue
-        if is_depr:
-            ppe_depr.append(item)
-        elif is_deposit:
+
+        if is_deposit:
             ppe_deposit.append(item)
-        else:
-            ppe_cost.append(item)
-    has_ppe = any(i["cy_amount"] != 0 or i["py_amount"] != 0 for i in ppe_cost)
+            i_nca += 1
+            continue
+
+        if is_depr:
+            # Orphan depreciation with no preceding cost — add as depr-only
+            ppe_classes.append({"cost": None, "depr": item})
+            i_nca += 1
+            continue
+
+        # Cost account — check if next item is its depreciation pair
+        depr_item = None
+        if i_nca + 1 < len(nca_items):
+            next_item = nca_items[i_nca + 1]
+            next_nl = next_item["account_name"].lower()
+            next_is_depr = any(kw in next_nl for kw in [
+                "accumulated", "amortisation", "depreciation",
+            ]) or next_nl.startswith("less:")
+            if next_is_depr:
+                depr_item = next_item
+                i_nca += 1  # skip the depr item in the outer loop
+
+        ppe_classes.append({"cost": item, "depr": depr_item})
+        i_nca += 1
+
+    has_ppe = any(
+        pair["cost"] is not None and
+        (pair["cost"]["cy_amount"] != 0 or pair["cost"]["py_amount"] != 0)
+        for pair in ppe_classes
+    )
 
     # Related Party — management fees
     mgmt_fee_items = []
@@ -1493,7 +1526,7 @@ def _generate_notes_document(context):
     # ==================================================================
     n1 = _note_num_for("policies")
     _notes_add_para(doc, f"Note {n1}: Statement of Significant Accounting Policies",
-                    bold=True, space_before=0, space_after=8)
+                    bold=True, space_before=0, space_after=6)
 
     # Opening paragraph — entity type specific
     if entity_type == "company":
@@ -1503,7 +1536,7 @@ def _generate_notes_document(context):
             "prepared in order to satisfy the financial reporting requirements of the "
             "Corporations Act 2001. The directors have determined that the entity is "
             "not a reporting entity.",
-            space_after=6)
+            space_before=6, space_after=6)
     elif entity_type == "trust":
         _notes_add_para(
             doc,
@@ -1511,7 +1544,7 @@ def _generate_notes_document(context):
             "prepared in order to satisfy the financial reporting requirements of the "
             "trust deed. The trustees have determined that the entity is not a "
             "reporting entity.",
-            space_after=6)
+            space_before=6, space_after=6)
     elif entity_type == "partnership":
         _notes_add_para(
             doc,
@@ -1519,13 +1552,13 @@ def _generate_notes_document(context):
             "prepared in order to satisfy the financial reporting requirements of the "
             "partnership agreement. The partners have determined that the entity is "
             "not a reporting entity.",
-            space_after=6)
+            space_before=6, space_after=6)
     else:  # sole_trader
         _notes_add_para(
             doc,
             "The financial statements are special purpose financial statements "
             "prepared in order to satisfy the information needs of the proprietor.",
-            space_after=6)
+            space_before=6, space_after=6)
 
     _notes_add_para(
         doc,
@@ -1544,46 +1577,46 @@ def _generate_notes_document(context):
 
     # (a) Revenue Recognition — always
     _notes_add_para(doc, f"{chr(policy_letter)}) Revenue Recognition",
-                    bold=True, space_after=4)
+                    bold=True, space_before=10, space_after=2)
     _notes_add_para(
         doc,
         "Revenue is recognised when the entity satisfies a performance obligation "
         "by transferring a promised good or service to a customer.",
-        space_after=8)
+        space_before=2, space_after=4)
     policy_letter += 1
 
     # Income Tax — companies only
     if is_company:
         _notes_add_para(doc, f"{chr(policy_letter)}) Income Tax",
-                        bold=True, space_after=4)
+                        bold=True, space_before=10, space_after=2)
         _notes_add_para(
             doc,
             "The income tax expense for the year comprises current income tax expense. "
             "Current income tax expense reflects the current year tax payable based on "
             "taxable income for the year.",
-            space_after=8)
+            space_before=2, space_after=4)
         policy_letter += 1
 
     # GST — always
     _notes_add_para(doc, f"{chr(policy_letter)}) Goods and Services Tax (GST)",
-                    bold=True, space_after=4)
+                    bold=True, space_before=10, space_after=2)
     _notes_add_para(
         doc,
         "Revenues, expenses and assets are recognised net of the amount of GST. "
         "Receivables and payables are stated with the amount of GST included.",
-        space_after=8)
+        space_before=2, space_after=4)
     policy_letter += 1
 
     # PPE — only if has_ppe
     if has_ppe:
         _notes_add_para(doc, f"{chr(policy_letter)}) Property, Plant and Equipment",
-                        bold=True, space_after=4)
+                        bold=True, space_before=10, space_after=2)
         _notes_add_para(
             doc,
             "Property, plant and equipment are carried at cost less any subsequent "
             "accumulated depreciation and impairment losses. Depreciation is calculated "
             "on a diminishing value basis over the estimated useful life of the asset.",
-            space_after=8)
+            space_before=2, space_after=4)
         policy_letter += 1
 
     # ==================================================================
@@ -1592,7 +1625,7 @@ def _generate_notes_document(context):
     if has_trade_debtors:
         n = _note_num_for("receivables")
         _notes_add_para(doc, f"Note {n}: Trade Receivables",
-                        bold=True, space_before=14, space_after=8)
+                        bold=True, space_before=18, space_after=6)
 
         tbl = _notes_create_table(doc, has_prior)
         total_cy = Decimal("0")
@@ -1627,7 +1660,7 @@ def _generate_notes_document(context):
             "Trade receivables are non-interest bearing and are generally on 30 to "
             "90 day terms. An allowance for doubtful debts is made when there is "
             "objective evidence that a trade receivable is impaired.",
-            space_before=8, space_after=8)
+            space_before=4, space_after=6)
 
     # ==================================================================
     # NOTE 3: Property, Plant and Equipment
@@ -1635,70 +1668,41 @@ def _generate_notes_document(context):
     if has_ppe:
         n = _note_num_for("ppe")
         _notes_add_para(doc, f"Note {n}: Property, Plant and Equipment",
-                        bold=True, space_before=14, space_after=8)
+                        bold=True, space_before=18, space_after=6)
 
         tbl = _notes_create_table(doc, has_prior)
 
-        # Match cost items to depreciation items by asset class keyword.
-        # Strip common prefixes so "Less: Accum Depreciation - Plant"
-        # matches "Plant & equipment - At cost" via the "plant" keyword.
-        def _asset_class_key(name):
-            nl = name.lower()
-            # Strip prefixes that obscure the asset class
-            for strip in ["less:", "accumulated", "accum", "depreciation",
-                          "amortisation", "amortization", "- at cost",
-                          "at cost"]:
-                nl = nl.replace(strip, "")
-            nl = nl.strip(" -&")
-            for kw in ["plant", "office", "motor", "vehicle", "computer",
-                        "furniture", "fixture", "building"]:
-                if kw in nl:
-                    return kw
-            return nl
+        # Render each cost/depreciation pair from TB proximity matching
+        for pair in ppe_classes:
+            cost_item = pair["cost"]
+            depr_item = pair["depr"]
 
-        # Group cost by class
-        cost_by_class = OrderedDict()
-        for item in ppe_cost:
-            cls = _asset_class_key(item["account_name"])
-            cost_by_class.setdefault(cls, []).append(item)
+            if cost_item is None:
+                continue  # orphan depreciation — skip
 
-        depr_by_class = {}
-        for item in ppe_depr:
-            cls = _asset_class_key(item["account_name"])
-            depr_by_class.setdefault(cls, []).append(item)
+            cost_cy = abs(cost_item["cy_amount"]) if cost_item["cy_amount"] else Decimal("0")
+            cost_py = abs(cost_item["py_amount"]) if cost_item["py_amount"] else Decimal("0")
+            _notes_add_table_row(tbl, cost_item["account_name"],
+                                 _fmt_note_amount(cost_cy), _fmt_note_amount(cost_py))
 
-        for cls, cost_items in cost_by_class.items():
-            for c_item in cost_items:
-                cost_cy = abs(c_item["cy_amount"]) if c_item["cy_amount"] else Decimal("0")
-                cost_py = abs(c_item["py_amount"]) if c_item["py_amount"] else Decimal("0")
-                _notes_add_table_row(tbl, c_item["account_name"],
-                                     _fmt_note_amount(cost_cy), _fmt_note_amount(cost_py))
-
-            # Find matching depreciation
-            depr_items = depr_by_class.get(cls, [])
-            depr_cy = sum(abs(d["cy_amount"]) for d in depr_items if d["cy_amount"])
-            depr_py = sum(abs(d["py_amount"]) for d in depr_items if d["py_amount"])
-
-            if depr_cy or depr_py:
-                # Check if amortisation or depreciation
-                depr_label = "Less: Accumulated depreciation"
-                for d in depr_items:
-                    if "amortisation" in d["account_name"].lower():
-                        depr_label = "Less: Accumulated amortisation"
-                        break
-                _notes_add_table_row(tbl, depr_label,
+            depr_cy = Decimal("0")
+            depr_py = Decimal("0")
+            if depr_item:
+                depr_cy = abs(depr_item["cy_amount"]) if depr_item["cy_amount"] else Decimal("0")
+                depr_py = abs(depr_item["py_amount"]) if depr_item["py_amount"] else Decimal("0")
+                # Use the actual account name from the TB
+                _notes_add_table_row(tbl, depr_item["account_name"],
                                      _fmt_note_amount(-depr_cy),
                                      _fmt_note_amount(-depr_py),
                                      indent=Cm(0.5))
 
-            total_cost_cy = sum(abs(c["cy_amount"]) for c in cost_items if c["cy_amount"])
-            total_cost_py = sum(abs(c["py_amount"]) for c in cost_items if c["py_amount"])
-            net_cy = total_cost_cy - depr_cy
-            net_py = total_cost_py - depr_py
+            net_cy = cost_cy - depr_cy
+            net_py = cost_py - depr_py
             nbv_row = _notes_add_table_row(tbl, "Net book value",
                                            _fmt_note_amount(net_cy),
                                            _fmt_note_amount(net_py), bold=True)
             _notes_apply_subtotal_border(nbv_row)
+            _notes_apply_grand_total_border(nbv_row)
 
             # Blank spacer row
             _notes_add_table_row(tbl, "", "", "")
@@ -1715,7 +1719,7 @@ def _generate_notes_document(context):
             "All plant and equipment is stated at historical cost less depreciation. "
             "Depreciation is calculated on a diminishing value basis at rates determined "
             "by the Australian Taxation Office.",
-            space_before=8, space_after=8)
+            space_before=4, space_after=6)
 
     # ==================================================================
     # NOTE 4: Related Party Transactions
@@ -1723,7 +1727,7 @@ def _generate_notes_document(context):
     if has_related_party:
         n = _note_num_for("related_party")
         _notes_add_para(doc, f"Note {n}: Related Party Transactions",
-                        bold=True, space_before=14, space_after=8)
+                        bold=True, space_before=18, space_after=6)
 
         # Entity-type language
         if entity_type == "company":
@@ -1758,7 +1762,7 @@ def _generate_notes_document(context):
                 _notes_add_para(
                     doc,
                     f"({chr(sub_letter)}) Management Fees \u2014 {counterparty}",
-                    bold=True, space_before=6, space_after=4)
+                    bold=True, space_before=10, space_after=2)
 
                 fee_cy = abs(item["cy_amount"]) if item["cy_amount"] else Decimal("0")
                 fee_py = abs(item["py_amount"]) if item["py_amount"] else Decimal("0")
@@ -1768,7 +1772,7 @@ def _generate_notes_document(context):
                     f"{counterparty}, a related party. Management fees charged during "
                     f"the year were {_fmt_dollar(fee_cy)} "
                     f"({prior_year_str}: {_fmt_dollar(fee_py)}).",
-                    space_after=8)
+                    space_before=2, space_after=6)
                 sub_letter += 1
 
         # Director Loans (skip for sole traders)
@@ -1781,7 +1785,7 @@ def _generate_notes_document(context):
                 _notes_add_para(
                     doc,
                     f"({chr(sub_letter)}) {heading_name}",
-                    bold=True, space_before=6, space_after=4)
+                    bold=True, space_before=10, space_after=2)
 
                 # Balance sign: in NCL section, cy_amount = debit - credit
                 # Negative = credit balance = entity owes director (liability)
@@ -1796,7 +1800,7 @@ def _generate_notes_document(context):
                         f"The {entity_leader} has borrowed funds from {entity_name}. "
                         f"The amount outstanding at year end was {_fmt_dollar(bal_cy)} "
                         f"({prior_year_str}: {_fmt_dollar(bal_py)}).",
-                        space_after=8)
+                        space_before=2, space_after=6)
                 else:
                     _notes_add_para(
                         doc,
@@ -1804,7 +1808,7 @@ def _generate_notes_document(context):
                         f"The balance outstanding at year end was "
                         f"{_fmt_dollar(bal_cy)} ({prior_year_str}: {_fmt_dollar(bal_py)}). "
                         f"The loan is unsecured, interest free and repayable on demand.",
-                        space_after=8)
+                        space_before=2, space_after=6)
                 sub_letter += 1
 
         # Related Entity Loans
@@ -1821,7 +1825,7 @@ def _generate_notes_document(context):
                 _notes_add_para(
                     doc,
                     f"({chr(sub_letter)}) Loan \u2014 {counterparty}",
-                    bold=True, space_before=6, space_after=4)
+                    bold=True, space_before=10, space_after=2)
 
                 bal_cy = abs(item["cy_amount"]) if item["cy_amount"] else Decimal("0")
                 bal_py = abs(item["py_amount"]) if item["py_amount"] else Decimal("0")
@@ -1834,7 +1838,7 @@ def _generate_notes_document(context):
                         f"party. The amount receivable at year end was "
                         f"{_fmt_dollar(bal_cy)} ({prior_year_str}: {_fmt_dollar(bal_py)}). "
                         f"The amount is unsecured, interest free and repayable on demand.",
-                        space_after=8)
+                        space_before=2, space_after=6)
                 else:
                     # Credit = entity owes (liability)
                     _notes_add_para(
@@ -1843,7 +1847,7 @@ def _generate_notes_document(context):
                         f"The balance outstanding at year end was "
                         f"{_fmt_dollar(bal_cy)} ({prior_year_str}: {_fmt_dollar(bal_py)}). "
                         f"The loan is unsecured, interest free and repayable on demand.",
-                        space_after=8)
+                        space_before=2, space_after=6)
                 sub_letter += 1
 
     # ==================================================================
@@ -1852,7 +1856,7 @@ def _generate_notes_document(context):
     if has_income_tax:
         n = _note_num_for("income_tax")
         _notes_add_para(doc, f"Note {n}: Income Tax",
-                        bold=True, space_before=14, space_after=8)
+                        bold=True, space_before=18, space_after=6)
 
         _notes_add_para(doc, "The income tax expense for the year comprises:",
                         space_after=6)
@@ -1875,13 +1879,13 @@ def _generate_notes_document(context):
             doc,
             f"The income tax provision has been calculated at the applicable corporate "
             f"tax rate of {rate_cy}% on the estimated taxable profit for the year.",
-            space_before=8, space_after=6)
+            space_before=4, space_after=6)
 
         _notes_add_para(
             doc,
             f"The applicable tax rate is {rate_cy}% ({prior_year_str}: {rate_py}%) "
             f"being the corporate tax rate for base rate entities.",
-            space_after=8)
+            space_after=6)
 
     # ==================================================================
     # NOTE 6: Events After the Reporting Date (companies only)
@@ -1889,7 +1893,7 @@ def _generate_notes_document(context):
     if is_company:
         n = _note_num_for("events")
         _notes_add_para(doc, f"Note {n}: Events After the Reporting Date",
-                        bold=True, space_before=14, space_after=8)
+                        bold=True, space_before=18, space_after=6)
 
         _notes_add_para(
             doc,
@@ -1898,7 +1902,7 @@ def _generate_notes_document(context):
             "affected or may significantly affect the operations of the entity, "
             "the results of those operations, or the state of affairs of the "
             "entity in future years.",
-            space_after=8)
+            space_before=4, space_after=6)
 
     # Save to buffer
     buf = io.BytesIO()
