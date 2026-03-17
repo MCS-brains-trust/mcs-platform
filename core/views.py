@@ -1346,6 +1346,11 @@ def entity_detail(request, pk):
         "engagement_letters": entity.engagement_letters.select_related(
             "financial_year", "uploaded_by"
         ).order_by("-financial_year__end_date", "-uploaded_at"),
+        "generated_engagement_letters": entity.legal_documents.select_related(
+            "financial_year", "generated_by"
+        ).filter(
+            document_type="engagement_letter"
+        ).order_by("-generated_at"),
         "engagement_letters_count": entity.engagement_letters.filter(is_current=True).count(),
     }
     return render(request, "core/entity_detail.html", context)

@@ -1,5 +1,3 @@
-{% load humanize %}
-
 <div class="p-3">
     <div class="d-flex justify-content-between align-items-start mb-3 gap-3 flex-wrap">
         <div>
@@ -9,7 +7,7 @@
                 Roll-forward is blocked until the letter for the new year is on file.
             </p>
             <div class="alert alert-light border small py-2 px-3 mb-0">
-                <strong>Recommended:</strong> Create the draft letter in StatementHub, then upload the signed version once it is returned.
+                <strong>Recommended:</strong> Create the draft letter in StatementHub, correct any mistakes by editing it, then upload the signed version once it is returned.
             </div>
         </div>
         <div class="d-flex gap-2 flex-wrap justify-content-end">
@@ -22,86 +20,159 @@
         </div>
     </div>
 
-    {# ── Letters table ── #}
-    {% if engagement_letters %}
-    <div class="table-responsive">
-        <table class="table table-hover align-middle mb-0">
-            <thead class="table-light">
-                <tr>
-                    <th>Financial Year</th>
-                    <th>File</th>
-                    <th>Status</th>
-                    <th>Uploaded By</th>
-                    <th>Uploaded</th>
-                    <th class="text-end">Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for letter in engagement_letters %}
-                <tr id="el-row-{{ letter.pk }}" {% if not letter.is_current %}class="text-muted"{% endif %}>
-                    <td>
-                        <strong>{{ letter.financial_year.year_label }}</strong>
-                        {% if not letter.is_current %}
-                        <span class="badge bg-secondary ms-1">Superseded</span>
-                        {% endif %}
-                    </td>
-                    <td>
-                        <a href="{{ letter.file.url }}" target="_blank" class="text-decoration-none">
-                            <i class="bi bi-file-earmark-pdf text-danger me-1"></i>
-                            {{ letter.original_filename|default:"Engagement Letter" }}
-                        </a>
-                        {% if letter.file_size_bytes %}
-                        <small class="text-muted ms-1">({{ letter.file_size_bytes|filesizeformat }})</small>
-                        {% endif %}
-                    </td>
-                    <td>
-                        <select class="form-select form-select-sm el-status-select"
-                                data-letter-pk="{{ letter.pk }}"
-                                style="width:auto; min-width:130px;">
-                            {% for val, label in letter.Status.choices %}
-                            <option value="{{ val }}" {% if letter.status == val %}selected{% endif %}>{{ label }}</option>
-                            {% endfor %}
-                        </select>
-                    </td>
-                    <td>
-                        {% if letter.uploaded_by %}
-                        {{ letter.uploaded_by.get_full_name|default:letter.uploaded_by.email }}
-                        {% else %}
-                        <span class="text-muted">—</span>
-                        {% endif %}
-                    </td>
-                    <td>
-                        <small class="text-muted">{{ letter.uploaded_at|date:"d M Y" }}</small>
-                    </td>
-                    <td class="text-end">
-                        <div class="btn-group btn-group-sm">
-                            <a href="{{ letter.file.url }}" class="btn btn-outline-primary" target="_blank" title="Download">
-                                <i class="bi bi-download"></i>
-                            </a>
-                            {% if letter.is_current %}
-                            <button class="btn btn-outline-secondary"
-                                    onclick="archiveEngagementLetter('{{ letter.pk }}')"
-                                    title="Mark as Superseded">
-                                <i class="bi bi-archive"></i>
-                            </button>
+    {% if generated_engagement_letters %}
+    <div class="card border-0 shadow-sm mb-4">
+        <div class="card-header bg-light">
+            <h6 class="mb-0"><i class="bi bi-file-earmark-richtext me-2"></i>Drafts Created in StatementHub</h6>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Financial Year</th>
+                        <th>Draft</th>
+                        <th>Status</th>
+                        <th>Saved By</th>
+                        <th>Updated</th>
+                        <th class="text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for doc in generated_engagement_letters %}
+                    <tr>
+                        <td>
+                            {% if doc.financial_year %}
+                            <strong>{{ doc.financial_year.year_label }}</strong>
+                            {% else %}
+                            <span class="text-muted">No year selected</span>
                             {% endif %}
-                            <button class="btn btn-outline-danger"
-                                    onclick="deleteEngagementLetter('{{ letter.pk }}')"
-                                    title="Delete permanently">
-                                <i class="bi bi-trash"></i>
-                            </button>
-                        </div>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+                        </td>
+                        <td>
+                            <div class="fw-semibold">{{ doc.title|default:"Engagement Letter Draft" }}</div>
+                            <div class="small text-muted">Editable in-system draft</div>
+                        </td>
+                        <td>
+                            <span class="badge bg-warning text-dark">{{ doc.get_status_display }}</span>
+                        </td>
+                        <td>
+                            {% if doc.generated_by %}
+                            {{ doc.generated_by.get_full_name|default:doc.generated_by.email }}
+                            {% else %}
+                            <span class="text-muted">—</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <small class="text-muted">{{ doc.generated_at|date:"d M Y" }}</small>
+                        </td>
+                        <td class="text-end">
+                            <div class="btn-group btn-group-sm flex-wrap">
+                                <a href="{% url 'core:engagement_letter_wizard' pk=entity.pk %}?draft={{ doc.pk }}" class="btn btn-outline-secondary" title="Edit draft">
+                                    <i class="bi bi-pencil-square"></i>
+                                </a>
+                                {% if doc.generated_file %}
+                                <a href="{{ doc.generated_file.url }}" class="btn btn-outline-primary" target="_blank" title="Download Word draft">
+                                    <i class="bi bi-file-earmark-word"></i>
+                                </a>
+                                {% endif %}
+                                {% if doc.pdf_file %}
+                                <a href="{{ doc.pdf_file.url }}" class="btn btn-outline-danger" target="_blank" title="Download PDF draft">
+                                    <i class="bi bi-file-earmark-pdf"></i>
+                                </a>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
     </div>
-    {% else %}
+    {% endif %}
+
+    {% if engagement_letters %}
+    <div class="card border-0 shadow-sm">
+        <div class="card-header bg-light">
+            <h6 class="mb-0"><i class="bi bi-cloud-arrow-up me-2"></i>Uploaded Engagement Letters</h6>
+        </div>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Financial Year</th>
+                        <th>File</th>
+                        <th>Status</th>
+                        <th>Uploaded By</th>
+                        <th>Uploaded</th>
+                        <th class="text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for letter in engagement_letters %}
+                    <tr id="el-row-{{ letter.pk }}" {% if not letter.is_current %}class="text-muted"{% endif %}>
+                        <td>
+                            <strong>{{ letter.financial_year.year_label }}</strong>
+                            {% if not letter.is_current %}
+                            <span class="badge bg-secondary ms-1">Superseded</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <a href="{{ letter.file.url }}" target="_blank" class="text-decoration-none">
+                                <i class="bi bi-file-earmark-pdf text-danger me-1"></i>
+                                {{ letter.original_filename|default:"Engagement Letter" }}
+                            </a>
+                            {% if letter.file_size_bytes %}
+                            <small class="text-muted ms-1">({{ letter.file_size_bytes|filesizeformat }})</small>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <select class="form-select form-select-sm el-status-select"
+                                    data-letter-pk="{{ letter.pk }}"
+                                    style="width:auto; min-width:130px;">
+                                {% for val, label in letter.Status.choices %}
+                                <option value="{{ val }}" {% if letter.status == val %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                        </td>
+                        <td>
+                            {% if letter.uploaded_by %}
+                            {{ letter.uploaded_by.get_full_name|default:letter.uploaded_by.email }}
+                            {% else %}
+                            <span class="text-muted">—</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <small class="text-muted">{{ letter.uploaded_at|date:"d M Y" }}</small>
+                        </td>
+                        <td class="text-end">
+                            <div class="btn-group btn-group-sm">
+                                <a href="{{ letter.file.url }}" class="btn btn-outline-primary" target="_blank" title="Download uploaded file">
+                                    <i class="bi bi-download"></i>
+                                </a>
+                                {% if letter.is_current %}
+                                <button class="btn btn-outline-secondary"
+                                        onclick="archiveEngagementLetter('{{ letter.pk }}')"
+                                        title="Mark as Superseded">
+                                    <i class="bi bi-archive"></i>
+                                </button>
+                                {% endif %}
+                                <button class="btn btn-outline-danger"
+                                        onclick="deleteEngagementLetter('{{ letter.pk }}')"
+                                        title="Delete permanently">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% elif not generated_engagement_letters %}
     <div class="text-center py-5 text-muted">
         <i class="bi bi-envelope-paper" style="font-size:2.5rem; opacity:0.35;"></i>
-        <p class="mt-2 mb-0">No engagement letters uploaded yet.</p>
-        <p class="small">Upload a letter for each financial year to maintain a complete audit trail.</p>
+        <p class="mt-2 mb-0">No engagement letters saved yet.</p>
+        <p class="small">Create one in StatementHub or upload a signed letter for each financial year to maintain a complete audit trail.</p>
     </div>
     {% endif %}
 
@@ -134,7 +205,6 @@
                             <option value="{{ fy.pk }}">
                                 {{ fy.year_label }}
                                 ({{ fy.start_date|date:"d M Y" }} — {{ fy.end_date|date:"d M Y" }})
-    
                             </option>
                             {% endfor %}
                         </select>
@@ -217,7 +287,6 @@ function deleteEngagementLetter(pk) {
     .catch(err => alert('Error: ' + err.message));
 }
 
-// Inline status update
 document.querySelectorAll('.el-status-select').forEach(function(sel) {
     sel.addEventListener('change', function() {
         const pk = this.dataset.letterPk;
@@ -244,7 +313,6 @@ document.querySelectorAll('.el-status-select').forEach(function(sel) {
     });
 });
 
-// Auto-open the tab if redirected back with ?tab=engagement_letters
 (function() {
     const params = new URLSearchParams(window.location.search);
     if (params.get('tab') === 'engagement_letters') {

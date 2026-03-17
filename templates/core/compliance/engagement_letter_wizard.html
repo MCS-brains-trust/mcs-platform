@@ -7,18 +7,60 @@
     <nav aria-label="breadcrumb">
         <ol class="breadcrumb">
             <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
-            <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}?tab=engagement_letters">{{ entity.entity_name }}</a></li>
             <li class="breadcrumb-item active">Engagement Letter</li>
         </ol>
     </nav>
 
-    <div class="row">
+    <div class="row g-3">
         <div class="col-lg-8">
             <div class="card">
-                <div class="card-header bg-primary text-white">
-                    <h5 class="mb-0"><i class="bi bi-envelope-paper"></i> Engagement Letter (APES 305)</h5>
+                <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center flex-wrap gap-2">
+                    <h5 class="mb-0"><i class="bi bi-envelope-paper me-2"></i>Engagement Letter (APES 305)</h5>
+                    {% if draft_doc %}
+                    <span class="badge bg-light text-primary">Editing saved draft</span>
+                    {% endif %}
                 </div>
                 <div class="card-body">
+                    <div class="alert alert-info small">
+                        Save the draft into the Engagement Letters tab for the selected financial year. You can reopen it later to edit mistakes and download the latest Word or PDF version.
+                    </div>
+
+                    <div class="row g-3 mb-4">
+                        <div class="col-md-6">
+                            <label class="form-label small fw-bold">Financial Year</label>
+                            <select id="financial_year_id" class="form-select" required>
+                                <option value="">— Select financial year —</option>
+                                {% for fy in financial_years %}
+                                <option value="{{ fy.pk }}" {% if initial.financial_year_id == fy.pk|stringformat:"s" %}selected{% endif %}>
+                                    {{ fy.year_label }} ({{ fy.start_date|date:"d M Y" }} — {{ fy.end_date|date:"d M Y" }})
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <div class="form-text">This determines where the engagement letter is saved in the Engagement Letters tab and which year can be rolled forward.</div>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label small fw-bold">Fee Basis</label>
+                            <select id="fee_basis" class="form-select form-select-sm">
+                                <option value="fixed" {% if initial.fee_basis == 'fixed' %}selected{% endif %}>Fixed Fee</option>
+                                <option value="hourly" {% if initial.fee_basis == 'hourly' %}selected{% endif %}>Hourly Rate</option>
+                                <option value="value_based" {% if initial.fee_basis == 'value_based' %}selected{% endif %}>Value-Based</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <label class="form-label small fw-bold">Fee Amount ($)</label>
+                            <input type="number" id="fee_amount" class="form-control form-control-sm"
+                                   value="{{ initial.fee_amount|default:'' }}" step="0.01" min="0">
+                        </div>
+                    </div>
+
+                    <div class="row g-3 mb-4">
+                        <div class="col-md-4">
+                            <label class="form-label small fw-bold">Letter Date</label>
+                            <input type="date" id="letter_date" class="form-control form-control-sm" value="{{ initial.date|default:'' }}">
+                        </div>
+                    </div>
+
                     <h6 class="border-bottom pb-2 mb-3">Services Engaged</h6>
                     <div class="row g-2 mb-4">
                         {% for svc_id, svc_label in service_options %}
@@ -26,42 +68,21 @@
                             <div class="form-check">
                                 <input class="form-check-input svc-check" type="checkbox"
                                        value="{{ svc_id }}" id="svc-{{ svc_id }}"
-                                       {% if svc_id in config.services_engaged %}checked{% endif %}>
+                                       {% if svc_id in initial.services %}checked{% endif %}>
                                 <label class="form-check-label" for="svc-{{ svc_id }}">{{ svc_label }}</label>
                             </div>
                         </div>
                         {% endfor %}
                     </div>
 
-                    <h6 class="border-bottom pb-2 mb-3">Fee Arrangement</h6>
-                    <div class="row g-3 mb-4">
-                        <div class="col-md-4">
-                            <label class="form-label small fw-bold">Fee Basis</label>
-                            <select id="fee_basis" class="form-select form-select-sm">
-                                <option value="fixed" {% if config.fee_basis == 'fixed' %}selected{% endif %}>Fixed Fee</option>
-                                <option value="hourly" {% if config.fee_basis == 'hourly' %}selected{% endif %}>Hourly Rate</option>
-                                <option value="value_based" {% if config.fee_basis == 'value_based' %}selected{% endif %}>Value-Based</option>
-                            </select>
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label small fw-bold">Fee Amount ($)</label>
-                            <input type="number" id="fee_amount" class="form-control form-control-sm"
-                                   value="{{ config.fee_amount|default:'' }}" step="0.01" min="0">
-                        </div>
-                        <div class="col-md-4">
-                            <label class="form-label small fw-bold">Date</label>
-                            <input type="date" id="letter_date" class="form-control form-control-sm">
-                        </div>
-                    </div>
-
                     <h6 class="border-bottom pb-2 mb-3">Additional Terms</h6>
-                    <textarea id="additional_terms" class="form-control mb-4" rows="4"
-                              placeholder="Any additional terms or conditions...">{{ config.additional_terms }}</textarea>
+                    <textarea id="additional_terms" class="form-control mb-4" rows="5"
+                              placeholder="Any additional terms or conditions...">{{ initial.additional_terms }}</textarea>
 
-                    <div class="d-flex justify-content-end gap-2">
-                        <a href="{% url 'core:entity_detail' pk=entity.pk %}" class="btn btn-outline-secondary">Cancel</a>
+                    <div class="d-flex justify-content-end gap-2 flex-wrap">
+                        <a href="{% url 'core:entity_detail' pk=entity.pk %}?tab=engagement_letters" class="btn btn-outline-secondary">Back to Engagement Letters</a>
                         <button class="btn btn-success" onclick="generateLetter()">
-                            <i class="bi bi-check-circle"></i> Generate Engagement Letter
+                            <i class="bi bi-save me-1"></i>{% if draft_doc %}Save Changes{% else %}Save Draft{% endif %}
                         </button>
                     </div>
                 </div>
@@ -69,9 +90,38 @@
         </div>
 
         <div class="col-lg-4">
+            <div class="card mb-3">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="bi bi-download me-1"></i>Saved Draft Behaviour</h6>
+                </div>
+                <div class="card-body small">
+                    <p class="mb-2">When you save this engagement letter, StatementHub will:</p>
+                    <table class="table table-sm align-middle mb-0">
+                        <tbody>
+                            <tr>
+                                <th class="w-50">Save to tab</th>
+                                <td>Visible under the selected financial year</td>
+                            </tr>
+                            <tr>
+                                <th>Word download</th>
+                                <td>Available from the Engagement Letters tab</td>
+                            </tr>
+                            <tr>
+                                <th>PDF download</th>
+                                <td>Available when PDF conversion succeeds</td>
+                            </tr>
+                            <tr>
+                                <th>Edit later</th>
+                                <td>Open the saved draft again and re-save it</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
             <div class="card">
                 <div class="card-header">
-                    <h6 class="mb-0"><i class="bi bi-info-circle"></i> APES 305 Requirements</h6>
+                    <h6 class="mb-0"><i class="bi bi-info-circle me-1"></i>APES 305 Requirements</h6>
                 </div>
                 <div class="card-body small">
                     <p>The engagement letter must include:</p>
@@ -83,11 +133,11 @@
                         <li>Basis of fees and billing arrangements</li>
                         <li>Limitation of liability (if applicable)</li>
                     </ul>
-                    <p class="text-muted mt-2">
+                    <p class="text-muted mt-2 mb-0">
                         {% if config.last_generated_fy %}
-                        Last generated for: {{ config.last_generated_fy }}
+                        Last saved for: {{ config.last_generated_fy }}
                         {% else %}
-                        No engagement letter generated yet.
+                        No engagement letter has been saved from the system yet.
                         {% endif %}
                     </p>
                 </div>
@@ -99,10 +149,17 @@
 <script>
 const CSRF_TOKEN = '{{ csrf_token }}';
 const GENERATE_URL = '{% url "core:engagement_letter_generate" pk=entity.pk %}';
+const DRAFT_ID = '{% if draft_doc %}{{ draft_doc.pk }}{% endif %}';
 
 function generateLetter() {
     const services = [];
     document.querySelectorAll('.svc-check:checked').forEach(cb => services.push(cb.value));
+
+    const financialYearId = document.getElementById('financial_year_id').value;
+    if (!financialYearId) {
+        alert('Please select the financial year this engagement letter covers.');
+        return;
+    }
 
     if (services.length === 0) {
         alert('Please select at least one service.');
@@ -110,6 +167,8 @@ function generateLetter() {
     }
 
     const payload = {
+        draft_id: DRAFT_ID || null,
+        financial_year_id: financialYearId,
         services: services,
         fee_amount: document.getElementById('fee_amount').value || null,
         fee_basis: document.getElementById('fee_basis').value,
@@ -125,8 +184,8 @@ function generateLetter() {
     .then(r => r.json())
     .then(data => {
         if (data.status === 'ok') {
-            alert('Engagement letter generated. You can now begin work on this financial year.');
-            location.href = '{% url "core:entity_detail" pk=entity.pk %}';
+            alert(data.message || 'Engagement letter saved.');
+            location.href = data.redirect_url || '{% url "core:entity_detail" pk=entity.pk %}?tab=engagement_letters';
         } else {
             alert('Error: ' + (data.error || 'Unknown error'));
         }

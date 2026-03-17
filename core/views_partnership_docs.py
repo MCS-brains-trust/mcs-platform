@@ -7,6 +7,7 @@ from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_POST
 
+from core.legal_doc_service import render_and_create_document, render_legal_document
 from core.models import (
     EngagementLetterConfig,
     Entity,
@@ -193,23 +194,52 @@ def engagement_letter_wizard(request, pk):
     """Engagement letter wizard — entity-level, APES 305 compliant."""
     entity = get_object_or_404(Entity, pk=pk)
 
-    # Get or create config
     config, _ = EngagementLetterConfig.objects.get_or_create(entity=entity)
-
-    # Service options vary by entity type
     service_options = _get_service_options(entity.entity_type)
+    financial_years = entity.financial_years.all().order_by("-end_date")
+
+    draft_id = request.GET.get("draft")
+    draft_doc = None
+    initial = {
+        "services": config.services_engaged or [],
+        "fee_amount": config.fee_amount,
+        "fee_basis": config.fee_basis,
+        "additional_terms": config.additional_terms,
+        "date": "",
+        "financial_year_id": str(config.last_generated_fy_id) if config.last_generated_fy_id else "",
+    }
+
+    if draft_id:
+        draft_doc = get_object_or_404(
+            LegalDocument,
+            pk=draft_id,
+            entity=entity,
+            document_type="engagement_letter",
+        )
+        params = draft_doc.parameters or {}
+        initial.update({
+            "services": params.get("services", initial["services"]),
+            "fee_amount": params.get("fee_amount", initial["fee_amount"]),
+            "fee_basis": params.get("fee_basis", initial["fee_basis"]),
+            "additional_terms": params.get("additional_terms", initial["additional_terms"]),
+            "date": params.get("date", initial["date"]),
+            "financial_year_id": str(draft_doc.financial_year_id) if draft_doc.financial_year_id else initial["financial_year_id"],
+        })
 
     return render(request, "core/compliance/engagement_letter_wizard.html", {
         "entity": entity,
         "config": config,
         "service_options": service_options,
+        "financial_years": financial_years,
+        "draft_doc": draft_doc,
+        "initial": initial,
     })
 
 
 @login_required
 @require_POST
 def engagement_letter_generate(request, pk):
-    """Generate an engagement letter for an entity."""
+    """Generate or update an engagement letter draft for an entity."""
     entity = get_object_or_404(Entity, pk=pk)
 
     try:
@@ -217,23 +247,25 @@ def engagement_letter_generate(request, pk):
     except json.JSONDecodeError:
         return JsonResponse({"status": "error", "error": "Invalid JSON"}, status=400)
 
-    # Update config
+    fy_id = data.get("financial_year_id")
+    if not fy_id:
+        return JsonResponse({"status": "error", "error": "Please select the financial year this engagement letter covers."}, status=400)
+
+    fy = get_object_or_404(FinancialYear, pk=fy_id, entity=entity)
+
     config, _ = EngagementLetterConfig.objects.get_or_create(entity=entity)
     config.services_engaged = data.get("services", [])
-    config.fee_amount = data.get("fee_amount")
+    config.fee_amount = data.get("fee_amount") or None
     config.fee_basis = data.get("fee_basis", "fixed")
     config.additional_terms = data.get("additional_terms", "")
+    config.last_generated_fy = fy
     config.save()
-
-    # Find the current FY
-    fy = FinancialYear.objects.filter(entity=entity).order_by("-end_date").first()
 
     signatories = EntityOfficer.objects.filter(
         entity=entity,
-        role__in=["director", "director_shareholder", "trustee", "partner"],
+        role__in=["director", "director_shareholder", "trustee", "partner", "individual", "public_officer"],
     )
 
-    # Build registered address from individual fields (Entity has no registered_address property)
     address_parts = filter(None, [
         entity.address_line_1,
         entity.address_line_2,
@@ -241,14 +273,22 @@ def engagement_letter_generate(request, pk):
     ])
     registered_address = ", ".join(address_parts)
 
-    # Format fee as "$X,XXX + GST" for display in the letter
     if config.fee_amount:
         try:
-            fee_display = f"${int(config.fee_amount):,} + GST"
+            fee_display = f"${float(config.fee_amount):,.2f} + GST"
         except (ValueError, TypeError):
             fee_display = f"{config.fee_amount} + GST"
     else:
         fee_display = ""
+
+    params = {
+        "services": data.get("services", []),
+        "fee_amount": data.get("fee_amount") or "",
+        "fee_basis": data.get("fee_basis", "fixed"),
+        "additional_terms": data.get("additional_terms", ""),
+        "date": data.get("date", ""),
+        "financial_year_id": str(fy.pk),
+    }
 
     context = {
         "entity_name": entity.entity_name,
@@ -260,28 +300,64 @@ def engagement_letter_generate(request, pk):
         "fee_amount": fee_display,
         "fee_basis": config.fee_basis,
         "additional_terms": config.additional_terms,
-        "signatories": [{"name": s.full_name, "role": s.get_role_display()} for s in signatories],
+        "signatories": [{"name": s.full_name, "role": getattr(s, "display_role", s.get_role_display())} for s in signatories],
         "date": data.get("date", ""),
     }
 
-    doc = LegalDocument.objects.create(
-        financial_year=fy,
-        entity=entity,
-        document_type="engagement_letter",
-        title=f"Engagement Letter — {entity.entity_name}",
-        context_data=context,
-        generated_by=request.user,
-        status="generated",
-    )
+    template = LegalDocumentTemplate.objects.filter(
+        document_type=LegalDocumentTemplate.DocumentType.ENGAGEMENT_LETTER,
+        is_active=True,
+    ).first()
+    if not template:
+        return JsonResponse({"status": "error", "error": "No active engagement letter template is configured."}, status=400)
 
-    if fy:
-        config.last_generated_fy = fy
-        config.save(update_fields=["last_generated_fy"])
+    draft_id = data.get("draft_id")
+    if draft_id:
+        doc = get_object_or_404(
+            LegalDocument,
+            pk=draft_id,
+            entity=entity,
+            document_type="engagement_letter",
+        )
+        doc.financial_year = fy
+        doc.template = template
+        doc.title = f"Engagement Letter — {entity.entity_name} — {fy.year_label}"
+        doc.parameters = params
+        doc.context_data = context
+        doc.status = LegalDocument.Status.DRAFT
+        doc.generated_by = request.user
+        doc.save(update_fields=["financial_year", "template", "title", "parameters", "context_data", "status", "generated_by"])
+        result = render_legal_document(doc.pk)
+        if result.get("status") != "ok":
+            return JsonResponse(result, status=400)
+        document_id = str(doc.pk)
+    else:
+        result = render_and_create_document(
+            entity=entity,
+            financial_year=fy,
+            template=template,
+            doc_type=LegalDocumentTemplate.DocumentType.ENGAGEMENT_LETTER,
+            context=context,
+            params=params,
+            user=request.user,
+            disclaimer_acknowledged=True,
+        )
+        if result.get("status") != "ok":
+            return JsonResponse(result, status=400)
+        document_id = result.get("document_id")
+        doc = LegalDocument.objects.get(pk=document_id)
+        doc.title = f"Engagement Letter — {entity.entity_name} — {fy.year_label}"
+        doc.context_data = context
+        doc.status = LegalDocument.Status.DRAFT
+        doc.save(update_fields=["title", "context_data", "status"])
 
     return JsonResponse({
         "status": "ok",
-        "document_id": str(doc.pk),
-        "message": "Engagement letter generated.",
+        "document_id": document_id,
+        "message": "Engagement letter saved. It is now available in the Engagement Letters tab for editing and download.",
+        "redirect_url": f"/core/entities/{entity.pk}/?tab=engagement_letters",
+        "docx_url": result.get("docx_url"),
+        "pdf_url": result.get("pdf_url"),
     })
 
 
