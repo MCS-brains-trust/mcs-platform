@@ -633,49 +633,138 @@ class NoteRegistry:
     """
     Automatically assigns note numbers based on what data exists in the
     trial balance sections. Notes are numbered sequentially starting from 1.
-    
+
     Per AASB 101 paragraph 113, each item in the financial statements shall
     be cross-referenced to any related information in the notes.
-    
+
     Standard note structure for MC&S special purpose financial statements:
     - Note 1: Summary of Significant Accounting Policies (ALWAYS)
-    - Note 2: Revenue (if trading_income or income data exists)
-    - Note 3: Profit from Ordinary Activities (if depreciation, borrowing costs, COGS, or bad debts)
-    - Note 4: Retained Profits / Undistributed Income (companies and trusts with equity data)
+    - Note 2: Trade Receivables (if trade debtors have balance)
+    - Note 3: Property, Plant and Equipment (if PPE at cost has balance)
+    - Note 4: Related Party Transactions (if related party accounts have balance)
+    - Note 5: Income Tax (if income tax account has balance)
+    - Note 6: Events After the Reporting Date (companies only)
     """
-    
+
     def __init__(self, entity, sections):
         self.entity_type = entity.entity_type
         self.notes = {}  # key -> note number
         self._next_num = 1
-        
+
+        # Pre-compute trigger conditions used by both registry and rendering
+        self._compute_triggers(sections)
+
         # Note 1: Accounting Policies — always present
         self._assign("accounting_policies")
-        
-        # Note 2: Revenue — if there's any income data
-        has_revenue = (len(sections["trading_income"]) > 0 or
-                       len(sections["income"]) > 0)
-        if has_revenue:
-            self._assign("revenue")
-        
-        # Note 3: Profit from Ordinary Activities — if depreciation, borrowing, COGS, or bad debts
-        has_depreciation = any("depreciation" in n.lower() or "amortisation" in n.lower()
-                               for _, n, _, _ in sections["expenses"])
-        has_borrowing = any("interest" in n.lower() and
-                           ("loan" in n.lower() or "australia" in n.lower() or "mortgage" in n.lower())
-                           for _, n, _, _ in sections["expenses"])
-        has_cogs = len(sections["cogs"]) > 0
-        has_bad_debts = any("bad" in n.lower() and "debt" in n.lower()
-                           for _, n, _, _ in sections["expenses"])
-        if has_depreciation or has_borrowing or has_cogs or has_bad_debts:
-            self._assign("profit_ordinary")
-        
-        # Note 4: Retained Profits / Undistributed Income
-        # For companies and trusts that have equity data
-        if self.entity_type in ("company", "trust"):
-            has_equity = len(sections["equity"]) > 0
-            if has_equity:
-                self._assign("retained_profits")
+
+        # Note 2: Trade Receivables — if account 2101 (trade debtors) has balance
+        if self.has_trade_receivables:
+            self._assign("trade_receivables")
+
+        # Note 3: PPE — if any PPE at cost account has balance
+        if self.has_ppe:
+            self._assign("ppe")
+
+        # Note 4: Related Party Transactions — if any related party account has balance
+        if self.has_related_party:
+            self._assign("related_party")
+
+        # Note 5: Income Tax — if income tax account has balance
+        if self.has_income_tax:
+            self._assign("income_tax")
+
+        # Note 6: Events After Reporting Date — companies only
+        if self.entity_type in ("company",):
+            self._assign("events_after")
+
+    def _compute_triggers(self, sections):
+        """Pre-compute all trigger conditions from trial balance data."""
+        # Trade Receivables: account 2101 (trade debtors) non-zero in CY or PY
+        self.trade_receivables_items = []
+        self.provision_doubtful = None
+        for code, name, balance, prior in sections["current_assets"]:
+            name_lower = name.lower()
+            if "trade" in name_lower and "debtor" in name_lower:
+                self.trade_receivables_items.append((code, name, balance, prior))
+            elif "provision" in name_lower and "doubtful" in name_lower:
+                if balance != 0 or prior != 0:
+                    self.provision_doubtful = (code, name, balance, prior)
+        self.has_trade_receivables = any(
+            bal != 0 or pr != 0
+            for _, _, bal, pr in self.trade_receivables_items
+        )
+
+        # PPE: non-current assets that are PPE at cost (not accumulated depreciation)
+        self.ppe_cost_items = []      # (code, name, cy, py) — at cost
+        self.ppe_depr_items = []      # (code, name, cy, py) — accumulated depreciation
+        self.ppe_deposit_items = []   # (code, name, cy, py) — deposits (not depreciable)
+        for code, name, balance, prior in sections["noncurrent_assets"]:
+            name_lower = name.lower()
+            is_depr = ("accumulated" in name_lower or "amortisation" in name_lower or
+                       "depreciation" in name_lower or name_lower.startswith("less:"))
+            is_deposit = "deposit" in name_lower
+            is_ppe = ("equipment" in name_lower or "vehicle" in name_lower or
+                      "furniture" in name_lower or "building" in name_lower or
+                      "fixture" in name_lower or "plant" in name_lower or
+                      "motor" in name_lower or "computer" in name_lower or
+                      "office" in name_lower or "at cost" in name_lower or
+                      is_depr or is_deposit)
+            if not is_ppe:
+                continue
+            if is_depr:
+                self.ppe_depr_items.append((code, name, balance, prior))
+            elif is_deposit:
+                self.ppe_deposit_items.append((code, name, balance, prior))
+            else:
+                self.ppe_cost_items.append((code, name, balance, prior))
+
+        self.has_ppe = any(
+            bal != 0 or pr != 0
+            for _, _, bal, pr in self.ppe_cost_items
+        )
+
+        # Related Party: management fees, director loans, related entity loans
+        self.mgmt_fee_items = []
+        for code, name, balance, prior in sections["expenses"]:
+            name_lower = name.lower()
+            if ("management" in name_lower and "fee" in name_lower and
+                ("majoti" in name_lower or "related" in name_lower)):
+                self.mgmt_fee_items.append((code, name, balance, prior))
+
+        self.director_loan_items = []
+        self.related_loan_items = []
+        for code, name, balance, prior in sections["noncurrent_liabilities"]:
+            name_lower = name.lower()
+            if "loan" in name_lower and "director" in name_lower:
+                self.director_loan_items.append((code, name, balance, prior))
+            elif "loan" in name_lower and (
+                "majoti" in name_lower or "ets" in name_lower or
+                "related" in name_lower):
+                self.related_loan_items.append((code, name, balance, prior))
+
+        has_mgmt_fees = any(bal != 0 or pr != 0
+                            for _, _, bal, pr in self.mgmt_fee_items)
+        has_director_loan = any(bal != 0 or pr != 0
+                                for _, _, bal, pr in self.director_loan_items)
+        has_related_loans = any(bal != 0 or pr != 0
+                                for _, _, bal, pr in self.related_loan_items)
+        self.has_related_party = has_mgmt_fees or has_director_loan or has_related_loans
+
+        # Income Tax: account 4110 or similar in equity section
+        self.income_tax_cy = Decimal("0")
+        self.income_tax_py = Decimal("0")
+        for code, name, balance, prior in sections["equity"]:
+            name_lower = name.lower()
+            if "income" in name_lower and "tax" in name_lower:
+                self.income_tax_cy += abs(balance) if balance else Decimal("0")
+                self.income_tax_py += abs(prior) if prior else Decimal("0")
+        # Also check expenses in case it was classified there
+        for code, name, balance, prior in sections["expenses"]:
+            name_lower = name.lower()
+            if "income" in name_lower and "tax" in name_lower:
+                self.income_tax_cy += abs(balance) if balance else Decimal("0")
+                self.income_tax_py += abs(prior) if prior else Decimal("0")
+        self.has_income_tax = self.income_tax_cy != 0 or self.income_tax_py != 0
     
     def _assign(self, key):
         """Assign the next sequential note number to a key."""
@@ -1147,10 +1236,7 @@ def _add_detailed_pnl(doc, entity, fy, sections, show_cents=False,
         total_income_prior += prior_val
         ft.add_line(name, val, prior_val, indent=1)
 
-    # Note ref for revenue
-    revenue_note = nr.get("revenue") if nr else ""
-    ft.add_subtotal("Total income", total_income, total_income_prior,
-                    note_ref=revenue_note)
+    ft.add_subtotal("Total income", total_income, total_income_prior)
 
     ft.add_spacer()
 
@@ -1182,10 +1268,8 @@ def _add_detailed_pnl(doc, entity, fy, sections, show_cents=False,
     else:
         profit_label = "Profit (Loss) from Ordinary Activities before income tax"
 
-    # Note ref for profit from ordinary activities
-    profit_note = nr.get("profit_ordinary") if nr else ""
     ft.add_total(profit_label, net_profit, net_profit_prior,
-                 is_grand_total=True, note_ref=profit_note)
+                 is_grand_total=True)
 
     return net_profit, net_profit_prior
 
@@ -1295,12 +1379,18 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
         # Receivables
         if receivable_items:
             ft.add_sub_heading("Receivables")
+            trade_recv_note = nr.get("trade_receivables") if nr else ""
             for code, name, balance, prior in receivable_items:
                 val = abs(balance) if balance > 0 else balance
                 prior_val = abs(prior) if prior and prior > 0 else (prior or Decimal("0"))
                 total_ca += val
                 total_ca_prior += prior_val
-                ft.add_line(name, val, prior_val, indent=1)
+                # Add note ref for trade debtors
+                line_note = ""
+                name_lower = name.lower()
+                if "trade" in name_lower and "debtor" in name_lower:
+                    line_note = trade_recv_note
+                ft.add_line(name, val, prior_val, indent=1, note_ref=line_note)
 
         # Inventories
         if inventory_items:
@@ -1385,9 +1475,11 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
 
         # PPE
         if ppe_items:
+            ppe_note_ref = nr.get("ppe") if nr else ""
             ft.add_sub_heading("Property, Plant and Equipment")
             ppe_total = Decimal("0")
             ppe_total_prior = Decimal("0")
+            first_ppe = True
             for code, name, balance, prior in ppe_items:
                 name_lower = name.lower()
                 if "accumulated" in name_lower or "amortisation" in name_lower or "less:" in name_lower:
@@ -1398,7 +1490,10 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
                     prior_val = abs(prior) if prior else Decimal("0")
                 ppe_total += val
                 ppe_total_prior += prior_val
-                ft.add_line(name, val, prior_val, indent=1)
+                # Add note ref on first PPE line
+                line_note = ppe_note_ref if first_ppe else ""
+                first_ppe = False
+                ft.add_line(name, val, prior_val, indent=1, note_ref=line_note)
 
             ft.add_subtotal("", ppe_total, ppe_total_prior)
             total_nca += ppe_total
@@ -1523,6 +1618,8 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
             secured_loans = [i for i in loan_items if "mortgage" in i[1].lower() or "secured" in i[1].lower()]
             unsecured_loans = [i for i in loan_items if "mortgage" not in i[1].lower() and "secured" not in i[1].lower()]
 
+            related_party_note = nr.get("related_party") if nr else ""
+
             if unsecured_loans:
                 ft.add_sub_heading("Unsecured:", italic=True)
                 for code, name, balance, prior in unsecured_loans:
@@ -1530,7 +1627,13 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
                     prior_val = abs(prior) if prior else Decimal("0")
                     total_ncl += val
                     total_ncl_prior += prior_val
-                    ft.add_line(name, val, prior_val, indent=1)
+                    # Add related party note ref for director/related entity loans
+                    line_note = ""
+                    name_lower = name.lower()
+                    if ("director" in name_lower or "majoti" in name_lower or
+                        "ets" in name_lower or "related" in name_lower):
+                        line_note = related_party_note
+                    ft.add_line(name, val, prior_val, indent=1, note_ref=line_note)
 
             if secured_loans:
                 ft.add_sub_heading("Secured:", italic=True)
@@ -1571,8 +1674,6 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
         total_equity = Decimal("0")
         total_equity_prior = Decimal("0")
 
-        retained_note = nr.get("retained_profits") if nr else ""
-
         if sections["equity"]:
             equity_items = list(sections["equity"])
             for i, (code, name, balance, prior) in enumerate(equity_items):
@@ -1582,26 +1683,20 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
                 total_equity_prior += prior_val
 
                 display_name = name
-                if entity_type == "trust" and "retained" in name.lower():
-                    display_name = "Undistributed income"
-
-                # Add note ref to retained profits / undistributed income line
-                line_note = ""
                 name_lower = name.lower()
-                if ("retained" in name_lower or "accumulated" in name_lower or
-                    "undistributed" in name_lower):
-                    line_note = retained_note
+                if entity_type == "trust" and "retained" in name_lower:
+                    display_name = "Undistributed income"
 
                 # Keep all equity items together with Total Equity
                 ft.add_line(display_name, val, prior_val,
-                            keep_with_next=True, note_ref=line_note)
+                            keep_with_next=True)
         else:
             if entity_type == "trust":
                 label = "Undistributed income"
             else:
                 label = "Retained profits / (accumulated losses)"
             ft.add_line(label, net_assets, net_assets_prior,
-                        keep_with_next=True, note_ref=retained_note)
+                        keep_with_next=True)
             total_equity = net_assets
             total_equity_prior = net_assets_prior
 
@@ -1633,17 +1728,24 @@ def _add_summary_pnl(doc, entity, fy, sections, show_cents=False,
     # Operating profit
     ft.add_line("Operating profit before income tax", net_profit, net_profit_prior)
 
-    # Income tax (check for tax accounts in equity or expenses)
-    tax_amount = Decimal("0")
-    tax_amount_prior = Decimal("0")
-    for code, name, balance, prior in sections["expenses"]:
-        if "tax" in name.lower() and "income" in name.lower():
-            tax_amount = abs(balance)
-            tax_amount_prior = abs(prior) if prior else Decimal("0")
+    # Income tax — reuse values from NoteRegistry if available
+    tax_amount = nr.income_tax_cy if nr else Decimal("0")
+    tax_amount_prior = nr.income_tax_py if nr else Decimal("0")
 
+    if not nr:
+        for code, name, balance, prior in sections["expenses"]:
+            if "tax" in name.lower() and "income" in name.lower():
+                tax_amount = abs(balance)
+                tax_amount_prior = abs(prior) if prior else Decimal("0")
+        for code, name, balance, prior in sections["equity"]:
+            if "income" in name.lower() and "tax" in name.lower():
+                tax_amount += abs(balance) if balance else Decimal("0")
+                tax_amount_prior += abs(prior) if prior else Decimal("0")
+
+    income_tax_note = nr.get("income_tax") if nr else ""
     if tax_amount > 0 or tax_amount_prior > 0:
         ft.add_line("Income tax attributable to operating profit (loss)",
-                    -tax_amount, -tax_amount_prior)
+                    -tax_amount, -tax_amount_prior, note_ref=income_tax_note)
 
     profit_after_tax = net_profit - tax_amount
     profit_after_tax_prior = net_profit_prior - tax_amount_prior
@@ -1685,10 +1787,9 @@ def _add_summary_pnl(doc, entity, fy, sections, show_cents=False,
     closing_retained = total_available - dividends
     closing_retained_prior = total_available_prior - dividends_prior
 
-    retained_note = nr.get("retained_profits") if nr else ""
     ft.add_total("Retained profits at end of year",
                  closing_retained, closing_retained_prior,
-                 is_grand_total=True, note_ref=retained_note)
+                 is_grand_total=True)
 
 
 # =============================================================================
@@ -1705,6 +1806,9 @@ def _add_notes(doc, entity, fy, sections, show_cents=False, note_registry=None):
 
     entity_type = entity.entity_type
     entity_ref_str = _entity_ref(entity_type)
+    has_prior = _has_prior_year(fy)
+    year = str(fy.end_date.year)
+    prior_year = str(fy.end_date.year - 1) if has_prior else None
 
     # ---- Note 1: Summary of Significant Accounting Policies ----
     note1_num = nr.get("accounting_policies") if nr else "1"
@@ -1801,42 +1905,22 @@ def _add_notes(doc, entity, fy, sections, show_cents=False, note_registry=None):
     # Conditional accounting policies
     policy_letter = ord("a")
 
-    # (a) Property, Plant and Equipment
-    has_ppe = len(sections["noncurrent_assets"]) > 0
-    if has_ppe:
-        _add_paragraph(doc, f"({chr(policy_letter)})   Property, Plant and Equipment (PPE)",
+    # (a) Property, Plant and Equipment — only if PPE at cost has balance
+    if nr and nr.has_ppe:
+        _add_paragraph(doc, f"({chr(policy_letter)})   Property, Plant and Equipment",
                        size=FONT_SIZE_BODY, bold=True, space_after=6)
         _add_paragraph(
             doc,
-            "All property, plant and equipment except for freehold land and buildings are initially "
-            "measured at cost and are depreciated over their useful lives on a straight-line basis. "
-            "Depreciation commences from the time the asset is available for its intended use. "
-            "Leasehold improvements are depreciated over the shorter of either the unexpired period "
-            "of the lease or the estimated useful lives of the improvements.",
-            size=FONT_SIZE_BODY, alignment=WD_ALIGN_PARAGRAPH.JUSTIFY, space_after=6,
-            first_line_indent=Cm(1.5))
-        _add_paragraph(
-            doc,
-            f"The carrying amount of plant and equipment is reviewed annually by {responsible} to "
-            f"ensure it is not in excess of the recoverable amount from these assets. The recoverable "
-            f"amount is assessed on the basis of the expected net cash flows that will be received "
-            f"from the asset's employment and subsequent disposal. The expected net cash flows have "
-            f"not been discounted in determining recoverable amounts.",
-            size=FONT_SIZE_BODY, alignment=WD_ALIGN_PARAGRAPH.JUSTIFY, space_after=6,
-            first_line_indent=Cm(1.5))
-        _add_paragraph(
-            doc,
-            f"Subsequent costs are included in the asset's carrying amount or recognised as a "
-            f"separate asset, as appropriate, only when it is probable that future economic benefits "
-            f"associated with the item will flow to {entity_ref_str} and the cost of the item can be "
-            f"measured reliably. All other repairs and maintenance are recognised as expenses in "
-            f"profit or loss during the financial period in which they are incurred.",
+            "Property, plant and equipment are carried at cost less any subsequent accumulated "
+            "depreciation and impairment losses. Depreciation is calculated on a diminishing value "
+            "basis over the estimated useful life of the asset.",
             size=FONT_SIZE_BODY, alignment=WD_ALIGN_PARAGRAPH.JUSTIFY, space_after=10,
             first_line_indent=Cm(1.5))
         policy_letter += 1
 
     # Impairment of Assets
-    if has_ppe:
+    has_nca = len(sections["noncurrent_assets"]) > 0
+    if has_nca:
         _add_paragraph(doc, f"({chr(policy_letter)})   Impairment of Assets",
                        size=FONT_SIZE_BODY, bold=True, space_after=6)
         _add_paragraph(
@@ -1935,6 +2019,19 @@ def _add_notes(doc, entity, fy, sections, show_cents=False, note_registry=None):
         first_line_indent=Cm(1.5))
     policy_letter += 1
 
+    # Income Tax
+    if nr and nr.has_income_tax:
+        _add_paragraph(doc, f"({chr(policy_letter)})   Income Tax",
+                       size=FONT_SIZE_BODY, bold=True, space_after=6)
+        _add_paragraph(
+            doc,
+            "The charge for current income tax expense is based on the profit for the year adjusted "
+            "for any non-assessable or disallowed items. It is calculated using the tax rates that "
+            "have been enacted or are substantially enacted by the balance sheet date.",
+            size=FONT_SIZE_BODY, alignment=WD_ALIGN_PARAGRAPH.JUSTIFY, space_after=10,
+            first_line_indent=Cm(1.5))
+        policy_letter += 1
+
     # Leases
     _add_paragraph(doc, f"({chr(policy_letter)})   Leases",
                    size=FONT_SIZE_BODY, bold=True, space_after=6)
@@ -1979,243 +2076,291 @@ def _add_notes(doc, entity, fy, sections, show_cents=False, note_registry=None):
         first_line_indent=Cm(1.5))
     policy_letter += 1
 
-    # ---- Note: Revenue ----
-    note2_num = nr.get("revenue") if nr else "2"
-    has_prior = _has_prior_year(fy)
-    year = str(fy.end_date.year)
-    prior_year_str = str(fy.end_date.year - 1) if has_prior else None
-    has_trading = _has_cogs(sections)
-
-    if not nr or nr.has("revenue"):
+    # ---- Note 2: Trade Receivables ----
+    if nr and nr.has("trade_receivables"):
         _start_report_section(doc, entity,
                               f"Notes to the Financial Statements\n{_get_period_text(fy)}",
                               footer_type="notes",
                               show_column_headers=False)
 
-        _add_paragraph(doc, f"Note {note2_num}:  Revenue", size=Pt(14), bold=True, space_after=8)
-        _add_paragraph(doc, "Operating Activities:", size=FONT_SIZE_BODY, bold=True, space_after=4)
+        note_num = nr.get("trade_receivables")
+        _add_paragraph(doc, f"Note {note_num}:  Trade Receivables",
+                       size=Pt(14), bold=True, space_before=12, space_after=8)
 
-        ft_note2 = FinancialTable(doc, has_prior=has_prior, include_note=False, show_cents=show_cents)
+        ft = FinancialTable(doc, has_prior=has_prior, include_note=False, show_cents=show_cents)
 
-        if has_trading:
-            ft_note2.add_sub_heading("Sales revenue:", bold=False, space_before=2)
-            total_revenue = Decimal("0")
-            total_revenue_prior = Decimal("0")
-            for code, name, balance, prior in sections["trading_income"]:
-                val = abs(balance)
-                prior_val = abs(prior) if prior else Decimal("0")
-                total_revenue += val
-                total_revenue_prior += prior_val
-            ft_note2.add_line("Non-primary production trading revenue",
-                              total_revenue, total_revenue_prior, indent=1)
-        else:
-            ft_note2.add_sub_heading("Other operating revenue:", bold=False, space_before=2)
-            total_revenue = Decimal("0")
-            total_revenue_prior = Decimal("0")
-            for code, name, balance, prior in sections["trading_income"]:
-                val = abs(balance)
-                prior_val = abs(prior) if prior else Decimal("0")
-                total_revenue += val
-                total_revenue_prior += prior_val
-                ft_note2.add_line(name, val, prior_val)
+        total_cy = Decimal("0")
+        total_py = Decimal("0")
+        for code, name, balance, prior in nr.trade_receivables_items:
+            val = abs(balance) if balance else Decimal("0")
+            prior_val = abs(prior) if prior else Decimal("0")
+            total_cy += val
+            total_py += prior_val
+            ft.add_line("Trade debtors", val, prior_val)
 
-        # Other income
-        if sections["income"]:
-            ft_note2.add_spacer()
-            ft_note2.add_sub_heading("Other revenue:", bold=False, space_before=2)
-            total_other = Decimal("0")
-            total_other_prior = Decimal("0")
-            for code, name, balance, prior in sections["income"]:
-                val = abs(balance)
-                prior_val = abs(prior) if prior else Decimal("0")
-                total_other += val
-                total_other_prior += prior_val
-                total_revenue += val
-                total_revenue_prior += prior_val
-                ft_note2.add_line(name, val, prior_val, indent=1)
+        # Provision for doubtful debts (if exists)
+        if nr.provision_doubtful:
+            _, prov_name, prov_bal, prov_prior = nr.provision_doubtful
+            prov_cy = -abs(prov_bal) if prov_bal else Decimal("0")
+            prov_py = -abs(prov_prior) if prov_prior else Decimal("0")
+            total_cy += prov_cy
+            total_py += prov_py
+            ft.add_line("Less: Provision for doubtful debts", prov_cy, prov_py)
 
-        ft_note2.add_spacer()
-        ft_note2.add_total("", total_revenue, total_revenue_prior, is_grand_total=True)
+        ft.add_subtotal("", total_cy, total_py)
+        ft.add_total("Total", total_cy, total_py, is_grand_total=True)
 
-    # ---- Note: Profit from Ordinary Activities ----
-    note3_num = nr.get("profit_ordinary") if nr else "3"
-    if not nr or nr.has("profit_ordinary"):
-        doc.add_paragraph().paragraph_format.space_after = Pt(8)
-        _add_paragraph(doc, f"Note {note3_num}:  Profit from Ordinary Activities",
-                       size=Pt(14), bold=True, space_after=6)
         _add_paragraph(
             doc,
-            "Profit (loss) from ordinary activities before income tax has been determined after:",
-            size=FONT_SIZE_BODY, space_after=8)
+            "Trade receivables are non-interest bearing and are generally on 30 to 90 day terms. "
+            "An allowance for doubtful debts is made when there is objective evidence that a trade "
+            "receivable is impaired.",
+            size=FONT_SIZE_BODY, alignment=WD_ALIGN_PARAGRAPH.JUSTIFY, space_before=8, space_after=10)
 
-        _add_paragraph(doc, "Charging as Expense:", size=FONT_SIZE_BODY, bold=True, space_after=4)
+    # ---- Note 3: Property, Plant and Equipment ----
+    if nr and nr.has("ppe"):
+        _start_report_section(doc, entity,
+                              f"Notes to the Financial Statements\n{_get_period_text(fy)}",
+                              footer_type="notes",
+                              show_column_headers=False)
 
-        ft_note3 = FinancialTable(doc, has_prior=has_prior, include_note=False, show_cents=show_cents)
+        note_num = nr.get("ppe")
+        _add_paragraph(doc, f"Note {note_num}:  Property, Plant and Equipment",
+                       size=Pt(14), bold=True, space_before=12, space_after=8)
 
-        # Check for borrowing costs
-        borrowing_total = Decimal("0")
-        borrowing_total_prior = Decimal("0")
-        for code, name, balance, prior in sections["expenses"]:
-            name_lower = name.lower()
-            if "interest" in name_lower and ("loan" in name_lower or "australia" in name_lower or "mortgage" in name_lower):
-                borrowing_total += abs(balance)
-                borrowing_total_prior += abs(prior) if prior else Decimal("0")
+        ft = FinancialTable(doc, has_prior=has_prior, include_note=False, show_cents=show_cents)
 
-        if borrowing_total > 0 or borrowing_total_prior > 0:
-            ft_note3.add_sub_heading("Borrowing costs:", bold=False, space_before=2)
-            ft_note3.add_line(" - Interest expense", borrowing_total, borrowing_total_prior, indent=1)
+        # Match cost items to their depreciation counterparts by asset class
+        # Group by extracting the asset class name (e.g., "Plant & equipment", "Office equipment")
+        def _asset_class(name):
+            """Extract the base asset class from a cost or depreciation account name."""
+            nl = name.lower()
+            if "plant" in nl:
+                return "plant"
+            if "office" in nl:
+                return "office"
+            if "motor" in nl or "vehicle" in nl:
+                return "motor"
+            if "computer" in nl:
+                return "computer"
+            if "furniture" in nl or "fixture" in nl:
+                return "furniture"
+            if "building" in nl:
+                return "building"
+            return nl  # fallback
 
-        # COGS
-        if has_trading:
-            total_cogs = Decimal("0")
-            total_cogs_prior = Decimal("0")
-            for code, name, balance, prior in sections["cogs"]:
-                name_lower = name.lower()
-                if "closing" not in name_lower:
-                    total_cogs += abs(balance) if balance else Decimal("0")
-                    total_cogs_prior += abs(prior) if prior else Decimal("0")
+        # Build cost dict by class
+        cost_by_class = OrderedDict()
+        for code, name, balance, prior in nr.ppe_cost_items:
+            cls = _asset_class(name)
+            if cls not in cost_by_class:
+                cost_by_class[cls] = {"name": name, "cy": Decimal("0"), "py": Decimal("0")}
+            cost_by_class[cls]["cy"] += abs(balance) if balance else Decimal("0")
+            cost_by_class[cls]["py"] += abs(prior) if prior else Decimal("0")
+
+        # Build depreciation dict by class
+        depr_by_class = {}
+        for code, name, balance, prior in nr.ppe_depr_items:
+            cls = _asset_class(name)
+            if cls not in depr_by_class:
+                depr_by_class[cls] = {"name": name, "cy": Decimal("0"), "py": Decimal("0")}
+            depr_by_class[cls]["cy"] += abs(balance) if balance else Decimal("0")
+            depr_by_class[cls]["py"] += abs(prior) if prior else Decimal("0")
+
+        # Render each asset class
+        for cls, cost_data in cost_by_class.items():
+            # Determine display label
+            display_name = cost_data["name"]
+            # Clean up "at cost" suffix for display
+            if " - at cost" in display_name.lower() or " at cost" in display_name.lower():
+                label = display_name.rsplit(" - ", 1)[0] if " - " in display_name else display_name
+                label = label + " - At cost"
+            else:
+                label = display_name
+
+            ft.add_line(label, cost_data["cy"], cost_data["py"])
+
+            depr_data = depr_by_class.get(cls)
+            if depr_data:
+                # Determine if amortisation or depreciation
+                depr_label_name = depr_data["name"].lower()
+                if "amortisation" in depr_label_name:
+                    ft.add_line("Less: Accumulated amortisation",
+                                -depr_data["cy"], -depr_data["py"])
                 else:
-                    total_cogs -= abs(balance) if balance else Decimal("0")
-                    total_cogs_prior -= abs(prior) if prior else Decimal("0")
+                    ft.add_line("Less: Accumulated depreciation",
+                                -depr_data["cy"], -depr_data["py"])
 
-            ft_note3.add_line("Cost of non-primary production goods traded",
-                              total_cogs, total_cogs_prior)
+                net_cy = cost_data["cy"] - depr_data["cy"]
+                net_py = cost_data["py"] - depr_data["py"]
+            else:
+                net_cy = cost_data["cy"]
+                net_py = cost_data["py"]
 
-        # Depreciation/amortisation
-        depreciation_total = Decimal("0")
-        depreciation_total_prior = Decimal("0")
-        amortisation_total = Decimal("0")
-        amortisation_total_prior = Decimal("0")
+            ft.add_subtotal("Net book value", net_cy, net_py, bold=True)
+            ft.add_spacer()
 
-        for code, name, balance, prior in sections["expenses"]:
-            name_lower = name.lower()
-            val = abs(balance)
+        # Deposits (non-depreciable)
+        for code, name, balance, prior in nr.ppe_deposit_items:
+            val = abs(balance) if balance else Decimal("0")
             prior_val = abs(prior) if prior else Decimal("0")
-            if "depreciation" in name_lower:
-                if "building" in name_lower:
-                    ft_note3.add_sub_heading("Depreciation of non-current assets:", bold=False, space_before=2)
-                    ft_note3.add_line(" - Buildings", val, prior_val, indent=1)
-                    depreciation_total += val
-                    depreciation_total_prior += prior_val
+            ft.add_line(name, val, prior_val)
+
+        _add_paragraph(
+            doc,
+            "All plant and equipment is stated at historical cost less depreciation. Depreciation "
+            "is calculated on a diminishing value basis at rates determined by the Australian "
+            "Taxation Office.",
+            size=FONT_SIZE_BODY, alignment=WD_ALIGN_PARAGRAPH.JUSTIFY, space_before=8, space_after=10)
+
+    # ---- Note 4: Related Party Transactions ----
+    if nr and nr.has("related_party"):
+        _start_report_section(doc, entity,
+                              f"Notes to the Financial Statements\n{_get_period_text(fy)}",
+                              footer_type="notes",
+                              show_column_headers=False)
+
+        note_num = nr.get("related_party")
+        _add_paragraph(doc, f"Note {note_num}:  Related Party Transactions",
+                       size=Pt(14), bold=True, space_before=12, space_after=8)
+
+        sub_letter = ord("a")
+
+        # Sub-section: Management Fees
+        has_mgmt = any(bal != 0 or pr != 0
+                       for _, _, bal, pr in nr.mgmt_fee_items)
+        if has_mgmt:
+            mgmt_cy = sum(abs(b) for _, _, b, _ in nr.mgmt_fee_items if b)
+            mgmt_py = sum(abs(p) for _, _, _, p in nr.mgmt_fee_items if p)
+
+            _add_paragraph(doc, f"({chr(sub_letter)}) Management Fees",
+                           size=FONT_SIZE_BODY, bold=True, space_before=8, space_after=6)
+
+            mgmt_cy_str = _fmt(mgmt_cy, show_cents)
+            mgmt_py_str = _fmt(mgmt_py, show_cents)
+            _add_paragraph(
+                doc,
+                f"During the year the entity was charged management fees by MAJOTI Pty Ltd, a related "
+                f"party. Management fees charged during the year were ${mgmt_cy_str} "
+                f"({prior_year or year}: ${mgmt_py_str}).",
+                size=FONT_SIZE_BODY, alignment=WD_ALIGN_PARAGRAPH.JUSTIFY, space_after=10)
+            sub_letter += 1
+
+        # Sub-section: Director Loan
+        has_dir_loan = any(bal != 0 or pr != 0
+                           for _, _, bal, pr in nr.director_loan_items)
+        if has_dir_loan:
+            for code, name, balance, prior in nr.director_loan_items:
+                dir_cy = abs(balance) if balance else Decimal("0")
+                dir_py = abs(prior) if prior else Decimal("0")
+
+                _add_paragraph(doc, f"({chr(sub_letter)}) Director Loan",
+                               size=FONT_SIZE_BODY, bold=True, space_before=8, space_after=6)
+
+                dir_cy_str = "nil" if dir_cy == 0 else f"${_fmt(dir_cy, show_cents)}"
+                dir_py_str = "nil" if dir_py == 0 else f"${_fmt(dir_py, show_cents)}"
+                _add_paragraph(
+                    doc,
+                    f"The entity has a loan with a director of the company. The balance outstanding at "
+                    f"year end was {dir_cy_str} ({prior_year or year}: {dir_py_str}). The loan is "
+                    f"unsecured, interest free and repayable on demand.",
+                    size=FONT_SIZE_BODY, alignment=WD_ALIGN_PARAGRAPH.JUSTIFY, space_after=10)
+                sub_letter += 1
+
+        # Sub-section: Related Entity Loans
+        has_rel_loans = any(bal != 0 or pr != 0
+                            for _, _, bal, pr in nr.related_loan_items)
+        if has_rel_loans:
+            for code, name, balance, prior in nr.related_loan_items:
+                if balance == 0 and prior == 0:
+                    continue
+                loan_cy = abs(balance) if balance else Decimal("0")
+                loan_py = abs(prior) if prior else Decimal("0")
+
+                # Extract counterparty name from account name (e.g., "Loan - MAJOTI" -> "MAJOTI")
+                counterparty = name
+                if " - " in name:
+                    counterparty = name.split(" - ", 1)[1].strip()
+
+                _add_paragraph(doc, f"({chr(sub_letter)}) {name}",
+                               size=FONT_SIZE_BODY, bold=True, space_before=8, space_after=6)
+
+                loan_cy_str = "nil" if loan_cy == 0 else f"${_fmt(loan_cy, show_cents)}"
+                loan_py_str = "nil" if loan_py == 0 else f"${_fmt(loan_py, show_cents)}"
+
+                # Debit balance = entity is owed money (asset); credit balance = entity owes (liability)
+                # In noncurrent_liabilities, balance = debit - credit
+                # Positive (debit) = entity advanced funds; Negative (credit) = entity owes
+                if balance and balance > 0:
+                    _add_paragraph(
+                        doc,
+                        f"The entity has advanced funds to {counterparty} Pty Ltd. The amount outstanding "
+                        f"at year end was {loan_cy_str} ({prior_year or year}: {loan_py_str}).",
+                        size=FONT_SIZE_BODY, alignment=WD_ALIGN_PARAGRAPH.JUSTIFY, space_after=10)
                 else:
-                    depreciation_total += val
-                    depreciation_total_prior += prior_val
-            if "amortisation" in name_lower or "amortization" in name_lower:
-                amortisation_total += val
-                amortisation_total_prior += prior_val
+                    _add_paragraph(
+                        doc,
+                        f"The entity has a loan with {counterparty} Pty Ltd. The balance outstanding at "
+                        f"year end was {loan_cy_str} ({prior_year or year}: {loan_py_str}). The loan is "
+                        f"unsecured, interest free and repayable on demand.",
+                        size=FONT_SIZE_BODY, alignment=WD_ALIGN_PARAGRAPH.JUSTIFY, space_after=10)
+                sub_letter += 1
 
-        if amortisation_total > 0 or amortisation_total_prior > 0:
-            ft_note3.add_sub_heading("Amortisation of non-current assets:", bold=False, space_before=2)
-            ft_note3.add_line(" - Leased assets", amortisation_total, amortisation_total_prior, indent=1)
-            ft_note3.add_subtotal("Total amortisation expenses", amortisation_total,
-                                  amortisation_total_prior)
+    # ---- Note 5: Income Tax ----
+    if nr and nr.has("income_tax"):
+        _start_report_section(doc, entity,
+                              f"Notes to the Financial Statements\n{_get_period_text(fy)}",
+                              footer_type="notes",
+                              show_column_headers=False)
 
-        if depreciation_total > 0 or depreciation_total_prior > 0:
-            has_building_dep = any("building" in n.lower() and "depreciation" in n.lower()
-                                   for _, n, _, _ in sections["expenses"])
-            if not has_building_dep:
-                ft_note3.add_sub_heading("Depreciation of non-current assets:", bold=False, space_before=2)
-            ft_note3.add_line(" - Other", depreciation_total, depreciation_total_prior, indent=1)
-            ft_note3.add_subtotal("Total depreciation expenses", depreciation_total,
-                                  depreciation_total_prior)
+        note_num = nr.get("income_tax")
+        _add_paragraph(doc, f"Note {note_num}:  Income Tax",
+                       size=Pt(14), bold=True, space_before=12, space_after=8)
 
-        # Bad debts
-        bad_debts = Decimal("0")
-        bad_debts_prior = Decimal("0")
-        for code, name, balance, prior in sections["expenses"]:
-            if "bad" in name.lower() and "debt" in name.lower():
-                bad_debts += abs(balance)
-                bad_debts_prior += abs(prior) if prior else Decimal("0")
+        _add_paragraph(doc, "The income tax expense for the year comprises:",
+                       size=FONT_SIZE_BODY, space_after=8)
 
-        if bad_debts > 0 or bad_debts_prior > 0:
-            ft_note3.add_line("Bad and doubtful debts", bad_debts, bad_debts_prior)
+        ft = FinancialTable(doc, has_prior=has_prior, include_note=False, show_cents=show_cents)
 
-    # ---- Note: Retained Profits / Undistributed Income ----
-    note4_num = nr.get("retained_profits") if nr else None
-    if note4_num and nr and nr.has("retained_profits"):
-        doc.add_paragraph().paragraph_format.space_after = Pt(8)
+        tax_cy = nr.income_tax_cy
+        tax_py = nr.income_tax_py
 
-        if entity_type == "trust":
-            note_title = f"Note {note4_num}:  Undistributed Income"
-        else:
-            note_title = f"Note {note4_num}:  Retained Profits"
+        ft.add_line("Current tax expense", tax_cy, tax_py)
+        ft.add_subtotal("", tax_cy, tax_py)
+        ft.add_total("Income tax expense", tax_cy, tax_py, is_grand_total=True)
 
-        _add_paragraph(doc, note_title, size=Pt(14), bold=True, space_after=8)
+        # Determine tax rate: 25% for base rate entities (< $50M revenue), else 30%
+        tax_rate = 25
+        _add_paragraph(
+            doc,
+            f"The income tax provision has been calculated at the applicable corporate tax rate "
+            f"of {tax_rate}% on the estimated taxable profit for the year.",
+            size=FONT_SIZE_BODY, alignment=WD_ALIGN_PARAGRAPH.JUSTIFY, space_before=8, space_after=6)
 
-        ft_note4 = FinancialTable(doc, has_prior=has_prior, include_note=False, show_cents=show_cents)
+        _add_paragraph(
+            doc,
+            f"The applicable tax rate is {tax_rate}% ({prior_year or year}: {tax_rate}%) being the "
+            f"corporate tax rate for base rate entities.",
+            size=FONT_SIZE_BODY, alignment=WD_ALIGN_PARAGRAPH.JUSTIFY, space_after=10)
 
-        # Calculate retained profits movement
-        opening_retained = Decimal("0")
-        opening_retained_prior = Decimal("0")
-        dividends = Decimal("0")
-        dividends_prior = Decimal("0")
+    # ---- Note 6: Events After the Reporting Date ----
+    if nr and nr.has("events_after"):
+        _start_report_section(doc, entity,
+                              f"Notes to the Financial Statements\n{_get_period_text(fy)}",
+                              footer_type="notes",
+                              show_column_headers=False)
 
-        # Get net profit (need to recalculate from sections)
-        total_income = Decimal("0")
-        total_income_prior = Decimal("0")
-        for code, name, balance, prior in sections["trading_income"]:
-            total_income += abs(balance)
-            total_income_prior += abs(prior) if prior else Decimal("0")
-        for code, name, balance, prior in sections["income"]:
-            total_income += abs(balance)
-            total_income_prior += abs(prior) if prior else Decimal("0")
+        note_num = nr.get("events_after")
+        _add_paragraph(doc, f"Note {note_num}:  Events After the Reporting Date",
+                       size=Pt(14), bold=True, space_before=12, space_after=8)
 
-        total_expenses = Decimal("0")
-        total_expenses_prior = Decimal("0")
-        for code, name, balance, prior in sections["expenses"]:
-            total_expenses += abs(balance)
-            total_expenses_prior += abs(prior) if prior else Decimal("0")
-
-        total_cogs_note = Decimal("0")
-        total_cogs_note_prior = Decimal("0")
-        if has_trading:
-            for code, name, balance, prior in sections["cogs"]:
-                name_lower = name.lower()
-                if "closing" not in name_lower:
-                    total_cogs_note += abs(balance) if balance else Decimal("0")
-                    total_cogs_note_prior += abs(prior) if prior else Decimal("0")
-                else:
-                    total_cogs_note -= abs(balance) if balance else Decimal("0")
-                    total_cogs_note_prior -= abs(prior) if prior else Decimal("0")
-
-        net_profit_note = total_income - total_expenses - total_cogs_note
-        net_profit_note_prior = total_income_prior - total_expenses_prior - total_cogs_note_prior
-
-        # Get equity data
-        for code, name, balance, prior in sections["equity"]:
-            name_lower = name.lower()
-            if "retained" in name_lower or "accumulated" in name_lower or "undistributed" in name_lower:
-                opening_retained = abs(balance) if balance < 0 else balance
-                opening_retained_prior = abs(prior) if prior and prior < 0 else (prior or Decimal("0"))
-            elif "dividend" in name_lower:
-                dividends = abs(balance) if balance else Decimal("0")
-                dividends_prior = abs(prior) if prior else Decimal("0")
-
-        # Opening balance = closing - profit + dividends
-        opening_balance = opening_retained - net_profit_note
-        opening_balance_prior = opening_retained_prior - net_profit_note_prior
-
-        if entity_type == "trust":
-            ft_note4.add_line("Undistributed income at beginning of year",
-                              opening_balance, opening_balance_prior)
-            ft_note4.add_line("Net profit / (loss) attributable to the trust",
-                              net_profit_note, net_profit_note_prior)
-        else:
-            ft_note4.add_line("Retained profits at beginning of year",
-                              opening_balance, opening_balance_prior)
-            ft_note4.add_line("Net profit / (loss) attributable to members",
-                              net_profit_note, net_profit_note_prior)
-
-        if dividends > 0 or dividends_prior > 0:
-            ft_note4.add_line("Dividends provided for or paid",
-                              -dividends, -dividends_prior)
-
-        if entity_type == "trust":
-            ft_note4.add_total("Undistributed income at end of year",
-                               opening_retained, opening_retained_prior, is_grand_total=True)
-        else:
-            ft_note4.add_total("Retained profits at end of year",
-                               opening_retained, opening_retained_prior, is_grand_total=True)
+        _add_paragraph(
+            doc,
+            "The directors are not aware of any matter or circumstance that has arisen since the "
+            "end of the financial year that has significantly affected or may significantly affect "
+            "the operations of the entity, the results of those operations, or the state of affairs "
+            "of the entity in future years.",
+            size=FONT_SIZE_BODY, alignment=WD_ALIGN_PARAGRAPH.JUSTIFY, space_after=10)
 
 
 # =============================================================================
