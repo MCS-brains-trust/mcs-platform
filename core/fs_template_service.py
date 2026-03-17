@@ -236,6 +236,76 @@ def _format_lines(items, credit_normal=False):
     return items
 
 
+def _classify_current_asset(name_lower):
+    """Classify a current asset into a sub-group by keyword matching."""
+    if any(kw in name_lower for kw in ["cash", "bank", "petty cash", "on hand"]):
+        return "Cash Assets"
+    if any(kw in name_lower for kw in ["debtor", "receivable", "trade debtor"]):
+        return "Receivables"
+    return "Other Current Assets"
+
+
+def _classify_current_liability(name_lower):
+    """Classify a current liability into a sub-group by keyword matching."""
+    if any(kw in name_lower for kw in [
+        "creditor", "payable", "accrual", "accounts payable", "trade creditor",
+        "sundry creditor",
+    ]):
+        return "Payables"
+    if any(kw in name_lower for kw in [
+        "gst", "payg", "tax", "taxation", "withholding", "bas",
+    ]):
+        return "Tax Liabilities"
+    return "Other Current Liabilities"
+
+
+def _build_subgrouped_items(items, classify_fn, credit_normal=False):
+    """Group items into sub-categories and add formatted amounts.
+
+    Returns a list of dicts suitable for the template. Each entry is either:
+      - A sub-heading row: {"is_heading": True, "account_name": "Cash Assets"}
+      - A line item row:   {"account_name": ..., "cy_formatted": ..., "py_formatted": ...}
+      - A subtotal row:    {"is_subtotal": True, "cy_formatted": ..., "py_formatted": ...}
+    """
+    from collections import OrderedDict
+
+    groups = OrderedDict()
+    for item in items:
+        group = classify_fn(item["account_name"].lower())
+        groups.setdefault(group, []).append(item)
+
+    # If there's only one group, return a flat list (no sub-headings needed)
+    if len(groups) <= 1:
+        return _format_lines(list(items), credit_normal=credit_normal)
+
+    result = []
+    for group_name, group_items in groups.items():
+        # Sub-heading row
+        result.append({
+            "is_heading": True,
+            "account_name": group_name,
+            "cy_formatted": "",
+            "py_formatted": "",
+        })
+        # Line items
+        formatted = _format_lines(list(group_items), credit_normal=credit_normal)
+        result.extend(formatted)
+        # Subtotal row
+        sub_cy = sum(item["cy_amount"] for item in group_items)
+        sub_py = sum(item["py_amount"] for item in group_items)
+        if credit_normal:
+            sub_cy = -sub_cy if sub_cy else sub_cy
+            sub_py = -sub_py if sub_py else sub_py
+        result.append({
+            "is_subtotal": True,
+            "account_name": "",
+            "cy_formatted": format_amount(sub_cy),
+            "py_formatted": format_amount(sub_py),
+        })
+
+    return result
+
+
 def _has_prior_year(fy):
     """Check if there is prior year data."""
     if not fy.prior_year:
@@ -332,11 +402,13 @@ def build_company_context(financial_year, include_watermark=True):
         rendered_total_expenses_cy = total_expenses_cy
         rendered_total_expenses_py = total_expenses_py
 
-    # Balance Sheet
-    current_assets = _format_lines(sections["current_assets"])
+    # Balance Sheet — sub-grouped current assets and current liabilities
+    current_assets = _build_subgrouped_items(
+        sections["current_assets"], _classify_current_asset)
     noncurrent_assets = _format_lines(sections["noncurrent_assets"])
     # Liabilities and equity are credit-normal (raw TB value is negative)
-    current_liabilities = _format_lines(sections["current_liabilities"], credit_normal=True)
+    current_liabilities = _build_subgrouped_items(
+        sections["current_liabilities"], _classify_current_liability, credit_normal=True)
     noncurrent_liabilities = _format_lines(sections["noncurrent_liabilities"], credit_normal=True)
     equity = _format_lines(sections["equity"], credit_normal=True)
 
@@ -566,6 +638,11 @@ _GRAND_TOTAL_LABELS = [
     "total assets", "total liabilities", "net assets", "total equity",
 ]
 
+_SUB_HEADING_LABELS = [
+    "cash assets", "receivables", "other current assets",
+    "payables", "tax liabilities", "other current liabilities",
+]
+
 _SUBTOTAL_LABELS = [
     "total income", "total expenses", "total revenue",
     "total current assets", "total non-current assets",
@@ -754,6 +831,41 @@ def _post_process_fs_doc(buffer, doc_type):
                             for run in para.runs:
                                 run.bold = True
 
+                # Sub-group headings (Cash Assets, Receivables, etc.) — bold only
+                is_sub_heading = any(
+                    lbl == first_cell_text for lbl in _SUB_HEADING_LABELS
+                )
+                if is_sub_heading:
+                    for cell in row.cells:
+                        for para in cell.paragraphs:
+                            for run in para.runs:
+                                run.bold = True
+
+                # Sub-group subtotal rows — empty label, amounts present,
+                # single top border on amount cells
+                if (not first_cell_text
+                        and len(row.cells) >= 3
+                        and row.cells[2].text.strip()):
+                    for cell in row.cells:
+                        for para in cell.paragraphs:
+                            for run in para.runs:
+                                run.bold = True
+                        # Single top border only
+                        tc = cell._tc
+                        tcPr = tc.get_or_add_tcPr()
+                        tcBorders = tcPr.find(qn('w:tcBorders'))
+                        if tcBorders is None:
+                            tcBorders = OxmlElement('w:tcBorders')
+                            tcPr.append(tcBorders)
+                        top_el = tcBorders.find(qn('w:top'))
+                        if top_el is None:
+                            top_el = OxmlElement('w:top')
+                            tcBorders.append(top_el)
+                        top_el.set(qn('w:val'), 'single')
+                        top_el.set(qn('w:sz'), '4')
+                        top_el.set(qn('w:space'), '0')
+                        top_el.set(qn('w:color'), '000000')
+
                 # Fix inline PY values in Balance Sheet totals
                 if doc_type == "BALANCE_SHEET":
                     _fix_inline_py_in_row(row, qn, OxmlElement, copy, re)
@@ -895,13 +1007,13 @@ def render_template(template_db_record, context):
 # ---------------------------------------------------------------------------
 DOCUMENT_TYPE_ORDER = [
     "COVER",
-    "COMPILATION",
     "DETAILED_PL",
     "BALANCE_SHEET",
     "SUMMARY_PL",
     "NOTES",
     "DECLARATION",
     "DISTRIBUTION",
+    "COMPILATION",
 ]
 
 

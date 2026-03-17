@@ -36,7 +36,7 @@ COL_WIDTHS = [Cm(8.5), Cm(1.5), Cm(3), Cm(3)]
 # Entity types that get templates
 ENTITY_TYPES = ["company", "trust", "sole_trader", "partnership"]
 
-# Document types (from DOCGEN.md order)
+# Document types — Compilation Report last per APES 315
 DOC_TYPES = [
     ("COVER", "Cover Page"),
     ("DETAILED_PL", "Detailed Profit and Loss Statement"),
@@ -44,8 +44,8 @@ DOC_TYPES = [
     ("SUMMARY_PL", "Summary P&L"),
     ("NOTES", "Notes to Financial Statements"),
     ("DECLARATION", "Declaration"),
-    ("COMPILATION", "Compilation Report"),
     ("DISTRIBUTION", "Distribution Summary"),
+    ("COMPILATION", "Compilation Report"),
 ]
 
 # Which doc types apply to which entity types
@@ -279,8 +279,8 @@ def _add_repeating_header(doc, document_title, date_field="{{ date_text }}"):
     pw.paragraph_format.space_before = Pt(0)
 
 
-def _add_footer(doc, text="These financial statements are unaudited."):
-    """Add standard footer with 'unaudited' text only.
+def _add_footer(doc, text="These financial statements are unaudited. They must be read in conjunction with the attached Accountant\u2019s Compilation Report and Notes which form part of these financial statements."):
+    """Add standard footer with full unaudited disclaimer text.
 
     Page numbers are NOT added here — they are stamped on the final
     merged PDF by _stamp_page_numbers() so numbering runs continuously
@@ -391,8 +391,27 @@ def _build_cover(entity_type):
     p = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
     p.text = ""
 
-    # --- Top section: entity details ---
-    _add_para(doc, "", size=Pt(60))  # push content down from top
+    # --- Logo at top (if file exists) ---
+    import os as _os
+    logo_candidates = [
+        _os.path.join(settings.BASE_DIR, "static", "img", "mcs_logo.png"),
+        _os.path.join(settings.BASE_DIR, "static", "MCSlogo.png"),
+    ]
+    logo_path = None
+    for candidate in logo_candidates:
+        if _os.path.isfile(candidate):
+            logo_path = candidate
+            break
+
+    _add_para(doc, "", size=Pt(20))  # small top spacer
+    if logo_path:
+        p_logo = doc.add_paragraph()
+        p_logo.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run_logo = p_logo.add_run()
+        run_logo.add_picture(logo_path, width=Cm(4))
+
+    # --- Entity details ---
+    _add_para(doc, "", size=Pt(30))  # spacer after logo
 
     _add_para(doc, "{{ entity_name }}", bold=True, size=Pt(18),
               alignment=WD_ALIGN_PARAGRAPH.CENTER)
@@ -415,15 +434,12 @@ def _build_cover(entity_type):
               alignment=WD_ALIGN_PARAGRAPH.LEFT)
 
     contents = [
-        "Compilation Report",
         "Detailed Profit and Loss Statement",
         "Detailed Balance Sheet",
     ]
     if entity_type == "company":
         contents.append("Summary Profit and Loss Statement")
-    contents.extend([
-        "Notes to the Financial Statements",
-    ])
+    contents.append("Notes to the Financial Statements")
     if entity_type == "company":
         contents.append("Directors' Declaration")
     elif entity_type == "trust":
@@ -433,6 +449,7 @@ def _build_cover(entity_type):
         contents.append("Proprietor Declaration")
     elif entity_type == "partnership":
         contents.append("Partners' Declaration")
+    contents.append("Compilation Report")
 
     for i, item in enumerate(contents, 1):
         _add_para(doc, f"{i}.\t{item}", size=Pt(11))
