@@ -1,7 +1,7 @@
 """Views for Partnership Documents and Cross-Entity Documents (Engagement Letters)."""
 import json
 import logging
-from datetime import timedelta
+from datetime import date, timedelta
 
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
