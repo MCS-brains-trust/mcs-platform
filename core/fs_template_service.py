@@ -164,19 +164,10 @@ def _get_tb_sections(fy):
         elif code_num < 4000:
             sections["noncurrent_liabilities"].append(entry)
         elif code_num < 5000:
-            # Fix 5: Income tax accounts (4100-4149) are P&L items (IS-TAX),
-            # not equity. They are already reflected in net profit and also
-            # appear as "Taxation" in current liabilities. Exclude them from
-            # the equity section to avoid double-counting.
-            is_income_tax = (4100 <= code_num <= 4149) or any(
-                kw in name_lower for kw in ["income tax", "tax on profit", "tax expense"]
-            )
-            if is_income_tax:
-                logger.debug(
-                    "Excluding income tax account %s (%s) from equity section",
-                    line.account_code, line.account_name,
-                )
-                continue
+            # Income tax accounts (4100-4149) ARE equity appropriation items.
+            # They must be included — they appear as "Less: Income tax on
+            # profit" and reduce Total Equity so it balances to Net Assets.
+            # Do NOT exclude them.
             sections["equity"].append(entry)
         elif code_num < 6000:
             sections["cogs"].append(entry)
@@ -992,14 +983,19 @@ def _stamp_page_numbers(pdf_bytes):
     reader = PdfReader(io.BytesIO(pdf_bytes))
     writer = PdfWriter()
 
-    for page_num, page in enumerate(reader.pages, 1):
+    for page_idx, page in enumerate(reader.pages):
+        if page_idx == 0:
+            # Skip page numbering on the cover page (page 1)
+            writer.add_page(page)
+            continue
+
         # Create a single-page overlay with the page number
         packet = io.BytesIO()
         page_width = float(page.mediabox.width)
         page_height = float(page.mediabox.height)
         c = rl_canvas.Canvas(packet, pagesize=(page_width, page_height))
         c.setFont("Helvetica", 9)
-        c.drawCentredString(page_width / 2, 28, str(page_num))
+        c.drawCentredString(page_width / 2, 28, str(page_idx + 1))
         c.save()
         packet.seek(0)
 

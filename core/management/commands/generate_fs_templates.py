@@ -379,27 +379,37 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
 # Template builders
 # ---------------------------------------------------------------------------
 def _build_cover(entity_type):
-    """Build cover page template."""
+    """Build cover page template — first page of the assembled package."""
     doc = Document()
     _set_default_font(doc)
     _set_page_setup(doc)
 
-    # No header/footer on cover
-    _add_para(doc, "", size=Pt(40))  # spacer
+    # No repeating header on cover page — leave header empty
+    section = doc.sections[0]
+    header = section.header
+    header.is_linked_to_previous = False
+    p = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
+    p.text = ""
+
+    # --- Top section: entity details ---
+    _add_para(doc, "", size=Pt(60))  # push content down from top
+
     _add_para(doc, "{{ entity_name }}", bold=True, size=Pt(18),
               alignment=WD_ALIGN_PARAGRAPH.CENTER)
     if entity_type in ("company",):
-        _add_para(doc, "ACN {{ acn }}", size=Pt(12),
+        _add_para(doc, "ACN {{ acn }}", size=Pt(11),
                   alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "ABN {{ abn }}", size=Pt(12),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "", size=Pt(20))  # spacer
-    _add_para(doc, "Financial Statements", bold=True, size=Pt(16),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "{{ date_text }}", size=Pt(12),
+    _add_para(doc, "ABN {{ abn }}", size=Pt(11),
               alignment=WD_ALIGN_PARAGRAPH.CENTER)
 
-    # Contents
+    _add_para(doc, "", size=Pt(24))  # spacer
+
+    _add_para(doc, "Financial Statements", size=Pt(11),
+              alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    _add_para(doc, "{{ date_text }}", size=Pt(11),
+              alignment=WD_ALIGN_PARAGRAPH.CENTER)
+
+    # --- Contents ---
     _add_para(doc, "", size=Pt(30))  # spacer
     _add_para(doc, "Contents", bold=True, size=Pt(14),
               alignment=WD_ALIGN_PARAGRAPH.LEFT)
@@ -426,6 +436,23 @@ def _build_cover(entity_type):
 
     for i, item in enumerate(contents, 1):
         _add_para(doc, f"{i}.\t{item}", size=Pt(11))
+
+    # --- Push firm details to bottom of page ---
+    # Use large paragraph spacing to push content down
+    for _ in range(8):
+        _add_para(doc, "", size=Pt(11))
+
+    # Firm contact details at bottom
+    _add_para(doc, "{{ firm_name }}", size=Pt(9),
+              alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    _add_para(doc, "{{ firm_address_1 }}", size=Pt(9),
+              alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    _add_para(doc, "{{ firm_address_2 }}", size=Pt(9),
+              alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    _add_para(doc, "{{ firm_phone }}", size=Pt(9),
+              alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    _add_para(doc, "{{ firm_email }}", size=Pt(9),
+              alignment=WD_ALIGN_PARAGRAPH.CENTER)
 
     return doc
 
