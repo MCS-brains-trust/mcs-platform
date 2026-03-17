@@ -259,15 +259,15 @@ def build_company_context(financial_year, include_watermark=True):
     income = _format_lines(sections["income"], credit_normal=True)
     expenses = _format_lines(sections["expenses"])
 
-    total_trading_income_cy = abs(_sum_section(sections["trading_income"]))
-    total_trading_income_py = abs(_sum_section(sections["trading_income"], "py_amount"))
+    total_trading_income_cy = -_sum_section(sections["trading_income"])
+    total_trading_income_py = -_sum_section(sections["trading_income"], "py_amount")
     total_cogs_cy = _sum_section(sections["cogs"])
     total_cogs_py = _sum_section(sections["cogs"], "py_amount")
     gross_profit_cy = total_trading_income_cy - total_cogs_cy
     gross_profit_py = total_trading_income_py - total_cogs_py
 
-    total_income_cy = abs(_sum_section(sections["income"]))
-    total_income_py = abs(_sum_section(sections["income"], "py_amount"))
+    total_income_cy = -_sum_section(sections["income"])
+    total_income_py = -_sum_section(sections["income"], "py_amount")
     total_expenses_cy = _sum_section(sections["expenses"])
     total_expenses_py = _sum_section(sections["expenses"], "py_amount")
 
@@ -277,6 +277,38 @@ def build_company_context(financial_year, include_watermark=True):
     else:
         net_profit_cy = total_income_cy - total_expenses_cy
         net_profit_py = total_income_py - total_expenses_py
+
+    # Pre-closing TB: add current year profit to equity if BS won't balance
+    _test_equity = -_sum_section(sections["equity"])
+    _test_liab = -(_sum_section(sections["current_liabilities"])
+                    + _sum_section(sections["noncurrent_liabilities"]))
+    _test_assets = (_sum_section(sections["current_assets"])
+                    + _sum_section(sections["noncurrent_assets"]))
+    _test_net_assets = _test_assets - _test_liab
+    if abs(_test_net_assets - _test_equity) > 1:
+        # TB not yet closed — inject current year profit / (loss) line
+        sections["equity"].append({
+            "account_name": "Current year profit / (loss)",
+            "cy_amount": -net_profit_cy,   # credit-normal convention
+            "py_amount": -net_profit_py,
+        })
+
+    # For P&L rendering: merge trading income & COGS into income & expenses
+    # since the P&L template has a single Income and Expenses section
+    if has_trading:
+        rendered_income = trading_income + income
+        rendered_total_income_cy = total_trading_income_cy + total_income_cy
+        rendered_total_income_py = total_trading_income_py + total_income_py
+        rendered_expenses = cogs + expenses
+        rendered_total_expenses_cy = total_cogs_cy + total_expenses_cy
+        rendered_total_expenses_py = total_cogs_py + total_expenses_py
+    else:
+        rendered_income = income
+        rendered_total_income_cy = total_income_cy
+        rendered_total_income_py = total_income_py
+        rendered_expenses = expenses
+        rendered_total_expenses_cy = total_expenses_cy
+        rendered_total_expenses_py = total_expenses_py
 
     # Balance Sheet
     current_assets = _format_lines(sections["current_assets"])
@@ -293,18 +325,18 @@ def build_company_context(financial_year, include_watermark=True):
     total_assets_cy = total_current_assets_cy + total_noncurrent_assets_cy
     total_assets_py = total_current_assets_py + total_noncurrent_assets_py
 
-    total_current_liab_cy = abs(_sum_section(sections["current_liabilities"]))
-    total_current_liab_py = abs(_sum_section(sections["current_liabilities"], "py_amount"))
-    total_noncurrent_liab_cy = abs(_sum_section(sections["noncurrent_liabilities"]))
-    total_noncurrent_liab_py = abs(_sum_section(sections["noncurrent_liabilities"], "py_amount"))
+    total_current_liab_cy = -_sum_section(sections["current_liabilities"])
+    total_current_liab_py = -_sum_section(sections["current_liabilities"], "py_amount")
+    total_noncurrent_liab_cy = -_sum_section(sections["noncurrent_liabilities"])
+    total_noncurrent_liab_py = -_sum_section(sections["noncurrent_liabilities"], "py_amount")
     total_liab_cy = total_current_liab_cy + total_noncurrent_liab_cy
     total_liab_py = total_current_liab_py + total_noncurrent_liab_py
 
     net_assets_cy = total_assets_cy - total_liab_cy
     net_assets_py = total_assets_py - total_liab_py
 
-    total_equity_cy = abs(_sum_section(sections["equity"]))
-    total_equity_py = abs(_sum_section(sections["equity"], "py_amount"))
+    total_equity_cy = -_sum_section(sections["equity"])
+    total_equity_py = -_sum_section(sections["equity"], "py_amount")
 
     # Officers
     directors = EntityOfficer.objects.filter(
@@ -336,18 +368,18 @@ def build_company_context(financial_year, include_watermark=True):
         # P&L
         "trading_income": trading_income,
         "cogs": cogs,
-        "income": income,
-        "expenses": expenses,
+        "income": rendered_income,
+        "expenses": rendered_expenses,
         "total_trading_income_cy": format_amount(total_trading_income_cy),
         "total_trading_income_py": format_amount(total_trading_income_py),
         "total_cogs_cy": format_amount(total_cogs_cy),
         "total_cogs_py": format_amount(total_cogs_py),
         "gross_profit_cy": format_amount(gross_profit_cy),
         "gross_profit_py": format_amount(gross_profit_py),
-        "total_income_cy": format_amount(total_income_cy),
-        "total_income_py": format_amount(total_income_py),
-        "total_expenses_cy": format_amount(total_expenses_cy),
-        "total_expenses_py": format_amount(total_expenses_py),
+        "total_income_cy": format_amount(rendered_total_income_cy),
+        "total_income_py": format_amount(rendered_total_income_py),
+        "total_expenses_cy": format_amount(rendered_total_expenses_cy),
+        "total_expenses_py": format_amount(rendered_total_expenses_py),
         "net_profit_cy": format_amount(net_profit_cy),
         "net_profit_py": format_amount(net_profit_py),
         # Balance Sheet
@@ -430,7 +462,7 @@ def build_trust_context(financial_year, include_watermark=True):
     # Distribution data
     net_profit_raw = Decimal("0")
     sections = _get_tb_sections(financial_year)
-    total_income = abs(_sum_section(sections["trading_income"])) + abs(_sum_section(sections["income"]))
+    total_income = -_sum_section(sections["trading_income"]) + -_sum_section(sections["income"])
     total_expenses = _sum_section(sections["expenses"]) + _sum_section(sections["cogs"])
     net_profit_raw = total_income - total_expenses
 
