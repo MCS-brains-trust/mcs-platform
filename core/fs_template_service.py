@@ -1613,9 +1613,10 @@ def _generate_notes_document(context):
             _notes_add_table_row(tbl, "Less: Provision for doubtful debts",
                                  _fmt_note_amount(pcy), _fmt_note_amount(ppy))
 
-        sub_row = _notes_add_table_row(tbl, "", _fmt_note_amount(total_cy),
-                                       _fmt_note_amount(total_py))
-        _notes_apply_subtotal_border(sub_row)
+            # Subtotal rule only when there are multiple lines above Total
+            sub_row = _notes_add_table_row(tbl, "", _fmt_note_amount(total_cy),
+                                           _fmt_note_amount(total_py))
+            _notes_apply_subtotal_border(sub_row)
 
         total_row = _notes_add_table_row(tbl, "Total", _fmt_note_amount(total_cy),
                                          _fmt_note_amount(total_py), bold=True)
@@ -1638,9 +1639,17 @@ def _generate_notes_document(context):
 
         tbl = _notes_create_table(doc, has_prior)
 
-        # Match cost items to depreciation items by asset class keyword
+        # Match cost items to depreciation items by asset class keyword.
+        # Strip common prefixes so "Less: Accum Depreciation - Plant"
+        # matches "Plant & equipment - At cost" via the "plant" keyword.
         def _asset_class_key(name):
             nl = name.lower()
+            # Strip prefixes that obscure the asset class
+            for strip in ["less:", "accumulated", "accum", "depreciation",
+                          "amortisation", "amortization", "- at cost",
+                          "at cost"]:
+                nl = nl.replace(strip, "")
+            nl = nl.strip(" -&")
             for kw in ["plant", "office", "motor", "vehicle", "computer",
                         "furniture", "fixture", "building"]:
                 if kw in nl:
@@ -1767,9 +1776,11 @@ def _generate_notes_document(context):
             for item in director_loan_items:
                 if item["cy_amount"] == 0 and item["py_amount"] == 0:
                     continue
+                # Em-dash in heading to match other sub-sections
+                heading_name = item["account_name"].replace(" - ", " \u2014 ")
                 _notes_add_para(
                     doc,
-                    f"({chr(sub_letter)}) {item['account_name']}",
+                    f"({chr(sub_letter)}) {heading_name}",
                     bold=True, space_before=6, space_after=4)
 
                 # Balance sign: in NCL section, cy_amount = debit - credit
@@ -1789,8 +1800,8 @@ def _generate_notes_document(context):
                 else:
                     _notes_add_para(
                         doc,
-                        f"{entity_name} has a loan with a {entity_leader} of "
-                        f"{entity_name}. The balance outstanding at year end was "
+                        f"{entity_name} has a loan with a {entity_leader}. "
+                        f"The balance outstanding at year end was "
                         f"{_fmt_dollar(bal_cy)} ({prior_year_str}: {_fmt_dollar(bal_py)}). "
                         f"The loan is unsecured, interest free and repayable on demand.",
                         space_after=8)
@@ -1847,13 +1858,10 @@ def _generate_notes_document(context):
                         space_after=6)
 
         tbl = _notes_create_table(doc, has_prior)
-        _notes_add_table_row(tbl, "Current tax expense",
-                             _fmt_note_amount(income_tax_cy),
-                             _fmt_note_amount(income_tax_py))
-        sub_row = _notes_add_table_row(tbl, "",
+        cte_row = _notes_add_table_row(tbl, "Current tax expense",
                                        _fmt_note_amount(income_tax_cy),
                                        _fmt_note_amount(income_tax_py))
-        _notes_apply_subtotal_border(sub_row)
+        _notes_apply_subtotal_border(cte_row)
         total_row = _notes_add_table_row(tbl, "Income tax expense",
                                          _fmt_note_amount(income_tax_cy),
                                          _fmt_note_amount(income_tax_py), bold=True)
