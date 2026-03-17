@@ -97,9 +97,12 @@ def render_legal_doc_to_pdf_bytes(doc):
     context.setdefault("document_title", doc.title or doc.get_document_type_display())
     context.setdefault("generated_at", doc.generated_at.strftime("%d %B %Y") if doc.generated_at else "")
     context.setdefault("firm_name", "MC & S Chartered Accountants")
-    # Build combined ACN/ABN display string from separate acn/abn context values
-    if "acn_abn" not in context:
-        context["acn_abn"] = _build_acn_abn(context.get("acn", ""), context.get("abn", ""))
+    # Always rebuild ACN/ABN from current entity data so stale context_data
+    # (e.g. generated before ABN was entered) is corrected at render time.
+    if doc.entity:
+        context["acn"] = doc.entity.acn or context.get("acn", "")
+        context["abn"] = doc.entity.abn or context.get("abn", "")
+    context["acn_abn"] = _build_acn_abn(context.get("acn", ""), context.get("abn", ""))
     context.setdefault("is_final", True)
     context.setdefault("watermark_text", "")
     if doc.financial_year and doc.financial_year.end_date:

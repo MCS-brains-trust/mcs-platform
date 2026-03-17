@@ -239,6 +239,24 @@ def _has_prior_year(fy):
     return fy.prior_year.trial_balance_lines.exists()
 
 
+def _format_acn_abn(acn, abn):
+    """Build a combined 'ACN: xxx / ABN: xxx' display string."""
+    parts = []
+    if acn:
+        d = "".join(c for c in str(acn) if c.isdigit())
+        if len(d) == 9:
+            parts.append(f"ACN: {d[:3]} {d[3:6]} {d[6:9]}")
+        elif d:
+            parts.append(f"ACN: {d}")
+    if abn:
+        d = "".join(c for c in str(abn) if c.isdigit())
+        if len(d) == 11:
+            parts.append(f"ABN: {d[:2]} {d[2:5]} {d[5:8]} {d[8:11]}")
+        elif d:
+            parts.append(f"ABN: {d}")
+    return " / ".join(parts) if parts else ""
+
+
 # ---------------------------------------------------------------------------
 # 3. build_company_context
 # ---------------------------------------------------------------------------
@@ -355,6 +373,7 @@ def build_company_context(financial_year, include_watermark=True):
         "trading_as": entity.trading_as or "",
         "abn": entity.abn or "",
         "acn": entity.acn or "",
+        "acn_abn": _format_acn_abn(entity.acn or "", entity.abn or ""),
         "entity_type": entity.entity_type,
         "year": year_str,
         "financial_year": year_str,
@@ -412,7 +431,7 @@ def build_company_context(financial_year, include_watermark=True):
             for d in directors
         ],
         # Firm details
-        "firm_name": "M C & S Pty Ltd",
+        "firm_name": "MC & S Pty Ltd",
         "firm_address_1": "PO Box 4440",
         "firm_address_2": "Dandenong South VIC 3164",
         "firm_phone": "(03) 9794 0000",
@@ -515,6 +534,129 @@ def build_sole_trader_context(financial_year, include_watermark=True):
         ]
 
     return context
+
+
+# ---------------------------------------------------------------------------
+# Post-processing — cantSplit and inline PY fix
+# ---------------------------------------------------------------------------
+# Summary row labels that must not split across page breaks.
+_SUMMARY_LABELS = [
+    "net profit", "net loss", "net profit / (loss)", "net profit/(loss)",
+    "total income", "total expenses", "total revenue",
+    "total current assets", "total non-current assets", "total assets",
+    "total current liabilities", "total non-current liabilities",
+    "total liabilities", "net assets", "total equity",
+    "gross profit",
+]
+
+
+def _post_process_fs_doc(buffer, doc_type):
+    """Post-process a rendered financial statement .docx.
+
+    - Issue A: set cantSplit on summary rows to prevent page-break splitting.
+    - Issue B: fix inline "(PY: xxx)" values in totals rows by splitting
+      merged cells into separate CY and PY columns.
+    """
+    if doc_type not in ("DETAILED_PL", "BALANCE_SHEET", "SUMMARY_PL"):
+        return buffer
+
+    import copy
+    import re
+    from docx import Document
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+
+    doc = Document(buffer)
+
+    for table in doc.tables:
+        for row in table.rows:
+            first_cell_text = row.cells[0].text.strip().lower() if row.cells else ""
+
+            # --- Issue A: cantSplit on summary rows ---
+            is_summary = any(label in first_cell_text for label in _SUMMARY_LABELS)
+            if is_summary:
+                tr = row._tr
+                trPr = tr.get_or_add_trPr()
+                for existing in trPr.findall(qn('w:cantSplit')):
+                    trPr.remove(existing)
+                cantSplit = OxmlElement('w:cantSplit')
+                cantSplit.set(qn('w:val'), '1')
+                trPr.append(cantSplit)
+
+            # --- Issue B: fix inline PY values in Balance Sheet totals ---
+            if doc_type == "BALANCE_SHEET":
+                _fix_inline_py_in_row(row, qn, OxmlElement, copy, re)
+
+    output = io.BytesIO()
+    doc.save(output)
+    output.seek(0)
+    return output
+
+
+def _fix_inline_py_in_row(row, qn, OxmlElement, copy, re):
+    """Split a merged cell containing 'CY (PY: xxx)' into separate CY and PY cells."""
+    tr = row._tr
+    tcs = list(tr.findall(qn('w:tc')))
+
+    for tc in tcs:
+        # Collect all text from the cell
+        text = ''.join(t.text or '' for t in tc.iter(qn('w:t')))
+        match = re.search(r'\(PY:\s*(.+?)\)\s*$', text)
+        if not match:
+            continue
+
+        py_text = match.group(1).strip()
+        cy_text = text[:match.start()].strip()
+
+        # Check for gridSpan (merged cell)
+        tcPr = tc.find(qn('w:tcPr'))
+        if tcPr is not None:
+            gridSpan = tcPr.find(qn('w:gridSpan'))
+            if gridSpan is not None:
+                span = int(gridSpan.get(qn('w:val'), '1'))
+                if span > 1:
+                    if span - 1 > 1:
+                        gridSpan.set(qn('w:val'), str(span - 1))
+                    else:
+                        tcPr.remove(gridSpan)
+
+        # Set this cell's text to CY value only
+        _set_cell_text(tc, cy_text, qn)
+
+        # Create new cell for PY value (clone formatting from CY cell)
+        new_tc = copy.deepcopy(tc)
+        # Remove gridSpan from new cell
+        new_tcPr = new_tc.find(qn('w:tcPr'))
+        if new_tcPr is not None:
+            new_gs = new_tcPr.find(qn('w:gridSpan'))
+            if new_gs is not None:
+                new_tcPr.remove(new_gs)
+
+        _set_cell_text(new_tc, py_text, qn)
+        tc.addnext(new_tc)
+        break  # Only fix one cell per row
+
+
+def _set_cell_text(tc, text, qn):
+    """Set the text of all runs in a table cell, preserving formatting."""
+    first_set = False
+    for p in tc.findall(qn('w:p')):
+        for r in p.findall(qn('w:r')):
+            for t in r.findall(qn('w:t')):
+                if not first_set:
+                    t.text = text
+                    first_set = True
+                else:
+                    t.text = ''
+    if not first_set:
+        # No runs found — create one
+        p_els = tc.findall(qn('w:p'))
+        if p_els:
+            r_el = OxmlElement('w:r')
+            t_el = OxmlElement('w:t')
+            t_el.text = text
+            r_el.append(t_el)
+            p_els[0].append(r_el)
 
 
 # ---------------------------------------------------------------------------
@@ -626,6 +768,7 @@ def generate_financial_statements(financial_year_id, include_watermark=True):
 
         try:
             buffer = render_template(tmpl, context)
+            buffer = _post_process_fs_doc(buffer, doc_type)
             results[doc_type] = buffer
             logger.info("Rendered %s for FY %s", doc_type, fy.pk)
         except Exception as e:

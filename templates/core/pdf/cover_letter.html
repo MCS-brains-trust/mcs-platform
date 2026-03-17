@@ -40,9 +40,9 @@
 
 <h2>Enclosed Documents</h2>
 <ul>
-  {% if documents_enclosed %}
-    {% for doc in documents_enclosed %}
-    <li>{{ doc }}</li>
+  {% if enclosed_documents %}
+    {% for doc in enclosed_documents %}
+    <li>{{ doc.type }}{% if doc.title %} &mdash; {{ doc.title }}{% endif %}</li>
     {% endfor %}
   {% else %}
     <li>Financial Statements</li>
