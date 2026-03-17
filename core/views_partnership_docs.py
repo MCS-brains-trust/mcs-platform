@@ -327,7 +327,14 @@ def engagement_letter_generate(request, pk):
         doc.status = LegalDocument.Status.DRAFT
         doc.generated_by = request.user
         doc.save(update_fields=["financial_year", "template", "title", "parameters", "context_data", "status", "generated_by"])
-        result = render_legal_document(doc.pk)
+        try:
+            result = render_legal_document(doc.pk)
+        except Exception as exc:
+            logger.exception("Engagement letter draft re-render failed: %s", exc)
+            return JsonResponse({
+                "status": "error",
+                "error": f"Could not save the engagement letter draft: {exc}",
+            }, status=400)
         if result.get("status") != "ok":
             return JsonResponse(result, status=400)
         document_id = str(doc.pk)
