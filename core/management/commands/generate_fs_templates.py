@@ -425,8 +425,27 @@ def _build_cover(entity_type):
     _add_para(doc, "{{ date_text }}", size=Pt(11),
               alignment=WD_ALIGN_PARAGRAPH.CENTER)
 
-    # --- Contents ---
-    _add_para(doc, "", size=Pt(30))  # spacer
+    # --- Firm contact details — bottom of cover page (page 1) ---
+    _add_para(doc, "", size=Pt(80))  # push firm block toward bottom
+
+    _add_para(doc, "{{ firm_name }}", size=Pt(9),
+              alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    _add_para(doc, "{{ firm_address_1 }}", size=Pt(9),
+              alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    _add_para(doc, "{{ firm_address_2 }}", size=Pt(9),
+              alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    _add_para(doc, "", size=Pt(4))
+    _add_para(doc, "Phone: {{ firm_phone }}", size=Pt(9),
+              alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    _add_para(doc, "Email: {{ firm_email }}", size=Pt(9),
+              alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    _add_para(doc, "Website: www.mcands.com.au", size=Pt(9),
+              alignment=WD_ALIGN_PARAGRAPH.CENTER)
+
+    # --- Page break: Contents starts on page 2 ---
+    doc.add_page_break()
+
+    # --- Contents page (page 2) ---
     _add_para(doc, "Contents", bold=True, size=Pt(14),
               alignment=WD_ALIGN_PARAGRAPH.LEFT)
 
@@ -452,23 +471,6 @@ def _build_cover(entity_type):
 
     for i, item in enumerate(contents, 1):
         _add_para(doc, f"{i}.\t{item}", size=Pt(11))
-
-    # --- Firm contact details at bottom of cover page ---
-    _add_para(doc, "", size=Pt(24))  # spacer before firm block
-
-    _add_para(doc, "{{ firm_name }}", size=Pt(9),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "{{ firm_address_1 }}", size=Pt(9),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "{{ firm_address_2 }}", size=Pt(9),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "", size=Pt(4))
-    _add_para(doc, "Phone: {{ firm_phone }}", size=Pt(9),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "Email: {{ firm_email }}", size=Pt(9),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
-    _add_para(doc, "Website: www.mcands.com.au", size=Pt(9),
-              alignment=WD_ALIGN_PARAGRAPH.CENTER)
 
     return doc
 
