@@ -1,6 +1,7 @@
 """Views for Partnership Documents and Cross-Entity Documents (Engagement Letters)."""
 import json
 import logging
+from datetime import timedelta
 
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
@@ -19,6 +20,47 @@ from core.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _build_next_financial_year_option(entity, financial_years):
+    if financial_years:
+        latest_fy = max(financial_years, key=lambda fy: fy.end_date)
+        start_date = latest_fy.end_date + timedelta(days=1)
+        duration_days = (latest_fy.end_date - latest_fy.start_date).days
+        end_date = start_date + timedelta(days=duration_days)
+        year_label = str(end_date.year)
+        prior_year_id = latest_fy.pk
+    else:
+        return None
+    return {
+        "pk": f"future:{start_date.isoformat()}:{end_date.isoformat()}",
+        "year_label": year_label,
+        "start_date": start_date,
+        "end_date": end_date,
+        "is_future_option": True,
+        "prior_year_id": str(prior_year_id),
+    }
+
+
+def _get_or_create_selected_financial_year(entity, fy_id):
+    if fy_id.startswith("future:"):
+        _, start_raw, end_raw = fy_id.split(":", 2)
+        start_date = date.fromisoformat(start_raw)
+        end_date = date.fromisoformat(end_raw)
+        prior_year = entity.financial_years.filter(end_date=start_date - timedelta(days=1)).order_by("-end_date").first()
+        fy, _ = FinancialYear.objects.get_or_create(
+            entity=entity,
+            start_date=start_date,
+            end_date=end_date,
+            defaults={
+                "year_label": str(end_date.year),
+                "period_type": FinancialYear.PeriodType.ANNUAL,
+                "status": FinancialYear.Status.DRAFT,
+                "prior_year": prior_year,
+            },
+        )
+        return fy
+    return get_object_or_404(FinancialYear, pk=fy_id, entity=entity)
 
 
 # ---------------------------------------------------------------------------
@@ -199,8 +241,13 @@ def engagement_letter_wizard(request, pk):
     service_options = _get_service_options(entity.entity_type)
     all_financial_years = list(entity.financial_years.all().order_by("end_date"))
     selectable_financial_years = [fy for fy in all_financial_years if fy.status != "finalised"]
-    financial_years = selectable_financial_years or all_financial_years
-    default_financial_year = financial_years[0] if financial_years else None
+    next_financial_year_option = _build_next_financial_year_option(entity, all_financial_years)
+    financial_years = list(selectable_financial_years)
+    if next_financial_year_option:
+        financial_years.append(next_financial_year_option)
+    elif not financial_years:
+        financial_years = list(all_financial_years)
+    default_financial_year = next_financial_year_option or (financial_years[0] if financial_years else None)
     draft_id = request.GET.get("draft")
     draft_doc = None
     initial = {
@@ -255,7 +302,7 @@ def engagement_letter_generate(request, pk):
     if not fy_id:
         return JsonResponse({"status": "error", "error": "Please select the financial year this engagement letter covers."}, status=400)
 
-    fy = get_object_or_404(FinancialYear, pk=fy_id, entity=entity)
+    fy = _get_or_create_selected_financial_year(entity, fy_id)
     if fy.status == "finalised":
         return JsonResponse({
             "status": "error",

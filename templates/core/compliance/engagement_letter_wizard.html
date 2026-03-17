@@ -33,7 +33,7 @@
                                 <option value="">— Select financial year —</option>
                                 {% for fy in financial_years %}
                                 <option value="{{ fy.pk }}" {% if initial.financial_year_id == fy.pk|stringformat:"s" %}selected{% endif %}>
-                                    {{ fy.year_label }} ({{ fy.start_date|date:"d M Y" }} — {{ fy.end_date|date:"d M Y" }})
+                                    {{ fy.year_label }} ({{ fy.start_date|date:"d M Y" }} — {{ fy.end_date|date:"d M Y" }}){% if fy.is_future_option %} — Next year{% endif %}
                                 </option>
                                 {% endfor %}
                             </select>
