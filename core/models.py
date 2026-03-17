@@ -406,20 +406,28 @@ class EntityOfficer(models.Model):
 
     def __str__(self):
         if self.roles:
-            role_labels = ', '.join(
-                dict(self.OfficerRole.choices).get(r, r.title()) for r in self.roles
-            )
+            role_labels = ', '.join(self.display_role_label(r) for r in self.roles)
             return f"{self.full_name} ({role_labels}) - {self.entity.entity_name}"
-        return f"{self.full_name} ({self.get_role_display()}) - {self.entity.entity_name}"
+        return f"{self.full_name} ({self.display_role}) - {self.entity.entity_name}"
+
+    def display_role_label(self, role_value=None):
+        """Return an entity-aware label for a role value."""
+        role_value = role_value or self.role
+        if role_value == self.OfficerRole.SOLE_TRADER:
+            return "Proprietor" if self.entity.entity_type == "sole_trader" else "Sole Trader / Proprietor"
+        return dict(self.OfficerRole.choices).get(role_value, str(role_value).replace("_", " ").title())
+
+    @property
+    def display_role(self):
+        """Return the primary role label, adjusted for entity type."""
+        return self.display_role_label(self.role)
 
     @property
     def roles_display(self):
         """Return a human-readable comma-separated list of all roles."""
         if self.roles:
-            return ', '.join(
-                dict(self.OfficerRole.choices).get(r, r.title()) for r in self.roles
-            )
-        return self.get_role_display()
+            return ', '.join(self.display_role_label(r) for r in self.roles)
+        return self.display_role
 
     def has_role(self, role_value):
         """Check if this officer has a specific role (checks both roles list and legacy role field)."""

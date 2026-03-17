@@ -385,10 +385,16 @@
     <!-- ============ OFFICERS & SIGNATORIES TAB ============ -->
     <div class="tab-pane fade" id="officers" role="tabpanel">
         <div class="d-flex justify-content-between align-items-center mb-3">
-            <h5 class="mb-0">Directors/Trustees/Beneficiaries</h5>
+            <h5 class="mb-0">
+                {% if entity.entity_type == 'company' %}Directors/Trustees/Beneficiaries
+                {% elif entity.entity_type == 'trust' %}Directors/Trustees/Beneficiaries
+                {% elif entity.entity_type == 'partnership' %}Partners
+                {% elif entity.entity_type == 'sole_trader' %}Proprietor
+                {% else %}Officers{% endif %}
+            </h5>
             {% if user.can_edit %}
             <a href="{% url 'core:entity_officers' pk=entity.pk %}" class="btn btn-sm btn-primary">
-                <i class="bi bi-pencil"></i> Manage Officers
+                <i class="bi bi-pencil"></i> Manage {% if entity.entity_type == 'sole_trader' %}Proprietor{% else %}Officers{% endif %}
             </a>
             {% endif %}
         </div>
@@ -410,7 +416,7 @@
                     {% for officer in officers %}
                     <tr class="{% if officer.date_ceased %}text-muted{% endif %}">
                         <td class="fw-semibold">{{ officer.full_name }}</td>
-                        <td>{{ officer.get_role_display }}</td>
+                        <td>{{ officer.display_role }}</td>
                         <td>{{ officer.date_appointed|date:"d M Y"|default:"—" }}</td>
                         <td>{{ officer.date_ceased|date:"d M Y"|default:"—" }}</td>
                         <td>
@@ -436,8 +442,8 @@
         {% else %}
         <div class="text-center py-4 text-muted">
             <i class="bi bi-person-badge display-6"></i>
-            <p class="mt-2">No officers or signatories set up.
-                <a href="{% url 'core:entity_officers' pk=entity.pk %}">Add officers</a> so they appear on the financial statement declarations.
+            <p class="mt-2">No {% if entity.entity_type == 'sole_trader' %}proprietor{% else %}officers or signatories{% endif %} set up.
+                <a href="{% url 'core:entity_officers' pk=entity.pk %}">Add {% if entity.entity_type == 'sole_trader' %}the proprietor{% else %}officers{% endif %}</a> so {% if entity.entity_type == 'sole_trader' %}they{% else %}they{% endif %} appear on the financial statement declarations.
             </p>
         </div>
         {% endif %}

@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% load mcs_filters %}
 
-{% block title %}Directors/Trustees/Beneficiaries - {{ entity.entity_name }} | StatementHub{% endblock %}
+{% block title %}{% if entity.entity_type == 'sole_trader' %}Proprietor{% else %}Directors/Trustees/Beneficiaries{% endif %} - {{ entity.entity_name }} | StatementHub{% endblock %}
 
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
     <div>
-        <h2>Directors/Trustees/Beneficiaries</h2>
+        <h2>{% if entity.entity_type == 'sole_trader' %}Proprietor{% elif entity.entity_type == 'partnership' %}Partners{% else %}Directors/Trustees/Beneficiaries{% endif %}</h2>
         <p class="text-muted mb-0">
             <a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a>
             &raquo;
@@ -56,7 +56,7 @@
                 <tr {% if officer.date_ceased %}class="text-muted"{% endif %}>
                     <td>{{ officer.display_order }}</td>
                     <td><strong>{{ officer.full_name }}</strong></td>
-                    <td>{{ officer.get_role_display }}</td>
+                    <td>{{ officer.display_role }}</td>
                     <td>{{ officer.title|default:"-" }}</td>
                     <td>{{ officer.date_appointed|date:"d/m/Y"|default:"-" }}</td>
                     <td>{{ officer.date_ceased|date:"d/m/Y"|default:"-" }}</td>

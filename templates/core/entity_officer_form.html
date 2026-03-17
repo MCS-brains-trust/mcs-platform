@@ -1,10 +1,10 @@
 {% extends "base.html" %}
 
-{% block title %}{% if form.instance.pk %}Edit{% else %}Add{% endif %} Officer - {{ entity.entity_name }} | StatementHub{% endblock %}
+{% block title %}{% if form.instance.pk %}Edit{% else %}Add{% endif %} {% if entity.entity_type == 'sole_trader' %}Proprietor{% else %}Officer{% endif %} - {{ entity.entity_name }} | StatementHub{% endblock %}
 
 {% block content %}
 <div class="mb-4">
-    <h2>{% if form.instance.pk %}Edit{% else %}Add{% endif %} Officer / Signatory</h2>
+    <h2>{% if form.instance.pk %}Edit{% else %}Add{% endif %} {% if entity.entity_type == 'sole_trader' %}Proprietor{% else %}Officer / Signatory{% endif %}</h2>
     <p class="text-muted">
         <a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a>
         &raquo;
@@ -34,13 +34,13 @@
                     <small class="text-muted">As it should appear on the financial statements</small>
                 </div>
                 <div class="col-md-3 mb-3">
-                    <label for="{{ form.role.id_for_label }}" class="form-label">Role *</label>
+                    <label for="{{ form.role.id_for_label }}" class="form-label">{% if entity.entity_type == 'sole_trader' %}Capacity{% else %}Role{% endif %} *</label>
                     {{ form.role }}
                 </div>
                 <div class="col-md-3 mb-3">
                     <label for="{{ form.title.id_for_label }}" class="form-label">Title</label>
                     {{ form.title }}
-                    <small class="text-muted">e.g. "Managing Director"</small>
+                    <small class="text-muted">{% if entity.entity_type == 'sole_trader' %}Optional title if needed{% else %}e.g. "Managing Director"{% endif %}</small>
                 </div>
             </div>
 
@@ -100,7 +100,7 @@
 
             <div class="d-flex gap-2">
                 <button type="submit" class="btn btn-primary">
-                    <i class="bi bi-check-lg"></i> {% if form.instance.pk %}Update{% else %}Add{% endif %} Officer
+                    <i class="bi bi-check-lg"></i> {% if form.instance.pk %}Update{% else %}Add{% endif %} {% if entity.entity_type == 'sole_trader' %}Proprietor{% else %}Officer{% endif %}
                 </button>
                 <a href="{% url 'core:entity_officers' entity.pk %}" class="btn btn-outline-secondary">Cancel</a>
             </div>
