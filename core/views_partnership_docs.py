@@ -14,6 +14,7 @@ from core.models import (
     EntityOfficer,
     FinancialYear,
     LegalDocument,
+    LegalDocumentTemplate,
     TrialBalanceLine,
 )
 
@@ -196,8 +197,10 @@ def engagement_letter_wizard(request, pk):
 
     config, _ = EngagementLetterConfig.objects.get_or_create(entity=entity)
     service_options = _get_service_options(entity.entity_type)
-    financial_years = entity.financial_years.all().order_by("-end_date")
-
+    financial_years = list(entity.financial_years.all().order_by("end_date"))
+    default_financial_year = financial_years[-1] if financial_years else None
+    if len(financial_years) >= 2:
+        default_financial_year = financial_years[-1]
     draft_id = request.GET.get("draft")
     draft_doc = None
     initial = {
@@ -206,8 +209,9 @@ def engagement_letter_wizard(request, pk):
         "fee_basis": config.fee_basis,
         "additional_terms": config.additional_terms,
         "date": "",
-        "financial_year_id": str(config.last_generated_fy_id) if config.last_generated_fy_id else "",
+        "financial_year_id": str(config.last_generated_fy_id) if config.last_generated_fy_id else (str(default_financial_year.pk) if default_financial_year else ""),
     }
+
 
     if draft_id:
         draft_doc = get_object_or_404(
