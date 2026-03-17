@@ -164,6 +164,19 @@ def _get_tb_sections(fy):
         elif code_num < 4000:
             sections["noncurrent_liabilities"].append(entry)
         elif code_num < 5000:
+            # Fix 5: Income tax accounts (4100-4149) are P&L items (IS-TAX),
+            # not equity. They are already reflected in net profit and also
+            # appear as "Taxation" in current liabilities. Exclude them from
+            # the equity section to avoid double-counting.
+            is_income_tax = (4100 <= code_num <= 4149) or any(
+                kw in name_lower for kw in ["income tax", "tax on profit", "tax expense"]
+            )
+            if is_income_tax:
+                logger.debug(
+                    "Excluding income tax account %s (%s) from equity section",
+                    line.account_code, line.account_name,
+                )
+                continue
             sections["equity"].append(entry)
         elif code_num < 6000:
             sections["cogs"].append(entry)
@@ -710,17 +723,9 @@ def _post_process_fs_doc(buffer, doc_type):
                                 kn.set(qn('w:val'), '1')
                                 ppPr.append(kn)
 
-                    # Apply borders to amount cells (indices 2, 3 in 4-col tables)
-                    num_cells = len(row.cells)
-                    if num_cells >= 4:
-                        amt_indices = [2, 3]
-                    elif num_cells >= 3:
-                        amt_indices = [1, 2]
-                    else:
-                        amt_indices = []
-
-                    for ci in amt_indices:
-                        tc = row.cells[ci]._tc
+                    # Apply borders to ALL cells in the row
+                    for cell in row.cells:
+                        tc = cell._tc
                         tcPr = tc.get_or_add_tcPr()
                         tcBorders = tcPr.find(qn('w:tcBorders'))
                         if tcBorders is None:
@@ -742,12 +747,17 @@ def _post_process_fs_doc(buffer, doc_type):
                             tcBorders.append(bot_el)
                         if is_grand:
                             bot_el.set(qn('w:val'), 'double')
-                            bot_el.set(qn('w:sz'), '6')
+                            bot_el.set(qn('w:sz'), '12')
                         else:
                             bot_el.set(qn('w:val'), 'single')
                             bot_el.set(qn('w:sz'), '6')
                         bot_el.set(qn('w:space'), '0')
                         bot_el.set(qn('w:color'), '000000')
+                    # Bold all text in summary rows
+                    for cell in row.cells:
+                        for para in cell.paragraphs:
+                            for run in para.runs:
+                                run.bold = True
 
                 # Fix inline PY values in Balance Sheet totals
                 if doc_type == "BALANCE_SHEET":

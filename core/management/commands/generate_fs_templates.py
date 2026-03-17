@@ -129,24 +129,32 @@ def _apply_cell_border(cell, **kwargs):
         el.set(qn('w:color'), attrs.get('color', '000000'))
 
 
-def _apply_subtotal_borders(row, amount_col_indices):
-    """Subtotal row: single thin top border + single thin bottom border on amount cells."""
-    for i in amount_col_indices:
+def _apply_subtotal_borders(row, amount_col_indices=None):
+    """Subtotal row: single thin top + single thin bottom on ALL cells. Bold text."""
+    for cell in row.cells:
         _apply_cell_border(
-            row.cells[i],
+            cell,
             top={"val": "single", "sz": "6", "color": "000000"},
             bottom={"val": "single", "sz": "6", "color": "000000"},
         )
+    for cell in row.cells:
+        for para in cell.paragraphs:
+            for run in para.runs:
+                run.bold = True
 
 
-def _apply_grand_total_borders(row, amount_col_indices):
-    """Grand total row: single thin top border + double bottom border on amount cells."""
-    for i in amount_col_indices:
+def _apply_grand_total_borders(row, amount_col_indices=None):
+    """Grand total row: single thin top + double bottom on ALL cells. Bold text."""
+    for cell in row.cells:
         _apply_cell_border(
-            row.cells[i],
+            cell,
             top={"val": "single", "sz": "6", "color": "000000"},
-            bottom={"val": "double", "sz": "6", "color": "000000"},
+            bottom={"val": "double", "sz": "12", "color": "000000"},
         )
+    for cell in row.cells:
+        for para in cell.paragraphs:
+            for run in para.runs:
+                run.bold = True
 
 
 # ---------------------------------------------------------------------------
@@ -216,28 +224,14 @@ def _add_total_row(doc, label, cy_tag, py_tag, size=None, grand_total=False):
 
 
 def _add_watermark_header(doc):
-    """Add a header with entity name left, DRAFT watermark right."""
+    """Add a header with DRAFT watermark only (entity name is in the document body)."""
     section = doc.sections[0]
     header = section.header
     header.is_linked_to_previous = False
 
-    # Use a table for left/right alignment in header
-    table = header.add_table(rows=1, cols=2, width=Inches(6.27))
-    table.autofit = True
-
-    # Left cell: entity name
-    left_cell = table.cell(0, 0)
-    left_cell.text = ""
-    p = left_cell.paragraphs[0]
-    run = p.add_run("{{ entity_name }}")
-    run.font.name = FONT_NAME
-    run.font.size = FONT_SIZE
-    run.bold = True
-
-    # Right cell: watermark
-    right_cell = table.cell(0, 1)
-    right_cell.text = ""
-    p = right_cell.paragraphs[0]
+    # Watermark text right-aligned — only visible when watermark context is non-empty
+    p = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
+    p.text = ""
     p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
     run = p.add_run("{{ watermark }}")
     run.font.name = FONT_NAME
@@ -502,9 +496,8 @@ def _build_balance_sheet(entity_type):
 
     # Net Assets
     _add_total_row(doc, "Net Assets", "{{ net_assets_cy }}", "{{ net_assets_py }}", size=Pt(12))
-    doc.add_paragraph("")
 
-    # Equity
+    # Equity — flows directly after Net Assets without forced page break
     _add_financial_table(doc, "Equity", "equity", "Total Equity",
                          "{{ total_equity_cy }}", "{{ total_equity_py }}")
 
@@ -557,6 +550,12 @@ def _build_summary_pl(entity_type):
                     run.font.size = FONT_SIZE
                     if r == 0 or r >= 3:
                         run.bold = True
+
+    # Fix 1: Apply borders to Summary P&L rows
+    # Row 3 = "Net Profit Before Tax" → subtotal
+    _apply_subtotal_borders(table.rows[3])
+    # Row 5 = "Net Profit After Tax" → grand total
+    _apply_grand_total_borders(table.rows[5])
 
     return doc
 
@@ -733,7 +732,7 @@ def _build_compilation(entity_type):
               "Code of Ethics for Professional Accountants (including Independence Standards).")
     doc.add_paragraph("")
 
-    _add_para(doc, "Assurance Disclaimer", bold=True)
+    _add_para(doc, "Assurance Disclaimer", bold=True, keep_with_next=True)
     _add_para(doc,
               "Since a compilation engagement is not an assurance engagement, we are not "
               "required to verify the reliability, accuracy or completeness of the information "
@@ -746,13 +745,12 @@ def _build_compilation(entity_type):
               "the benefit of the {{ compilation_responsible_party }} who are responsible for "
               "the reliability, accuracy and completeness of the information compiled. We do "
               "not accept responsibility for the contents of the special purpose financial "
-              "statements.")
-    doc.add_paragraph("")
+              "statements.", keep_with_next=True)
     doc.add_paragraph("")
 
-    _add_para(doc, "{{ firm_name }}", bold=True)
-    _add_para(doc, "{{ firm_address_1 }}")
-    _add_para(doc, "{{ firm_address_2 }}")
+    _add_para(doc, "{{ firm_name }}", bold=True, keep_with_next=True)
+    _add_para(doc, "{{ firm_address_1 }}", keep_with_next=True)
+    _add_para(doc, "{{ firm_address_2 }}", keep_with_next=True)
     doc.add_paragraph("")
     _add_para(doc, "Dated: {{ year_end_date }}")
 
