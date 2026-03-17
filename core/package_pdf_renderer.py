@@ -69,6 +69,7 @@ DOCUMENT_ORDER = [
     # "cover_letter" excluded — transmittal letter is not part of the client package
     "dividend_statement",
     "shareholder_loan_acknowledgment",
+    "compilation_report",  # Compilation Report last per APES 315
 ]
 
 
@@ -171,10 +172,11 @@ def build_package_bundle(fy):
                 from core.fs_template_service import generate_combined_pdf
 
                 logger.info("Regenerating clean FS for package bundle FY %s", fy.pk)
-                # Exclude embedded DECLARATION — the standalone directors_declaration
-                # legal document is included separately in the package.
+                # Exclude DECLARATION (standalone legal doc) and COMPILATION
+                # (appended last per APES 315 after all legal documents).
                 pdf_buffer = generate_combined_pdf(
-                    fy.pk, include_watermark=False, exclude_types={"DECLARATION"},
+                    fy.pk, include_watermark=False,
+                    exclude_types={"DECLARATION", "COMPILATION"},
                 )
 
                 reader = PdfReader(pdf_buffer)
@@ -218,6 +220,35 @@ def build_package_bundle(fy):
                         logger.error("Could not add stored FS PDF: %s", e2)
                 else:
                     logger.error("No stored FS document found for fallback FY %s", fy.pk)
+            continue
+
+        # Compilation Report — docxtpl template, not an HTML legal doc.
+        # Rendered separately so it appears after all legal documents.
+        if doc_type == "compilation_report":
+            try:
+                from core.fs_template_service import generate_financial_statements
+                from core.libreoffice_utils import convert_docx_to_pdf
+                import tempfile as _tmpfile
+
+                comp_docs = generate_financial_statements(fy.pk, include_watermark=False)
+                comp_buffer = comp_docs.get("COMPILATION")
+                if comp_buffer:
+                    _tmpdir = _tmpfile.mkdtemp(prefix="shub_comp_")
+                    comp_docx = os.path.join(_tmpdir, "COMPILATION.docx")
+                    with open(comp_docx, "wb") as _f:
+                        _f.write(comp_buffer.read())
+                    convert_docx_to_pdf(comp_docx, _tmpdir, timeout=60)
+                    comp_pdf = os.path.join(_tmpdir, "COMPILATION.pdf")
+                    if os.path.exists(comp_pdf):
+                        comp_reader = PdfReader(comp_pdf)
+                        for page in comp_reader.pages:
+                            writer.add_page(page)
+                        docs_added += 1
+                        logger.info("Added Compilation Report (%d pages)", len(comp_reader.pages))
+                    import shutil
+                    shutil.rmtree(_tmpdir, ignore_errors=True)
+            except Exception as e:
+                logger.error("Failed to add Compilation Report: %s", e)
             continue
 
         # LegalDocument types

@@ -246,16 +246,22 @@ def _classify_current_asset(name_lower):
 
 
 def _classify_current_liability(name_lower):
-    """Classify a current liability into a sub-group by keyword matching."""
+    """Classify a current liability into a sub-group by keyword matching.
+
+    Tax Liabilities are checked FIRST because accounts like "GST payable"
+    contain "payable" which would otherwise match the Payables group.
+    """
+    # Tax / ATO statutory obligations — check first (higher priority)
+    if any(kw in name_lower for kw in [
+        "gst", "payg", "tax", "taxation", "withholding", "bas", "ato", "clearing",
+    ]):
+        return "Tax Liabilities"
+    # Trade payables / creditors
     if any(kw in name_lower for kw in [
         "creditor", "payable", "accrual", "accounts payable", "trade creditor",
         "sundry creditor",
     ]):
         return "Payables"
-    if any(kw in name_lower for kw in [
-        "gst", "payg", "tax", "taxation", "withholding", "bas",
-    ]):
-        return "Tax Liabilities"
     return "Other Current Liabilities"
 
 

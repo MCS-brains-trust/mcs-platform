@@ -442,6 +442,7 @@ def _build_cover(entity_type):
     contents.append("Notes to the Financial Statements")
     if entity_type == "company":
         contents.append("Directors' Declaration")
+        contents.append("Solvency Resolution")
     elif entity_type == "trust":
         contents.append("Trustee's Declaration")
         contents.append("Beneficiaries Distribution Summary")
@@ -449,14 +450,15 @@ def _build_cover(entity_type):
         contents.append("Proprietor Declaration")
     elif entity_type == "partnership":
         contents.append("Partners' Declaration")
+    contents.append("Management Representation Letter")
     contents.append("Compilation Report")
 
     for i, item in enumerate(contents, 1):
         _add_para(doc, f"{i}.\t{item}", size=Pt(11))
 
-    # --- Push firm details to bottom of page ---
-    # Use large paragraph spacing to push content down
-    for _ in range(8):
+    # --- Push firm details toward bottom of page ---
+    # Reduced spacer count to prevent overflow onto page 2
+    for _ in range(4):
         _add_para(doc, "", size=Pt(11))
 
     # Firm contact details at bottom
