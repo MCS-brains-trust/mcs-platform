@@ -197,10 +197,10 @@ def engagement_letter_wizard(request, pk):
 
     config, _ = EngagementLetterConfig.objects.get_or_create(entity=entity)
     service_options = _get_service_options(entity.entity_type)
-    financial_years = list(entity.financial_years.all().order_by("end_date"))
-    default_financial_year = financial_years[-1] if financial_years else None
-    if len(financial_years) >= 2:
-        default_financial_year = financial_years[-1]
+    all_financial_years = list(entity.financial_years.all().order_by("end_date"))
+    selectable_financial_years = [fy for fy in all_financial_years if fy.status != "finalised"]
+    financial_years = selectable_financial_years or all_financial_years
+    default_financial_year = financial_years[0] if financial_years else None
     draft_id = request.GET.get("draft")
     draft_doc = None
     initial = {
@@ -256,6 +256,11 @@ def engagement_letter_generate(request, pk):
         return JsonResponse({"status": "error", "error": "Please select the financial year this engagement letter covers."}, status=400)
 
     fy = get_object_or_404(FinancialYear, pk=fy_id, entity=entity)
+    if fy.status == "finalised":
+        return JsonResponse({
+            "status": "error",
+            "error": "Engagement letters can only be created for a non-finalised financial year. Please choose the next open year.",
+        }, status=400)
 
     config, _ = EngagementLetterConfig.objects.get_or_create(entity=entity)
     config.services_engaged = data.get("services", [])
@@ -313,7 +318,10 @@ def engagement_letter_generate(request, pk):
         is_active=True,
     ).first()
     if not template:
-        return JsonResponse({"status": "error", "error": "No active engagement letter template is configured."}, status=400)
+        return JsonResponse({
+            "status": "error",
+            "error": "No active engagement letter template is configured. Please activate a Client Engagement Letter template in Document Templates before saving.",
+        }, status=400)
 
     draft_id = data.get("draft_id")
     if draft_id:
