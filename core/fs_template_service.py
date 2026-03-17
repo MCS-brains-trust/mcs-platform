@@ -1150,6 +1150,38 @@ def _notes_spacer(doc, size_pt=8):
     return p
 
 
+def _notes_keep_with_next(para):
+    """Set keepNext on a paragraph so it stays with the following element."""
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    pPr = para._p.get_or_add_pPr()
+    if pPr.find(qn('w:keepNext')) is None:
+        kn = OxmlElement('w:keepNext')
+        kn.set(qn('w:val'), '1')
+        pPr.append(kn)
+
+
+def _notes_keep_together(para):
+    """Set keepLines on a paragraph so it does not split across pages."""
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    pPr = para._p.get_or_add_pPr()
+    if pPr.find(qn('w:keepLines')) is None:
+        kl = OxmlElement('w:keepLines')
+        kl.set(qn('w:val'), '1')
+        pPr.append(kl)
+
+
+def _notes_table_keep_with_next(table):
+    """Set keepNext on all paragraphs in the last row of a table."""
+    rows = list(table.rows)
+    if not rows:
+        return
+    for cell in rows[-1].cells:
+        for para in cell.paragraphs:
+            _notes_keep_with_next(para)
+
+
 def _notes_add_para(doc, text, bold=False, italic=False, size=None,
                     alignment=WD_ALIGN_PARAGRAPH.LEFT, space_after=None,
                     space_before=None, left_indent=None):
@@ -1670,8 +1702,9 @@ def _generate_notes_document(context):
     if has_trade_debtors:
         _notes_spacer(doc, 8)
         n = _note_num_for("receivables")
-        _notes_add_para(doc, f"Note {n}: Trade Receivables",
-                        bold=True, space_before=18, space_after=6)
+        heading_p = _notes_add_para(doc, f"Note {n}: Trade Receivables",
+                                    bold=True, space_before=18, space_after=6)
+        _notes_keep_with_next(heading_p)
 
         tbl = _notes_create_table(doc, has_prior)
         total_cy = Decimal("0")
@@ -1700,13 +1733,15 @@ def _generate_notes_document(context):
         total_row = _notes_add_table_row(tbl, "Total", _fmt_note_amount(total_cy),
                                          _fmt_note_amount(total_py), bold=True)
         _notes_apply_grand_total_border(total_row)
+        _notes_table_keep_with_next(tbl)
 
-        _notes_add_para(
+        trailing_p = _notes_add_para(
             doc,
             "Trade receivables are non-interest bearing and are generally on 30 to "
             "90 day terms. An allowance for doubtful debts is made when there is "
             "objective evidence that a trade receivable is impaired.",
             space_before=4, space_after=6)
+        _notes_keep_together(trailing_p)
 
     # ==================================================================
     # NOTE 3: Property, Plant and Equipment
@@ -1714,8 +1749,9 @@ def _generate_notes_document(context):
     if has_ppe:
         _notes_spacer(doc, 8)
         n = _note_num_for("ppe")
-        _notes_add_para(doc, f"Note {n}: Property, Plant and Equipment",
-                        bold=True, space_before=18, space_after=6)
+        heading_p = _notes_add_para(doc, f"Note {n}: Property, Plant and Equipment",
+                                    bold=True, space_before=18, space_after=6)
+        _notes_keep_with_next(heading_p)
 
         tbl = _notes_create_table(doc, has_prior)
 
@@ -1761,12 +1797,15 @@ def _generate_notes_document(context):
             _notes_add_table_row(tbl, item["account_name"],
                                  _fmt_note_amount(val_cy), _fmt_note_amount(val_py))
 
-        _notes_add_para(
+        _notes_table_keep_with_next(tbl)
+
+        trailing_p = _notes_add_para(
             doc,
             "All plant and equipment is stated at historical cost less depreciation. "
             "Depreciation is calculated on a diminishing value basis at rates determined "
             "by the Australian Taxation Office.",
             space_before=4, space_after=6)
+        _notes_keep_together(trailing_p)
 
     # ==================================================================
     # NOTE 4: Related Party Transactions
@@ -1907,8 +1946,9 @@ def _generate_notes_document(context):
         _notes_add_para(doc, f"Note {n}: Income Tax",
                         bold=True, space_before=18, space_after=6)
 
-        _notes_add_para(doc, "The income tax expense for the year comprises:",
-                        space_after=6)
+        leadin_p = _notes_add_para(doc, "The income tax expense for the year comprises:",
+                                    space_after=6)
+        _notes_keep_with_next(leadin_p)
 
         tbl = _notes_create_table(doc, has_prior)
         cte_row = _notes_add_table_row(tbl, "Current tax expense",
@@ -1919,22 +1959,26 @@ def _generate_notes_document(context):
                                          _fmt_note_amount(income_tax_cy),
                                          _fmt_note_amount(income_tax_py), bold=True)
         _notes_apply_grand_total_border(total_row)
+        _notes_table_keep_with_next(tbl)
 
         # Tax rate
         rate_cy = 25 if abs(total_revenue_cy) < 50_000_000 else 30
         rate_py = 25 if abs(total_revenue_py) < 50_000_000 else 30
 
-        _notes_add_para(
+        rate_p1 = _notes_add_para(
             doc,
             f"The income tax provision has been calculated at the applicable corporate "
             f"tax rate of {rate_cy}% on the estimated taxable profit for the year.",
             space_before=4, space_after=6)
+        _notes_keep_together(rate_p1)
+        _notes_keep_with_next(rate_p1)
 
-        _notes_add_para(
+        rate_p2 = _notes_add_para(
             doc,
             f"The applicable tax rate is {rate_cy}% ({prior_year_str}: {rate_py}%) "
             f"being the corporate tax rate for base rate entities.",
             space_after=6)
+        _notes_keep_together(rate_p2)
 
     # ==================================================================
     # NOTE 6: Events After the Reporting Date (companies only)
