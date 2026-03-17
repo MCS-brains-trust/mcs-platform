@@ -347,7 +347,7 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
     # Row 2 — data row with item fields
     data_row = table.add_row()
     data_row.cells[0].text = "{{ item.account_name }}"
-    data_row.cells[1].text = ""
+    data_row.cells[1].text = "{{ item.note_ref }}"
     data_row.cells[2].text = "{{ item.cy_formatted }}"
     data_row.cells[3].text = "{{ item.py_formatted }}"
     for i in range(4):

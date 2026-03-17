@@ -310,6 +310,7 @@ def _build_subgrouped_items(items, classify_fn, credit_normal=False):
             "account_name": group_name,
             "cy_formatted": "",
             "py_formatted": "",
+            "note_ref": "",
         })
         # Line items
         formatted = _format_lines(list(group_items), credit_normal=credit_normal)
@@ -325,6 +326,7 @@ def _build_subgrouped_items(items, classify_fn, credit_normal=False):
             "account_name": "",
             "cy_formatted": format_amount(sub_cy),
             "py_formatted": format_amount(sub_py),
+            "note_ref": "",
         })
 
     return result
@@ -353,6 +355,94 @@ def _format_acn_abn(acn, abn):
         elif d:
             parts.append(f"ABN: {d}")
     return " / ".join(parts) if parts else ""
+
+
+# ---------------------------------------------------------------------------
+# 2b. Note map computation — shared between context builder and notes generator
+# ---------------------------------------------------------------------------
+def _compute_note_map(sections, entity_type, has_income_tax):
+    """Compute the sequential note numbering map from TB section data.
+
+    Returns (note_map, note_lookup) where:
+      note_map   = [(1, 'policies'), (2, 'receivables'), ...]
+      note_lookup = {'receivables': 2, 'ppe': 3, ...}
+    """
+    # Trade Receivables trigger
+    has_trade_debtors = any(
+        ("trade" in i["account_name"].lower() and "debtor" in i["account_name"].lower())
+        and (i["cy_amount"] != 0 or i["py_amount"] != 0)
+        for i in sections["current_assets"]
+    )
+
+    # PPE trigger — any non-current asset that is PPE at cost with non-zero balance
+    has_ppe = False
+    for item in sections["noncurrent_assets"]:
+        nl = item["account_name"].lower()
+        is_depr = any(kw in nl for kw in ["accumulated", "amortisation", "depreciation"]) or nl.startswith("less:")
+        is_deposit = "deposit" in nl
+        is_cost = any(kw in nl for kw in [
+            "equipment", "vehicle", "furniture", "building", "fixture",
+            "plant", "motor", "computer", "office", "at cost",
+        ]) and not is_depr and not is_deposit
+        if is_cost and (item["cy_amount"] != 0 or item["py_amount"] != 0):
+            has_ppe = True
+            break
+
+    # Related party triggers
+    has_mgmt_fees = any(
+        "management" in i["account_name"].lower() and "fee" in i["account_name"].lower()
+        and (i["cy_amount"] != 0 or i["py_amount"] != 0)
+        for i in sections["expenses"]
+    )
+    has_director_loan = (
+        entity_type != "sole_trader" and
+        any(
+            "loan" in i["account_name"].lower() and "director" in i["account_name"].lower()
+            and (i["cy_amount"] != 0 or i["py_amount"] != 0)
+            for i in sections["noncurrent_liabilities"]
+        )
+    )
+    has_related_loans = any(
+        "loan" in i["account_name"].lower()
+        and any(kw in i["account_name"].lower() for kw in ["majoti", "ets", "related"])
+        and (i["cy_amount"] != 0 or i["py_amount"] != 0)
+        for i in sections["noncurrent_liabilities"]
+    )
+    has_related_party = has_mgmt_fees or has_director_loan or has_related_loans
+
+    is_company = entity_type == "company"
+
+    note_map = []
+    n = 1
+    note_map.append((n, "policies")); n += 1
+    if has_trade_debtors:
+        note_map.append((n, "receivables")); n += 1
+    if has_ppe:
+        note_map.append((n, "ppe")); n += 1
+    if has_related_party:
+        note_map.append((n, "related_party")); n += 1
+    if has_income_tax:
+        note_map.append((n, "income_tax")); n += 1
+    if is_company:
+        note_map.append((n, "events")); n += 1
+
+    note_lookup = {note_type: note_num for note_num, note_type in note_map}
+    return note_map, note_lookup
+
+
+def _assign_note_refs(items, note_lookup, classify_fn):
+    """Add a 'note_ref' key to each item dict based on a classification function.
+
+    classify_fn(account_name_lower) -> note_type string or None.
+    """
+    for item in items:
+        nl = item["account_name"].lower()
+        note_type = classify_fn(nl)
+        if note_type and note_type in note_lookup:
+            item["note_ref"] = str(note_lookup[note_type])
+        else:
+            item["note_ref"] = ""
+    return items
 
 
 # ---------------------------------------------------------------------------
@@ -440,6 +530,38 @@ def build_company_context(financial_year, include_watermark=True):
             "cy_amount": -net_profit_cy,   # credit-normal convention
             "py_amount": -net_profit_py,
         })
+
+    # Compute note_map and assign note_ref to items for the Note column
+    note_map, note_lookup = _compute_note_map(sections, entity_type, has_income_tax)
+
+    def _classify_note(nl):
+        """Return note_type for an account name, or None."""
+        if "trade" in nl and "debtor" in nl:
+            return "receivables"
+        if any(kw in nl for kw in [
+            "equipment", "vehicle", "furniture", "building", "fixture",
+            "plant", "motor", "computer", "office", "at cost",
+        ]):
+            # Exclude depreciation/amortisation lines — note ref goes on cost only
+            if not any(kw in nl for kw in ["accumulated", "amortisation", "depreciation"]) and not nl.startswith("less:"):
+                return "ppe"
+        if "deposit" in nl:
+            return "ppe"
+        if "loan" in nl and ("director" in nl or "majoti" in nl or "ets" in nl or "related" in nl):
+            return "related_party"
+        if "management" in nl and "fee" in nl:
+            return "related_party"
+        return None
+
+    _assign_note_refs(sections["current_assets"], note_lookup, _classify_note)
+    _assign_note_refs(sections["noncurrent_assets"], note_lookup, _classify_note)
+    _assign_note_refs(sections["noncurrent_liabilities"], note_lookup, _classify_note)
+    _assign_note_refs(sections["expenses"], note_lookup, _classify_note)
+    # Sections that don't have note refs — add empty note_ref
+    for sec_key in ["trading_income", "cogs", "income", "current_liabilities", "equity"]:
+        for item in sections[sec_key]:
+            if "note_ref" not in item:
+                item["note_ref"] = ""
 
     # For P&L rendering: merge trading income & COGS into income & expenses
     # since the P&L template has a single Income and Expenses section
@@ -600,6 +722,10 @@ def build_company_context(financial_year, include_watermark=True):
 
     # Add format_amount as a Jinja2 filter
     context["format_amount"] = format_amount
+
+    # Note map for notes generator and statement tables
+    context["_note_map"] = note_map
+    context["_note_lookup"] = note_lookup
 
     # Raw data for programmatic notes generation (not used by Jinja2 templates)
     context["_sections"] = sections
@@ -1474,27 +1600,10 @@ def _generate_notes_document(context):
 
     is_company = entity_type == "company"
 
-    # --- Build note_map ---
-    note_map = []
-    note_num = 1
-    note_map.append((note_num, "policies"))
-    note_num += 1
-
-    if has_trade_debtors:
-        note_map.append((note_num, "receivables"))
-        note_num += 1
-    if has_ppe:
-        note_map.append((note_num, "ppe"))
-        note_num += 1
-    if has_related_party:
-        note_map.append((note_num, "related_party"))
-        note_num += 1
-    if has_income_tax:
-        note_map.append((note_num, "income_tax"))
-        note_num += 1
-    if is_company:
-        note_map.append((note_num, "events"))
-        note_num += 1
+    # --- Note map — use precomputed from context, or compute fresh ---
+    note_map = context.get("_note_map")
+    if not note_map:
+        note_map, _ = _compute_note_map(sections, entity_type, has_income_tax)
 
     def _note_num_for(note_type):
         for n, t in note_map:
