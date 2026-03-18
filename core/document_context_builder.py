@@ -99,11 +99,12 @@ class ContextValidationError(Exception):
     accountant in the UI.
     """
 
-    def __init__(self, message, document_type=None, entity_id=None, missing_fields=None):
+    def __init__(self, message, document_type=None, entity_id=None, missing_fields=None, resolution_hints=None):
         self.message = message
         self.document_type = document_type
         self.entity_id = entity_id
         self.missing_fields = missing_fields or []
+        self.resolution_hints = resolution_hints or {}
         super().__init__(message)
 
 
@@ -235,6 +236,7 @@ def get_jinja_env():
     """
     from jinja2 import Environment
     env = Environment()
+    # Primary names (short)
     env.filters["currency"] = format_currency
     env.filters["currency_abs"] = format_currency_abs
     env.filters["percentage"] = format_percentage
@@ -246,6 +248,15 @@ def get_jinja_env():
     env.filters["abn_format"] = format_abn
     env.filters["acn_format"] = format_acn
     env.filters["safe_logo"] = safe_logo
+    # Aliases with format_* prefix (spec-compliant names for templates)
+    env.filters["format_currency"] = format_currency
+    env.filters["format_percentage"] = format_percentage
+    env.filters["format_date_long"] = format_date_long
+    env.filters["format_date_short"] = format_date_short
+    env.filters["format_abn"] = format_abn
+    env.filters["format_acn"] = format_acn
+    env.filters["mask_tfn"] = mask_tfn
+    env.filters["format_yesno"] = format_yesno
     return env
 
 
@@ -612,12 +623,15 @@ class DocumentContextBuilder:
                 pass
 
         return {
-            "fy_year": year_int,
+            "fy_year": str(year_int),                             # always string for template consistency
+            "fy_year_int": year_int,                              # int version for arithmetic
             "fy_year_label": fy.year_label,
             "fy_start_date": format_date_long(fy.start_date),
+            "fy_start_formatted": format_date_long(fy.start_date),  # alias for templates
             "fy_end_date": format_date_long(fy.end_date),
             "fy_end_date_short": format_date_short(fy.end_date),
             "fy_end_date_year": str(year_int),
+            "fy_end_formatted": format_date_long(fy.end_date),   # alias for templates
             "fy_period_label": f"For the year ended {format_date_long(fy.end_date)}",
             "fy_status": fy.status,
             "fy_is_finalised": fy.status == "finalised",
@@ -644,8 +658,11 @@ class DocumentContextBuilder:
         sections = self._classify_tb_lines(lines)
 
         # ── P&L ──────────────────────────────────────────────────────────
-        revenue = self._sum_section(sections["trading_income"] + sections["income"])
-        revenue_py = self._sum_section(sections["trading_income"] + sections["income"], field="py")
+        # Income accounts are credit-normal (negative closing_balance = positive income).
+        # Negate so revenue is a positive number for display and ratio purposes.
+        revenue = -self._sum_section(sections["trading_income"] + sections["income"])
+        revenue_py = -self._sum_section(sections["trading_income"] + sections["income"], field="py")
+        # COGS are debit-normal (positive closing_balance = positive cost).
         cogs = self._sum_section(sections["cogs"])
         cogs_py = self._sum_section(sections["cogs"], field="py")
         gross_profit = revenue - cogs
@@ -653,6 +670,7 @@ class DocumentContextBuilder:
         gross_margin_pct = (gross_profit / revenue * 100) if revenue != 0 else Decimal(0)
         gross_margin_pct_py = (gross_profit_py / revenue_py * 100) if revenue_py != 0 else Decimal(0)
 
+        # Expenses are debit-normal (positive closing_balance = positive expense).
         expenses = self._sum_section(sections["expenses"])
         expenses_py = self._sum_section(sections["expenses"], field="py")
 
@@ -704,14 +722,22 @@ class DocumentContextBuilder:
         total_current_liabilities_py = self._sum_section(sections["current_liabilities"], field="py")
         total_non_current_liabilities = self._sum_section(sections["noncurrent_liabilities"])
         total_non_current_liabilities_py = self._sum_section(sections["noncurrent_liabilities"], field="py")
+        # Liabilities are credit-normal (negative); take abs for display and ratio purposes
+        total_current_liabilities = abs(total_current_liabilities)
+        total_current_liabilities_py = abs(total_current_liabilities_py)
+        total_non_current_liabilities = abs(total_non_current_liabilities)
+        total_non_current_liabilities_py = abs(total_non_current_liabilities_py)
         total_liabilities = total_current_liabilities + total_non_current_liabilities
         total_liabilities_py = total_current_liabilities_py + total_non_current_liabilities_py
 
-        total_equity = self._sum_section(sections["equity"])
+        # Equity accounts are credit-normal (negative closing_balance = positive equity).
+        # Negate the sum so that total_equity is a positive number representing net equity.
+        total_equity = -self._sum_section(sections["equity"])
+        total_equity_py = -self._sum_section(sections["equity"], field="py")
         net_assets = total_assets - total_liabilities
         net_assets_py = total_assets_py - total_liabilities_py
 
-        # Ratios
+        # Ratios (total_current_liabilities is already abs'd above)
         current_ratio = (
             total_current_assets / total_current_liabilities
             if total_current_liabilities != 0 else None
@@ -721,14 +747,15 @@ class DocumentContextBuilder:
             total_liabilities / total_equity if total_equity != 0 else None
         )
 
-        # Retained earnings
-        retained_earnings = self._sum_keyword(
+        # Retained earnings and share capital are credit-normal (negative = positive equity).
+        # Negate so positive value = accumulated profits, negative = accumulated losses.
+        retained_earnings = -self._sum_keyword(
             sections["equity"], ["retained", "accumulated"]
         )
-        retained_earnings_py = self._sum_keyword(
+        retained_earnings_py = -self._sum_keyword(
             sections["equity"], ["retained", "accumulated"], field="py"
         )
-        share_capital = self._sum_keyword(sections["equity"], ["share capital", "paid up capital"])
+        share_capital = -self._sum_keyword(sections["equity"], ["share capital", "paid up capital"])
 
         # ── Key compliance balances ───────────────────────────────────────
         director_loan_balance = self._sum_keyword(
@@ -831,6 +858,7 @@ class DocumentContextBuilder:
             "net_assets": net_assets,
             "net_assets_py": net_assets_py,
             "total_equity": total_equity,
+            "total_equity_py": total_equity_py,
             "retained_earnings": retained_earnings,
             "retained_earnings_py": retained_earnings_py,
             "retained_earnings_positive": retained_earnings >= Decimal(0),
@@ -905,7 +933,9 @@ class DocumentContextBuilder:
         if working_capital < 0 and current_ratio is not None and current_ratio < Decimal("1.0"):
             going_concern_flag = True
 
-        # Condition 2: retained earnings deficit > 20% of total assets
+        # Condition 2: accumulated losses > 20% of total assets.
+        # retained_earnings is now normalised: positive = profits, negative = losses.
+        # A NEGATIVE retained_earnings value means accumulated losses.
         if total_assets > 0 and retained_earnings < 0:
             if abs(retained_earnings) > (total_assets * Decimal("0.20")):
                 going_concern_flag = True
@@ -1661,9 +1691,14 @@ class DocumentContextBuilder:
             config = None
 
         services = list(getattr(config, "services_engaged", []) or [])
-        fee_amount = getattr(config, "fee_amount", None)
-        fee_basis = getattr(config, "fee_basis", "fixed")
-        additional_terms = getattr(config, "additional_terms", "")
+        # Fall back to wizard_data if no config or config has no services
+        if not services:
+            wizard_services = self.wizard_data.get("services", [])
+            if isinstance(wizard_services, (list, tuple)):
+                services = list(wizard_services)
+        fee_amount = getattr(config, "fee_amount", None) or self.wizard_data.get("fee_amount")
+        fee_basis = getattr(config, "fee_basis", None) or self.wizard_data.get("fee_basis", "fixed")
+        additional_terms = getattr(config, "additional_terms", "") or self.wizard_data.get("additional_terms", "")
         prior_year_letter_existed = getattr(config, "last_generated_fy_id", None) is not None
 
         practice_name = ctx.get("practice_name", "")

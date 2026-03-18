@@ -443,10 +443,14 @@ def _build_cover(entity_type):
     p_spacer.paragraph_format.space_before = Pt(160)  # push to ~60% down
 
     # Single continuous block — no gap between address and contact details
-    for line in ["{{ firm_name }}", "{{ firm_address_1 }}",
-                 "{{ firm_address_2 }}", "",
-                 "Phone: {{ firm_phone }}", "Email: {{ firm_email }}",
-                 "Website: www.mcands.com.au"]:
+    for line in [
+        "{{ practice_name or firm_name }}",
+        "{{ practice_registered_address or firm_address_1 }}",
+        "",
+        "Phone: {{ practice_phone or firm_phone }}",
+        "Email: {{ practice_email or firm_email }}",
+        "{% if practice_website %}Website: {{ practice_website }}{% endif %}",
+    ]:
         p = _add_para(doc, line, size=Pt(9), alignment=WD_ALIGN_PARAGRAPH.CENTER)
         p.paragraph_format.space_before = Pt(0)
         p.paragraph_format.space_after = Pt(2)
@@ -794,9 +798,10 @@ def _build_compilation(entity_type):
               "statements.", keep_with_next=True)
     doc.add_paragraph("")
 
-    _add_para(doc, "{{ firm_name }}", bold=True, keep_with_next=True)
-    _add_para(doc, "{{ firm_address_1 }}", keep_with_next=True)
-    _add_para(doc, "{{ firm_address_2 }}", keep_with_next=True)
+    _add_para(doc, "{{ practice_name or firm_name }}", bold=True, keep_with_next=True)
+    _add_para(doc, "{{ practice_registered_address or (firm_address_1 + ', ' + firm_address_2) }}", keep_with_next=True)
+    _add_para(doc, "Registered Tax Agent No: {{ practice_tax_agent_number }}", keep_with_next=True)
+    _add_para(doc, "{{ practice_signatory_designation }}", keep_with_next=True)
     doc.add_paragraph("")
     _add_para(doc, "Dated: {{ signing_date }}")
 

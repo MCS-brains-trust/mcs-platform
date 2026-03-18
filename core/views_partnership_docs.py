@@ -360,6 +360,25 @@ def engagement_letter_generate(request, pk):
         "date": data.get("date", ""),
     }
 
+    # Enrich with DocumentContextBuilder (practice_* namespace + Jinja2 filters)
+    try:
+        from core.document_context_builder import DocumentContextBuilder
+        _wizard = {
+            "services": data.get("services", []),
+            "fee_amount": data.get("fee_amount", ""),
+            "fee_basis": data.get("fee_basis", "fixed"),
+            "additional_terms": data.get("additional_terms", ""),
+            "date": data.get("date", ""),
+        }
+        dcb = DocumentContextBuilder(entity, financial_year=fy, wizard_data=_wizard)
+        enriched = dcb.build("engagement_letter")
+        for k, v in enriched.items():
+            if k not in context or k.startswith("practice_"):
+                context[k] = v
+    except Exception as _e:
+        import logging as _log
+        _log.getLogger(__name__).warning("DCB enrichment skipped for engagement_letter: %s", _e)
+
     template = LegalDocumentTemplate.objects.filter(
         document_type=LegalDocumentTemplate.DocumentType.ENGAGEMENT_LETTER,
         is_active=True,

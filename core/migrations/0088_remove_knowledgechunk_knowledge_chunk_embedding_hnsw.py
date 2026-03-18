@@ -2,6 +2,22 @@
 from django.db import migrations
 
 
+def _is_postgres(schema_editor):
+    return schema_editor.connection.vendor == "postgresql"
+
+
+class SafeRemoveIndex(migrations.RemoveIndex):
+    """RemoveIndex that is a no-op on non-PostgreSQL backends."""
+
+    def database_forwards(self, app_label, schema_editor, from_state, to_state):
+        if _is_postgres(schema_editor):
+            super().database_forwards(app_label, schema_editor, from_state, to_state)
+
+    def database_backwards(self, app_label, schema_editor, from_state, to_state):
+        if _is_postgres(schema_editor):
+            super().database_backwards(app_label, schema_editor, from_state, to_state)
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -9,7 +25,7 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.RemoveIndex(
+        SafeRemoveIndex(
             model_name='knowledgechunk',
             name='knowledge_chunk_embedding_hnsw',
         ),

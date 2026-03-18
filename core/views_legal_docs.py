@@ -388,6 +388,17 @@ def div7a_generate(request, pk):
     # Build context
     context = build_div7a_context(entity, fy, params)
 
+    # Enrich with DocumentContextBuilder (practice_* namespace + Jinja2 filters)
+    try:
+        from core.document_context_builder import DocumentContextBuilder
+        dcb = DocumentContextBuilder(entity, financial_year=fy, wizard_data=params)
+        enriched = dcb.build("div7a_loan_agreement")
+        for k, v in enriched.items():
+            if k not in context or k.startswith("practice_"):
+                context[k] = v
+    except Exception as _e:
+        logger.warning("DCB enrichment skipped for div7a: %s", _e)
+
     # Generate document
     result = render_and_create_document(
         entity=entity,
@@ -510,6 +521,17 @@ def change_of_trustee_generate(request, pk):
 
     # Build context
     context = build_change_of_trustee_context(entity, fy, params)
+
+    # Enrich with DocumentContextBuilder
+    try:
+        from core.document_context_builder import DocumentContextBuilder
+        dcb = DocumentContextBuilder(entity, financial_year=fy, wizard_data=params)
+        enriched = dcb.build("financial_statements")  # entity+practice context
+        for k, v in enriched.items():
+            if k not in context or k.startswith("practice_"):
+                context[k] = v
+    except Exception as _e:
+        logger.warning("DCB enrichment skipped for change_of_trustee: %s", _e)
 
     # Define the 3 sub-documents
     template_configs = [
@@ -663,6 +685,17 @@ def fixed_unit_trust_generate(request, pk):
     # Build context
     context = build_fixed_unit_trust_context(entity, fy, params)
 
+    # Enrich with DocumentContextBuilder
+    try:
+        from core.document_context_builder import DocumentContextBuilder
+        dcb = DocumentContextBuilder(entity, financial_year=fy, wizard_data=params)
+        enriched = dcb.build("financial_statements")
+        for k, v in enriched.items():
+            if k not in context or k.startswith("practice_"):
+                context[k] = v
+    except Exception as _e:
+        logger.warning("DCB enrichment skipped for fixed_unit_trust: %s", _e)
+
     # Define the 5 sub-documents
     template_configs = [
         {
@@ -800,6 +833,17 @@ def unit_transfer_generate(request, pk):
 
     # Build context
     context = build_unit_transfer_context(entity, fy, params)
+
+    # Enrich with DocumentContextBuilder
+    try:
+        from core.document_context_builder import DocumentContextBuilder
+        dcb = DocumentContextBuilder(entity, financial_year=fy, wizard_data=params)
+        enriched = dcb.build("financial_statements")
+        for k, v in enriched.items():
+            if k not in context or k.startswith("practice_"):
+                context[k] = v
+    except Exception as _e:
+        logger.warning("DCB enrichment skipped for unit_transfer: %s", _e)
 
     # Define the 7 sub-documents
     template_configs = [

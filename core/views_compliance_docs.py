@@ -424,6 +424,17 @@ def generate_management_rep_letter(request, pk):
         "signatories": [{"name": d.full_name, "role": d.get_role_display()} for d in directors],
     }
 
+    # Enrich with DocumentContextBuilder
+    try:
+        from core.document_context_builder import DocumentContextBuilder
+        dcb = DocumentContextBuilder(entity, financial_year=fy)
+        enriched = dcb.build("management_representation_letter")
+        for k, v in enriched.items():
+            if k not in context or k.startswith("practice_"):
+                context[k] = v
+    except Exception as _e:
+        logger.warning("DCB enrichment skipped for management_rep_letter: %s", _e)
+
     doc = LegalDocument.objects.create(
         financial_year=fy,
         entity=entity,
@@ -491,6 +502,17 @@ def generate_cover_letter(request, pk):
         "document_count": len(enclosed_list),
         "date": str(fy.end_date),
     }
+
+    # Enrich with DocumentContextBuilder
+    try:
+        from core.document_context_builder import DocumentContextBuilder
+        dcb = DocumentContextBuilder(entity, financial_year=fy)
+        enriched = dcb.build("client_cover_letter")
+        for k, v in enriched.items():
+            if k not in context or k.startswith("practice_"):
+                context[k] = v
+    except Exception as _e:
+        logger.warning("DCB enrichment skipped for cover_letter: %s", _e)
 
     doc = LegalDocument.objects.create(
         financial_year=fy,

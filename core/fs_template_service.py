@@ -2386,6 +2386,37 @@ def generate_financial_statements(financial_year_id, include_watermark=True):
     builder = context_builders.get(entity_type, build_company_context)
     context = builder(fy, include_watermark=include_watermark)
 
+    # ── DocumentContextBuilder enrichment ────────────────────────────────────
+    # Merge the new practice_* namespace and Jinja2 filter keys on top of the
+    # legacy context without replacing any existing keys.  This allows existing
+    # templates to keep working while new templates can use the richer spec.
+    try:
+        from core.document_context_builder import DocumentContextBuilder
+        dcb = DocumentContextBuilder(entity, financial_year=fy)
+        enriched = dcb.build("financial_statements")
+        # Only inject keys that are NOT already present (legacy keys take priority)
+        for k, v in enriched.items():
+            if k not in context:
+                context[k] = v
+        # Always override practice_* keys (new namespace — no conflict risk)
+        for k, v in enriched.items():
+            if k.startswith("practice_") or k in (
+                "signatory_name", "signatory_designation",
+                "tax_agent_number", "bas_agent_number", "asic_agent_number",
+                "professional_body", "membership_number",
+                "practice_independence_maintained",
+                "basis_of_preparation", "basis_of_preparation_note",
+                "is_going_concern", "has_events_after_balance_date",
+                "compilation_report_name",
+            ):
+                context[k] = v
+        logger.debug("DocumentContextBuilder enrichment applied for FY %s", fy.pk)
+    except Exception as _dcb_exc:
+        logger.warning(
+            "DocumentContextBuilder enrichment failed for FY %s — "
+            "falling back to legacy context: %s", fy.pk, _dcb_exc
+        )
+
     # Get active templates for this entity type
     templates = FinancialStatementTemplate.objects.filter(
         entity_type=entity_type,

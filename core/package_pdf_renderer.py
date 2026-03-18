@@ -268,6 +268,17 @@ def build_package_bundle(fy):
                 ctx_builder = ctx_builders.get(entity.entity_type, build_company_context)
                 context = ctx_builder(fy, include_watermark=False)
 
+                # Enrich with DocumentContextBuilder (practice_* namespace + filters)
+                try:
+                    from core.document_context_builder import DocumentContextBuilder
+                    dcb = DocumentContextBuilder(entity, financial_year=fy)
+                    enriched = dcb.build("compilation_report")
+                    for k, v in enriched.items():
+                        if k not in context or k.startswith("practice_"):
+                            context[k] = v
+                except Exception as _e:
+                    logger.warning("DCB enrichment skipped in package renderer: %s", _e)
+
                 # Find the COMPILATION template
                 comp_tmpl = FinancialStatementTemplate.objects.filter(
                     document_type="COMPILATION",

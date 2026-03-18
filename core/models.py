@@ -10,7 +10,35 @@ import uuid
 from django.conf import settings
 from django.db import models
 from django.urls import reverse
-from pgvector.django import VectorField
+# pgvector is PostgreSQL-only. On other backends (SQLite in tests) we fall back
+# to a plain JSONField so the model can still be created and queried.
+try:
+    from pgvector.django import VectorField as _PgVectorField
+    _PGVECTOR_AVAILABLE = True
+except ImportError:
+    _PgVectorField = None
+    _PGVECTOR_AVAILABLE = False
+
+
+class VectorField(models.JSONField):
+    """
+    Portable VectorField: behaves as pgvector.django.VectorField on PostgreSQL,
+    and falls back to a plain JSONField on other backends (e.g. SQLite in tests).
+    The column is always created; pgvector-specific operations (HNSW index,
+    cosine search) are guarded inside migrations.
+    """
+
+    def __init__(self, dimensions=1536, **kwargs):
+        self.dimensions = dimensions
+        kwargs.setdefault("default", list)
+        kwargs.setdefault("null", True)
+        kwargs.setdefault("blank", True)
+        super().__init__(**kwargs)
+
+    def deconstruct(self):
+        name, path, args, kwargs = super().deconstruct()
+        kwargs["dimensions"] = self.dimensions
+        return name, path, args, kwargs
 
 from config.encryption import EncryptedCharField
 
