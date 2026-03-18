@@ -12,6 +12,8 @@ from django.db import models
 from django.urls import reverse
 # pgvector is PostgreSQL-only. On other backends (SQLite in tests) we fall back
 # to a plain JSONField so the model can still be created and queried.
+# IMPORTANT: VectorField must deconstruct() as pgvector.django.VectorField when
+# pgvector is available, so Django does NOT generate spurious AlterField migrations.
 try:
     from pgvector.django import VectorField as _PgVectorField
     _PGVECTOR_AVAILABLE = True
@@ -20,25 +22,30 @@ except ImportError:
     _PGVECTOR_AVAILABLE = False
 
 
-class VectorField(models.JSONField):
-    """
-    Portable VectorField: behaves as pgvector.django.VectorField on PostgreSQL,
-    and falls back to a plain JSONField on other backends (e.g. SQLite in tests).
-    The column is always created; pgvector-specific operations (HNSW index,
-    cosine search) are guarded inside migrations.
-    """
+if _PGVECTOR_AVAILABLE:
+    # On PostgreSQL: use the real pgvector field directly.
+    # This ensures deconstruct() returns 'pgvector.django.VectorField' and
+    # no spurious migration is generated.
+    VectorField = _PgVectorField
+else:
+    # On SQLite / non-pgvector environments (e.g. local tests): use a JSONField
+    # that stores vectors as JSON arrays. This is never used in production.
+    class VectorField(models.JSONField):  # type: ignore[no-redef]
+        """
+        SQLite fallback for pgvector.VectorField. Stores vectors as JSON arrays.
+        Only used when pgvector is not installed (e.g. local test environments).
+        """
+        def __init__(self, dimensions=1536, **kwargs):
+            self.dimensions = dimensions
+            kwargs.setdefault("default", list)
+            kwargs.setdefault("null", True)
+            kwargs.setdefault("blank", True)
+            super().__init__(**kwargs)
 
-    def __init__(self, dimensions=1536, **kwargs):
-        self.dimensions = dimensions
-        kwargs.setdefault("default", list)
-        kwargs.setdefault("null", True)
-        kwargs.setdefault("blank", True)
-        super().__init__(**kwargs)
-
-    def deconstruct(self):
-        name, path, args, kwargs = super().deconstruct()
-        kwargs["dimensions"] = self.dimensions
-        return name, path, args, kwargs
+        def deconstruct(self):
+            name, path, args, kwargs = super().deconstruct()
+            kwargs["dimensions"] = self.dimensions
+            return name, path, args, kwargs
 
 from config.encryption import EncryptedCharField
 
