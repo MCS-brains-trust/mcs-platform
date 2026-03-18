@@ -98,7 +98,18 @@ def render_legal_doc_to_pdf_bytes(doc):
     context = dict(doc.context_data or {})
     context.setdefault("document_title", doc.title or doc.get_document_type_display())
     context.setdefault("generated_at", doc.generated_at.strftime("%d %B %Y") if doc.generated_at else "")
-    context.setdefault("firm_name", "MC & S Chartered Accountants")
+    # Load firm branding from FirmSettings (white-label support)
+    try:
+        from core.models import FirmSettings
+        _fs = FirmSettings.get()
+        context.setdefault("firm_name", _fs.firm_name or "MC & S Chartered Accountants")
+        context.setdefault("firm_address_1", _fs.firm_address_1 or "")
+        context.setdefault("firm_address_2", _fs.firm_address_2 or "")
+        context.setdefault("firm_phone", _fs.firm_phone or "")
+        context.setdefault("firm_email", _fs.firm_email or "")
+        context.setdefault("firm_logo_url", _fs.logo_url or "")
+    except Exception:
+        context.setdefault("firm_name", "MC & S Chartered Accountants")
     # Always rebuild ACN/ABN from current entity data, formatted with spaces.
     if doc.entity:
         acn_raw = doc.entity.acn or context.get("acn", "")

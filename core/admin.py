@@ -512,3 +512,71 @@ class WorkPaperTemplateAdmin(admin.ModelAdmin):
 
 
 from . import admin_office_admin  # noqa: F401
+
+
+# ---------------------------------------------------------------------------
+# FirmSettings — Singleton admin
+# ---------------------------------------------------------------------------
+from .models import FirmSettings
+
+
+@admin.register(FirmSettings)
+class FirmSettingsAdmin(admin.ModelAdmin):
+    """
+    Admin interface for the FirmSettings singleton.
+    Prevents adding a second record and redirects to the single instance.
+    """
+
+    fieldsets = (
+        ("Firm Identity", {
+            "fields": ("firm_name", "firm_legal_name", "firm_abn"),
+            "description": (
+                "These details appear on all generated documents, including "
+                "financial statements, workpapers, engagement letters, and legal documents."
+            ),
+        }),
+        ("Contact Details", {
+            "fields": ("firm_address_1", "firm_address_2", "firm_phone", "firm_email", "firm_website"),
+        }),
+        ("Logo", {
+            "fields": ("logo",),
+            "description": (
+                "Upload your firm logo here. Recommended format: PNG with transparent background, "
+                "minimum 400 × 150 px, maximum 2 MB. "
+                "The logo will automatically appear on all generated documents."
+            ),
+        }),
+        ("Document Settings", {
+            "fields": ("compilation_report_name", "document_disclaimer"),
+            "classes": ("collapse",),
+            "description": (
+                "Advanced settings for document generation. "
+                "Leave blank to use platform defaults."
+            ),
+        }),
+        ("Audit", {
+            "fields": ("updated_at", "updated_by"),
+            "classes": ("collapse",),
+        }),
+    )
+    readonly_fields = ("updated_at", "updated_by")
+
+    def has_add_permission(self, request):
+        # Only allow adding if no record exists yet
+        return not FirmSettings.objects.exists()
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def save_model(self, request, obj, form, change):
+        obj.updated_by = request.user
+        super().save_model(request, obj, form, change)
+
+    def changelist_view(self, request, extra_context=None):
+        """Redirect the list view directly to the single settings record."""
+        obj = FirmSettings.get()
+        from django.urls import reverse
+        from django.http import HttpResponseRedirect
+        return HttpResponseRedirect(
+            reverse("admin:core_firmsettings_change", args=[obj.pk])
+        )

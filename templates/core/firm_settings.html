@@ -1,0 +1,240 @@
+{% extends "base.html" %}
+{% block title %}Firm Settings — StatementHub{% endblock %}
+
+{% block content %}
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h4 class="mb-0"><i class="bi bi-building-gear"></i> Firm Settings</h4>
+        <p class="text-muted mb-0 mt-1" style="font-size:0.875rem;">
+            Manage your firm's branding. These details appear on all generated documents —
+            financial statements, workpapers, engagement letters, and legal documents.
+        </p>
+    </div>
+</div>
+
+{% if messages %}
+  {% for message in messages %}
+  <div class="alert alert-{{ message.tags|default:'info' }} alert-dismissible fade show" role="alert">
+    {{ message }}
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+  </div>
+  {% endfor %}
+{% endif %}
+
+<form method="post" enctype="multipart/form-data" id="firmSettingsForm">
+  {% csrf_token %}
+
+  <div class="row g-4">
+
+    <!-- ── LEFT COLUMN: Logo ── -->
+    <div class="col-lg-4">
+      <div class="card h-100">
+        <div class="card-header">
+          <h6 class="mb-0"><i class="bi bi-image"></i> Firm Logo</h6>
+        </div>
+        <div class="card-body">
+
+          <!-- Current logo preview -->
+          <div class="text-center mb-3" id="logoPreviewContainer">
+            {% if settings.logo %}
+            <div class="border rounded p-3 bg-light mb-2" style="min-height:100px; display:flex; align-items:center; justify-content:center;">
+              <img src="{{ settings.logo_url }}" alt="Current firm logo"
+                   id="logoPreviewImg"
+                   style="max-width:100%; max-height:140px; object-fit:contain;">
+            </div>
+            <p class="text-muted" style="font-size:0.8rem;">Current logo</p>
+            {% else %}
+            <div class="border rounded p-4 bg-light mb-2 text-muted" style="min-height:100px; display:flex; align-items:center; justify-content:center; flex-direction:column;" id="logoPlaceholder">
+              <i class="bi bi-image" style="font-size:2rem; opacity:0.4;"></i>
+              <p class="mb-0 mt-2" style="font-size:0.85rem;">No logo uploaded</p>
+            </div>
+            {% endif %}
+          </div>
+
+          <!-- Upload input -->
+          <div class="mb-3">
+            <label for="logoInput" class="form-label fw-semibold">Upload Logo</label>
+            <input type="file" class="form-control" id="logoInput" name="logo"
+                   accept="image/png,image/jpeg,image/jpg,image/svg+xml">
+            <div class="form-text">
+              PNG with transparent background recommended.<br>
+              Minimum 400 × 150 px &mdash; Maximum 2 MB.
+            </div>
+          </div>
+
+          {% if settings.logo %}
+          <!-- Remove logo -->
+          <div class="form-check">
+            <input class="form-check-input" type="checkbox" name="remove_logo" value="1" id="removeLogo">
+            <label class="form-check-label text-danger" for="removeLogo">
+              Remove current logo
+            </label>
+          </div>
+          {% endif %}
+
+        </div>
+      </div>
+    </div>
+
+    <!-- ── RIGHT COLUMN: Details ── -->
+    <div class="col-lg-8">
+
+      <!-- Firm Identity -->
+      <div class="card mb-4">
+        <div class="card-header">
+          <h6 class="mb-0"><i class="bi bi-briefcase"></i> Firm Identity</h6>
+        </div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-md-8">
+              <label for="firmName" class="form-label fw-semibold">
+                Firm Name <span class="text-danger">*</span>
+              </label>
+              <input type="text" class="form-control" id="firmName" name="firm_name"
+                     value="{{ settings.firm_name }}" required
+                     placeholder="e.g. Smith & Jones Chartered Accountants">
+              <div class="form-text">Appears on all documents and in the platform footer.</div>
+            </div>
+            <div class="col-md-4">
+              <label for="firmAbn" class="form-label fw-semibold">ABN</label>
+              <input type="text" class="form-control" id="firmAbn" name="firm_abn"
+                     value="{{ settings.firm_abn }}"
+                     placeholder="e.g. 69 079 892 023" maxlength="20">
+            </div>
+            <div class="col-12">
+              <label for="firmLegalName" class="form-label fw-semibold">Legal Name</label>
+              <input type="text" class="form-control" id="firmLegalName" name="firm_legal_name"
+                     value="{{ settings.firm_legal_name }}"
+                     placeholder="Full legal entity name (if different from trading name)">
+              <div class="form-text">Leave blank if the same as the firm name above.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Contact Details -->
+      <div class="card mb-4">
+        <div class="card-header">
+          <h6 class="mb-0"><i class="bi bi-geo-alt"></i> Contact Details</h6>
+        </div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-12">
+              <label for="firmAddress1" class="form-label fw-semibold">Address Line 1</label>
+              <input type="text" class="form-control" id="firmAddress1" name="firm_address_1"
+                     value="{{ settings.firm_address_1 }}"
+                     placeholder="e.g. PO Box 4440 or 123 Main Street">
+            </div>
+            <div class="col-12">
+              <label for="firmAddress2" class="form-label fw-semibold">Address Line 2</label>
+              <input type="text" class="form-control" id="firmAddress2" name="firm_address_2"
+                     value="{{ settings.firm_address_2 }}"
+                     placeholder="e.g. Dandenong South VIC 3164">
+            </div>
+            <div class="col-md-4">
+              <label for="firmPhone" class="form-label fw-semibold">Phone</label>
+              <input type="text" class="form-control" id="firmPhone" name="firm_phone"
+                     value="{{ settings.firm_phone }}"
+                     placeholder="e.g. (03) 9794 0000">
+            </div>
+            <div class="col-md-4">
+              <label for="firmEmail" class="form-label fw-semibold">Email</label>
+              <input type="email" class="form-control" id="firmEmail" name="firm_email"
+                     value="{{ settings.firm_email }}"
+                     placeholder="e.g. info@yourfirm.com.au">
+            </div>
+            <div class="col-md-4">
+              <label for="firmWebsite" class="form-label fw-semibold">Website</label>
+              <input type="url" class="form-control" id="firmWebsite" name="firm_website"
+                     value="{{ settings.firm_website }}"
+                     placeholder="e.g. https://yourfirm.com.au">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Document Settings -->
+      <div class="card mb-4">
+        <div class="card-header d-flex justify-content-between align-items-center">
+          <h6 class="mb-0"><i class="bi bi-file-earmark-text"></i> Document Settings</h6>
+          <span class="badge bg-secondary">Advanced</span>
+        </div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-12">
+              <label for="compilationReportName" class="form-label fw-semibold">
+                Compilation Report Signatory Name
+              </label>
+              <input type="text" class="form-control" id="compilationReportName"
+                     name="compilation_report_name"
+                     value="{{ settings.compilation_report_name }}"
+                     placeholder="Defaults to firm name if left blank">
+              <div class="form-text">
+                The name that appears in the signatory block of the Compilation Report (APES 315).
+                Leave blank to use the firm name above.
+              </div>
+            </div>
+            <div class="col-12">
+              <label for="documentDisclaimer" class="form-label fw-semibold">
+                Legal Document Disclaimer
+              </label>
+              <textarea class="form-control" id="documentDisclaimer" name="document_disclaimer"
+                        rows="4" placeholder="Leave blank to use the platform default disclaimer.">{{ settings.document_disclaimer }}</textarea>
+              <div class="form-text">
+                Appended to Div 7A agreements, trust deeds, and other legal documents.
+                Leave blank to use the platform default.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /col-lg-8 -->
+  </div><!-- /row -->
+
+  <!-- ── Audit trail ── -->
+  {% if settings.updated_at %}
+  <p class="text-muted mt-2" style="font-size:0.8rem;">
+    Last updated: {{ settings.updated_at|date:"d M Y H:i" }}
+    {% if settings.updated_by %}by {{ settings.updated_by.get_full_name|default:settings.updated_by.username }}{% endif %}
+  </p>
+  {% endif %}
+
+  <!-- ── Save button ── -->
+  <div class="d-flex gap-2 mt-3 mb-5">
+    <button type="submit" class="btn btn-primary">
+      <i class="bi bi-check-lg"></i> Save Firm Settings
+    </button>
+    <a href="{% url 'core:entity_list' %}" class="btn btn-outline-secondary">Cancel</a>
+  </div>
+
+</form>
+
+<script>
+// Live logo preview when a new file is selected
+document.getElementById('logoInput').addEventListener('change', function(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    // Validate size client-side
+    if (file.size > 2 * 1024 * 1024) {
+        alert('File is too large. Maximum size is 2 MB.');
+        this.value = '';
+        return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = function(ev) {
+        const container = document.getElementById('logoPreviewContainer');
+        container.innerHTML = `
+            <div class="border rounded p-3 bg-light mb-2" style="min-height:100px; display:flex; align-items:center; justify-content:center;">
+                <img src="${ev.target.result}" alt="Logo preview"
+                     style="max-width:100%; max-height:140px; object-fit:contain;">
+            </div>
+            <p class="text-muted" style="font-size:0.8rem;">Preview (not yet saved)</p>
+        `;
+    };
+    reader.readAsDataURL(file);
+});
+</script>
+{% endblock %}

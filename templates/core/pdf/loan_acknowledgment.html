@@ -22,7 +22,11 @@
 </head>
 <body>
 <div class="header">
-  <div class="firm">MC &amp; S Chartered Accountants</div>
+  {% if firm_logo_url %}
+  <img src="{{ firm_logo_url }}" alt="{{ firm_name }}" style="max-height:60px; max-width:220px; object-fit:contain; display:block; margin-bottom:6px;">
+  {% else %}
+  <div class="firm">{{ firm_name|default:"StatementHub" }}</div>
+  {% endif %}
   <div class="doc-title">Shareholder / Director Loan Acknowledgment</div>
 </div>
 

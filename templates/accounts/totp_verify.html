@@ -1,3 +1,4 @@
+{% load i18n %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -61,7 +62,7 @@
                     </div>
                 </div>
                 <div class="card-footer text-center text-muted small">
-                    &copy; 2026 MC &amp; S Pty Ltd
+                    &copy; {% now "Y" %} {{ firm_name }}
                 </div>
             </div>
         </div>

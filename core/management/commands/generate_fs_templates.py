@@ -394,18 +394,23 @@ def _build_cover(entity_type):
     header.is_linked_to_previous = False
     p = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
     p.text = ""
-
-    # --- Logo at top (if file exists) ---
+    # --- Logo at top: prefer FirmSettings upload, fall back to static files ---
     import os as _os
-    logo_candidates = [
-        _os.path.join(settings.BASE_DIR, "static", "img", "mcs_logo.png"),
-        _os.path.join(settings.BASE_DIR, "static", "MCSlogo.png"),
-    ]
     logo_path = None
-    for candidate in logo_candidates:
-        if _os.path.isfile(candidate):
-            logo_path = candidate
-            break
+    try:
+        from core.models import FirmSettings
+        logo_path = FirmSettings.get().logo_path
+    except Exception:
+        pass
+    if not logo_path:
+        logo_candidates = [
+            _os.path.join(settings.BASE_DIR, "static", "img", "mcs_logo.png"),
+            _os.path.join(settings.BASE_DIR, "static", "MCSlogo.png"),
+        ]
+        for candidate in logo_candidates:
+            if _os.path.isfile(candidate):
+                logo_path = candidate
+                break
 
     _add_para(doc, "", size=Pt(12))  # small top spacer
     if logo_path:

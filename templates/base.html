@@ -1,4 +1,5 @@
 {% load static %}
+{% load i18n %}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -230,7 +231,12 @@
 <!-- ── SIDEBAR ── -->
 <nav class="sh-sidebar" id="shSidebar">
     <div class="sh-sidebar-brand">
+        {% if firm_logo_url %}
+        <img src="{{ firm_logo_url }}" alt="{{ firm_name }}"
+             style="max-height:44px; max-width:180px; object-fit:contain; display:block; margin-bottom:8px; filter:brightness(0) invert(1);">
+        {% else %}
         <h1>Statement<span class="accent">Hub</span></h1>
+        {% endif %}
         <span class="role-badge {% if user.is_admin %}role-badge-admin{% elif user.is_senior %}role-badge-senior{% elif user.is_office_admin %}role-badge-office-admin{% else %}role-badge-accountant{% endif %}">
             {{ user.get_role_display|upper }}
         </span>
@@ -364,6 +370,10 @@
            href="{% url 'core:knowledge_brain_admin' %}">
             <i class="bi bi-stars"></i> Eva Knowledge Brain
         </a>
+        <a class="sh-nav-item {% if active_nav == 'firm_settings' %}active{% endif %}"
+           href="{% url 'core:firm_settings' %}">
+            <i class="bi bi-building-gear"></i> Firm Settings
+        </a>
         <a class="sh-nav-item" href="/admin/" target="_blank">
             <i class="bi bi-gear-wide-connected"></i> Django Admin
         </a>
@@ -465,7 +475,7 @@
     <footer class="border-top py-3" style="padding: 0 32px;">
         <div class="d-flex justify-content-between align-items-center">
             <p class="text-muted small mb-0">
-                &copy; 2026 MC &amp; S Pty Ltd &mdash; StatementHub
+                &copy; {% now "Y" %} {{ firm_name }} &mdash; StatementHub
             </p>
             <p class="text-muted small mb-0">
                 <i class="bi bi-clock-history me-1"></i>Build: {{ BUILD_TIMESTAMP }}

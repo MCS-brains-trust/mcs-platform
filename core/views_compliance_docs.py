@@ -320,8 +320,13 @@ def directors_report_draft_with_eva(request, pk):
             api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
         )
 
+        try:
+            from core.models import FirmSettings
+            _firm_ai_name = FirmSettings.get().firm_name or "MC & S Chartered Accountants"
+        except Exception:
+            _firm_ai_name = "MC & S Chartered Accountants"
         system_prompt = (
-            "You are Eva, the AI assistant for MC & S Chartered Accountants. "
+            f"You are Eva, the AI assistant for {_firm_ai_name}. "
             "You are drafting a section of a Director's Report under the Corporations Act 2001 (Cth). "
             "Write professionally and concisely. Use Australian accounting terminology. "
             f"The company is {entity.entity_name} (ACN: {entity.acn or 'N/A'})."

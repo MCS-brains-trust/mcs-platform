@@ -48,12 +48,46 @@ FONT_SIZE_SUBHEADING = Pt(12)
 FONT_SIZE_SMALL = Pt(9)
 FONT_SIZE_FOOTER = Pt(8)
 
-FIRM_NAME = "MC & S Pty Ltd"
-FIRM_ADDRESS_1 = "PO Box 4440"
-FIRM_ADDRESS_2 = "Dandenong South VIC 3164"
-FIRM_PHONE = "Phone: (03) 9794 0000"
-FIRM_EMAIL = "Email: info@mcands.com.au"
-FIRM_WEBSITE = "Website: www.mcands.com.au"
+# ---------------------------------------------------------------------------
+# Firm constants — loaded from FirmSettings at call time (white-label support)
+# These module-level names are kept for backward compatibility but now resolve
+# dynamically via FirmSettings so any firm can white-label the platform.
+# ---------------------------------------------------------------------------
+def _firm_const(attr, default):
+    """Return a FirmSettings attribute, falling back to a default string."""
+    try:
+        from core.models import FirmSettings
+        val = getattr(FirmSettings.get(), attr, None)
+        return val or default
+    except Exception:
+        return default
+
+
+class _LazyFirmStr:
+    """Lazy string that resolves from FirmSettings at use time."""
+    def __init__(self, attr, default, prefix=""):
+        self._attr = attr
+        self._default = default
+        self._prefix = prefix
+    def _resolve(self):
+        val = _firm_const(self._attr, self._default)
+        return f"{self._prefix}{val}" if self._prefix else val
+    def __str__(self):
+        return self._resolve()
+    def __add__(self, other):
+        return self._resolve() + other
+    def __radd__(self, other):
+        return other + self._resolve()
+    def __format__(self, fmt):
+        return format(self._resolve(), fmt)
+
+
+FIRM_NAME = _LazyFirmStr("firm_name", "MC & S Pty Ltd")
+FIRM_ADDRESS_1 = _LazyFirmStr("firm_address_1", "PO Box 4440")
+FIRM_ADDRESS_2 = _LazyFirmStr("firm_address_2", "Dandenong South VIC 3164")
+FIRM_PHONE = _LazyFirmStr("firm_phone", "(03) 9794 0000", prefix="Phone: ")
+FIRM_EMAIL = _LazyFirmStr("firm_email", "info@mcands.com.au", prefix="Email: ")
+FIRM_WEBSITE = _LazyFirmStr("firm_website", "www.mcands.com.au", prefix="Website: ")
 
 
 # =============================================================================
@@ -919,12 +953,27 @@ def _add_column_headers(doc, year, has_prior=False, prior_year=None, include_not
 # =============================================================================
 
 def _get_logo_path():
-    """Get the path to the MC&S logo file."""
+    """Get the firm logo path.
+
+    Priority order:
+    1. FirmSettings.logo (uploaded via Firm Settings admin page)
+    2. MCS_LOGO_PATH setting (legacy)
+    3. Static file fallbacks (legacy)
+    """
+    # 1. FirmSettings upload (white-label support)
+    try:
+        from core.models import FirmSettings
+        fs_path = FirmSettings.get().logo_path
+        if fs_path and Path(str(fs_path)).exists():
+            return str(fs_path)
+    except Exception:
+        pass
+    # 2. Legacy settings path
     from django.conf import settings
     logo_path = getattr(settings, 'MCS_LOGO_PATH', None)
     if logo_path and Path(str(logo_path)).exists():
         return str(logo_path)
-    # Fallback: check common locations
+    # 3. Static file fallbacks
     fallbacks = [
         Path(__file__).resolve().parent.parent / 'static' / 'MCSlogo.png',
         Path('/home/ubuntu/upload/MCSlogo.png'),

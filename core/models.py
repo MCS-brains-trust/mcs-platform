@@ -5376,3 +5376,162 @@ class EngagementLetter(models.Model):
                 is_current=True,
             ).update(is_current=False)
         super().save(*args, **kwargs)
+
+
+# ---------------------------------------------------------------------------
+# FirmSettings — Singleton model for firm-wide branding and identity
+# ---------------------------------------------------------------------------
+class FirmSettings(models.Model):
+    """
+    Singleton model storing firm-wide branding and identity.
+
+    Only one record should ever exist (pk=1). Use FirmSettings.get() to
+    retrieve it safely, creating defaults if it does not yet exist.
+
+    These values are injected into every generated document (financial
+    statements, workpapers, legal documents, engagement letters, and all
+    PDF exports) so that the platform can be white-labelled for any firm.
+    """
+
+    # ── Identity ──────────────────────────────────────────────────────────
+    firm_name = models.CharField(
+        max_length=255,
+        default="MC & S Pty Ltd",
+        help_text="Trading name shown on all documents (e.g. 'Smith & Jones Chartered Accountants').",
+    )
+    firm_legal_name = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        help_text="Full legal entity name if different from trading name.",
+    )
+    firm_abn = models.CharField(
+        max_length=20,
+        blank=True,
+        default="",
+        verbose_name="ABN",
+        help_text="Australian Business Number (11 digits, no spaces).",
+    )
+
+    # ── Contact details ───────────────────────────────────────────────────
+    firm_address_1 = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        help_text="Street address or PO Box.",
+    )
+    firm_address_2 = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        help_text="Suburb, state, and postcode (e.g. 'Dandenong South VIC 3164').",
+    )
+    firm_phone = models.CharField(
+        max_length=30,
+        blank=True,
+        default="",
+        help_text="Primary phone number shown on documents.",
+    )
+    firm_email = models.EmailField(
+        blank=True,
+        default="",
+        help_text="Primary contact email shown on documents.",
+    )
+    firm_website = models.URLField(
+        blank=True,
+        default="",
+        help_text="Firm website URL (optional).",
+    )
+
+    # ── Logo ──────────────────────────────────────────────────────────────
+    logo = models.ImageField(
+        upload_to="firm_branding/",
+        null=True,
+        blank=True,
+        help_text=(
+            "Firm logo. Recommended: PNG with transparent background, "
+            "minimum 400 x 150 px, maximum 2 MB. "
+            "This logo will appear on all generated financial statements, "
+            "workpapers, engagement letters, and legal documents."
+        ),
+    )
+
+    # ── Compilation report ────────────────────────────────────────────────
+    compilation_report_name = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        help_text=(
+            "Name used in the Compilation Report signatory block. "
+            "Defaults to firm_name if left blank."
+        ),
+    )
+
+    # ── Document footer / disclaimer ──────────────────────────────────────
+    document_disclaimer = models.TextField(
+        blank=True,
+        default="",
+        help_text=(
+            "Optional disclaimer appended to legal documents. "
+            "Leave blank to use the platform default."
+        ),
+    )
+
+    # ── Audit ─────────────────────────────────────────────────────────────
+    updated_at = models.DateTimeField(auto_now=True)
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="firm_settings_updates",
+    )
+
+    class Meta:
+        verbose_name = "Firm Settings"
+        verbose_name_plural = "Firm Settings"
+
+    def __str__(self):
+        return f"Firm Settings — {self.firm_name}"
+
+    def save(self, *args, **kwargs):
+        # Enforce singleton: always use pk=1
+        self.pk = 1
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        # Prevent accidental deletion of the singleton record
+        pass
+
+    @classmethod
+    def get(cls):
+        """Return the singleton FirmSettings instance, creating defaults if absent."""
+        obj, _ = cls.objects.get_or_create(pk=1)
+        return obj
+
+    @property
+    def display_name(self):
+        """Best available display name for the firm."""
+        return self.firm_name or "StatementHub"
+
+    @property
+    def compilation_name(self):
+        """Name to use in the Compilation Report signatory block."""
+        return self.compilation_report_name or self.firm_name
+
+    @property
+    def logo_url(self):
+        """Logo URL if one has been uploaded, else None."""
+        if self.logo:
+            return self.logo.url
+        return None
+
+    @property
+    def logo_path(self):
+        """Absolute filesystem path to the logo file, else None."""
+        if self.logo:
+            try:
+                return self.logo.path
+            except Exception:
+                return None
+        return None

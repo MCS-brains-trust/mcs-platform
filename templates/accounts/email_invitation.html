@@ -22,13 +22,17 @@
     <div class="container">
         <div class="card">
             <div class="header">
+                {% if firm_logo_url %}
+                <img src="{{ firm_logo_url }}" alt="{{ firm_name }}" style="max-height:50px; max-width:180px; object-fit:contain; margin-bottom:8px; display:block; margin-left:auto; margin-right:auto;">
+                {% else %}
                 <h2>StatementHub</h2>
-                <p>MC &amp; S Pty Ltd</p>
+                {% endif %}
+                <p>{{ firm_name }}</p>
             </div>
             <div class="body">
                 <p>Hi {{ invitation.first_name }},</p>
 
-                <p>You've been invited to join <strong>StatementHub</strong>, the financial statement platform for MC &amp; S Pty Ltd.</p>
+                <p>You've been invited to join <strong>StatementHub</strong>, the financial statement platform for {{ firm_name }}.</p>
 
                 <div class="details">
                     <p><strong>Role:</strong> {{ invitation.get_role_display }}</p>
@@ -52,7 +56,7 @@
                 </p>
             </div>
             <div class="footer">
-                <p>&copy; 2026 MC &amp; S Pty Ltd. This invitation expires on {{ invitation.expires_at|date:"d F Y" }}.</p>
+                <p>&copy; {{ firm_name }}. This invitation expires on {{ invitation.expires_at|date:"d F Y" }}.</p>
             </div>
         </div>
     </div>

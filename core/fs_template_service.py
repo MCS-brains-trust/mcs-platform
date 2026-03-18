@@ -233,6 +233,39 @@ def _safe_amp(text):
     return text
 
 
+def _get_firm_context():
+    """Return firm branding fields from FirmSettings for document context.
+
+    Loads the singleton FirmSettings record and returns a dict of firm_*
+    keys ready to be unpacked into any document context.  Falls back to
+    MC & S defaults if the record has not yet been configured so that
+    existing documents are never broken during the migration period.
+    """
+    try:
+        from core.models import FirmSettings
+        fs = FirmSettings.get()
+        return {
+            "firm_name": _safe_amp(fs.firm_name or "MC & S Pty Ltd"),
+            "firm_address_1": fs.firm_address_1 or "PO Box 4440",
+            "firm_address_2": fs.firm_address_2 or "Dandenong South VIC 3164",
+            "firm_phone": fs.firm_phone or "(03) 9794 0000",
+            "firm_email": fs.firm_email or "info@mcands.com.au",
+            "firm_website": fs.firm_website or "",
+            "firm_logo_path": fs.logo_path,
+        }
+    except Exception:
+        logger.warning("FirmSettings unavailable — using MC & S defaults", exc_info=True)
+        return {
+            "firm_name": _safe_amp("MC & S Pty Ltd"),
+            "firm_address_1": "PO Box 4440",
+            "firm_address_2": "Dandenong South VIC 3164",
+            "firm_phone": "(03) 9794 0000",
+            "firm_email": "info@mcands.com.au",
+            "firm_website": "",
+            "firm_logo_path": None,
+        }
+
+
 def _format_lines(items, credit_normal=False):
     """Add formatted amount strings to each item dict.
 
@@ -712,12 +745,8 @@ def build_company_context(financial_year, include_watermark=True):
         ],
         # Signing / declaration date (for Compilation Report "Dated:" line)
         "signing_date": signing_date,
-        # Firm details — protect ampersand from XML stripping
-        "firm_name": _safe_amp("MC & S Pty Ltd"),
-        "firm_address_1": "PO Box 4440",
-        "firm_address_2": "Dandenong South VIC 3164",
-        "firm_phone": "(03) 9794 0000",
-        "firm_email": "info@mcands.com.au",
+        # Firm details — loaded from FirmSettings singleton (white-label support)
+        **_get_firm_context(),
     }
 
     # Add format_amount as a Jinja2 filter
