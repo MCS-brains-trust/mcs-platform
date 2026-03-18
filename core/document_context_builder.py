@@ -351,12 +351,11 @@ class DocumentContextBuilder:
         ctx.update(self._base_context())
         ctx.update(self._practice_branding_context())
 
+        ctx.update(self._entity_people_context())
         if self.financial_year:
             ctx.update(self._financial_year_context())
             ctx.update(self._financial_data_context())
             ctx.update(self._computed_flags(ctx))
-
-        ctx.update(self._entity_people_context())
 
         # Document-type-specific context
         doc_ctx_method = {
@@ -506,6 +505,8 @@ class DocumentContextBuilder:
             "practice_name": firm.firm_name,
             "practice_legal_name": firm.firm_legal_name or firm.firm_name,
             "practice_abn": format_abn(firm.firm_abn) if firm.firm_abn else "",
+            "practice_address_1": firm.firm_address_1 or "",
+            "practice_address_2": firm.firm_address_2 or "",
             "practice_registered_address": address,
             "practice_phone": firm.firm_phone or "",
             "practice_email": firm.firm_email or "",
@@ -622,10 +623,16 @@ class DocumentContextBuilder:
             except Exception:
                 pass
 
+        # Prior year end/start dates
+        fy_prior_end_date = format_date_long(fy.prior_year.end_date) if has_prior_year else ""
+        fy_prior_start_date = format_date_long(fy.prior_year.start_date) if has_prior_year else ""
+        today_str = format_date_long(date.today())
+
         return {
             "fy_year": str(year_int),                             # always string for template consistency
             "fy_year_int": year_int,                              # int version for arithmetic
             "fy_year_label": fy.year_label,
+            "fy_label": fy.year_label,                           # alias
             "fy_start_date": format_date_long(fy.start_date),
             "fy_start_formatted": format_date_long(fy.start_date),  # alias for templates
             "fy_end_date": format_date_long(fy.end_date),
@@ -633,6 +640,8 @@ class DocumentContextBuilder:
             "fy_end_date_year": str(year_int),
             "fy_end_formatted": format_date_long(fy.end_date),   # alias for templates
             "fy_period_label": f"For the year ended {format_date_long(fy.end_date)}",
+            "fy_prior_end_date": fy_prior_end_date,
+            "fy_prior_start_date": fy_prior_start_date,
             "fy_status": fy.status,
             "fy_is_finalised": fy.status == "finalised",
             "fy_finalised_date": format_date_long(fy.finalised_at) if fy.finalised_at else "",
@@ -640,6 +649,9 @@ class DocumentContextBuilder:
             "has_prior_year": has_prior_year,
             "prior_year_label": prior_year_label,
             "comparative_period_label": prior_year_label,
+            "generation_date": today_str,                        # alias for document_generated_date
+            "document_generated_date": today_str,
+            "document_generated_date_short": format_date_short(date.today()),
         }
 
     # ------------------------------------------------------------------
@@ -709,6 +721,10 @@ class DocumentContextBuilder:
             if net_profit_py != 0 else None
         )
         net_profit_margin_pct = (net_profit / revenue * 100) if revenue != 0 else Decimal(0)
+        # Aliases — defined here after net_profit is assigned
+        net_profit_after_tax = net_profit
+        net_margin_pct = (net_profit / revenue * 100) if revenue != 0 else Decimal(0)
+        net_margin_pct_py = (net_profit_py / revenue_py * 100) if revenue_py != 0 else Decimal(0)
 
         # ── Balance Sheet ─────────────────────────────────────────────────
         total_current_assets = self._sum_section(sections["current_assets"])
@@ -824,8 +840,12 @@ class DocumentContextBuilder:
             "gross_profit_py": gross_profit_py,
             "gross_margin_pct": gross_margin_pct,
             "gross_margin_pct_py": gross_margin_pct_py,
+            "net_margin_pct": net_margin_pct,
+            "net_margin_pct_py": net_margin_pct_py,
             "operating_expenses": expenses,
             "operating_expenses_py": expenses_py,
+            "expenses": expenses,                        # alias for operating_expenses
+            "expenses_py": expenses_py,
             "ebitda": ebitda,
             "ebitda_py": ebitda_py,
             "depreciation": depreciation,
@@ -1034,6 +1054,8 @@ class DocumentContextBuilder:
             "consecutive_losses": 0,  # Requires multi-year query — placeholder
             # Division 7A
             "div7a_risk": div7a_risk,
+            "div7a_risk_flag": div7a_risk,          # alias
+            "has_director_loans": director_loan_balance > Decimal(0),  # alias
             "div7a_loan_agreement_exists": div7a_loan_agreement_exists,
             "div7a_complying_rate_applied": div7a_complying_rate_applied,
             "div7a_benchmark_rate": div7a_benchmark_rate,
@@ -1048,6 +1070,8 @@ class DocumentContextBuilder:
             # Section 100A
             "section_100a_risk_flag": section_100a_risk_flag,
             "show_section_100a_caveat": section_100a_risk_flag,
+            # Trust distribution flag
+            "has_trust_distribution": ctx.get("is_trust", False) and len(ctx.get("beneficiaries", [])) > 0,
             # Reporting framework flags
             "is_reporting_entity": ctx.get("is_reporting_entity", False),
             # Conditional notes
@@ -1937,13 +1961,16 @@ class DocumentContextBuilder:
                     missing_fields=["directors"],
                 )
             if not ctx.get("solvency_confirmed") and not ctx.get("modified_solvency_declaration_text"):
-                raise ContextValidationError(
-                    "Going concern issue identified. Standard declaration cannot be generated. "
-                    "Resolve Eva finding first.",
-                    document_type=document_type,
-                    entity_id=entity_id,
-                    missing_fields=["solvency_confirmed"],
-                )
+                # When going_concern_flag=True, allow generation with modified declaration
+                # (show_modified_solvency=True will render the appropriate modified wording)
+                if not ctx.get("going_concern_flag", False):
+                    raise ContextValidationError(
+                        "Going concern issue identified. Standard declaration cannot be generated. "
+                        "Resolve Eva finding first.",
+                        document_type=document_type,
+                        entity_id=entity_id,
+                        missing_fields=["solvency_confirmed"],
+                    )
 
         elif document_type == "solvency_resolution":
             if not ctx.get("solvency_confirmed"):
