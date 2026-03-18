@@ -244,14 +244,39 @@ def _get_firm_context():
     try:
         from core.models import FirmSettings
         fs = FirmSettings.get()
+        _name = _safe_amp(fs.firm_name or "MC & S Pty Ltd")
+        _addr = " ".join(filter(None, [fs.firm_address_1, fs.firm_address_2]))
         return {
-            "firm_name": _safe_amp(fs.firm_name or "MC & S Pty Ltd"),
+            # Legacy keys (kept for backward compat with existing templates)
+            "firm_name": _name,
             "firm_address_1": fs.firm_address_1 or "PO Box 4440",
             "firm_address_2": fs.firm_address_2 or "Dandenong South VIC 3164",
             "firm_phone": fs.firm_phone or "(03) 9794 0000",
             "firm_email": fs.firm_email or "info@mcands.com.au",
             "firm_website": fs.firm_website or "",
             "firm_logo_path": fs.logo_path,
+            "firm_logo_url": fs.logo_url or "",
+            "firm_abn": fs.firm_abn or "",
+            # New spec keys (practice_* namespace)
+            "practice_name": _name,
+            "practice_legal_name": _safe_amp(fs.firm_legal_name or fs.firm_name or "MC & S Pty Ltd"),
+            "practice_abn": fs.firm_abn or "",
+            "practice_registered_address": _addr,
+            "practice_phone": fs.firm_phone or "",
+            "practice_email": fs.firm_email or "",
+            "practice_website": fs.firm_website or "",
+            "practice_logo_url": fs.logo_url or "",
+            "practice_logo_path": fs.logo_path,
+            "practice_tax_agent_number": fs.tax_agent_number or "",
+            "practice_bas_agent_number": fs.bas_agent_number or "",
+            "practice_asic_agent_number": fs.asic_agent_number or "",
+            "practice_signatory_name": fs.signatory_name or "",
+            "practice_signatory_designation": fs.signatory_designation or "",
+            "practice_professional_body": fs.professional_body or "CPA Australia",
+            "practice_membership_number": fs.membership_number or "",
+            "practice_independence_maintained": fs.practice_independence_maintained,
+            "practice_compilation_report_name": fs.compilation_report_name or fs.firm_name or "",
+            "practice_legal_disclaimer": fs.document_disclaimer or "",
         }
     except Exception:
         logger.warning("FirmSettings unavailable — using MC & S defaults", exc_info=True)
@@ -263,6 +288,27 @@ def _get_firm_context():
             "firm_email": "info@mcands.com.au",
             "firm_website": "",
             "firm_logo_path": None,
+            "firm_logo_url": "",
+            "firm_abn": "",
+            "practice_name": _safe_amp("MC & S Pty Ltd"),
+            "practice_legal_name": _safe_amp("MC & S Pty Ltd"),
+            "practice_abn": "",
+            "practice_registered_address": "",
+            "practice_phone": "",
+            "practice_email": "",
+            "practice_website": "",
+            "practice_logo_url": "",
+            "practice_logo_path": None,
+            "practice_tax_agent_number": "",
+            "practice_bas_agent_number": "",
+            "practice_asic_agent_number": "",
+            "practice_signatory_name": "",
+            "practice_signatory_designation": "",
+            "practice_professional_body": "CPA Australia",
+            "practice_membership_number": "",
+            "practice_independence_maintained": True,
+            "practice_compilation_report_name": "",
+            "practice_legal_disclaimer": "",
         }
 
 
@@ -1267,11 +1313,30 @@ def render_template(template_db_record, context):
 
     tpl = DocxTemplate(template_path)
 
-    tpl.render(context)
+    # Inject InlineImage logo if context carries a builder reference
+    # (new-style callers via DocumentContextBuilder)
+    builder = context.pop("__builder__", None)
+    if builder is not None:
+        builder.tpl = tpl
+        # Re-resolve logo now that tpl is available
+        from core.models import FirmSettings
+        firm = FirmSettings.get()
+        context["practice_logo"] = builder._resolve_logo_for_docx(firm)
+
+    # Use the StatementHub Jinja2 environment with all custom filters
+    from core.document_context_builder import get_jinja_env
+    jinja_env = get_jinja_env()
+
+    tpl.render(context, jinja_env=jinja_env)
 
     buffer = io.BytesIO()
     tpl.save(buffer)
     buffer.seek(0)
+
+    # Cleanup temp logo files if builder was used
+    if builder is not None:
+        builder.cleanup()
+
     return buffer
 
 

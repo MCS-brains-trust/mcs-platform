@@ -6,7 +6,7 @@
     <div>
         <h4 class="mb-0"><i class="bi bi-building-gear"></i> Firm Settings</h4>
         <p class="text-muted mb-0 mt-1" style="font-size:0.875rem;">
-            Manage your firm's branding. These details appear on all generated documents —
+            Manage your firm's identity and branding. These details appear on every generated document —
             financial statements, workpapers, engagement letters, and legal documents.
         </p>
     </div>
@@ -58,7 +58,7 @@
                    accept="image/png,image/jpeg,image/jpg,image/svg+xml">
             <div class="form-text">
               PNG with transparent background recommended.<br>
-              Minimum 400 × 150 px &mdash; Maximum 2 MB.
+              Minimum 400 &times; 150 px &mdash; Maximum 2 MB.
             </div>
           </div>
 
@@ -71,6 +71,13 @@
             </label>
           </div>
           {% endif %}
+
+          <!-- Logo usage note -->
+          <div class="alert alert-info mt-3 mb-0 p-2" style="font-size:0.8rem;">
+            <i class="bi bi-info-circle"></i>
+            The logo is embedded in Word documents as an image and shown in PDF headers.
+            Use a PNG with a transparent background for best results.
+          </div>
 
         </div>
       </div>
@@ -92,8 +99,8 @@
               </label>
               <input type="text" class="form-control" id="firmName" name="firm_name"
                      value="{{ settings.firm_name }}" required
-                     placeholder="e.g. Smith & Jones Chartered Accountants">
-              <div class="form-text">Appears on all documents and in the platform footer.</div>
+                     placeholder="e.g. Smith &amp; Jones Chartered Accountants">
+              <div class="form-text">Trading name shown on all documents and in the platform footer.</div>
             </div>
             <div class="col-md-4">
               <label for="firmAbn" class="form-label fw-semibold">ABN</label>
@@ -153,6 +160,92 @@
         </div>
       </div>
 
+      <!-- Registration Numbers -->
+      <div class="card mb-4">
+        <div class="card-header">
+          <h6 class="mb-0"><i class="bi bi-card-checklist"></i> Registration Numbers</h6>
+        </div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-md-4">
+              <label for="taxAgentNumber" class="form-label fw-semibold">
+                Tax Agent Number <span class="text-danger">*</span>
+              </label>
+              <input type="text" class="form-control" id="taxAgentNumber" name="tax_agent_number"
+                     value="{{ settings.tax_agent_number }}"
+                     placeholder="e.g. 12345678">
+              <div class="form-text">TPB registration. Required on all engagement letters (APES 305).</div>
+            </div>
+            <div class="col-md-4">
+              <label for="basAgentNumber" class="form-label fw-semibold">BAS Agent Number</label>
+              <input type="text" class="form-control" id="basAgentNumber" name="bas_agent_number"
+                     value="{{ settings.bas_agent_number }}"
+                     placeholder="e.g. 87654321">
+              <div class="form-text">TPB BAS Agent registration (if applicable).</div>
+            </div>
+            <div class="col-md-4">
+              <label for="asicAgentNumber" class="form-label fw-semibold">ASIC Agent Number</label>
+              <input type="text" class="form-control" id="asicAgentNumber" name="asic_agent_number"
+                     value="{{ settings.asic_agent_number }}"
+                     placeholder="e.g. 000123456">
+              <div class="form-text">ASIC registered agent number (if applicable).</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Signatory -->
+      <div class="card mb-4">
+        <div class="card-header">
+          <h6 class="mb-0"><i class="bi bi-pen"></i> Signatory</h6>
+        </div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label for="signatoryName" class="form-label fw-semibold">Signatory Name</label>
+              <input type="text" class="form-control" id="signatoryName" name="signatory_name"
+                     value="{{ settings.signatory_name }}"
+                     placeholder="e.g. John Smith">
+              <div class="form-text">Name of the signing partner or director for document sign-off blocks.</div>
+            </div>
+            <div class="col-md-6">
+              <label for="signatoryDesignation" class="form-label fw-semibold">Signatory Designation</label>
+              <input type="text" class="form-control" id="signatoryDesignation" name="signatory_designation"
+                     value="{{ settings.signatory_designation }}"
+                     placeholder="e.g. CPA, Registered Tax Agent">
+              <div class="form-text">Designation shown under the signatory name on documents.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Professional Body -->
+      <div class="card mb-4">
+        <div class="card-header">
+          <h6 class="mb-0"><i class="bi bi-award"></i> Professional Body</h6>
+        </div>
+        <div class="card-body">
+          <div class="row g-3">
+            <div class="col-md-6">
+              <label for="professionalBody" class="form-label fw-semibold">Professional Body</label>
+              <select class="form-select" id="professionalBody" name="professional_body">
+                <option value="CPA Australia" {% if settings.professional_body == "CPA Australia" %}selected{% endif %}>CPA Australia</option>
+                <option value="CAANZ" {% if settings.professional_body == "CAANZ" %}selected{% endif %}>Chartered Accountants Australia &amp; New Zealand (CAANZ)</option>
+                <option value="IPA" {% if settings.professional_body == "IPA" %}selected{% endif %}>Institute of Public Accountants (IPA)</option>
+                <option value="Other" {% if settings.professional_body == "Other" %}selected{% endif %}>Other</option>
+              </select>
+              <div class="form-text">Drives the dispute resolution clause wording in engagement letters.</div>
+            </div>
+            <div class="col-md-6">
+              <label for="membershipNumber" class="form-label fw-semibold">Membership Number</label>
+              <input type="text" class="form-control" id="membershipNumber" name="membership_number"
+                     value="{{ settings.membership_number }}"
+                     placeholder="e.g. 7654321">
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- Document Settings -->
       <div class="card mb-4">
         <div class="card-header d-flex justify-content-between align-items-center">
@@ -161,6 +254,7 @@
         </div>
         <div class="card-body">
           <div class="row g-3">
+
             <div class="col-12">
               <label for="compilationReportName" class="form-label fw-semibold">
                 Compilation Report Signatory Name
@@ -170,10 +264,26 @@
                      value="{{ settings.compilation_report_name }}"
                      placeholder="Defaults to firm name if left blank">
               <div class="form-text">
-                The name that appears in the signatory block of the Compilation Report (APES 315).
-                Leave blank to use the firm name above.
+                The name in the signatory block of the Compilation Report (APES 315).
+                Leave blank to use the firm name.
               </div>
             </div>
+
+            <div class="col-12">
+              <div class="form-check form-switch">
+                <input class="form-check-input" type="checkbox" role="switch"
+                       id="practiceIndependence" name="practice_independence_maintained"
+                       value="1" {% if settings.practice_independence_maintained %}checked{% endif %}>
+                <label class="form-check-label fw-semibold" for="practiceIndependence">
+                  Practice maintains independence (APES 110)
+                </label>
+              </div>
+              <div class="form-text ms-4">
+                When enabled, an independence statement is included in all Compilation Reports.
+                Disable only if the practice has a non-independence relationship with the client.
+              </div>
+            </div>
+
             <div class="col-12">
               <label for="documentDisclaimer" class="form-label fw-semibold">
                 Legal Document Disclaimer
@@ -185,6 +295,7 @@
                 Leave blank to use the platform default.
               </div>
             </div>
+
           </div>
         </div>
       </div>

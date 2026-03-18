@@ -45,6 +45,24 @@ def firm_settings(request):
         settings_obj.compilation_report_name = request.POST.get("compilation_report_name", "").strip()
         settings_obj.document_disclaimer = request.POST.get("document_disclaimer", "").strip()
 
+        # ── Registration numbers (new spec fields) ────────────────────────
+        settings_obj.tax_agent_number = request.POST.get("tax_agent_number", "").strip()
+        settings_obj.bas_agent_number = request.POST.get("bas_agent_number", "").strip()
+        settings_obj.asic_agent_number = request.POST.get("asic_agent_number", "").strip()
+
+        # ── Signatory ─────────────────────────────────────────────────────
+        settings_obj.signatory_name = request.POST.get("signatory_name", "").strip()
+        settings_obj.signatory_designation = request.POST.get("signatory_designation", "").strip()
+
+        # ── Professional body ─────────────────────────────────────────────
+        settings_obj.professional_body = request.POST.get("professional_body", "CPA Australia").strip()
+        settings_obj.membership_number = request.POST.get("membership_number", "").strip()
+
+        # ── Independence toggle (checkbox — present = True, absent = False) ─
+        settings_obj.practice_independence_maintained = (
+            request.POST.get("practice_independence_maintained") == "1"
+        )
+
         # ── Logo upload ───────────────────────────────────────────────────
         if "logo" in request.FILES:
             logo_file = request.FILES["logo"]

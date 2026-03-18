@@ -5456,6 +5456,63 @@ class FirmSettings(models.Model):
         ),
     )
 
+    # ── Registration numbers ────────────────────────────────────────────────
+    tax_agent_number = models.CharField(
+        max_length=20,
+        blank=True,
+        default="",
+        verbose_name="Tax Agent Number",
+        help_text="TPB Tax Agent registration number. Required on all engagement letters (APES 305).",
+    )
+    bas_agent_number = models.CharField(
+        max_length=20,
+        blank=True,
+        default="",
+        verbose_name="BAS Agent Number",
+        help_text="TPB BAS Agent registration number (if applicable).",
+    )
+    asic_agent_number = models.CharField(
+        max_length=20,
+        blank=True,
+        default="",
+        verbose_name="ASIC Agent Number",
+        help_text="ASIC registered agent number (if applicable).",
+    )
+
+    # ── Signatory ─────────────────────────────────────────────────────────
+    signatory_name = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        help_text="Name of the signing partner/director for document sign-off blocks.",
+    )
+    signatory_designation = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        help_text="Designation shown under signatory name (e.g. 'CPA, Registered Tax Agent').",
+    )
+
+    # ── Professional body ─────────────────────────────────────────────────
+    professional_body = models.CharField(
+        max_length=100,
+        blank=True,
+        default="CPA Australia",
+        help_text="Professional body membership (e.g. 'CPA Australia', 'CAANZ'). Drives dispute resolution clause wording.",
+    )
+    membership_number = models.CharField(
+        max_length=50,
+        blank=True,
+        default="",
+        help_text="Professional body membership number.",
+    )
+
+    # ── Independence ──────────────────────────────────────────────────────
+    practice_independence_maintained = models.BooleanField(
+        default=True,
+        help_text="Whether the practice maintains independence under APES 110. Drives independence statement in compilation reports.",
+    )
+
     # ── Compilation report ────────────────────────────────────────────────
     compilation_report_name = models.CharField(
         max_length=255,
@@ -5497,6 +5554,18 @@ class FirmSettings(models.Model):
     def save(self, *args, **kwargs):
         # Enforce singleton: always use pk=1
         self.pk = 1
+        # PIL validation: reject corrupted or non-image logo files at save time
+        if self.logo:
+            from PIL import Image
+            from django.core.exceptions import ValidationError
+            try:
+                img = Image.open(self.logo)
+                img.verify()
+            except Exception:
+                raise ValidationError(
+                    'Logo file is corrupted or not a valid image. '
+                    'Upload a PNG or JPEG under 2 MB.'
+                )
         super().save(*args, **kwargs)
 
     def delete(self, *args, **kwargs):

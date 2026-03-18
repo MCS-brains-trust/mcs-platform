@@ -278,12 +278,54 @@ def render_multi_document_set(
 def _render_docx(template, context):
     """Render a docxtpl template with the given context and return bytes."""
     from docxtpl import DocxTemplate
+    from core.document_context_builder import get_jinja_env, DocumentContextBuilder
+    from core.models import FirmSettings
+    import tempfile as _tempfile
+    import os as _os
 
     tpl = DocxTemplate(template.template_file.path)
-    tpl.render(context)
+
+    # Inject InlineImage logo for Word documents
+    firm = FirmSettings.get()
+    _temp_files = []
+    if firm.logo:
+        try:
+            from docxtpl import InlineImage
+            from docx.shared import Cm
+            try:
+                logo_path = firm.logo.path
+                if _os.path.exists(logo_path):
+                    context["practice_logo"] = InlineImage(tpl, logo_path, width=Cm(4.0))
+                else:
+                    context.setdefault("practice_logo", "")
+            except NotImplementedError:
+                # Object storage — download to temp file
+                import requests as _req
+                resp = _req.get(firm.logo.url, timeout=10)
+                resp.raise_for_status()
+                suffix = _os.path.splitext(firm.logo.name)[1] or ".png"
+                with _tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                    tmp.write(resp.content)
+                    _temp_files.append(tmp.name)
+                context["practice_logo"] = InlineImage(tpl, _temp_files[-1], width=Cm(4.0))
+        except Exception as _exc:
+            logger.warning("Logo injection failed in _render_docx: %s", _exc)
+            context.setdefault("practice_logo", "")
+    else:
+        context.setdefault("practice_logo", "")
+
+    jinja_env = get_jinja_env()
+    tpl.render(context, jinja_env=jinja_env)
 
     buffer = io.BytesIO()
     tpl.save(buffer)
+
+    for _tmp in _temp_files:
+        try:
+            _os.unlink(_tmp)
+        except Exception:
+            pass
+
     return buffer.getvalue()
 
 

@@ -236,26 +236,78 @@ def _get_standard_disclaimer():
 
 
 def _get_firm_details():
-    """Return firm details dict from FirmSettings."""
+    """Return firm details dict from FirmSettings — includes all new spec fields."""
     try:
         from core.models import FirmSettings
         fs = FirmSettings.get()
         return {
+            # Identity
             "firm_name": fs.firm_name or "MC & S Chartered Accountants",
+            "firm_legal_name": fs.firm_legal_name or fs.firm_name or "MC & S Chartered Accountants",
             "firm_abn": fs.firm_abn or "",
             "firm_address": " ".join(filter(None, [fs.firm_address_1, fs.firm_address_2])),
+            "firm_address_1": fs.firm_address_1 or "",
+            "firm_address_2": fs.firm_address_2 or "",
             "firm_phone": fs.firm_phone or "",
             "firm_email": fs.firm_email or "",
+            "firm_website": fs.firm_website or "",
             "firm_logo_url": fs.logo_url or "",
+            # Practice branding (new spec names)
+            "practice_name": fs.firm_name or "MC & S Chartered Accountants",
+            "practice_legal_name": fs.firm_legal_name or fs.firm_name or "MC & S Chartered Accountants",
+            "practice_abn": fs.firm_abn or "",
+            "practice_registered_address": " ".join(filter(None, [fs.firm_address_1, fs.firm_address_2])),
+            "practice_phone": fs.firm_phone or "",
+            "practice_email": fs.firm_email or "",
+            "practice_website": fs.firm_website or "",
+            "practice_logo_url": fs.logo_url or "",
+            # Registration numbers
+            "practice_tax_agent_number": fs.tax_agent_number or "",
+            "practice_bas_agent_number": fs.bas_agent_number or "",
+            "practice_asic_agent_number": fs.asic_agent_number or "",
+            # Signatory
+            "practice_signatory_name": fs.signatory_name or "",
+            "practice_signatory_designation": fs.signatory_designation or "",
+            # Professional body
+            "practice_professional_body": fs.professional_body or "CPA Australia",
+            "practice_membership_number": fs.membership_number or "",
+            # Independence
+            "practice_independence_maintained": fs.practice_independence_maintained,
+            # Compilation
+            "practice_compilation_report_name": fs.compilation_report_name or fs.firm_name or "",
+            # Disclaimer
+            "practice_legal_disclaimer": fs.document_disclaimer or "",
         }
     except Exception:
         return {
             "firm_name": "MC & S Chartered Accountants",
+            "firm_legal_name": "MC & S Chartered Accountants",
             "firm_abn": "",
             "firm_address": "",
+            "firm_address_1": "",
+            "firm_address_2": "",
             "firm_phone": "",
             "firm_email": "",
+            "firm_website": "",
             "firm_logo_url": "",
+            "practice_name": "MC & S Chartered Accountants",
+            "practice_legal_name": "MC & S Chartered Accountants",
+            "practice_abn": "",
+            "practice_registered_address": "",
+            "practice_phone": "",
+            "practice_email": "",
+            "practice_website": "",
+            "practice_logo_url": "",
+            "practice_tax_agent_number": "",
+            "practice_bas_agent_number": "",
+            "practice_asic_agent_number": "",
+            "practice_signatory_name": "",
+            "practice_signatory_designation": "",
+            "practice_professional_body": "CPA Australia",
+            "practice_membership_number": "",
+            "practice_independence_maintained": True,
+            "practice_compilation_report_name": "",
+            "practice_legal_disclaimer": "",
         }
 
 
