@@ -20,6 +20,32 @@ from core.models import (
 logger = logging.getLogger(__name__)
 
 
+def _sanitise_context_for_storage(ctx):
+    """
+    Return a copy of ctx with all non-JSON-serialisable values removed.
+    InlineImage objects (logo), date/Decimal types, etc. must not be
+    persisted to the database — they are only needed at render time.
+    """
+    from datetime import date as _date, datetime as _datetime
+    from decimal import Decimal as _Decimal
+
+    def _clean(obj):
+        if isinstance(obj, dict):
+            return {k: _clean(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_clean(i) for i in obj]
+        if isinstance(obj, (_date, _datetime)):
+            return obj.isoformat()
+        if isinstance(obj, _Decimal):
+            return float(obj)
+        if isinstance(obj, (str, int, float, bool)) or obj is None:
+            return obj
+        # Anything else (InlineImage, etc.) — drop it
+        return None
+
+    return _clean(ctx)
+
+
 def _format_acn_abn(acn, abn):
     """Build a combined 'ACN: xxx / ABN: xxx' display string."""
     parts = []
@@ -189,7 +215,7 @@ def generate_solvency_resolution(request, pk):
         entity=entity,
         document_type="solvency_resolution",
         title=f"Solvency Resolution — {entity.entity_name} — {fy.end_date.year}",
-        context_data=context,
+        context_data=_sanitise_context_for_storage(context),
         generated_by=request.user,
         status="generated",
     )
@@ -251,7 +277,7 @@ def generate_directors_declaration(request, pk):
         entity=entity,
         document_type="directors_declaration",
         title=f"Director's Declaration — {entity.entity_name} — {fy.end_date.year}",
-        context_data=context,
+        context_data=_sanitise_context_for_storage(context),
         generated_by=request.user,
         status="generated",
     )
@@ -386,7 +412,7 @@ def generate_loan_acknowledgment(request, pk):
         entity=entity,
         document_type="shareholder_loan_ack",
         title=f"Loan Acknowledgment — {data.get('shareholder_name', 'Unknown')} — {entity.entity_name}",
-        context_data=context,
+        context_data=_sanitise_context_for_storage(context),
         generated_by=request.user,
         status="generated",
     )
@@ -440,7 +466,7 @@ def generate_management_rep_letter(request, pk):
         entity=entity,
         document_type="management_rep_letter",
         title=f"Management Representation Letter — {entity.entity_name} — {fy.end_date.year}",
-        context_data=context,
+        context_data=_sanitise_context_for_storage(context),
         generated_by=request.user,
         status="generated",
     )
@@ -519,7 +545,7 @@ def generate_cover_letter(request, pk):
         entity=entity,
         document_type="client_cover_letter",
         title=f"Cover Letter — {entity.entity_name} — {fy.end_date.year}",
-        context_data=context,
+        context_data=_sanitise_context_for_storage(context),
         generated_by=request.user,
         status="generated",
     )
