@@ -1776,6 +1776,10 @@ class DocumentContextBuilder:
             ),
             "tpb_registration_statement": tpb_registration_statement,
             "dispute_resolution_clause": dispute_resolution_clause,
+            # Client portal & e-signing (optional — hidden by default)
+            "show_client_portal": bool(ctx.get("practice_website")),
+            "client_portal_url": ctx.get("practice_website", ""),
+            "show_fusesign": False,  # Set to True when FuseSign is configured
         }
 
     # ------------------------------------------------------------------
