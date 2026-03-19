@@ -74,16 +74,18 @@ def _prefill_xlsx(template_file_path, context):
     pattern = re.compile(r"\{\{(\w+)\}\}")
 
     for ws in wb.worksheets:
+        # iter_rows() skips ghost cells inside merged ranges; iterate all cells
+        # by coordinate so we catch the top-left cell of every merged range.
         for row in ws.iter_rows():
             for cell in row:
-                if cell.data_type == "s" and cell.value:
-                    original = cell.value
-                    def _replace(m):
-                        key = m.group(1)
-                        return str(context.get(key, m.group(0)))
-                    new_value = pattern.sub(_replace, original)
-                    if new_value != original:
-                        cell.value = new_value
+                val = cell.value
+                if not isinstance(val, str):
+                    continue
+                new_value = pattern.sub(
+                    lambda m: str(context.get(m.group(1), m.group(0))), val
+                )
+                if new_value != val:
+                    cell.value = new_value
 
     # Also try to write to named ranges (if the template uses them)
     for range_name, value in context.items():
@@ -201,13 +203,16 @@ def workpaper_download(request, fy_pk, template_pk):
     safe_entity = re.sub(r'[^\w\s\-]', '', entity.entity_name).strip()
     safe_name = re.sub(r'[^\w\s\-]', '', template.name).strip()
     filename = f"{safe_entity} — {safe_name} {fy.year_label}.{ext}"
-    # RFC 5987 encoding for non-ASCII characters in Content-Disposition
-    filename_ascii = filename.encode("ascii", "replace").decode("ascii").replace("?", "_")
+    # Build a safe ASCII fallback (replace em-dash and other non-ASCII with hyphen)
+    filename_ascii = re.sub(r'[^\x20-\x7E]', '-', filename)
+    # RFC 5987 percent-encoded UTF-8 filename for browsers that support it
+    from urllib.parse import quote
+    filename_encoded = quote(filename, safe=" -_.()")
 
     response = HttpResponse(buf.read(), content_type=content_type)
     response["Content-Disposition"] = (
         f'attachment; filename="{filename_ascii}"; '
-        f"filename*=UTF-8''{filename.encode('utf-8').hex()}"
+        f"filename*=UTF-8''{filename_encoded}"
     )
     return response
 
