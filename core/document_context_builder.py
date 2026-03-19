@@ -1747,21 +1747,54 @@ class DocumentContextBuilder:
                 "commencing legal proceedings."
             )
 
+        # engagement_date: wizard sends key 'date', DCB also checks 'engagement_date'
+        _raw_date = (
+            self.wizard_data.get("engagement_date")
+            or self.wizard_data.get("date")
+            or format_date_long(date.today())
+        )
+
         return {
             "client_name": ctx.get("entity_name", ""),
             "client_address": ctx.get("entity_postal_address", ""),
-            "engagement_date": self.wizard_data.get("engagement_date", format_date_long(date.today())),
+            "engagement_date": _raw_date,
             "addressee_salutation": ctx.get("addressee_salutation", "Dear Client"),
             "services_engaged": services,
+            # -------------------------------------------------------
+            # Service flags — keys MUST match wizard service IDs
+            # (see views_partnership_docs._get_service_options)
+            # -------------------------------------------------------
             "show_service_compilation": "compilation" in services,
+            "show_service_financial_statements": "financial_statements" in services,
             "show_service_tax_return": "tax_return" in services,
-            "show_service_bas": "bas_preparation" in services,
-            "show_service_asic": "asic_review" in services,
-            "show_service_trust_distribution": "trust_distribution_planning" in services and ctx.get("is_trust", False),
-            "show_service_div7a": "div7a_monitoring" in services,
+            # wizard sends 'bas'; also accept legacy 'bas_preparation'
+            "show_service_bas": "bas" in services or "bas_preparation" in services,
+            "show_service_bookkeeping": "bookkeeping" in services,
+            "show_service_tax_planning": "tax_planning" in services,
+            # wizard sends 'payroll'; also accept legacy 'payroll_tax'
+            "show_service_payroll": "payroll" in services or "payroll_tax" in services,
+            # wizard sends 'asic_compliance'; also accept legacy 'asic_review'
+            "show_service_asic": "asic_compliance" in services or "asic_review" in services,
+            # wizard sends 'trust_distribution'; also accept legacy 'trust_distribution_planning'
+            "show_service_trust_distribution": (
+                ("trust_distribution" in services or "trust_distribution_planning" in services)
+                and ctx.get("is_trust", False)
+            ),
+            "show_service_trust_deed_review": "trust_deed_review" in services,
+            # wizard sends 'div7a_monitoring'
+            "show_service_div7a": "div7a_monitoring" in services or "div7a" in services,
             "show_service_fbt": "fbt" in services,
             "show_service_tpar": "tpar" in services,
-            "show_service_payroll_tax": "payroll_tax" in services,
+            # Company-specific
+            "show_service_dividend_management": "dividend_management" in services,
+            "show_service_directors_report": "directors_report" in services,
+            # Partnership-specific
+            "show_service_partner_statements": "partner_statements" in services,
+            "show_service_partnership_agreement_review": "partnership_agreement_review" in services,
+            # SMSF-specific
+            "show_service_smsf_audit": "smsf_audit" in services,
+            "show_service_smsf_compliance": "smsf_compliance" in services,
+            "show_service_member_statements": "member_statements" in services,
             "fee_amount": format_currency(fee_amount) if fee_amount else "",
             "fee_basis": fee_basis,
             "show_fixed_fee_clause": fee_basis == "fixed",
