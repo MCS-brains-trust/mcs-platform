@@ -127,7 +127,7 @@ def _detect_active_nav(path):
         return 'connections'
     if path.startswith('/import/bulk'):
         return 'import'
-    if path.startswith('/admin/firm-settings'):
+    if path.startswith('/settings/firm'):
         return 'firm_settings'
 
     # Dashboard (root or review dashboard)

@@ -437,7 +437,9 @@ urlpatterns = [
     path("api/years/<uuid:fy_pk>/workpapers/", views_workpapers.workpaper_list_api, name="workpaper_list_api"),
 
     # ===== FIRM SETTINGS =====
-    path("admin/firm-settings/", views_firm_settings.firm_settings, name="firm_settings"),
+    # NOTE: Must NOT use the admin/ prefix — Django's built-in admin site
+    # intercepts all /admin/* requests before core.urls is consulted.
+    path("settings/firm/", views_firm_settings.firm_settings, name="firm_settings"),
 
     # ===== WEBHOOKS (third-party callbacks) =====
     path("webhooks/fusesign/", views_webhooks.fusesign_webhook, name="fusesign_webhook"),
