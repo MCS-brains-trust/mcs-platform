@@ -1880,20 +1880,8 @@ function submitReallocation() {
         .then(r => r.json())
         .then(data => {
             if (data.ok) {
-                // Update the row in-place
-                const row = document.querySelector(`tr[data-txn-id="${reallocateTxnId}"]`);
-                if (row) {
-                    const acctCell = row.querySelector('.txn-account');
-                    if (acctCell) acctCell.innerHTML = `<code class="small">${data.account_code}</code>`;
-                    const taxCell = row.querySelector('.txn-tax');
-                    if (taxCell && data.tax_type) {
-                        const badgeClass = data.tax_type.includes('GST on') ? 'bg-info text-dark' : 'bg-secondary';
-                        taxCell.innerHTML = `<span class="badge ${badgeClass} small">${data.tax_type}</span>`;
-                    }
-                    row.style.backgroundColor = '#fff3cd';
-                    setTimeout(() => { row.style.backgroundColor = ''; }, 2000);
-                }
                 bootstrap.Modal.getInstance(document.getElementById('reallocateModal')).hide();
+                location.reload();
             } else {
                 alert('Error: ' + (data.error || 'Unknown error'));
             }
@@ -1937,16 +1925,8 @@ function submitReallocation() {
                     }
                 });
                 // Uncheck all and hide bulk bar
-                cbs.forEach(cb => { cb.checked = false; });
-                updateBulkBar(reallocateBulkSection);
                 bootstrap.Modal.getInstance(document.getElementById('reallocateModal')).hide();
-                // Show success toast
-                const toastHtml = `<div class="position-fixed bottom-0 end-0 p-3" style="z-index:9999">
-                    <div class="toast show bg-success text-white" role="alert">
-                        <div class="toast-body"><i class="bi bi-check-circle"></i> ${data.updated_count} transaction${data.updated_count !== 1 ? 's' : ''} reallocated successfully. Refresh the page to see updated BAS figures.</div>
-                    </div></div>`;
-                document.body.insertAdjacentHTML('beforeend', toastHtml);
-                setTimeout(() => { document.querySelector('.toast')?.closest('.position-fixed')?.remove(); }, 5000);
+                location.reload();
             } else {
                 alert('Error: ' + (data.error || 'Unknown error'));
             }
