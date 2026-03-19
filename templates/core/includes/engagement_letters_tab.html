@@ -254,7 +254,7 @@ const elCsrfToken = '{{ csrf_token }}';
 
 function archiveEngagementLetter(pk) {
     if (!confirm('Mark this engagement letter as superseded? It will remain on file for audit purposes.')) return;
-    fetch(`/core/api/engagement-letters/${pk}/archive/`, {
+    fetch(`/api/engagement-letters/${pk}/archive/`, {
         method: 'POST',
         headers: { 'X-CSRFToken': elCsrfToken },
     })
@@ -271,7 +271,7 @@ function archiveEngagementLetter(pk) {
 
 function deleteEngagementLetter(pk) {
     if (!confirm('Permanently delete this engagement letter? This cannot be undone.')) return;
-    fetch(`/core/api/engagement-letters/${pk}/delete/`, {
+    fetch(`/api/engagement-letters/${pk}/delete/`, {
         method: 'POST',
         headers: { 'X-CSRFToken': elCsrfToken },
     })
@@ -291,7 +291,7 @@ document.querySelectorAll('.el-status-select').forEach(function(sel) {
     sel.addEventListener('change', function() {
         const pk = this.dataset.letterPk;
         const newStatus = this.value;
-        fetch(`/core/api/engagement-letters/${pk}/status/`, {
+        fetch(`/api/engagement-letters/${pk}/status/`, {
             method: 'POST',
             headers: {
                 'X-CSRFToken': elCsrfToken,
