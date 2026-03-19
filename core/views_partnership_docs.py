@@ -396,6 +396,7 @@ def engagement_letter_generate(request, pk):
 
     draft_id = data.get("draft_id")
     if draft_id:
+        # Explicit draft_id supplied — update that specific record
         doc = get_object_or_404(
             LegalDocument,
             pk=draft_id,
@@ -411,17 +412,21 @@ def engagement_letter_generate(request, pk):
         doc.generated_by = request.user
         doc.save(update_fields=["financial_year", "template", "title", "parameters", "context_data", "status", "generated_by"])
         try:
-            result = render_legal_document(doc.pk)
+            render_result = render_legal_document(doc.pk)
         except Exception as exc:
             logger.exception("Engagement letter draft re-render failed: %s", exc)
             return JsonResponse({
                 "status": "error",
                 "error": f"Could not save the engagement letter draft: {exc}",
             }, status=400)
-        if result.get("status") != "ok":
-            return JsonResponse(result, status=400)
+        if render_result.get("status") != "ok":
+            return JsonResponse(render_result, status=400)
         document_id = str(doc.pk)
+        docx_url = doc.generated_file.url if doc.generated_file else None
+        pdf_url = doc.pdf_file.url if doc.pdf_file else None
     else:
+        # No draft_id — render_and_create_document will upsert (update existing draft
+        # for same entity + financial_year + doc_type, or create a new one).
         result = render_and_create_document(
             entity=entity,
             financial_year=fy,
@@ -440,6 +445,8 @@ def engagement_letter_generate(request, pk):
         doc.context_data = context
         doc.status = LegalDocument.Status.DRAFT
         doc.save(update_fields=["title", "context_data", "status"])
+        docx_url = result.get("docx_url")
+        pdf_url = result.get("pdf_url")
 
     # Auto-satisfy roll-forward gate
     _auto_create_engagement_letter(doc, entity, fy, request.user)
@@ -449,8 +456,8 @@ def engagement_letter_generate(request, pk):
         "document_id": document_id,
         "message": "Engagement letter generated and saved. The roll-forward gate for this year is now satisfied.",
         "redirect_url": f"/entities/{entity.pk}/?tab=engagement_letters",
-        "docx_url": result.get("docx_url"),
-        "pdf_url": result.get("pdf_url"),
+        "docx_url": docx_url,
+        "pdf_url": pdf_url,
     })
 
 

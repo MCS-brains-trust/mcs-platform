@@ -138,29 +138,59 @@ def render_and_create_document(
         # Step 2: Convert to PDF
         pdf_bytes = _convert_to_pdf(docx_bytes)
 
-        # Step 3: Create LegalDocument record
-        # Auto-increment version
-        existing_count = LegalDocument.objects.filter(
-            entity=entity,
-            document_type=doc_type,
-        ).count()
+        # Step 3: Create or update LegalDocument record
+        # If a draft already exists for this entity + financial_year + doc_type, update it
+        # instead of creating a duplicate.
+        existing_draft = None
+        if financial_year:
+            existing_draft = LegalDocument.objects.filter(
+                entity=entity,
+                financial_year=financial_year,
+                document_type=doc_type,
+                status=LegalDocument.Status.DRAFT,
+            ).order_by('-created_at').first()
 
-        doc = LegalDocument.objects.create(
-            entity=entity,
-            financial_year=financial_year,
-            template=template,
-            document_type=doc_type,
-            version=existing_count + 1,
-            status=LegalDocument.Status.DRAFT,
-            parameters=params,
-            generated_by=user,
-            disclaimer_acknowledged=disclaimer_acknowledged,
-            disclaimer_acknowledged_at=timezone.now() if disclaimer_acknowledged else None,
-        )
+        if existing_draft:
+            doc = existing_draft
+            doc.template = template
+            doc.parameters = params
+            doc.generated_by = user
+            doc.disclaimer_acknowledged = disclaimer_acknowledged
+            doc.disclaimer_acknowledged_at = timezone.now() if disclaimer_acknowledged else None
+            doc.save(update_fields=[
+                'template', 'parameters', 'generated_by',
+                'disclaimer_acknowledged', 'disclaimer_acknowledged_at',
+            ])
+        else:
+            # Auto-increment version
+            existing_count = LegalDocument.objects.filter(
+                entity=entity,
+                document_type=doc_type,
+            ).count()
 
-        # Step 4: Save files
+            doc = LegalDocument.objects.create(
+                entity=entity,
+                financial_year=financial_year,
+                template=template,
+                document_type=doc_type,
+                version=existing_count + 1,
+                status=LegalDocument.Status.DRAFT,
+                parameters=params,
+                generated_by=user,
+                disclaimer_acknowledged=disclaimer_acknowledged,
+                disclaimer_acknowledged_at=timezone.now() if disclaimer_acknowledged else None,
+            )
+
+        # Step 4: Save files (delete old files first if updating an existing draft)
         safe_name = entity.entity_name.replace(" ", "_").replace("/", "_")
         fy_year = str(financial_year.end_date.year) if financial_year else ""
+
+        if existing_draft:
+            # Delete old stored files before saving new ones
+            if doc.generated_file:
+                doc.generated_file.delete(save=False)
+            if doc.pdf_file:
+                doc.pdf_file.delete(save=False)
 
         docx_filename = f"{safe_name}_{doc_type}_{fy_year}_v{doc.version}.docx"
         doc.generated_file.save(docx_filename, ContentFile(docx_bytes))
