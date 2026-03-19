@@ -24,6 +24,33 @@ from core.models import (
 logger = logging.getLogger(__name__)
 
 
+def _sanitise_context_for_storage(ctx):
+    """
+    Return a copy of ctx with all non-JSON-serialisable values removed.
+    InlineImage objects (logo), date/Decimal types, etc. must not be
+    persisted to the database — they are only needed at render time.
+    """
+    import json
+    from datetime import date as _date, datetime as _datetime
+    from decimal import Decimal as _Decimal
+
+    def _clean(obj):
+        if isinstance(obj, dict):
+            return {k: _clean(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_clean(i) for i in obj]
+        if isinstance(obj, (_date, _datetime)):
+            return obj.isoformat()
+        if isinstance(obj, _Decimal):
+            return float(obj)
+        if isinstance(obj, (str, int, float, bool)) or obj is None:
+            return obj
+        # Anything else (InlineImage, etc.) — drop it
+        return None
+
+    return _clean(ctx)
+
+
 def _build_next_financial_year_option(entity, financial_years):
     if financial_years:
         latest_fy = max(financial_years, key=lambda fy: fy.end_date)
@@ -181,7 +208,7 @@ def generate_partner_statements(request, pk):
             entity=entity,
             document_type="partner_statement",
             title=f"Partner Statement — {partner.full_name} — {entity.entity_name} {fy.end_date.year}",
-            context_data=context,
+            context_data=_sanitise_context_for_storage(context),
             generated_by=request.user,
             status="generated",
         )
@@ -219,7 +246,7 @@ def generate_partnership_tax_summary(request, pk):
         entity=entity,
         document_type="partnership_tax_summary",
         title=f"Partnership Tax Summary — {entity.entity_name} — {fy.end_date.year}",
-        context_data=context,
+        context_data=_sanitise_context_for_storage(context),
         generated_by=request.user,
         status="generated",
     )
@@ -414,9 +441,8 @@ def engagement_letter_generate(request, pk):
         doc.template = template
         doc.title = f"Engagement Letter — {entity.entity_name} — {fy.year_label}"
         doc.parameters = params
-        doc.context_data = context
+        doc.context_data = _sanitise_context_for_storage(context)
         doc.status = LegalDocument.Status.DRAFT
-        doc.generated_by = request.user
         doc.save(update_fields=["financial_year", "template", "title", "parameters", "context_data", "status", "generated_by"])
         try:
             render_result = render_legal_document(doc.pk)
@@ -449,12 +475,11 @@ def engagement_letter_generate(request, pk):
         document_id = result.get("document_id")
         doc = LegalDocument.objects.get(pk=document_id)
         doc.title = f"Engagement Letter — {entity.entity_name} — {fy.year_label}"
-        doc.context_data = context
+        doc.context_data = _sanitise_context_for_storage(context)
         doc.status = LegalDocument.Status.DRAFT
         doc.save(update_fields=["title", "context_data", "status"])
         docx_url = result.get("docx_url")
         pdf_url = result.get("pdf_url")
-
     # Auto-satisfy roll-forward gate
     _auto_create_engagement_letter(doc, entity, fy, request.user)
 
@@ -624,11 +649,10 @@ def engagement_letter_quick_generate(request, pk):
 
     document_id = result.get("document_id")
     doc = LegalDocument.objects.get(pk=document_id)
-    doc.title = f"Engagement Letter \u2014 {entity.entity_name} \u2014 {fy.year_label}"
-    doc.context_data = context
+    doc.title = f"Engagement Letter — {entity.entity_name} — {fy.year_label}"
+    doc.context_data = _sanitise_context_for_storage(context)
     doc.status = LegalDocument.Status.DRAFT
     doc.save(update_fields=["title", "context_data", "status"])
-
     config.last_generated_fy = fy
     config.save(update_fields=["last_generated_fy"])
 
