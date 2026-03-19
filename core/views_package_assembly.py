@@ -165,6 +165,11 @@ def package_download_bundle(request, pk):
     Download the full client package as a single merged PDF bundle.
     Combines Financial Statements + all LegalDocuments in the correct order.
     The accountant can then upload this bundle to FuseSign manually.
+
+    Optional query param:
+        ?include=financial_statements,directors_declaration,...
+    When provided, only the listed document types are included in the bundle.
+    When omitted, all available documents are included (default behaviour).
     """
     fy = get_object_or_404(FinancialYear, pk=pk)
 
@@ -182,9 +187,15 @@ def package_download_bundle(request, pk):
             content_type="text/plain",
         )
 
+    # Parse optional ?include= query param (comma-separated doc type list)
+    include_param = request.GET.get("include", "").strip()
+    include_types = None
+    if include_param:
+        include_types = {t.strip() for t in include_param.split(",") if t.strip()}
+
     try:
         from core.package_pdf_renderer import build_package_bundle
-        pdf_bytes, filename = build_package_bundle(fy)
+        pdf_bytes, filename = build_package_bundle(fy, include_types=include_types)
 
         response = HttpResponse(pdf_bytes, content_type="application/pdf")
         response["Content-Disposition"] = f'attachment; filename="{filename}"'

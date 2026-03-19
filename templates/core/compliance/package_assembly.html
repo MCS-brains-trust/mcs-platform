@@ -97,6 +97,7 @@
                                 <th>Document</th>
                                 <th class="text-center">Required</th>
                                 <th class="text-center">Status</th>
+                                <th class="text-center" style="width:80px" title="Tick to include in the downloaded bundle">Include</th>
                                 <th class="text-center">Action</th>
                             </tr>
                         </thead>
@@ -127,6 +128,13 @@
                                     <span class="badge bg-warning text-dark">Missing</span>
                                     {% else %}
                                     <span class="badge bg-light text-muted">N/A</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    {% if item.present %}
+                                    <input type="checkbox" class="form-check-input bundle-include-cb" value="{{ item.doc_type }}" checked title="Include {{ item.label }} in bundle">
+                                    {% else %}
+                                    <input type="checkbox" class="form-check-input bundle-include-cb" value="{{ item.doc_type }}" disabled title="{{ item.label }} not present — cannot include">
                                     {% endif %}
                                 </td>
                                 <td class="text-center">
@@ -171,9 +179,13 @@
                     {% endif %}
                     <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary">Back</a>
                     {% if fy.package_assembled %}
-                    <button class="btn btn-info" onclick="sendForSigning()"
+                    <button id="downloadBundleBtn" class="btn btn-info" onclick="downloadBundle()"
                             {% if not fy.can_assemble_package %}disabled title="Client package is only available after Eva has cleared this financial year"{% endif %}>
-                        <i class="bi bi-download"></i> Download Package Bundle
+                        <span id="downloadBundleBtnLabel"><i class="bi bi-download"></i> Download Package Bundle</span>
+                        <span id="downloadBundleSpinner" class="d-none">
+                            <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+                            &#x23F3; Preparing PDF&hellip;
+                        </span>
                     </button>
                     {% else %}
                     <button class="btn btn-success" onclick="assemblePackage()"
@@ -391,6 +403,7 @@
 const CSRF_TOKEN = '{{ csrf_token }}';
 const ASSEMBLE_URL = '{% url "core:package_assemble" pk=fy.pk %}';
 const SIGN_URL = '{% url "core:package_send_for_signing" pk=fy.pk %}';
+const DOWNLOAD_BUNDLE_URL = '{% url "core:package_download_bundle" pk=fy.pk %}';
 const COMMENTARY_GENERATE_URL = '{% url "core:yearend_commentary_generate" pk=fy.pk %}';
 const COMMENTARY_POLL_URL = '{% url "core:yearend_commentary_poll" pk=fy.pk %}';
 const COMMENTARY_SAVE_URL = '{% url "core:yearend_commentary_save" pk=fy.pk %}';
@@ -435,20 +448,47 @@ function assemblePackage() {
 }
 
 function sendForSigning() {
-    if (!confirm('Download the client package as a single PDF bundle for upload to FuseSign?')) return;
-    fetch(SIGN_URL, {
-        method: 'POST',
-        headers: {'X-CSRFToken': CSRF_TOKEN},
-    })
-    .then(r => r.json())
-    .then(data => {
-        if (data.status === 'ok' && data.download_url) {
-            window.location.href = data.download_url;
-        } else {
-            alert('Error: ' + (data.error || 'Unknown error'));
-        }
-    })
-    .catch(err => alert('Error: ' + err.message));
+    // Legacy — kept for any remaining references; delegates to downloadBundle.
+    downloadBundle();
+}
+
+function downloadBundle() {
+    // Collect checked document types
+    const checked = Array.from(
+        document.querySelectorAll('.bundle-include-cb:checked:not(:disabled)')
+    ).map(cb => cb.value);
+
+    if (checked.length === 0) {
+        alert('Please tick at least one document to include in the bundle.');
+        return;
+    }
+
+    // Show loading state on button
+    const btn = document.getElementById('downloadBundleBtn');
+    const label = document.getElementById('downloadBundleBtnLabel');
+    const spinner = document.getElementById('downloadBundleSpinner');
+    btn.disabled = true;
+    label.classList.add('d-none');
+    spinner.classList.remove('d-none');
+
+    // Build URL with selected doc types as query param
+    const url = DOWNLOAD_BUNDLE_URL + '?include=' + encodeURIComponent(checked.join(','));
+
+    // Use a hidden iframe so the page stays open while the PDF downloads.
+    // We detect completion by polling — when the iframe src is set the
+    // browser starts downloading; we restore the button after a short delay.
+    const iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+    document.body.appendChild(iframe);
+    iframe.src = url;
+
+    // Restore button after 8 s (generous time for PDF generation)
+    setTimeout(() => {
+        btn.disabled = false;
+        label.classList.remove('d-none');
+        spinner.classList.add('d-none');
+        document.body.removeChild(iframe);
+    }, 8000);
 }
 
 // ---- Year-End Commentary ----

@@ -177,9 +177,16 @@ def render_legal_doc_to_pdf_bytes(doc):
         return None
 
 
-def build_package_bundle(fy):
+def build_package_bundle(fy, include_types=None):
     """
     Build a single merged PDF bundle for the given FinancialYear.
+
+    Args:
+        fy: FinancialYear instance.
+        include_types: Optional list/set of document type strings to include.
+            When provided, only those types are rendered into the bundle.
+            When None (default), all documents in DOCUMENT_ORDER are included.
+
     Returns (pdf_bytes, filename) or raises an exception.
     """
     from pypdf import PdfWriter, PdfReader
@@ -201,7 +208,15 @@ def build_package_bundle(fy):
     entity_name = entity.entity_name
     fy_year = fy.end_date.year
 
-    for doc_type in DOCUMENT_ORDER:
+    # If the caller specified a subset of documents, filter DOCUMENT_ORDER.
+    # Always preserve the canonical ordering even when filtering.
+    active_order = (
+        [dt for dt in DOCUMENT_ORDER if dt in include_types]
+        if include_types is not None
+        else DOCUMENT_ORDER
+    )
+
+    for doc_type in active_order:
         if doc_type == "financial_statements":
             # Primary path: regenerate clean FS via the docxtpl template
             # service with include_watermark=False, then convert to PDF.
