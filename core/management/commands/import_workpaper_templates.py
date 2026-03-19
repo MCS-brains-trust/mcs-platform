@@ -1,7 +1,7 @@
 """
 Management command: import_workpaper_templates
 
-Bulk-registers the 19 MC&S workpaper .docx templates into the WorkPaperTemplate
+Bulk-registers the 19 MC&S workpaper .xlsx templates into the WorkPaperTemplate
 database table.  The converted files (with platform merge fields injected) must
 be present in the directory specified by --source (default: ./workpaper_templates/).
 
@@ -23,7 +23,7 @@ from core.models import WorkPaperTemplate
 
 WORKPAPER_REGISTRY = [
     {
-        "filename": "WP01_Div7A_Loan_Calculation.docx",
+        "filename": "WP01_Div7A_Loan_Calculation.xlsx",
         "name": "Division 7A — Loan Calculation & Minimum Repayment Schedule",
         "category": WorkPaperTemplate.Category.DIVISION_7A,
         "description": (
@@ -35,7 +35,7 @@ WORKPAPER_REGISTRY = [
         "sort_order": 10,
     },
     {
-        "filename": "WP02_Div7A_UPE_Confirmation.docx",
+        "filename": "WP02_Div7A_UPE_Confirmation.xlsx",
         "name": "Division 7A — UPE Sub-Trust or Repayment Confirmation",
         "category": WorkPaperTemplate.Category.DIVISION_7A,
         "description": (
@@ -47,7 +47,7 @@ WORKPAPER_REGISTRY = [
         "sort_order": 20,
     },
     {
-        "filename": "WP19_Div7A_Unfranked_Dividend_Calculation.docx",
+        "filename": "WP19_Div7A_Unfranked_Dividend_Calculation.xlsx",
         "name": "Division 7A — Unfranked Dividend Calculation",
         "category": WorkPaperTemplate.Category.DIVISION_7A,
         "description": (
@@ -58,7 +58,7 @@ WORKPAPER_REGISTRY = [
         "sort_order": 30,
     },
     {
-        "filename": "WP03_SGC_Shortfall_Calculation.docx",
+        "filename": "WP03_SGC_Shortfall_Calculation.xlsx",
         "name": "Superannuation Guarantee — Shortfall Calculation",
         "category": WorkPaperTemplate.Category.PAYROLL,
         "description": (
@@ -69,7 +69,7 @@ WORKPAPER_REGISTRY = [
         "sort_order": 10,
     },
     {
-        "filename": "WP04_Contractor_SG_Classification.docx",
+        "filename": "WP04_Contractor_SG_Classification.xlsx",
         "name": "Contractor SG Classification Assessment",
         "category": WorkPaperTemplate.Category.PAYROLL,
         "description": (
@@ -80,7 +80,7 @@ WORKPAPER_REGISTRY = [
         "sort_order": 20,
     },
     {
-        "filename": "WP14_Wages_Payroll_Reconciliation.docx",
+        "filename": "WP14_Wages_Payroll_Reconciliation.xlsx",
         "name": "Wages & Payroll Reconciliation",
         "category": WorkPaperTemplate.Category.PAYROLL,
         "description": (
@@ -91,7 +91,7 @@ WORKPAPER_REGISTRY = [
         "sort_order": 30,
     },
     {
-        "filename": "WP05_GST_Reconciliation_Schedule.docx",
+        "filename": "WP05_GST_Reconciliation_Schedule.xlsx",
         "name": "GST Reconciliation Schedule",
         "category": WorkPaperTemplate.Category.ACCOUNT_RECONCILIATION,
         "description": (
@@ -103,7 +103,7 @@ WORKPAPER_REGISTRY = [
         "sort_order": 10,
     },
     {
-        "filename": "WP13_Bank_Reconciliation_Summary.docx",
+        "filename": "WP13_Bank_Reconciliation_Summary.xlsx",
         "name": "Bank Reconciliation Summary",
         "category": WorkPaperTemplate.Category.ACCOUNT_RECONCILIATION,
         "description": (
@@ -115,7 +115,7 @@ WORKPAPER_REGISTRY = [
         "sort_order": 20,
     },
     {
-        "filename": "WP18_Prepayments_Accruals_Schedule.docx",
+        "filename": "WP18_Prepayments_Accruals_Schedule.xlsx",
         "name": "Prepayments & Accruals Schedule",
         "category": WorkPaperTemplate.Category.ACCOUNT_RECONCILIATION,
         "description": (
@@ -126,7 +126,7 @@ WORKPAPER_REGISTRY = [
         "sort_order": 30,
     },
     {
-        "filename": "WP06_Section100A_Risk_Assessment.docx",
+        "filename": "WP06_Section100A_Risk_Assessment.xlsx",
         "name": "Section 100A Risk Assessment",
         "category": WorkPaperTemplate.Category.TRUST_DISTRIBUTION,
         "description": (
@@ -138,7 +138,7 @@ WORKPAPER_REGISTRY = [
         "sort_order": 10,
     },
     {
-        "filename": "WP07_Trust_Distribution_Reconciliation.docx",
+        "filename": "WP07_Trust_Distribution_Reconciliation.xlsx",
         "name": "Trust Distribution Reconciliation",
         "category": WorkPaperTemplate.Category.TRUST_DISTRIBUTION,
         "description": (
@@ -149,7 +149,7 @@ WORKPAPER_REGISTRY = [
         "sort_order": 20,
     },
     {
-        "filename": "WP08_Going_Concern_Assessment.docx",
+        "filename": "WP08_Going_Concern_Assessment.xlsx",
         "name": "Going Concern Assessment",
         "category": WorkPaperTemplate.Category.GENERAL,
         "description": (
@@ -161,7 +161,7 @@ WORKPAPER_REGISTRY = [
         "sort_order": 10,
     },
     {
-        "filename": "WP09_Related_Party_Transaction_Register.docx",
+        "filename": "WP09_Related_Party_Transaction_Register.xlsx",
         "name": "Related Party Transaction Register",
         "category": WorkPaperTemplate.Category.GENERAL,
         "description": (
@@ -172,7 +172,7 @@ WORKPAPER_REGISTRY = [
         "sort_order": 20,
     },
     {
-        "filename": "WP10_ATO_Benchmark_Comparison.docx",
+        "filename": "WP10_ATO_Benchmark_Comparison.xlsx",
         "name": "ATO Industry Benchmark Comparison",
         "category": WorkPaperTemplate.Category.GENERAL,
         "description": (
@@ -183,7 +183,7 @@ WORKPAPER_REGISTRY = [
         "sort_order": 30,
     },
     {
-        "filename": "WP11_TPAR_Contractor_Register.docx",
+        "filename": "WP11_TPAR_Contractor_Register.xlsx",
         "name": "TPAR Contractor Payment Register",
         "category": WorkPaperTemplate.Category.GENERAL,
         "description": (
@@ -194,7 +194,7 @@ WORKPAPER_REGISTRY = [
         "sort_order": 40,
     },
     {
-        "filename": "WP12_Thin_Capitalisation_Assessment.docx",
+        "filename": "WP12_Thin_Capitalisation_Assessment.xlsx",
         "name": "Thin Capitalisation Assessment",
         "category": WorkPaperTemplate.Category.GENERAL,
         "description": (
@@ -205,7 +205,7 @@ WORKPAPER_REGISTRY = [
         "sort_order": 50,
     },
     {
-        "filename": "WP15_Fixed_Asset_Movement_Schedule.docx",
+        "filename": "WP15_Fixed_Asset_Movement_Schedule.xlsx",
         "name": "Fixed Asset Movement Schedule",
         "category": WorkPaperTemplate.Category.DEPRECIATION,
         "description": (
@@ -216,7 +216,7 @@ WORKPAPER_REGISTRY = [
         "sort_order": 10,
     },
     {
-        "filename": "WP16_Loans_Borrowings_Movement_Schedule.docx",
+        "filename": "WP16_Loans_Borrowings_Movement_Schedule.xlsx",
         "name": "Loans & Borrowings Movement Schedule",
         "category": WorkPaperTemplate.Category.LOAN_ACCOUNT,
         "description": (
@@ -228,7 +228,7 @@ WORKPAPER_REGISTRY = [
         "sort_order": 10,
     },
     {
-        "filename": "WP17_FBT_Exposure_Summary.docx",
+        "filename": "WP17_FBT_Exposure_Summary.xlsx",
         "name": "FBT Exposure Summary",
         "category": WorkPaperTemplate.Category.GENERAL,
         "description": (
@@ -242,13 +242,13 @@ WORKPAPER_REGISTRY = [
 
 
 class Command(BaseCommand):
-    help = "Bulk-register MC&S workpaper .docx templates into the WorkPaperTemplate table."
+    help = "Bulk-register MC&S workpaper .xlsx templates into the WorkPaperTemplate table."
 
     def add_arguments(self, parser):
         parser.add_argument(
             "--source",
             default=None,
-            help="Directory containing the converted .docx files. "
+            help="Directory containing the converted .xlsx files. "
                  "Defaults to workpaper_templates/ inside the project root.",
         )
         parser.add_argument(
