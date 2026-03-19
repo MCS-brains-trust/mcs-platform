@@ -239,18 +239,10 @@
         </button>
     </li>
     <li class="nav-item">
-        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#salesTab" type="button">
-            <i class="bi bi-graph-up-arrow"></i> Sales Detail
-            {% with total=sales_detail.gst_txns|length|add:sales_detail.non_gst_txns|length %}
-            {% if total %}({{ total }}){% else %}({{ sales_lines|length }}){% endif %}
-            {% endwith %}
-        </button>
-    </li>
-    <li class="nav-item">
-        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#purchasesTab" type="button">
-            <i class="bi bi-cart"></i> Purchases Detail
-            {% with total=purchase_detail.gst_txns|length|add:purchase_detail.non_gst_txns|length %}
-            {% if total %}({{ total }}){% else %}({{ purchase_lines|length }}){% endif %}
+        <button class="nav-link" data-bs-toggle="tab" data-bs-target="#basDetailTab" type="button">
+            <i class="bi bi-list-columns-reverse"></i> BAS Detail
+            {% with total=sales_detail.gst_txns|length|add:sales_detail.non_gst_txns|length|add:purchase_detail.gst_txns|length|add:purchase_detail.non_gst_txns|length %}
+            {% if total %}({{ total }}){% endif %}
             {% endwith %}
         </button>
     </li>
@@ -367,419 +359,313 @@
         </div>
     </div>
 
-    <!-- Sales Detail Tab -->
-    <div class="tab-pane fade" id="salesTab">
-        {% if sales_detail.gst_txns or sales_detail.non_gst_txns %}
-        <!-- View Toggle + Bulk Actions -->
-        <div class="d-flex justify-content-between align-items-center mb-3">
+    <!-- BAS Detail Tab (consolidated Sales + Purchases) -->
+    <div class="tab-pane fade" id="basDetailTab">
+        <!-- Toolbar -->
+        <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
             <div>
-                <span class="text-muted small">{{ sales_detail.gst_txns|length }} GST transaction{{ sales_detail.gst_txns|length|pluralize }} &middot; {{ sales_detail.non_gst_txns|length }} GST-free transaction{{ sales_detail.non_gst_txns|length|pluralize }}</span>
+                <span class="text-muted small">
+                    {{ sales_detail.gst_txns|length|add:sales_detail.non_gst_txns|length }} sales &middot;
+                    {{ purchase_detail.gst_txns|length|add:purchase_detail.non_gst_txns|length }} purchases
+                </span>
             </div>
-            <div class="d-flex align-items-center gap-2">
+            <div class="d-flex align-items-center gap-2 flex-wrap">
+                <!-- Bulk action bars -->
                 <div id="salesBulkBar" class="d-none">
                     <span class="badge bg-warning text-dark me-1" id="salesSelectedCount">0 selected</span>
                     <button type="button" class="btn btn-outline-warning btn-sm" onclick="openBulkReallocateModal('sales')">
                         <i class="bi bi-arrow-repeat"></i> Reallocate Selected
                     </button>
                 </div>
-                <div class="btn-group btn-group-sm" role="group">
-                    <button type="button" class="btn btn-outline-primary active" onclick="toggleSalesView('transactions')" id="salesTxnBtn">
-                        <i class="bi bi-list-ul"></i> Transactions
-                    </button>
-                    <button type="button" class="btn btn-outline-primary" onclick="toggleSalesView('summary')" id="salesSumBtn">
-                        <i class="bi bi-bar-chart"></i> Account Summary
-                    </button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Transaction Detail View -->
-        <div id="salesTransactionView">
-            <!-- GST Sales Section -->
-            {% if sales_detail.gst_txns %}
-            <div class="card mb-3">
-                <div class="card-header bg-primary bg-opacity-10 py-2">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <strong><i class="bi bi-receipt"></i> GST on Sales (G1 Taxable)</strong>
-                        <span class="badge bg-primary">{{ sales_detail.gst_txns|length }} transactions</span>
-                    </div>
-                </div>
-                <div class="card-body p-0">
-                    <div class="table-responsive">
-                        <table class="table table-sm table-hover mb-0 gst-detail-table">
-                            <thead class="table-light">
-                                <tr>
-                                    <th style="width:35px"><input type="checkbox" class="form-check-input" onchange="toggleAllCheckboxes(this, 'sales-gst')"></th>
-                                    <th style="width:90px">Date</th>
-                                    <th style="width:70px">Type</th>
-                                    <th>Description</th>
-                                    <th style="width:80px">Account</th>
-                                    <th style="width:80px">Tax Code</th>
-                                    <th style="width:60px" class="text-end">Rate</th>
-                                    <th style="width:100px" class="text-end">Taxable Amt</th>
-                                    <th style="width:90px" class="text-end">GST Amt</th>
-                                    <th style="width:100px" class="text-end">Total (Inc)</th>
-                                    <th style="width:40px"></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for txn in sales_detail.gst_txns %}
-                                <tr data-txn-id="{{ txn.txn_id }}" data-section="sales">
-                                    <td><input type="checkbox" class="form-check-input bas-txn-cb" data-group="sales-gst" data-section="sales" value="{{ txn.txn_id }}" onchange="updateBulkBar('sales')"></td>
-                                    <td class="text-nowrap small">{{ txn.date|date:"d/m/Y" }}</td>
-                                    <td><span class="badge bg-success bg-opacity-75 small">{{ txn.txn_type }}</span></td>
-                                    <td class="small text-truncate" style="max-width:250px" title="{{ txn.description }}">{{ txn.description }}</td>
-                                    <td class="txn-account"><code class="small">{{ txn.account_code }}</code></td>
-                                    <td class="txn-tax"><span class="badge bg-info text-dark small">GST</span></td>
-                                    <td class="text-end small">10.00%</td>
-                                    <td class="text-end small">${{ txn.taxable_amount|floatformat:2 }}</td>
-                                    <td class="text-end small">${{ txn.gst_amount|floatformat:2 }}</td>
-                                    <td class="text-end small fw-semibold">${{ txn.gross_amount|floatformat:2 }}</td>
-                                    <td>{% if txn.txn_id %}<button class="btn btn-link btn-sm p-0 text-muted" onclick="openSingleReallocateModal('{{ txn.txn_id }}', '{{ txn.account_code }}', '{{ txn.account_name|escapejs }}', '{{ txn.tax_code }}')" title="Reallocate"><i class="bi bi-pencil-square"></i></button>{% endif %}</td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                            <tfoot class="table-primary">
-                                <tr class="fw-bold">
-                                    <td></td>
-                                    <td colspan="6">Total GST Sales</td>
-                                    <td class="text-end">${{ sales_detail.gst_total_taxable|floatformat:2 }}</td>
-                                    <td class="text-end">${{ sales_detail.gst_total_gst|floatformat:2 }}</td>
-                                    <td class="text-end">${{ sales_detail.gst_total_gross|floatformat:2 }}</td>
-                                    <td></td>
-                                </tr>
-                            </tfoot>
-                        </table>
-                    </div>
-                </div>
-            </div>
-            {% endif %}
-
-            <!-- GST-Free Sales Section -->
-            {% if sales_detail.non_gst_txns %}
-            <div class="card mb-3">
-                <div class="card-header bg-secondary bg-opacity-10 py-2">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <strong><i class="bi bi-receipt-cutoff"></i> GST-Free Sales (G3)</strong>
-                        <span class="badge bg-secondary">{{ sales_detail.non_gst_txns|length }} transactions</span>
-                    </div>
-                </div>
-                <div class="card-body p-0">
-                    <div class="table-responsive">
-                        <table class="table table-sm table-hover mb-0 gst-detail-table">
-                            <thead class="table-light">
-                                <tr>
-                                    <th style="width:35px"><input type="checkbox" class="form-check-input" onchange="toggleAllCheckboxes(this, 'sales-nongst')"></th>
-                                    <th style="width:90px">Date</th>
-                                    <th style="width:70px">Type</th>
-                                    <th>Description</th>
-                                    <th style="width:80px">Account</th>
-                                    <th style="width:80px">Tax Code</th>
-                                    <th style="width:60px" class="text-end">Rate</th>
-                                    <th style="width:100px" class="text-end">Amount</th>
-                                    <th style="width:90px" class="text-end">GST Amt</th>
-                                    <th style="width:100px" class="text-end">Total</th>
-                                    <th style="width:40px"></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for txn in sales_detail.non_gst_txns %}
-                                <tr data-txn-id="{{ txn.txn_id }}" data-section="sales">
-                                    <td><input type="checkbox" class="form-check-input bas-txn-cb" data-group="sales-nongst" data-section="sales" value="{{ txn.txn_id }}" onchange="updateBulkBar('sales')"></td>
-                                    <td class="text-nowrap small">{{ txn.date|date:"d/m/Y" }}</td>
-                                    <td><span class="badge bg-success bg-opacity-75 small">{{ txn.txn_type }}</span></td>
-                                    <td class="small text-truncate" style="max-width:250px" title="{{ txn.description }}">{{ txn.description }}</td>
-                                    <td class="txn-account"><code class="small">{{ txn.account_code }}</code></td>
-                                    <td class="txn-tax"><span class="badge bg-secondary small">{{ txn.tax_code }}</span></td>
-                                    <td class="text-end small text-muted">&mdash;</td>
-                                    <td class="text-end small">${{ txn.gross_amount|floatformat:2 }}</td>
-                                    <td class="text-end small text-muted">&mdash;</td>
-                                    <td class="text-end small fw-semibold">${{ txn.gross_amount|floatformat:2 }}</td>
-                                    <td>{% if txn.txn_id %}<button class="btn btn-link btn-sm p-0 text-muted" onclick="openSingleReallocateModal('{{ txn.txn_id }}', '{{ txn.account_code }}', '{{ txn.account_name|escapejs }}', '{{ txn.tax_code }}')" title="Reallocate"><i class="bi bi-pencil-square"></i></button>{% endif %}</td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                            <tfoot class="table-secondary">
-                                <tr class="fw-bold">
-                                    <td></td>
-                                    <td colspan="6">Total GST-Free Sales</td>
-                                    <td class="text-end">${{ sales_detail.non_gst_total|floatformat:2 }}</td>
-                                    <td class="text-end">&mdash;</td>
-                                    <td class="text-end">${{ sales_detail.non_gst_total|floatformat:2 }}</td>
-                                    <td></td>
-                                </tr>
-                            </tfoot>
-                        </table>
-                    </div>
-                </div>
-            </div>
-            {% endif %}
-
-            <!-- Grand Total -->
-            <div class="card border-primary">
-                <div class="card-body py-2">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <strong>Total Sales (G1)</strong>
-                        <strong class="fs-5">${{ sales_detail.grand_total|floatformat:2 }}</strong>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Account Summary View (hidden by default) -->
-        <div id="salesSummaryView" style="display:none;">
-            <div class="card">
-                <div class="card-body p-0">
-                    <table class="table table-sm table-hover mb-0">
-                        <thead class="table-light">
-                            <tr>
-                                <th>Account Code</th>
-                                <th>Account Name</th>
-                                <th>Tax Code</th>
-                                <th class="text-end">Amount</th>
-                                <th>BAS Label</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for line in sales_lines %}
-                            <tr>
-                                <td><code>{{ line.code }}</code></td>
-                                <td>{{ line.name }}</td>
-                                <td><span class="badge bg-secondary">{{ line.tax_code }}</span></td>
-                                <td class="text-end">${{ line.amount|floatformat:2 }}</td>
-                                <td><span class="badge bg-primary">{{ line.bas_label }}</span></td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                        {% if sales_lines %}
-                        <tfoot class="table-light">
-                            <tr>
-                                <td colspan="3"><strong>Total (G1)</strong></td>
-                                <td class="text-end"><strong>${{ bas_data.G1|floatformat:2 }}</strong></td>
-                                <td></td>
-                            </tr>
-                        </tfoot>
-                        {% endif %}
-                    </table>
-                </div>
-            </div>
-        </div>
-
-        {% else %}
-        <!-- Empty state -->
-        <div class="card">
-            <div class="card-body text-center text-muted py-4">
-                <i class="bi bi-inbox fs-1 d-block mb-2"></i>
-                No sales transactions{% if selected_period %} in {{ period_label }}{% endif %}
-            </div>
-        </div>
-        {% endif %}
-    </div>
-
-    <!-- Purchases Detail Tab -->
-    <div class="tab-pane fade" id="purchasesTab">
-        {% if purchase_detail.gst_txns or purchase_detail.non_gst_txns %}
-        <!-- View Toggle + Bulk Actions -->
-        <div class="d-flex justify-content-between align-items-center mb-3">
-            <div>
-                <span class="text-muted small">{{ purchase_detail.gst_txns|length }} GST transaction{{ purchase_detail.gst_txns|length|pluralize }} &middot; {{ purchase_detail.non_gst_txns|length }} GST-free transaction{{ purchase_detail.non_gst_txns|length|pluralize }}</span>
-            </div>
-            <div class="d-flex align-items-center gap-2">
                 <div id="purchasesBulkBar" class="d-none">
                     <span class="badge bg-warning text-dark me-1" id="purchasesSelectedCount">0 selected</span>
                     <button type="button" class="btn btn-outline-warning btn-sm" onclick="openBulkReallocateModal('purchases')">
                         <i class="bi bi-arrow-repeat"></i> Reallocate Selected
                     </button>
                 </div>
-                <div class="btn-group btn-group-sm" role="group">
-                    <button type="button" class="btn btn-outline-success active" onclick="togglePurchasesView('transactions')" id="purchasesTxnBtn">
-                        <i class="bi bi-list-ul"></i> Transactions
-                    </button>
-                    <button type="button" class="btn btn-outline-success" onclick="togglePurchasesView('summary')" id="purchasesSumBtn">
-                        <i class="bi bi-bar-chart"></i> Account Summary
-                    </button>
+                <!-- Download button -->
+                <div class="btn-group btn-group-sm">
+                    <a class="btn btn-outline-dark"
+                       href="{% url 'core:gst_activity_statement_download' pk=fy.pk %}?format=excel{% if selected_period %}&period={{ selected_period.period.period_number }}{% elif selected_view == 'full_year' %}&view=full_year{% endif %}">
+                        <i class="bi bi-file-earmark-excel text-success"></i> Excel
+                    </a>
+                    <a class="btn btn-outline-dark"
+                       href="{% url 'core:gst_activity_statement_download' pk=fy.pk %}?format=pdf{% if selected_period %}&period={{ selected_period.period.period_number }}{% elif selected_view == 'full_year' %}&view=full_year{% endif %}">
+                        <i class="bi bi-file-earmark-pdf text-danger"></i> PDF
+                    </a>
                 </div>
             </div>
         </div>
 
-        <!-- Transaction Detail View -->
-        <div id="purchasesTransactionView">
-            <!-- GST Purchases Section -->
-            {% if purchase_detail.gst_txns %}
-            <div class="card mb-3">
-                <div class="card-header bg-success bg-opacity-10 py-2">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <strong><i class="bi bi-cart-check"></i> GST on Purchases (G11 Taxable)</strong>
-                        <span class="badge bg-success">{{ purchase_detail.gst_txns|length }} transactions</span>
-                    </div>
-                </div>
-                <div class="card-body p-0">
-                    <div class="table-responsive">
-                        <table class="table table-sm table-hover mb-0 gst-detail-table">
-                            <thead class="table-light">
-                                <tr>
-                                    <th style="width:35px"><input type="checkbox" class="form-check-input" onchange="toggleAllCheckboxes(this, 'purchases-gst')"></th>
-                                    <th style="width:90px">Date</th>
-                                    <th style="width:70px">Type</th>
-                                    <th>Description</th>
-                                    <th style="width:80px">Account</th>
-                                    <th style="width:80px">Tax Code</th>
-                                    <th style="width:60px" class="text-end">Rate</th>
-                                    <th style="width:100px" class="text-end">Taxable Amt</th>
-                                    <th style="width:90px" class="text-end">GST Amt</th>
-                                    <th style="width:100px" class="text-end">Total (Inc)</th>
-                                    <th style="width:40px"></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for txn in purchase_detail.gst_txns %}
-                                <tr data-txn-id="{{ txn.txn_id }}" data-section="purchases">
-                                    <td><input type="checkbox" class="form-check-input bas-txn-cb" data-group="purchases-gst" data-section="purchases" value="{{ txn.txn_id }}" onchange="updateBulkBar('purchases')"></td>
-                                    <td class="text-nowrap small">{{ txn.date|date:"d/m/Y" }}</td>
-                                    <td><span class="badge bg-danger bg-opacity-75 small">{{ txn.txn_type }}</span></td>
-                                    <td class="small text-truncate" style="max-width:250px" title="{{ txn.description }}">{{ txn.description }}</td>
-                                    <td class="txn-account"><code class="small">{{ txn.account_code }}</code></td>
-                                    <td class="txn-tax"><span class="badge bg-info text-dark small">GST</span></td>
-                                    <td class="text-end small">10.00%</td>
-                                    <td class="text-end small">${{ txn.taxable_amount|floatformat:2 }}</td>
-                                    <td class="text-end small">${{ txn.gst_amount|floatformat:2 }}</td>
-                                    <td class="text-end small fw-semibold">${{ txn.gross_amount|floatformat:2 }}</td>
-                                    <td>{% if txn.txn_id %}<button class="btn btn-link btn-sm p-0 text-muted" onclick="openSingleReallocateModal('{{ txn.txn_id }}', '{{ txn.account_code }}', '{{ txn.account_name|escapejs }}', '{{ txn.tax_code }}')" title="Reallocate"><i class="bi bi-pencil-square"></i></button>{% endif %}</td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                            <tfoot class="table-success">
-                                <tr class="fw-bold">
-                                    <td></td>
-                                    <td colspan="6">Total GST Purchases</td>
-                                    <td class="text-end">${{ purchase_detail.gst_total_taxable|floatformat:2 }}</td>
-                                    <td class="text-end">${{ purchase_detail.gst_total_gst|floatformat:2 }}</td>
-                                    <td class="text-end">${{ purchase_detail.gst_total_gross|floatformat:2 }}</td>
-                                    <td></td>
-                                </tr>
-                            </tfoot>
-                        </table>
-                    </div>
+        {% if sales_detail.gst_txns or sales_detail.non_gst_txns or purchase_detail.gst_txns or purchase_detail.non_gst_txns %}
+
+        <!-- ── SALES ── -->
+        {% if sales_detail.gst_txns %}
+        <div class="card mb-3">
+            <div class="card-header bg-primary bg-opacity-10 py-2">
+                <div class="d-flex justify-content-between align-items-center">
+                    <strong><i class="bi bi-receipt"></i> GST on Sales (G1 Taxable)</strong>
+                    <span class="badge bg-primary">{{ sales_detail.gst_txns|length }} transactions</span>
                 </div>
             </div>
-            {% endif %}
-
-            <!-- GST-Free Purchases Section -->
-            {% if purchase_detail.non_gst_txns %}
-            <div class="card mb-3">
-                <div class="card-header bg-secondary bg-opacity-10 py-2">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <strong><i class="bi bi-cart-x"></i> GST-Free Purchases (G14)</strong>
-                        <span class="badge bg-secondary">{{ purchase_detail.non_gst_txns|length }} transactions</span>
-                    </div>
-                </div>
-                <div class="card-body p-0">
-                    <div class="table-responsive">
-                        <table class="table table-sm table-hover mb-0 gst-detail-table">
-                            <thead class="table-light">
-                                <tr>
-                                    <th style="width:35px"><input type="checkbox" class="form-check-input" onchange="toggleAllCheckboxes(this, 'purchases-nongst')"></th>
-                                    <th style="width:90px">Date</th>
-                                    <th style="width:70px">Type</th>
-                                    <th>Description</th>
-                                    <th style="width:80px">Account</th>
-                                    <th style="width:80px">Tax Code</th>
-                                    <th style="width:60px" class="text-end">Rate</th>
-                                    <th style="width:100px" class="text-end">Amount</th>
-                                    <th style="width:90px" class="text-end">GST Amt</th>
-                                    <th style="width:100px" class="text-end">Total</th>
-                                    <th style="width:40px"></th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {% for txn in purchase_detail.non_gst_txns %}
-                                <tr data-txn-id="{{ txn.txn_id }}" data-section="purchases">
-                                    <td><input type="checkbox" class="form-check-input bas-txn-cb" data-group="purchases-nongst" data-section="purchases" value="{{ txn.txn_id }}" onchange="updateBulkBar('purchases')"></td>
-                                    <td class="text-nowrap small">{{ txn.date|date:"d/m/Y" }}</td>
-                                    <td><span class="badge bg-danger bg-opacity-75 small">{{ txn.txn_type }}</span></td>
-                                    <td class="small text-truncate" style="max-width:250px" title="{{ txn.description }}">{{ txn.description }}</td>
-                                    <td class="txn-account"><code class="small">{{ txn.account_code }}</code></td>
-                                    <td class="txn-tax"><span class="badge bg-secondary small">{{ txn.tax_code }}</span></td>
-                                    <td class="text-end small text-muted">&mdash;</td>
-                                    <td class="text-end small">${{ txn.gross_amount|floatformat:2 }}</td>
-                                    <td class="text-end small text-muted">&mdash;</td>
-                                    <td class="text-end small fw-semibold">${{ txn.gross_amount|floatformat:2 }}</td>
-                                    <td>{% if txn.txn_id %}<button class="btn btn-link btn-sm p-0 text-muted" onclick="openSingleReallocateModal('{{ txn.txn_id }}', '{{ txn.account_code }}', '{{ txn.account_name|escapejs }}', '{{ txn.tax_code }}')" title="Reallocate"><i class="bi bi-pencil-square"></i></button>{% endif %}</td>
-                                </tr>
-                                {% endfor %}
-                            </tbody>
-                            <tfoot class="table-secondary">
-                                <tr class="fw-bold">
-                                    <td></td>
-                                    <td colspan="6">Total GST-Free Purchases</td>
-                                    <td class="text-end">${{ purchase_detail.non_gst_total|floatformat:2 }}</td>
-                                    <td class="text-end">&mdash;</td>
-                                    <td class="text-end">${{ purchase_detail.non_gst_total|floatformat:2 }}</td>
-                                    <td></td>
-                                </tr>
-                            </tfoot>
-                        </table>
-                    </div>
-                </div>
-            </div>
-            {% endif %}
-
-            <!-- Grand Total -->
-            <div class="card border-success">
-                <div class="card-body py-2">
-                    <div class="d-flex justify-content-between align-items-center">
-                        <strong>Total Purchases (G11)</strong>
-                        <strong class="fs-5">${{ purchase_detail.grand_total|floatformat:2 }}</strong>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Account Summary View (hidden by default) -->
-        <div id="purchasesSummaryView" style="display:none;">
-            <div class="card">
-                <div class="card-body p-0">
-                    <table class="table table-sm table-hover mb-0">
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover mb-0 gst-detail-table">
                         <thead class="table-light">
                             <tr>
-                                <th>Account Code</th>
-                                <th>Account Name</th>
-                                <th>Tax Code</th>
-                                <th class="text-end">Amount</th>
-                                <th>BAS Label</th>
+                                <th style="width:35px"><input type="checkbox" class="form-check-input" onchange="toggleAllCheckboxes(this, 'sales-gst')"></th>
+                                <th style="width:90px">Date</th>
+                                <th style="width:70px">Type</th>
+                                <th>Description</th>
+                                <th style="width:80px">Account</th>
+                                <th style="width:80px">Tax Code</th>
+                                <th style="width:60px" class="text-end">Rate</th>
+                                <th style="width:100px" class="text-end">Taxable Amt</th>
+                                <th style="width:90px" class="text-end">GST Amt</th>
+                                <th style="width:100px" class="text-end">Total (Inc)</th>
+                                <th style="width:40px"></th>
                             </tr>
                         </thead>
                         <tbody>
-                            {% for line in purchase_lines %}
-                            <tr>
-                                <td><code>{{ line.code }}</code></td>
-                                <td>{{ line.name }}</td>
-                                <td><span class="badge bg-secondary">{{ line.tax_code }}</span></td>
-                                <td class="text-end">${{ line.amount|floatformat:2 }}</td>
-                                <td><span class="badge bg-success">{{ line.bas_label }}</span></td>
+                            {% for txn in sales_detail.gst_txns %}
+                            <tr data-txn-id="{{ txn.txn_id }}" data-section="sales">
+                                <td><input type="checkbox" class="form-check-input bas-txn-cb" data-group="sales-gst" data-section="sales" value="{{ txn.txn_id }}" onchange="updateBulkBar('sales')"></td>
+                                <td class="text-nowrap small">{{ txn.date|date:"d/m/Y" }}</td>
+                                <td><span class="badge bg-success bg-opacity-75 small">{{ txn.txn_type }}</span></td>
+                                <td class="small text-truncate" style="max-width:250px" title="{{ txn.description }}">{{ txn.description }}</td>
+                                <td class="txn-account"><code class="small">{{ txn.account_code }}</code></td>
+                                <td class="txn-tax">
+                                    <span class="badge bg-info text-dark small">{{ txn.tax_code }}</span>
+                                </td>
+                                <td class="text-end small">10.00%</td>
+                                <td class="text-end small">${{ txn.taxable_amount|floatformat:2 }}</td>
+                                <td class="text-end small text-success">${{ txn.gst_amount|floatformat:2 }}</td>
+                                <td class="text-end small fw-semibold">${{ txn.gross_amount|floatformat:2 }}</td>
+                                <td>{% if txn.txn_id %}<button class="btn btn-link btn-sm p-0 text-muted" onclick="openSingleReallocateModal(\'{{ txn.txn_id }}\', \'{{ txn.account_code }}\', \'{{ txn.account_name|escapejs }}\', \'{{ txn.tax_code }}\'" title="Reallocate"><i class="bi bi-pencil-square"></i></button>{% endif %}</td>
                             </tr>
                             {% endfor %}
                         </tbody>
-                        {% if purchase_lines %}
-                        <tfoot class="table-light">
-                            <tr>
-                                <td colspan="3"><strong>Total (G11)</strong></td>
-                                <td class="text-end"><strong>${{ bas_data.G11|floatformat:2 }}</strong></td>
+                        <tfoot class="table-secondary">
+                            <tr class="fw-bold">
+                                <td></td>
+                                <td colspan="6">Total GST on Sales (1A)</td>
+                                <td class="text-end">${{ sales_detail.gst_total_taxable|floatformat:2 }}</td>
+                                <td class="text-end text-success">${{ sales_detail.gst_total_gst|floatformat:2 }}</td>
+                                <td class="text-end">${{ sales_detail.gst_total_gross|floatformat:2 }}</td>
                                 <td></td>
                             </tr>
                         </tfoot>
-                        {% endif %}
                     </table>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if sales_detail.non_gst_txns %}
+        <div class="card mb-3">
+            <div class="card-header bg-secondary bg-opacity-10 py-2">
+                <div class="d-flex justify-content-between align-items-center">
+                    <strong><i class="bi bi-dash-circle"></i> GST-Free Sales</strong>
+                    <span class="badge bg-secondary">{{ sales_detail.non_gst_txns|length }} transactions</span>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover mb-0 gst-detail-table">
+                        <thead class="table-light">
+                            <tr>
+                                <th style="width:35px"><input type="checkbox" class="form-check-input" onchange="toggleAllCheckboxes(this, 'sales-free')"></th>
+                                <th style="width:90px">Date</th>
+                                <th style="width:70px">Type</th>
+                                <th>Description</th>
+                                <th style="width:80px">Account</th>
+                                <th style="width:80px">Tax Code</th>
+                                <th style="width:60px" class="text-end">Rate</th>
+                                <th style="width:100px" class="text-end">Amount</th>
+                                <th style="width:90px" class="text-end">GST Amt</th>
+                                <th style="width:100px" class="text-end">Total (Inc)</th>
+                                <th style="width:40px"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for txn in sales_detail.non_gst_txns %}
+                            <tr data-txn-id="{{ txn.txn_id }}" data-section="sales">
+                                <td><input type="checkbox" class="form-check-input bas-txn-cb" data-group="sales-free" data-section="sales" value="{{ txn.txn_id }}" onchange="updateBulkBar('sales')"></td>
+                                <td class="text-nowrap small">{{ txn.date|date:"d/m/Y" }}</td>
+                                <td><span class="badge bg-success bg-opacity-75 small">{{ txn.txn_type }}</span></td>
+                                <td class="small text-truncate" style="max-width:250px" title="{{ txn.description }}">{{ txn.description }}</td>
+                                <td class="txn-account"><code class="small">{{ txn.account_code }}</code></td>
+                                <td class="txn-tax"><span class="badge bg-secondary small">{{ txn.tax_code }}</span></td>
+                                <td class="text-end small text-muted">&mdash;</td>
+                                <td class="text-end small">${{ txn.gross_amount|floatformat:2 }}</td>
+                                <td class="text-end small text-muted">&mdash;</td>
+                                <td class="text-end small fw-semibold">${{ txn.gross_amount|floatformat:2 }}</td>
+                                <td>{% if txn.txn_id %}<button class="btn btn-link btn-sm p-0 text-muted" onclick="openSingleReallocateModal('{{ txn.txn_id }}', '{{ txn.account_code }}', '{{ txn.account_name|escapejs }}', '{{ txn.tax_code }}')" title="Reallocate"><i class="bi bi-pencil-square"></i></button>{% endif %}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                        <tfoot class="table-secondary">
+                            <tr class="fw-bold">
+                                <td></td>
+                                <td colspan="6">Total GST-Free Sales</td>
+                                <td class="text-end">${{ sales_detail.non_gst_total|floatformat:2 }}</td>
+                                <td class="text-end">&mdash;</td>
+                                <td class="text-end">${{ sales_detail.non_gst_total|floatformat:2 }}</td>
+                                <td></td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Sales Grand Total -->
+        <div class="card border-primary mb-4">
+            <div class="card-body py-2">
+                <div class="d-flex justify-content-between align-items-center">
+                    <strong>Total Sales (G1)</strong>
+                    <strong class="fs-5">${{ sales_detail.grand_total|floatformat:2 }}</strong>
+                </div>
+            </div>
+        </div>
+
+        <!-- ── PURCHASES ── -->
+        {% if purchase_detail.gst_txns %}
+        <div class="card mb-3">
+            <div class="card-header bg-success bg-opacity-10 py-2">
+                <div class="d-flex justify-content-between align-items-center">
+                    <strong><i class="bi bi-cart"></i> GST on Purchases (G11 Taxable)</strong>
+                    <span class="badge bg-success">{{ purchase_detail.gst_txns|length }} transactions</span>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover mb-0 gst-detail-table">
+                        <thead class="table-light">
+                            <tr>
+                                <th style="width:35px"><input type="checkbox" class="form-check-input" onchange="toggleAllCheckboxes(this, 'purchases-gst')"></th>
+                                <th style="width:90px">Date</th>
+                                <th style="width:70px">Type</th>
+                                <th>Description</th>
+                                <th style="width:80px">Account</th>
+                                <th style="width:80px">Tax Code</th>
+                                <th style="width:60px" class="text-end">Rate</th>
+                                <th style="width:100px" class="text-end">Taxable Amt</th>
+                                <th style="width:90px" class="text-end">GST Amt</th>
+                                <th style="width:100px" class="text-end">Total (Inc)</th>
+                                <th style="width:40px"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for txn in purchase_detail.gst_txns %}
+                            <tr data-txn-id="{{ txn.txn_id }}" data-section="purchases">
+                                <td><input type="checkbox" class="form-check-input bas-txn-cb" data-group="purchases-gst" data-section="purchases" value="{{ txn.txn_id }}" onchange="updateBulkBar('purchases')"></td>
+                                <td class="text-nowrap small">{{ txn.date|date:"d/m/Y" }}</td>
+                                <td><span class="badge bg-danger bg-opacity-75 small">{{ txn.txn_type }}</span></td>
+                                <td class="small text-truncate" style="max-width:250px" title="{{ txn.description }}">{{ txn.description }}</td>
+                                <td class="txn-account"><code class="small">{{ txn.account_code }}</code></td>
+                                <td class="txn-tax">
+                                    <span class="badge bg-info text-dark small">{{ txn.tax_code }}</span>
+                                </td>
+                                <td class="text-end small">10.00%</td>
+                                <td class="text-end small">${{ txn.taxable_amount|floatformat:2 }}</td>
+                                <td class="text-end small text-success">${{ txn.gst_amount|floatformat:2 }}</td>
+                                <td class="text-end small fw-semibold">${{ txn.gross_amount|floatformat:2 }}</td>
+                                <td>{% if txn.txn_id %}<button class="btn btn-link btn-sm p-0 text-muted" onclick="openSingleReallocateModal(\'{{ txn.txn_id }}\', \'{{ txn.account_code }}\', \'{{ txn.account_name|escapejs }}\', \'{{ txn.tax_code }}\'" title="Reallocate"><i class="bi bi-pencil-square"></i></button>{% endif %}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                        <tfoot class="table-secondary">
+                            <tr class="fw-bold">
+                                <td></td>
+                                <td colspan="6">Total GST on Purchases (1B)</td>
+                                <td class="text-end">${{ purchase_detail.gst_total_taxable|floatformat:2 }}</td>
+                                <td class="text-end text-success">${{ purchase_detail.gst_total_gst|floatformat:2 }}</td>
+                                <td class="text-end">${{ purchase_detail.gst_total_gross|floatformat:2 }}</td>
+                                <td></td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if purchase_detail.non_gst_txns %}
+        <div class="card mb-3">
+            <div class="card-header bg-secondary bg-opacity-10 py-2">
+                <div class="d-flex justify-content-between align-items-center">
+                    <strong><i class="bi bi-dash-circle"></i> GST-Free Purchases</strong>
+                    <span class="badge bg-secondary">{{ purchase_detail.non_gst_txns|length }} transactions</span>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover mb-0 gst-detail-table">
+                        <thead class="table-light">
+                            <tr>
+                                <th style="width:35px"><input type="checkbox" class="form-check-input" onchange="toggleAllCheckboxes(this, 'purchases-free')"></th>
+                                <th style="width:90px">Date</th>
+                                <th style="width:70px">Type</th>
+                                <th>Description</th>
+                                <th style="width:80px">Account</th>
+                                <th style="width:80px">Tax Code</th>
+                                <th style="width:60px" class="text-end">Rate</th>
+                                <th style="width:100px" class="text-end">Amount</th>
+                                <th style="width:90px" class="text-end">GST Amt</th>
+                                <th style="width:100px" class="text-end">Total (Inc)</th>
+                                <th style="width:40px"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for txn in purchase_detail.non_gst_txns %}
+                            <tr data-txn-id="{{ txn.txn_id }}" data-section="purchases">
+                                <td><input type="checkbox" class="form-check-input bas-txn-cb" data-group="purchases-free" data-section="purchases" value="{{ txn.txn_id }}" onchange="updateBulkBar('purchases')"></td>
+                                <td class="text-nowrap small">{{ txn.date|date:"d/m/Y" }}</td>
+                                <td><span class="badge bg-danger bg-opacity-75 small">{{ txn.txn_type }}</span></td>
+                                <td class="small text-truncate" style="max-width:250px" title="{{ txn.description }}">{{ txn.description }}</td>
+                                <td class="txn-account"><code class="small">{{ txn.account_code }}</code></td>
+                                <td class="txn-tax"><span class="badge bg-secondary small">{{ txn.tax_code }}</span></td>
+                                <td class="text-end small text-muted">&mdash;</td>
+                                <td class="text-end small">${{ txn.gross_amount|floatformat:2 }}</td>
+                                <td class="text-end small text-muted">&mdash;</td>
+                                <td class="text-end small fw-semibold">${{ txn.gross_amount|floatformat:2 }}</td>
+                                <td>{% if txn.txn_id %}<button class="btn btn-link btn-sm p-0 text-muted" onclick="openSingleReallocateModal('{{ txn.txn_id }}', '{{ txn.account_code }}', '{{ txn.account_name|escapejs }}', '{{ txn.tax_code }}')" title="Reallocate"><i class="bi bi-pencil-square"></i></button>{% endif %}</td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                        <tfoot class="table-secondary">
+                            <tr class="fw-bold">
+                                <td></td>
+                                <td colspan="6">Total GST-Free Purchases</td>
+                                <td class="text-end">${{ purchase_detail.non_gst_total|floatformat:2 }}</td>
+                                <td class="text-end">&mdash;</td>
+                                <td class="text-end">${{ purchase_detail.non_gst_total|floatformat:2 }}</td>
+                                <td></td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- Purchases Grand Total -->
+        <div class="card border-success mb-3">
+            <div class="card-body py-2">
+                <div class="d-flex justify-content-between align-items-center">
+                    <strong>Total Purchases (G11)</strong>
+                    <strong class="fs-5">${{ purchase_detail.grand_total|floatformat:2 }}</strong>
                 </div>
             </div>
         </div>
 
         {% else %}
-        <!-- Empty state -->
         <div class="card">
             <div class="card-body text-center text-muted py-4">
                 <i class="bi bi-inbox fs-1 d-block mb-2"></i>
-                No purchase transactions{% if selected_period %} in {{ period_label }}{% endif %}
+                No transactions{% if selected_period %} in {{ period_label }}{% endif %}
             </div>
         </div>
         {% endif %}
@@ -1713,43 +1599,7 @@ let reallocateTxnId = null;
 let reallocateBulkSection = null;
 
 // ── View Toggles ──
-function toggleSalesView(view) {
-    const txnView = document.getElementById('salesTransactionView');
-    const sumView = document.getElementById('salesSummaryView');
-    const txnBtn = document.getElementById('salesTxnBtn');
-    const sumBtn = document.getElementById('salesSumBtn');
-    if (!txnView || !sumView) return;
-    if (view === 'transactions') {
-        txnView.style.display = 'block';
-        sumView.style.display = 'none';
-        txnBtn.classList.add('active');
-        sumBtn.classList.remove('active');
-    } else {
-        txnView.style.display = 'none';
-        sumView.style.display = 'block';
-        txnBtn.classList.remove('active');
-        sumBtn.classList.add('active');
-    }
-}
 
-function togglePurchasesView(view) {
-    const txnView = document.getElementById('purchasesTransactionView');
-    const sumView = document.getElementById('purchasesSummaryView');
-    const txnBtn = document.getElementById('purchasesTxnBtn');
-    const sumBtn = document.getElementById('purchasesSumBtn');
-    if (!txnView || !sumView) return;
-    if (view === 'transactions') {
-        txnView.style.display = 'block';
-        sumView.style.display = 'none';
-        txnBtn.classList.add('active');
-        sumBtn.classList.remove('active');
-    } else {
-        txnView.style.display = 'none';
-        sumView.style.display = 'block';
-        txnBtn.classList.remove('active');
-        sumBtn.classList.add('active');
-    }
-}
 
 // ── Checkbox & Bulk Bar ──
 function toggleAllCheckboxes(headerCb, group) {
