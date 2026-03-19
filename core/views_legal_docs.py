@@ -147,6 +147,85 @@ def legal_template_upload(request):
 
 
 # ---------------------------------------------------------------------------
+# Download existing legal document template file
+# ---------------------------------------------------------------------------
+@login_required
+def legal_template_download(request, pk):
+    """Download the .docx file for a LegalDocumentTemplate."""
+    if not request.user.is_admin:
+        from django.http import HttpResponseForbidden
+        return HttpResponseForbidden("Admin access required.")
+    template = get_object_or_404(LegalDocumentTemplate, pk=pk)
+    if not template.template_file:
+        from django.http import HttpResponseNotFound
+        return HttpResponseNotFound("No file attached to this template.")
+    safe_name = f"{template.name.replace(' ', '_')}_v{template.version}.docx"
+    try:
+        file_data = template.template_file.read()
+    except Exception as e:
+        logger.error("Failed to read template file: %s", e)
+        from django.http import HttpResponseServerError
+        return HttpResponseServerError(f"Could not read template file: {e}")
+    from django.http import HttpResponse
+    response = HttpResponse(
+        file_data,
+        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+    response["Content-Disposition"] = f'attachment; filename="{safe_name}"'
+    return response
+
+
+# ---------------------------------------------------------------------------
+# Replace (upload new version of) a legal document template
+# ---------------------------------------------------------------------------
+@login_required
+@require_POST
+def legal_template_replace(request, pk):
+    """Upload a replacement .docx file for an existing LegalDocumentTemplate."""
+    if not request.user.is_admin:
+        return JsonResponse({"error": "Admin access required."}, status=403)
+    template = get_object_or_404(LegalDocumentTemplate, pk=pk)
+    file = request.FILES.get("template_file")
+    if not file:
+        return JsonResponse({"error": "No file uploaded."}, status=400)
+    if not file.name.lower().endswith(".docx"):
+        return JsonResponse({"error": "Only .docx files are accepted."}, status=400)
+    # Deactivate the current version
+    template.is_active = False
+    template.save(update_fields=["is_active"])
+    # Create the new version
+    new_template = LegalDocumentTemplate.objects.create(
+        name=template.name,
+        document_type=template.document_type,
+        entity_types=template.entity_types,
+        template_file=file,
+        version=template.version + 1,
+        is_active=True,
+        solicitor_approved=False,
+        variable_schema=template.variable_schema,
+        created_by=request.user,
+    )
+    # Re-extract variable schema from the new file
+    try:
+        schema = _extract_template_variables(new_template)
+        new_template.variable_schema = schema
+        new_template.save(update_fields=["variable_schema"])
+    except Exception as e:
+        logger.warning("Failed to extract template variables from replacement: %s", e)
+    from core.views import _log_action
+    _log_action(
+        request, "update",
+        f"Replaced legal template '{template.name}' — now v{new_template.version}",
+    )
+    return JsonResponse({
+        "status": "ok",
+        "template_id": str(new_template.pk),
+        "version": new_template.version,
+        "message": f"Template replaced successfully. Now at version {new_template.version}.",
+    })
+
+
+# ---------------------------------------------------------------------------
 # Generic Document Generation Wizard (fallback for non-specific types)
 # ---------------------------------------------------------------------------
 @login_required

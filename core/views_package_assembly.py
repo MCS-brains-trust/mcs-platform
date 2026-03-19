@@ -32,30 +32,30 @@ PACKAGE_CONTENTS = {
         ("directors_report", "Director's Report", False),  # Only if large proprietary
         ("solvency_resolution", "Solvency Resolution", True),
         ("dividend_statement", "Dividend Statements", False),  # Only if dividend declared
-        ("shareholder_loan_acknowledgment", "Loan Acknowledgment", False),  # Only if loan > $10K
-        ("management_representation_letter", "Management Representation Letter", True),
-        ("cover_letter", "Cover Letter (Transmittal)", True),
+        ("shareholder_loan_ack", "Loan Acknowledgment", False),  # Only if loan > $10K
+        ("management_rep_letter", "Management Representation Letter", True),
+        ("client_cover_letter", "Cover Letter (Transmittal)", True),
     ],
     "trust": [
         ("financial_statements", "Financial Statements", True),
-        ("trust_distribution_minutes", "Trust Distribution Minutes", True),
-        ("management_representation_letter", "Management Representation Letter", True),
-        ("cover_letter", "Cover Letter (Transmittal)", True),
+        ("distribution_minutes", "Trust Distribution Minutes", True),
+        ("management_rep_letter", "Management Representation Letter", True),
+        ("client_cover_letter", "Cover Letter (Transmittal)", True),
     ],
     "partnership": [
         ("financial_statements", "Financial Statements", True),
         ("partner_statement", "Partner Statements", True),
         ("partnership_tax_summary", "Partnership Tax Summary", True),
-        ("management_representation_letter", "Management Representation Letter", True),
-        ("cover_letter", "Cover Letter (Transmittal)", True),
+        ("management_rep_letter", "Management Representation Letter", True),
+        ("client_cover_letter", "Cover Letter (Transmittal)", True),
     ],
     "individual": [
-        ("cover_letter", "Cover Letter (Transmittal)", True),
+        ("client_cover_letter", "Cover Letter (Transmittal)", True),
     ],
-      "smsf": [
+    "smsf": [
         ("financial_statements", "Financial Statements", True),
-        ("management_representation_letter", "Management Representation Letter", True),
-        ("cover_letter", "Cover Letter (Transmittal)", True),
+        ("management_rep_letter", "Management Representation Letter", True),
+        ("client_cover_letter", "Cover Letter (Transmittal)", True),
     ],
 }
 # ---------------------------------------------------------------------------
@@ -100,7 +100,7 @@ def package_assembly(request, pk):
             is_required = False
         if doc_type == "dividend_statement":
             is_required = DividendEvent.objects.filter(financial_year=fy).exists()
-        if doc_type == "shareholder_loan_acknowledgment":
+        if doc_type == "shareholder_loan_ack":
             is_required = _has_director_loan_over_10k(fy)
 
         checklist.append({
@@ -224,7 +224,7 @@ def _evaluate_risk_rules(fy, entity, existing_types):
 
     # T2-67: Director loan > $10K, no acknowledgment
     if entity.entity_type == "company" and _has_director_loan_over_10k(fy):
-        if "shareholder_loan_acknowledgment" not in existing_types:
+        if "shareholder_loan_ack" not in existing_types:
             alerts.append({
                 "rule": "T2-67",
                 "severity": "warning",
@@ -270,7 +270,7 @@ def _evaluate_risk_rules(fy, entity, existing_types):
     # generated at job start (Roll Forward), not at package assembly time.
 
     # T2-72: No management representation letter
-    if "management_representation_letter" not in existing_types:
+    if "management_rep_letter" not in existing_types:
         alerts.append({
             "rule": "T2-72",
             "severity": "warning",
@@ -280,7 +280,7 @@ def _evaluate_risk_rules(fy, entity, existing_types):
         })
 
     # T2-73: No cover letter (generate last, after all other docs are present)
-    if "cover_letter" not in existing_types:
+    if "client_cover_letter" not in existing_types:
         alerts.append({
             "rule": "T2-73",
             "severity": "info",

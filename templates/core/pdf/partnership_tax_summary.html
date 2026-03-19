@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  @page { size: A4; margin: 2.5cm 2cm 2.5cm 2cm; }
+  body { font-family: Arial, sans-serif; font-size: 10.5pt; color: #1a1a1a; line-height: 1.6; }
+  .header { border-bottom: 2px solid #000000; padding-bottom: 10px; margin-bottom: 24px; text-align: center; }
+  .firm { font-size: 13pt; font-weight: bold; color: #000000; }
+  .doc-title { font-size: 12pt; font-weight: bold; margin-top: 4px; }
+  h2 { font-size: 11pt; color: #000000; border-bottom: 1px solid #000000; padding-bottom: 3px; margin-top: 18px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+  th { background: #f0f0f0; text-align: left; padding: 6px 8px; border: 1px solid #ccc; font-size: 10pt; }
+  td { padding: 6px 8px; border: 1px solid #ccc; font-size: 10pt; }
+  td.num { text-align: right; }
+  .total-row td { font-weight: bold; border-top: 2px solid #000; }
+  .note { font-size: 8.5pt; color: #555; margin-top: 16px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="firm"><strong>{{ entity_name }}</strong></div>
+  <div style="font-size:9pt;">ABN {{ abn }}</div>
+  <div class="doc-title">Partnership Tax Summary</div>
+  <div style="font-size:9pt;">For the Year Ended {{ financial_year_end|default:financial_year }}</div>
+</div>
+
+<h2>Partnership Income Summary</h2>
+<table>
+  <tbody>
+    <tr>
+      <td>Total Revenue</td>
+      <td class="num">{{ total_revenue|floatformat:2 }}</td>
+    </tr>
+    <tr>
+      <td>Less: Total Expenses</td>
+      <td class="num">({{ total_expenses|floatformat:2 }})</td>
+    </tr>
+    <tr class="total-row">
+      <td>Net Partnership Income</td>
+      <td class="num">{{ net_profit|floatformat:2 }}</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Partner Profit Allocation</h2>
+<table>
+  <thead>
+    <tr>
+      <th>Partner Name</th>
+      <th style="text-align:right;">Share %</th>
+      <th style="text-align:right;">Share Amount ($)</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for partner in partners %}
+    <tr>
+      <td>{{ partner.name }}</td>
+      <td class="num">{{ partner.percentage|floatformat:2 }}%</td>
+      <td class="num">{{ partner.share_amount|floatformat:2 }}</td>
+    </tr>
+    {% endfor %}
+    <tr class="total-row">
+      <td>Total</td>
+      <td class="num">100.00%</td>
+      <td class="num">{{ net_profit|floatformat:2 }}</td>
+    </tr>
+  </tbody>
+</table>
+
+<p class="note">This summary is prepared for tax purposes only and does not constitute audited financial statements. Each partner should include their share of partnership income in their individual income tax return.</p>
+</body>
+</html>

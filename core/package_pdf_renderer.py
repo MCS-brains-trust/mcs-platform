@@ -52,25 +52,40 @@ def _build_acn_abn(acn, abn):
 
 
 # Document type → (template_name, title)
+# Keys MUST match LegalDocumentTemplate.DocumentType values exactly.
 LEGAL_DOC_TEMPLATES = {
     "solvency_resolution": ("core/pdf/solvency_resolution.html", "Solvency Resolution"),
     "directors_declaration": ("core/pdf/directors_declaration.html", "Director's Declaration"),
     "directors_report": ("core/pdf/directors_report.html", "Director's Report"),
-    "management_representation_letter": ("core/pdf/management_rep_letter.html", "Management Representation Letter"),
-    "cover_letter": ("core/pdf/cover_letter.html", "Cover Letter"),
-    "shareholder_loan_acknowledgment": ("core/pdf/loan_acknowledgment.html", "Loan Acknowledgment"),
+    "management_rep_letter": ("core/pdf/management_rep_letter.html", "Management Representation Letter"),
+    "management_rep_letter_trust": ("core/pdf/management_rep_letter.html", "Management Representation Letter"),
+    "management_rep_letter_partnership": ("core/pdf/management_rep_letter.html", "Management Representation Letter"),
+    "client_cover_letter": ("core/pdf/cover_letter.html", "Cover Letter"),
+    "shareholder_loan_ack": ("core/pdf/loan_acknowledgment.html", "Loan Acknowledgment"),
+    "partner_statement": ("core/pdf/partner_statement.html", "Partner Statement"),
+    "partnership_tax_summary": ("core/pdf/partnership_tax_summary.html", "Partnership Tax Summary"),
+    "distribution_minutes": ("core/pdf/distribution_minutes.html", "Trust Distribution Minutes"),
 }
 
 DOCUMENT_ORDER = [
     "financial_statements",
+    # Company compliance
     "directors_declaration",
     "solvency_resolution",
     "directors_report",
-    "management_representation_letter",
-    # "cover_letter" excluded — transmittal letter is not part of the client package
+    # Trust-specific
+    "distribution_minutes",
+    # Partnership-specific
+    "partner_statement",
+    "partnership_tax_summary",
+    # All entity types
+    "management_rep_letter",
+    "management_rep_letter_trust",
+    "management_rep_letter_partnership",
     "dividend_statement",
-    "shareholder_loan_acknowledgment",
+    "shareholder_loan_ack",
     "compilation_report",  # Compilation Report last per APES 315
+    # Cover letter intentionally excluded from bundle — transmittal only
 ]
 
 

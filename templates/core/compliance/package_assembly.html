@@ -97,6 +97,7 @@
                                 <th>Document</th>
                                 <th class="text-center">Required</th>
                                 <th class="text-center">Status</th>
+                                <th class="text-center">Action</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -126,6 +127,35 @@
                                     <span class="badge bg-warning text-dark">Missing</span>
                                     {% else %}
                                     <span class="badge bg-light text-muted">N/A</span>
+                                    {% endif %}
+                                </td>
+                                <td class="text-center">
+                                    {% if not item.present %}
+                                        {% if item.doc_type == 'financial_statements' %}
+                                        <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-xs btn-outline-secondary">Go to FS</a>
+                                        {% elif item.doc_type == 'directors_declaration' %}
+                                        <button class="btn btn-xs btn-outline-primary" onclick="generateDoc('{% url 'core:generate_directors_declaration' pk=fy.pk %}', 'Director\'s Declaration')">Generate</button>
+                                        {% elif item.doc_type == 'solvency_resolution' %}
+                                        <button class="btn btn-xs btn-outline-primary" onclick="generateDoc('{% url 'core:generate_solvency_resolution' pk=fy.pk %}', 'Solvency Resolution')">Generate</button>
+                                        {% elif item.doc_type == 'directors_report' %}
+                                        <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-xs btn-outline-secondary">Go to FY</a>
+                                        {% elif item.doc_type == 'dividend_statement' %}
+                                        <a href="{% url 'core:dividend_wizard' pk=fy.pk %}" class="btn btn-xs btn-outline-primary">Dividend Wizard</a>
+                                        {% elif item.doc_type == 'shareholder_loan_ack' %}
+                                        <button class="btn btn-xs btn-outline-primary" onclick="generateDoc('{% url 'core:generate_loan_acknowledgment' pk=fy.pk %}', 'Loan Acknowledgment')">Generate</button>
+                                        {% elif item.doc_type == 'management_rep_letter' %}
+                                        <button class="btn btn-xs btn-outline-primary" onclick="generateDoc('{% url 'core:generate_management_rep_letter' pk=fy.pk %}', 'Management Representation Letter')">Generate</button>
+                                        {% elif item.doc_type == 'client_cover_letter' %}
+                                        <button class="btn btn-xs btn-outline-primary" onclick="generateDoc('{% url 'core:generate_cover_letter' pk=fy.pk %}', 'Cover Letter')">Generate</button>
+                                        {% elif item.doc_type == 'distribution_minutes' %}
+                                        <a href="{% url 'core:generate_distribution_minutes' pk=fy.pk %}" class="btn btn-xs btn-outline-primary">Generate</a>
+                                        {% elif item.doc_type == 'partner_statement' %}
+                                        <a href="{% url 'core:partner_statements' pk=fy.pk %}" class="btn btn-xs btn-outline-primary">Partner Wizard</a>
+                                        {% elif item.doc_type == 'partnership_tax_summary' %}
+                                        <button class="btn btn-xs btn-outline-primary" onclick="generateDoc('{% url 'core:generate_partnership_tax_summary' pk=fy.pk %}', 'Partnership Tax Summary')">Generate</button>
+                                        {% endif %}
+                                    {% else %}
+                                    <span class="text-muted small">—</span>
                                     {% endif %}
                                 </td>
                             </tr>
@@ -203,6 +233,9 @@
     </div>
 </div>
 
+<style>
+.btn-xs { padding: 0.15rem 0.4rem; font-size: 0.72rem; line-height: 1.4; }
+</style>
 <script>
 const CSRF_TOKEN = '{{ csrf_token }}';
 const ASSEMBLE_URL = '{% url "core:package_assemble" pk=fy.pk %}';

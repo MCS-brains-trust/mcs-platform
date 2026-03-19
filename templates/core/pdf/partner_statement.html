@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  @page { size: A4; margin: 2.5cm 2cm 2.5cm 2cm; }
+  body { font-family: Arial, sans-serif; font-size: 10.5pt; color: #1a1a1a; line-height: 1.6; }
+  .header { border-bottom: 2px solid #000000; padding-bottom: 10px; margin-bottom: 24px; text-align: center; }
+  .firm { font-size: 13pt; font-weight: bold; color: #000000; }
+  .doc-title { font-size: 12pt; font-weight: bold; margin-top: 4px; }
+  h2 { font-size: 11pt; color: #000000; border-bottom: 1px solid #000000; padding-bottom: 3px; margin-top: 18px; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+  th { background: #f0f0f0; text-align: left; padding: 6px 8px; border: 1px solid #ccc; font-size: 10pt; }
+  td { padding: 6px 8px; border: 1px solid #ccc; font-size: 10pt; }
+  td.num { text-align: right; }
+  .total-row td { font-weight: bold; border-top: 2px solid #000; }
+  .sig-block { margin-top: 36px; page-break-inside: avoid; }
+  .sig-line { border-top: 1px solid #333; width: 55%; margin-top: 38px; margin-bottom: 4px; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="firm"><strong>{{ entity_name }}</strong></div>
+  <div style="font-size:9pt;">ABN {{ abn }}</div>
+  <div class="doc-title">Partner Statement</div>
+  <div style="font-size:9pt;">For the Year Ended {{ financial_year_end|default:financial_year }}</div>
+</div>
+
+<h2>Partner: {{ partner_name }}</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>Description</th>
+      <th style="text-align:right;">Amount ($)</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Profit Share ({{ profit_share_percentage }}%)</td>
+      <td class="num">{{ profit_share_amount|floatformat:2 }}</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2>Capital Account Movement</h2>
+<table>
+  <tbody>
+    <tr>
+      <td>Opening Capital Balance</td>
+      <td class="num">{{ capital_account.opening|floatformat:2 }}</td>
+    </tr>
+    <tr>
+      <td>Add: Contributions</td>
+      <td class="num">{{ capital_account.contributions|floatformat:2 }}</td>
+    </tr>
+    <tr>
+      <td>Add: Profit Share</td>
+      <td class="num">{{ capital_account.profit_share|floatformat:2 }}</td>
+    </tr>
+    <tr>
+      <td>Less: Drawings</td>
+      <td class="num">({{ capital_account.drawings|floatformat:2 }})</td>
+    </tr>
+    <tr class="total-row">
+      <td>Closing Capital Balance</td>
+      <td class="num">{{ capital_account.closing|floatformat:2 }}</td>
+    </tr>
+  </tbody>
+</table>
+
+{% if income_categories %}
+<h2>Income Categories</h2>
+<table>
+  <thead>
+    <tr><th>Category</th><th style="text-align:right;">Amount ($)</th></tr>
+  </thead>
+  <tbody>
+    {% for category, amount in income_categories.items %}
+    <tr>
+      <td>{{ category }}</td>
+      <td class="num">{{ amount|floatformat:2 }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<div class="sig-block">
+  <div class="sig-line"></div>
+  <p><strong>{{ partner_name }}</strong><br>Partner<br>{{ entity_name }}</p>
+  <p>Date: ___________________</p>
+</div>
+</body>
+</html>

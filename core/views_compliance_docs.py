@@ -384,7 +384,7 @@ def generate_loan_acknowledgment(request, pk):
     doc = LegalDocument.objects.create(
         financial_year=fy,
         entity=entity,
-        document_type="shareholder_loan_acknowledgment",
+        document_type="shareholder_loan_ack",
         title=f"Loan Acknowledgment — {data.get('shareholder_name', 'Unknown')} — {entity.entity_name}",
         context_data=context,
         generated_by=request.user,
@@ -428,7 +428,7 @@ def generate_management_rep_letter(request, pk):
     try:
         from core.document_context_builder import DocumentContextBuilder
         dcb = DocumentContextBuilder(entity, financial_year=fy)
-        enriched = dcb.build("management_representation_letter")
+        enriched = dcb.build("management_rep_letter")
         for k, v in enriched.items():
             if k not in context or k.startswith("practice_"):
                 context[k] = v
@@ -438,7 +438,7 @@ def generate_management_rep_letter(request, pk):
     doc = LegalDocument.objects.create(
         financial_year=fy,
         entity=entity,
-        document_type="management_representation_letter",
+        document_type="management_rep_letter",
         title=f"Management Representation Letter — {entity.entity_name} — {fy.end_date.year}",
         context_data=context,
         generated_by=request.user,
@@ -470,7 +470,7 @@ def generate_cover_letter(request, pk):
         ("financial_statements", "Financial Statements"),
         ("directors_declaration", "Director's Declaration"),
         ("solvency_resolution", "Solvency Resolution"),
-        ("management_representation_letter", "Management Representation Letter"),
+        ("management_rep_letter", "Management Representation Letter"),
     ]
 
     existing_docs = LegalDocument.objects.filter(
@@ -517,7 +517,7 @@ def generate_cover_letter(request, pk):
     doc = LegalDocument.objects.create(
         financial_year=fy,
         entity=entity,
-        document_type="cover_letter",
+        document_type="client_cover_letter",
         title=f"Cover Letter — {entity.entity_name} — {fy.end_date.year}",
         context_data=context,
         generated_by=request.user,

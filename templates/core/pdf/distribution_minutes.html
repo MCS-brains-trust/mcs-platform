@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  @page { size: A4; margin: 2.5cm 2cm 2.5cm 2cm; }
+  body { font-family: Arial, sans-serif; font-size: 10.5pt; color: #1a1a1a; line-height: 1.6; }
+  .header { border-bottom: 2px solid #000000; padding-bottom: 10px; margin-bottom: 24px; text-align: center; }
+  .firm { font-size: 13pt; font-weight: bold; color: #000000; }
+  .doc-title { font-size: 12pt; font-weight: bold; margin-top: 4px; }
+  h2 { font-size: 11pt; color: #000000; border-bottom: 1px solid #000000; padding-bottom: 3px; margin-top: 18px; }
+  p { margin: 6px 0; }
+  table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+  th { background: #f0f0f0; text-align: left; padding: 6px 8px; border: 1px solid #ccc; font-size: 10pt; }
+  td { padding: 6px 8px; border: 1px solid #ccc; font-size: 10pt; }
+  td.num { text-align: right; }
+  .total-row td { font-weight: bold; border-top: 2px solid #000; }
+  .sig-block { margin-top: 36px; page-break-inside: avoid; }
+  .sig-line { border-top: 1px solid #333; width: 55%; margin-top: 38px; margin-bottom: 4px; }
+  .resolution { background: #f9f9f9; border-left: 3px solid #000; padding: 10px 14px; margin: 14px 0; }
+</style>
+</head>
+<body>
+<div class="header">
+  <div class="firm"><strong>{{ trust_name|default:entity_name }}</strong></div>
+  <div class="doc-title">Minutes of Meeting of Trustee(s)</div>
+  <div style="font-size:9pt;">Resolving to Distribute Trust Income</div>
+  <div style="font-size:9pt;">For the Year Ended {{ financial_year_end|default:financial_year }}</div>
+</div>
+
+<h2>Meeting Details</h2>
+<p><strong>Date:</strong> {{ minutes_date|default:financial_year_end }}</p>
+<p><strong>Trustee(s) Present:</strong> {{ trustee_name }}</p>
+<p><strong>Chairperson:</strong> {{ chairperson_name }}</p>
+
+<h2>Background</h2>
+<p>The trustee(s) of <strong>{{ trust_name|default:entity_name }}</strong> (the Trust) resolved to distribute the net income of the Trust for the year ended {{ financial_year_end|default:financial_year }} as follows.</p>
+
+{% if has_beneficiaries and beneficiary_rows %}
+<h2>Distribution Resolution</h2>
+<div class="resolution">
+  <p><strong>RESOLVED</strong> that the net income of the Trust for the year ended {{ financial_year_end|default:financial_year }} be distributed to the following beneficiaries in the amounts specified:</p>
+</div>
+<table>
+  <thead>
+    <tr>
+      <th>Beneficiary</th>
+      <th>Type</th>
+      <th style="text-align:right;">Distribution ($)</th>
+      <th style="text-align:right;">Percentage</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in beneficiary_rows %}
+    <tr>
+      <td>{{ row.name }}</td>
+      <td>{{ row.type }}</td>
+      <td class="num">{{ row.distribution }}</td>
+      <td class="num">{{ row.percentage }}</td>
+    </tr>
+    {% endfor %}
+    <tr class="total-row">
+      <td colspan="2">Total Distributed</td>
+      <td class="num">{{ total_distributed }}</td>
+      <td class="num">100%</td>
+    </tr>
+  </tbody>
+</table>
+{% else %}
+<h2>Distribution Resolution</h2>
+<div class="resolution">
+  <p><strong>RESOLVED</strong> that the net income of the Trust for the year ended {{ financial_year_end|default:financial_year }} be distributed to the beneficiaries as determined by the trustee(s) in accordance with the Trust Deed.</p>
+</div>
+{% endif %}
+
+<h2>Confirmation</h2>
+<p>There being no further business, the meeting was declared closed.</p>
+
+<div class="sig-block">
+  <div class="sig-line"></div>
+  <p><strong>{{ chairperson_name }}</strong><br>Chairperson / Trustee<br>{{ trust_name|default:entity_name }}</p>
+  <p>Date: ___________________</p>
+</div>
+</body>
+</html>

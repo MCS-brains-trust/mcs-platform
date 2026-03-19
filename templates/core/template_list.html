@@ -98,4 +98,151 @@
 </div>
 {% endfor %}
 {% endif %}
+
+{# ============================================================ #}
+{# Section 2: .docx Compliance & Legal Templates               #}
+{# ============================================================ #}
+<div class="d-flex justify-content-between align-items-center mt-5 mb-3">
+    <div>
+        <h4 class="fw-bold mb-1"><i class="bi bi-file-earmark-word"></i> Word (.docx) Compliance Templates</h4>
+        <p class="text-muted mb-0">Downloadable Word templates for compliance &amp; legal documents &mdash; {{ legal_total_count }} template{{ legal_total_count|pluralize }} active</p>
+    </div>
+</div>
+
+{% if not legal_categories %}
+<div class="card">
+    <div class="card-body text-center py-5">
+        <i class="bi bi-file-earmark-word display-4 text-muted"></i>
+        <p class="text-muted mt-3 mb-0">No .docx templates uploaded yet.</p>
+    </div>
+</div>
+{% else %}
+{% for cat_label, legal_tpls in legal_categories.items %}
+<div class="card mb-4">
+    <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+        <h6 class="mb-0"><i class="bi bi-folder2-open me-2"></i>{{ cat_label }}</h6>
+        <span class="badge bg-light text-dark">{{ legal_tpls|length }} template{{ legal_tpls|length|pluralize }}</span>
+    </div>
+    <div class="card-body p-0">
+        <table class="table table-hover mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Template Name</th>
+                    <th>Document Type</th>
+                    <th class="text-center">Version</th>
+                    <th class="text-center">Solicitor Approved</th>
+                    <th class="text-center">Created</th>
+                    <th class="text-end">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for tpl in legal_tpls %}
+                <tr>
+                    <td>
+                        <span class="fw-semibold">{{ tpl.name }}</span>
+                        {% if tpl.solicitor_approved and tpl.solicitor_name %}
+                        <br><small class="text-success"><i class="bi bi-check-circle"></i> Approved by {{ tpl.solicitor_name }}{% if tpl.approval_date %} on {{ tpl.approval_date|date:"d M Y" }}{% endif %}</small>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <span class="badge bg-secondary">{{ tpl.get_document_type_display }}</span>
+                    </td>
+                    <td class="text-center">
+                        <span class="badge bg-secondary">v{{ tpl.version }}</span>
+                    </td>
+                    <td class="text-center">
+                        {% if tpl.solicitor_approved %}
+                        <span class="badge bg-success"><i class="bi bi-check-circle"></i> Yes</span>
+                        {% else %}
+                        <span class="badge bg-warning text-dark">Pending</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-center">
+                        <small class="text-muted">{{ tpl.created_at|date:"d M Y" }}</small>
+                    </td>
+                    <td class="text-end">
+                        <div class="btn-group btn-group-sm">
+                            <a href="{% url 'core:legal_template_download' pk=tpl.pk %}" class="btn btn-outline-primary" title="Download .docx">
+                                <i class="bi bi-download"></i>
+                            </a>
+                            <button class="btn btn-outline-warning" title="Replace with new version"
+                                    onclick="openReplaceModal('{{ tpl.pk }}', '{{ tpl.name|escapejs }}', {{ tpl.version }})"
+                                    data-bs-toggle="tooltip">
+                                <i class="bi bi-arrow-repeat"></i>
+                            </button>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endfor %}
+{% endif %}
+
+{# Replace Modal #}
+<div class="modal fade" id="replaceModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-arrow-repeat"></i> Replace Template</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Uploading a replacement will <strong>deactivate the current version</strong> and create a new version. The old version is kept for audit purposes.</p>
+                <p class="text-muted small">Replacing: <strong id="replaceTemplateName"></strong> (currently <span id="replaceTemplateVersion"></span>)</p>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">New .docx File <span class="text-danger">*</span></label>
+                    <input type="file" class="form-control" id="replaceFile" accept=".docx" required>
+                    <div class="form-text">Only .docx files are accepted. Merge fields ({{ '{{' }} field_name {{ '}}' }}) must match the existing schema.</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-warning" id="replaceSubmitBtn" onclick="submitReplace()">
+                    <i class="bi bi-arrow-repeat"></i> Replace Template
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let _replacePk = null;
+function openReplaceModal(pk, name, version) {
+    _replacePk = pk;
+    document.getElementById('replaceTemplateName').textContent = name;
+    document.getElementById('replaceTemplateVersion').textContent = 'v' + version;
+    document.getElementById('replaceFile').value = '';
+    new bootstrap.Modal(document.getElementById('replaceModal')).show();
+}
+function submitReplace() {
+    const file = document.getElementById('replaceFile').files[0];
+    if (!file) { alert('Please select a .docx file.'); return; }
+    const btn = document.getElementById('replaceSubmitBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Uploading...';
+    const fd = new FormData();
+    fd.append('template_file', file);
+    fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
+    fetch('/core/legal-templates/' + _replacePk + '/replace/', { method: 'POST', body: fd })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            alert(data.message);
+            location.reload();
+        } else {
+            alert('Error: ' + (data.error || 'Unknown error'));
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-arrow-repeat"></i> Replace Template';
+        }
+    })
+    .catch(err => {
+        alert('Error: ' + err.message);
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-arrow-repeat"></i> Replace Template';
+    });
+}
+</script>
 {% endblock %}

@@ -46,6 +46,8 @@ urlpatterns = [
     # Legal Document Generation
     path("legal-templates/", views_legal_docs.legal_template_list, name="legal_template_list"),
     path("legal-templates/upload/", views_legal_docs.legal_template_upload, name="legal_template_upload"),
+    path("legal-templates/<uuid:pk>/download/", views_legal_docs.legal_template_download, name="legal_template_download"),
+    path("legal-templates/<uuid:pk>/replace/", views_legal_docs.legal_template_replace, name="legal_template_replace"),
     path("years/<uuid:pk>/legal-docs/wizard/<str:doc_type>/", views_legal_docs.legal_doc_wizard, name="legal_doc_wizard"),
     path("years/<uuid:pk>/legal-docs/generate/<str:doc_type>/", views_legal_docs.legal_doc_generate, name="legal_doc_generate"),
     path("years/<uuid:pk>/legal-docs/", views_legal_docs.legal_doc_list, name="legal_doc_list"),

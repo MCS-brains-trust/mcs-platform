@@ -19,7 +19,7 @@ from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
-from core.models import DocumentTemplate, Entity
+from core.models import DocumentTemplate, Entity, LegalDocumentTemplate
 from core.views import _log_action
 
 
@@ -48,10 +48,53 @@ def template_list(request):
             }
         categories[cat]["templates"].append(tpl)
 
+    # Legal / compliance .docx templates — grouped by document type category
+    legal_templates = LegalDocumentTemplate.objects.filter(is_active=True).order_by("name")
+    LEGAL_CATEGORY_MAP = {
+        "div7a_loan_agreement": "Legal Agreements",
+        "trust_deed_change_trustee": "Trust Deeds",
+        "trust_deed_add_beneficiary": "Trust Deeds",
+        "trust_deed_remove_beneficiary": "Trust Deeds",
+        "trust_deed_extend_vesting": "Trust Deeds",
+        "trust_deed_update_distribution": "Trust Deeds",
+        "discretionary_trust_deed": "Trust Deeds",
+        "unit_trust_deed": "Trust Deeds",
+        "unit_trust_deed_ancillaries": "Trust Deeds",
+        "unit_transfer": "Trust Deeds",
+        "company_constitution": "Company Documents",
+        "company_constitution_special": "Company Documents",
+        "company_establishment": "Company Documents",
+        "partnership_agreement": "Partnership Documents",
+        "partner_statement": "Partnership Documents",
+        "partnership_tax_summary": "Partnership Documents",
+        "dividend_statement": "Compliance Documents",
+        "dividend_minutes": "Compliance Documents",
+        "solvency_resolution": "Compliance Documents",
+        "directors_declaration": "Compliance Documents",
+        "directors_declaration_large": "Compliance Documents",
+        "directors_declaration_gp": "Compliance Documents",
+        "directors_report": "Compliance Documents",
+        "shareholder_loan_ack": "Compliance Documents",
+        "engagement_letter": "Client Letters",
+        "management_rep_letter": "Client Letters",
+        "management_rep_letter_trust": "Client Letters",
+        "management_rep_letter_partnership": "Client Letters",
+        "client_cover_letter": "Client Letters",
+        "distribution_minutes": "Trust Documents",
+        "section_100a_summary": "Trust Documents",
+    }
+    legal_categories = {}
+    for tpl in legal_templates:
+        cat = LEGAL_CATEGORY_MAP.get(tpl.document_type, "Other")
+        if cat not in legal_categories:
+            legal_categories[cat] = []
+        legal_categories[cat].append(tpl)
     context = {
         "categories": categories,
         "total_count": templates.count(),
         "active_count": templates.filter(is_active=True).count(),
+        "legal_categories": legal_categories,
+        "legal_total_count": legal_templates.count(),
     }
     return render(request, "core/template_list.html", context)
 
