@@ -195,7 +195,7 @@
                 <div class="mb-3">
                     <label class="form-label fw-semibold">New .docx File <span class="text-danger">*</span></label>
                     <input type="file" class="form-control" id="replaceFile" accept=".docx" required>
-                    <div class="form-text">Only .docx files are accepted. Merge fields ({{ '{{' }} field_name {{ '}}' }}) must match the existing schema.</div>
+                    <div class="form-text">Only .docx files are accepted. Merge fields ({% templatetag openvariable %} field_name {% templatetag closevariable %}) must match the existing schema.</div>
                 </div>
             </div>
             <div class="modal-footer">
