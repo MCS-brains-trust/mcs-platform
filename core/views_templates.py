@@ -59,7 +59,7 @@ def template_list(request):
         label = ENTITY_TYPE_LABELS.get(tpl.entity_type, tpl.entity_type.replace("_", " ").title())
         if label not in fs_by_entity:
             fs_by_entity[label] = []
-        tpl._in_package = tpl.document_type in PACKAGE_FS_TYPES
+        tpl.in_package = tpl.document_type in PACKAGE_FS_TYPES
         fs_by_entity[label].append(tpl)
 
     # JSON-driven DocumentTemplates (distribution minutes, trust elections, etc.)
@@ -137,7 +137,7 @@ def template_list(request):
         cat = LEGAL_CATEGORY_MAP.get(tpl.document_type, "Other")
         if cat not in legal_categories_raw:
             legal_categories_raw[cat] = []
-        tpl._in_package = tpl.document_type in PACKAGE_LEGAL_TYPES
+        tpl.in_package = tpl.document_type in PACKAGE_LEGAL_TYPES
         legal_categories_raw[cat].append(tpl)
     # Apply canonical ordering
     legal_categories = {

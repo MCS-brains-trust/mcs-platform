@@ -129,7 +129,7 @@
                         </td>
                         <td class="text-center"><span class="badge bg-secondary">v{{ tpl.version }}</span></td>
                         <td class="text-center">
-                            {% if tpl._in_package %}
+                            {% if tpl.in_package %}
                             <span class="badge bg-primary"><i class="bi bi-box-seam"></i> Yes</span>
                             {% else %}<span class="text-muted small">—</span>{% endif %}
                         </td>
@@ -262,7 +262,7 @@
                         <td class="fw-semibold">{{ tpl.name }}</td>
                         <td><span class="badge bg-secondary">{{ tpl.get_document_type_display }}</span></td>
                         <td class="text-center">
-                            {% if tpl._in_package %}<span class="badge bg-primary"><i class="bi bi-box-seam"></i> Yes</span>
+                            {% if tpl.in_package %}<span class="badge bg-primary"><i class="bi bi-box-seam"></i> Yes</span>
                             {% else %}<span class="text-muted small">—</span>{% endif %}
                         </td>
                         <td class="text-center"><span class="badge bg-secondary">v{{ tpl.version }}</span></td>
