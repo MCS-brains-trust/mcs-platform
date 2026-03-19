@@ -5639,3 +5639,79 @@ class FirmSettings(models.Model):
             except Exception:
                 return None
         return None
+
+
+# ---------------------------------------------------------------------------
+# Year-End Client Commentary
+# ---------------------------------------------------------------------------
+class YearEndCommentary(models.Model):
+    """
+    AI-generated year-end commentary for a financial year, transforming
+    trial balance figures (current year + comparatives) into a client-ready
+    advisory narrative. Surfaced exclusively on the Package Assemble stage.
+    """
+
+    class Status(models.TextChoices):
+        GENERATING = "generating", "Generating"
+        DRAFT = "draft", "Draft"
+        REVIEWED = "reviewed", "Reviewed"
+        SENT = "sent", "Sent to Client"
+        ERROR = "error", "Error"
+
+    class Tone(models.TextChoices):
+        PROFESSIONAL = "professional", "Professional"
+        CONVERSATIONAL = "conversational", "Conversational"
+        TECHNICAL = "technical", "Technical"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    financial_year = models.OneToOneField(
+        FinancialYear,
+        on_delete=models.CASCADE,
+        related_name="year_end_commentary",
+        help_text="One commentary per financial year (upsert on regenerate).",
+    )
+
+    # Five-section commentary content
+    section_snapshot = models.TextField(blank=True, default="")
+    section_revenue = models.TextField(blank=True, default="")
+    section_costs = models.TextField(blank=True, default="")
+    section_watch_items = models.TextField(blank=True, default="")
+    section_actions = models.TextField(blank=True, default="")
+    full_content = models.TextField(blank=True, default="")
+
+    # Metadata
+    status = models.CharField(
+        max_length=12, choices=Status.choices, default=Status.GENERATING,
+    )
+    tone = models.CharField(
+        max_length=15, choices=Tone.choices, default=Tone.PROFESSIONAL,
+    )
+    version = models.PositiveIntegerField(default=1)
+    model_used = models.CharField(max_length=20, blank=True, default="")
+    generated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="generated_yearend_commentaries",
+    )
+    generated_at = models.DateTimeField(auto_now_add=True)
+    reviewed_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="reviewed_yearend_commentaries",
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+
+    # Context snapshot for audit trail
+    context_snapshot = models.JSONField(default=dict, blank=True)
+    error_message = models.TextField(blank=True, default="")
+
+    # Task tracking
+    generation_started_at = models.DateTimeField(null=True, blank=True)
+    generation_completed_at = models.DateTimeField(null=True, blank=True)
+    generation_step = models.CharField(max_length=100, blank=True, default="")
+
+    class Meta:
+        ordering = ["-generated_at"]
+        verbose_name = "Year-End Commentary"
+        verbose_name_plural = "Year-End Commentaries"
+
+    def __str__(self):
+        return f"Year-End Commentary — {self.financial_year} ({self.get_status_display()})"

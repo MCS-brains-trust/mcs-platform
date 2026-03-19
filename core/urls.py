@@ -98,6 +98,12 @@ urlpatterns = [
     path("years/<uuid:pk>/package/send-for-signing/", views_package_assembly.package_send_for_signing, name="package_send_for_signing"),
     path("years/<uuid:pk>/package/download-bundle/", views_package_assembly.package_download_bundle, name="package_download_bundle"),
 
+    # Year-End Commentary (Package Assembly)
+    path("years/<uuid:pk>/package/commentary/generate/", views_package_assembly.yearend_commentary_generate, name="yearend_commentary_generate"),
+    path("years/<uuid:pk>/package/commentary/poll/", views_package_assembly.yearend_commentary_poll, name="yearend_commentary_poll"),
+    path("years/<uuid:pk>/package/commentary/save/", views_package_assembly.yearend_commentary_save, name="yearend_commentary_save"),
+    path("years/<uuid:pk>/package/commentary/mark-reviewed/", views_package_assembly.yearend_commentary_mark_reviewed, name="yearend_commentary_mark_reviewed"),
+
     # Bulk Operations
     path("bulk/generate-packages/", views_bulk_operations.bulk_generate_packages, name="bulk_generate_packages"),
     path("bulk/readiness-check/", views_bulk_operations.bulk_readiness_check, name="bulk_readiness_check"),

@@ -16,6 +16,7 @@ from core.models import (
     FinancialYear,
     LegalDocument,
     TrialBalanceLine,
+    YearEndCommentary,
 )
 
 logger = logging.getLogger(__name__)
@@ -118,6 +119,9 @@ def package_assembly(request, pk):
         item["present"] for item in checklist if item["required"]
     )
 
+    # Year-end commentary (if exists)
+    commentary = YearEndCommentary.objects.filter(financial_year=fy).first()
+
     return render(request, "core/compliance/package_assembly.html", {
         "fy": fy,
         "entity": entity,
@@ -125,6 +129,7 @@ def package_assembly(request, pk):
         "risk_alerts": risk_alerts,
         "all_required_present": all_required_present,
         "existing_docs": existing_docs,
+        "commentary": commentary,
     })
 
 
@@ -306,3 +311,119 @@ def _has_director_loan_over_10k(fy):
             if balance > 10000:
                 return True
     return False
+
+
+# ---------------------------------------------------------------------------
+# Year-End Commentary Views
+# ---------------------------------------------------------------------------
+
+@login_required
+@require_POST
+def yearend_commentary_generate(request, pk):
+    """
+    Kick off year-end commentary generation for a financial year.
+    Runs synchronously (fast enough for a single LLM call).
+    Returns JSON immediately after saving the GENERATING record,
+    then the client polls yearend_commentary_poll until done.
+    """
+    fy = get_object_or_404(FinancialYear, pk=pk)
+
+    try:
+        body = json.loads(request.body or "{}")
+    except json.JSONDecodeError:
+        body = {}
+    tone = body.get("tone", "professional")
+
+    try:
+        from core.eva_yearend_commentary import generate_yearend_commentary
+        # Run synchronously — LLM call is ~3-5s, acceptable for this use case
+        generate_yearend_commentary(
+            financial_year_id=str(fy.pk),
+            generated_by_id=str(request.user.pk),
+            tone=tone,
+        )
+        return JsonResponse({"status": "ok"})
+    except Exception as exc:
+        logger.exception("Year-end commentary generation error: %s", exc)
+        return JsonResponse({"status": "error", "error": str(exc)}, status=500)
+
+
+@login_required
+def yearend_commentary_poll(request, pk):
+    """
+    Poll the current status of the year-end commentary generation.
+    Returns status, current step, and error if any.
+    """
+    fy = get_object_or_404(FinancialYear, pk=pk)
+    commentary = YearEndCommentary.objects.filter(financial_year=fy).first()
+
+    if not commentary:
+        return JsonResponse({"status": "none"})
+
+    return JsonResponse({
+        "status": commentary.status,
+        "step": commentary.generation_step or "",
+        "error": commentary.error_message or "",
+    })
+
+
+@login_required
+@require_POST
+def yearend_commentary_save(request, pk):
+    """
+    Save manual edits to the commentary sections.
+    Accepts JSON: {"sections": {"snapshot": "...", "revenue": "...", ...}}
+    """
+    fy = get_object_or_404(FinancialYear, pk=pk)
+    commentary = get_object_or_404(YearEndCommentary, financial_year=fy)
+
+    try:
+        body = json.loads(request.body or "{}")
+    except json.JSONDecodeError:
+        return JsonResponse({"status": "error", "error": "Invalid JSON"}, status=400)
+
+    sections = body.get("sections", {})
+    update_fields = []
+
+    section_map = {
+        "snapshot": "section_snapshot",
+        "revenue": "section_revenue",
+        "costs": "section_costs",
+        "watch_items": "section_watch_items",
+        "actions": "section_actions",
+    }
+
+    for key, field in section_map.items():
+        if key in sections:
+            setattr(commentary, field, sections[key])
+            update_fields.append(field)
+
+    if update_fields:
+        # Rebuild full_content from sections
+        commentary.full_content = "\n\n".join([
+            f"## Year Snapshot\n{commentary.section_snapshot}",
+            f"## Revenue & Income Analysis\n{commentary.section_revenue}",
+            f"## Expense & Margin Analysis\n{commentary.section_costs}",
+            f"## Key Observations\n{commentary.section_watch_items}",
+            f"## Recommended Actions\n{commentary.section_actions}",
+        ])
+        update_fields.append("full_content")
+        commentary.save(update_fields=update_fields)
+
+    return JsonResponse({"status": "ok"})
+
+
+@login_required
+@require_POST
+def yearend_commentary_mark_reviewed(request, pk):
+    """Mark the year-end commentary as reviewed by the current user."""
+    from datetime import timezone as dt_timezone
+    fy = get_object_or_404(FinancialYear, pk=pk)
+    commentary = get_object_or_404(YearEndCommentary, financial_year=fy)
+
+    commentary.status = YearEndCommentary.Status.REVIEWED
+    commentary.reviewed_by = request.user
+    commentary.reviewed_at = datetime.now(dt_timezone.utc)
+    commentary.save(update_fields=["status", "reviewed_by", "reviewed_at"])
+
+    return JsonResponse({"status": "ok"})

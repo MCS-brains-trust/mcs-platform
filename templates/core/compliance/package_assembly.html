@@ -49,7 +49,7 @@
                         </button>
                         {% elif alert.resolution == 'generate_directors_declaration' %}
                         <button class="btn btn-sm btn-outline-primary text-nowrap"
-                                onclick="generateDoc('{% url 'core:generate_directors_declaration' pk=fy.pk %}', "Director's Declaration")">
+                                onclick="generateDoc('{% url 'core:generate_directors_declaration' pk=fy.pk %}', 'Director\'s Declaration')">
                             {{ alert.resolution_label }}
                         </button>
                         {% elif alert.resolution == 'generate_loan_acknowledgment' %}
@@ -231,15 +231,172 @@
             {% endif %}
         </div>
     </div>
+
+    {# ------------------------------------------------------------------ #}
+    {# Year-End Client Commentary                                          #}
+    {# ------------------------------------------------------------------ #}
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card" id="commentaryCard">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <div>
+                        <h5 class="mb-0">
+                            <i class="bi bi-stars text-warning"></i>
+                            Year-End Client Commentary
+                            <span class="badge bg-secondary ms-2" style="font-size:0.65rem;">Eva AI</span>
+                        </h5>
+                        <small class="text-muted">
+                            AI-generated narrative based on the full-year trial balance and prior-year comparatives.
+                            Review and edit before sending to the client.
+                        </small>
+                    </div>
+                    <div class="d-flex gap-2 align-items-center">
+                        <select id="toneSelect" class="form-select form-select-sm" style="width:auto;">
+                            <option value="professional" {% if commentary and commentary.tone == 'professional' %}selected{% endif %}>Professional</option>
+                            <option value="conversational" {% if commentary and commentary.tone == 'conversational' %}selected{% endif %}>Conversational</option>
+                            <option value="technical" {% if commentary and commentary.tone == 'technical' %}selected{% endif %}>Technical</option>
+                        </select>
+                        <button class="btn btn-sm btn-primary" id="generateBtn" onclick="generateCommentary()">
+                            <i class="bi bi-stars"></i>
+                            {% if commentary and commentary.status == 'draft' or commentary and commentary.status == 'reviewed' %}
+                                Regenerate
+                            {% else %}
+                                Generate Commentary
+                            {% endif %}
+                        </button>
+                        {% if commentary and commentary.full_content %}
+                        <button class="btn btn-sm btn-outline-secondary" onclick="copyCommentary()" title="Copy to clipboard">
+                            <i class="bi bi-clipboard"></i> Copy
+                        </button>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <div class="card-body" id="commentaryBody">
+                    {# Generating state #}
+                    <div id="commentaryGenerating" class="text-center py-4" style="display:none;">
+                        <div class="spinner-border text-primary mb-3" role="status"></div>
+                        <p class="text-muted mb-1">Eva is analysing the trial balance...</p>
+                        <p class="text-muted small" id="generatingStep">Building financial context</p>
+                    </div>
+
+                    {# Error state #}
+                    {% if commentary and commentary.status == 'error' %}
+                    <div class="alert alert-danger">
+                        <i class="bi bi-exclamation-triangle"></i>
+                        <strong>Generation failed:</strong> {{ commentary.error_message }}
+                    </div>
+                    {% endif %}
+
+                    {# Empty state #}
+                    {% if not commentary or not commentary.full_content %}
+                    <div id="commentaryEmpty" class="text-center py-5 text-muted">
+                        <i class="bi bi-stars" style="font-size:2.5rem; opacity:0.3;"></i>
+                        <p class="mt-3 mb-1">No commentary generated yet.</p>
+                        <p class="small">Click <strong>Generate Commentary</strong> to create a client-ready year-end narrative using the full-year trial balance figures.</p>
+                    </div>
+                    {% else %}
+                    {# Commentary sections #}
+                    <div id="commentaryContent">
+                        <div class="d-flex justify-content-between align-items-center mb-3">
+                            <div>
+                                <span class="badge bg-{% if commentary.status == 'reviewed' %}success{% elif commentary.status == 'draft' %}warning text-dark{% else %}secondary{% endif %} me-2">
+                                    {{ commentary.get_status_display }}
+                                </span>
+                                <small class="text-muted">
+                                    Generated {{ commentary.generated_at|date:"d M Y H:i" }}
+                                    {% if commentary.generated_by %}by {{ commentary.generated_by.get_full_name|default:commentary.generated_by.email }}{% endif %}
+                                    &middot; v{{ commentary.version }}
+                                </small>
+                            </div>
+                            <div class="d-flex gap-2">
+                                {% if commentary.status == 'draft' %}
+                                <button class="btn btn-sm btn-outline-success" onclick="markReviewed()">
+                                    <i class="bi bi-check-circle"></i> Mark as Reviewed
+                                </button>
+                                {% endif %}
+                                <button class="btn btn-sm btn-outline-secondary" onclick="toggleEdit()" id="editBtn">
+                                    <i class="bi bi-pencil"></i> Edit
+                                </button>
+                            </div>
+                        </div>
+
+                        {# Section: Year Snapshot #}
+                        {% if commentary.section_snapshot %}
+                        <div class="commentary-section mb-4">
+                            <h6 class="text-primary border-bottom pb-1"><i class="bi bi-graph-up"></i> Year Snapshot</h6>
+                            <div class="commentary-text" id="sec-snapshot" data-section="snapshot">{{ commentary.section_snapshot|linebreaks }}</div>
+                            <textarea class="form-control commentary-edit d-none" id="edit-snapshot" rows="4">{{ commentary.section_snapshot }}</textarea>
+                        </div>
+                        {% endif %}
+
+                        {# Section: Revenue & Income #}
+                        {% if commentary.section_revenue %}
+                        <div class="commentary-section mb-4">
+                            <h6 class="text-primary border-bottom pb-1"><i class="bi bi-cash-stack"></i> Revenue &amp; Income Analysis</h6>
+                            <div class="commentary-text" id="sec-revenue" data-section="revenue">{{ commentary.section_revenue|linebreaks }}</div>
+                            <textarea class="form-control commentary-edit d-none" id="edit-revenue" rows="5">{{ commentary.section_revenue }}</textarea>
+                        </div>
+                        {% endif %}
+
+                        {# Section: Expense & Margin #}
+                        {% if commentary.section_costs %}
+                        <div class="commentary-section mb-4">
+                            <h6 class="text-primary border-bottom pb-1"><i class="bi bi-receipt"></i> Expense &amp; Margin Analysis</h6>
+                            <div class="commentary-text" id="sec-costs" data-section="costs">{{ commentary.section_costs|linebreaks }}</div>
+                            <textarea class="form-control commentary-edit d-none" id="edit-costs" rows="5">{{ commentary.section_costs }}</textarea>
+                        </div>
+                        {% endif %}
+
+                        {# Section: Key Observations #}
+                        {% if commentary.section_watch_items %}
+                        <div class="commentary-section mb-4">
+                            <h6 class="text-primary border-bottom pb-1"><i class="bi bi-eye"></i> Key Observations</h6>
+                            <div class="commentary-text" id="sec-watch" data-section="watch_items">{{ commentary.section_watch_items|linebreaks }}</div>
+                            <textarea class="form-control commentary-edit d-none" id="edit-watch_items" rows="5">{{ commentary.section_watch_items }}</textarea>
+                        </div>
+                        {% endif %}
+
+                        {# Section: Recommended Actions #}
+                        {% if commentary.section_actions %}
+                        <div class="commentary-section mb-4">
+                            <h6 class="text-primary border-bottom pb-1"><i class="bi bi-lightning-charge"></i> Recommended Actions</h6>
+                            <div class="commentary-text" id="sec-actions" data-section="actions">{{ commentary.section_actions|linebreaks }}</div>
+                            <textarea class="form-control commentary-edit d-none" id="edit-actions" rows="5">{{ commentary.section_actions }}</textarea>
+                        </div>
+                        {% endif %}
+
+                        {# Edit mode save/cancel #}
+                        <div id="editActions" class="d-none mt-3 d-flex gap-2 justify-content-end">
+                            <button class="btn btn-sm btn-outline-secondary" onclick="cancelEdit()">Cancel</button>
+                            <button class="btn btn-sm btn-success" onclick="saveEdits()">
+                                <i class="bi bi-check-lg"></i> Save Edits
+                            </button>
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 
 <style>
 .btn-xs { padding: 0.15rem 0.4rem; font-size: 0.72rem; line-height: 1.4; }
+.commentary-section { border-left: 3px solid #dee2e6; padding-left: 1rem; }
+.commentary-text p { margin-bottom: 0.5rem; }
 </style>
+
 <script>
 const CSRF_TOKEN = '{{ csrf_token }}';
 const ASSEMBLE_URL = '{% url "core:package_assemble" pk=fy.pk %}';
 const SIGN_URL = '{% url "core:package_send_for_signing" pk=fy.pk %}';
+const COMMENTARY_GENERATE_URL = '{% url "core:yearend_commentary_generate" pk=fy.pk %}';
+const COMMENTARY_POLL_URL = '{% url "core:yearend_commentary_poll" pk=fy.pk %}';
+const COMMENTARY_SAVE_URL = '{% url "core:yearend_commentary_save" pk=fy.pk %}';
+const COMMENTARY_MARK_REVIEWED_URL = '{% url "core:yearend_commentary_mark_reviewed" pk=fy.pk %}';
+
+let pollInterval = null;
 
 function generateDoc(url, label) {
     if (!confirm('Generate ' + label + '?')) return;
@@ -259,10 +416,8 @@ function generateDoc(url, label) {
     .catch(err => alert('Error: ' + err.message));
 }
 
-
 function assemblePackage() {
     if (!confirm('Assemble the client package? This will mark all documents as ready for signing.')) return;
-
     fetch(ASSEMBLE_URL, {
         method: 'POST',
         headers: {'X-CSRFToken': CSRF_TOKEN},
@@ -295,5 +450,146 @@ function sendForSigning() {
     })
     .catch(err => alert('Error: ' + err.message));
 }
+
+// ---- Year-End Commentary ----
+
+function generateCommentary() {
+    const tone = document.getElementById('toneSelect').value;
+    document.getElementById('commentaryEmpty') && (document.getElementById('commentaryEmpty').style.display = 'none');
+    document.getElementById('commentaryContent') && (document.getElementById('commentaryContent').style.display = 'none');
+    document.getElementById('commentaryGenerating').style.display = 'block';
+    document.getElementById('generateBtn').disabled = true;
+
+    fetch(COMMENTARY_GENERATE_URL, {
+        method: 'POST',
+        headers: {'X-CSRFToken': CSRF_TOKEN, 'Content-Type': 'application/json'},
+        body: JSON.stringify({tone: tone}),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            startPolling();
+        } else {
+            document.getElementById('commentaryGenerating').style.display = 'none';
+            document.getElementById('generateBtn').disabled = false;
+            alert('Error: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(err => {
+        document.getElementById('commentaryGenerating').style.display = 'none';
+        document.getElementById('generateBtn').disabled = false;
+        alert('Error: ' + err.message);
+    });
+}
+
+function startPolling() {
+    if (pollInterval) clearInterval(pollInterval);
+    pollInterval = setInterval(pollCommentary, 2000);
+}
+
+function pollCommentary() {
+    fetch(COMMENTARY_POLL_URL)
+    .then(r => r.json())
+    .then(data => {
+        if (data.step) {
+            document.getElementById('generatingStep').textContent = data.step;
+        }
+        if (data.status === 'draft' || data.status === 'reviewed') {
+            clearInterval(pollInterval);
+            location.reload();
+        } else if (data.status === 'error') {
+            clearInterval(pollInterval);
+            document.getElementById('commentaryGenerating').style.display = 'none';
+            document.getElementById('generateBtn').disabled = false;
+            alert('Commentary generation failed: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(() => {});
+}
+
+function toggleEdit() {
+    const editBtn = document.getElementById('editBtn');
+    const isEditing = editBtn.classList.contains('active');
+    if (isEditing) {
+        cancelEdit();
+    } else {
+        editBtn.classList.add('active');
+        editBtn.innerHTML = '<i class="bi bi-x-lg"></i> Cancel';
+        document.querySelectorAll('.commentary-text').forEach(el => el.classList.add('d-none'));
+        document.querySelectorAll('.commentary-edit').forEach(el => el.classList.remove('d-none'));
+        document.getElementById('editActions').classList.remove('d-none');
+    }
+}
+
+function cancelEdit() {
+    const editBtn = document.getElementById('editBtn');
+    editBtn.classList.remove('active');
+    editBtn.innerHTML = '<i class="bi bi-pencil"></i> Edit';
+    document.querySelectorAll('.commentary-text').forEach(el => el.classList.remove('d-none'));
+    document.querySelectorAll('.commentary-edit').forEach(el => el.classList.add('d-none'));
+    document.getElementById('editActions').classList.add('d-none');
+}
+
+function saveEdits() {
+    const sections = {};
+    document.querySelectorAll('.commentary-edit').forEach(el => {
+        const key = el.id.replace('edit-', '');
+        sections[key] = el.value;
+    });
+    fetch(COMMENTARY_SAVE_URL, {
+        method: 'POST',
+        headers: {'X-CSRFToken': CSRF_TOKEN, 'Content-Type': 'application/json'},
+        body: JSON.stringify({sections: sections}),
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') {
+            location.reload();
+        } else {
+            alert('Error saving: ' + (data.error || 'Unknown error'));
+        }
+    })
+    .catch(err => alert('Error: ' + err.message));
+}
+
+function markReviewed() {
+    fetch(COMMENTARY_MARK_REVIEWED_URL, {
+        method: 'POST',
+        headers: {'X-CSRFToken': CSRF_TOKEN},
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.status === 'ok') location.reload();
+        else alert('Error: ' + (data.error || 'Unknown error'));
+    })
+    .catch(err => alert('Error: ' + err.message));
+}
+
+function copyCommentary() {
+    const sections = [];
+    document.querySelectorAll('.commentary-section').forEach(sec => {
+        const heading = sec.querySelector('h6');
+        const body = sec.querySelector('.commentary-text');
+        if (heading && body) {
+            sections.push(heading.textContent.trim() + '\n\n' + body.innerText.trim());
+        }
+    });
+    const text = sections.join('\n\n---\n\n');
+    navigator.clipboard.writeText(text).then(() => {
+        const btn = event.target.closest('button');
+        const orig = btn.innerHTML;
+        btn.innerHTML = '<i class="bi bi-check-lg"></i> Copied!';
+        setTimeout(() => btn.innerHTML = orig, 2000);
+    });
+}
+
+// Auto-start polling if currently generating
+{% if commentary and commentary.status == 'generating' %}
+document.getElementById('commentaryEmpty') && (document.getElementById('commentaryEmpty').style.display = 'none');
+document.getElementById('commentaryContent') && (document.getElementById('commentaryContent').style.display = 'none');
+document.getElementById('commentaryGenerating').style.display = 'block';
+document.getElementById('generateBtn').disabled = true;
+startPolling();
+{% endif %}
 </script>
 {% endblock %}
