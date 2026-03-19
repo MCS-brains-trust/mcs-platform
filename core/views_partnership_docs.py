@@ -448,7 +448,7 @@ def engagement_letter_generate(request, pk):
         "status": "ok",
         "document_id": document_id,
         "message": "Engagement letter generated and saved. The roll-forward gate for this year is now satisfied.",
-        "redirect_url": f"/core/entities/{entity.pk}/?tab=engagement_letters",
+        "redirect_url": f"/entities/{entity.pk}/?tab=engagement_letters",
         "docx_url": result.get("docx_url"),
         "pdf_url": result.get("pdf_url"),
     })
@@ -622,7 +622,7 @@ def engagement_letter_quick_generate(request, pk):
         "status": "ok",
         "document_id": document_id,
         "message": f"Engagement letter generated for {fy.year_label}. Roll-forward gate satisfied.",
-        "redirect_url": f"/core/entities/{entity.pk}/?tab=engagement_letters",
+        "redirect_url": f"/entities/{entity.pk}/?tab=engagement_letters",
         "docx_url": result.get("docx_url"),
         "pdf_url": result.get("pdf_url"),
     })
