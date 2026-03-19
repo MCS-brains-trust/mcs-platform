@@ -19,7 +19,7 @@ from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
-from core.models import DocumentTemplate, Entity, LegalDocumentTemplate
+from core.models import DocumentTemplate, Entity, FinancialStatementTemplate, LegalDocumentTemplate, WorkPaperTemplate
 from core.views import _log_action
 
 
@@ -28,28 +28,68 @@ from core.views import _log_action
 # =============================================================================
 @login_required
 def template_list(request):
-    """List all document templates, grouped by category."""
+    """List all document templates, organised into three tabs."""
     if not request.user.is_admin:
         messages.error(request, "Only administrators can manage document templates.")
         return redirect("core:entity_list")
 
-    templates = DocumentTemplate.objects.all().order_by(
-        "document_category", "entity_type", "-version"
-    )
+    # -----------------------------------------------------------------------
+    # TAB 1: Financial Statement Templates
+    # -----------------------------------------------------------------------
+    # FinancialStatementTemplate (.docx) — grouped by entity type
+    fs_templates = FinancialStatementTemplate.objects.filter(
+        is_active=True
+    ).order_by("entity_type", "document_type")
 
-    # Group by category
-    categories = {}
-    for tpl in templates:
+    ENTITY_TYPE_LABELS = {
+        "company": "Company",
+        "trust": "Trust",
+        "sole_trader": "Sole Trader",
+        "partnership": "Partnership",
+        "smsf": "SMSF",
+        "individual": "Individual",
+    }
+    # FS doc types that are used in the annual client package bundle
+    PACKAGE_FS_TYPES = {
+        "COVER", "DETAILED_PL", "BALANCE_SHEET", "SUMMARY_PL",
+        "NOTES", "DECLARATION", "COMPILATION", "DISTRIBUTION",
+    }
+    fs_by_entity = {}
+    for tpl in fs_templates:
+        label = ENTITY_TYPE_LABELS.get(tpl.entity_type, tpl.entity_type.replace("_", " ").title())
+        if label not in fs_by_entity:
+            fs_by_entity[label] = []
+        tpl._in_package = tpl.document_type in PACKAGE_FS_TYPES
+        fs_by_entity[label].append(tpl)
+
+    # JSON-driven DocumentTemplates (distribution minutes, trust elections, etc.)
+    json_templates = DocumentTemplate.objects.filter(
+        is_active=True
+    ).order_by("document_category", "entity_type", "-version")
+    json_categories = {}
+    for tpl in json_templates:
         cat = tpl.get_document_category_display()
-        if cat not in categories:
-            categories[cat] = {
-                "key": tpl.document_category,
-                "templates": [],
-            }
-        categories[cat]["templates"].append(tpl)
+        if cat not in json_categories:
+            json_categories[cat] = []
+        json_categories[cat].append(tpl)
 
-    # Legal / compliance .docx templates — grouped by document type category
-    legal_templates = LegalDocumentTemplate.objects.filter(is_active=True).order_by("name")
+    # -----------------------------------------------------------------------
+    # TAB 2: Legal Templates
+    # -----------------------------------------------------------------------
+    legal_templates = LegalDocumentTemplate.objects.filter(
+        is_active=True
+    ).order_by("name")
+
+    LEGAL_CATEGORY_ORDER = [
+        "Compliance Documents",
+        "Client Letters",
+        "Trust Documents",
+        "Trust Deeds",
+        "Company Documents",
+        "Partnership Documents",
+        "Legal Agreements",
+        "Other",
+    ]
     LEGAL_CATEGORY_MAP = {
         "div7a_loan_agreement": "Legal Agreements",
         "trust_deed_change_trustee": "Trust Deeds",
@@ -83,18 +123,75 @@ def template_list(request):
         "distribution_minutes": "Trust Documents",
         "section_100a_summary": "Trust Documents",
     }
-    legal_categories = {}
+    # Legal doc types used in the annual client package bundle
+    PACKAGE_LEGAL_TYPES = {
+        "solvency_resolution", "directors_declaration", "directors_declaration_large",
+        "directors_declaration_gp", "directors_report", "shareholder_loan_ack",
+        "dividend_statement", "dividend_minutes", "management_rep_letter",
+        "management_rep_letter_trust", "management_rep_letter_partnership",
+        "client_cover_letter", "distribution_minutes", "partner_statement",
+        "partnership_tax_summary",
+    }
+    legal_categories_raw = {}
     for tpl in legal_templates:
         cat = LEGAL_CATEGORY_MAP.get(tpl.document_type, "Other")
+        if cat not in legal_categories_raw:
+            legal_categories_raw[cat] = []
+        tpl._in_package = tpl.document_type in PACKAGE_LEGAL_TYPES
+        legal_categories_raw[cat].append(tpl)
+    # Apply canonical ordering
+    legal_categories = {
+        cat: legal_categories_raw[cat]
+        for cat in LEGAL_CATEGORY_ORDER
+        if cat in legal_categories_raw
+    }
+    for cat, tpls in legal_categories_raw.items():
         if cat not in legal_categories:
-            legal_categories[cat] = []
-        legal_categories[cat].append(tpl)
+            legal_categories[cat] = tpls
+
+    # -----------------------------------------------------------------------
+    # TAB 3: Workpapers
+    # -----------------------------------------------------------------------
+    workpaper_templates = WorkPaperTemplate.objects.filter(
+        is_active=True
+    ).order_by("category", "sort_order", "name")
+    workpaper_categories = {}
+    for tpl in workpaper_templates:
+        cat = tpl.get_category_display()
+        if cat not in workpaper_categories:
+            workpaper_categories[cat] = []
+        workpaper_categories[cat].append(tpl)
+
+    # -----------------------------------------------------------------------
+    # Choices for upload modals
+    # -----------------------------------------------------------------------
+    legal_type_choices = LegalDocumentTemplate.DocumentType.choices
+    workpaper_category_choices = WorkPaperTemplate.Category.choices
+    entity_type_choices = [
+        ("company", "Company"),
+        ("trust", "Trust"),
+        ("sole_trader", "Sole Trader"),
+        ("partnership", "Partnership"),
+        ("smsf", "SMSF"),
+        ("individual", "Individual"),
+    ]
+
     context = {
-        "categories": categories,
-        "total_count": templates.count(),
-        "active_count": templates.filter(is_active=True).count(),
+        # Tab 1 — Financial Statements
+        "fs_by_entity": fs_by_entity,
+        "fs_total_count": fs_templates.count(),
+        "json_categories": json_categories,
+        "json_total_count": json_templates.count(),
+        # Tab 2 — Legal Templates
         "legal_categories": legal_categories,
         "legal_total_count": legal_templates.count(),
+        "legal_type_choices": legal_type_choices,
+        # Tab 3 — Workpapers
+        "workpaper_categories": workpaper_categories,
+        "workpaper_total_count": workpaper_templates.count(),
+        "workpaper_category_choices": workpaper_category_choices,
+        # Shared
+        "entity_type_choices": entity_type_choices,
     }
     return render(request, "core/template_list.html", context)
 
@@ -537,3 +634,170 @@ def _get_sample_context(document_category):
         ],
     }
     return sample
+
+
+# =============================================================================
+# Financial Statement Template — Download & Replace
+# =============================================================================
+
+@login_required
+def fs_template_download(request, pk):
+    """Download the .docx file for a FinancialStatementTemplate."""
+    if not request.user.is_admin:
+        from django.http import HttpResponseForbidden
+        return HttpResponseForbidden("Admin access required.")
+    tpl = get_object_or_404(FinancialStatementTemplate, pk=pk)
+    if not tpl.template_file:
+        return HttpResponse("No file attached to this template.", status=404)
+    safe_name = f"{tpl.name.replace(' ', '_')}_v{tpl.version}.docx"
+    try:
+        file_data = tpl.template_file.read()
+    except Exception as e:
+        return HttpResponse(f"Could not read template file: {e}", status=500)
+    response = HttpResponse(
+        file_data,
+        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+    response["Content-Disposition"] = f'attachment; filename="{safe_name}"'
+    return response
+
+
+@login_required
+@require_POST
+def fs_template_replace(request, pk):
+    """Upload a replacement .docx file for an existing FinancialStatementTemplate."""
+    if not request.user.is_admin:
+        return JsonResponse({"error": "Admin access required."}, status=403)
+    tpl = get_object_or_404(FinancialStatementTemplate, pk=pk)
+    file = request.FILES.get("template_file")
+    if not file:
+        return JsonResponse({"error": "No file uploaded."}, status=400)
+    if not file.name.lower().endswith(".docx"):
+        return JsonResponse({"error": "Only .docx files are accepted."}, status=400)
+    # Deactivate the current version
+    tpl.is_active = False
+    tpl.save(update_fields=["is_active", "updated_at"])
+    # Create the new version
+    try:
+        new_version = str(float(tpl.version) + 1) if tpl.version else "2.0"
+    except (ValueError, TypeError):
+        new_version = "2.0"
+    new_tpl = FinancialStatementTemplate.objects.create(
+        name=tpl.name,
+        document_type=tpl.document_type,
+        entity_type=tpl.entity_type,
+        description=tpl.description,
+        template_file=file,
+        version=new_version,
+        is_active=True,
+    )
+    _log_action(
+        request, "update",
+        f"Replaced FS template '{tpl.name}' ({tpl.entity_type}) — now v{new_tpl.version}",
+    )
+    return JsonResponse({
+        "status": "ok",
+        "template_id": str(new_tpl.pk),
+        "version": new_tpl.version,
+        "message": f"Template replaced successfully. Now at version {new_tpl.version}.",
+    })
+
+
+# =============================================================================
+# Workpaper Template — Upload, Download, Replace, Delete
+# =============================================================================
+
+@login_required
+@require_POST
+def workpaper_template_upload(request):
+    """Upload a new WorkPaperTemplate (.xlsx or .docx)."""
+    if not request.user.is_admin:
+        return JsonResponse({"error": "Admin access required."}, status=403)
+    name = request.POST.get("name", "").strip()
+    category = request.POST.get("category", "general")
+    description = request.POST.get("description", "").strip()
+    entity_types = request.POST.getlist("entity_types")
+    file = request.FILES.get("template_file")
+    if not name or not file:
+        return JsonResponse({"error": "Name and file are required."}, status=400)
+    ext = file.name.rsplit(".", 1)[-1].lower() if "." in file.name else ""
+    if ext not in ("xlsx", "docx"):
+        return JsonResponse({"error": "Only .xlsx or .docx files are accepted."}, status=400)
+    tpl = WorkPaperTemplate.objects.create(
+        name=name,
+        category=category,
+        description=description,
+        entity_types=entity_types,
+        template_file=file,
+        file_format=ext,
+        is_active=True,
+        created_by=request.user,
+    )
+    _log_action(request, "create", f"Uploaded workpaper template: {name}")
+    return JsonResponse({
+        "status": "ok",
+        "template_id": str(tpl.pk),
+        "message": f"Workpaper template '{name}' uploaded successfully.",
+    })
+
+
+@login_required
+def workpaper_template_download(request, pk):
+    """Download the raw template file for a WorkPaperTemplate."""
+    if not request.user.is_admin:
+        from django.http import HttpResponseForbidden
+        return HttpResponseForbidden("Admin access required.")
+    tpl = get_object_or_404(WorkPaperTemplate, pk=pk)
+    if not tpl.template_file:
+        return HttpResponse("No file attached to this template.", status=404)
+    ext = tpl.file_format.lower()
+    content_type_map = {
+        "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    }
+    content_type = content_type_map.get(ext, "application/octet-stream")
+    safe_name = f"{tpl.name.replace(' ', '_')}.{ext}"
+    try:
+        file_data = tpl.template_file.read()
+    except Exception as e:
+        return HttpResponse(f"Could not read template file: {e}", status=500)
+    response = HttpResponse(file_data, content_type=content_type)
+    response["Content-Disposition"] = f'attachment; filename="{safe_name}"'
+    return response
+
+
+@login_required
+@require_POST
+def workpaper_template_replace(request, pk):
+    """Upload a replacement file for an existing WorkPaperTemplate."""
+    if not request.user.is_admin:
+        return JsonResponse({"error": "Admin access required."}, status=403)
+    tpl = get_object_or_404(WorkPaperTemplate, pk=pk)
+    file = request.FILES.get("template_file")
+    if not file:
+        return JsonResponse({"error": "No file uploaded."}, status=400)
+    ext = file.name.rsplit(".", 1)[-1].lower() if "." in file.name else ""
+    if ext not in ("xlsx", "docx"):
+        return JsonResponse({"error": "Only .xlsx or .docx files are accepted."}, status=400)
+    # Replace the file in-place (workpapers are not versioned like legal templates)
+    tpl.template_file = file
+    tpl.file_format = ext
+    tpl.save(update_fields=["template_file", "file_format", "updated_at"])
+    _log_action(request, "update", f"Replaced workpaper template file: {tpl.name}")
+    return JsonResponse({
+        "status": "ok",
+        "message": f"Template '{tpl.name}' replaced successfully.",
+    })
+
+
+@login_required
+@require_POST
+def workpaper_template_delete(request, pk):
+    """Soft-delete (deactivate) a WorkPaperTemplate."""
+    if not request.user.is_admin:
+        return JsonResponse({"error": "Admin access required."}, status=403)
+    tpl = get_object_or_404(WorkPaperTemplate, pk=pk)
+    tpl.is_active = False
+    tpl.save(update_fields=["is_active", "updated_at"])
+    _log_action(request, "delete", f"Deactivated workpaper template: {tpl.name}")
+    return JsonResponse({"status": "ok", "message": f"'{tpl.name}' deactivated."})

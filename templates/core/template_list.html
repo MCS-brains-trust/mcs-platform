@@ -1,206 +1,404 @@
 {% extends "base.html" %}
-{% block title %}Document Templates - StatementHub{% endblock %}
+{% block title %}Document Templates — StatementHub{% endblock %}
 {% block content %}
-<div class="d-flex justify-content-between align-items-center mb-4">
+
+<div class="d-flex justify-content-between align-items-start mb-4">
     <div>
-        <h4 class="fw-bold mb-1"><i class="bi bi-file-earmark-text"></i> Document Templates</h4>
-        <p class="text-muted mb-0">JSON-driven, version-controlled document templates — {{ total_count }} templates ({{ active_count }} active)</p>
+        <h4 class="fw-bold mb-1"><i class="bi bi-file-earmark-text-fill"></i> Document Templates</h4>
+        <p class="text-muted mb-0">
+            Single source of truth for all document generation across StatementHub.
+            Templates are drawn automatically when generating financial statements, legal documents, and workpapers.
+        </p>
     </div>
-    <a href="{% url 'core:template_create' %}" class="btn btn-primary">
-        <i class="bi bi-plus-circle"></i> New Template
-    </a>
+    <div class="d-flex gap-2">
+        <button class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#uploadWorkpaperModal">
+            <i class="bi bi-upload"></i> Upload Workpaper
+        </button>
+        <a href="{% url 'core:template_create' %}" class="btn btn-primary btn-sm">
+            <i class="bi bi-plus-circle"></i> New JSON Template
+        </a>
+    </div>
 </div>
 
-{% if not categories %}
-<div class="card">
-    <div class="card-body text-center py-5">
-        <i class="bi bi-file-earmark-text display-4 text-muted"></i>
-        <p class="text-muted mt-3 mb-0">No document templates yet. Click <strong>New Template</strong> to create one.</p>
+<div class="row g-3 mb-4">
+    <div class="col-md-4">
+        <div class="card border-0 bg-primary bg-opacity-10 h-100">
+            <div class="card-body d-flex align-items-center gap-3 py-3">
+                <div class="bg-primary bg-opacity-20 rounded-3 p-2">
+                    <i class="bi bi-file-earmark-bar-graph fs-4 text-primary"></i>
+                </div>
+                <div>
+                    <div class="fw-bold fs-5">{{ fs_total_count }}</div>
+                    <div class="text-muted small">Financial Statement Templates</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card border-0 bg-success bg-opacity-10 h-100">
+            <div class="card-body d-flex align-items-center gap-3 py-3">
+                <div class="bg-success bg-opacity-20 rounded-3 p-2">
+                    <i class="bi bi-file-earmark-text fs-4 text-success"></i>
+                </div>
+                <div>
+                    <div class="fw-bold fs-5">{{ legal_total_count }}</div>
+                    <div class="text-muted small">Legal &amp; Compliance Templates</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-4">
+        <div class="card border-0 bg-warning bg-opacity-10 h-100">
+            <div class="card-body d-flex align-items-center gap-3 py-3">
+                <div class="bg-warning bg-opacity-20 rounded-3 p-2">
+                    <i class="bi bi-file-earmark-spreadsheet fs-4 text-warning"></i>
+                </div>
+                <div>
+                    <div class="fw-bold fs-5">{{ workpaper_total_count }}</div>
+                    <div class="text-muted small">Workpaper Templates</div>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
-{% else %}
-{% for cat_label, cat_data in categories.items %}
-<div class="card mb-4">
-    <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
-        <h6 class="mb-0"><i class="bi bi-folder2-open me-2"></i>{{ cat_label }}</h6>
-        <span class="badge bg-light text-dark">{{ cat_data.templates|length }} template{{ cat_data.templates|length|pluralize }}</span>
-    </div>
-    <div class="card-body p-0">
-        <table class="table table-hover mb-0">
-            <thead class="table-light">
-                <tr>
-                    <th>Template Name</th>
-                    <th>Entity Type</th>
-                    <th class="text-center">Version</th>
-                    <th class="text-center">Status</th>
-                    <th>Merge Fields</th>
-                    <th class="text-center">Updated</th>
-                    <th class="text-end">Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for tpl in cat_data.templates %}
-                <tr>
-                    <td>
-                        <a href="{% url 'core:template_edit' pk=tpl.pk %}" class="text-decoration-none fw-semibold">
-                            {{ tpl.name }}
-                        </a>
-                        {% if tpl.description %}
-                        <br><small class="text-muted">{{ tpl.description|truncatewords:12 }}</small>
-                        {% endif %}
-                    </td>
-                    <td>
-                        {% if tpl.entity_type %}
-                        <span class="badge bg-info text-dark">{{ tpl.get_entity_type_display }}</span>
-                        {% else %}
-                        <span class="text-muted">All</span>
-                        {% endif %}
-                    </td>
-                    <td class="text-center">
-                        <span class="badge bg-secondary">v{{ tpl.version }}</span>
-                    </td>
-                    <td class="text-center">
-                        {% if tpl.is_active %}
-                        <span class="badge bg-success">Active</span>
-                        {% else %}
-                        <span class="badge bg-warning text-dark">Inactive</span>
-                        {% endif %}
-                    </td>
-                    <td>
-                        {% with fields=tpl.get_merge_field_names %}
-                        <small class="text-muted">{{ fields|length }} field{{ fields|length|pluralize }}</small>
-                        {% endwith %}
-                    </td>
-                    <td class="text-center">
-                        <small class="text-muted">{{ tpl.updated_at|date:"d M Y" }}</small>
-                    </td>
-                    <td class="text-end">
-                        <div class="btn-group btn-group-sm">
-                            <a href="{% url 'core:template_edit' pk=tpl.pk %}" class="btn btn-outline-primary" title="Edit">
-                                <i class="bi bi-pencil"></i>
-                            </a>
-                            <a href="{% url 'core:template_preview' pk=tpl.pk %}" class="btn btn-outline-secondary" title="Preview">
-                                <i class="bi bi-eye"></i>
-                            </a>
-                            <form method="post" action="{% url 'core:template_toggle_active' pk=tpl.pk %}" class="d-inline">
-                                {% csrf_token %}
-                                <button type="submit" class="btn btn-outline-{{ tpl.is_active|yesno:'warning,success' }}" title="{{ tpl.is_active|yesno:'Deactivate,Activate' }}">
-                                    <i class="bi bi-{{ tpl.is_active|yesno:'pause,play' }}"></i>
+
+<ul class="nav nav-tabs mb-0" id="templateTabs" role="tablist">
+    <li class="nav-item" role="presentation">
+        <button class="nav-link active fw-semibold" id="tab-fs" data-bs-toggle="tab"
+                data-bs-target="#pane-fs" type="button" role="tab">
+            <i class="bi bi-file-earmark-bar-graph me-1"></i>
+            Financial Statements
+            <span class="badge bg-primary ms-1">{{ fs_total_count }}</span>
+        </button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link fw-semibold" id="tab-legal" data-bs-toggle="tab"
+                data-bs-target="#pane-legal" type="button" role="tab">
+            <i class="bi bi-file-earmark-text me-1"></i>
+            Legal Templates
+            <span class="badge bg-success ms-1">{{ legal_total_count }}</span>
+        </button>
+    </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link fw-semibold" id="tab-workpapers" data-bs-toggle="tab"
+                data-bs-target="#pane-workpapers" type="button" role="tab">
+            <i class="bi bi-file-earmark-spreadsheet me-1"></i>
+            Workpapers
+            <span class="badge bg-warning text-dark ms-1">{{ workpaper_total_count }}</span>
+        </button>
+    </li>
+</ul>
+
+<div class="tab-content border border-top-0 rounded-bottom bg-white p-0" id="templateTabContent">
+
+{# ===== TAB 1: FINANCIAL STATEMENT TEMPLATES ===== #}
+<div class="tab-pane fade show active p-4" id="pane-fs" role="tabpanel">
+    <p class="text-muted mb-4">
+        These <strong>.docx templates</strong> are used to generate the annual financial statements for each entity type.
+        The system automatically selects the active template for the matching entity type and document section.
+        Replace a template here to update it across all future generations.
+        <span class="badge bg-primary ms-1"><i class="bi bi-box-seam"></i> In Package</span>
+        indicates the document is included in the annual client package bundle.
+    </p>
+
+    {% if fs_by_entity %}
+    {% for entity_label, templates in fs_by_entity.items %}
+    <div class="card mb-4">
+        <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center py-2">
+            <h6 class="mb-0 fw-semibold"><i class="bi bi-building me-2"></i>{{ entity_label }}</h6>
+            <span class="badge bg-white text-primary">{{ templates|length }} template{{ templates|length|pluralize }}</span>
+        </div>
+        <div class="card-body p-0">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Document Section</th>
+                        <th class="text-center">Version</th>
+                        <th class="text-center">In Package</th>
+                        <th class="text-center">Status</th>
+                        <th class="text-center">Updated</th>
+                        <th class="text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for tpl in templates %}
+                    <tr>
+                        <td>
+                            <span class="fw-semibold">{{ tpl.get_document_type_display }}</span>
+                            {% if tpl.description %}<br><small class="text-muted">{{ tpl.description|truncatewords:10 }}</small>{% endif %}
+                        </td>
+                        <td class="text-center"><span class="badge bg-secondary">v{{ tpl.version }}</span></td>
+                        <td class="text-center">
+                            {% if tpl._in_package %}
+                            <span class="badge bg-primary"><i class="bi bi-box-seam"></i> Yes</span>
+                            {% else %}<span class="text-muted small">—</span>{% endif %}
+                        </td>
+                        <td class="text-center">
+                            {% if tpl.is_active %}<span class="badge bg-success">Active</span>
+                            {% else %}<span class="badge bg-warning text-dark">Inactive</span>{% endif %}
+                        </td>
+                        <td class="text-center"><small class="text-muted">{{ tpl.updated_at|date:"d M Y" }}</small></td>
+                        <td class="text-end">
+                            <div class="btn-group btn-group-sm">
+                                <a href="{% url 'core:fs_template_download' pk=tpl.pk %}" class="btn btn-outline-primary" title="Download .docx">
+                                    <i class="bi bi-download"></i>
+                                </a>
+                                <button class="btn btn-outline-warning" title="Replace"
+                                        onclick="openFsReplaceModal('{{ tpl.pk }}', '{{ tpl.name|escapejs }}', '{{ tpl.version }}')">
+                                    <i class="bi bi-arrow-repeat"></i>
                                 </button>
-                            </form>
-                        </div>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
     </div>
-</div>
-{% endfor %}
-{% endif %}
+    {% endfor %}
 
-{# ============================================================ #}
-{# Section 2: .docx Compliance & Legal Templates               #}
-{# ============================================================ #}
-<div class="d-flex justify-content-between align-items-center mt-5 mb-3">
-    <div>
-        <h4 class="fw-bold mb-1"><i class="bi bi-file-earmark-word"></i> Word (.docx) Compliance Templates</h4>
-        <p class="text-muted mb-0">Downloadable Word templates for compliance &amp; legal documents &mdash; {{ legal_total_count }} template{{ legal_total_count|pluralize }} active</p>
+    {% if json_categories %}
+    <h6 class="fw-semibold text-muted mt-4 mb-3">
+        <i class="bi bi-braces me-1"></i> JSON-Driven Templates
+        <small class="fw-normal">(distribution minutes, trust elections, tax planning summaries)</small>
+    </h6>
+    {% for cat_label, templates in json_categories.items %}
+    <div class="card mb-3">
+        <div class="card-header bg-secondary text-white d-flex justify-content-between align-items-center py-2">
+            <h6 class="mb-0 fw-semibold"><i class="bi bi-braces me-2"></i>{{ cat_label }}</h6>
+            <span class="badge bg-white text-secondary">{{ templates|length }}</span>
+        </div>
+        <div class="card-body p-0">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Template Name</th>
+                        <th>Entity Type</th>
+                        <th class="text-center">Version</th>
+                        <th class="text-center">Status</th>
+                        <th class="text-center">Updated</th>
+                        <th class="text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for tpl in templates %}
+                    <tr>
+                        <td>
+                            <a href="{% url 'core:template_edit' pk=tpl.pk %}" class="text-decoration-none fw-semibold">{{ tpl.name }}</a>
+                            {% if tpl.description %}<br><small class="text-muted">{{ tpl.description|truncatewords:10 }}</small>{% endif %}
+                        </td>
+                        <td>
+                            {% if tpl.entity_type %}<span class="badge bg-info text-dark">{{ tpl.get_entity_type_display }}</span>
+                            {% else %}<span class="text-muted small">All</span>{% endif %}
+                        </td>
+                        <td class="text-center"><span class="badge bg-secondary">v{{ tpl.version }}</span></td>
+                        <td class="text-center">
+                            {% if tpl.is_active %}<span class="badge bg-success">Active</span>
+                            {% else %}<span class="badge bg-warning text-dark">Inactive</span>{% endif %}
+                        </td>
+                        <td class="text-center"><small class="text-muted">{{ tpl.updated_at|date:"d M Y" }}</small></td>
+                        <td class="text-end">
+                            <div class="btn-group btn-group-sm">
+                                <a href="{% url 'core:template_edit' pk=tpl.pk %}" class="btn btn-outline-primary" title="Edit"><i class="bi bi-pencil"></i></a>
+                                <a href="{% url 'core:template_preview' pk=tpl.pk %}" class="btn btn-outline-secondary" title="Preview"><i class="bi bi-eye"></i></a>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
     </div>
+    {% endfor %}
+    {% endif %}
+
+    {% else %}
+    <div class="text-center py-5 text-muted">
+        <i class="bi bi-file-earmark-bar-graph display-4"></i>
+        <p class="mt-3">No financial statement templates found.<br>
+        Run <code>python manage.py generate_fs_templates</code> to seed them.</p>
+    </div>
+    {% endif %}
 </div>
 
-{% if not legal_categories %}
-<div class="card">
-    <div class="card-body text-center py-5">
-        <i class="bi bi-file-earmark-word display-4 text-muted"></i>
-        <p class="text-muted mt-3 mb-0">No .docx templates uploaded yet.</p>
+{# ===== TAB 2: LEGAL TEMPLATES ===== #}
+<div class="tab-pane fade p-4" id="pane-legal" role="tabpanel">
+    <div class="d-flex justify-content-between align-items-start mb-4">
+        <p class="text-muted mb-0">
+            These <strong>.docx templates</strong> are used to generate compliance documents, client letters, trust deeds,
+            and other legal documents. The system draws from the active template for each document type.
+            <span class="badge bg-primary ms-1"><i class="bi bi-box-seam"></i> In Package</span>
+            indicates the document is included in the annual client package bundle.
+        </p>
+        <button class="btn btn-outline-primary btn-sm ms-3 flex-shrink-0"
+                data-bs-toggle="modal" data-bs-target="#uploadLegalModal">
+            <i class="bi bi-upload"></i> Upload Template
+        </button>
     </div>
-</div>
-{% else %}
-{% for cat_label, legal_tpls in legal_categories.items %}
-<div class="card mb-4">
-    <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
-        <h6 class="mb-0"><i class="bi bi-folder2-open me-2"></i>{{ cat_label }}</h6>
-        <span class="badge bg-light text-dark">{{ legal_tpls|length }} template{{ legal_tpls|length|pluralize }}</span>
-    </div>
-    <div class="card-body p-0">
-        <table class="table table-hover mb-0">
-            <thead class="table-light">
-                <tr>
-                    <th>Template Name</th>
-                    <th>Document Type</th>
-                    <th class="text-center">Version</th>
-                    <th class="text-center">Solicitor Approved</th>
-                    <th class="text-center">Created</th>
-                    <th class="text-end">Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for tpl in legal_tpls %}
-                <tr>
-                    <td>
-                        <span class="fw-semibold">{{ tpl.name }}</span>
-                        {% if tpl.solicitor_approved and tpl.solicitor_name %}
-                        <br><small class="text-success"><i class="bi bi-check-circle"></i> Approved by {{ tpl.solicitor_name }}{% if tpl.approval_date %} on {{ tpl.approval_date|date:"d M Y" }}{% endif %}</small>
-                        {% endif %}
-                    </td>
-                    <td>
-                        <span class="badge bg-secondary">{{ tpl.get_document_type_display }}</span>
-                    </td>
-                    <td class="text-center">
-                        <span class="badge bg-secondary">v{{ tpl.version }}</span>
-                    </td>
-                    <td class="text-center">
-                        {% if tpl.solicitor_approved %}
-                        <span class="badge bg-success"><i class="bi bi-check-circle"></i> Yes</span>
-                        {% else %}
-                        <span class="badge bg-warning text-dark">Pending</span>
-                        {% endif %}
-                    </td>
-                    <td class="text-center">
-                        <small class="text-muted">{{ tpl.created_at|date:"d M Y" }}</small>
-                    </td>
-                    <td class="text-end">
-                        <div class="btn-group btn-group-sm">
-                            <a href="{% url 'core:legal_template_download' pk=tpl.pk %}" class="btn btn-outline-primary" title="Download .docx">
-                                <i class="bi bi-download"></i>
-                            </a>
-                            <button class="btn btn-outline-warning" title="Replace with new version"
-                                    onclick="openReplaceModal('{{ tpl.pk }}', '{{ tpl.name|escapejs }}', {{ tpl.version }})"
-                                    data-bs-toggle="tooltip">
-                                <i class="bi bi-arrow-repeat"></i>
-                            </button>
-                        </div>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-</div>
-{% endfor %}
-{% endif %}
 
-{# Replace Modal #}
-<div class="modal fade" id="replaceModal" tabindex="-1">
+    {% if legal_categories %}
+    {% for cat_label, templates in legal_categories.items %}
+    <div class="card mb-4">
+        <div class="card-header bg-success text-white d-flex justify-content-between align-items-center py-2">
+            <h6 class="mb-0 fw-semibold"><i class="bi bi-file-earmark-text me-2"></i>{{ cat_label }}</h6>
+            <span class="badge bg-white text-success">{{ templates|length }} template{{ templates|length|pluralize }}</span>
+        </div>
+        <div class="card-body p-0">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Template Name</th>
+                        <th>Document Type</th>
+                        <th class="text-center">In Package</th>
+                        <th class="text-center">Version</th>
+                        <th class="text-center">Solicitor Approved</th>
+                        <th class="text-center">Updated</th>
+                        <th class="text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for tpl in templates %}
+                    <tr>
+                        <td class="fw-semibold">{{ tpl.name }}</td>
+                        <td><span class="badge bg-secondary">{{ tpl.get_document_type_display }}</span></td>
+                        <td class="text-center">
+                            {% if tpl._in_package %}<span class="badge bg-primary"><i class="bi bi-box-seam"></i> Yes</span>
+                            {% else %}<span class="text-muted small">—</span>{% endif %}
+                        </td>
+                        <td class="text-center"><span class="badge bg-secondary">v{{ tpl.version }}</span></td>
+                        <td class="text-center">
+                            {% if tpl.solicitor_approved %}<span class="badge bg-success"><i class="bi bi-check-circle"></i> {{ tpl.solicitor_name|default:"Yes" }}</span>
+                            {% else %}<span class="badge bg-warning text-dark">Pending</span>{% endif %}
+                        </td>
+                        <td class="text-center"><small class="text-muted">{{ tpl.created_at|date:"d M Y" }}</small></td>
+                        <td class="text-end">
+                            <div class="btn-group btn-group-sm">
+                                <a href="{% url 'core:legal_template_download' pk=tpl.pk %}" class="btn btn-outline-primary" title="Download .docx">
+                                    <i class="bi bi-download"></i>
+                                </a>
+                                <button class="btn btn-outline-warning" title="Replace"
+                                        onclick="openLegalReplaceModal('{{ tpl.pk }}', '{{ tpl.name|escapejs }}', {{ tpl.version }})">
+                                    <i class="bi bi-arrow-repeat"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="text-center py-5 text-muted">
+        <i class="bi bi-file-earmark-text display-4"></i>
+        <p class="mt-3">No legal templates uploaded yet. Click <strong>Upload Template</strong> to add one.</p>
+    </div>
+    {% endif %}
+</div>
+
+{# ===== TAB 3: WORKPAPERS ===== #}
+<div class="tab-pane fade p-4" id="pane-workpapers" role="tabpanel">
+    <div class="d-flex justify-content-between align-items-start mb-4">
+        <p class="text-muted mb-0">
+            These <strong>.xlsx and .docx templates</strong> are pre-filled with entity name, ABN, and financial year
+            data when an accountant downloads them from the Work Papers tab of a financial year.
+            Upload your firm's standard workpaper templates here and they will be available across all entities.
+        </p>
+        <button class="btn btn-outline-primary btn-sm ms-3 flex-shrink-0"
+                data-bs-toggle="modal" data-bs-target="#uploadWorkpaperModal">
+            <i class="bi bi-upload"></i> Upload Workpaper
+        </button>
+    </div>
+
+    {% if workpaper_categories %}
+    {% for cat_label, templates in workpaper_categories.items %}
+    <div class="card mb-4">
+        <div class="card-header bg-warning text-dark d-flex justify-content-between align-items-center py-2">
+            <h6 class="mb-0 fw-semibold"><i class="bi bi-file-earmark-spreadsheet me-2"></i>{{ cat_label }}</h6>
+            <span class="badge bg-white text-dark">{{ templates|length }} template{{ templates|length|pluralize }}</span>
+        </div>
+        <div class="card-body p-0">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th>Template Name</th>
+                        <th>Format</th>
+                        <th>Entity Types</th>
+                        <th>Description</th>
+                        <th class="text-end">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for tpl in templates %}
+                    <tr>
+                        <td class="fw-semibold">{{ tpl.name }}</td>
+                        <td>
+                            {% if tpl.file_format == "xlsx" %}
+                            <span class="badge bg-success"><i class="bi bi-file-earmark-spreadsheet"></i> Excel</span>
+                            {% else %}
+                            <span class="badge bg-primary"><i class="bi bi-file-earmark-word"></i> Word</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            {% if tpl.entity_types %}{% for et in tpl.entity_types %}<span class="badge bg-secondary me-1">{{ et }}</span>{% endfor %}
+                            {% else %}<span class="text-muted small">All</span>{% endif %}
+                        </td>
+                        <td><small class="text-muted">{{ tpl.description|truncatewords:12|default:"—" }}</small></td>
+                        <td class="text-end">
+                            <div class="btn-group btn-group-sm">
+                                <a href="{% url 'core:workpaper_template_download' pk=tpl.pk %}" class="btn btn-outline-primary" title="Download">
+                                    <i class="bi bi-download"></i>
+                                </a>
+                                <button class="btn btn-outline-warning" title="Replace file"
+                                        onclick="openWpReplaceModal('{{ tpl.pk }}', '{{ tpl.name|escapejs }}')">
+                                    <i class="bi bi-arrow-repeat"></i>
+                                </button>
+                                <button class="btn btn-outline-danger" title="Deactivate"
+                                        onclick="deleteWorkpaper('{{ tpl.pk }}', '{{ tpl.name|escapejs }}')">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endfor %}
+    {% else %}
+    <div class="text-center py-5 text-muted">
+        <i class="bi bi-file-earmark-spreadsheet display-4"></i>
+        <p class="mt-3">No workpaper templates uploaded yet. Click <strong>Upload Workpaper</strong> to add one.</p>
+    </div>
+    {% endif %}
+</div>
+
+</div>{# end .tab-content #}
+
+
+{# ===== MODALS ===== #}
+
+{# FS Replace #}
+<div class="modal fade" id="fsReplaceModal" tabindex="-1">
     <div class="modal-dialog">
         <div class="modal-content">
             <div class="modal-header">
-                <h5 class="modal-title"><i class="bi bi-arrow-repeat"></i> Replace Template</h5>
+                <h5 class="modal-title"><i class="bi bi-arrow-repeat"></i> Replace FS Template</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
-                <p>Uploading a replacement will <strong>deactivate the current version</strong> and create a new version. The old version is kept for audit purposes.</p>
-                <p class="text-muted small">Replacing: <strong id="replaceTemplateName"></strong> (currently <span id="replaceTemplateVersion"></span>)</p>
+                <p>Uploading a replacement will <strong>deactivate the current version</strong> and create a new active version.</p>
+                <p class="text-muted small">Replacing: <strong id="fsReplaceTemplateName"></strong> (v<span id="fsReplaceTemplateVersion"></span>)</p>
                 <div class="mb-3">
                     <label class="form-label fw-semibold">New .docx File <span class="text-danger">*</span></label>
-                    <input type="file" class="form-control" id="replaceFile" accept=".docx" required>
-                    <div class="form-text">Only .docx files are accepted. Merge fields ({% templatetag openvariable %} field_name {% templatetag closevariable %}) must match the existing schema.</div>
+                    <input type="file" class="form-control" id="fsReplaceFile" accept=".docx" required>
                 </div>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="button" class="btn btn-warning" id="replaceSubmitBtn" onclick="submitReplace()">
+                <button type="button" class="btn btn-warning" id="fsReplaceSubmitBtn" onclick="submitFsReplace()">
                     <i class="bi bi-arrow-repeat"></i> Replace Template
                 </button>
             </div>
@@ -208,41 +406,285 @@
     </div>
 </div>
 
+{# Legal Upload #}
+<div class="modal fade" id="uploadLegalModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-upload"></i> Upload Legal Template</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Template Name</label>
+                    <input type="text" id="legalUploadName" class="form-control" placeholder="e.g. Solvency Resolution">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Document Type <span class="text-danger">*</span></label>
+                    <select id="legalUploadType" class="form-select" required>
+                        <option value="">— Select type —</option>
+                        {% for value, label in legal_type_choices %}
+                        <option value="{{ value }}">{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Template File (.docx) <span class="text-danger">*</span></label>
+                    <input type="file" id="legalUploadFile" class="form-control" accept=".docx" required>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="legalUploadSubmitBtn" onclick="submitLegalUpload()">
+                    <i class="bi bi-upload"></i> Upload
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# Legal Replace #}
+<div class="modal fade" id="legalReplaceModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-arrow-repeat"></i> Replace Legal Template</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Uploading a replacement will <strong>deactivate the current version</strong> and create a new version. The old version is kept for audit purposes.</p>
+                <p class="text-muted small">Replacing: <strong id="legalReplaceTemplateName"></strong> (v<span id="legalReplaceTemplateVersion"></span>)</p>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">New .docx File <span class="text-danger">*</span></label>
+                    <input type="file" class="form-control" id="legalReplaceFile" accept=".docx" required>
+                    <div class="form-text">Merge fields must match the existing schema.</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-warning" id="legalReplaceSubmitBtn" onclick="submitLegalReplace()">
+                    <i class="bi bi-arrow-repeat"></i> Replace Template
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# Workpaper Upload #}
+<div class="modal fade" id="uploadWorkpaperModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-upload"></i> Upload Workpaper Template</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Template Name <span class="text-danger">*</span></label>
+                    <input type="text" id="wpUploadName" class="form-control" placeholder="e.g. BAS Reconciliation — Quarterly">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Category <span class="text-danger">*</span></label>
+                    <select id="wpUploadCategory" class="form-select">
+                        {% for value, label in workpaper_category_choices %}
+                        <option value="{{ value }}">{{ label }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Description</label>
+                    <textarea id="wpUploadDescription" class="form-control" rows="2"
+                              placeholder="Brief description of what this workpaper is used for"></textarea>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Entity Types</label>
+                    <div class="d-flex flex-wrap gap-3">
+                        {% for value, label in entity_type_choices %}
+                        <div class="form-check">
+                            <input class="form-check-input wp-entity-type" type="checkbox"
+                                   value="{{ value }}" id="wpEt_{{ value }}">
+                            <label class="form-check-label" for="wpEt_{{ value }}">{{ label }}</label>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    <div class="form-text">Leave all unchecked to make available for all entity types.</div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Template File (.xlsx or .docx) <span class="text-danger">*</span></label>
+                    <input type="file" id="wpUploadFile" class="form-control" accept=".xlsx,.docx" required>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-primary" id="wpUploadSubmitBtn" onclick="submitWpUpload()">
+                    <i class="bi bi-upload"></i> Upload
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+{# Workpaper Replace #}
+<div class="modal fade" id="wpReplaceModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title"><i class="bi bi-arrow-repeat"></i> Replace Workpaper Template</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Replacing: <strong id="wpReplaceTemplateName"></strong></p>
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">New File (.xlsx or .docx) <span class="text-danger">*</span></label>
+                    <input type="file" class="form-control" id="wpReplaceFile" accept=".xlsx,.docx" required>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="button" class="btn btn-warning" id="wpReplaceSubmitBtn" onclick="submitWpReplace()">
+                    <i class="bi bi-arrow-repeat"></i> Replace
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+
 <script>
-let _replacePk = null;
-function openReplaceModal(pk, name, version) {
-    _replacePk = pk;
-    document.getElementById('replaceTemplateName').textContent = name;
-    document.getElementById('replaceTemplateVersion').textContent = 'v' + version;
-    document.getElementById('replaceFile').value = '';
-    new bootstrap.Modal(document.getElementById('replaceModal')).show();
+const CSRF = '{{ csrf_token }}';
+
+// ---- FS Replace ----
+let _fsPk = null;
+function openFsReplaceModal(pk, name, version) {
+    _fsPk = pk;
+    document.getElementById('fsReplaceTemplateName').textContent = name;
+    document.getElementById('fsReplaceTemplateVersion').textContent = version;
+    document.getElementById('fsReplaceFile').value = '';
+    new bootstrap.Modal(document.getElementById('fsReplaceModal')).show();
 }
-function submitReplace() {
-    const file = document.getElementById('replaceFile').files[0];
+function submitFsReplace() {
+    const file = document.getElementById('fsReplaceFile').files[0];
     if (!file) { alert('Please select a .docx file.'); return; }
-    const btn = document.getElementById('replaceSubmitBtn');
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Uploading...';
+    const btn = document.getElementById('fsReplaceSubmitBtn');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Uploading...';
     const fd = new FormData();
-    fd.append('template_file', file);
-    fd.append('csrfmiddlewaretoken', '{{ csrf_token }}');
-    fetch('/core/legal-templates/' + _replacePk + '/replace/', { method: 'POST', body: fd })
-    .then(r => r.json())
-    .then(data => {
-        if (data.status === 'ok') {
-            alert(data.message);
-            location.reload();
-        } else {
-            alert('Error: ' + (data.error || 'Unknown error'));
-            btn.disabled = false;
-            btn.innerHTML = '<i class="bi bi-arrow-repeat"></i> Replace Template';
-        }
-    })
-    .catch(err => {
-        alert('Error: ' + err.message);
-        btn.disabled = false;
-        btn.innerHTML = '<i class="bi bi-arrow-repeat"></i> Replace Template';
-    });
+    fd.append('template_file', file); fd.append('csrfmiddlewaretoken', CSRF);
+    fetch('/core/templates/fs/' + _fsPk + '/replace/', { method: 'POST', body: fd })
+    .then(r => r.json()).then(data => {
+        if (data.status === 'ok') { alert(data.message); location.reload(); }
+        else { alert('Error: ' + (data.error || 'Unknown')); btn.disabled = false; btn.innerHTML = '<i class="bi bi-arrow-repeat"></i> Replace Template'; }
+    }).catch(err => { alert('Error: ' + err.message); btn.disabled = false; btn.innerHTML = '<i class="bi bi-arrow-repeat"></i> Replace Template'; });
 }
+
+// ---- Legal Upload ----
+function submitLegalUpload() {
+    const name = document.getElementById('legalUploadName').value.trim();
+    const docType = document.getElementById('legalUploadType').value;
+    const file = document.getElementById('legalUploadFile').files[0];
+    if (!docType || !file) { alert('Document type and file are required.'); return; }
+    const btn = document.getElementById('legalUploadSubmitBtn');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Uploading...';
+    const fd = new FormData();
+    fd.append('name', name); fd.append('document_type', docType); fd.append('template_file', file); fd.append('csrfmiddlewaretoken', CSRF);
+    fetch('/core/legal-templates/upload/', { method: 'POST', body: fd })
+    .then(r => r.json()).then(data => {
+        if (data.status === 'ok') { alert('Template uploaded successfully.'); location.reload(); }
+        else { alert('Error: ' + (data.error || 'Unknown')); btn.disabled = false; btn.innerHTML = '<i class="bi bi-upload"></i> Upload'; }
+    }).catch(err => { alert('Error: ' + err.message); btn.disabled = false; btn.innerHTML = '<i class="bi bi-upload"></i> Upload'; });
+}
+
+// ---- Legal Replace ----
+let _legalPk = null;
+function openLegalReplaceModal(pk, name, version) {
+    _legalPk = pk;
+    document.getElementById('legalReplaceTemplateName').textContent = name;
+    document.getElementById('legalReplaceTemplateVersion').textContent = version;
+    document.getElementById('legalReplaceFile').value = '';
+    new bootstrap.Modal(document.getElementById('legalReplaceModal')).show();
+}
+function submitLegalReplace() {
+    const file = document.getElementById('legalReplaceFile').files[0];
+    if (!file) { alert('Please select a .docx file.'); return; }
+    const btn = document.getElementById('legalReplaceSubmitBtn');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Uploading...';
+    const fd = new FormData();
+    fd.append('template_file', file); fd.append('csrfmiddlewaretoken', CSRF);
+    fetch('/core/legal-templates/' + _legalPk + '/replace/', { method: 'POST', body: fd })
+    .then(r => r.json()).then(data => {
+        if (data.status === 'ok') { alert(data.message); location.reload(); }
+        else { alert('Error: ' + (data.error || 'Unknown')); btn.disabled = false; btn.innerHTML = '<i class="bi bi-arrow-repeat"></i> Replace Template'; }
+    }).catch(err => { alert('Error: ' + err.message); btn.disabled = false; btn.innerHTML = '<i class="bi bi-arrow-repeat"></i> Replace Template'; });
+}
+
+// ---- Workpaper Upload ----
+function submitWpUpload() {
+    const name = document.getElementById('wpUploadName').value.trim();
+    const category = document.getElementById('wpUploadCategory').value;
+    const description = document.getElementById('wpUploadDescription').value.trim();
+    const file = document.getElementById('wpUploadFile').files[0];
+    if (!name || !file) { alert('Name and file are required.'); return; }
+    const btn = document.getElementById('wpUploadSubmitBtn');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Uploading...';
+    const fd = new FormData();
+    fd.append('name', name); fd.append('category', category); fd.append('description', description);
+    fd.append('template_file', file); fd.append('csrfmiddlewaretoken', CSRF);
+    document.querySelectorAll('.wp-entity-type:checked').forEach(cb => fd.append('entity_types', cb.value));
+    fetch('/core/templates/workpapers/upload/', { method: 'POST', body: fd })
+    .then(r => r.json()).then(data => {
+        if (data.status === 'ok') { alert(data.message); location.reload(); }
+        else { alert('Error: ' + (data.error || 'Unknown')); btn.disabled = false; btn.innerHTML = '<i class="bi bi-upload"></i> Upload'; }
+    }).catch(err => { alert('Error: ' + err.message); btn.disabled = false; btn.innerHTML = '<i class="bi bi-upload"></i> Upload'; });
+}
+
+// ---- Workpaper Replace ----
+let _wpPk = null;
+function openWpReplaceModal(pk, name) {
+    _wpPk = pk;
+    document.getElementById('wpReplaceTemplateName').textContent = name;
+    document.getElementById('wpReplaceFile').value = '';
+    new bootstrap.Modal(document.getElementById('wpReplaceModal')).show();
+}
+function submitWpReplace() {
+    const file = document.getElementById('wpReplaceFile').files[0];
+    if (!file) { alert('Please select a file.'); return; }
+    const btn = document.getElementById('wpReplaceSubmitBtn');
+    btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Uploading...';
+    const fd = new FormData();
+    fd.append('template_file', file); fd.append('csrfmiddlewaretoken', CSRF);
+    fetch('/core/templates/workpapers/' + _wpPk + '/replace/', { method: 'POST', body: fd })
+    .then(r => r.json()).then(data => {
+        if (data.status === 'ok') { alert(data.message); location.reload(); }
+        else { alert('Error: ' + (data.error || 'Unknown')); btn.disabled = false; btn.innerHTML = '<i class="bi bi-arrow-repeat"></i> Replace'; }
+    }).catch(err => { alert('Error: ' + err.message); btn.disabled = false; btn.innerHTML = '<i class="bi bi-arrow-repeat"></i> Replace'; });
+}
+
+// ---- Workpaper Delete ----
+function deleteWorkpaper(pk, name) {
+    if (!confirm('Deactivate "' + name + '"? It will no longer appear in the Work Papers tab.')) return;
+    const fd = new FormData();
+    fd.append('csrfmiddlewaretoken', CSRF);
+    fetch('/core/templates/workpapers/' + pk + '/delete/', { method: 'POST', body: fd })
+    .then(r => r.json()).then(data => {
+        if (data.status === 'ok') { alert(data.message); location.reload(); }
+        else { alert('Error: ' + (data.error || 'Unknown')); }
+    }).catch(err => alert('Error: ' + err.message));
+}
+
+// Restore active tab from URL hash
+document.addEventListener('DOMContentLoaded', function () {
+    const hash = window.location.hash;
+    if (hash) {
+        const target = '#pane-' + hash.replace('#', '');
+        const btn = document.querySelector('[data-bs-target="' + target + '"]');
+        if (btn) new bootstrap.Tab(btn).show();
+    }
+    document.querySelectorAll('#templateTabs button').forEach(btn => {
+        btn.addEventListener('shown.bs.tab', function (e) {
+            const target = e.target.getAttribute('data-bs-target').replace('#pane-', '#');
+            history.replaceState(null, '', target);
+        });
+    });
+});
 </script>
+
 {% endblock %}

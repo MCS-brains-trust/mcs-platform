@@ -391,6 +391,14 @@ urlpatterns = [
     path("templates/<uuid:pk>/delete/", views_templates.template_delete, name="template_delete"),
     path("templates/<uuid:pk>/toggle-active/", views_templates.template_toggle_active, name="template_toggle_active"),
     path("templates/<uuid:pk>/update-structure/", views_templates.template_update_structure, name="template_update_structure"),
+    # FS template admin endpoints (download/replace .docx)
+    path("templates/fs/<uuid:pk>/download/", views_templates.fs_template_download, name="fs_template_download"),
+    path("templates/fs/<uuid:pk>/replace/", views_templates.fs_template_replace, name="fs_template_replace"),
+    # Workpaper template admin endpoints
+    path("templates/workpapers/upload/", views_templates.workpaper_template_upload, name="workpaper_template_upload"),
+    path("templates/workpapers/<uuid:pk>/download/", views_templates.workpaper_template_download, name="workpaper_template_download"),
+    path("templates/workpapers/<uuid:pk>/replace/", views_templates.workpaper_template_replace, name="workpaper_template_replace"),
+    path("templates/workpapers/<uuid:pk>/delete/", views_templates.workpaper_template_delete, name="workpaper_template_delete"),
 
     # ===== EVA AI PRACTICE INTELLIGENCE =====
     # Chat Interface (GET = history, POST = send message)
