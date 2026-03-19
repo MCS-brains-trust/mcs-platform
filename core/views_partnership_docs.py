@@ -367,7 +367,7 @@ def engagement_letter_generate(request, pk):
 
     # Enrich with DocumentContextBuilder (practice_* namespace + Jinja2 filters)
     try:
-        from core.document_context_builder import DocumentContextBuilder
+        from core.document_context_builder import DocumentContextBuilder, ContextValidationError
         _date_str = data.get("date", "")
         _wizard = {
             "services": data.get("services", []),
@@ -383,6 +383,10 @@ def engagement_letter_generate(request, pk):
         # show_service_* flags, practice_* fields, and engagement letter variables.
         for k, v in enriched.items():
             context[k] = v
+    except ContextValidationError as _cve:
+        # Surface validation errors (e.g. missing Tax Agent Number) as a friendly
+        # JSON error rather than letting the request crash with a 500 HTML page.
+        return JsonResponse({"status": "error", "error": str(_cve)}, status=400)
     except Exception as _e:
         import logging as _log
         _log.getLogger(__name__).warning("DCB enrichment skipped for engagement_letter: %s", _e)
@@ -587,19 +591,21 @@ def engagement_letter_quick_generate(request, pk):
     }
 
     try:
-        from core.document_context_builder import DocumentContextBuilder
+        from core.document_context_builder import DocumentContextBuilder, ContextValidationError
         _wizard = {
             "services": config.services_engaged,
             "fee_amount": str(config.fee_amount) if config.fee_amount else "",
             "fee_basis": config.fee_basis,
             "additional_terms": config.additional_terms,
             "date": today_str,
+            "engagement_date": today_str,
         }
         dcb = DocumentContextBuilder(entity, financial_year=fy, wizard_data=_wizard)
         enriched = dcb.build("engagement_letter")
         for k, v in enriched.items():
-            if k not in context or k.startswith("practice_"):
-                context[k] = v
+            context[k] = v
+    except ContextValidationError as _cve:
+        return JsonResponse({"status": "error", "error": str(_cve)}, status=400)
     except Exception as _e:
         logger.warning("DCB enrichment skipped for quick engagement letter: %s", _e)
 
