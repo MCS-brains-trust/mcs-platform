@@ -148,7 +148,7 @@ def render_and_create_document(
                 financial_year=financial_year,
                 document_type=doc_type,
                 status=LegalDocument.Status.DRAFT,
-            ).order_by('-created_at').first()
+            ).order_by('-generated_at').first()
 
         if existing_draft:
             doc = existing_draft
