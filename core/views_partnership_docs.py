@@ -258,7 +258,10 @@ def engagement_letter_wizard(request, pk):
         "fee_basis": config.fee_basis,
         "additional_terms": config.additional_terms,
         "date": "",
-        "financial_year_id": str(config.last_generated_fy_id) if config.last_generated_fy_id else (str(default_financial_year.pk) if default_financial_year else ""),
+        "financial_year_id": str(config.last_generated_fy_id) if config.last_generated_fy_id else (
+            str(default_financial_year["pk"] if isinstance(default_financial_year, dict) else default_financial_year.pk)
+            if default_financial_year else ""
+        ),
     }
 
 
