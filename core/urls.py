@@ -84,6 +84,7 @@ urlpatterns = [
     path("years/<uuid:pk>/partnership-tax-summary/", views_partnership_docs.generate_partnership_tax_summary, name="generate_partnership_tax_summary"),
     path("entities/<uuid:pk>/engagement-letter/", views_partnership_docs.engagement_letter_wizard, name="engagement_letter_wizard"),
     path("entities/<uuid:pk>/engagement-letter/generate/", views_partnership_docs.engagement_letter_generate, name="engagement_letter_generate"),
+    path("entities/<uuid:pk>/engagement-letter/quick-generate/", views_partnership_docs.engagement_letter_quick_generate, name="engagement_letter_quick_generate"),
 
     # Engagement Letters tab (per-year storage + audit trail)
     path("entities/<uuid:pk>/engagement-letters/upload/", views_engagement_letters.engagement_letter_upload, name="engagement_letter_upload"),

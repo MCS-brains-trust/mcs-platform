@@ -8,8 +8,10 @@ from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_POST
 
+from django.core.files.base import ContentFile
 from core.legal_doc_service import render_and_create_document, render_legal_document
 from core.models import (
+    EngagementLetter,
     EngagementLetterConfig,
     Entity,
     EntityOfficer,
@@ -436,10 +438,187 @@ def engagement_letter_generate(request, pk):
         doc.status = LegalDocument.Status.DRAFT
         doc.save(update_fields=["title", "context_data", "status"])
 
+    # Auto-satisfy roll-forward gate
+    _auto_create_engagement_letter(doc, entity, fy, request.user)
+
     return JsonResponse({
         "status": "ok",
         "document_id": document_id,
-        "message": "Engagement letter saved. It is now available in the Engagement Letters tab for editing and download.",
+        "message": "Engagement letter generated and saved. The roll-forward gate for this year is now satisfied.",
+        "redirect_url": f"/core/entities/{entity.pk}/?tab=engagement_letters",
+        "docx_url": result.get("docx_url"),
+        "pdf_url": result.get("pdf_url"),
+    })
+
+
+def _auto_create_engagement_letter(legal_doc, entity, financial_year, user):
+    """
+    After generating a LegalDocument of type engagement_letter, create (or
+    replace) an EngagementLetter record so the roll-forward gate is satisfied
+    automatically without requiring a manual upload.
+    """
+    try:
+        if not legal_doc.generated_file:
+            return
+        legal_doc.generated_file.seek(0)
+        docx_bytes = legal_doc.generated_file.read()
+        safe_name = entity.entity_name.replace(" ", "_").replace("/", "_")
+        filename = f"{safe_name}_engagement_letter_{financial_year.year_label}.docx"
+        # Demote any existing current letters for this entity+year
+        EngagementLetter.objects.filter(
+            entity=entity,
+            financial_year=financial_year,
+            is_current=True,
+        ).update(is_current=False)
+        el = EngagementLetter(
+            entity=entity,
+            financial_year=financial_year,
+            original_filename=filename,
+            file_size_bytes=len(docx_bytes),
+            status=EngagementLetter.Status.DRAFT,
+            is_current=True,
+            notes=f"Auto-generated from LegalDocument {legal_doc.pk}",
+            uploaded_by=user,
+        )
+        el.file.save(filename, ContentFile(docx_bytes), save=True)
+    except Exception as exc:
+        logger.warning("Could not auto-create EngagementLetter record: %s", exc)
+
+
+@login_required
+@require_POST
+def engagement_letter_quick_generate(request, pk):
+    """
+    One-click engagement letter generation using the saved EngagementLetterConfig.
+    No wizard required — uses stored services, fee, and fee_basis with today's date.
+    Satisfies the roll-forward gate automatically.
+    """
+    entity = get_object_or_404(Entity, pk=pk)
+    if not request.user.can_do_accounting:
+        return JsonResponse({"status": "error", "error": "Permission denied."}, status=403)
+
+    try:
+        data = json.loads(request.body or "{}")
+    except json.JSONDecodeError:
+        data = {}
+
+    fy_id = data.get("financial_year_id") or request.POST.get("financial_year_id")
+    if fy_id:
+        fy = get_object_or_404(FinancialYear, pk=fy_id, entity=entity)
+    else:
+        fy = (
+            entity.financial_years.filter(status__in=["draft", "in_progress", "review"])
+            .order_by("-end_date").first()
+            or entity.financial_years.order_by("-end_date").first()
+        )
+    if not fy:
+        return JsonResponse({"status": "error", "error": "No financial year found for this entity."}, status=400)
+
+    config, _ = EngagementLetterConfig.objects.get_or_create(entity=entity)
+    if not config.services_engaged:
+        return JsonResponse({
+            "status": "error",
+            "error": "No services configured for this entity. Please use the full wizard first to set up services and fees.",
+        }, status=400)
+
+    template = LegalDocumentTemplate.objects.filter(
+        document_type=LegalDocumentTemplate.DocumentType.ENGAGEMENT_LETTER,
+        is_active=True,
+    ).first()
+    if not template:
+        return JsonResponse({
+            "status": "error",
+            "error": "No active engagement letter template found. Please upload one in Document Templates.",
+        }, status=400)
+
+    address_parts = list(filter(None, [
+        entity.address_line_1,
+        entity.address_line_2,
+        " ".join(filter(None, [entity.suburb, entity.state, entity.postcode])),
+    ]))
+    registered_address = ", ".join(address_parts)
+
+    fee_display = ""
+    if config.fee_amount:
+        try:
+            fee_display = f"${float(config.fee_amount):,.2f} + GST"
+        except (ValueError, TypeError):
+            fee_display = str(config.fee_amount)
+
+    signatories = EntityOfficer.objects.filter(
+        entity=entity,
+        role__in=["director", "director_shareholder", "trustee", "partner", "individual", "public_officer"],
+    ).order_by("full_name")
+
+    today_str = date.today().strftime("%d %B %Y")
+    params = {
+        "services": config.services_engaged,
+        "fee_amount": str(config.fee_amount) if config.fee_amount else "",
+        "fee_basis": config.fee_basis,
+        "additional_terms": config.additional_terms,
+        "date": today_str,
+        "financial_year_id": str(fy.pk),
+    }
+    context = {
+        "entity_name": entity.entity_name,
+        "entity_type": entity.entity_type,
+        "abn": entity.abn or "",
+        "acn": entity.acn or "",
+        "registered_address": registered_address,
+        "services_engaged": config.services_engaged,
+        "fee_amount": fee_display,
+        "fee_basis": config.fee_basis,
+        "additional_terms": config.additional_terms,
+        "signatories": [{"name": s.full_name, "role": getattr(s, "display_role", s.get_role_display())} for s in signatories],
+        "date": today_str,
+    }
+
+    try:
+        from core.document_context_builder import DocumentContextBuilder
+        _wizard = {
+            "services": config.services_engaged,
+            "fee_amount": str(config.fee_amount) if config.fee_amount else "",
+            "fee_basis": config.fee_basis,
+            "additional_terms": config.additional_terms,
+            "date": today_str,
+        }
+        dcb = DocumentContextBuilder(entity, financial_year=fy, wizard_data=_wizard)
+        enriched = dcb.build("engagement_letter")
+        for k, v in enriched.items():
+            if k not in context or k.startswith("practice_"):
+                context[k] = v
+    except Exception as _e:
+        logger.warning("DCB enrichment skipped for quick engagement letter: %s", _e)
+
+    result = render_and_create_document(
+        entity=entity,
+        financial_year=fy,
+        template=template,
+        doc_type=LegalDocumentTemplate.DocumentType.ENGAGEMENT_LETTER,
+        context=context,
+        params=params,
+        user=request.user,
+        disclaimer_acknowledged=True,
+    )
+    if result.get("status") != "ok":
+        return JsonResponse(result, status=400)
+
+    document_id = result.get("document_id")
+    doc = LegalDocument.objects.get(pk=document_id)
+    doc.title = f"Engagement Letter \u2014 {entity.entity_name} \u2014 {fy.year_label}"
+    doc.context_data = context
+    doc.status = LegalDocument.Status.DRAFT
+    doc.save(update_fields=["title", "context_data", "status"])
+
+    config.last_generated_fy = fy
+    config.save(update_fields=["last_generated_fy"])
+
+    _auto_create_engagement_letter(doc, entity, fy, request.user)
+
+    return JsonResponse({
+        "status": "ok",
+        "document_id": document_id,
+        "message": f"Engagement letter generated for {fy.year_label}. Roll-forward gate satisfied.",
         "redirect_url": f"/core/entities/{entity.pk}/?tab=engagement_letters",
         "docx_url": result.get("docx_url"),
         "pdf_url": result.get("pdf_url"),
