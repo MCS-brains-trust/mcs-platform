@@ -163,11 +163,19 @@
                     <!-- Financial Statement Download Buttons -->
                     {% if fy.status == 'finalised' %}
                     <!-- Final statements — direct download, no modal -->
-                    <button type="button" class="btn btn-sm btn-dark" onclick="showPeriodModal('docx')">
-                        <i class="bi bi-file-earmark-word"></i> Download Financial Statements
+                    <button type="button" id="dlBtnDocx" class="btn btn-sm btn-dark" onclick="showPeriodModal('docx')">
+                        <span id="dlBtnDocxLabel"><i class="bi bi-file-earmark-word"></i> Download Financial Statements</span>
+                        <span id="dlBtnDocxSpinner" class="d-none">
+                            <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+                            &#x23F3; Preparing&hellip;
+                        </span>
                     </button>
-                    <button type="button" class="btn btn-sm btn-danger" onclick="showPeriodModal('pdf')">
-                        <i class="bi bi-file-earmark-pdf"></i> Download Financial Statements
+                    <button type="button" id="dlBtnPdf" class="btn btn-sm btn-danger" onclick="showPeriodModal('pdf')">
+                        <span id="dlBtnPdfLabel"><i class="bi bi-file-earmark-pdf"></i> Download Financial Statements</span>
+                        <span id="dlBtnPdfSpinner" class="d-none">
+                            <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
+                            &#x23F3; Preparing&hellip;
+                        </span>
                     </button>
                     {% elif fy.status == 'draft' or fy.status == 'in_review' or fy.status == 'reopened' %}
                     <!-- Management Accounts — opens period selection modal -->
@@ -3110,7 +3118,34 @@ function showPeriodModal(fmt) {
 
 function downloadStatements() {
     const url = "{% url 'core:generate_document' pk=fy.pk %}" + '?format=' + selectedFormat;
-    window.location.href = url;
+
+    // Show spinner on the button that was clicked
+    const isPdf = (selectedFormat === 'pdf');
+    const btn    = document.getElementById(isPdf ? 'dlBtnPdf'        : 'dlBtnDocx');
+    const label  = document.getElementById(isPdf ? 'dlBtnPdfLabel'   : 'dlBtnDocxLabel');
+    const spinner = document.getElementById(isPdf ? 'dlBtnPdfSpinner' : 'dlBtnDocxSpinner');
+    if (btn && label && spinner) {
+        btn.disabled = true;
+        label.classList.add('d-none');
+        spinner.classList.remove('d-none');
+    }
+
+    // Trigger download via hidden iframe so the page stays open
+    const iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+    document.body.appendChild(iframe);
+    iframe.src = url;
+
+    // Restore button after generous delay (PDF generation can take ~15 s)
+    setTimeout(function() {
+        if (btn && label && spinner) {
+            btn.disabled = false;
+            label.classList.remove('d-none');
+            spinner.classList.add('d-none');
+        }
+        document.body.removeChild(iframe);
+    }, 15000);
+
     const modal = bootstrap.Modal.getInstance(document.getElementById('periodModal'));
     if (modal) modal.hide();
 }
