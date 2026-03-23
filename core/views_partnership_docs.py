@@ -77,7 +77,7 @@ def _get_or_create_selected_financial_year(entity, fy_id):
         start_date = date.fromisoformat(start_raw)
         end_date = date.fromisoformat(end_raw)
         prior_year = entity.financial_years.filter(end_date=start_date - timedelta(days=1)).order_by("-end_date").first()
-        fy, _ = FinancialYear.objects.get_or_create(
+        fy, created = FinancialYear.objects.get_or_create(
             entity=entity,
             start_date=start_date,
             end_date=end_date,
@@ -88,6 +88,19 @@ def _get_or_create_selected_financial_year(entity, fy_id):
                 "prior_year": prior_year,
             },
         )
+        # When a brand-new FY shell is created from an engagement letter, run
+        # the full roll-forward population so that comparatives, BS opening
+        # balances, stock, and depreciation assets are all carried through.
+        # This mirrors exactly what the manual roll_forward view does.
+        if created and prior_year is not None and prior_year.is_locked:
+            try:
+                from core.views import _populate_rolled_forward_fy
+                _populate_rolled_forward_fy(prior_year, fy)
+            except Exception as _rf_exc:
+                logger.warning(
+                    "Engagement-letter roll-forward population failed for FY %s: %s",
+                    fy.year_label, _rf_exc,
+                )
         return fy
     return get_object_or_404(FinancialYear, pk=fy_id, entity=entity)
 

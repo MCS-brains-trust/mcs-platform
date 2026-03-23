@@ -2932,6 +2932,301 @@ def reroll_forward(request, pk):
     })
 
 
+def _populate_rolled_forward_fy(current_fy, new_fy):
+    """Populate a freshly-created financial year with rolled-forward data from
+    ``current_fy``.  This is the single authoritative implementation of the
+    five-pass roll-forward algorithm and is called by both the interactive
+    ``roll_forward`` view and the engagement-letter generation path so that
+    both routes produce identical results.
+
+    Passes:
+      1. Classify all base TB lines as BS or P&L; accumulate net P&L.
+      2. Create BS opening-balance lines in new_fy (P&L closed to retained
+         profits).
+      3. Create P&L comparative-only lines (zero current, prior values set)
+         and convert closing stock → opening stock.
+      4. Roll forward StockItem records.
+      5. Roll forward DepreciationAsset records.
+
+    Returns a dict with summary counts for logging.
+    """
+    from decimal import Decimal as _D
+    entity = current_fy.entity
+
+    # Seed entity chart of accounts from template if not already done
+    EntityChartOfAccount.seed_from_template(entity)
+
+    # Build lookup of account_code -> section from ChartOfAccount
+    coa_sections = dict(
+        ChartOfAccount.objects.filter(
+            entity_type=entity.entity_type, is_active=True
+        ).values_list("account_code", "section")
+    )
+
+    # -----------------------------------------------------------------
+    # Pass 1: Classify all lines and calculate net P&L result
+    # -----------------------------------------------------------------
+    net_pl_result = _D("0")
+    retained_profits_line = None
+    income_tax_line = None
+    bs_lines = []
+    pl_lines = []
+
+    for line in current_fy.trial_balance_lines.select_related("mapped_line_item").filter(is_adjustment=False):
+        is_bs = _is_balance_sheet_account(line.account_code, line.mapped_line_item, coa_sections)
+        if is_bs:
+            code_prefix = line.account_code.split(".")[0] if line.account_code else ""
+            if code_prefix == "4199":
+                retained_profits_line = line
+            is_income_tax = False
+            if line.account_name and "income tax" in line.account_name.lower():
+                is_income_tax = True
+            if code_prefix == "4110":
+                is_income_tax = True
+            if line.mapped_line_item and (line.mapped_line_item.standard_code or "") == "BS-EQ-011":
+                is_income_tax = True
+            if is_income_tax:
+                income_tax_line = line
+            bs_lines.append(line)
+        else:
+            pl_lines.append(line)
+            net_pl_result += line.debit - line.credit
+
+    # -----------------------------------------------------------------
+    # Pass 2: Create balance sheet lines, adjusting retained profits
+    # -----------------------------------------------------------------
+    carried_bs = 0
+    for line in bs_lines:
+        if line.closing_balance == _D("0") and line != retained_profits_line:
+            continue
+        opening = line.closing_balance
+        if line == retained_profits_line:
+            tax_amount = income_tax_line.closing_balance if income_tax_line else _D("0")
+            opening = line.closing_balance + net_pl_result + tax_amount
+            if opening == _D("0"):
+                continue
+        if line == income_tax_line:
+            TrialBalanceLine.objects.create(
+                financial_year=new_fy,
+                account_code=line.account_code,
+                account_name=line.account_name,
+                opening_balance=_D("0"),
+                debit=_D("0"),
+                credit=_D("0"),
+                closing_balance=_D("0"),
+                prior_debit=line.debit,
+                prior_credit=line.credit,
+                mapped_line_item=line.mapped_line_item,
+                is_adjustment=False,
+                source='rollover',
+            )
+            carried_bs += 1
+            continue
+        TrialBalanceLine.objects.create(
+            financial_year=new_fy,
+            account_code=line.account_code,
+            account_name=line.account_name,
+            opening_balance=opening,
+            debit=_D("0"),
+            credit=_D("0"),
+            closing_balance=opening,
+            prior_debit=line.debit,
+            prior_credit=line.credit,
+            mapped_line_item=line.mapped_line_item,
+            is_adjustment=False,
+            source='rollover',
+        )
+        carried_bs += 1
+
+    # If no retained profits line existed, create one to hold the net P&L
+    tax_amount = income_tax_line.closing_balance if income_tax_line else _D("0")
+    if retained_profits_line is None and (net_pl_result != _D("0") or tax_amount != _D("0")):
+        etype = entity.entity_type
+        if etype == "trust":
+            rp_name, rp_code = "Undistributed income", "4199"
+        elif etype == "partnership":
+            rp_name, rp_code = "Partners' current accounts", "4199"
+        elif etype == "sole_trader":
+            rp_name, rp_code = "Proprietor's funds", "4199"
+        else:
+            rp_name, rp_code = "Retained profits", "4199"
+        rp_opening = net_pl_result + tax_amount
+        TrialBalanceLine.objects.create(
+            financial_year=new_fy,
+            account_code=rp_code,
+            account_name=rp_name,
+            opening_balance=rp_opening,
+            debit=_D("0"),
+            credit=_D("0"),
+            closing_balance=rp_opening,
+            prior_debit=_D("0"),
+            prior_credit=_D("0"),
+            mapped_line_item=None,
+            is_adjustment=False,
+            source='rollover',
+        )
+        carried_bs += 1
+        if income_tax_line:
+            TrialBalanceLine.objects.create(
+                financial_year=new_fy,
+                account_code=income_tax_line.account_code,
+                account_name=income_tax_line.account_name,
+                opening_balance=_D("0"),
+                debit=_D("0"),
+                credit=_D("0"),
+                closing_balance=_D("0"),
+                prior_debit=income_tax_line.debit,
+                prior_credit=income_tax_line.credit,
+                mapped_line_item=income_tax_line.mapped_line_item,
+                is_adjustment=False,
+                source='rollover',
+            )
+            carried_bs += 1
+
+    # -----------------------------------------------------------------
+    # Pass 3: Create P&L comparative lines and convert closing stock
+    # -----------------------------------------------------------------
+    carried_pl = 0
+    stock_converted = 0
+    opening_stock_mapping = None
+    closing_stock_mapping = None
+    try:
+        opening_stock_mapping = AccountMapping.objects.get(standard_code="IS-COS-002")
+    except AccountMapping.DoesNotExist:
+        pass
+    try:
+        closing_stock_mapping = AccountMapping.objects.get(standard_code="IS-COS-004")
+    except AccountMapping.DoesNotExist:
+        pass
+    CLOSING_STOCK_KEYWORDS = [
+        "closing stock", "closing work in progress", "closing wip",
+        "closing raw material", "closing finished goods", "closing inventory",
+    ]
+    for line in pl_lines:
+        if line.debit == _D("0") and line.credit == _D("0"):
+            continue
+        is_closing_stock = False
+        name_lower = (line.account_name or "").lower()
+        if line.mapped_line_item and (line.mapped_line_item.standard_code or "") == "IS-COS-004":
+            is_closing_stock = True
+        if not is_closing_stock:
+            for kw in CLOSING_STOCK_KEYWORDS:
+                if kw in name_lower:
+                    is_closing_stock = True
+                    break
+        TrialBalanceLine.objects.create(
+            financial_year=new_fy,
+            account_code=line.account_code,
+            account_name=line.account_name,
+            opening_balance=_D("0"),
+            debit=_D("0"),
+            credit=_D("0"),
+            closing_balance=_D("0"),
+            prior_debit=line.debit,
+            prior_credit=line.credit,
+            mapped_line_item=line.mapped_line_item,
+            is_adjustment=False,
+            source='rollover',
+        )
+        carried_pl += 1
+        if is_closing_stock:
+            closing_amount = line.credit - line.debit
+            if closing_amount != _D("0"):
+                opening_name = line.account_name
+                for old, new_word in [("Closing", "Opening"), ("closing", "opening"), ("CLOSING", "OPENING")]:
+                    opening_name = opening_name.replace(old, new_word)
+                if opening_name == line.account_name:
+                    opening_name = "Opening " + line.account_name
+                opening_code = line.account_code
+                for pl_line in pl_lines:
+                    pl_name_lower = (pl_line.account_name or "").lower()
+                    if ("opening" in pl_name_lower and
+                        ("stock" in pl_name_lower or "work in progress" in pl_name_lower
+                         or "wip" in pl_name_lower or "inventory" in pl_name_lower
+                         or "raw material" in pl_name_lower or "finished good" in pl_name_lower)):
+                        opening_code = pl_line.account_code
+                        opening_name = pl_line.account_name
+                        break
+                    if pl_line.mapped_line_item and (pl_line.mapped_line_item.standard_code or "") == "IS-COS-002":
+                        opening_code = pl_line.account_code
+                        opening_name = pl_line.account_name
+                        break
+                TrialBalanceLine.objects.create(
+                    financial_year=new_fy,
+                    account_code=opening_code,
+                    account_name=opening_name,
+                    opening_balance=_D("0"),
+                    debit=closing_amount if closing_amount > _D("0") else _D("0"),
+                    credit=abs(closing_amount) if closing_amount < _D("0") else _D("0"),
+                    closing_balance=_D("0"),
+                    prior_debit=_D("0"),
+                    prior_credit=_D("0"),
+                    mapped_line_item=opening_stock_mapping,
+                    is_adjustment=False,
+                    source='rollover',
+                )
+                stock_converted += 1
+
+    # -----------------------------------------------------------------
+    # Pass 4: Roll forward stock items (closing → opening)
+    # -----------------------------------------------------------------
+    stock_rolled = 0
+    for stock_item in current_fy.stock_items.all():
+        if stock_item.closing_value == _D("0") and stock_item.closing_quantity == _D("0"):
+            continue
+        StockItem.objects.create(
+            financial_year=new_fy,
+            item_name=stock_item.item_name,
+            opening_quantity=stock_item.closing_quantity,
+            opening_value=stock_item.closing_value,
+            closing_quantity=_D("0"),
+            closing_value=_D("0"),
+            notes=f"Rolled forward from FY{current_fy.year_label}",
+            display_order=stock_item.display_order,
+        )
+        stock_rolled += 1
+
+    # -----------------------------------------------------------------
+    # Pass 5: Roll forward depreciation assets (closing WDV → opening WDV)
+    # -----------------------------------------------------------------
+    dep_rolled = 0
+    for pa in current_fy.depreciation_assets.all():
+        if pa.closing_wdv <= 0 and not pa.disposal_date:
+            continue
+        new_asset = DepreciationAsset(
+            financial_year=new_fy,
+            category=pa.category,
+            asset_name=pa.asset_name,
+            purchase_date=pa.purchase_date,
+            total_cost=pa.total_cost,
+            private_use_pct=pa.private_use_pct,
+            opening_wdv=pa.closing_wdv,
+            method=pa.method,
+            rate=pa.rate,
+            display_order=pa.display_order,
+            asset_account_code=pa.asset_account_code,
+            asset_account_name=pa.asset_account_name,
+            accum_dep_code=pa.accum_dep_code,
+            accum_dep_name=pa.accum_dep_name,
+            dep_expense_code=pa.dep_expense_code,
+            dep_expense_name=pa.dep_expense_name,
+            notes=f"Rolled forward from FY{current_fy.year_label}",
+        )
+        _calc_depreciation(new_asset)
+        new_asset.save()
+        dep_rolled += 1
+
+    return {
+        "carried_bs": carried_bs,
+        "carried_pl": carried_pl,
+        "stock_converted": stock_converted,
+        "stock_rolled": stock_rolled,
+        "dep_rolled": dep_rolled,
+        "net_pl_result": net_pl_result,
+        "tax_amount": tax_amount,
+    }
+
+
 @login_required
 def roll_forward(request, pk):
     """Create a new financial year from the current one, carrying closing balances."""
@@ -3003,336 +3298,16 @@ def roll_forward(request, pk):
             status=FinancialYear.Status.DRAFT,
         )
 
-        # Seed entity chart of accounts from template if not already done
-        EntityChartOfAccount.seed_from_template(entity)
-
-        # Build lookup of account_code -> section from ChartOfAccount
-        coa_sections = dict(
-            ChartOfAccount.objects.filter(
-                entity_type=entity.entity_type, is_active=True
-            ).values_list("account_code", "section")
-        )
-
-        # -----------------------------------------------------------------
-        # Pass 1: Classify all lines and calculate net P&L result
-        #
-        # Income statement accounts (revenue/expense) are excluded — they
-        # reset to zero at year end.  Only balance sheet accounts (assets,
-        # liabilities, equity) carry forward.
-        # -----------------------------------------------------------------
-        net_pl_result = Decimal("0")  # Positive = net expense (loss), Negative = net income (profit)
-        retained_profits_line = None
-        income_tax_line = None  # Track income tax (4110) separately
-        bs_lines = []
-        pl_lines = []
-
-        for line in current_fy.trial_balance_lines.select_related("mapped_line_item").filter(is_adjustment=False):
-            is_bs = _is_balance_sheet_account(line.account_code, line.mapped_line_item, coa_sections)
-
-            if is_bs:
-                # HARD RULE: account 4199 is ALWAYS the retained profits target.
-                # Only 4199 is accepted as retained_profits_line.  Other equity
-                # accounts (e.g. 4200.03 shareholder sub-accounts) must never
-                # receive the rolled-forward P&L, even if mapped to BS-EQ-002.
-                code_prefix = line.account_code.split(".")[0] if line.account_code else ""
-                if code_prefix == "4199":
-                    retained_profits_line = line
-
-                # Check if this is the income tax line (4110 or mapped to BS-EQ-011)
-                is_income_tax = False
-                if line.account_name and "income tax" in line.account_name.lower():
-                    is_income_tax = True
-                if code_prefix == "4110":
-                    is_income_tax = True
-                if line.mapped_line_item and (line.mapped_line_item.standard_code or "") == "BS-EQ-011":
-                    is_income_tax = True
-                if is_income_tax:
-                    income_tax_line = line
-
-                bs_lines.append(line)
-            else:
-                pl_lines.append(line)
-                # Accumulate net P&L: debits (expenses) minus credits (income)
-                # Sign matches closing_balance convention where credits are negative
-                net_pl_result += line.debit - line.credit
-
-        # -----------------------------------------------------------------
-        # Pass 2: Create balance sheet lines, adjusting retained profits
-        # -----------------------------------------------------------------
-        carried_bs = 0
-        for line in bs_lines:
-            if line.closing_balance == 0 and line != retained_profits_line:
-                continue
-
-            opening = line.closing_balance
-
-            # Close P&L to retained profits:
-            # Formula: New RP = Prior RP + Net Profit After Tax
-            # In closing_balance convention (credits negative, debits positive):
-            #   net_pl_result (before tax) is negative for profit
-            #   income_tax closing_balance is positive (debit)
-            #   After-tax P&L = net_pl_result + tax_amount
-            #     e.g. -95919.16 + 23979.75 = -71939.41 (profit after tax)
-            #   opening = RP.closing + after-tax P&L
-            #     e.g. -517904.75 + (-71939.41) = -589844.16
-            if line == retained_profits_line:
-                tax_amount = income_tax_line.closing_balance if income_tax_line else Decimal("0")
-                opening = line.closing_balance + net_pl_result + tax_amount
-                # If retained profits was zero but net P&L is non-zero,
-                # we still need to create the line
-                if opening == 0:
-                    continue
-
-            # Skip income tax line — it has been absorbed into retained profits
-            if line == income_tax_line:
-                # Carry as comparative only (zero current, prior values preserved)
-                TrialBalanceLine.objects.create(
-                    financial_year=new_fy,
-                    account_code=line.account_code,
-                    account_name=line.account_name,
-                    opening_balance=Decimal("0"),
-                    debit=Decimal("0"),
-                    credit=Decimal("0"),
-                    closing_balance=Decimal("0"),
-                    prior_debit=line.debit,
-                    prior_credit=line.credit,
-                    mapped_line_item=line.mapped_line_item,
-                    is_adjustment=False,
-                    source='rollover',
-                )
-                carried_bs += 1
-                continue
-
-            TrialBalanceLine.objects.create(
-                financial_year=new_fy,
-                account_code=line.account_code,
-                account_name=line.account_name,
-                opening_balance=opening,
-                debit=Decimal("0"),
-                credit=Decimal("0"),
-                closing_balance=opening,  # = opening, waiting for movement
-                prior_debit=line.debit,
-                prior_credit=line.credit,
-                mapped_line_item=line.mapped_line_item,
-                is_adjustment=False,
-                source='rollover',
-            )
-            carried_bs += 1
-
-        # If there was no retained profits line but there IS a net P&L
-        # result, create a new retained profits line to hold it
-        tax_amount = income_tax_line.closing_balance if income_tax_line else Decimal("0")
-        if retained_profits_line is None and (net_pl_result != 0 or tax_amount != 0):
-            # Determine the appropriate account code and mapping
-            etype = entity.entity_type
-            if etype == "trust":
-                rp_name = "Undistributed income"
-                rp_code = "4199"
-            elif etype == "partnership":
-                rp_name = "Partners' current accounts"
-                rp_code = "4199"
-            elif etype == "sole_trader":
-                rp_name = "Proprietor's funds"
-                rp_code = "4199"
-            else:
-                rp_name = "Retained profits"
-                rp_code = "4199"
-
-            rp_opening = net_pl_result + tax_amount
-            TrialBalanceLine.objects.create(
-                financial_year=new_fy,
-                account_code=rp_code,
-                account_name=rp_name,
-                opening_balance=rp_opening,
-                debit=Decimal("0"),
-                credit=Decimal("0"),
-                closing_balance=rp_opening,
-                prior_debit=Decimal("0"),
-                prior_credit=Decimal("0"),
-                mapped_line_item=None,
-                is_adjustment=False,
-                source='rollover',
-            )
-            carried_bs += 1
-
-            # Also create comparative-only line for income tax if it existed
-            if income_tax_line:
-                TrialBalanceLine.objects.create(
-                    financial_year=new_fy,
-                    account_code=income_tax_line.account_code,
-                    account_name=income_tax_line.account_name,
-                    opening_balance=Decimal("0"),
-                    debit=Decimal("0"),
-                    credit=Decimal("0"),
-                    closing_balance=Decimal("0"),
-                    prior_debit=income_tax_line.debit,
-                    prior_credit=income_tax_line.credit,
-                    mapped_line_item=income_tax_line.mapped_line_item,
-                    is_adjustment=False,
-                    source='rollover',
-                )
-                carried_bs += 1
-
-        # -----------------------------------------------------------------
-        # Pass 3: Create P&L comparative lines (zero current, prior only)
-        #         AND convert closing stock → opening stock for new year
-        # -----------------------------------------------------------------
-        carried_pl = 0
-        stock_converted = 0
-
-        # Build lookup for opening stock mapping (IS-COS-002)
-        opening_stock_mapping = None
-        closing_stock_mapping = None
-        try:
-            opening_stock_mapping = AccountMapping.objects.get(standard_code="IS-COS-002")
-        except AccountMapping.DoesNotExist:
-            pass
-        try:
-            closing_stock_mapping = AccountMapping.objects.get(standard_code="IS-COS-004")
-        except AccountMapping.DoesNotExist:
-            pass
-
-        # Keywords to identify closing stock/WIP accounts
-        CLOSING_STOCK_KEYWORDS = [
-            "closing stock", "closing work in progress", "closing wip",
-            "closing raw material", "closing finished goods",
-            "closing inventory",
-        ]
-
-        for line in pl_lines:
-            if line.debit == 0 and line.credit == 0:
-                continue  # Skip if no prior year activity
-
-            # Check if this is a closing stock account
-            is_closing_stock = False
-            name_lower = (line.account_name or "").lower()
-
-            # Check by mapped standard code
-            if line.mapped_line_item and (line.mapped_line_item.standard_code or "") == "IS-COS-004":
-                is_closing_stock = True
-            # Check by account name keywords
-            if not is_closing_stock:
-                for kw in CLOSING_STOCK_KEYWORDS:
-                    if kw in name_lower:
-                        is_closing_stock = True
-                        break
-
-            # Create the comparative line (always)
-            TrialBalanceLine.objects.create(
-                financial_year=new_fy,
-                account_code=line.account_code,
-                account_name=line.account_name,
-                opening_balance=Decimal("0"),
-                debit=Decimal("0"),
-                credit=Decimal("0"),
-                closing_balance=Decimal("0"),
-                prior_debit=line.debit,
-                prior_credit=line.credit,
-                mapped_line_item=line.mapped_line_item,
-                is_adjustment=False,
-                source='rollover',
-            )
-            carried_pl += 1
-
-            # If closing stock, also create an opening stock line for the new year
-            if is_closing_stock:
-                # Closing stock is typically a credit in P&L (reduces COGS)
-                # Opening stock is a debit in P&L (increases COGS)
-                # The closing stock amount becomes the opening stock amount
-                closing_amount = line.credit - line.debit  # Positive if credit
-                if closing_amount != 0:
-                    # Derive opening account name from closing
-                    opening_name = line.account_name
-                    for old, new in [("Closing", "Opening"), ("closing", "opening"), ("CLOSING", "OPENING")]:
-                        opening_name = opening_name.replace(old, new)
-                    if opening_name == line.account_name:
-                        # Keyword replacement didn't work, prepend "Opening"
-                        opening_name = "Opening " + line.account_name
-
-                    # Derive opening account code: try to find matching opening code
-                    # Convention: opening stock codes are typically nearby
-                    # e.g., 1135 closing -> 1105 opening, or same code range
-                    opening_code = line.account_code
-                    # Look for an existing opening stock line in the current FY
-                    for pl_line in pl_lines:
-                        pl_name_lower = (pl_line.account_name or "").lower()
-                        if ("opening" in pl_name_lower and
-                            ("stock" in pl_name_lower or "work in progress" in pl_name_lower
-                             or "wip" in pl_name_lower or "inventory" in pl_name_lower
-                             or "raw material" in pl_name_lower or "finished good" in pl_name_lower)):
-                            opening_code = pl_line.account_code
-                            opening_name = pl_line.account_name
-                            break
-                        if pl_line.mapped_line_item and (pl_line.mapped_line_item.standard_code or "") == "IS-COS-002":
-                            opening_code = pl_line.account_code
-                            opening_name = pl_line.account_name
-                            break
-
-                    TrialBalanceLine.objects.create(
-                        financial_year=new_fy,
-                        account_code=opening_code,
-                        account_name=opening_name,
-                        opening_balance=Decimal("0"),
-                        debit=closing_amount if closing_amount > 0 else Decimal("0"),
-                        credit=abs(closing_amount) if closing_amount < 0 else Decimal("0"),
-                        closing_balance=Decimal("0"),
-                        prior_debit=Decimal("0"),
-                        prior_credit=Decimal("0"),
-                        mapped_line_item=opening_stock_mapping,
-                        is_adjustment=False,
-                        source='rollover',
-                    )
-                    stock_converted += 1
-
-        # -----------------------------------------------------------------
-        # Pass 4: Roll forward stock items (closing → opening)
-        # -----------------------------------------------------------------
-        stock_rolled = 0
-        for stock_item in current_fy.stock_items.all():
-            if stock_item.closing_value == 0 and stock_item.closing_quantity == 0:
-                continue
-            StockItem.objects.create(
-                financial_year=new_fy,
-                item_name=stock_item.item_name,
-                opening_quantity=stock_item.closing_quantity,
-                opening_value=stock_item.closing_value,
-                closing_quantity=Decimal("0"),
-                closing_value=Decimal("0"),
-                notes=f"Rolled forward from FY{current_fy.year_label}",
-                display_order=stock_item.display_order,
-            )
-            stock_rolled += 1
-
-        # -----------------------------------------------------------------
-        # Pass 5: Roll forward depreciation assets (closing WDV → opening WDV)
-        # -----------------------------------------------------------------
-        dep_rolled = 0
-        for pa in current_fy.depreciation_assets.all():
-            # Skip assets that are fully written off and have no disposal
-            if pa.closing_wdv <= 0 and not pa.disposal_date:
-                continue
-            new_asset = DepreciationAsset(
-                financial_year=new_fy,
-                category=pa.category,
-                asset_name=pa.asset_name,
-                purchase_date=pa.purchase_date,
-                total_cost=pa.total_cost,
-                private_use_pct=pa.private_use_pct,
-                opening_wdv=pa.closing_wdv,  # Prior closing becomes new opening
-                method=pa.method,
-                rate=pa.rate,
-                display_order=pa.display_order,
-                asset_account_code=pa.asset_account_code,
-                asset_account_name=pa.asset_account_name,
-                accum_dep_code=pa.accum_dep_code,
-                accum_dep_name=pa.accum_dep_name,
-                dep_expense_code=pa.dep_expense_code,
-                dep_expense_name=pa.dep_expense_name,
-                notes=f"Rolled forward from FY{current_fy.year_label}",
-            )
-            _calc_depreciation(new_asset)
-            new_asset.save()
-            dep_rolled += 1
+        # Run the full five-pass roll-forward algorithm (same logic used by
+        # the engagement-letter-triggered path via _populate_rolled_forward_fy)
+        rf = _populate_rolled_forward_fy(current_fy, new_fy)
+        carried_bs = rf["carried_bs"]
+        carried_pl = rf["carried_pl"]
+        stock_converted = rf["stock_converted"]
+        stock_rolled = rf["stock_rolled"]
+        dep_rolled = rf["dep_rolled"]
+        net_pl_result = rf["net_pl_result"]
+        tax_amount = rf["tax_amount"]
 
         total_carried = carried_bs + carried_pl
         pl_direction = "profit" if net_pl_result < 0 else "loss"
