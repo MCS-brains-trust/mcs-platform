@@ -5680,28 +5680,30 @@ def generate_document(request, pk):
     doc.file.save(filename, ContentFile(file_content), save=True)
     # Also create/update a LegalDocument record so the package assembly
     # checklist can detect that distribution minutes have been generated.
-    from core.models import LegalDocument
-    try:
-        from core.document_context_builder import DocumentContextBuilder
-        _dcb = DocumentContextBuilder(entity, financial_year=fy)
-        _dist_ctx = _dcb.build("distribution_minutes")
-    except Exception:
-        _dist_ctx = {
-            "entity_name": entity.entity_name,
-            "financial_year": str(fy.end_date.year),
-            "financial_year_end": str(fy.end_date),
-        }
-    LegalDocument.objects.update_or_create(
-        financial_year=fy,
-        entity=entity,
-        document_type="distribution_minutes",
-        defaults={
-            "title": f"Trust Distribution Minutes — {entity.entity_name} — {fy.end_date.year}",
-            "context_data": _dist_ctx,
-            "generated_by": request.user,
-            "status": "generated",
-        },
-    )
+    entity = fy.entity
+    if entity.entity_type == "trust":
+        from core.models import LegalDocument
+        try:
+            from core.document_context_builder import DocumentContextBuilder
+            _dcb = DocumentContextBuilder(entity, financial_year=fy)
+            _dist_ctx = _dcb.build("distribution_minutes")
+        except Exception:
+            _dist_ctx = {
+                "entity_name": entity.entity_name,
+                "financial_year": str(fy.end_date.year),
+                "financial_year_end": str(fy.end_date),
+            }
+        LegalDocument.objects.update_or_create(
+            financial_year=fy,
+            entity=entity,
+            document_type="distribution_minutes",
+            defaults={
+                "title": f"Trust Distribution Minutes — {entity.entity_name} — {fy.end_date.year}",
+                "context_data": _dist_ctx,
+                "generated_by": request.user,
+                "status": "generated",
+            },
+        )
 
     return response
 
