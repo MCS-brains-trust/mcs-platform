@@ -386,6 +386,14 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
     # Row 1 — {%tr for %} tag in its own row (docxtpl requirement)
     for_row = table.add_row()
     for_row.cells[0].text = "{%tr for item in " + items_tag + " %}"
+    # Suppress top border on the for-loop row so LibreOffice doesn't render
+    # a line between the header row and the first data row.
+    for cell in for_row.cells:
+        _apply_cell_border(
+            cell,
+            top={"val": "nil", "sz": "0", "color": "auto"},
+            bottom={"val": "nil", "sz": "0", "color": "auto"},
+        )
 
     # Row 2 — data row with item fields
     data_row = table.add_row()
