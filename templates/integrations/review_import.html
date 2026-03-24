@@ -266,7 +266,7 @@ document.addEventListener('DOMContentLoaded', function() {
         suggestCodeUrl: "{% url 'core:entity_coa_suggest_code' pk=fy.pk %}",
         quickAddUrl: "{% url 'integrations:quick_add_entity_account' %}",
         csrfToken: document.querySelector('[name=csrfmiddlewaretoken]').value,
-        balanceRequired: {{ import_mode == "trial_balance"|yesno:"true,false" }},
+        balanceRequired: {% if import_mode == "trial_balance" %}true{% else %}false{% endif %},
         balanceBlocked: {{ balance_blocked|yesno:"true,false" }},
         balanceWarning: {{ balance_warning|yesno:"true,false" }}
     });
