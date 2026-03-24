@@ -407,17 +407,26 @@ class QuickBooksProvider(BaseProvider):
             return values
 
         def _extract_net_activity(mapped, numeric_values=None):
+            # Prefer explicit net activity keys (present in some QB report variants)
             for key in (
                 "net_activity_total",
                 "net_activity",
                 "net_change",
-                "change",
-                "amount",
-                "total",
             ):
                 value = mapped.get(key, "")
                 if value not in ("", None):
                     return _to_decimal(value)
+            # The standard QB GeneralLedger report has 'balance' (ending balance) and
+            # 'beginning_balance' columns. Net Activity = Ending Balance - Beginning Balance.
+            # This is always correct regardless of account type or sign convention.
+            ending = mapped.get("balance", "")
+            beginning = mapped.get("beginning_balance_total") or mapped.get("beginning_balance") or ""
+            if ending not in ("", None) and beginning not in ("", None):
+                return _to_decimal(ending) - _to_decimal(beginning)
+            # Fallback: if we only have ending balance, use it as net (accounts with no opening balance)
+            if ending not in ("", None):
+                return _to_decimal(ending)
+            # Last resort: use the last numeric value
             numeric_values = numeric_values or []
             if numeric_values:
                 return numeric_values[-1]
@@ -463,6 +472,36 @@ class QuickBooksProvider(BaseProvider):
                 "movement_amount": net_activity,
             })
 
+        def _extract_beginning_balance_from_children(children):
+            """Extract the beginning balance from the first Data child row.
+
+            The QB GeneralLedger API includes a 'Beginning Balance' Data row as the
+            first child of each account Section. Its ColData[0].value is 'Beginning Balance'
+            and the balance column (last numeric column) holds the opening balance value.
+            """
+            for child in children or []:
+                if not isinstance(child, dict):
+                    continue
+                child_type = (child.get("type") or child.get("RowType") or "").lower()
+                if child_type != "data":
+                    continue
+                col_data = child.get("ColData", []) or []
+                if not col_data:
+                    continue
+                label = _col_value(col_data[0]).lower().strip()
+                if label == "beginning balance":
+                    # The balance column is the last column (col[8] in standard GL report)
+                    mapped = _col_map(col_data)
+                    balance_val = mapped.get("balance", "")
+                    if balance_val not in ("", None):
+                        return _to_decimal(balance_val)
+                    # Fallback: last numeric value in the row
+                    nums = _extract_numeric_values(col_data)
+                    if nums:
+                        return nums[-1]
+                break  # Only check the first Data row
+            return None
+
         def handle_row(row, current_account_code="", current_account_name=""):
             if not isinstance(row, dict):
                 return
@@ -480,25 +519,34 @@ class QuickBooksProvider(BaseProvider):
                 current_account_name = header_name
             if header_code:
                 current_account_code = header_code
+
+            # The QB GeneralLedger report returns individual transaction Data rows inside
+            # each account Section, plus a Summary row with the account totals.
+            # We ONLY use the Summary row to compute net activity — individual Data rows
+            # contain per-transaction amounts (always positive) which cannot be reliably
+            # used to determine net movement without knowing the account's normal balance.
             if summary_cols and current_account_name:
                 mapped = _col_map(summary_cols)
                 numeric_values = _extract_numeric_values(summary_cols)
+
+                # Net Activity = Ending Balance - Beginning Balance.
+                # The Summary row's 'balance' column = ending balance.
+                # The beginning balance is in the first 'Beginning Balance' Data child row.
+                # Inject it into the mapped dict so _extract_net_activity can use it.
+                beginning_balance = _extract_beginning_balance_from_children(children)
+                if beginning_balance is not None and "beginning_balance" not in mapped:
+                    mapped["beginning_balance"] = str(beginning_balance)
+
                 net_activity = _extract_net_activity(mapped, numeric_values)
-                opening_balance = _extract_opening_balance(mapped, numeric_values)
+                opening_balance = beginning_balance if beginning_balance is not None else _extract_opening_balance(mapped, numeric_values)
                 append_account_row(current_account_code, current_account_name, net_activity, opening_balance)
                 return
-            if row_type.lower() == "data" and col_data:
-                first_value = _col_value(col_data[0])
-                first_id = _col_id(col_data[0])
-                candidate_name = first_value or current_account_name
-                candidate_code = first_id or current_account_code
-                if not _looks_like_detail_row(candidate_name):
-                    mapped = _col_map(col_data)
-                    numeric_values = _extract_numeric_values(col_data)
-                    net_activity = _extract_net_activity(mapped, numeric_values)
-                    opening_balance = _extract_opening_balance(mapped, numeric_values)
-                    append_account_row(candidate_code, candidate_name, net_activity, opening_balance)
-                    return
+
+            # Skip individual Data rows — they are transactions, not account summaries.
+            # Only recurse into child Sections (sub-accounts).
+            if row_type.lower() == "data":
+                return
+
             for child in children:
                 handle_row(child, current_account_code=current_account_code, current_account_name=current_account_name)
 
