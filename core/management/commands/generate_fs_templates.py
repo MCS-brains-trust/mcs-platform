@@ -376,18 +376,43 @@ def _add_spacer(doc, pts=4):
 
 
 def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_tag, total_py_tag):
-    """Add a 4-column financial table with Jinja2 for-loop."""
-    _add_para(doc, section_title, bold=True, keep_with_next=True)
+    """Add a 4-column financial table with Jinja2 for-loop.
 
-    table = doc.add_table(rows=1, cols=4, style='Normal Table')
+    The section title (e.g. 'Income', 'Expenses') is placed as the FIRST ROW
+    of the table rather than as a standalone paragraph before the table.
+    This eliminates the LibreOffice paragraph-before-table bottom-border
+    artefact that produced an unwanted horizontal line above the year headers.
+    """
+    # Build the table — section title row + header row + data rows + total row
+    table = doc.add_table(rows=2, cols=4, style='Normal Table')
     _set_table_full_width(table)
     _clear_table_borders(table)
     table.autofit = False
     for i, width in enumerate(COL_WIDTHS):
         table.columns[i].width = width
 
-    # Header row
-    hdr = table.rows[0]
+    # Row 0 — Section title (spans visually; only col 0 has text)
+    title_row = table.rows[0]
+    title_row.cells[0].text = section_title
+    for i in range(4):
+        for p in title_row.cells[i].paragraphs:
+            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(0)
+            for run in p.runs:
+                run.font.name = FONT_NAME
+                run.font.size = FONT_SIZE
+                run.bold = True
+        _apply_cell_border(title_row.cells[i])
+    # Keep title row with the header row below it
+    tr_title = title_row._tr
+    trPr_title = tr_title.get_or_add_trPr()
+    cantSplit_title = OxmlElement('w:cantSplit')
+    cantSplit_title.set(qn('w:val'), '1')
+    trPr_title.append(cantSplit_title)
+
+    # Row 1 — Column headers (Note / year / prior_year)
+    hdr = table.rows[1]
     hdr.cells[0].text = ""
     hdr.cells[1].text = "Note"
     hdr.cells[2].text = "{{ year }}\n$"
@@ -395,30 +420,23 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
     for i in range(4):
         for p in hdr.cells[i].paragraphs:
             p.alignment = WD_ALIGN_PARAGRAPH.RIGHT if i >= 2 else WD_ALIGN_PARAGRAPH.LEFT
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(0)
             for run in p.runs:
                 run.font.name = FONT_NAME
                 run.font.size = FONT_SIZE
                 run.bold = True
-
-    # Nil ALL borders on header cells — _apply_cell_border now nils every
-    # unspecified side, so calling with no kwargs clears everything.
+    # Nil ALL borders on header cells
     for cell in hdr.cells:
         _apply_cell_border(cell)
-
-    # Fix 7a: Mark header row to repeat on each page (tblHeader)
+    # Keep header with first data row
     tr = hdr._tr
     trPr = tr.get_or_add_trPr()
-    tblHeader = OxmlElement('w:tblHeader')
-    trPr.append(tblHeader)
-    # Fix 7a: Keep header with first data row
-    for cell in hdr.cells:
-        for p in cell.paragraphs:
-            pPr = p._p.get_or_add_pPr()
-            kn = OxmlElement('w:keepNext')
-            kn.set(qn('w:val'), '1')
-            pPr.append(kn)
+    kn_tr = OxmlElement('w:keepNext')
+    kn_tr.set(qn('w:val'), '1')
+    trPr.append(kn_tr)
 
-    # Row 1 — {%tr for %} tag in its own row (docxtpl requirement)
+    # Row 2 — {%tr for %} tag in its own row (docxtpl requirement)
     for_row = table.add_row()
     for_row.cells[0].text = "{%tr for item in " + items_tag + " %}"
     # Set minimum row height so docxtpl loop row doesn't create a visible gap
@@ -431,7 +449,7 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
     for cell in for_row.cells:
         _apply_cell_border(cell)
 
-    # Row 2 — data row with item fields
+    # Row 3 — data row with item fields
     data_row = table.add_row()
     data_row.cells[0].text = "{{ item.account_name }}"
     data_row.cells[1].text = "{{ item.note_ref }}"
