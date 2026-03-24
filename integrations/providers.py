@@ -336,7 +336,7 @@ class QuickBooksProvider(BaseProvider):
     def _fetch_account_types(self, access_token, tenant_id):
         """Fetch account type classifications from the QBO Account query API.
 
-        Returns dict mapping account name → AccountType string.
+        Returns dict mapping account name → {'type': AccountType, 'subtype': AccountSubType}.
         """
         base_url = f"https://quickbooks.api.intuit.com/v3/company/{tenant_id}"
         resp = requests.get(
@@ -354,14 +354,17 @@ class QuickBooksProvider(BaseProvider):
         resp.raise_for_status()
         data = resp.json()
         accounts = data.get("QueryResponse", {}).get("Account", [])
-        account_types = {}
+        account_info = {}
         for acct in accounts:
             name = (acct.get("Name") or "").strip()
             acct_type = (acct.get("AccountType") or "").strip()
+            acct_subtype = (acct.get("AccountSubType") or "").strip()
             if name and acct_type:
-                account_types[name] = acct_type
-        logger.info("QBO account types fetched: %d accounts", len(account_types))
-        return account_types
+                account_info[name] = {"type": acct_type, "subtype": acct_subtype}
+                # Debug: log type+subtype for every account so we can verify classifications
+                logger.info("QBO account %r type=%s subtype=%s", name, acct_type, acct_subtype)
+        logger.info("QBO account types fetched: %d accounts", len(account_info))
+        return account_info
 
     def fetch_period_movement(self, access_token, tenant_id, from_date, to_date):
         # Fetch account type classifications before processing GL rows
@@ -505,6 +508,11 @@ class QuickBooksProvider(BaseProvider):
             'Long Term Liability', 'Equity', 'Retained Earnings',
             'Income', 'Other Income', 'Accounts Payable',
         }
+        # AccountSubType exceptions: equity accounts that carry debit balances
+        DEBIT_SUBTYPES = {
+            'OwnersEquity',
+            'DrawingsAndCapital',
+        }
 
         def append_account_row(account_code, account_name, closing_balance, opening_balance="0"):
             account_name = (account_name or "").strip()
@@ -516,10 +524,16 @@ class QuickBooksProvider(BaseProvider):
             if closing_balance == 0:
                 return
             # QBO GL Balance column is always positive (absolute value).
-            # Look up account type from the Account query API to determine side.
-            acct_type = account_types.get(account_name, "")
+            # Look up account type/subtype from the Account query API to determine side.
+            acct_info = account_types.get(account_name, {})
+            acct_type = acct_info.get("type", "") if isinstance(acct_info, dict) else acct_info
+            acct_subtype = acct_info.get("subtype", "") if isinstance(acct_info, dict) else ""
             closing_balance = abs(closing_balance)
-            if acct_type in DEBIT_TYPES:
+            # Check subtype first for known debit-nature equity exceptions (e.g. drawings)
+            if acct_subtype in DEBIT_SUBTYPES:
+                debit = closing_balance
+                credit = Decimal("0")
+            elif acct_type in DEBIT_TYPES:
                 debit = closing_balance
                 credit = Decimal("0")
             elif acct_type in CREDIT_TYPES:
@@ -527,8 +541,8 @@ class QuickBooksProvider(BaseProvider):
                 credit = closing_balance
             else:
                 logger.warning(
-                    "QBO GL unknown AccountType %r for %r — defaulting to debit",
-                    acct_type, account_name,
+                    "QBO GL unknown AccountType %r SubType %r for %r — defaulting to debit",
+                    acct_type, acct_subtype, account_name,
                 )
                 debit = closing_balance
                 credit = Decimal("0")
