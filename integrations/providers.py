@@ -461,7 +461,19 @@ class QuickBooksProvider(BaseProvider):
                 return True
             return False
 
-        def append_account_row(account_code, account_name, closing_balance, opening_balance="0"):
+        # QBO account types and their natural debit/credit side
+        DEBIT_TYPES = {
+            'bank', 'other current asset', 'fixed asset',
+            'other asset', 'accounts receivable',
+            'cost of goods sold', 'expense', 'other expense',
+        }
+        CREDIT_TYPES = {
+            'credit card', 'other current liability',
+            'long term liability', 'equity', 'retained earnings',
+            'income', 'other income', 'accounts payable',
+        }
+
+        def append_account_row(account_code, account_name, closing_balance, opening_balance="0", account_type=""):
             account_name = (account_name or "").strip()
             account_code = (account_code or "").strip()
             opening_balance = _to_decimal(opening_balance)
@@ -470,13 +482,24 @@ class QuickBooksProvider(BaseProvider):
                 return
             if closing_balance == 0:
                 return
-            # GL Balance column: positive = debit-nature, negative = credit-nature
-            if closing_balance > 0:
+            # QBO GL Balance column is always positive (absolute value).
+            # Use the account type classification to determine debit vs credit side.
+            acct_type_lower = (account_type or "").strip().lower()
+            closing_balance = abs(closing_balance)
+            if acct_type_lower in DEBIT_TYPES:
                 debit = closing_balance
                 credit = Decimal("0")
-            else:
+            elif acct_type_lower in CREDIT_TYPES:
                 debit = Decimal("0")
-                credit = abs(closing_balance)
+                credit = closing_balance
+            else:
+                # Unknown type — fall back to sign, log a warning
+                logger.warning(
+                    "QBO GL unknown account type %r for %r — falling back to sign-based side",
+                    account_type, account_name,
+                )
+                debit = closing_balance
+                credit = Decimal("0")
             movement_amount = closing_balance - opening_balance
             lines.append({
                 "account_code": account_code,
@@ -543,7 +566,7 @@ class QuickBooksProvider(BaseProvider):
 
         _debug_row_count = [0]
 
-        def handle_row(row, current_account_code="", current_account_name=""):
+        def handle_row(row, current_account_code="", current_account_name="", current_account_type=""):
             if not isinstance(row, dict):
                 return
             row_type = row.get("type") or row.get("RowType") or "Unknown"
@@ -561,55 +584,44 @@ class QuickBooksProvider(BaseProvider):
             if header_code:
                 current_account_code = header_code
 
-            # Debug: log first 3 rows so we can see the actual structure
+            # Extract account type from the Section row's group attribute.
+            # QBO GL nests: outer Section = account type category (e.g. "Bank"),
+            # inner Section = individual account. The 'group' field on the row
+            # carries the classification (e.g. "Bank", "Equity", "Income").
+            row_group = (row.get("group") or "").strip()
+            if row_group:
+                current_account_type = row_group
+
+            # Debug: log first 3 Section headers to see account type field
             _debug_row_count[0] += 1
             if _debug_row_count[0] <= 3:
-                data_children = [c for c in children if isinstance(c, dict) and (c.get("type") or c.get("RowType") or "").lower() == "data"]
-                first_child_label = ""
-                last_child_label = ""
-                first_child_bal = ""
-                last_child_bal = ""
-                if data_children:
-                    fc = data_children[0].get("ColData", [])
-                    lc = data_children[-1].get("ColData", [])
-                    first_child_label = _col_value(fc[0]) if fc else ""
-                    last_child_label = _col_value(lc[0]) if lc else ""
-                    bal_idx = len(column_names) - 1
-                    first_child_bal = _col_value(fc[bal_idx]) if len(fc) > bal_idx else ""
-                    last_child_bal = _col_value(lc[bal_idx]) if len(lc) > bal_idx else ""
-                # Also check last 3 raw children (including non-Data) to see nesting
-                raw_last3 = children[-3:] if len(children) >= 3 else children
-                raw_last3_info = [(c.get('type','?'), _col_value((c.get('ColData') or [{}])[0]) if c.get('ColData') else 'no-coldata', len(c.get('Rows',{}).get('Row',[]) or [])) for c in raw_last3 if isinstance(c, dict)]
                 logger.info(
-                    "QB GL row %d: type=%s acct=%s data_children=%d first=%r/%s last=%r/%s raw_last3=%s",
-                    _debug_row_count[0], row_type, header_name, len(data_children),
-                    first_child_label, first_child_bal, last_child_label, last_child_bal,
-                    raw_last3_info,
+                    "QB GL row %d: type=%s group=%r header_name=%r header_keys=%s row_keys=%s",
+                    _debug_row_count[0], row_type, row_group, header_name,
+                    list(header.keys()) if header else [],
+                    list(row.keys()),
                 )
 
-            # For Section rows: extract closing balance from the last child Data row's
-            # Balance column. This is the correct closing balance for the account.
+            # For Section rows with an account name and child Data rows:
+            # extract closing balance from the last child Data row's Balance column.
             if row_type.lower() == "section" and current_account_name:
                 closing_balance, beginning_balance = _extract_closing_balance_from_children(children)
 
-                if closing_balance is None:
-                    # Fallback: try Summary row numeric values
-                    mapped = _col_map(summary_cols)
-                    # Look for 'balance' (ending balance) in the mapped summary
-                    bal_val = mapped.get("balance", "")
-                    if bal_val not in ("", None):
-                        closing_balance = _to_decimal(bal_val)
-                    else:
-                        numeric_values = _extract_numeric_values(summary_cols)
-                        closing_balance = numeric_values[-1] if numeric_values else Decimal("0")
-                    beginning_balance = _extract_opening_balance(mapped)
+                if closing_balance is not None:
+                    append_account_row(
+                        current_account_code,
+                        current_account_name,
+                        closing_balance,
+                        beginning_balance if beginning_balance is not None else Decimal("0"),
+                        account_type=current_account_type,
+                    )
+                    return
 
-                append_account_row(
-                    current_account_code,
-                    current_account_name,
-                    closing_balance,
-                    beginning_balance if beginning_balance is not None else Decimal("0"),
-                )
+                # If no child Data rows, this is a category grouping Section —
+                # recurse into its children (which are individual account Sections).
+                for child in children:
+                    handle_row(child, current_account_code=current_account_code,
+                               current_account_name="", current_account_type=current_account_type)
                 return
 
             # Skip individual Data rows — they are transactions, not account summaries.
@@ -618,7 +630,9 @@ class QuickBooksProvider(BaseProvider):
 
             # Recurse into non-Section, non-Data rows (e.g. nested groups)
             for child in children:
-                handle_row(child, current_account_code=current_account_code, current_account_name=current_account_name)
+                handle_row(child, current_account_code=current_account_code,
+                           current_account_name=current_account_name,
+                           current_account_type=current_account_type)
 
         for row in rows_data:
             handle_row(row)
