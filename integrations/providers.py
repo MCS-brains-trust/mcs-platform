@@ -461,24 +461,30 @@ class QuickBooksProvider(BaseProvider):
                 return True
             return False
 
-        def append_account_row(account_code, account_name, net_activity, opening_balance="0"):
+        def append_account_row(account_code, account_name, closing_balance, opening_balance="0"):
             account_name = (account_name or "").strip()
             account_code = (account_code or "").strip()
             opening_balance = _to_decimal(opening_balance)
-            net_activity = _to_decimal(net_activity)
+            closing_balance = _to_decimal(closing_balance)
             if not account_name or _looks_like_detail_row(account_name):
                 return
-            if net_activity == 0:
+            if closing_balance == 0:
                 return
-            debit = net_activity if net_activity > 0 else Decimal("0")
-            credit = -net_activity if net_activity < 0 else Decimal("0")
+            # GL Balance column: positive = debit-nature, negative = credit-nature
+            if closing_balance > 0:
+                debit = closing_balance
+                credit = Decimal("0")
+            else:
+                debit = Decimal("0")
+                credit = abs(closing_balance)
+            movement_amount = closing_balance - opening_balance
             lines.append({
                 "account_code": account_code,
                 "account_name": account_name,
                 "opening_balance": opening_balance,
                 "debit": debit,
                 "credit": credit,
-                "movement_amount": net_activity,
+                "movement_amount": movement_amount,
             })
 
         def _get_balance_col_index():
@@ -499,17 +505,15 @@ class QuickBooksProvider(BaseProvider):
             nums = _extract_numeric_values(col_data)
             return nums[-1] if nums else None
 
-        def _extract_net_from_children(children):
-            """Compute net activity from child Data rows.
+        def _extract_closing_balance_from_children(children):
+            """Extract closing balance from child Data rows.
 
             The QB GeneralLedger API returns child Data rows for each account Section:
               - First Data row: 'Beginning Balance' label + opening balance in Balance col
               - Middle Data rows: individual transactions (date in col 0, running balance in last col)
-              - There is NO explicit 'Ending Balance' row — the ending balance is the Balance
-                value of the last child Data row.
+              - Last Data row: the closing balance in the Balance column (ColData index 8)
 
-            Net Activity = Ending Balance (last row) - Beginning Balance (first row).
-            Returns (net_activity, beginning_balance) or (None, None) if not found.
+            Returns (closing_balance, beginning_balance) or (None, None) if not found.
             """
             data_rows = [
                 c for c in (children or [])
@@ -520,7 +524,6 @@ class QuickBooksProvider(BaseProvider):
                 return None, None
 
             beginning_balance = None
-            ending_balance = None
 
             # First Data row: should be 'Beginning Balance'
             first_col_data = data_rows[0].get("ColData", []) or []
@@ -528,23 +531,13 @@ class QuickBooksProvider(BaseProvider):
             if first_label == "beginning balance":
                 beginning_balance = _extract_balance_from_col_data(first_col_data)
 
-            # Last Data row: always holds the ending balance in the Balance column,
+            # Last Data row: always holds the closing balance in the Balance column,
             # regardless of whether its label is a date, 'Ending Balance', or anything else.
             last_col_data = data_rows[-1].get("ColData", []) or []
-            ending_balance = _extract_balance_from_col_data(last_col_data)
+            closing_balance = _extract_balance_from_col_data(last_col_data)
 
-            # If first == last (only one row = Beginning Balance, no transactions),
-            # the account had no movement in the period.
-            if len(data_rows) == 1 and first_label == "beginning balance":
-                return Decimal("0"), beginning_balance
-
-            # Compute net
-            if beginning_balance is not None and ending_balance is not None:
-                return ending_balance - beginning_balance, beginning_balance
-
-            # No beginning balance row (account opened this period): net = ending balance
-            if ending_balance is not None:
-                return ending_balance, Decimal("0")
+            if closing_balance is not None:
+                return closing_balance, (beginning_balance if beginning_balance is not None else Decimal("0"))
 
             return None, None
 
@@ -594,30 +587,27 @@ class QuickBooksProvider(BaseProvider):
                     raw_last3_info,
                 )
 
-            # For Section rows: compute Net Activity = Ending Balance - Beginning Balance
-            # by scanning the child Data rows.
-            #
-            # The QB GeneralLedger API returns the Summary row with empty numeric columns
-            # (only the label 'Total for X' is populated). The actual balances are in:
-            #   - First Data child row: 'Beginning Balance' label + opening balance
-            #   - Last Data child row:  'Ending Balance' label + closing balance
-            #
-            # We prefer this child-row approach. If it fails (e.g. no Ending Balance row),
-            # we fall back to the Summary row's numeric values.
+            # For Section rows: extract closing balance from the last child Data row's
+            # Balance column. This is the correct closing balance for the account.
             if row_type.lower() == "section" and current_account_name:
-                net_activity, beginning_balance = _extract_net_from_children(children)
+                closing_balance, beginning_balance = _extract_closing_balance_from_children(children)
 
-                if net_activity is None:
+                if closing_balance is None:
                     # Fallback: try Summary row numeric values
                     mapped = _col_map(summary_cols)
-                    numeric_values = _extract_numeric_values(summary_cols)
-                    net_activity = _extract_net_activity(mapped, numeric_values)
-                    beginning_balance = _extract_opening_balance(mapped, numeric_values)
+                    # Look for 'balance' (ending balance) in the mapped summary
+                    bal_val = mapped.get("balance", "")
+                    if bal_val not in ("", None):
+                        closing_balance = _to_decimal(bal_val)
+                    else:
+                        numeric_values = _extract_numeric_values(summary_cols)
+                        closing_balance = numeric_values[-1] if numeric_values else Decimal("0")
+                    beginning_balance = _extract_opening_balance(mapped)
 
                 append_account_row(
                     current_account_code,
                     current_account_name,
-                    net_activity,
+                    closing_balance,
                     beginning_balance if beginning_balance is not None else Decimal("0"),
                 )
                 return

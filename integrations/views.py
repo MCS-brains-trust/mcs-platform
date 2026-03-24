@@ -17,6 +17,7 @@ from decimal import Decimal
 import requests as http_requests
 from django.conf import settings
 from django.contrib import messages
+from django.db.utils import DatabaseError
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -427,10 +428,16 @@ def _do_cloud_import(
         # request (possibly handled by a different Gunicorn worker)
         # can read the staged data from the database backend.
         request.session.modified = True
-        request.session.save()
+        try:
+            request.session.save()
+        except DatabaseError:
+            # Session row may not exist yet (race condition) — create fresh
+            request.session.create()
         if connection_obj:
-            connection_obj.last_sync_at = timezone.now()
-            connection_obj.save(update_fields=["last_sync_at"])
+            from integrations.models import QBTenantConnection, XeroTenantConnection
+            type(connection_obj).objects.filter(pk=connection_obj.pk).update(
+                last_sync_at=timezone.now()
+            )
         return redirect("integrations:review_import", fy_pk=fy.pk)
     except Exception as e:
         logger.exception("Cloud import failed", extra={
