@@ -134,7 +134,11 @@ _COA_SECTION_TO_DISPLAY = {
     'revenue': 'Income',
     'cost_of_sales': 'Cost of Sales',
     'expenses': 'Expenses',
+    'current_assets': 'Current Assets',
+    'non_current_assets': 'Non Current Assets',
     'assets': 'Current Assets',
+    'current_liabilities': 'Current Liabilities',
+    'non_current_liabilities': 'Non Current Liabilities',
     'liabilities': 'Current Liabilities',
     'equity': 'Equity',
     'capital_accounts': 'Equity',
@@ -146,7 +150,9 @@ _COA_SECTION_TO_DISPLAY = {
 _PL_COA_SECTIONS = {'revenue', 'cost_of_sales', 'expenses'}
 
 # Sections that are balance sheet (used for roll-forward filtering)
-_BS_SECTIONS = {"assets", "liabilities", "equity", "capital_accounts"}
+_BS_SECTIONS = {"assets", "liabilities", "equity", "capital_accounts",
+                "current_assets", "non_current_assets",
+                "current_liabilities", "non_current_liabilities"}
 _BS_STATEMENTS = {"balance_sheet", "equity"}
 
 
@@ -1839,7 +1845,8 @@ def financial_year_detail(request, pk):
                 active_bank_mapping = bank_account_mappings.filter(is_default=True).first()
     # Get bank/cash accounts from entity CoA for the mapping dropdown
     bank_coa_accounts = EntityChartOfAccount.objects.filter(
-        entity=fy.entity, is_active=True, section='assets',
+        entity=fy.entity, is_active=True,
+        section__in=['assets', 'current_assets', 'non_current_assets'],
     ).filter(
         Q(account_name__icontains='bank') | Q(account_name__icontains='cash') |
         Q(classification__icontains='bank') | Q(classification__icontains='cash')
@@ -1864,7 +1871,9 @@ def financial_year_detail(request, pk):
             entity=fy.entity, end_date__lt=fy.start_date,
         ).exists()
         # Check if balance sheet has any lines at all (excluding bank_statement source)
-        bs_sections = ['assets', 'liabilities', 'equity', 'capital_accounts']
+        bs_sections = ['assets', 'current_assets', 'non_current_assets',
+                       'liabilities', 'current_liabilities', 'non_current_liabilities',
+                       'equity', 'capital_accounts']
         has_balance_sheet = TrialBalanceLine.objects.filter(
             financial_year=fy,
         ).exclude(source='bank_statement').exists()
@@ -11825,7 +11834,11 @@ def entity_coa_suggest_code(request, pk):
     sub_ranges = {
         'revenue': (0, 999), 'cost_of_sales': (0, 999),
         'expenses': (1000, 1999),
+        'current_assets': (2000, 2499),
+        'non_current_assets': (2500, 2999),
         'assets': (2000, 2999),
+        'current_liabilities': (3000, 3499),
+        'non_current_liabilities': (3500, 3999),
         'liabilities': (3000, 3999),
         'equity': (4000, 4999), 'capital_accounts': (4000, 4999), 'pl_appropriation': (4000, 4999),
         'suspense': (9000, 9999),
@@ -11836,6 +11849,12 @@ def entity_coa_suggest_code(request, pk):
     shared_sections = {
         'revenue': ['revenue', 'cost_of_sales'],
         'cost_of_sales': ['revenue', 'cost_of_sales'],
+        'current_assets': ['current_assets', 'assets'],
+        'non_current_assets': ['non_current_assets', 'assets'],
+        'assets': ['current_assets', 'non_current_assets', 'assets'],
+        'current_liabilities': ['current_liabilities', 'liabilities'],
+        'non_current_liabilities': ['non_current_liabilities', 'liabilities'],
+        'liabilities': ['current_liabilities', 'non_current_liabilities', 'liabilities'],
         'equity': ['equity', 'capital_accounts', 'pl_appropriation'],
         'capital_accounts': ['equity', 'capital_accounts', 'pl_appropriation'],
         'pl_appropriation': ['equity', 'capital_accounts', 'pl_appropriation'],

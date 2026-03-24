@@ -1825,8 +1825,8 @@ function quickGenerateEngagementLetter(entityPk, fyPk) {
     });
   }
 
-  wireAccountNew('modalAssetAcctSelect', 'newAssetAcctRow', 'newAssetAcctName', 'newAssetAcctCode', 'newAssetAcctConfirm', 'newAssetAcctCancel', 'modalAssetAcctName', 'assets');
-  wireAccountNew('modalAccumDepSelect',  'newAccumDepRow',  'newAccumDepName',  'newAccumDepCode',  'newAccumDepConfirm',  'newAccumDepCancel',  'modalAccumDepName',  'assets');
+  wireAccountNew('modalAssetAcctSelect', 'newAssetAcctRow', 'newAssetAcctName', 'newAssetAcctCode', 'newAssetAcctConfirm', 'newAssetAcctCancel', 'modalAssetAcctName', 'non_current_assets');
+  wireAccountNew('modalAccumDepSelect',  'newAccumDepRow',  'newAccumDepName',  'newAccumDepCode',  'newAccumDepConfirm',  'newAccumDepCancel',  'modalAccumDepName',  'non_current_assets');
   wireAccountNew('modalDepExpSelect',    'newDepExpRow',    'newDepExpName',    'newDepExpCode',    'newDepExpConfirm',    'newDepExpCancel',    'modalDepExpName',    'expenses');
 
   // Auto-fill Opening WDV from Total Cost when adding a new asset
@@ -3329,15 +3329,17 @@ document.addEventListener('DOMContentLoaded', function() {
                     <label class="form-label fw-bold">Section</label>
                     <select id="rqa-section" class="form-select form-select-sm">
                         <option value="">-- Select section --</option>
-                        <option value="revenue" data-range-min="0" data-range-max="999">Revenue</option>
-                        <option value="cost_of_sales" data-range-min="0" data-range-max="999">Cost of Sales</option>
-                        <option value="expenses" data-range-min="1000" data-range-max="1999">Expenses</option>
-                        <option value="assets" data-range-min="2000" data-range-max="2999">Assets</option>
-                        <option value="liabilities" data-range-min="3000" data-range-max="3999">Liabilities</option>
-                        <option value="equity" data-range-min="4000" data-range-max="4999">Equity</option>
-                        <option value="capital_accounts" data-range-min="4000" data-range-max="4999">Capital Accounts</option>
-                        <option value="pl_appropriation" data-range-min="4000" data-range-max="4999">P&amp;L Appropriation</option>
-                        <option value="suspense" data-range-min="9000" data-range-max="9999">Suspense</option>
+                        <option value="revenue" data-range-min="0" data-range-max="999">Revenue (0 – 999)</option>
+                        <option value="cost_of_sales" data-range-min="0" data-range-max="999">Cost of Sales (0 – 999)</option>
+                        <option value="expenses" data-range-min="1000" data-range-max="1999">Expenses (1000 – 1999)</option>
+                        <option value="current_assets" data-range-min="2000" data-range-max="2499">Current Assets (2000 – 2499)</option>
+                        <option value="non_current_assets" data-range-min="2500" data-range-max="2999">Non-Current Assets (2500 – 2999)</option>
+                        <option value="current_liabilities" data-range-min="3000" data-range-max="3499">Current Liabilities (3000 – 3499)</option>
+                        <option value="non_current_liabilities" data-range-min="3500" data-range-max="3999">Non-Current Liabilities (3500 – 3999)</option>
+                        <option value="equity" data-range-min="4000" data-range-max="4999">Equity (4000 – 4999)</option>
+                        <option value="capital_accounts" data-range-min="4000" data-range-max="4999">Capital Accounts (4000 – 4999)</option>
+                        <option value="pl_appropriation" data-range-min="4000" data-range-max="4999">P&amp;L Appropriation (4000 – 4999)</option>
+                        <option value="suspense" data-range-min="9000" data-range-max="9999">Suspense (9000+)</option>
                     </select>
                 </div>
                 <div class="mb-3">
