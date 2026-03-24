@@ -331,10 +331,15 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
                 run.font.size = FONT_SIZE
                 run.bold = True
 
-    # Remove top border from all header cells (suppress the line above year columns)
-    # Use 'nil' not 'none' — LibreOffice ignores 'none' and falls back to table default
+    # Remove top AND bottom borders from all header cells.
+    # The bottom border of the repeating header row renders as a visible line
+    # above the year columns on every page when tblHeader causes the row to repeat.
     for cell in hdr.cells:
-        _apply_cell_border(cell, top={"val": "nil", "sz": "0", "color": "auto"})
+        _apply_cell_border(
+            cell,
+            top={"val": "nil", "sz": "0", "color": "auto"},
+            bottom={"val": "nil", "sz": "0", "color": "auto"},
+        )
 
     # Fix 7a: Mark header row to repeat on each page (tblHeader)
     tr = hdr._tr
