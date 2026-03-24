@@ -517,6 +517,8 @@ class QuickBooksProvider(BaseProvider):
                 break  # Only check the first Data row
             return None
 
+        _debug_row_count = [0]
+
         def handle_row(row, current_account_code="", current_account_name=""):
             if not isinstance(row, dict):
                 return
@@ -534,6 +536,25 @@ class QuickBooksProvider(BaseProvider):
                 current_account_name = header_name
             if header_code:
                 current_account_code = header_code
+
+            # Debug: log first 3 rows so we can see the actual structure
+            _debug_row_count[0] += 1
+            if _debug_row_count[0] <= 3:
+                logger.info(
+                    "QB GL row %d: type=%s header_name=%s summary_keys=%s summary_col_count=%d children_count=%d",
+                    _debug_row_count[0],
+                    row_type,
+                    header_name,
+                    ",".join(summary.keys()) if summary else "",
+                    len(summary_cols),
+                    len(children),
+                )
+                if summary_cols:
+                    logger.info(
+                        "QB GL row %d summary_cols sample: %s",
+                        _debug_row_count[0],
+                        json.dumps(summary_cols[:3], default=str)[:500],
+                    )
 
             # The QB GeneralLedger report returns individual transaction Data rows inside
             # each account Section, plus a Summary row with the account totals.
