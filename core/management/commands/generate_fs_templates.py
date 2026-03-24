@@ -113,21 +113,23 @@ def _set_table_full_width(table):
 
 def _clear_table_borders(table):
     """
-    Explicitly set all table-level borders to nil.
+    Explicitly set all table-level borders to nil AND zero cell margins.
 
     LibreOffice inherits w:tblBorders from the table style (e.g. 'Table Grid')
     and renders them even when individual cells declare w:nil.  Clearing the
-    table-level borders here means only the borders we explicitly draw on
-    individual cells will appear in the PDF output.
+    table-level borders AND zeroing tblCellMar eliminates both the unwanted
+    border lines and the excessive vertical gaps between sections.
     """
     tbl = table._tbl
     tblPr = tbl.find(qn('w:tblPr'))
     if tblPr is None:
         tblPr = OxmlElement('w:tblPr')
         tbl.insert(0, tblPr)
-    existing = tblPr.find(qn('w:tblBorders'))
-    if existing is not None:
-        tblPr.remove(existing)
+    # Remove and replace tblBorders
+    for tag in ('w:tblBorders', 'w:tblCellMar'):
+        existing = tblPr.find(qn(tag))
+        if existing is not None:
+            tblPr.remove(existing)
     tblBorders = OxmlElement('w:tblBorders')
     for edge in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
         el = OxmlElement(f'w:{edge}')
@@ -136,28 +138,52 @@ def _clear_table_borders(table):
         el.set(qn('w:color'), 'auto')
         tblBorders.append(el)
     tblPr.append(tblBorders)
+    # Zero top/bottom cell margins so table sits flush (no gap between sections)
+    tblCellMar = OxmlElement('w:tblCellMar')
+    for side in ('top', 'bottom'):
+        el = OxmlElement(f'w:{side}')
+        el.set(qn('w:w'), '0')
+        el.set(qn('w:type'), 'dxa')
+        tblCellMar.append(el)
+    tblPr.append(tblCellMar)
 
 
 # ---------------------------------------------------------------------------
 # Border helpers — Australian special-purpose FS presentation
 # ---------------------------------------------------------------------------
 def _apply_cell_border(cell, **kwargs):
-    """Apply borders to a cell. kwargs: top, bottom with {val, sz, color} dicts."""
+    """
+    Apply borders to a cell.
+
+    kwargs: named sides (top, bottom, left, right, insideH, insideV) with
+    {val, sz, color} dicts for sides that should be visible.
+
+    ALL sides not explicitly passed are set to nil so LibreOffice cannot
+    inherit borders from the table style on any unspecified edge.
+    """
     tc = cell._tc
     tcPr = tc.get_or_add_tcPr()
-    tcBorders = tcPr.find(qn('w:tcBorders'))
-    if tcBorders is None:
-        tcBorders = OxmlElement('w:tcBorders')
-        tcPr.append(tcBorders)
-    for edge, attrs in kwargs.items():
-        el = tcBorders.find(qn(f'w:{edge}'))
-        if el is None:
-            el = OxmlElement(f'w:{edge}')
-            tcBorders.append(el)
-        el.set(qn('w:val'), attrs.get('val', 'single'))
-        el.set(qn('w:sz'), str(attrs.get('sz', 6)))
-        el.set(qn('w:space'), '0')
-        el.set(qn('w:color'), attrs.get('color', '000000'))
+    existing = tcPr.find(qn('w:tcBorders'))
+    if existing is not None:
+        tcPr.remove(existing)
+    tcBorders = OxmlElement('w:tcBorders')
+    for side in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
+        if side in kwargs:
+            attrs = kwargs[side]
+            el = OxmlElement(f'w:{side}')
+            el.set(qn('w:val'), attrs.get('val', 'single'))
+            el.set(qn('w:sz'), str(attrs.get('sz', 6)))
+            el.set(qn('w:space'), '0')
+            el.set(qn('w:color'), attrs.get('color', '000000'))
+        else:
+            # Explicitly nil every unspecified side — prevents LibreOffice
+            # from inheriting the table style border on that edge.
+            el = OxmlElement(f'w:{side}')
+            el.set(qn('w:val'), 'nil')
+            el.set(qn('w:sz'), '0')
+            el.set(qn('w:color'), 'auto')
+        tcBorders.append(el)
+    tcPr.append(tcBorders)
 
 
 def _apply_subtotal_borders(row, amount_col_indices=None):
@@ -212,7 +238,7 @@ def _add_page_number_footer(doc):
 def _add_total_row(doc, label, cy_tag, py_tag, size=None, grand_total=False):
     """Add a single-row 4-column table for a total/summary line (label, note, CY, PY)."""
     font_size = size or FONT_SIZE
-    table = doc.add_table(rows=1, cols=4)
+    table = doc.add_table(rows=1, cols=4, style='Normal Table')
     _set_table_full_width(table)
     _clear_table_borders(table)
     table.autofit = False
@@ -335,11 +361,25 @@ def _add_footer(doc, text="These financial statements are unaudited. They must b
     run.font.italic = True
 
 
+def _add_spacer(doc, pts=4):
+    """Add a minimal spacer paragraph with controlled height to separate sections."""
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after = Pt(0)
+    pPr = p._p.get_or_add_pPr()
+    sz = OxmlElement('w:sz')
+    sz.set(qn('w:val'), str(int(pts * 2)))  # half-points
+    rPr = OxmlElement('w:rPr')
+    rPr.append(sz)
+    pPr.append(rPr)
+    return p
+
+
 def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_tag, total_py_tag):
     """Add a 4-column financial table with Jinja2 for-loop."""
     _add_para(doc, section_title, bold=True, keep_with_next=True)
 
-    table = doc.add_table(rows=1, cols=4)
+    table = doc.add_table(rows=1, cols=4, style='Normal Table')
     _set_table_full_width(table)
     _clear_table_borders(table)
     table.autofit = False
@@ -360,15 +400,10 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
                 run.font.size = FONT_SIZE
                 run.bold = True
 
-    # Remove top AND bottom borders from all header cells.
-    # The bottom border of the repeating header row renders as a visible line
-    # above the year columns on every page when tblHeader causes the row to repeat.
+    # Nil ALL borders on header cells — _apply_cell_border now nils every
+    # unspecified side, so calling with no kwargs clears everything.
     for cell in hdr.cells:
-        _apply_cell_border(
-            cell,
-            top={"val": "nil", "sz": "0", "color": "auto"},
-            bottom={"val": "nil", "sz": "0", "color": "auto"},
-        )
+        _apply_cell_border(cell)
 
     # Fix 7a: Mark header row to repeat on each page (tblHeader)
     tr = hdr._tr
@@ -386,14 +421,15 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
     # Row 1 — {%tr for %} tag in its own row (docxtpl requirement)
     for_row = table.add_row()
     for_row.cells[0].text = "{%tr for item in " + items_tag + " %}"
-    # Suppress top border on the for-loop row so LibreOffice doesn't render
-    # a line between the header row and the first data row.
+    # Set minimum row height so docxtpl loop row doesn't create a visible gap
+    tr_for = for_row._tr
+    trPr_for = tr_for.get_or_add_trPr()
+    trHeight = OxmlElement('w:trHeight')
+    trHeight.set(qn('w:val'), '1')
+    trHeight.set(qn('w:hRule'), 'exact')
+    trPr_for.append(trHeight)
     for cell in for_row.cells:
-        _apply_cell_border(
-            cell,
-            top={"val": "nil", "sz": "0", "color": "auto"},
-            bottom={"val": "nil", "sz": "0", "color": "auto"},
-        )
+        _apply_cell_border(cell)
 
     # Row 2 — data row with item fields
     data_row = table.add_row()
@@ -407,10 +443,20 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
             for run in p.runs:
                 run.font.name = FONT_NAME
                 run.font.size = FONT_SIZE
+        _apply_cell_border(data_row.cells[i])
 
     # Row 3 — {%tr endfor %} tag in its own row
     endfor_row = table.add_row()
     endfor_row.cells[0].text = "{%tr endfor %}"
+    # Set minimum row height so endfor row doesn't create a visible gap
+    tr_end = endfor_row._tr
+    trPr_end = tr_end.get_or_add_trPr()
+    trHeight_end = OxmlElement('w:trHeight')
+    trHeight_end.set(qn('w:val'), '1')
+    trHeight_end.set(qn('w:hRule'), 'exact')
+    trPr_end.append(trHeight_end)
+    for cell in endfor_row.cells:
+        _apply_cell_border(cell)
 
     # Total row — subtotal borders (single top + single bottom on amount cells)
     total_row = table.add_row()
@@ -550,14 +596,12 @@ def _build_detailed_pl(entity_type):
     # Income section
     _add_financial_table(doc, "Income", "income", "Total Income",
                          "{{ total_income_cy }}", "{{ total_income_py }}")
-
-    doc.add_paragraph("")  # spacer
+    _add_spacer(doc)
 
     # Expenses section
     _add_financial_table(doc, "Expenses", "expenses", "Total Expenses",
                          "{{ total_expenses_cy }}", "{{ total_expenses_py }}")
-
-    doc.add_paragraph("")  # spacer
+    _add_spacer(doc)
 
     # Net Profit section — shows tax breakdown when income tax exists
     # Pre-tax profit (subtotal)
@@ -568,7 +612,7 @@ def _build_detailed_pl(entity_type):
     _add_para(doc, "{% if has_income_tax %}", size=Pt(1))
 
     # Income tax row
-    tax_table = doc.add_table(rows=1, cols=4)
+    tax_table = doc.add_table(rows=1, cols=4, style='Normal Table')
     _set_table_full_width(tax_table)
     _clear_table_borders(tax_table)
     tax_table.autofit = False
@@ -584,6 +628,7 @@ def _build_detailed_pl(entity_type):
             for run in p.runs:
                 run.font.name = FONT_NAME
                 run.font.size = FONT_SIZE
+        _apply_cell_border(tax_row.cells[i])
 
     # After-tax profit (grand total)
     _add_total_row(doc, "Operating profit after income tax",
@@ -605,33 +650,33 @@ def _build_balance_sheet(entity_type):
     # Current Assets
     _add_financial_table(doc, "Current Assets", "current_assets", "Total Current Assets",
                          "{{ total_current_assets_cy }}", "{{ total_current_assets_py }}")
-    doc.add_paragraph("")
+    _add_spacer(doc)
 
     # Non-Current Assets
     _add_financial_table(doc, "Non-Current Assets", "noncurrent_assets",
                          "Total Non-Current Assets",
                          "{{ total_noncurrent_assets_cy }}", "{{ total_noncurrent_assets_py }}")
-    doc.add_paragraph("")
+    _add_spacer(doc)
 
     # Total Assets
     _add_total_row(doc, "Total Assets", "{{ total_assets_cy }}", "{{ total_assets_py }}")
-    doc.add_paragraph("")
+    _add_spacer(doc)
 
     # Current Liabilities
     _add_financial_table(doc, "Current Liabilities", "current_liabilities",
                          "Total Current Liabilities",
                          "{{ total_current_liab_cy }}", "{{ total_current_liab_py }}")
-    doc.add_paragraph("")
+    _add_spacer(doc)
 
     # Non-Current Liabilities
     _add_financial_table(doc, "Non-Current Liabilities", "noncurrent_liabilities",
                          "Total Non-Current Liabilities",
                          "{{ total_noncurrent_liab_cy }}", "{{ total_noncurrent_liab_py }}")
-    doc.add_paragraph("")
+    _add_spacer(doc)
 
     # Total Liabilities
     _add_total_row(doc, "Total Liabilities", "{{ total_liabilities_cy }}", "{{ total_liabilities_py }}")
-    doc.add_paragraph("")
+    _add_spacer(doc)
 
     # Net Assets
     _add_total_row(doc, "Net Assets", "{{ net_assets_cy }}", "{{ net_assets_py }}", size=Pt(12))
@@ -676,7 +721,7 @@ def _build_summary_pl(entity_type):
         ("Retained profits at the end of the financial year", "{{ retained_profit_closing_cy }}", "{{ retained_profit_closing_py }}", True, "grand_total"),
     ]
 
-    table = doc.add_table(rows=len(rows_data), cols=3)
+    table = doc.add_table(rows=len(rows_data), cols=3, style='Normal Table')
     _set_table_full_width(table)
     _clear_table_borders(table)
     table.autofit = False
@@ -695,11 +740,9 @@ def _build_summary_pl(entity_type):
                     run.font.name = FONT_NAME
                     run.font.size = FONT_SIZE
                     run.bold = is_bold or r == 0
-        # Suppress top border on the header row (removes line above year columns)
-        # Use 'nil' not 'none' — LibreOffice ignores 'none' and falls back to table default
-        if r == 0:
-            for cell in table.rows[r].cells:
-                _apply_cell_border(cell, top={"val": "nil", "sz": "0", "color": "auto"})
+        # Nil all borders on every row — _apply_cell_border with no kwargs clears all sides
+        for cell in table.rows[r].cells:
+            _apply_cell_border(cell)
         if border_type == "subtotal":
             _apply_subtotal_borders(table.rows[r])
         elif border_type == "grand_total":
