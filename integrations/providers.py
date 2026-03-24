@@ -237,10 +237,10 @@ class QuickBooksProvider(BaseProvider):
     supports_period_movement_import = True
 
     def get_client_id(self):
-        return getattr(settings, "QB_CLIENT_ID", "")
+        return getattr(settings, "QBO_CLIENT_ID", "")
 
     def get_client_secret(self):
-        return getattr(settings, "QB_CLIENT_SECRET", "")
+        return getattr(settings, "QBO_CLIENT_SECRET", "")
 
     def get_authorize_params(self, redirect_uri, state):
         params = super().get_authorize_params(redirect_uri, state)

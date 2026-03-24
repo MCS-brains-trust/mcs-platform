@@ -1883,10 +1883,18 @@ def qb_select_tenant_import(request, fy_pk):
             tenant_obj.save(update_fields=["entity"])
 
         if not _ensure_qb_tenant_token(tenant_obj):
-            messages.error(request, "QuickBooks token expired. Please reconnect this company.")
-            return redirect("integrations:qb_global_dashboard")
+            messages.error(
+                request,
+                f"The QuickBooks token for '{tenant_obj.company_name}' has expired and could not be "
+                f"refreshed automatically. Please go to Connections → QuickBooks and reconnect this company."
+            )
+            return redirect("integrations:qb_select_tenant_import", fy_pk=fy_pk)
 
         provider = get_provider("quickbooks")
+        if not provider:
+            messages.error(request, "QuickBooks integration is not configured on this server.")
+            return redirect("integrations:qb_global_dashboard")
+
         return _do_cloud_import(
             request,
             fy,
