@@ -363,6 +363,21 @@ class QuickBooksProvider(BaseProvider):
         lines = []
         row_types = {}
 
+        # Debug: log the raw structure so we can diagnose parsing issues
+        first_row_type = ""
+        first_row_keys = ""
+        if rows_data:
+            first_row_type = rows_data[0].get("RowType") or rows_data[0].get("type") or "?"
+            first_row_keys = ",".join(rows_data[0].keys())
+        logger.info(
+            "QB GL structure: %d columns, %d rows, first_row_type=%s, first_row_keys=%s, cols=%s",
+            len(columns),
+            len(rows_data),
+            first_row_type,
+            first_row_keys,
+            ",".join(c.get("ColTitle", "") for c in columns[:10]),
+        )
+
         def _normalize_header(value):
             value = (value or "").strip().lower()
             return re.sub(r"[^a-z0-9]+", "_", value).strip("_")
