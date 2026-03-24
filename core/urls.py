@@ -24,6 +24,7 @@ from . import views_workpapers
 from . import views_webhooks
 from . import views_franking
 from . import views_firm_settings
+from . import views_family_trust_election
 
 app_name = "core"
 
@@ -454,6 +455,12 @@ urlpatterns = [
     # NOTE: Must NOT use the admin/ prefix — Django's built-in admin site
     # intercepts all /admin/* requests before core.urls is consulted.
     path("settings/firm/", views_firm_settings.firm_settings, name="firm_settings"),
+
+    # ===== FAMILY TRUST ELECTION =====
+    path("entities/<uuid:entity_pk>/family-trust-election/", views_family_trust_election.family_trust_election, name="family_trust_election_new"),
+    path("entities/<uuid:entity_pk>/family-trust-election/<uuid:doc_pk>/", views_family_trust_election.family_trust_election, name="family_trust_election_edit"),
+    path("api/fte/<uuid:doc_pk>/toggle-checklist/", views_family_trust_election.fte_toggle_checklist, name="fte_toggle_checklist"),
+    path("api/fte/<uuid:doc_pk>/delete/", views_family_trust_election.fte_delete, name="fte_delete"),
 
     # ===== WEBHOOKS (third-party callbacks) =====
     path("webhooks/fusesign/", views_webhooks.fusesign_webhook, name="fusesign_webhook"),

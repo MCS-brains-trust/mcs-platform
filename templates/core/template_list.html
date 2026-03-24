@@ -87,6 +87,13 @@
             <span class="badge bg-warning text-dark ms-1">{{ workpaper_total_count }}</span>
         </button>
     </li>
+    <li class="nav-item" role="presentation">
+        <button class="nav-link fw-semibold" id="tab-trust-docs" data-bs-toggle="tab"
+                data-bs-target="#pane-trust-docs" type="button" role="tab">
+            <i class="bi bi-file-earmark-check me-1"></i>
+            Trust Working Documents
+        </button>
+    </li>
 </ul>
 
 <div class="tab-content border border-top-0 rounded-bottom bg-white p-0" id="templateTabContent">
@@ -295,6 +302,54 @@
         <p class="mt-3">No legal templates uploaded yet. Click <strong>Upload Template</strong> to add one.</p>
     </div>
     {% endif %}
+</div>
+
+{# ===== TAB 4: TRUST WORKING DOCUMENTS ===== #}
+<div class="tab-pane fade p-4" id="pane-trust-docs" role="tabpanel">
+    <div class="d-flex justify-content-between align-items-start mb-4">
+        <p class="text-muted mb-0">
+            Interactive internal working documents for trust-specific compliance tasks.
+            These forms auto-fill known entity data from StatementHub and let accountants
+            complete the remaining fields and tick off checklist items directly on the platform.
+        </p>
+    </div>
+    <div class="row g-3">
+        <div class="col-md-6 col-lg-4">
+            <div class="card h-100 border-primary border-opacity-25">
+                <div class="card-body">
+                    <div class="d-flex align-items-center gap-3 mb-3">
+                        <div class="bg-primary bg-opacity-10 rounded-3 p-2">
+                            <i class="bi bi-file-earmark-check fs-4 text-primary"></i>
+                        </div>
+                        <div>
+                            <h6 class="mb-0 fw-bold">Family Trust Election</h6>
+                            <small class="text-muted">Trust entities</small>
+                        </div>
+                    </div>
+                    <p class="text-muted small mb-3">
+                        Internal working document for Family Trust Elections (FTE) and Interposed Entity Elections (IEE).
+                        Auto-fills trust name, ABN, TFN, trustee, and deed date from the entity record.
+                        Includes a 7-section structured form with a clickable adviser completion checklist.
+                    </p>
+                    <div class="d-flex flex-wrap gap-2 mb-3">
+                        <span class="badge bg-info text-dark"><i class="bi bi-lightning-charge me-1"></i>Auto-fill</span>
+                        <span class="badge bg-success"><i class="bi bi-check2-square me-1"></i>Clickable Checklist</span>
+                        <span class="badge bg-secondary">Trust Only</span>
+                    </div>
+                    <div class="alert alert-light border py-2 mb-3" style="font-size:.8rem;">
+                        <strong>Sections:</strong> Trust details &bull; Election type &bull; Test individual &amp; family group
+                        &bull; Franking credit checklist &bull; Timing &bull; Risk review &bull; Adviser sign-off
+                    </div>
+                    <div class="d-flex gap-2">
+                        <a href="{% url 'core:entity_list' %}" class="btn btn-primary btn-sm">
+                            <i class="bi bi-arrow-right-circle me-1"></i> Open via Entity
+                        </a>
+                        <span class="text-muted small align-self-center">Entity &rarr; Family Trust Election</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>
 
 {# ===== TAB 3: WORKPAPERS ===== #}

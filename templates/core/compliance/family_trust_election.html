@@ -1,0 +1,443 @@
+{% extends "base.html" %}
+{% block title %}Family Trust Election — {{ entity.entity_name }}{% endblock %}
+{% block content %}
+<div class="container-fluid py-3">
+    <nav aria-label="breadcrumb">
+        <ol class="breadcrumb">
+            <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
+            <li class="breadcrumb-item active">Family Trust Election</li>
+        </ol>
+    </nav>
+
+    <div class="row g-3">
+        {# ── Left: Form ─────────────────────────────────────────────────── #}
+        <div class="col-lg-9">
+            <div class="card shadow-sm">
+                <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0">
+                        <i class="bi bi-file-earmark-check me-2"></i>
+                        Family Trust Election
+                        <span class="badge bg-white text-primary ms-2 fw-normal" style="font-size:.75rem;">Internal Working Document</span>
+                    </h5>
+                    {% if doc %}
+                    <span class="badge bg-white bg-opacity-20 text-white">
+                        Last saved {{ doc.updated_at|date:"d M Y H:i" }}
+                        {% if doc.last_saved_by %}by {{ doc.last_saved_by.get_full_name }}{% endif %}
+                    </span>
+                    {% endif %}
+                </div>
+
+                <div class="card-body">
+                    <div class="alert alert-info border-0 py-2 mb-4">
+                        <i class="bi bi-info-circle me-1"></i>
+                        <strong>Internal template — not an ATO approved form.</strong>
+                        Use this to collect instructions, document the election year, identify the test individual,
+                        and record the adviser check that distributions remain within the family group.
+                    </div>
+
+                    <form method="post" id="fte-form">
+                        {% csrf_token %}
+
+                        {# ── Section 1: Trust and Client Details ─────────────── #}
+                        <h6 class="fw-bold text-primary border-bottom pb-2 mb-3">
+                            <span class="badge bg-primary me-2">1</span>Trust and Client Details
+                        </h6>
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold">Trust Name</label>
+                                <input type="text" class="form-control bg-light" value="{{ prefill.trust_name }}" readonly
+                                       title="Auto-filled from entity record">
+                                <div class="form-text"><i class="bi bi-lock-fill text-muted"></i> Auto-filled</div>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label fw-semibold">ABN</label>
+                                <input type="text" class="form-control bg-light" value="{{ prefill.trust_abn }}" readonly
+                                       title="Auto-filled from entity record">
+                                <div class="form-text"><i class="bi bi-lock-fill text-muted"></i> Auto-filled</div>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label fw-semibold">TFN</label>
+                                <input type="text" class="form-control bg-light" value="{{ prefill.trust_tfn }}" readonly
+                                       title="Auto-filled from entity record">
+                                <div class="form-text"><i class="bi bi-lock-fill text-muted"></i> Auto-filled</div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold">Trustee Name and Capacity</label>
+                                <input type="text" class="form-control bg-light" value="{{ prefill.trustee_name }}" readonly
+                                       title="Auto-filled from entity record">
+                                <div class="form-text"><i class="bi bi-lock-fill text-muted"></i> Auto-filled</div>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label fw-semibold">Trust Deed Date</label>
+                                <input type="text" class="form-control bg-light" value="{{ prefill.deed_date }}" readonly
+                                       title="Auto-filled from entity record">
+                                <div class="form-text"><i class="bi bi-lock-fill text-muted"></i> Auto-filled</div>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label fw-semibold">Primary Adviser / Manager</label>
+                                <input type="text" class="form-control bg-light" value="{{ prefill.primary_adviser }}" readonly
+                                       title="Auto-filled from entity record">
+                                <div class="form-text"><i class="bi bi-lock-fill text-muted"></i> Auto-filled</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label fw-semibold">Client Contact</label>
+                                <input type="text" class="form-control bg-light" value="{{ prefill.client_contact }}" readonly>
+                                <div class="form-text"><i class="bi bi-lock-fill text-muted"></i> Auto-filled</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label fw-semibold">Financial Year</label>
+                                <select name="financial_year_id" class="form-select">
+                                    <option value="">— Not linked to a specific year —</option>
+                                    {% for fy in financial_years %}
+                                    <option value="{{ fy.pk }}"
+                                        {% if doc and doc.financial_year_id == fy.pk %}selected{% endif %}>
+                                        {{ fy.year_label }} ({{ fy.start_date|date:"d M Y" }} – {{ fy.end_date|date:"d M Y" }})
+                                    </option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label fw-semibold">Income Year for Election</label>
+                                <input type="text" name="income_year" class="form-control"
+                                       placeholder="e.g. 2025"
+                                       value="{{ doc.income_year|default:'' }}">
+                            </div>
+                            <div class="col-12">
+                                <label class="form-label fw-semibold">Reason Election Considered</label>
+                                <textarea name="reason_for_election" class="form-control" rows="2"
+                                          placeholder="Briefly describe why the election is being considered…">{{ doc.reason_for_election|default:'' }}</textarea>
+                            </div>
+                        </div>
+
+                        {# ── Section 2: Election Type ─────────────────────────── #}
+                        <h6 class="fw-bold text-primary border-bottom pb-2 mb-3">
+                            <span class="badge bg-primary me-2">2</span>Election Type
+                        </h6>
+                        <div class="mb-4">
+                            {% with et=doc.election_type|default:'' %}
+                            <div class="list-group">
+                                <label class="list-group-item list-group-item-action d-flex align-items-center gap-3">
+                                    <input class="form-check-input" type="radio" name="election_type" value="fte"
+                                           {% if et == 'fte' %}checked{% endif %}>
+                                    <span><strong>Family Trust Election (FTE)</strong></span>
+                                </label>
+                                <label class="list-group-item list-group-item-action d-flex align-items-center gap-3">
+                                    <input class="form-check-input" type="radio" name="election_type" value="iee"
+                                           {% if et == 'iee' %}checked{% endif %}>
+                                    <span><strong>Interposed Entity Election (IEE)</strong> linked to existing FTE</span>
+                                </label>
+                                <label class="list-group-item list-group-item-action d-flex align-items-center gap-3">
+                                    <input class="form-check-input" type="radio" name="election_type" value="review_only"
+                                           {% if et == 'review_only' %}checked{% endif %}>
+                                    <span>Review only — no election to be made this year</span>
+                                </label>
+                                <label class="list-group-item list-group-item-action d-flex align-items-center gap-3">
+                                    <input class="form-check-input" type="radio" name="election_type" value="other"
+                                           {% if et == 'other' %}checked{% endif %}>
+                                    <span>Other:</span>
+                                    <input type="text" name="election_type_other" class="form-control form-control-sm ms-2"
+                                           style="max-width:320px;"
+                                           placeholder="Describe…"
+                                           value="{{ doc.election_type_other|default:'' }}">
+                                </label>
+                            </div>
+                            {% endwith %}
+                        </div>
+
+                        {# ── Section 3: Test Individual and Family Group ───────── #}
+                        <h6 class="fw-bold text-primary border-bottom pb-2 mb-3">
+                            <span class="badge bg-primary me-2">3</span>Test Individual and Family Group
+                        </h6>
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold">Proposed Test Individual</label>
+                                <input type="text" name="proposed_test_individual" class="form-control"
+                                       placeholder="Full name"
+                                       value="{{ doc.proposed_test_individual|default:'' }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold">Relationship to Principal Family</label>
+                                <input type="text" name="test_individual_relationship" class="form-control"
+                                       placeholder="e.g. Settlor, Primary beneficiary"
+                                       value="{{ doc.test_individual_relationship|default:'' }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold">Spouse Details (if relevant)</label>
+                                <input type="text" name="spouse_details" class="form-control"
+                                       placeholder="Name and relationship"
+                                       value="{{ doc.spouse_details|default:'' }}">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold">Expected Beneficiaries for the Year</label>
+                                <textarea name="expected_beneficiaries" class="form-control" rows="2"
+                                          placeholder="List expected beneficiaries…">{{ doc.expected_beneficiaries|default:'' }}</textarea>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold">Any Non-Family Distributions Contemplated?</label>
+                                <select name="non_family_distributions" class="form-select">
+                                    <option value="">— Select —</option>
+                                    <option value="yes" {% if doc.non_family_distributions == 'yes' %}selected{% endif %}>Yes</option>
+                                    <option value="no" {% if doc.non_family_distributions == 'no' %}selected{% endif %}>No</option>
+                                </select>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label fw-semibold">If Yes, Details and Risk Comments</label>
+                                <textarea name="non_family_distribution_details" class="form-control" rows="2"
+                                          placeholder="Describe any non-family distributions…">{{ doc.non_family_distribution_details|default:'' }}</textarea>
+                            </div>
+                        </div>
+
+                        {# ── Section 4: Franking Credit / Loss Access Checklist ── #}
+                        <h6 class="fw-bold text-primary border-bottom pb-2 mb-3">
+                            <span class="badge bg-primary me-2">4</span>Franking Credit / Loss Access Checklist
+                        </h6>
+                        <div class="mb-4">
+                            <table class="table table-bordered align-middle">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Item</th>
+                                        <th class="text-center" style="width:80px;">Yes</th>
+                                        <th class="text-center" style="width:80px;">No</th>
+                                        <th class="text-center" style="width:80px;">N/A</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% with items=checklist_items %}
+                                    {% for item in checklist_items %}
+                                    <tr>
+                                        <td>{{ item.label }}</td>
+                                        <td class="text-center">
+                                            <input type="radio" class="form-check-input"
+                                                   name="{{ item.field }}" value="yes"
+                                                   {% if item.value == 'yes' %}checked{% endif %}>
+                                        </td>
+                                        <td class="text-center">
+                                            <input type="radio" class="form-check-input"
+                                                   name="{{ item.field }}" value="no"
+                                                   {% if item.value == 'no' %}checked{% endif %}>
+                                        </td>
+                                        <td class="text-center">
+                                            <input type="radio" class="form-check-input"
+                                                   name="{{ item.field }}" value="na"
+                                                   {% if item.value == 'na' %}checked{% endif %}>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                    {% endwith %}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        {# ── Section 5: Timing and Return Preparation ─────────── #}
+                        <h6 class="fw-bold text-primary border-bottom pb-2 mb-3">
+                            <span class="badge bg-primary me-2">5</span>Timing and Return Preparation
+                        </h6>
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-4">
+                                <label class="form-label fw-semibold">Date Trust First Received Franked Dividend / Relevant Income</label>
+                                <input type="date" name="date_first_franked_dividend" class="form-control"
+                                       value="{{ doc.date_first_franked_dividend|date:'Y-m-d'|default:'' }}">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label fw-semibold">Distribution Minutes Prepared By</label>
+                                <input type="text" name="distribution_minutes_prepared_by" class="form-control"
+                                       placeholder="Name"
+                                       value="{{ doc.distribution_minutes_prepared_by|default:'' }}">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label fw-semibold">Tax Return Prepared By</label>
+                                <input type="text" name="tax_return_prepared_by" class="form-control"
+                                       placeholder="Name"
+                                       value="{{ doc.tax_return_prepared_by|default:'' }}">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label fw-semibold">Election to be Lodged with Return for Year Ended</label>
+                                <input type="text" name="election_lodgment_year_ended" class="form-control"
+                                       placeholder="e.g. 30 June 2025"
+                                       value="{{ doc.election_lodgment_year_ended|default:'' }}">
+                            </div>
+                            <div class="col-md-8">
+                                <label class="form-label fw-semibold">Further Action Required Before Lodgment</label>
+                                <textarea name="further_action_required" class="form-control" rows="2"
+                                          placeholder="List any outstanding actions…">{{ doc.further_action_required|default:'' }}</textarea>
+                            </div>
+                        </div>
+
+                        {# ── Section 6: Adviser Risk Review ───────────────────── #}
+                        <h6 class="fw-bold text-primary border-bottom pb-2 mb-3">
+                            <span class="badge bg-primary me-2">6</span>Adviser Risk Review
+                        </h6>
+                        <div class="alert alert-warning border-0 py-2 mb-3">
+                            <i class="bi bi-exclamation-triangle me-1"></i>
+                            Consider and note any issues with: family group leakage, FTDT exposure,
+                            prior-year inconsistency, deed power limits, streaming, s100A, Part IVA,
+                            related bucket companies, and whether an IEE is also required.
+                        </div>
+                        <div class="row g-3 mb-4">
+                            <div class="col-12">
+                                <label class="form-label fw-semibold">Risk Notes / Comments</label>
+                                <textarea name="risk_notes" class="form-control" rows="3"
+                                          placeholder="Document any risk issues identified…">{{ doc.risk_notes|default:'' }}</textarea>
+                            </div>
+                            <div class="col-12">
+                                <label class="form-label fw-semibold">Deed / Legal Issues Noted</label>
+                                <textarea name="deed_legal_issues" class="form-control" rows="3"
+                                          placeholder="Note any deed or legal issues…">{{ doc.deed_legal_issues|default:'' }}</textarea>
+                            </div>
+                            <div class="col-12">
+                                <label class="form-label fw-semibold">Return Disclosure / Workpaper References</label>
+                                <textarea name="return_disclosure_references" class="form-control" rows="2"
+                                          placeholder="Reference workpaper or return disclosure items…">{{ doc.return_disclosure_references|default:'' }}</textarea>
+                            </div>
+                        </div>
+
+                        {# ── Section 7: Adviser Completion Checklist ──────────── #}
+                        <h6 class="fw-bold text-primary border-bottom pb-2 mb-3">
+                            <span class="badge bg-primary me-2">7</span>Adviser Completion Checklist
+                        </h6>
+                        <div class="card bg-light border-0 mb-4">
+                            <div class="card-body">
+                                <p class="text-muted small mb-3">
+                                    Tick each item as it is completed. These are saved instantly when clicked.
+                                </p>
+                                <div class="row g-2">
+                                    {% for item in adviser_checklist %}
+                                    <div class="col-md-6">
+                                        <div class="form-check d-flex align-items-center gap-2 p-2 rounded
+                                                    {% if item.value %}bg-success bg-opacity-10 border border-success border-opacity-25{% else %}bg-white border{% endif %}"
+                                             id="adv-check-row-{{ item.field }}">
+                                            <input class="form-check-input adv-checklist-cb"
+                                                   type="checkbox"
+                                                   name="{{ item.field }}"
+                                                   id="adv-{{ item.field }}"
+                                                   data-field="{{ item.field }}"
+                                                   {% if item.value %}checked{% endif %}
+                                                   {% if not doc %}disabled title="Save the document first to enable checklist items"{% endif %}>
+                                            <label class="form-check-label fw-semibold mb-0" for="adv-{{ item.field }}">
+                                                {{ item.label }}
+                                            </label>
+                                        </div>
+                                    </div>
+                                    {% endfor %}
+                                </div>
+                            </div>
+                        </div>
+
+                        {# ── Save Button ───────────────────────────────────────── #}
+                        <div class="d-flex gap-2 justify-content-end">
+                            <a href="{% url 'core:entity_detail' pk=entity.pk %}" class="btn btn-outline-secondary">
+                                <i class="bi bi-arrow-left"></i> Back to Entity
+                            </a>
+                            <button type="submit" class="btn btn-primary">
+                                <i class="bi bi-floppy me-1"></i>
+                                {% if doc %}Update Document{% else %}Save Document{% endif %}
+                            </button>
+                        </div>
+                    </form>
+                </div>{# /card-body #}
+            </div>{# /card #}
+        </div>{# /col-lg-9 #}
+
+        {# ── Right: Sidebar ──────────────────────────────────────────────── #}
+        <div class="col-lg-3">
+            {# New document button #}
+            <div class="card mb-3">
+                <div class="card-body text-center">
+                    <a href="{% url 'core:family_trust_election_new' entity_pk=entity.pk %}"
+                       class="btn btn-outline-primary w-100">
+                        <i class="bi bi-plus-circle me-1"></i> New FTE Document
+                    </a>
+                </div>
+            </div>
+
+            {# Existing documents #}
+            {% if existing_docs %}
+            <div class="card">
+                <div class="card-header bg-light fw-semibold py-2">
+                    <i class="bi bi-clock-history me-1"></i> Saved Documents
+                </div>
+                <div class="list-group list-group-flush">
+                    {% for d in existing_docs %}
+                    <a href="{% url 'core:family_trust_election_edit' entity_pk=entity.pk doc_pk=d.pk %}"
+                       class="list-group-item list-group-item-action {% if doc and doc.pk == d.pk %}active{% endif %}">
+                        <div class="fw-semibold small">
+                            {% if d.financial_year %}FY{{ d.financial_year.year_label }}{% else %}No FY linked{% endif %}
+                            {% if d.election_type %}
+                            <span class="badge bg-primary ms-1" style="font-size:.65rem;">
+                                {{ d.get_election_type_display }}
+                            </span>
+                            {% endif %}
+                        </div>
+                        <div class="text-muted" style="font-size:.75rem;">
+                            {{ d.updated_at|date:"d M Y" }}
+                        </div>
+                    </a>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
+            {# Delete button for existing doc #}
+            {% if doc %}
+            <div class="card mt-3 border-danger">
+                <div class="card-body text-center">
+                    <form method="post" action="{% url 'core:fte_delete' doc_pk=doc.pk %}"
+                          onsubmit="return confirm('Delete this Family Trust Election document? This cannot be undone.')">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-outline-danger btn-sm w-100">
+                            <i class="bi bi-trash me-1"></i> Delete This Document
+                        </button>
+                    </form>
+                </div>
+            </div>
+            {% endif %}
+        </div>{# /col-lg-3 #}
+    </div>{# /row #}
+</div>{# /container-fluid #}
+
+<script>
+// ── Adviser Checklist — instant HTMX-style toggle ─────────────────────────
+(function () {
+    const DOC_PK = "{{ doc.pk|default:'' }}";
+    const CSRF = "{{ csrf_token }}";
+
+    document.querySelectorAll('.adv-checklist-cb').forEach(function (cb) {
+        cb.addEventListener('change', function () {
+            if (!DOC_PK) return;
+            const field = cb.dataset.field;
+            const value = cb.checked;
+            const row = document.getElementById('adv-check-row-' + field);
+
+            fetch('/core/api/fte/' + DOC_PK + '/toggle-checklist/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': CSRF,
+                },
+                body: JSON.stringify({ field: field, value: value }),
+            })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                if (data.status === 'ok') {
+                    if (value) {
+                        row.classList.remove('bg-white', 'border');
+                        row.classList.add('bg-success', 'bg-opacity-10', 'border', 'border-success', 'border-opacity-25');
+                    } else {
+                        row.classList.remove('bg-success', 'bg-opacity-10', 'border-success', 'border-opacity-25');
+                        row.classList.add('bg-white', 'border');
+                    }
+                } else {
+                    cb.checked = !value; // revert
+                    alert('Could not save checklist item. Please try again.');
+                }
+            })
+            .catch(function () {
+                cb.checked = !value;
+                alert('Network error. Please try again.');
+            });
+        });
+    });
+})();
+</script>
+{% endblock %}

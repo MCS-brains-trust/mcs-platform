@@ -5724,3 +5724,104 @@ class YearEndCommentary(models.Model):
 
     def __str__(self):
         return f"Year-End Commentary — {self.financial_year} ({self.get_status_display()})"
+
+
+# ---------------------------------------------------------------------------
+# Family Trust Election — Internal Working Document
+# ---------------------------------------------------------------------------
+class FamilyTrustElectionDocument(models.Model):
+    """
+    Internal working document for a Family Trust Election (FTE) or
+    Interposed Entity Election (IEE).  Stores the accountant's instructions,
+    checklist state, and adviser risk notes.  Linked to an entity and an
+    optional financial year.
+    """
+
+    class ElectionType(models.TextChoices):
+        FTE = "fte", "Family Trust Election (FTE)"
+        IEE = "iee", "Interposed Entity Election (IEE) linked to existing FTE"
+        REVIEW_ONLY = "review_only", "Review only — no election to be made this year"
+        OTHER = "other", "Other"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entity = models.ForeignKey(
+        Entity, on_delete=models.CASCADE, related_name="fte_documents",
+    )
+    financial_year = models.ForeignKey(
+        "FinancialYear", on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="fte_documents",
+    )
+
+    # ── Section 2: Election Type ──────────────────────────────────────────
+    election_type = models.CharField(
+        max_length=20, choices=ElectionType.choices, blank=True, default="",
+    )
+    election_type_other = models.CharField(max_length=255, blank=True, default="")
+
+    # ── Section 1 extra fields (entity data auto-filled from Entity) ──────
+    income_year = models.CharField(
+        max_length=20, blank=True, default="",
+        help_text="Income year for election, e.g. '2025'",
+    )
+    reason_for_election = models.TextField(blank=True, default="")
+
+    # ── Section 3: Test Individual and Family Group ───────────────────────
+    proposed_test_individual = models.CharField(max_length=255, blank=True, default="")
+    test_individual_relationship = models.CharField(max_length=255, blank=True, default="")
+    spouse_details = models.CharField(max_length=255, blank=True, default="")
+    expected_beneficiaries = models.TextField(blank=True, default="")
+    non_family_distributions = models.CharField(max_length=5, blank=True, default="")
+    non_family_distribution_details = models.TextField(blank=True, default="")
+
+    # ── Section 4: Franking Credit / Loss Access Checklist ───────────────
+    # Each item: 'yes' / 'no' / 'na'
+    checklist_franked_distributions = models.CharField(max_length=5, blank=True, default="")
+    checklist_deed_permits_distribution = models.CharField(max_length=5, blank=True, default="")
+    checklist_beneficiaries_within_family = models.CharField(max_length=5, blank=True, default="")
+    checklist_no_excluded_distributions = models.CharField(max_length=5, blank=True, default="")
+    checklist_bucket_company_within_group = models.CharField(max_length=5, blank=True, default="")
+    checklist_franking_credit_streaming = models.CharField(max_length=5, blank=True, default="")
+    checklist_prior_elections_checked = models.CharField(max_length=5, blank=True, default="")
+
+    # ── Section 5: Timing and Return Preparation ─────────────────────────
+    date_first_franked_dividend = models.DateField(null=True, blank=True)
+    distribution_minutes_prepared_by = models.CharField(max_length=255, blank=True, default="")
+    tax_return_prepared_by = models.CharField(max_length=255, blank=True, default="")
+    election_lodgment_year_ended = models.CharField(max_length=20, blank=True, default="")
+    further_action_required = models.TextField(blank=True, default="")
+
+    # ── Section 6: Adviser Risk Review ───────────────────────────────────
+    risk_notes = models.TextField(blank=True, default="")
+    deed_legal_issues = models.TextField(blank=True, default="")
+    return_disclosure_references = models.TextField(blank=True, default="")
+
+    # ── Section 7: Adviser Completion Checklist ───────────────────────────
+    adv_trust_deed_reviewed = models.BooleanField(default=False)
+    adv_election_year_confirmed = models.BooleanField(default=False)
+    adv_test_individual_confirmed = models.BooleanField(default=False)
+    adv_family_group_verified = models.BooleanField(default=False)
+    adv_iee_considered = models.BooleanField(default=False)
+    adv_workpaper_references_saved = models.BooleanField(default=False)
+    adv_client_authority_retained = models.BooleanField(default=False)
+    adv_reviewer_signoff = models.BooleanField(default=False)
+
+    # ── Metadata ──────────────────────────────────────────────────────────
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="created_fte_documents",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    last_saved_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="saved_fte_documents",
+    )
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "Family Trust Election Document"
+        verbose_name_plural = "Family Trust Election Documents"
+
+    def __str__(self):
+        fy_label = f" — FY{self.financial_year.year_label}" if self.financial_year else ""
+        return f"FTE Document — {self.entity.entity_name}{fy_label}"
