@@ -333,7 +333,40 @@ class QuickBooksProvider(BaseProvider):
         walk(rows_data)
         return lines
 
+    def _fetch_account_types(self, access_token, tenant_id):
+        """Fetch account type classifications from the QBO Account query API.
+
+        Returns dict mapping account name → AccountType string.
+        """
+        base_url = f"https://quickbooks.api.intuit.com/v3/company/{tenant_id}"
+        resp = requests.get(
+            f"{base_url}/query",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Accept": "application/json",
+            },
+            params={
+                "minorversion": "65",
+                "query": "SELECT Id, Name, AccountType, AccountSubType FROM Account",
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        accounts = data.get("QueryResponse", {}).get("Account", [])
+        account_types = {}
+        for acct in accounts:
+            name = (acct.get("Name") or "").strip()
+            acct_type = (acct.get("AccountType") or "").strip()
+            if name and acct_type:
+                account_types[name] = acct_type
+        logger.info("QBO account types fetched: %d accounts", len(account_types))
+        return account_types
+
     def fetch_period_movement(self, access_token, tenant_id, from_date, to_date):
+        # Fetch account type classifications before processing GL rows
+        account_types = self._fetch_account_types(access_token, tenant_id)
+
         base_url = f"https://quickbooks.api.intuit.com/v3/company/{tenant_id}"
         params = {
             "minorversion": "65",
@@ -461,19 +494,19 @@ class QuickBooksProvider(BaseProvider):
                 return True
             return False
 
-        # QBO account types and their natural debit/credit side
+        # QBO AccountType values (as returned by Account query API) and their natural side
         DEBIT_TYPES = {
-            'bank', 'other current asset', 'fixed asset',
-            'other asset', 'accounts receivable',
-            'cost of goods sold', 'expense', 'other expense',
+            'Bank', 'Other Current Asset', 'Fixed Asset',
+            'Other Asset', 'Accounts Receivable',
+            'Cost of Goods Sold', 'Expense', 'Other Expense',
         }
         CREDIT_TYPES = {
-            'credit card', 'other current liability',
-            'long term liability', 'equity', 'retained earnings',
-            'income', 'other income', 'accounts payable',
+            'Credit Card', 'Other Current Liability',
+            'Long Term Liability', 'Equity', 'Retained Earnings',
+            'Income', 'Other Income', 'Accounts Payable',
         }
 
-        def append_account_row(account_code, account_name, closing_balance, opening_balance="0", account_type=""):
+        def append_account_row(account_code, account_name, closing_balance, opening_balance="0"):
             account_name = (account_name or "").strip()
             account_code = (account_code or "").strip()
             opening_balance = _to_decimal(opening_balance)
@@ -483,20 +516,19 @@ class QuickBooksProvider(BaseProvider):
             if closing_balance == 0:
                 return
             # QBO GL Balance column is always positive (absolute value).
-            # Use the account type classification to determine debit vs credit side.
-            acct_type_lower = (account_type or "").strip().lower()
+            # Look up account type from the Account query API to determine side.
+            acct_type = account_types.get(account_name, "")
             closing_balance = abs(closing_balance)
-            if acct_type_lower in DEBIT_TYPES:
+            if acct_type in DEBIT_TYPES:
                 debit = closing_balance
                 credit = Decimal("0")
-            elif acct_type_lower in CREDIT_TYPES:
+            elif acct_type in CREDIT_TYPES:
                 debit = Decimal("0")
                 credit = closing_balance
             else:
-                # Unknown type — fall back to sign, log a warning
                 logger.warning(
-                    "QBO GL unknown account type %r for %r — falling back to sign-based side",
-                    account_type, account_name,
+                    "QBO GL unknown AccountType %r for %r — defaulting to debit",
+                    acct_type, account_name,
                 )
                 debit = closing_balance
                 credit = Decimal("0")
@@ -566,7 +598,7 @@ class QuickBooksProvider(BaseProvider):
 
         _debug_row_count = [0]
 
-        def handle_row(row, current_account_code="", current_account_name="", current_account_type=""):
+        def handle_row(row, current_account_code="", current_account_name=""):
             if not isinstance(row, dict):
                 return
             row_type = row.get("type") or row.get("RowType") or "Unknown"
@@ -584,26 +616,10 @@ class QuickBooksProvider(BaseProvider):
             if header_code:
                 current_account_code = header_code
 
-            # Extract account type from the Section row's group attribute.
-            # QBO GL nests: outer Section = account type category (e.g. "Bank"),
-            # inner Section = individual account. The 'group' field on the row
-            # carries the classification (e.g. "Bank", "Equity", "Income").
-            row_group = (row.get("group") or "").strip()
-            if row_group:
-                current_account_type = row_group
-
-            # Debug: log first 3 Section headers to see account type field
-            _debug_row_count[0] += 1
-            if _debug_row_count[0] <= 3:
-                logger.info(
-                    "QB GL row %d: type=%s group=%r header_name=%r header_keys=%s row_keys=%s",
-                    _debug_row_count[0], row_type, row_group, header_name,
-                    list(header.keys()) if header else [],
-                    list(row.keys()),
-                )
-
             # For Section rows with an account name and child Data rows:
             # extract closing balance from the last child Data row's Balance column.
+            # Account type for side assignment is looked up from the account_types dict
+            # (fetched via separate Account query API call).
             if row_type.lower() == "section" and current_account_name:
                 closing_balance, beginning_balance = _extract_closing_balance_from_children(children)
 
@@ -613,7 +629,6 @@ class QuickBooksProvider(BaseProvider):
                         current_account_name,
                         closing_balance,
                         beginning_balance if beginning_balance is not None else Decimal("0"),
-                        account_type=current_account_type,
                     )
                     return
 
@@ -621,7 +636,7 @@ class QuickBooksProvider(BaseProvider):
                 # recurse into its children (which are individual account Sections).
                 for child in children:
                     handle_row(child, current_account_code=current_account_code,
-                               current_account_name="", current_account_type=current_account_type)
+                               current_account_name="")
                 return
 
             # Skip individual Data rows — they are transactions, not account summaries.
@@ -631,8 +646,7 @@ class QuickBooksProvider(BaseProvider):
             # Recurse into non-Section, non-Data rows (e.g. nested groups)
             for child in children:
                 handle_row(child, current_account_code=current_account_code,
-                           current_account_name=current_account_name,
-                           current_account_type=current_account_type)
+                           current_account_name=current_account_name)
 
         for row in rows_data:
             handle_row(row)
