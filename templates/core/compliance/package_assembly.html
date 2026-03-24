@@ -474,21 +474,36 @@ function downloadBundle() {
     // Build URL with selected doc types as query param
     const url = DOWNLOAD_BUNDLE_URL + '?include=' + encodeURIComponent(checked.join(','));
 
-    // Use a hidden iframe so the page stays open while the PDF downloads.
-    // We detect completion by polling — when the iframe src is set the
-    // browser starts downloading; we restore the button after a short delay.
-    const iframe = document.createElement('iframe');
-    iframe.style.display = 'none';
-    document.body.appendChild(iframe);
-    iframe.src = url;
-
-    // Restore button after 8 s (generous time for PDF generation)
-    setTimeout(() => {
-        btn.disabled = false;
-        label.classList.remove('d-none');
-        spinner.classList.add('d-none');
-        document.body.removeChild(iframe);
-    }, 8000);
+    // Use fetch + blob so the download only triggers once the full PDF is
+    // received — avoids the iframe race condition where the element was
+    // removed from the DOM before the browser could save the file.
+    fetch(url, {credentials: 'same-origin'})
+        .then(response => {
+            if (!response.ok) {
+                return response.text().then(t => { throw new Error(t || response.statusText); });
+            }
+            return response.blob();
+        })
+        .then(blob => {
+            // Extract filename from Content-Disposition header if available
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'Client_Package.pdf';
+            document.body.appendChild(a);
+            a.click();
+            setTimeout(() => {
+                URL.revokeObjectURL(a.href);
+                document.body.removeChild(a);
+            }, 1000);
+        })
+        .catch(err => {
+            alert('Download failed: ' + err.message);
+        })
+        .finally(() => {
+            btn.disabled = false;
+            label.classList.remove('d-none');
+            spinner.classList.add('d-none');
+        });
 }
 
 // ---- Year-End Commentary ----
