@@ -595,6 +595,35 @@ def build_company_context(financial_year, include_watermark=True):
     net_profit_cy = net_profit_pretax_cy - income_tax_cy
     net_profit_py = net_profit_pretax_py - income_tax_py
 
+    # Retained profit opening balance — scan equity section for retained/accumulated accounts
+    # The TB balance for these accounts is the CLOSING balance (opening + CY profit).
+    # We back-calculate opening = closing_tb_balance - net_profit_after_tax.
+    # Credit-normal: negative raw value = credit balance = positive retained profit.
+    _retained_closing_raw_cy = Decimal("0")
+    _retained_closing_raw_py = Decimal("0")
+    _dividends_cy = Decimal("0")
+    _dividends_py = Decimal("0")
+    for _item in sections["equity"]:
+        _name_l = _item.get("account_name", "").lower()
+        if any(kw in _name_l for kw in ["retained", "accumulated"]):
+            _retained_closing_raw_cy += _item.get("cy_amount", Decimal("0")) or Decimal("0")
+            _retained_closing_raw_py += _item.get("py_amount", Decimal("0")) or Decimal("0")
+        elif "dividend" in _name_l:
+            _dividends_cy += abs(_item.get("cy_amount", Decimal("0")) or Decimal("0"))
+            _dividends_py += abs(_item.get("py_amount", Decimal("0")) or Decimal("0"))
+    # Convert credit-normal raw to positive display amount
+    _retained_closing_cy = -_retained_closing_raw_cy
+    _retained_closing_py = -_retained_closing_raw_py
+    # Opening = closing TB balance minus current year after-tax profit
+    retained_profit_opening_cy = _retained_closing_cy - net_profit_cy
+    retained_profit_opening_py = _retained_closing_py - net_profit_py
+    # Total available = opening retained + after-tax profit = closing TB balance
+    total_available_cy = retained_profit_opening_cy + net_profit_cy
+    total_available_py = retained_profit_opening_py + net_profit_py
+    # Closing retained = total available minus dividends
+    retained_profit_closing_cy = total_available_cy - _dividends_cy
+    retained_profit_closing_py = total_available_py - _dividends_py
+
     # Pre-closing TB: add current year profit (after tax) to equity if BS won't balance
     _test_equity = -_sum_section(sections["equity"])
     _test_liab = -(_sum_section(sections["current_liabilities"])
@@ -760,6 +789,13 @@ def build_company_context(financial_year, include_watermark=True):
         "income_tax_py": format_amount(-income_tax_py) if income_tax_py else "-",
         "net_profit_cy": format_amount(net_profit_cy),
         "net_profit_py": format_amount(net_profit_py),
+        # Summary P&L — retained profit appropriation
+        "retained_profit_opening_cy": format_amount(retained_profit_opening_cy),
+        "retained_profit_opening_py": format_amount(retained_profit_opening_py),
+        "total_available_cy": format_amount(total_available_cy),
+        "total_available_py": format_amount(total_available_py),
+        "retained_profit_closing_cy": format_amount(retained_profit_closing_cy),
+        "retained_profit_closing_py": format_amount(retained_profit_closing_py),
         # Balance Sheet
         "current_assets": current_assets,
         "noncurrent_assets": noncurrent_assets,

@@ -600,23 +600,38 @@ def _build_summary_pl(entity_type):
     _add_footer(doc)
 
     # Summary table
-    table = doc.add_table(rows=6, cols=3)
+    # Rows:
+    #  0 — header (year / $)
+    #  1 — Total Income
+    #  2 — Total Expenses
+    #  3 — Operating profit before income tax          [bold, subtotal border]
+    #  4 — Income tax attributable to operating profit
+    #  5 — Operating profit after income tax           [bold, subtotal border]
+    #  6 — (spacer)
+    #  7 — Retained profit at the beginning of the financial year
+    #  8 — Total available for appropriation           [bold, subtotal border]
+    #  9 — Retained profits at the end of the financial year [bold, grand-total border]
+    rows_data = [
+        ("", "{{ year }}\n$", "{{ prior_year }}\n$", False, None),
+        ("Total Income", "{{ total_income_cy }}", "{{ total_income_py }}", False, None),
+        ("Total Expenses", "{{ total_expenses_cy }}", "{{ total_expenses_py }}", False, None),
+        ("Operating profit before income tax", "{{ net_profit_pretax_cy }}", "{{ net_profit_pretax_py }}", True, "subtotal"),
+        ("Income tax attributable to operating profit (loss)", "{{ income_tax_cy }}", "{{ income_tax_py }}", False, None),
+        ("Operating profit after income tax", "{{ net_profit_cy }}", "{{ net_profit_py }}", True, "subtotal"),
+        ("", "", "", False, None),
+        ("Retained profit at the beginning of the financial year", "{{ retained_profit_opening_cy }}", "{{ retained_profit_opening_py }}", False, None),
+        ("Total available for appropriation", "{{ total_available_cy }}", "{{ total_available_py }}", True, "subtotal"),
+        ("Retained profits at the end of the financial year", "{{ retained_profit_closing_cy }}", "{{ retained_profit_closing_py }}", True, "grand_total"),
+    ]
+
+    table = doc.add_table(rows=len(rows_data), cols=3)
     _set_table_full_width(table)
     table.autofit = False
     table.columns[0].width = Cm(10)
     table.columns[1].width = Cm(3)
     table.columns[2].width = Cm(3)
 
-    rows_data = [
-        ("", "{{ year }}\n$", "{{ prior_year }}\n$"),
-        ("Total Income", "{{ total_income_cy }}", "{{ total_income_py }}"),
-        ("Total Expenses", "{{ total_expenses_cy }}", "{{ total_expenses_py }}"),
-        ("Operating profit before income tax", "{{ net_profit_pretax_cy }}", "{{ net_profit_pretax_py }}"),
-        ("Income tax attributable to operating profit (loss)", "{{ income_tax_cy }}", "{{ income_tax_py }}"),
-        ("Operating profit after income tax", "{{ net_profit_cy }}", "{{ net_profit_py }}"),
-    ]
-
-    for r, (label, cy, py) in enumerate(rows_data):
+    for r, (label, cy, py, is_bold, border_type) in enumerate(rows_data):
         table.rows[r].cells[0].text = label
         table.rows[r].cells[1].text = cy
         table.rows[r].cells[2].text = py
@@ -626,14 +641,11 @@ def _build_summary_pl(entity_type):
                 for run in p.runs:
                     run.font.name = FONT_NAME
                     run.font.size = FONT_SIZE
-                    if r == 0 or r >= 3:
-                        run.bold = True
-
-    # Fix 1: Apply borders to Summary P&L rows
-    # Row 3 = "Net Profit Before Tax" → subtotal
-    _apply_subtotal_borders(table.rows[3])
-    # Row 5 = "Net Profit After Tax" → grand total
-    _apply_grand_total_borders(table.rows[5])
+                    run.bold = is_bold or r == 0
+        if border_type == "subtotal":
+            _apply_subtotal_borders(table.rows[r])
+        elif border_type == "grand_total":
+            _apply_grand_total_borders(table.rows[r])
 
     return doc
 
