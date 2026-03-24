@@ -42,6 +42,7 @@ DOC_TYPES = [
     ("DETAILED_PL", "Detailed Profit and Loss Statement"),
     ("BALANCE_SHEET", "Detailed Balance Sheet"),
     ("SUMMARY_PL", "Summary P&L"),
+    ("DEPRECIATION_REPORT", "Depreciation Report"),
     ("NOTES", "Notes to Financial Statements"),
     ("DECLARATION", "Declaration"),
     ("DISTRIBUTION", "Distribution Summary"),
@@ -51,12 +52,15 @@ DOC_TYPES = [
 # Which doc types apply to which entity types
 ENTITY_DOC_TYPES = {
     "company": ["COVER", "DETAILED_PL", "BALANCE_SHEET", "SUMMARY_PL",
-                 "NOTES", "DECLARATION", "COMPILATION"],
-    "trust": ["COVER", "DETAILED_PL", "BALANCE_SHEET", "NOTES",
+                 "DEPRECIATION_REPORT", "NOTES", "DECLARATION", "COMPILATION"],
+    "trust": ["COVER", "DETAILED_PL", "BALANCE_SHEET",
+              "DEPRECIATION_REPORT", "NOTES",
               "DECLARATION", "COMPILATION", "DISTRIBUTION"],
-    "sole_trader": ["COVER", "DETAILED_PL", "BALANCE_SHEET", "NOTES",
+    "sole_trader": ["COVER", "DETAILED_PL", "BALANCE_SHEET",
+                     "DEPRECIATION_REPORT", "NOTES",
                      "DECLARATION", "COMPILATION"],
-    "partnership": ["COVER", "DETAILED_PL", "BALANCE_SHEET", "NOTES",
+    "partnership": ["COVER", "DETAILED_PL", "BALANCE_SHEET",
+                     "DEPRECIATION_REPORT", "NOTES",
                      "DECLARATION", "COMPILATION"],
 }
 

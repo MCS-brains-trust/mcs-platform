@@ -2386,6 +2386,326 @@ def _generate_notes_document(context):
 
 
 # ---------------------------------------------------------------------------
+# 6b. _generate_depreciation_report
+# ---------------------------------------------------------------------------
+def _generate_depreciation_report(context):
+    """Build the Depreciation Report as a python-docx Document (landscape).
+
+    Assets are grouped by category with subtotals per category.
+    Columns: Asset | Total Cost | Priv% | OWDV | Disp Date | Disp Consid |
+             Add Date | Add Cost | Dep Value | T | Rate | Deprec | Priv | CWDV
+
+    Returns a BytesIO buffer containing the .docx, or None if no assets exist.
+    """
+    from docx import Document
+    from docx.shared import Cm, Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.table import WD_TABLE_ALIGNMENT
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    from collections import OrderedDict
+    from decimal import Decimal
+    from core.models import DepreciationAsset
+
+    fy = context["_fy"]
+    entity = context["_entity"]
+
+    assets = DepreciationAsset.objects.filter(
+        financial_year=fy
+    ).order_by("category", "display_order", "asset_name")
+
+    if not assets.exists():
+        return None
+
+    # Group by category
+    categories = OrderedDict()
+    for asset in assets:
+        categories.setdefault(asset.category, []).append(asset)
+
+    def _fmt(val):
+        if val is None or val == 0:
+            return ""
+        return f"{val:,.0f}"
+
+    def _fmt_rate(val):
+        if val is None or val == 0:
+            return "0.00"
+        return f"{val:.2f}"
+
+    def _fmt_date(d):
+        if d is None:
+            return ""
+        return d.strftime("%d/%m/%y")
+
+    FONT = "Calibri"
+    FONT_SZ = Pt(7)
+    FONT_SZ_HDR = Pt(7)
+    FONT_SZ_TITLE = Pt(9)
+    HEADER_BG = "D9E2F3"
+
+    # Column widths (cm) — 14 columns to fit A4 landscape
+    COL_W = [5.0, 1.7, 0.9, 1.7, 1.4, 1.4, 1.4, 1.4, 1.4, 0.5, 1.1, 1.7, 1.1, 1.7]
+    COL_HEADERS = [
+        "Asset", "Total\nCost", "Priv\n%", "OWDV",
+        "Disp\nDate", "Disp\nConsid",
+        "Add\nDate", "Add\nCost",
+        "Dep\nValue", "T", "Rate", "Deprec", "Priv", "CWDV",
+    ]
+
+    def _shade_cell(cell, hex_color):
+        from docx.oxml import parse_xml
+        from docx.oxml.ns import nsdecls
+        shading = parse_xml(f'<w:shd {nsdecls("w")} w:fill="{hex_color}"/>')
+        cell._tc.get_or_add_tcPr().append(shading)
+
+    def _apply_top_border(row):
+        for cell in row.cells:
+            tc = cell._tc
+            tcPr = tc.get_or_add_tcPr()
+            tcBorders = tcPr.find(qn('w:tcBorders'))
+            if tcBorders is None:
+                tcBorders = OxmlElement('w:tcBorders')
+                tcPr.append(tcBorders)
+            top = OxmlElement('w:top')
+            top.set(qn('w:val'), 'single')
+            top.set(qn('w:sz'), '6')
+            top.set(qn('w:space'), '0')
+            top.set(qn('w:color'), '000000')
+            tcBorders.append(top)
+
+    doc = Document()
+
+    # Landscape A4 setup
+    from docx.shared import Cm as _Cm
+    for section in doc.sections:
+        section.page_width = _Cm(29.7)
+        section.page_height = _Cm(21.0)
+        section.top_margin = _Cm(2)
+        section.bottom_margin = _Cm(2)
+        section.left_margin = _Cm(1.5)
+        section.right_margin = _Cm(1.5)
+        section.orientation = 1  # WD_ORIENT.LANDSCAPE
+
+    # Set default font
+    style = doc.styles["Normal"]
+    style.font.name = FONT
+    style.font.size = FONT_SZ
+
+    # Repeating header
+    header = doc.sections[0].header
+    header.is_linked_to_previous = False
+    for para in list(header.paragraphs):
+        para.clear()
+    p1 = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
+    p1.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r1 = p1.add_run("{{ entity_name }}")
+    r1.font.name = FONT; r1.font.size = Pt(10); r1.bold = True
+    p1.paragraph_format.space_after = Pt(0)
+    p2 = header.add_paragraph()
+    p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r2 = p2.add_run("ABN {{ abn }}")
+    r2.font.name = FONT; r2.font.size = Pt(8)
+    p2.paragraph_format.space_after = Pt(0)
+    p3 = header.add_paragraph()
+    p3.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r3 = p3.add_run("Depreciation Report")
+    r3.font.name = FONT; r3.font.size = Pt(8)
+    p3.paragraph_format.space_after = Pt(0)
+    p4 = header.add_paragraph()
+    p4.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r4 = p4.add_run("{{ date_text }}")
+    r4.font.name = FONT; r4.font.size = Pt(8)
+    p4.paragraph_format.space_after = Pt(4)
+    pPr = p4._p.get_or_add_pPr()
+    pBdr = OxmlElement('w:pBdr')
+    bb = OxmlElement('w:bottom')
+    bb.set(qn('w:val'), 'single'); bb.set(qn('w:sz'), '6')
+    bb.set(qn('w:space'), '1'); bb.set(qn('w:color'), '000000')
+    pBdr.append(bb); pPr.append(pBdr)
+    pw = header.add_paragraph()
+    pw.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    rw = pw.add_run("{{ watermark }}")
+    rw.font.name = FONT; rw.font.size = Pt(12)
+    rw.font.color.rgb = RGBColor(0xFF, 0x00, 0x00); rw.bold = True
+    pw.paragraph_format.space_after = Pt(0)
+
+    # Footer
+    footer = doc.sections[0].footer
+    footer.is_linked_to_previous = False
+    fp = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
+    fp.text = ""
+    fp.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    fr = fp.add_run(
+        "These financial statements are unaudited. They must be read in conjunction with the "
+        "attached Accountant\u2019s Compilation Report and Notes which form part of these financial statements."
+    )
+    fr.font.name = FONT; fr.font.size = Pt(7); fr.font.italic = True
+
+    # Grand totals accumulators
+    grand_cost = Decimal("0")
+    grand_owdv = Decimal("0")
+    grand_deprec = Decimal("0")
+    grand_priv = Decimal("0")
+    grand_cwdv = Decimal("0")
+    grand_add = Decimal("0")
+    grand_disp = Decimal("0")
+
+    first_category = True
+    for cat_name, cat_assets in categories.items():
+        if not first_category:
+            doc.add_paragraph().paragraph_format.space_after = Pt(6)
+        first_category = False
+
+        # Category heading
+        ph = doc.add_paragraph()
+        rh = ph.add_run(cat_name)
+        rh.font.name = FONT; rh.font.size = Pt(9); rh.bold = True; rh.underline = True
+        ph.paragraph_format.space_after = Pt(2)
+
+        # Table
+        table = doc.add_table(rows=1, cols=len(COL_HEADERS))
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+        table.autofit = False
+
+        # Fix column widths
+        for row in table.rows:
+            for i, w in enumerate(COL_W):
+                row.cells[i].width = Cm(w)
+
+        # Header row
+        hdr = table.rows[0].cells
+        for i, hdr_text in enumerate(COL_HEADERS):
+            cell = hdr[i]
+            p = cell.paragraphs[0]
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run = p.add_run(hdr_text)
+            run.font.size = FONT_SZ_HDR; run.font.name = FONT; run.bold = True
+            _shade_cell(cell, HEADER_BG)
+
+        # Category totals
+        cat_cost = Decimal("0")
+        cat_owdv = Decimal("0")
+        cat_deprec = Decimal("0")
+        cat_priv = Decimal("0")
+        cat_cwdv = Decimal("0")
+        cat_add = Decimal("0")
+        cat_disp = Decimal("0")
+
+        for asset in cat_assets:
+            row = table.add_row()
+            for i, w in enumerate(COL_W):
+                row.cells[i].width = Cm(w)
+            vals = [
+                asset.asset_name,
+                _fmt(asset.total_cost),
+                f"{asset.private_use_pct:.2f}" if asset.private_use_pct else "",
+                _fmt(asset.opening_wdv),
+                _fmt_date(asset.disposal_date),
+                _fmt(asset.disposal_consideration),
+                _fmt_date(asset.addition_date),
+                _fmt(asset.addition_cost),
+                _fmt(asset.depreciable_value),
+                asset.get_method_display()[0] if asset.method else "",
+                _fmt_rate(asset.rate),
+                _fmt(asset.depreciation_amount),
+                _fmt(asset.private_depreciation),
+                _fmt(asset.closing_wdv),
+            ]
+            for i, val in enumerate(vals):
+                cell = row.cells[i]
+                cell.width = Cm(COL_W[i])
+                p = cell.paragraphs[0]
+                p.alignment = WD_ALIGN_PARAGRAPH.RIGHT if i > 0 else WD_ALIGN_PARAGRAPH.LEFT
+                run = p.add_run(str(val))
+                run.font.size = FONT_SZ; run.font.name = FONT
+
+            cat_cost += asset.total_cost or Decimal("0")
+            cat_owdv += asset.opening_wdv or Decimal("0")
+            cat_deprec += asset.depreciation_amount or Decimal("0")
+            cat_priv += asset.private_depreciation or Decimal("0")
+            cat_cwdv += asset.closing_wdv or Decimal("0")
+            cat_add += asset.addition_cost or Decimal("0")
+            cat_disp += asset.disposal_consideration or Decimal("0")
+
+        # Subtotals row
+        sub_row = table.add_row()
+        for i, w in enumerate(COL_W):
+            sub_row.cells[i].width = Cm(w)
+        sub_vals = [
+            "Subtotals",
+            _fmt(cat_cost), "", _fmt(cat_owdv),
+            "", _fmt(cat_disp),
+            "", _fmt(cat_add),
+            "", "", "",
+            _fmt(cat_deprec), _fmt(cat_priv), _fmt(cat_cwdv),
+        ]
+        for i, val in enumerate(sub_vals):
+            cell = sub_row.cells[i]
+            cell.width = Cm(COL_W[i])
+            p = cell.paragraphs[0]
+            p.alignment = WD_ALIGN_PARAGRAPH.RIGHT if i > 0 else WD_ALIGN_PARAGRAPH.LEFT
+            run = p.add_run(str(val))
+            run.font.size = FONT_SZ; run.font.name = FONT; run.bold = True
+        _apply_top_border(sub_row)
+
+        # Net depreciation line
+        net_dep = cat_deprec - cat_priv
+        pn = doc.add_paragraph()
+        rn = pn.add_run(f"Deduct Private Portion: {_fmt(cat_priv)}     Net Depreciation: {_fmt(net_dep)}")
+        rn.font.size = Pt(8); rn.font.name = FONT; rn.bold = True; rn.underline = True
+        pn.paragraph_format.space_after = Pt(4)
+
+        # Accumulate grand totals
+        grand_cost += cat_cost; grand_owdv += cat_owdv
+        grand_deprec += cat_deprec; grand_priv += cat_priv
+        grand_cwdv += cat_cwdv; grand_add += cat_add; grand_disp += cat_disp
+
+    # Grand totals section
+    doc.add_paragraph().paragraph_format.space_after = Pt(4)
+    pg = doc.add_paragraph()
+    rg = pg.add_run("Grand Totals")
+    rg.font.name = FONT; rg.font.size = Pt(9); rg.bold = True
+    pg.paragraph_format.space_after = Pt(2)
+
+    gt_table = doc.add_table(rows=1, cols=len(COL_HEADERS))
+    gt_table.alignment = WD_TABLE_ALIGNMENT.CENTER
+    gt_table.autofit = False
+    for row in gt_table.rows:
+        for i, w in enumerate(COL_W):
+            row.cells[i].width = Cm(w)
+    gt_vals = [
+        "Total All Categories",
+        _fmt(grand_cost), "", _fmt(grand_owdv),
+        "", _fmt(grand_disp),
+        "", _fmt(grand_add),
+        "", "", "",
+        _fmt(grand_deprec), _fmt(grand_priv), _fmt(grand_cwdv),
+    ]
+    gt_row = gt_table.rows[0]
+    for i, val in enumerate(gt_vals):
+        cell = gt_row.cells[i]
+        cell.width = Cm(COL_W[i])
+        p = cell.paragraphs[0]
+        p.alignment = WD_ALIGN_PARAGRAPH.RIGHT if i > 0 else WD_ALIGN_PARAGRAPH.LEFT
+        run = p.add_run(str(val))
+        run.font.size = FONT_SZ; run.font.name = FONT; run.bold = True
+    _apply_top_border(gt_row)
+
+    # Net depreciation grand total
+    grand_net = grand_deprec - grand_priv
+    pgn = doc.add_paragraph()
+    rgn = pgn.add_run(
+        f"Total Private Portion: {_fmt(grand_priv)}     Total Net Depreciation: {_fmt(grand_net)}"
+    )
+    rgn.font.size = Pt(9); rgn.font.name = FONT; rgn.bold = True; rgn.underline = True
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf
+
+
+# ---------------------------------------------------------------------------
 # 7. generate_financial_statements
 # ---------------------------------------------------------------------------
 DOCUMENT_TYPE_ORDER = [
@@ -2393,6 +2713,7 @@ DOCUMENT_TYPE_ORDER = [
     "DETAILED_PL",
     "BALANCE_SHEET",
     "SUMMARY_PL",
+    "DEPRECIATION_REPORT",
     "NOTES",
     "DECLARATION",
     "DISTRIBUTION",
@@ -2470,6 +2791,25 @@ def generate_financial_statements(financial_year_id, include_watermark=True):
     results = {}
     for doc_type in DOCUMENT_TYPE_ORDER:
         if doc_type in skip_types:
+            continue
+
+        # DEPRECIATION_REPORT: programmatic generation from DepreciationAsset records
+        if doc_type == "DEPRECIATION_REPORT":
+            try:
+                buffer = _generate_depreciation_report(context)
+                if buffer is None:
+                    logger.info(
+                        "No depreciation assets for FY %s — skipping DEPRECIATION_REPORT",
+                        fy.pk,
+                    )
+                else:
+                    buffer = _post_process_fs_doc(buffer, doc_type)
+                    results[doc_type] = buffer
+                    logger.info("Generated programmatic DEPRECIATION_REPORT for FY %s", fy.pk)
+            except Exception as e:
+                logger.error(
+                    "Failed to generate DEPRECIATION_REPORT for FY %s: %s", fy.pk, e
+                )
             continue
 
         # NOTES: use programmatic generation instead of static template

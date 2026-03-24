@@ -1522,6 +1522,7 @@ class FinancialStatementTemplate(models.Model):
         DETAILED_PL = "DETAILED_PL", "Detailed Profit and Loss"
         BALANCE_SHEET = "BALANCE_SHEET", "Balance Sheet"
         SUMMARY_PL = "SUMMARY_PL", "Summary P&L"
+        DEPRECIATION_REPORT = "DEPRECIATION_REPORT", "Depreciation Report"
         NOTES = "NOTES", "Notes to Financial Statements"
         DECLARATION = "DECLARATION", "Declaration"
         COMPILATION = "COMPILATION", "Compilation Report"
