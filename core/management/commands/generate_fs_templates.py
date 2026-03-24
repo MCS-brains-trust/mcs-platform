@@ -111,6 +111,33 @@ def _set_table_full_width(table):
     tblPr.append(tblW)
 
 
+def _clear_table_borders(table):
+    """
+    Explicitly set all table-level borders to nil.
+
+    LibreOffice inherits w:tblBorders from the table style (e.g. 'Table Grid')
+    and renders them even when individual cells declare w:nil.  Clearing the
+    table-level borders here means only the borders we explicitly draw on
+    individual cells will appear in the PDF output.
+    """
+    tbl = table._tbl
+    tblPr = tbl.find(qn('w:tblPr'))
+    if tblPr is None:
+        tblPr = OxmlElement('w:tblPr')
+        tbl.insert(0, tblPr)
+    existing = tblPr.find(qn('w:tblBorders'))
+    if existing is not None:
+        tblPr.remove(existing)
+    tblBorders = OxmlElement('w:tblBorders')
+    for edge in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
+        el = OxmlElement(f'w:{edge}')
+        el.set(qn('w:val'), 'nil')
+        el.set(qn('w:sz'), '0')
+        el.set(qn('w:color'), 'auto')
+        tblBorders.append(el)
+    tblPr.append(tblBorders)
+
+
 # ---------------------------------------------------------------------------
 # Border helpers — Australian special-purpose FS presentation
 # ---------------------------------------------------------------------------
@@ -187,6 +214,7 @@ def _add_total_row(doc, label, cy_tag, py_tag, size=None, grand_total=False):
     font_size = size or FONT_SIZE
     table = doc.add_table(rows=1, cols=4)
     _set_table_full_width(table)
+    _clear_table_borders(table)
     table.autofit = False
     for i, width in enumerate(COL_WIDTHS):
         table.columns[i].width = width
@@ -313,6 +341,7 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
 
     table = doc.add_table(rows=1, cols=4)
     _set_table_full_width(table)
+    _clear_table_borders(table)
     table.autofit = False
     for i, width in enumerate(COL_WIDTHS):
         table.columns[i].width = width
@@ -533,6 +562,7 @@ def _build_detailed_pl(entity_type):
     # Income tax row
     tax_table = doc.add_table(rows=1, cols=4)
     _set_table_full_width(tax_table)
+    _clear_table_borders(tax_table)
     tax_table.autofit = False
     for i, width in enumerate(COL_WIDTHS):
         tax_table.columns[i].width = width
@@ -640,6 +670,7 @@ def _build_summary_pl(entity_type):
 
     table = doc.add_table(rows=len(rows_data), cols=3)
     _set_table_full_width(table)
+    _clear_table_borders(table)
     table.autofit = False
     table.columns[0].width = Cm(10)
     table.columns[1].width = Cm(3)
@@ -854,6 +885,7 @@ def _build_distribution(entity_type):
     # Distribution table
     table = doc.add_table(rows=1, cols=3)
     _set_table_full_width(table)
+    _clear_table_borders(table)
     table.autofit = False
     table.columns[0].width = Cm(8)
     table.columns[1].width = Cm(4)
