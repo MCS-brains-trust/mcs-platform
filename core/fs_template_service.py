@@ -597,56 +597,51 @@ def build_company_context(financial_year, include_watermark=True):
 
     # Retained profit roll-forward
     # ─────────────────────────────────────────────────────────────────────────
-    # The TB stores two columns per account:
-    #   cy_amount  = current year closing balance
-    #   py_amount  = prior year closing balance (the comparative column)
+    # StatementHub uses an UNCLOSED trial balance convention: current-year
+    # profit/loss remains in the P&L accounts and has NOT been transferred
+    # into the retained earnings account.  This means:
     #
-    # Roll-forward identity:
-    #   retained_profit_opening_cy  = prior year CLOSING retained balance
-    #                               = py_amount of retained/accumulated accounts
-    #                               (this is exactly what the comparative column holds)
+    #   cy_amount of retained/accumulated accounts
+    #       = the OPENING retained balance for the current year
+    #       = the CLOSING retained balance of the prior year
     #
-    #   retained_profit_closing_cy  = cy_amount of retained/accumulated accounts
-    #                               (the current year closing balance)
+    #   py_amount of retained/accumulated accounts
+    #       = the OPENING retained balance for the prior year
+    #       = the CLOSING retained balance of the year before that
     #
-    # The prior-year column on the Summary P&L shows the SAME roll-forward
-    # one year earlier:
-    #   retained_profit_opening_py  = py_amount − net_profit_py
-    #                               (back-calculated because we don't have a
-    #                                prior-prior-year comparative column)
+    # Roll-forward identity (unclosed TB):
+    #   retained_profit_opening_cy  = cy_amount (negated, credit-normal)
+    #   retained_profit_closing_cy  = opening + after-tax profit − dividends
     #
-    # Credit-normal convention: equity accounts have negative raw values for
+    #   retained_profit_opening_py  = py_amount (negated, credit-normal)
+    #   retained_profit_closing_py  = py_opening + net_profit_py − dividends_py
+    #
+    # Credit-normal convention: equity accounts carry negative raw values for
     # credit (positive) balances, so we negate to get display amounts.
     # ─────────────────────────────────────────────────────────────────────────
-    _retained_closing_raw_cy = Decimal("0")
-    _retained_closing_raw_py = Decimal("0")
+    _retained_opening_raw_cy = Decimal("0")   # cy_amount = opening for current year
+    _retained_opening_raw_py = Decimal("0")   # py_amount = opening for prior year
     _dividends_cy = Decimal("0")
     _dividends_py = Decimal("0")
     for _item in sections["equity"]:
         _name_l = _item.get("account_name", "").lower()
         if any(kw in _name_l for kw in ["retained", "accumulated"]):
-            _retained_closing_raw_cy += _item.get("cy_amount", Decimal("0")) or Decimal("0")
-            _retained_closing_raw_py += _item.get("py_amount", Decimal("0")) or Decimal("0")
+            _retained_opening_raw_cy += _item.get("cy_amount", Decimal("0")) or Decimal("0")
+            _retained_opening_raw_py += _item.get("py_amount", Decimal("0")) or Decimal("0")
         elif "dividend" in _name_l:
             _dividends_cy += abs(_item.get("cy_amount", Decimal("0")) or Decimal("0"))
             _dividends_py += abs(_item.get("py_amount", Decimal("0")) or Decimal("0"))
 
     # Convert credit-normal raw to positive display amounts
-    _retained_closing_cy = -_retained_closing_raw_cy   # CY closing retained balance
-    _retained_closing_py = -_retained_closing_raw_py   # PY closing retained balance
-
-    # CY opening = prior year closing (the comparative column IS the prior year closing)
-    retained_profit_opening_cy = _retained_closing_py
-
-    # PY opening = back-calculated (no prior-prior-year comparative available)
-    retained_profit_opening_py = _retained_closing_py - net_profit_py
+    # For unclosed TB: cy_amount IS the opening balance (profit not yet transferred)
+    retained_profit_opening_cy = -_retained_opening_raw_cy
+    retained_profit_opening_py = -_retained_opening_raw_py
 
     # Total available = opening + after-tax profit
     total_available_cy = retained_profit_opening_cy + net_profit_cy
     total_available_py = retained_profit_opening_py + net_profit_py
 
     # Closing retained = total available minus dividends
-    # CY closing should match the TB retained balance exactly
     retained_profit_closing_cy = total_available_cy - _dividends_cy
     retained_profit_closing_py = total_available_py - _dividends_py
 
