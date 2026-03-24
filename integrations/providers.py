@@ -510,10 +510,11 @@ class QuickBooksProvider(BaseProvider):
 
             The QB GeneralLedger API returns child Data rows for each account Section:
               - First Data row: 'Beginning Balance' label + opening balance in Balance col
-              - Middle Data rows: individual transactions
-              - Last Data row: 'Ending Balance' label + closing balance in Balance col
+              - Middle Data rows: individual transactions (date in col 0, running balance in last col)
+              - There is NO explicit 'Ending Balance' row — the ending balance is the Balance
+                value of the last child Data row.
 
-            Net Activity = Ending Balance - Beginning Balance.
+            Net Activity = Ending Balance (last row) - Beginning Balance (first row).
             Returns (net_activity, beginning_balance) or (None, None) if not found.
             """
             data_rows = [
@@ -527,29 +528,29 @@ class QuickBooksProvider(BaseProvider):
             beginning_balance = None
             ending_balance = None
 
-            # Check first Data row for 'Beginning Balance'
+            # First Data row: should be 'Beginning Balance'
             first_col_data = data_rows[0].get("ColData", []) or []
             first_label = _col_value(first_col_data[0]).lower().strip() if first_col_data else ""
             if first_label == "beginning balance":
                 beginning_balance = _extract_balance_from_col_data(first_col_data)
 
-            # Check last Data row for 'Ending Balance'
+            # Last Data row: always holds the ending balance in the Balance column,
+            # regardless of whether its label is a date, 'Ending Balance', or anything else.
             last_col_data = data_rows[-1].get("ColData", []) or []
-            last_label = _col_value(last_col_data[0]).lower().strip() if last_col_data else ""
-            if last_label == "ending balance":
-                ending_balance = _extract_balance_from_col_data(last_col_data)
+            ending_balance = _extract_balance_from_col_data(last_col_data)
 
-            # If we have both, compute net
+            # If first == last (only one row = Beginning Balance, no transactions),
+            # the account had no movement in the period.
+            if len(data_rows) == 1 and first_label == "beginning balance":
+                return Decimal("0"), beginning_balance
+
+            # Compute net
             if beginning_balance is not None and ending_balance is not None:
                 return ending_balance - beginning_balance, beginning_balance
 
-            # If only ending balance (no beginning balance row = account opened this period)
+            # No beginning balance row (account opened this period): net = ending balance
             if ending_balance is not None:
                 return ending_balance, Decimal("0")
-
-            # If only beginning balance (account closed this period, ending = 0)
-            if beginning_balance is not None:
-                return -beginning_balance, beginning_balance
 
             return None, None
 
