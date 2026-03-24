@@ -69,7 +69,7 @@ class BaseProvider:
     def get_tenants(self, access_token):
         raise NotImplementedError
 
-    def fetch_trial_balance(self, access_token, tenant_id, as_at_date):
+    def fetch_trial_balance(self, access_token, tenant_id, as_at_date, start_date=None):
         raise NotImplementedError
 
     def fetch_period_movement(self, access_token, tenant_id, from_date, to_date):
@@ -141,7 +141,7 @@ class XeroProvider(BaseProvider):
             for t in data
         ]
 
-    def fetch_trial_balance(self, access_token, tenant_id, as_at_date):
+    def fetch_trial_balance(self, access_token, tenant_id, as_at_date, start_date=None):
         url = "https://api.xero.com/api.xro/2.0/Reports/TrialBalance"
         headers = {
             "Authorization": f"Bearer {access_token}",
@@ -279,13 +279,15 @@ class QuickBooksProvider(BaseProvider):
     def get_tenants(self, access_token):
         return []
 
-    def fetch_trial_balance(self, access_token, tenant_id, as_at_date):
+    def fetch_trial_balance(self, access_token, tenant_id, as_at_date, start_date=None):
         base_url = f"https://quickbooks.api.intuit.com/v3/company/{tenant_id}"
-        params = {"minorversion": "65"}
-        if as_at_date:
-            params["date_macro"] = ""
-            params["end_date"] = as_at_date.isoformat()
-            params["start_date"] = ""
+        params = {
+            "minorversion": "65",
+            "end_date": as_at_date.isoformat(),
+            "accounting_method": "Accrual",
+        }
+        if start_date:
+            params["start_date"] = start_date.isoformat()
         resp = requests.get(
             f"{base_url}/reports/TrialBalance",
             headers={
@@ -300,41 +302,33 @@ class QuickBooksProvider(BaseProvider):
         lines = []
         rows_data = data.get("Rows", {}).get("Row", [])
 
+        # Debug: log first 3 rows for verification
+        for i, r in enumerate(rows_data[:3]):
+            logger.info("QBO TB row %d: type=%s ColData=%s", i, r.get("type"), r.get("ColData"))
+
         def walk(rows):
             for row in rows:
-                if row.get("type") == "Section":
-                    header_cols = row.get("Header", {}).get("ColData", [])
-                    code = header_cols[0].get("id", "") if header_cols else ""
-                    name = header_cols[0].get("value", "") if header_cols else ""
-                    summary = row.get("Summary", {}).get("ColData", [])
-                    if summary:
-                        opening = _to_decimal(summary[1].get("value", "0")) if len(summary) > 1 else Decimal("0")
-                        debit = _to_decimal(summary[2].get("value", "0")) if len(summary) > 2 else Decimal("0")
-                        credit = _to_decimal(summary[3].get("value", "0")) if len(summary) > 3 else Decimal("0")
+                row_type = row.get("type", "")
+                if row_type == "Data":
+                    cols = row.get("ColData", [])
+                    if len(cols) >= 3:
+                        code = cols[0].get("id", "")
+                        name = (cols[0].get("value", "") or "").strip()
+                        if not name:
+                            continue
+                        debit = _to_decimal(cols[1].get("value"))
+                        credit = _to_decimal(cols[2].get("value"))
                         lines.append({
                             "account_code": code,
                             "account_name": name,
-                            "opening_balance": opening,
+                            "opening_balance": Decimal("0"),
                             "debit": debit,
                             "credit": credit,
                         })
+                elif row_type == "Section":
+                    # Recurse into child rows within sections
                     child_rows = row.get("Rows", {}).get("Row", [])
                     walk(child_rows)
-                elif row.get("type") == "Data":
-                    cols = row.get("ColData", [])
-                    if len(cols) >= 4:
-                        code = cols[0].get("id", "")
-                        name = cols[0].get("value", "")
-                        opening = _to_decimal(cols[1].get("value", "0"))
-                        debit = _to_decimal(cols[2].get("value", "0"))
-                        credit = _to_decimal(cols[3].get("value", "0"))
-                        lines.append({
-                            "account_code": code,
-                            "account_name": name,
-                            "opening_balance": opening,
-                            "debit": debit,
-                            "credit": credit,
-                        })
 
         walk(rows_data)
         return lines

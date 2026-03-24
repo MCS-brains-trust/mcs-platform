@@ -386,7 +386,7 @@ def _do_cloud_import(
         if import_mode == "period_movement":
             raw_lines = provider.fetch_period_movement(access_token, tenant_id, from_date, to_date)
         else:
-            raw_lines = provider.fetch_trial_balance(access_token, tenant_id, as_at_date)
+            raw_lines = provider.fetch_trial_balance(access_token, tenant_id, as_at_date, start_date=fy.start_date)
         if not raw_lines:
             if import_mode == "period_movement":
                 raise ValueError(
