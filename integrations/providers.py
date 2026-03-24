@@ -590,10 +590,14 @@ class QuickBooksProvider(BaseProvider):
                     bal_idx = len(column_names) - 1
                     first_child_bal = _col_value(fc[bal_idx]) if len(fc) > bal_idx else ""
                     last_child_bal = _col_value(lc[bal_idx]) if len(lc) > bal_idx else ""
+                # Also check last 3 raw children (including non-Data) to see nesting
+                raw_last3 = children[-3:] if len(children) >= 3 else children
+                raw_last3_info = [(c.get('type','?'), _col_value((c.get('ColData') or [{}])[0]) if c.get('ColData') else 'no-coldata', len(c.get('Rows',{}).get('Row',[]) or [])) for c in raw_last3 if isinstance(c, dict)]
                 logger.info(
-                    "QB GL row %d: type=%s acct=%s children=%d first_child_label=%r last_child_label=%r first_bal=%s last_bal=%s",
+                    "QB GL row %d: type=%s acct=%s data_children=%d first=%r/%s last=%r/%s raw_last3=%s",
                     _debug_row_count[0], row_type, header_name, len(data_children),
-                    first_child_label, last_child_label, first_child_bal, last_child_bal,
+                    first_child_label, first_child_bal, last_child_label, last_child_bal,
+                    raw_last3_info,
                 )
 
             # For Section rows: compute Net Activity = Ending Balance - Beginning Balance
