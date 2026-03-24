@@ -332,8 +332,9 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
                 run.bold = True
 
     # Remove top border from all header cells (suppress the line above year columns)
+    # Use 'nil' not 'none' — LibreOffice ignores 'none' and falls back to table default
     for cell in hdr.cells:
-        _apply_cell_border(cell, top={"val": "none", "sz": "0", "color": "auto"})
+        _apply_cell_border(cell, top={"val": "nil", "sz": "0", "color": "auto"})
 
     # Fix 7a: Mark header row to repeat on each page (tblHeader)
     tr = hdr._tr
@@ -651,9 +652,10 @@ def _build_summary_pl(entity_type):
                     run.font.size = FONT_SIZE
                     run.bold = is_bold or r == 0
         # Suppress top border on the header row (removes line above year columns)
+        # Use 'nil' not 'none' — LibreOffice ignores 'none' and falls back to table default
         if r == 0:
             for cell in table.rows[r].cells:
-                _apply_cell_border(cell, top={"val": "none", "sz": "0", "color": "auto"})
+                _apply_cell_border(cell, top={"val": "nil", "sz": "0", "color": "auto"})
         if border_type == "subtotal":
             _apply_subtotal_borders(table.rows[r])
         elif border_type == "grand_total":
