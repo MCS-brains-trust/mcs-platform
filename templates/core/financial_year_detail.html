@@ -162,14 +162,7 @@
 
                     <!-- Financial Statement Download Buttons -->
                     {% if fy.status == 'finalised' %}
-                    <!-- Final statements — direct download, no modal -->
-                    <button type="button" id="dlBtnDocx" class="btn btn-sm btn-dark" onclick="showPeriodModal('docx')">
-                        <span id="dlBtnDocxLabel"><i class="bi bi-file-earmark-word"></i> Download Financial Statements</span>
-                        <span id="dlBtnDocxSpinner" class="d-none">
-                            <span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>
-                            &#x23F3; Preparing&hellip;
-                        </span>
-                    </button>
+                    <!-- Final statements — PDF only -->
                     <button type="button" id="dlBtnPdf" class="btn btn-sm btn-danger" onclick="showPeriodModal('pdf')">
                         <span id="dlBtnPdfLabel"><i class="bi bi-file-earmark-pdf"></i> Download Financial Statements</span>
                         <span id="dlBtnPdfSpinner" class="d-none">
