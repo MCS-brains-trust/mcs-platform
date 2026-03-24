@@ -576,21 +576,24 @@ class QuickBooksProvider(BaseProvider):
             # Debug: log first 3 rows so we can see the actual structure
             _debug_row_count[0] += 1
             if _debug_row_count[0] <= 3:
+                data_children = [c for c in children if isinstance(c, dict) and (c.get("type") or c.get("RowType") or "").lower() == "data"]
+                first_child_label = ""
+                last_child_label = ""
+                first_child_bal = ""
+                last_child_bal = ""
+                if data_children:
+                    fc = data_children[0].get("ColData", [])
+                    lc = data_children[-1].get("ColData", [])
+                    first_child_label = _col_value(fc[0]) if fc else ""
+                    last_child_label = _col_value(lc[0]) if lc else ""
+                    bal_idx = len(column_names) - 1
+                    first_child_bal = _col_value(fc[bal_idx]) if len(fc) > bal_idx else ""
+                    last_child_bal = _col_value(lc[bal_idx]) if len(lc) > bal_idx else ""
                 logger.info(
-                    "QB GL row %d: type=%s header_name=%s summary_keys=%s summary_col_count=%d children_count=%d",
-                    _debug_row_count[0],
-                    row_type,
-                    header_name,
-                    ",".join(summary.keys()) if summary else "",
-                    len(summary_cols),
-                    len(children),
+                    "QB GL row %d: type=%s acct=%s children=%d first_child_label=%r last_child_label=%r first_bal=%s last_bal=%s",
+                    _debug_row_count[0], row_type, header_name, len(data_children),
+                    first_child_label, last_child_label, first_child_bal, last_child_bal,
                 )
-                if summary_cols:
-                    logger.info(
-                        "QB GL row %d summary_cols sample: %s",
-                        _debug_row_count[0],
-                        json.dumps(summary_cols[:3], default=str)[:500],
-                    )
 
             # For Section rows: compute Net Activity = Ending Balance - Beginning Balance
             # by scanning the child Data rows.
