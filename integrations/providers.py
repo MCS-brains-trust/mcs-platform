@@ -282,109 +282,98 @@ class QuickBooksProvider(BaseProvider):
     def get_tenants(self, access_token):
         return []
 
-    def _fetch_qbo_tb_snapshot(self, access_token, tenant_id, as_at_date):
-        """Fetch QBO TrialBalance as at a specific date.
+    def _fetch_qbo_gl_summary(self, access_token, tenant_id, start_date, end_date):
+        """Fetch QBO GeneralLedger Summary with net activity per account.
 
-        Returns dict of {account_id: (account_name, signed_balance)}
-        where balance is positive for debit-side, negative for credit-side.
+        Calls /v3/company/{realmId}/reports/GeneralLedger with
+        summarize_column_by=Account to get gross Debit/Credit totals
+        per account for the period. Net activity = Debit - Credit.
+
+        Only accounts with non-zero net activity are returned.
         """
         base_url = f"https://quickbooks.api.intuit.com/v3/company/{tenant_id}"
         resp = requests.get(
-            f"{base_url}/reports/TrialBalance",
+            f"{base_url}/reports/GeneralLedger",
             headers={
                 "Authorization": f"Bearer {access_token}",
                 "Accept": "application/json",
             },
             params={
                 "minorversion": "65",
-                "end_date": as_at_date.isoformat(),
+                "start_date": start_date.isoformat(),
+                "end_date": end_date.isoformat(),
                 "accounting_method": "Accrual",
+                "summarize_column_by": "Account",
             },
-            timeout=30,
+            timeout=60,
         )
         resp.raise_for_status()
         data = resp.json()
-        rows_data = data.get("Rows", {}).get("Row", [])
-        result = {}
 
-        def walk(rows):
-            for row in rows:
-                row_type = row.get("type", "")
-                if row_type == "Data" or ("ColData" in row and row_type != "Section"):
-                    cols = row.get("ColData", [])
-                    if len(cols) < 3:
-                        continue
-                    name = (cols[0].get("value", "") or "").strip()
-                    if not name:
-                        continue
-                    code = cols[0].get("id", "") or name
-                    debit = _to_decimal((cols[1].get("value") or "").strip())
-                    credit = _to_decimal((cols[2].get("value") or "").strip())
-                    balance = debit - credit
-                    result[code] = (name, balance)
-                elif row_type == "Section":
-                    child_rows = row.get("Rows", {}).get("Row", [])
-                    walk(child_rows)
+        logger.info("QBO GL Summary: status=%s top_keys=%s",
+                     resp.status_code, list(data.keys()))
 
-        walk(rows_data)
-        return result
-
-    def _fetch_qbo_trial_balance(self, access_token, tenant_id, start_date, end_date):
-        """Calculate net activity by comparing two TB snapshots.
-
-        Calls TrialBalance twice:
-          1. as at end_date   → closing balances
-          2. as at start_date - 1 day → opening balances
-
-        Net activity = closing - opening per account.
-        Only accounts with non-zero net activity are returned.
-        """
-        from datetime import timedelta
-
-        closing = self._fetch_qbo_tb_snapshot(access_token, tenant_id, end_date)
-        opening_date = start_date - timedelta(days=1)
-        opening = self._fetch_qbo_tb_snapshot(access_token, tenant_id, opening_date)
-
-        logger.info("QBO snapshots: closing=%s has %d accounts, opening=%s has %d accounts",
-                     end_date, len(closing), opening_date, len(opening))
-        for code, (name, cbal) in list(closing.items())[:5]:
-            obal = opening.get(code, (name, Decimal("0")))[1]
-            logger.info("  %s: closing=%s opening=%s net=%s", name, cbal, obal, cbal - obal)
-
+        rows = data.get("Rows", {}).get("Row", [])
         lines = []
-        for code, (name, closing_bal) in closing.items():
-            opening_bal = opening.get(code, (name, Decimal("0")))[1]
-            net = closing_bal - opening_bal
+
+        for row in rows:
+            if row.get("type") != "Section":
+                continue
+
+            header = row.get("Header", {})
+            cols = header.get("ColData", [])
+            if not cols:
+                continue
+
+            account_name = (cols[0].get("value", "") or "").strip()
+            account_code = cols[0].get("id", "")
+            if not account_name:
+                continue
+
+            summary = row.get("Summary", {})
+            summary_cols = summary.get("ColData", [])
+
+            if len(summary_cols) >= 3:
+                raw_debit = (summary_cols[1].get("value") or "").strip()
+                raw_credit = (summary_cols[2].get("value") or "").strip()
+            else:
+                logger.warning("QBO GL row %s has unexpected cols: %s",
+                               account_name, summary_cols)
+                continue
+
+            debit = _to_decimal(raw_debit)
+            credit = _to_decimal(raw_credit)
+            net = debit - credit
 
             if net == 0:
                 continue
 
             if net > 0:
-                debit = net
-                credit = Decimal("0")
+                out_debit = net
+                out_credit = Decimal("0")
             else:
-                debit = Decimal("0")
-                credit = abs(net)
+                out_debit = Decimal("0")
+                out_credit = abs(net)
 
             lines.append({
-                "account_code": code,
-                "account_name": name,
-                "opening_balance": opening_bal,
-                "debit": debit,
-                "credit": credit,
+                "account_code": account_code,
+                "account_name": account_name,
+                "opening_balance": Decimal("0"),
+                "debit": out_debit,
+                "credit": out_credit,
                 "movement_amount": net,
             })
 
+        logger.info("QBO GL Summary: %d accounts with activity", len(lines))
         return lines
 
     def fetch_trial_balance(self, access_token, tenant_id, as_at_date, start_date=None):
         if not start_date:
-            # Default to Australian FY start: 1 July of prior year
             start_date = as_at_date.replace(month=7, day=1, year=as_at_date.year - 1)
-        return self._fetch_qbo_trial_balance(access_token, tenant_id, start_date, as_at_date)
+        return self._fetch_qbo_gl_summary(access_token, tenant_id, start_date, as_at_date)
 
     def fetch_period_movement(self, access_token, tenant_id, from_date, to_date):
-        return self._fetch_qbo_trial_balance(access_token, tenant_id, from_date, to_date)
+        return self._fetch_qbo_gl_summary(access_token, tenant_id, from_date, to_date)
 
 def _to_decimal(value):
     """Safely convert a value to Decimal."""
