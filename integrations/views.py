@@ -391,7 +391,7 @@ def _do_cloud_import(
         if not raw_lines:
             if import_mode == "period_movement":
                 raise ValueError(
-                    f"{provider.display_name} returned no usable movement lines for "
+                    f"{provider.display_name} returned no usable lines for "
                     f"{from_date.isoformat()} to {to_date.isoformat()}."
                 )
             raise ValueError(
@@ -401,7 +401,7 @@ def _do_cloud_import(
         total_debit = sum((line.get("debit") or 0) for line in raw_lines)
         total_credit = sum((line.get("credit") or 0) for line in raw_lines)
         imbalance = total_debit - total_credit
-        if import_mode == "trial_balance" and abs(imbalance) > Decimal("0.01"):
+        if abs(imbalance) > Decimal("0.01"):
             raise ValueError(
                 f"{provider.display_name} trial balance does not balance for {as_at_date.isoformat()} "
                 f"(difference: {imbalance})."
@@ -705,9 +705,10 @@ def commit_import(request, fy_pk):
             if import_mode == "period_movement":
                 period_from = staged.get("from_date", "")
                 period_to = staged.get("to_date", "")
+                provider_name = staged.get("provider_name", "Cloud")
                 movement_amount = Decimal(str(line.get("movement_amount", debit - credit)))
                 description = (
-                    f"Xero General Ledger Summary movement import {period_from} to {period_to}; "
+                    f"{provider_name} import {period_from} to {period_to}; "
                     f"net movement {movement_amount}"
                 )
 
@@ -935,6 +936,7 @@ def _apply_learned_mappings(entity, raw_lines):
             "opening_balance": str(line["opening_balance"]),
             "debit": str(line["debit"]),
             "credit": str(line["credit"]),
+            "movement_amount": str(line.get("movement_amount", Decimal(str(line["debit"])) - Decimal(str(line["credit"])))),
             "mapped_id": "",
             "mapped_label": "",
             "confidence": "new",
