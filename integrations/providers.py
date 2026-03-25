@@ -276,11 +276,11 @@ class QuickBooksProvider(BaseProvider):
     def get_tenants(self, access_token):
         return []
 
-    def _fetch_qbo_trial_balance(self, access_token, tenant_id, end_date):
+    def _fetch_qbo_trial_balance(self, access_token, tenant_id, start_date, end_date):
         """Fetch and parse QBO TrialBalance report.
 
-        Calls /v3/company/{realmId}/reports/TrialBalance with end_date only
-        (no start_date — that would return period movements, not closing balances).
+        Calls /v3/company/{realmId}/reports/TrialBalance with start_date
+        and end_date to get period movements (Net Activity).
 
         Returns list of dicts with account_code, account_name, opening_balance,
         debit, credit, and movement_amount keys.
@@ -294,6 +294,7 @@ class QuickBooksProvider(BaseProvider):
             },
             params={
                 "minorversion": "65",
+                "start_date": start_date.isoformat(),
                 "end_date": end_date.isoformat(),
                 "accounting_method": "Accrual",
             },
@@ -337,10 +338,13 @@ class QuickBooksProvider(BaseProvider):
         return lines
 
     def fetch_trial_balance(self, access_token, tenant_id, as_at_date, start_date=None):
-        return self._fetch_qbo_trial_balance(access_token, tenant_id, as_at_date)
+        if not start_date:
+            # Default to Australian FY start: 1 July of prior year
+            start_date = as_at_date.replace(month=7, day=1, year=as_at_date.year - 1)
+        return self._fetch_qbo_trial_balance(access_token, tenant_id, start_date, as_at_date)
 
     def fetch_period_movement(self, access_token, tenant_id, from_date, to_date):
-        return self._fetch_qbo_trial_balance(access_token, tenant_id, to_date)
+        return self._fetch_qbo_trial_balance(access_token, tenant_id, from_date, to_date)
 
 def _to_decimal(value):
     """Safely convert a value to Decimal."""

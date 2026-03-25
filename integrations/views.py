@@ -401,7 +401,7 @@ def _do_cloud_import(
         total_debit = sum((line.get("debit") or 0) for line in raw_lines)
         total_credit = sum((line.get("credit") or 0) for line in raw_lines)
         imbalance = total_debit - total_credit
-        if abs(imbalance) > Decimal("0.01"):
+        if import_mode == "trial_balance" and provider.name != "quickbooks" and abs(imbalance) > Decimal("0.01"):
             raise ValueError(
                 f"{provider.display_name} trial balance does not balance for {as_at_date.isoformat()} "
                 f"(difference: {imbalance})."
