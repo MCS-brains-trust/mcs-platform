@@ -318,10 +318,10 @@ class QuickBooksProvider(BaseProvider):
                     code = cols[0].get("id", "")
                     raw_debit = (cols[1].get("value") or "").strip()
                     raw_credit = (cols[2].get("value") or "").strip()
-                    if not raw_debit and not raw_credit:
-                        continue
                     debit = _to_decimal(raw_debit)
                     credit = _to_decimal(raw_credit)
+                    if debit == 0 and credit == 0:
+                        continue
                     lines.append({
                         "account_code": code,
                         "account_name": name,
