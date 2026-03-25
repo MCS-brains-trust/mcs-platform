@@ -285,9 +285,9 @@ class QuickBooksProvider(BaseProvider):
     def _fetch_qbo_gl_summary(self, access_token, tenant_id, start_date, end_date):
         """Fetch QBO GeneralLedger and compute net activity per account.
 
-        Each account Section contains Data rows with a Balance column (index 8).
-        Net activity = ending balance (last row) - beginning balance (first row).
-        Only accounts with non-zero net activity are returned.
+        Sums the Amount column (index 7) from transaction Data rows,
+        excluding the Beginning Balance row. Accounts with zero net
+        activity are excluded.
         """
         base_url = f"https://quickbooks.api.intuit.com/v3/company/{tenant_id}"
         resp = requests.get(
@@ -325,29 +325,20 @@ class QuickBooksProvider(BaseProvider):
             if not account_name:
                 continue
 
-            # Get all Data rows inside this Section
+            # Sum Amount column (index 7) from transaction Data rows,
+            # excluding the "Beginning Balance" label row.
             data_rows = row.get("Rows", {}).get("Row", [])
             data_rows = [r for r in data_rows
                          if r.get("type") == "Data" or "ColData" in r]
-            if not data_rows:
-                continue
 
-            # Beginning balance = first row, Balance column (index 8)
-            first_cols = data_rows[0].get("ColData", [])
-            beginning_balance = _to_decimal(
-                first_cols[8].get("value", "0") if len(first_cols) > 8 else "0"
-            )
-
-            # Ending balance = last row, Balance column (index 8)
-            last_cols = data_rows[-1].get("ColData", [])
-            ending_balance = _to_decimal(
-                last_cols[8].get("value", "0") if len(last_cols) > 8 else "0"
-            )
-
-            net = ending_balance - beginning_balance
-
-            logger.info("QBO GL: %s begin=%s end=%s net=%s",
-                        account_name, beginning_balance, ending_balance, net)
+            net = Decimal("0")
+            for data_row in data_rows:
+                cols = data_row.get("ColData", [])
+                date_val = (cols[0].get("value", "") or "").strip() if cols else ""
+                if date_val == "Beginning Balance":
+                    continue
+                if len(cols) > 7:
+                    net += _to_decimal((cols[7].get("value") or "").strip())
 
             if net == 0:
                 continue
@@ -362,7 +353,7 @@ class QuickBooksProvider(BaseProvider):
             lines.append({
                 "account_code": account_code,
                 "account_name": account_name,
-                "opening_balance": beginning_balance,
+                "opening_balance": Decimal("0"),
                 "debit": out_debit,
                 "credit": out_credit,
                 "movement_amount": net,
