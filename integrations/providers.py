@@ -283,11 +283,11 @@ class QuickBooksProvider(BaseProvider):
         return []
 
     def _fetch_qbo_gl_summary(self, access_token, tenant_id, start_date, end_date):
-        """Fetch QBO GeneralLedger Summary with net activity per account.
+        """Fetch QBO GeneralLedger with net activity per account.
 
-        Calls /v3/company/{realmId}/reports/GeneralLedger with
-        summarize_column_by=Account to get gross Debit/Credit totals
-        per account for the period. Net activity = Debit - Credit.
+        Calls /v3/company/{realmId}/reports/GeneralLedger to get
+        per-account Section rows with gross Debit/Credit totals.
+        Net activity = Debit - Credit.
 
         Only accounts with non-zero net activity are returned.
         """
@@ -303,10 +303,11 @@ class QuickBooksProvider(BaseProvider):
                 "start_date": start_date.isoformat(),
                 "end_date": end_date.isoformat(),
                 "accounting_method": "Accrual",
-                "summarize_column_by": "Account",
             },
             timeout=60,
         )
+        if not resp.ok:
+            logger.error("QBO GL error %s: %s", resp.status_code, resp.text[:500])
         resp.raise_for_status()
         data = resp.json()
 
