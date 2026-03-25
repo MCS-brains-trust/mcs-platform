@@ -3288,8 +3288,9 @@ def roll_forward(request, pk):
     if request.method == "POST":
         # Calculate new dates (add 1 year)
         from dateutil.relativedelta import relativedelta
+        from datetime import timedelta
         new_start = current_fy.end_date + relativedelta(days=1)
-        new_end = current_fy.end_date + relativedelta(years=1)
+        new_end = new_start + relativedelta(years=1) - timedelta(days=1)
         new_label = str(new_end.year)
 
         # Check if already exists

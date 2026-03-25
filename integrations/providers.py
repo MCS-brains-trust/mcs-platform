@@ -302,15 +302,6 @@ class QuickBooksProvider(BaseProvider):
         resp.raise_for_status()
         data = resp.json()
         rows_data = data.get("Rows", {}).get("Row", [])
-        logger.info("QBO TB status=%s top_keys=%s rows=%d",
-                     resp.status_code,
-                     list(data.keys()),
-                     len(rows_data))
-        if rows_data:
-            logger.info("QBO TB first row: %s", rows_data[0])
-        else:
-            logger.warning("QBO TB returned EMPTY rows. Full response: %s",
-                           str(data)[:500])
         lines = []
 
         def walk(rows):
