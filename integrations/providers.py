@@ -327,18 +327,22 @@ class QuickBooksProvider(BaseProvider):
 
             # Sum Amount column (index 7) from transaction Data rows,
             # excluding the "Beginning Balance" label row.
-            data_rows = row.get("Rows", {}).get("Row", [])
-            data_rows = [r for r in data_rows
-                         if r.get("type") == "Data" or "ColData" in r]
+            child_rows = row.get("Rows", {}).get("Row", [])
 
             net = Decimal("0")
-            for data_row in data_rows:
+            for data_row in child_rows:
+                if data_row.get("type") == "Section":
+                    continue
                 cols = data_row.get("ColData", [])
-                date_val = (cols[0].get("value", "") or "").strip() if cols else ""
-                if date_val == "Beginning Balance":
+                if not cols:
+                    continue
+                label = (cols[0].get("value", "") or "").strip()
+                if label == "Beginning Balance":
                     continue
                 if len(cols) > 7:
-                    net += _to_decimal((cols[7].get("value") or "").strip())
+                    amount_str = (cols[7].get("value") or "").strip()
+                    if amount_str:
+                        net += _to_decimal(amount_str)
 
             if net == 0:
                 continue
