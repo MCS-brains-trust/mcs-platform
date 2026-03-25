@@ -1857,9 +1857,9 @@ def qb_select_tenant_import(request, fy_pk):
     if request.method == "POST":
         realm_id = request.POST.get("tenant_id", "")
         link_tenant = request.POST.get("link_tenant") == "1"
-        import_mode = request.POST.get("import_mode", "period_movement")
-        from_date_raw = request.POST.get("from_date", "").strip()
-        to_date_raw = request.POST.get("to_date", "").strip()
+        import_mode = "trial_balance"
+        from_date = None
+        to_date = None
 
         if not realm_id:
             messages.error(request, "Please select a company.")
@@ -1869,22 +1869,6 @@ def qb_select_tenant_import(request, fy_pk):
         if not tenant_obj:
             messages.error(request, "Company not found.")
             return redirect("integrations:qb_select_tenant_import", fy_pk=fy_pk)
-
-        from_date = None
-        to_date = None
-        if import_mode == "period_movement":
-            if not from_date_raw or not to_date_raw:
-                messages.error(request, "Please choose both a from date and a to date.")
-                return redirect("integrations:qb_select_tenant_import", fy_pk=fy_pk)
-            try:
-                from_date = timezone.datetime.fromisoformat(from_date_raw).date()
-                to_date = timezone.datetime.fromisoformat(to_date_raw).date()
-            except ValueError:
-                messages.error(request, "Invalid import period. Please choose valid dates.")
-                return redirect("integrations:qb_select_tenant_import", fy_pk=fy_pk)
-            if from_date > to_date:
-                messages.error(request, "The from date must be on or before the to date.")
-                return redirect("integrations:qb_select_tenant_import", fy_pk=fy_pk)
 
         if link_tenant:
             tenants.filter(entity=entity).update(entity=None)
