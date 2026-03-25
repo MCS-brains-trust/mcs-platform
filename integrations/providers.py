@@ -316,7 +316,7 @@ class QuickBooksProvider(BaseProvider):
         def walk(rows):
             for row in rows:
                 row_type = row.get("type", "")
-                if row_type == "Data":
+                if row_type == "Data" or ("ColData" in row and row_type != "Section"):
                     cols = row.get("ColData", [])
                     if len(cols) < 3:
                         continue
