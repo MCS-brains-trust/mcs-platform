@@ -282,12 +282,60 @@ class QuickBooksProvider(BaseProvider):
     def get_tenants(self, access_token):
         return []
 
-    def _fetch_qbo_gl_summary(self, access_token, tenant_id, start_date, end_date):
+    def _fetch_qbo_tb_sides(self, access_token, tenant_id, end_date):
+        """Fetch QBO TrialBalance to determine debit/credit side per account.
+
+        Returns dict of {account_key: 'D' or 'C'}.
+        """
+        base_url = f"https://quickbooks.api.intuit.com/v3/company/{tenant_id}"
+        resp = requests.get(
+            f"{base_url}/reports/TrialBalance",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Accept": "application/json",
+            },
+            params={
+                "minorversion": "65",
+                "end_date": end_date.isoformat(),
+                "accounting_method": "Accrual",
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        rows_data = data.get("Rows", {}).get("Row", [])
+        sides = {}
+
+        def walk(rows):
+            for row in rows:
+                row_type = row.get("type", "")
+                if row_type == "Data" or ("ColData" in row and row_type != "Section"):
+                    cols = row.get("ColData", [])
+                    if len(cols) < 3:
+                        continue
+                    code = cols[0].get("id", "")
+                    name = (cols[0].get("value", "") or "").strip()
+                    key = code or name
+                    if not key:
+                        continue
+                    raw_debit = (cols[1].get("value") or "").strip()
+                    raw_credit = (cols[2].get("value") or "").strip()
+                    if raw_debit:
+                        sides[key] = "D"
+                    elif raw_credit:
+                        sides[key] = "C"
+                elif row_type == "Section":
+                    walk(row.get("Rows", {}).get("Row", []))
+
+        walk(rows_data)
+        return sides
+
+    def _fetch_qbo_gl_summary(self, access_token, tenant_id, start_date, end_date, tb_sides):
         """Fetch QBO GeneralLedger and compute net activity per account.
 
-        Sums the Amount column (index 7) from transaction Data rows,
-        excluding the Beginning Balance row. Accounts with zero net
-        activity are excluded.
+        Sums the Amount column (index 7) from transaction Data rows.
+        Uses tb_sides and beginning_balance to determine the correct
+        debit/credit convention for each account.
         """
         base_url = f"https://quickbooks.api.intuit.com/v3/company/{tenant_id}"
         resp = requests.get(
@@ -309,7 +357,7 @@ class QuickBooksProvider(BaseProvider):
         resp.raise_for_status()
         data = resp.json()
         rows = data.get("Rows", {}).get("Row", [])
-        logger.info("QBO GL: status=%s, %d top-level rows", resp.status_code, len(rows))
+        logger.info("QBO GL: %d top-level rows", len(rows))
 
         lines = []
 
@@ -325,11 +373,11 @@ class QuickBooksProvider(BaseProvider):
             if not account_name:
                 continue
 
-            # Sum Amount column (index 7) from transaction Data rows,
-            # excluding the "Beginning Balance" label row.
             child_rows = row.get("Rows", {}).get("Row", [])
 
+            beginning_balance = Decimal("0")
             net = Decimal("0")
+
             for data_row in child_rows:
                 if data_row.get("type") == "Section":
                     continue
@@ -337,8 +385,14 @@ class QuickBooksProvider(BaseProvider):
                 if not cols:
                     continue
                 label = (cols[0].get("value", "") or "").strip()
+
                 if label == "Beginning Balance":
+                    if len(cols) > 8:
+                        beginning_balance = _to_decimal(
+                            (cols[8].get("value") or "").strip() or "0"
+                        )
                     continue
+
                 if len(cols) > 7:
                     amount_str = (cols[7].get("value") or "").strip()
                     if amount_str:
@@ -347,17 +401,30 @@ class QuickBooksProvider(BaseProvider):
             if net == 0:
                 continue
 
-            if net > 0:
-                out_debit = net
-                out_credit = Decimal("0")
+            # Determine sign convention from TB side and beginning balance
+            key = account_code or account_name
+            tb_side = tb_sides.get(key, "D")
+            use_credit_convention = (tb_side == "C") or (beginning_balance < 0)
+
+            if use_credit_convention:
+                if net > 0:
+                    out_debit, out_credit = Decimal("0"), net
+                else:
+                    out_debit, out_credit = abs(net), Decimal("0")
             else:
-                out_debit = Decimal("0")
-                out_credit = abs(net)
+                if net > 0:
+                    out_debit, out_credit = net, Decimal("0")
+                else:
+                    out_debit, out_credit = Decimal("0"), abs(net)
+
+            logger.info("QBO GL: %s tb=%s begin=%s net=%s → %s",
+                        account_name, tb_side, beginning_balance, net,
+                        "D" if out_debit > 0 else "C")
 
             lines.append({
                 "account_code": account_code,
                 "account_name": account_name,
-                "opening_balance": Decimal("0"),
+                "opening_balance": beginning_balance,
                 "debit": out_debit,
                 "credit": out_credit,
                 "movement_amount": net,
@@ -366,13 +433,21 @@ class QuickBooksProvider(BaseProvider):
         logger.info("QBO GL: %d accounts with net activity", len(lines))
         return lines
 
+    def _fetch_qbo_net_activity(self, access_token, tenant_id, start_date, end_date):
+        """Orchestrate TB sides + GL summary for correct debit/credit assignment."""
+        tb_sides = self._fetch_qbo_tb_sides(access_token, tenant_id, end_date)
+        logger.info("QBO TB sides: %d accounts", len(tb_sides))
+        return self._fetch_qbo_gl_summary(
+            access_token, tenant_id, start_date, end_date, tb_sides
+        )
+
     def fetch_trial_balance(self, access_token, tenant_id, as_at_date, start_date=None):
         if not start_date:
             start_date = as_at_date.replace(month=7, day=1, year=as_at_date.year - 1)
-        return self._fetch_qbo_gl_summary(access_token, tenant_id, start_date, as_at_date)
+        return self._fetch_qbo_net_activity(access_token, tenant_id, start_date, as_at_date)
 
     def fetch_period_movement(self, access_token, tenant_id, from_date, to_date):
-        return self._fetch_qbo_gl_summary(access_token, tenant_id, from_date, to_date)
+        return self._fetch_qbo_net_activity(access_token, tenant_id, from_date, to_date)
 
 def _to_decimal(value):
     """Safely convert a value to Decimal."""
