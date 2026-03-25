@@ -345,6 +345,12 @@ class QuickBooksProvider(BaseProvider):
         opening_date = start_date - timedelta(days=1)
         opening = self._fetch_qbo_tb_snapshot(access_token, tenant_id, opening_date)
 
+        logger.info("QBO snapshots: closing=%s has %d accounts, opening=%s has %d accounts",
+                     end_date, len(closing), opening_date, len(opening))
+        for code, (name, cbal) in list(closing.items())[:5]:
+            obal = opening.get(code, (name, Decimal("0")))[1]
+            logger.info("  %s: closing=%s opening=%s net=%s", name, cbal, obal, cbal - obal)
+
         lines = []
         for code, (name, closing_bal) in closing.items():
             opening_bal = opening.get(code, (name, Decimal("0")))[1]
