@@ -404,7 +404,7 @@ class QuickBooksProvider(BaseProvider):
             # Determine sign convention from TB side and beginning balance
             key = account_code or account_name
             tb_side = tb_sides.get(key, "D")
-            use_credit_convention = (tb_side == "C") or (beginning_balance < 0)
+            use_credit_convention = (tb_side == "C") or (tb_side == "D" and beginning_balance < 0 and net < 0)
 
             if use_credit_convention:
                 if net > 0:
