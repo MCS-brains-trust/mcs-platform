@@ -283,12 +283,10 @@ class QuickBooksProvider(BaseProvider):
         return []
 
     def _fetch_qbo_gl_summary(self, access_token, tenant_id, start_date, end_date):
-        """Fetch QBO GeneralLedger with net activity per account.
+        """Fetch QBO GeneralLedger and compute net activity per account.
 
-        Calls /v3/company/{realmId}/reports/GeneralLedger to get
-        per-account Section rows with gross Debit/Credit totals.
-        Net activity = Debit - Credit.
-
+        Each account Section contains Data rows with a Balance column (index 8).
+        Net activity = ending balance (last row) - beginning balance (first row).
         Only accounts with non-zero net activity are returned.
         """
         base_url = f"https://quickbooks.api.intuit.com/v3/company/{tenant_id}"
@@ -310,41 +308,46 @@ class QuickBooksProvider(BaseProvider):
             logger.error("QBO GL error %s: %s", resp.status_code, resp.text[:500])
         resp.raise_for_status()
         data = resp.json()
-
-        logger.info("QBO GL Summary: status=%s top_keys=%s",
-                     resp.status_code, list(data.keys()))
-
         rows = data.get("Rows", {}).get("Row", [])
+        logger.info("QBO GL: status=%s, %d top-level rows", resp.status_code, len(rows))
+
         lines = []
 
         for row in rows:
             if row.get("type") != "Section":
                 continue
 
-            header = row.get("Header", {})
-            cols = header.get("ColData", [])
-            if not cols:
+            header_cols = row.get("Header", {}).get("ColData", [])
+            if not header_cols:
                 continue
-
-            account_name = (cols[0].get("value", "") or "").strip()
-            account_code = cols[0].get("id", "")
+            account_name = (header_cols[0].get("value", "") or "").strip()
+            account_code = header_cols[0].get("id", "") or account_name
             if not account_name:
                 continue
 
-            summary = row.get("Summary", {})
-            summary_cols = summary.get("ColData", [])
-
-            if len(summary_cols) >= 3:
-                raw_debit = (summary_cols[1].get("value") or "").strip()
-                raw_credit = (summary_cols[2].get("value") or "").strip()
-            else:
-                logger.warning("QBO GL row %s has unexpected cols: %s",
-                               account_name, summary_cols)
+            # Get all Data rows inside this Section
+            data_rows = row.get("Rows", {}).get("Row", [])
+            data_rows = [r for r in data_rows
+                         if r.get("type") == "Data" or "ColData" in r]
+            if not data_rows:
                 continue
 
-            debit = _to_decimal(raw_debit)
-            credit = _to_decimal(raw_credit)
-            net = debit - credit
+            # Beginning balance = first row, Balance column (index 8)
+            first_cols = data_rows[0].get("ColData", [])
+            beginning_balance = _to_decimal(
+                first_cols[8].get("value", "0") if len(first_cols) > 8 else "0"
+            )
+
+            # Ending balance = last row, Balance column (index 8)
+            last_cols = data_rows[-1].get("ColData", [])
+            ending_balance = _to_decimal(
+                last_cols[8].get("value", "0") if len(last_cols) > 8 else "0"
+            )
+
+            net = ending_balance - beginning_balance
+
+            logger.info("QBO GL: %s begin=%s end=%s net=%s",
+                        account_name, beginning_balance, ending_balance, net)
 
             if net == 0:
                 continue
@@ -359,13 +362,13 @@ class QuickBooksProvider(BaseProvider):
             lines.append({
                 "account_code": account_code,
                 "account_name": account_name,
-                "opening_balance": Decimal("0"),
+                "opening_balance": beginning_balance,
                 "debit": out_debit,
                 "credit": out_credit,
                 "movement_amount": net,
             })
 
-        logger.info("QBO GL Summary: %d accounts with activity", len(lines))
+        logger.info("QBO GL: %d accounts with net activity", len(lines))
         return lines
 
     def fetch_trial_balance(self, access_token, tenant_id, as_at_date, start_date=None):
