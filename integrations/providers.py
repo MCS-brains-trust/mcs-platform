@@ -282,14 +282,11 @@ class QuickBooksProvider(BaseProvider):
     def get_tenants(self, access_token):
         return []
 
-    def _fetch_qbo_trial_balance(self, access_token, tenant_id, start_date, end_date):
-        """Fetch and parse QBO TrialBalance report.
+    def _fetch_qbo_tb_snapshot(self, access_token, tenant_id, as_at_date):
+        """Fetch QBO TrialBalance as at a specific date.
 
-        Calls /v3/company/{realmId}/reports/TrialBalance with start_date
-        and end_date to get period movements (Net Activity).
-
-        Returns list of dicts with account_code, account_name, opening_balance,
-        debit, credit, and movement_amount keys.
+        Returns dict of {account_id: (account_name, signed_balance)}
+        where balance is positive for debit-side, negative for credit-side.
         """
         base_url = f"https://quickbooks.api.intuit.com/v3/company/{tenant_id}"
         resp = requests.get(
@@ -300,8 +297,7 @@ class QuickBooksProvider(BaseProvider):
             },
             params={
                 "minorversion": "65",
-                "start_date": start_date.isoformat(),
-                "end_date": end_date.isoformat(),
+                "end_date": as_at_date.isoformat(),
                 "accounting_method": "Accrual",
             },
             timeout=30,
@@ -309,7 +305,7 @@ class QuickBooksProvider(BaseProvider):
         resp.raise_for_status()
         data = resp.json()
         rows_data = data.get("Rows", {}).get("Row", [])
-        lines = []
+        result = {}
 
         def walk(rows):
             for row in rows:
@@ -321,26 +317,58 @@ class QuickBooksProvider(BaseProvider):
                     name = (cols[0].get("value", "") or "").strip()
                     if not name:
                         continue
-                    code = cols[0].get("id", "")
-                    raw_debit = (cols[1].get("value") or "").strip()
-                    raw_credit = (cols[2].get("value") or "").strip()
-                    debit = _to_decimal(raw_debit)
-                    credit = _to_decimal(raw_credit)
-                    if debit == 0 and credit == 0:
-                        continue
-                    lines.append({
-                        "account_code": code,
-                        "account_name": name,
-                        "opening_balance": Decimal("0"),
-                        "debit": debit,
-                        "credit": credit,
-                        "movement_amount": debit - credit,
-                    })
+                    code = cols[0].get("id", "") or name
+                    debit = _to_decimal((cols[1].get("value") or "").strip())
+                    credit = _to_decimal((cols[2].get("value") or "").strip())
+                    balance = debit - credit
+                    result[code] = (name, balance)
                 elif row_type == "Section":
                     child_rows = row.get("Rows", {}).get("Row", [])
                     walk(child_rows)
 
         walk(rows_data)
+        return result
+
+    def _fetch_qbo_trial_balance(self, access_token, tenant_id, start_date, end_date):
+        """Calculate net activity by comparing two TB snapshots.
+
+        Calls TrialBalance twice:
+          1. as at end_date   → closing balances
+          2. as at start_date - 1 day → opening balances
+
+        Net activity = closing - opening per account.
+        Only accounts with non-zero net activity are returned.
+        """
+        from datetime import timedelta
+
+        closing = self._fetch_qbo_tb_snapshot(access_token, tenant_id, end_date)
+        opening_date = start_date - timedelta(days=1)
+        opening = self._fetch_qbo_tb_snapshot(access_token, tenant_id, opening_date)
+
+        lines = []
+        for code, (name, closing_bal) in closing.items():
+            opening_bal = opening.get(code, (name, Decimal("0")))[1]
+            net = closing_bal - opening_bal
+
+            if net == 0:
+                continue
+
+            if net > 0:
+                debit = net
+                credit = Decimal("0")
+            else:
+                debit = Decimal("0")
+                credit = abs(net)
+
+            lines.append({
+                "account_code": code,
+                "account_name": name,
+                "opening_balance": opening_bal,
+                "debit": debit,
+                "credit": credit,
+                "movement_amount": net,
+            })
+
         return lines
 
     def fetch_trial_balance(self, access_token, tenant_id, as_at_date, start_date=None):
