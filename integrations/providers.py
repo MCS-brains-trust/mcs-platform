@@ -146,6 +146,9 @@ class XeroProvider(BaseProvider):
             "Accept": "application/json",
         }
         params = {"date": as_at_date.isoformat()}
+        if start_date:
+            params["fromDate"] = start_date.isoformat()
+            params["paymentsOnly"] = "false"
         resp = requests.get(url, headers=headers, params=params, timeout=30)
         resp.raise_for_status()
         report = (resp.json().get("Reports") or [{}])[0]
@@ -163,12 +166,15 @@ class XeroProvider(BaseProvider):
             code = (cells[0].get("Attributes") or [{}])[0].get("Value", "") if cells[0].get("Attributes") else ""
             debit = _to_decimal(cells[1].get("Value"))
             credit = _to_decimal(cells[2].get("Value"))
+            if debit == 0 and credit == 0:
+                continue
             lines.append({
                 "account_code": code,
                 "account_name": account_name,
                 "opening_balance": Decimal("0"),
                 "debit": debit,
                 "credit": credit,
+                "movement_amount": debit - credit,
             })
         return lines
 
