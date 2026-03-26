@@ -676,6 +676,39 @@ class FinancialYear(models.Model):
 
 
 # ---------------------------------------------------------------------------
+# Staged Import (persisted between fetch and commit)
+# ---------------------------------------------------------------------------
+class StagedImport(models.Model):
+    """Persists cloud import data between fetch and commit.
+
+    Eliminates session-based storage which could be lost on session
+    expiry, clearing, or Gunicorn worker changes.
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    financial_year = models.OneToOneField(
+        FinancialYear, on_delete=models.CASCADE,
+        related_name="staged_import",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+    )
+    provider_name = models.CharField(max_length=50)
+    import_mode = models.CharField(max_length=30, default="trial_balance")
+    as_at_date = models.DateField()
+    from_date = models.DateField(null=True, blank=True)
+    to_date = models.DateField(null=True, blank=True)
+    lines = models.JSONField()
+    merge_warnings = models.JSONField(default=list)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"Staged import for {self.financial_year} by {self.user}"
+
+
+# ---------------------------------------------------------------------------
 # Account Mapping (Standard Chart)
 # ---------------------------------------------------------------------------
 class AccountMapping(models.Model):

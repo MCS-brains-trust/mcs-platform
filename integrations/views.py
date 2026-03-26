@@ -414,26 +414,20 @@ def _do_cloud_import(
             messages.warning(request, w)
         _sync_source_accounts_to_entity_coa(entity, raw_lines)
         staged_lines = _apply_learned_mappings(entity, raw_lines)
-        request.session["staged_import"] = {
-            "fy_pk": str(fy.pk),
-            "connection_pk": str(connection_obj.pk) if connection_obj else "",
-            "as_at_date": as_at_date.isoformat(),
-            "provider_name": provider.display_name,
-            "lines": staged_lines,
-            "merge_warnings": merge_warnings,
-            "import_mode": import_mode,
-            "from_date": from_date.isoformat() if from_date else "",
-            "to_date": to_date.isoformat() if to_date else "",
-        }
-        # Force session save to DB before redirect so the next
-        # request (possibly handled by a different Gunicorn worker)
-        # can read the staged data from the database backend.
-        request.session.modified = True
-        try:
-            request.session.save()
-        except DatabaseError:
-            # Session row may not exist yet (race condition) — create fresh
-            request.session.create()
+        from core.models import StagedImport
+        StagedImport.objects.update_or_create(
+            financial_year=fy,
+            defaults={
+                "user": request.user,
+                "provider_name": provider.display_name,
+                "import_mode": import_mode,
+                "as_at_date": as_at_date,
+                "from_date": from_date,
+                "to_date": to_date,
+                "lines": staged_lines,
+                "merge_warnings": merge_warnings,
+            },
+        )
         if connection_obj:
             from integrations.models import QBTenantConnection, XeroTenantConnection
             type(connection_obj).objects.filter(pk=connection_obj.pk).update(
@@ -539,9 +533,23 @@ def review_import(request, fy_pk):
     adjust, or reject individual mappings before committing.
     """
     fy = get_object_or_404(FinancialYear, pk=fy_pk)
-    staged = request.session.get("staged_import")
+    from core.models import StagedImport
+    try:
+        staged_obj = StagedImport.objects.get(financial_year=fy)
+        staged = {
+            "fy_pk": str(fy.pk),
+            "lines": staged_obj.lines,
+            "import_mode": staged_obj.import_mode,
+            "provider_name": staged_obj.provider_name,
+            "as_at_date": staged_obj.as_at_date.isoformat(),
+            "from_date": staged_obj.from_date.isoformat() if staged_obj.from_date else "",
+            "to_date": staged_obj.to_date.isoformat() if staged_obj.to_date else "",
+            "merge_warnings": staged_obj.merge_warnings,
+        }
+    except StagedImport.DoesNotExist:
+        staged = None
 
-    if not staged or staged.get("fy_pk") != str(fy_pk):
+    if not staged:
         messages.error(request, "No staged import data found. Please pull again.")
         return redirect("core:financial_year_detail", pk=fy_pk)
 
@@ -610,9 +618,23 @@ def commit_import(request, fy_pk):
     or changed mappings.
     """
     fy = get_object_or_404(FinancialYear, pk=fy_pk)
-    staged = request.session.get("staged_import")
+    from core.models import StagedImport
+    try:
+        staged_obj = StagedImport.objects.get(financial_year=fy)
+        staged = {
+            "fy_pk": str(fy.pk),
+            "lines": staged_obj.lines,
+            "import_mode": staged_obj.import_mode,
+            "provider_name": staged_obj.provider_name,
+            "as_at_date": staged_obj.as_at_date.isoformat(),
+            "from_date": staged_obj.from_date.isoformat() if staged_obj.from_date else "",
+            "to_date": staged_obj.to_date.isoformat() if staged_obj.to_date else "",
+            "merge_warnings": staged_obj.merge_warnings,
+        }
+    except StagedImport.DoesNotExist:
+        staged = None
 
-    if not staged or staged.get("fy_pk") != str(fy_pk):
+    if not staged:
         messages.error(request, "No staged import data found.")
         return redirect("core:financial_year_detail", pk=fy_pk)
 
@@ -812,7 +834,7 @@ def commit_import(request, fy_pk):
     for w in merge_warnings:
         messages.warning(request, w)
 
-    request.session.pop("staged_import", None)
+    StagedImport.objects.filter(financial_year=fy).delete()
 
     # Auto-trigger risk engine after cloud import
     from core.signals import trigger_risk_recalc
