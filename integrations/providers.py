@@ -357,7 +357,6 @@ class QuickBooksProvider(BaseProvider):
         resp.raise_for_status()
         data = resp.json()
         rows = data.get("Rows", {}).get("Row", [])
-        logger.info("QBO GL: %d top-level rows", len(rows))
 
         lines = []
 
@@ -425,10 +424,6 @@ class QuickBooksProvider(BaseProvider):
                 else:
                     out_debit, out_credit = Decimal("0"), abs(net)
 
-            logger.info("QBO GL: %s tb=%s begin=%s end=%s net=%s → %s",
-                        account_name, tb_side, beginning_balance, ending_balance, net,
-                        "D" if out_debit > 0 else "C")
-
             lines.append({
                 "account_code": account_code,
                 "account_name": account_name,
@@ -438,13 +433,11 @@ class QuickBooksProvider(BaseProvider):
                 "movement_amount": net,
             })
 
-        logger.info("QBO GL: %d accounts with net activity", len(lines))
         return lines
 
     def _fetch_qbo_net_activity(self, access_token, tenant_id, start_date, end_date):
         """Orchestrate TB sides + GL summary for correct debit/credit assignment."""
         tb_sides = self._fetch_qbo_tb_sides(access_token, tenant_id, end_date)
-        logger.info("QBO TB sides: %d accounts", len(tb_sides))
         return self._fetch_qbo_gl_summary(
             access_token, tenant_id, start_date, end_date, tb_sides
         )
