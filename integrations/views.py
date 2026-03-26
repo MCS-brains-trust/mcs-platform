@@ -1027,27 +1027,16 @@ def _apply_learned_mappings(entity, raw_lines):
             "entity_acct_name": "",
         }
 
-        if cam and cam.mapped_line_item:
-            staged_line["mapped_id"] = str(cam.mapped_line_item.pk)
-            staged_line["mapped_label"] = (
-                f"{cam.mapped_line_item.standard_code} - "
-                f"{cam.mapped_line_item.line_item_label}"
-            )
-            staged_line["confidence"] = "learned"
+        # Learned mappings and COA auto-suggestions are intentionally not applied here.
+        # The accountant must map every account manually in the wizard.
 
-        # Try to match entity COA by code
+        # Still populate entity_acct_code/name for display purposes (account identification only)
         ea = entity_coa.get(code.lower())
         if ea:
             staged_line["entity_acct_code"] = ea.account_code
             staged_line["entity_acct_name"] = ea.account_name
             if staged_line["confidence"] == "new":
                 staged_line["confidence"] = "matched"
-            # If entity account has a maps_to and we don't have one yet, use it
-            if ea.maps_to and not staged_line["mapped_id"]:
-                staged_line["mapped_id"] = str(ea.maps_to.pk)
-                staged_line["mapped_label"] = (
-                    f"{ea.maps_to.standard_code} - {ea.maps_to.line_item_label}"
-                )
 
         staged.append(staged_line)
 
