@@ -692,125 +692,129 @@ def commit_import(request, fy_pk):
                 "account_name": line_obj.account_name,
             }
 
-    fy.trial_balance_lines.filter(is_adjustment=False).delete()
+    # Wrap delete + create in a transaction so a failure midway
+    # does not leave the entity's TB in a corrupt state.
+    from django.db import transaction
+    with transaction.atomic():
+        fy.trial_balance_lines.filter(is_adjustment=False).delete()
 
-    uploaded_codes = set()
+        uploaded_codes = set()
 
-    for i, line in enumerate(staged_lines):
-        mapping_id = request.POST.get(f"mapping_{i}", "").strip()
-        entity_acct_code = request.POST.get(f"entity_acct_{i}", "").strip()
-        mapped_item = None
+        for i, line in enumerate(staged_lines):
+            mapping_id = request.POST.get(f"mapping_{i}", "").strip()
+            entity_acct_code = request.POST.get(f"entity_acct_{i}", "").strip()
+            mapped_item = None
 
-        if mapping_id:
+            if mapping_id:
+                try:
+                    mapped_item = AccountMapping.objects.get(pk=mapping_id)
+                except AccountMapping.DoesNotExist:
+                    pass
+
+            # If an entity account was assigned, look it up for its maps_to
+            if entity_acct_code and not mapped_item:
+                try:
+                    ea = EntityChartOfAccount.objects.select_related("maps_to").get(
+                        entity=entity, account_code=entity_acct_code
+                    )
+                    if ea.maps_to:
+                        mapped_item = ea.maps_to
+                except EntityChartOfAccount.DoesNotExist:
+                    pass
+
             try:
-                mapped_item = AccountMapping.objects.get(pk=mapping_id)
-            except AccountMapping.DoesNotExist:
-                pass
+                opening = Decimal(str(line.get("opening_balance", "0")))
+                debit = Decimal(str(line.get("debit", "0")))
+                credit = Decimal(str(line.get("credit", "0")))
+                closing = opening + debit - credit
 
-        # If an entity account was assigned, look it up for its maps_to
-        if entity_acct_code and not mapped_item:
-            try:
-                ea = EntityChartOfAccount.objects.select_related("maps_to").get(
-                    entity=entity, account_code=entity_acct_code
+                description = ""
+                if import_mode == "period_movement":
+                    period_from = staged.get("from_date", "")
+                    period_to = staged.get("to_date", "")
+                    provider_name = staged.get("provider_name", "Cloud")
+                    movement_amount = Decimal(str(line.get("movement_amount", debit - credit)))
+                    description = (
+                        f"{provider_name} import {period_from} to {period_to}; "
+                        f"net movement {movement_amount}"
+                    )
+
+                # Restore prior year comparatives from snapshot (matched by code)
+                acct_code = line["account_code"]
+                comp = prior_data.get(acct_code, {})
+                py_debit = comp.get("prior_debit", Decimal("0"))
+                py_credit = comp.get("prior_credit", Decimal("0"))
+
+                TrialBalanceLine.objects.create(
+                    financial_year=fy,
+                    account_code=acct_code,
+                    account_name=line["account_name"],
+                    opening_balance=opening,
+                    debit=debit,
+                    credit=credit,
+                    closing_balance=closing,
+                    mapped_line_item=mapped_item,
+                    is_adjustment=False,
+                    description=description,
+                    prior_debit=py_debit,
+                    prior_credit=py_credit,
+                    prior_closing_balance=comp.get("prior_closing_balance", Decimal("0")),
+                    prior_balance_override=comp.get("prior_balance_override", False),
+                    prior_mapped_line_item=comp.get("prior_mapped_line_item"),
+                    reclassified=comp.get("reclassified", False),
+                    comparatives_locked=comp.get("comparatives_locked", False),
                 )
-                if ea.maps_to:
-                    mapped_item = ea.maps_to
-            except EntityChartOfAccount.DoesNotExist:
-                pass
 
-        try:
-            opening = Decimal(str(line.get("opening_balance", "0")))
-            debit = Decimal(str(line.get("debit", "0")))
-            credit = Decimal(str(line.get("credit", "0")))
-            closing = opening + debit - credit
+                uploaded_codes.add(acct_code)
 
-            description = ""
-            if import_mode == "period_movement":
-                period_from = staged.get("from_date", "")
-                period_to = staged.get("to_date", "")
-                provider_name = staged.get("provider_name", "Cloud")
-                movement_amount = Decimal(str(line.get("movement_amount", debit - credit)))
-                description = (
-                    f"{provider_name} import {period_from} to {period_to}; "
-                    f"net movement {movement_amount}"
+                # Update the learning system
+                ClientAccountMapping.objects.update_or_create(
+                    entity=entity,
+                    client_account_code=acct_code,
+                    defaults={
+                        "client_account_name": line["account_name"],
+                        "mapped_line_item": mapped_item,
+                    },
                 )
 
-            # Restore prior year comparatives from snapshot (matched by code)
-            acct_code = line["account_code"]
-            comp = prior_data.get(acct_code, {})
-            py_debit = comp.get("prior_debit", Decimal("0"))
-            py_credit = comp.get("prior_credit", Decimal("0"))
+                imported += 1
+                if not mapped_item:
+                    unmapped += 1
+
+            except Exception as e:
+                errors.append(f"Line {i + 1} ({line.get('account_code', '?')}): {str(e)}")
+
+        # ------------------------------------------------------------------
+        # Re-create comparative-only lines for accounts that existed in the
+        # prior snapshot but were NOT in the cloud import.  These are
+        # typically P&L accounts from the prior year that have no current-year
+        # activity yet but must appear in the comparative column.
+        # ------------------------------------------------------------------
+        for code, comp in prior_data.items():
+            if code in uploaded_codes:
+                continue
+            if comp["prior_debit"] == 0 and comp["prior_credit"] == 0:
+                continue
 
             TrialBalanceLine.objects.create(
                 financial_year=fy,
-                account_code=acct_code,
-                account_name=line["account_name"],
-                opening_balance=opening,
-                debit=debit,
-                credit=credit,
-                closing_balance=closing,
-                mapped_line_item=mapped_item,
+                account_code=code,
+                account_name=comp.get("account_name", ""),
+                opening_balance=Decimal("0"),
+                debit=Decimal("0"),
+                credit=Decimal("0"),
+                closing_balance=Decimal("0"),
+                mapped_line_item=comp.get("mapped_line_item") or comp.get("prior_mapped_line_item"),
                 is_adjustment=False,
-                description=description,
-                prior_debit=py_debit,
-                prior_credit=py_credit,
+                source='rollover',
+                prior_debit=comp["prior_debit"],
+                prior_credit=comp["prior_credit"],
                 prior_closing_balance=comp.get("prior_closing_balance", Decimal("0")),
                 prior_balance_override=comp.get("prior_balance_override", False),
                 prior_mapped_line_item=comp.get("prior_mapped_line_item"),
                 reclassified=comp.get("reclassified", False),
                 comparatives_locked=comp.get("comparatives_locked", False),
             )
-
-            uploaded_codes.add(acct_code)
-
-            # Update the learning system
-            ClientAccountMapping.objects.update_or_create(
-                entity=entity,
-                client_account_code=acct_code,
-                defaults={
-                    "client_account_name": line["account_name"],
-                    "mapped_line_item": mapped_item,
-                },
-            )
-
-            imported += 1
-            if not mapped_item:
-                unmapped += 1
-
-        except Exception as e:
-            errors.append(f"Line {i + 1} ({line.get('account_code', '?')}): {str(e)}")
-
-    # ------------------------------------------------------------------
-    # Re-create comparative-only lines for accounts that existed in the
-    # prior snapshot but were NOT in the cloud import.  These are
-    # typically P&L accounts from the prior year that have no current-year
-    # activity yet but must appear in the comparative column.
-    # ------------------------------------------------------------------
-    for code, comp in prior_data.items():
-        if code in uploaded_codes:
-            continue
-        if comp["prior_debit"] == 0 and comp["prior_credit"] == 0:
-            continue
-
-        TrialBalanceLine.objects.create(
-            financial_year=fy,
-            account_code=code,
-            account_name=comp.get("account_name", ""),
-            opening_balance=Decimal("0"),
-            debit=Decimal("0"),
-            credit=Decimal("0"),
-            closing_balance=Decimal("0"),
-            mapped_line_item=comp.get("mapped_line_item") or comp.get("prior_mapped_line_item"),
-            is_adjustment=False,
-            source='rollover',
-            prior_debit=comp["prior_debit"],
-            prior_credit=comp["prior_credit"],
-            prior_closing_balance=comp.get("prior_closing_balance", Decimal("0")),
-            prior_balance_override=comp.get("prior_balance_override", False),
-            prior_mapped_line_item=comp.get("prior_mapped_line_item"),
-            reclassified=comp.get("reclassified", False),
-            comparatives_locked=comp.get("comparatives_locked", False),
-        )
 
     # Log the import
     connection_pk = staged.get("connection_pk")

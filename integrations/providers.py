@@ -301,6 +301,10 @@ class QuickBooksProvider(BaseProvider):
             },
             timeout=30,
         )
+        if resp.status_code == 401:
+            raise ValueError(
+                "QuickBooks token has expired. Please reconnect via Connections → QuickBooks."
+            )
         resp.raise_for_status()
         data = resp.json()
         rows_data = data.get("Rows", {}).get("Row", [])
@@ -352,6 +356,10 @@ class QuickBooksProvider(BaseProvider):
             },
             timeout=60,
         )
+        if resp.status_code == 401:
+            raise ValueError(
+                "QuickBooks token has expired. Please reconnect via Connections → QuickBooks."
+            )
         if not resp.ok:
             logger.error("QBO GL error %s: %s", resp.status_code, resp.text[:500])
         resp.raise_for_status()
