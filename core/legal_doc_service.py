@@ -57,8 +57,10 @@ def render_legal_document(legal_document_id):
     if not template or not template.template_file:
         raise ValueError(f"No template file found for document {doc.pk}")
 
-    # Build the full context from stored parameters
-    context = doc.parameters or {}
+    # Build the full context: prefer context_data (enriched by DCB) over
+    # raw parameters (wizard-only fields). context_data contains selected_services,
+    # show_service_* flags, and all DCB-generated variables.
+    context = doc.context_data or doc.parameters or {}
 
     # Add standard fields — firm branding from FirmSettings (white-label support)
     try:

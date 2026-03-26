@@ -1754,12 +1754,98 @@ class DocumentContextBuilder:
             or format_date_long(date.today())
         )
 
+        # Build dynamic selected_services list for row-repeat in template
+        SERVICE_DISPLAY = {
+            "compilation": ("Compilation of Financial Statements",
+                "Compilation of annual financial statements in accordance with APES 315 Compilation of Financial Information. "
+                "Includes Balance Sheet, Profit & Loss Statement, and Notes to Financial Statements."),
+            "financial_statements": ("Financial Statements",
+                "Preparation of annual financial statements including Balance Sheet, Profit & Loss Statement, "
+                "and Notes to Financial Statements."),
+            "tax_return": ("Income Tax Return",
+                "Preparation and lodgement of the income tax return for the entity for the relevant income year."),
+            "bas": ("BAS Preparation & Lodgement",
+                "Preparation and lodgement of Business Activity Statements for each applicable BAS period. "
+                "Includes GST reconciliation."),
+            "bas_preparation": ("BAS Preparation & Lodgement",
+                "Preparation and lodgement of Business Activity Statements for each applicable BAS period. "
+                "Includes GST reconciliation."),
+            "bookkeeping": ("Bookkeeping",
+                "Ongoing bookkeeping services including data entry, bank reconciliations, "
+                "and maintenance of the general ledger."),
+            "tax_planning": ("Tax Planning & Advisory",
+                "Proactive tax planning advice including review of tax position, identification of "
+                "tax minimisation opportunities, and year-end planning strategies."),
+            "payroll": ("Payroll Services",
+                "Processing of employee payroll including calculation of wages, superannuation, "
+                "PAYG withholding, and preparation of payroll summaries."),
+            "payroll_tax": ("Payroll Services",
+                "Processing of employee payroll including calculation of wages, superannuation, "
+                "PAYG withholding, and preparation of payroll summaries."),
+            "asic_compliance": ("ASIC Annual Review & Compliance",
+                "Review of ASIC annual statement and payment of annual review fee. "
+                "Preparation of any required solvency declaration."),
+            "asic_review": ("ASIC Annual Review & Compliance",
+                "Review of ASIC annual statement and payment of annual review fee. "
+                "Preparation of any required solvency declaration."),
+            "dividend_management": ("Dividend Management",
+                "Preparation of dividend resolutions, dividend statements, and associated "
+                "documentation for distributions to shareholders."),
+            "directors_report": ("Director's Report",
+                "Preparation of the Director\u2019s Report as required under the Corporations Act 2001 "
+                "for the relevant financial year."),
+            "trust_distribution": ("Trust Distribution Planning",
+                "Review of trust income, preparation of trustee resolutions, distribution minutes, "
+                "and beneficiary statements."),
+            "trust_distribution_planning": ("Trust Distribution Planning",
+                "Review of trust income, preparation of trustee resolutions, distribution minutes, "
+                "and beneficiary statements."),
+            "trust_deed_review": ("Trust Deed Review",
+                "Review of the trust deed to ensure it remains current and appropriate for the "
+                "trust\u2019s activities and tax planning objectives."),
+            "partner_statements": ("Partner Statements",
+                "Preparation of individual partner income statements showing each partner\u2019s share "
+                "of partnership income or loss."),
+            "partnership_agreement_review": ("Partnership Agreement Review",
+                "Review of the partnership agreement to ensure it remains current and reflects the "
+                "current partnership arrangements."),
+            "smsf_audit": ("SMSF Audit Coordination",
+                "Coordination of the annual SMSF audit with an approved SMSF auditor as required "
+                "under the Superannuation Industry (Supervision) Act 1993."),
+            "smsf_compliance": ("SMSF Compliance",
+                "Preparation of the SMSF annual return, member statements, and compliance "
+                "documentation in accordance with superannuation legislation."),
+            "member_statements": ("Member Statements",
+                "Preparation of annual member benefit statements showing each member\u2019s opening "
+                "balance, contributions, earnings, and closing balance."),
+            "div7a_monitoring": ("Division 7A Monitoring",
+                "Annual review of director/shareholder loan accounts for Division 7A compliance. "
+                "Preparation or review of complying loan agreements."),
+            "div7a": ("Division 7A Monitoring",
+                "Annual review of director/shareholder loan accounts for Division 7A compliance. "
+                "Preparation or review of complying loan agreements."),
+            "fbt": ("Fringe Benefits Tax",
+                "Preparation and lodgement of the annual Fringe Benefits Tax return including "
+                "calculation of FBT liability and employee declarations."),
+            "tpar": ("Taxable Payments Annual Report (TPAR)",
+                "Preparation and lodgement of the annual Taxable Payments Annual Report where "
+                "applicable under ATO reporting requirements."),
+        }
+        selected_services = []
+        seen = set()
+        for svc_id in services:
+            if svc_id in SERVICE_DISPLAY and svc_id not in seen:
+                name, desc = SERVICE_DISPLAY[svc_id]
+                selected_services.append({"name": name, "description": desc})
+                seen.add(svc_id)
+
         return {
             "client_name": ctx.get("entity_name", ""),
             "client_address": ctx.get("entity_postal_address", ""),
             "engagement_date": _raw_date,
             "addressee_salutation": ctx.get("addressee_salutation", "Dear Client"),
             "services_engaged": services,
+            "selected_services": selected_services,
             # -------------------------------------------------------
             # Service flags — keys MUST match wizard service IDs
             # (see views_partnership_docs._get_service_options)
