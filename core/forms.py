@@ -317,6 +317,7 @@ class EntityOfficerForm(forms.ModelForm):
                 "trust": [
                     EntityOfficer.OfficerRole.TRUSTEE,
                     EntityOfficer.OfficerRole.BENEFICIARY,
+                    EntityOfficer.OfficerRole.UNIT_HOLDER,
                     EntityOfficer.OfficerRole.DIRECTOR,  # directors of trustee company
                 ],
                 "partnership": [

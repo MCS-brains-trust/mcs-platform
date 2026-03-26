@@ -361,6 +361,7 @@ class EntityOfficer(models.Model):
         PUBLIC_OFFICER = "public_officer", "Public Officer"
         SOLE_TRADER = "sole_trader", "Sole Trader / Proprietor"
         CHAIRPERSON = "chairperson", "Chairperson"
+        UNIT_HOLDER = "unit_holder", "Unit Holder"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     entity = models.ForeignKey(
