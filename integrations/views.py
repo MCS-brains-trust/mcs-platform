@@ -1020,21 +1020,13 @@ def _apply_learned_mappings(entity, raw_lines):
     """
     Look up existing ClientAccountMapping records for this entity and
     pre-populate the mapped_line_item for each raw line.
-    Also pre-match against EntityChartOfAccount by code.
+    Only applies learned mappings from prior imports — no name guessing.
     """
     existing_mappings = {
         cam.client_account_code: cam
         for cam in ClientAccountMapping.objects.filter(entity=entity)
         .select_related("mapped_line_item")
     }
-
-    # Build entity COA lookups by code and by name
-    _coa_qs = list(
-        EntityChartOfAccount.objects.filter(entity=entity)
-        .select_related("maps_to")
-    )
-    entity_coa = {ea.account_code.lower(): ea for ea in _coa_qs}
-    entity_coa_by_name = {ea.account_name.lower(): ea for ea in _coa_qs}
 
     staged = []
     for line in raw_lines:
@@ -1055,26 +1047,10 @@ def _apply_learned_mappings(entity, raw_lines):
             "entity_acct_name": "",
         }
 
-        # Priority 1: ClientAccountMapping (learned from prior imports)
         if cam and cam.mapped_line_item:
             staged_line["mapped_id"] = str(cam.mapped_line_item.pk)
             staged_line["mapped_label"] = cam.mapped_line_item.line_item_label
             staged_line["confidence"] = "learned"
-
-        # Populate entity account fields and apply Priority 2 if no learned mapping
-        ea = entity_coa.get(code.lower())
-        if not ea:
-            ea = entity_coa_by_name.get(line["account_name"].lower())
-        if ea:
-            staged_line["entity_acct_code"] = ea.account_code
-            staged_line["entity_acct_name"] = ea.account_name
-            # Priority 2: EntityChartOfAccount.maps_to
-            if not staged_line["mapped_id"] and ea.maps_to:
-                staged_line["mapped_id"] = str(ea.maps_to.pk)
-                staged_line["mapped_label"] = ea.maps_to.line_item_label
-                staged_line["confidence"] = "matched"
-            elif not staged_line["mapped_id"]:
-                staged_line["confidence"] = "matched"
 
         staged.append(staged_line)
 
