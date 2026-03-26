@@ -294,8 +294,8 @@ class EntityOfficerForm(forms.ModelForm):
             "distribution_percentage",
         )
         widgets = {
-            "date_appointed": forms.DateInput(attrs={"type": "date"}),
-            "date_ceased": forms.DateInput(attrs={"type": "date"}),
+            "date_appointed": forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d"),
+            "date_ceased": forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d"),
         }
 
     def __init__(self, *args, entity_type=None, **kwargs):
