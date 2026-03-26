@@ -307,7 +307,34 @@ class QuickBooksProvider(BaseProvider):
     def get_tenants(self, access_token):
         return []
 
-    def _fetch_qbo_tb_sides(self, access_token, tenant_id, end_date):
+    def _fetch_qbo_account_codes(self, access_token, tenant_id):
+        """Fetch account list and return dict of {internal_id: account_number}.
+        Uses AcctNum if set, falls back to account Name."""
+        base_url = f"https://quickbooks.api.intuit.com/v3/company/{tenant_id}"
+        resp = requests.get(
+            f"{base_url}/query",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Accept": "application/json",
+            },
+            params={
+                "query": "SELECT Id, AcctNum, Name FROM Account MAXRESULTS 1000",
+                "minorversion": "65",
+            },
+            timeout=30,
+        )
+        if resp.status_code == 401:
+            raise ValueError(
+                "QuickBooks token has expired. Please reconnect via Connections → QuickBooks."
+            )
+        resp.raise_for_status()
+        accounts = resp.json().get("QueryResponse", {}).get("Account", [])
+        return {
+            a["Id"]: a.get("AcctNum") or a.get("Name", "")
+            for a in accounts
+        }
+
+    def _fetch_qbo_tb_sides(self, access_token, tenant_id, end_date, account_codes=None):
         """Fetch QBO TrialBalance to determine debit/credit side per account.
 
         Returns dict of {account_key: 'D' or 'C'}.
@@ -342,9 +369,10 @@ class QuickBooksProvider(BaseProvider):
                     cols = row.get("ColData", [])
                     if len(cols) < 3:
                         continue
-                    code = cols[0].get("id", "")
+                    internal_id = cols[0].get("id", "")
                     name = (cols[0].get("value", "") or "").strip()
-                    key = code or name
+                    resolved_code = (account_codes or {}).get(internal_id) or name
+                    key = resolved_code
                     if not key:
                         continue
                     raw_debit = (cols[1].get("value") or "").strip()
@@ -359,7 +387,7 @@ class QuickBooksProvider(BaseProvider):
         walk(rows_data)
         return sides
 
-    def _fetch_qbo_gl_summary(self, access_token, tenant_id, start_date, end_date, tb_sides):
+    def _fetch_qbo_gl_summary(self, access_token, tenant_id, start_date, end_date, tb_sides, account_codes=None):
         """Fetch QBO GeneralLedger and compute net activity per account.
 
         Sums the Amount column (index 7) from transaction Data rows.
@@ -401,7 +429,8 @@ class QuickBooksProvider(BaseProvider):
             if not header_cols:
                 continue
             account_name = (header_cols[0].get("value", "") or "").strip()
-            account_code = header_cols[0].get("id", "") or account_name
+            internal_id = header_cols[0].get("id", "")
+            account_code = (account_codes or {}).get(internal_id) or account_name
             if not account_name:
                 continue
 
@@ -442,7 +471,7 @@ class QuickBooksProvider(BaseProvider):
                 continue
 
             # Determine sign convention from TB side and ending balance
-            key = account_code or account_name
+            key = account_code  # already resolved above
             tb_side = tb_sides.get(key, "D")
             use_credit_convention = (tb_side == "C") or (tb_side == "D" and ending_balance < 0)
 
@@ -470,9 +499,10 @@ class QuickBooksProvider(BaseProvider):
 
     def _fetch_qbo_net_activity(self, access_token, tenant_id, start_date, end_date):
         """Orchestrate TB sides + GL summary for correct debit/credit assignment."""
-        tb_sides = self._fetch_qbo_tb_sides(access_token, tenant_id, end_date)
+        account_codes = self._fetch_qbo_account_codes(access_token, tenant_id)
+        tb_sides = self._fetch_qbo_tb_sides(access_token, tenant_id, end_date, account_codes)
         return self._fetch_qbo_gl_summary(
-            access_token, tenant_id, start_date, end_date, tb_sides
+            access_token, tenant_id, start_date, end_date, tb_sides, account_codes
         )
 
     def fetch_trial_balance(self, access_token, tenant_id, as_at_date, start_date=None):
