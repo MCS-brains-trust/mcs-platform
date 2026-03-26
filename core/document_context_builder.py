@@ -1378,7 +1378,7 @@ class DocumentContextBuilder:
                 f"Dear {directors[0]['first_name']}" if directors else "Dear Director"
             )
         elif entity_type == "trust":
-            if trustees and trustees[0].get("role") == "trustee":
+            if trustees:
                 salutation = f"Dear {trustees[0]['first_name']}"
             else:
                 salutation = "Dear Trustee"
