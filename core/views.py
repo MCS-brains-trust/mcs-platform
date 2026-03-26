@@ -6051,7 +6051,11 @@ def entity_officer_create(request, entity_pk):
             messages.success(request, f"Added {officer.full_name} as {officer.get_role_display()}.")
             return redirect("core:entity_officers", pk=entity.pk)
     else:
-        form = EntityOfficerForm(entity_type=entity.entity_type)
+        next_order = entity.officers.count() + 1
+        form = EntityOfficerForm(
+            entity_type=entity.entity_type,
+            initial={"display_order": next_order},
+        )
 
     return render(request, "core/entity_officer_form.html", {
         "form": form,
