@@ -740,7 +740,7 @@ def commit_import(request, fy_pk):
                     )
 
                 # Restore prior year comparatives from snapshot (matched by code)
-                acct_code = line["account_code"]
+                acct_code = entity_acct_code if entity_acct_code else line["account_code"]
                 comp = prior_data.get(acct_code, {})
                 py_debit = comp.get("prior_debit", Decimal("0"))
                 py_credit = comp.get("prior_credit", Decimal("0"))
