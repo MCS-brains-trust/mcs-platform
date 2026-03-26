@@ -1028,12 +1028,13 @@ def _apply_learned_mappings(entity, raw_lines):
         .select_related("mapped_line_item")
     }
 
-    # Build entity COA lookup by code
-    entity_coa = {
-        ea.account_code.lower(): ea
-        for ea in EntityChartOfAccount.objects.filter(entity=entity)
+    # Build entity COA lookups by code and by name
+    _coa_qs = list(
+        EntityChartOfAccount.objects.filter(entity=entity)
         .select_related("maps_to")
-    }
+    )
+    entity_coa = {ea.account_code.lower(): ea for ea in _coa_qs}
+    entity_coa_by_name = {ea.account_name.lower(): ea for ea in _coa_qs}
 
     staged = []
     for line in raw_lines:
@@ -1062,6 +1063,8 @@ def _apply_learned_mappings(entity, raw_lines):
 
         # Populate entity account fields and apply Priority 2 if no learned mapping
         ea = entity_coa.get(code.lower())
+        if not ea:
+            ea = entity_coa_by_name.get(line["account_name"].lower())
         if ea:
             staged_line["entity_acct_code"] = ea.account_code
             staged_line["entity_acct_name"] = ea.account_name
