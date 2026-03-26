@@ -138,6 +138,38 @@ class XeroProvider(BaseProvider):
             for t in data
         ]
 
+    @staticmethod
+    def _extract_xero_account_code(cells_0):
+        """Extract account code from a Xero row's first cell Attributes."""
+        for attr in (cells_0.get("Attributes") or []):
+            if attr.get("Id") == "account":
+                return attr.get("Value", "")
+        # Fallback: first attribute's Value
+        attrs = cells_0.get("Attributes") or []
+        return attrs[0].get("Value", "") if attrs else ""
+
+    def _process_xero_tb_row(self, row, lines):
+        """Process a single Xero TrialBalance Row into the lines list."""
+        cells = row.get("Cells", [])
+        if len(cells) < 3:
+            return
+        account_name = (cells[0].get("Value") or "").strip()
+        if not account_name:
+            return
+        code = self._extract_xero_account_code(cells[0])
+        debit = _to_decimal(cells[1].get("Value"))
+        credit = _to_decimal(cells[2].get("Value"))
+        if debit == 0 and credit == 0:
+            return
+        lines.append({
+            "account_code": code,
+            "account_name": account_name,
+            "opening_balance": Decimal("0"),
+            "debit": debit,
+            "credit": credit,
+            "movement_amount": debit - credit,
+        })
+
     def fetch_trial_balance(self, access_token, tenant_id, as_at_date, start_date=None):
         url = "https://api.xero.com/api.xro/2.0/Reports/TrialBalance"
         headers = {
@@ -150,32 +182,23 @@ class XeroProvider(BaseProvider):
             params["fromDate"] = start_date.isoformat()
             params["paymentsOnly"] = "false"
         resp = requests.get(url, headers=headers, params=params, timeout=30)
+        if resp.status_code == 401:
+            raise ValueError(
+                "Xero authorisation expired. Please reconnect your "
+                "Xero account from the Integrations page."
+            )
         resp.raise_for_status()
         report = (resp.json().get("Reports") or [{}])[0]
         rows = report.get("Rows", [])
         lines = []
         for row in rows:
-            if row.get("RowType") != "Row":
-                continue
-            cells = row.get("Cells", [])
-            if len(cells) < 4:
-                continue
-            account_name = (cells[0].get("Value") or "").strip()
-            if not account_name:
-                continue
-            code = (cells[0].get("Attributes") or [{}])[0].get("Value", "") if cells[0].get("Attributes") else ""
-            debit = _to_decimal(cells[1].get("Value"))
-            credit = _to_decimal(cells[2].get("Value"))
-            if debit == 0 and credit == 0:
-                continue
-            lines.append({
-                "account_code": code,
-                "account_name": account_name,
-                "opening_balance": Decimal("0"),
-                "debit": debit,
-                "credit": credit,
-                "movement_amount": debit - credit,
-            })
+            row_type = row.get("RowType")
+            if row_type == "Section":
+                for child in row.get("Rows", []):
+                    if child.get("RowType") == "Row":
+                        self._process_xero_tb_row(child, lines)
+            elif row_type == "Row":
+                self._process_xero_tb_row(row, lines)
         return lines
 
     def fetch_period_movement(self, access_token, tenant_id, from_date, to_date):
@@ -190,36 +213,38 @@ class XeroProvider(BaseProvider):
             "toDate": to_date.isoformat(),
         }
         resp = requests.get(url, headers=headers, params=params, timeout=30)
+        if resp.status_code == 401:
+            raise ValueError(
+                "Xero authorisation expired. Please reconnect your "
+                "Xero account from the Integrations page."
+            )
         resp.raise_for_status()
         report = (resp.json().get("Reports") or [{}])[0]
         rows = report.get("Rows", [])
         lines = []
-        current_section = ""
         for row in rows:
             row_type = row.get("RowType")
             if row_type == "Header":
                 continue
             if row_type == "Section":
                 section_rows = row.get("Rows", [])
-                header = row.get("Title", "")
-                if header:
-                    current_section = header
                 for child in section_rows:
                     if child.get("RowType") != "Row":
                         continue
                     cells = child.get("Cells", [])
                     if len(cells) < 6:
                         continue
-                    account_name = (cells[0].get("Value") or current_section or "").strip()
+                    account_name = (cells[0].get("Value") or "").strip()
                     if not account_name:
                         continue
+                    code = self._extract_xero_account_code(cells[0])
                     movement = _to_decimal(cells[4].get("Value"))
                     if movement == 0:
                         continue
                     debit = movement if movement > 0 else Decimal("0")
                     credit = -movement if movement < 0 else Decimal("0")
                     lines.append({
-                        "account_code": "",
+                        "account_code": code,
                         "account_name": account_name,
                         "opening_balance": _to_decimal(cells[1].get("Value")),
                         "debit": debit,
