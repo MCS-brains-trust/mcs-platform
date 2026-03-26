@@ -287,6 +287,224 @@ def get_resolution_hint(missing_fields):
 
 
 # ---------------------------------------------------------------------------
+# Engagement letter service descriptions — entity-type-specific variants
+# ---------------------------------------------------------------------------
+
+_SERVICE_NAMES = {
+    "compilation": "Compilation of Financial Statements",
+    "financial_statements": "Financial Statements",
+    "tax_return": "Income Tax Return",
+    "bas": "BAS Preparation & Lodgement",
+    "bas_preparation": "BAS Preparation & Lodgement",
+    "bookkeeping": "Bookkeeping",
+    "tax_planning": "Tax Planning & Advisory",
+    "payroll": "Payroll Services",
+    "payroll_tax": "Payroll Services",
+    "asic_compliance": "ASIC Annual Review & Compliance",
+    "asic_review": "ASIC Annual Review & Compliance",
+    "dividend_management": "Dividend Management",
+    "directors_report": "Director\u2019s Report",
+    "trust_distribution": "Trust Distribution Planning",
+    "trust_distribution_planning": "Trust Distribution Planning",
+    "trust_deed_review": "Trust Deed Review",
+    "partner_statements": "Partner Statements",
+    "partnership_agreement_review": "Partnership Agreement Review",
+    "smsf_audit": "SMSF Audit Coordination",
+    "smsf_compliance": "SMSF Compliance",
+    "member_statements": "Member Statements",
+    "div7a_monitoring": "Division 7A Monitoring",
+    "div7a": "Division 7A Monitoring",
+    "fbt": "Fringe Benefits Tax",
+    "tpar": "Taxable Payments Annual Report (TPAR)",
+}
+
+# Entity-type-specific descriptions keyed by (service_id, entity_type).
+# Falls back to "company" variant when no specific variant exists.
+_SERVICE_DESCRIPTIONS = {
+    # --- Financial Statements ---
+    ("financial_statements", "company"): (
+        "Preparation of annual financial statements in accordance with applicable Australian Accounting Standards, "
+        "including the Balance Sheet, Profit & Loss Statement, Statement of Changes in Equity, and Notes to the "
+        "Financial Statements. We will review the trial balance, apply any necessary year-end adjustments, and "
+        "prepare the financial statements in a form suitable for director approval and, where required, lodgement "
+        "with ASIC. The financial statements will reflect the entity\u2019s financial position as at the end of the "
+        "relevant financial year and will be accompanied by the Directors\u2019 Declaration confirming the statements "
+        "give a true and fair view. Preparation of tax effect accounting entries and deferred tax disclosures are "
+        "included where applicable."
+    ),
+    ("financial_statements", "trust"): (
+        "Preparation of annual financial statements for the trust in accordance with applicable Australian "
+        "Accounting Standards, including the Balance Sheet, Profit & Loss Statement, Statement of Distribution, "
+        "and Notes to the Financial Statements. The statements will be prepared for trustee approval and will "
+        "reflect the trust\u2019s financial position and distributable income as at the end of the relevant "
+        "financial year. We will review the trial balance, apply any necessary year-end adjustments, and prepare "
+        "the financial statements in a form suitable for trustee execution."
+    ),
+    ("financial_statements", "partnership"): (
+        "Preparation of annual financial statements for the partnership in accordance with applicable Australian "
+        "Accounting Standards, including the Balance Sheet, Profit & Loss Statement, and Notes to the Financial "
+        "Statements. The statements will reflect the partnership\u2019s financial position as at the end of the "
+        "relevant financial year and will be prepared for partner approval."
+    ),
+    ("financial_statements", "sole_trader"): (
+        "Preparation of annual financial statements reflecting your business financial position and trading "
+        "results for the relevant financial year. Statements are prepared for your records and to support "
+        "preparation of your income tax return."
+    ),
+    ("financial_statements", "individual"): (
+        "Preparation of annual financial statements reflecting your business financial position and trading "
+        "results for the relevant financial year. Statements are prepared for your records and to support "
+        "preparation of your income tax return."
+    ),
+    # --- Income Tax Return ---
+    ("tax_return", "company"): (
+        "Preparation and electronic lodgement of the income tax return for the entity for the relevant income "
+        "year ended 30 June, in accordance with the Income Tax Assessment Act 1997 and applicable ATO "
+        "requirements. Our service includes the calculation of taxable income, application of available "
+        "deductions and offsets, preparation of the tax reconciliation from accounting profit to taxable income, "
+        "and review of carry-forward losses and franking account balances. We will advise you of the estimated "
+        "tax liability or refund position prior to lodgement and notify you of the due date for payment. This "
+        "service does not include the lodgement of individual tax returns for directors, shareholders, or "
+        "beneficiaries unless separately engaged."
+    ),
+    ("tax_return", "trust"): (
+        "Preparation and electronic lodgement of the trust tax return for the relevant income year ended "
+        "30 June, in accordance with the Income Tax Assessment Act 1997 and applicable ATO requirements. "
+        "Our service includes the calculation of net income, application of available deductions, preparation "
+        "of the tax reconciliation, review of carry-forward losses, and preparation of the Distribution "
+        "Statement for beneficiaries. We will advise you of any tax liability at the trust level prior to "
+        "lodgement. This service does not include the lodgement of individual tax returns for beneficiaries "
+        "unless separately engaged."
+    ),
+    ("tax_return", "partnership"): (
+        "Preparation and electronic lodgement of the partnership tax return for the relevant income year "
+        "ended 30 June. Our service includes calculation of partnership net income, preparation of the tax "
+        "reconciliation, and preparation of the distribution schedule for partners. This service does not "
+        "include the lodgement of individual tax returns for partners unless separately engaged."
+    ),
+    ("tax_return", "sole_trader"): (
+        "Preparation and electronic lodgement of your individual income tax return including your business "
+        "schedule for the relevant income year ended 30 June, in accordance with the Income Tax Assessment "
+        "Act 1997 and applicable ATO requirements."
+    ),
+    ("tax_return", "individual"): (
+        "Preparation and electronic lodgement of your individual income tax return for the relevant income "
+        "year ended 30 June, in accordance with the Income Tax Assessment Act 1997 and applicable ATO "
+        "requirements."
+    ),
+}
+
+# Default descriptions for services without entity-type variants
+_SERVICE_DEFAULTS = {
+    "compilation": (
+        "Compilation of annual financial statements in accordance with APES 315 Compilation of Financial "
+        "Information. Includes Balance Sheet, Profit & Loss Statement, and Notes to Financial Statements."
+    ),
+    "bas": (
+        "Preparation and lodgement of Business Activity Statements for each applicable BAS period. "
+        "Includes GST reconciliation."
+    ),
+    "bas_preparation": (
+        "Preparation and lodgement of Business Activity Statements for each applicable BAS period. "
+        "Includes GST reconciliation."
+    ),
+    "bookkeeping": (
+        "Ongoing bookkeeping services including data entry, bank reconciliations, "
+        "and maintenance of the general ledger."
+    ),
+    "tax_planning": (
+        "Proactive tax planning advice including review of tax position, identification of "
+        "tax minimisation opportunities, and year-end planning strategies."
+    ),
+    "payroll": (
+        "Processing of employee payroll including calculation of wages, superannuation, "
+        "PAYG withholding, and preparation of payroll summaries."
+    ),
+    "payroll_tax": (
+        "Processing of employee payroll including calculation of wages, superannuation, "
+        "PAYG withholding, and preparation of payroll summaries."
+    ),
+    "asic_compliance": (
+        "Review of ASIC annual statement and payment of annual review fee. "
+        "Preparation of any required solvency declaration."
+    ),
+    "asic_review": (
+        "Review of ASIC annual statement and payment of annual review fee. "
+        "Preparation of any required solvency declaration."
+    ),
+    "dividend_management": (
+        "Preparation of dividend resolutions, dividend statements, and associated "
+        "documentation for distributions to shareholders."
+    ),
+    "directors_report": (
+        "Preparation of the Director\u2019s Report as required under the Corporations Act 2001 "
+        "for the relevant financial year."
+    ),
+    "trust_distribution": (
+        "Review of trust income, preparation of trustee resolutions, distribution minutes, "
+        "and beneficiary statements."
+    ),
+    "trust_distribution_planning": (
+        "Review of trust income, preparation of trustee resolutions, distribution minutes, "
+        "and beneficiary statements."
+    ),
+    "trust_deed_review": (
+        "Review of the trust deed to ensure it remains current and appropriate for the "
+        "trust\u2019s activities and tax planning objectives."
+    ),
+    "partner_statements": (
+        "Preparation of individual partner income statements showing each partner\u2019s share "
+        "of partnership income or loss."
+    ),
+    "partnership_agreement_review": (
+        "Review of the partnership agreement to ensure it remains current and reflects the "
+        "current partnership arrangements."
+    ),
+    "smsf_audit": (
+        "Coordination of the annual SMSF audit with an approved SMSF auditor as required "
+        "under the Superannuation Industry (Supervision) Act 1993."
+    ),
+    "smsf_compliance": (
+        "Preparation of the SMSF annual return, member statements, and compliance "
+        "documentation in accordance with superannuation legislation."
+    ),
+    "member_statements": (
+        "Preparation of annual member benefit statements showing each member\u2019s opening "
+        "balance, contributions, earnings, and closing balance."
+    ),
+    "div7a_monitoring": (
+        "Annual review of director/shareholder loan accounts for Division 7A compliance. "
+        "Preparation or review of complying loan agreements."
+    ),
+    "div7a": (
+        "Annual review of director/shareholder loan accounts for Division 7A compliance. "
+        "Preparation or review of complying loan agreements."
+    ),
+    "fbt": (
+        "Preparation and lodgement of the annual Fringe Benefits Tax return including "
+        "calculation of FBT liability and employee declarations."
+    ),
+    "tpar": (
+        "Preparation and lodgement of the annual Taxable Payments Annual Report where "
+        "applicable under ATO reporting requirements."
+    ),
+}
+
+
+def _get_service_description(service_id, entity_type):
+    """Return entity-type-appropriate service description text."""
+    key = (service_id, entity_type)
+    desc = _SERVICE_DESCRIPTIONS.get(key)
+    if desc:
+        return desc
+    # Fall back to company variant, then default
+    desc = _SERVICE_DESCRIPTIONS.get((service_id, "company"))
+    if desc:
+        return desc
+    return _SERVICE_DEFAULTS.get(service_id, "")
+
+
+# ---------------------------------------------------------------------------
 # DocumentContextBuilder
 # ---------------------------------------------------------------------------
 
@@ -1755,87 +1973,13 @@ class DocumentContextBuilder:
         )
 
         # Build dynamic selected_services list for row-repeat in template
-        SERVICE_DISPLAY = {
-            "compilation": ("Compilation of Financial Statements",
-                "Compilation of annual financial statements in accordance with APES 315 Compilation of Financial Information. "
-                "Includes Balance Sheet, Profit & Loss Statement, and Notes to Financial Statements."),
-            "financial_statements": ("Financial Statements",
-                "Preparation of annual financial statements including Balance Sheet, Profit & Loss Statement, "
-                "and Notes to Financial Statements."),
-            "tax_return": ("Income Tax Return",
-                "Preparation and lodgement of the income tax return for the entity for the relevant income year."),
-            "bas": ("BAS Preparation & Lodgement",
-                "Preparation and lodgement of Business Activity Statements for each applicable BAS period. "
-                "Includes GST reconciliation."),
-            "bas_preparation": ("BAS Preparation & Lodgement",
-                "Preparation and lodgement of Business Activity Statements for each applicable BAS period. "
-                "Includes GST reconciliation."),
-            "bookkeeping": ("Bookkeeping",
-                "Ongoing bookkeeping services including data entry, bank reconciliations, "
-                "and maintenance of the general ledger."),
-            "tax_planning": ("Tax Planning & Advisory",
-                "Proactive tax planning advice including review of tax position, identification of "
-                "tax minimisation opportunities, and year-end planning strategies."),
-            "payroll": ("Payroll Services",
-                "Processing of employee payroll including calculation of wages, superannuation, "
-                "PAYG withholding, and preparation of payroll summaries."),
-            "payroll_tax": ("Payroll Services",
-                "Processing of employee payroll including calculation of wages, superannuation, "
-                "PAYG withholding, and preparation of payroll summaries."),
-            "asic_compliance": ("ASIC Annual Review & Compliance",
-                "Review of ASIC annual statement and payment of annual review fee. "
-                "Preparation of any required solvency declaration."),
-            "asic_review": ("ASIC Annual Review & Compliance",
-                "Review of ASIC annual statement and payment of annual review fee. "
-                "Preparation of any required solvency declaration."),
-            "dividend_management": ("Dividend Management",
-                "Preparation of dividend resolutions, dividend statements, and associated "
-                "documentation for distributions to shareholders."),
-            "directors_report": ("Director's Report",
-                "Preparation of the Director\u2019s Report as required under the Corporations Act 2001 "
-                "for the relevant financial year."),
-            "trust_distribution": ("Trust Distribution Planning",
-                "Review of trust income, preparation of trustee resolutions, distribution minutes, "
-                "and beneficiary statements."),
-            "trust_distribution_planning": ("Trust Distribution Planning",
-                "Review of trust income, preparation of trustee resolutions, distribution minutes, "
-                "and beneficiary statements."),
-            "trust_deed_review": ("Trust Deed Review",
-                "Review of the trust deed to ensure it remains current and appropriate for the "
-                "trust\u2019s activities and tax planning objectives."),
-            "partner_statements": ("Partner Statements",
-                "Preparation of individual partner income statements showing each partner\u2019s share "
-                "of partnership income or loss."),
-            "partnership_agreement_review": ("Partnership Agreement Review",
-                "Review of the partnership agreement to ensure it remains current and reflects the "
-                "current partnership arrangements."),
-            "smsf_audit": ("SMSF Audit Coordination",
-                "Coordination of the annual SMSF audit with an approved SMSF auditor as required "
-                "under the Superannuation Industry (Supervision) Act 1993."),
-            "smsf_compliance": ("SMSF Compliance",
-                "Preparation of the SMSF annual return, member statements, and compliance "
-                "documentation in accordance with superannuation legislation."),
-            "member_statements": ("Member Statements",
-                "Preparation of annual member benefit statements showing each member\u2019s opening "
-                "balance, contributions, earnings, and closing balance."),
-            "div7a_monitoring": ("Division 7A Monitoring",
-                "Annual review of director/shareholder loan accounts for Division 7A compliance. "
-                "Preparation or review of complying loan agreements."),
-            "div7a": ("Division 7A Monitoring",
-                "Annual review of director/shareholder loan accounts for Division 7A compliance. "
-                "Preparation or review of complying loan agreements."),
-            "fbt": ("Fringe Benefits Tax",
-                "Preparation and lodgement of the annual Fringe Benefits Tax return including "
-                "calculation of FBT liability and employee declarations."),
-            "tpar": ("Taxable Payments Annual Report (TPAR)",
-                "Preparation and lodgement of the annual Taxable Payments Annual Report where "
-                "applicable under ATO reporting requirements."),
-        }
+        entity_type = (self.entity.entity_type or "company").lower()
         selected_services = []
         seen = set()
         for svc_id in services:
-            if svc_id in SERVICE_DISPLAY and svc_id not in seen:
-                name, desc = SERVICE_DISPLAY[svc_id]
+            if svc_id in _SERVICE_NAMES and svc_id not in seen:
+                name = _SERVICE_NAMES[svc_id]
+                desc = _get_service_description(svc_id, entity_type)
                 selected_services.append({"name": name, "description": desc})
                 seen.add(svc_id)
 
