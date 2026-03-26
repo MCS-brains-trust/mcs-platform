@@ -96,7 +96,7 @@
             {% endif %}
 
             {{ form.profit_share_percentage.as_hidden }}
-            {{ form.distribution_percentage.as_hidden }}
+            {% if entity.entity_type != 'trust' %}{{ form.distribution_percentage.as_hidden }}{% endif %}
 
             <div class="d-flex gap-2">
                 <button type="submit" class="btn btn-primary">
