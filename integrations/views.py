@@ -412,6 +412,7 @@ def _do_cloud_import(
         raw_lines, merge_warnings = merge_duplicate_accounts(raw_lines)
         for w in merge_warnings:
             messages.warning(request, w)
+        _sync_source_accounts_to_entity_coa(entity, raw_lines)
         staged_lines = _apply_learned_mappings(entity, raw_lines)
         request.session["staged_import"] = {
             "fy_pk": str(fy.pk),
@@ -900,6 +901,62 @@ def quick_add_entity_account(request):
             "maps_to_id": str(maps_to.pk) if maps_to else "",
         },
     })
+
+
+# ---------------------------------------------------------------------------
+# Source account sync
+# ---------------------------------------------------------------------------
+
+def _guess_section_from_code(code):
+    """Heuristic section assignment based on common Australian COA ranges."""
+    from core.models import EntityChartOfAccount
+    S = EntityChartOfAccount.StatementSection
+    try:
+        n = int(str(code).split(".")[0])
+    except (ValueError, AttributeError):
+        return S.EXPENSES
+    if n < 1000:
+        return S.REVENUE
+    elif n < 2000:
+        return S.EXPENSES
+    elif n < 3000:
+        return S.CURRENT_ASSETS
+    elif n < 4000:
+        return S.CURRENT_LIABILITIES
+    elif n < 5000:
+        return S.EQUITY
+    else:
+        return S.EXPENSES
+
+
+def _sync_source_accounts_to_entity_coa(entity, raw_lines):
+    """Upsert each imported source account into EntityChartOfAccount.
+
+    Creates new accounts or updates names for existing codes.
+    Does NOT overwrite maps_to — preserves any existing mappings.
+    """
+    from core.models import EntityChartOfAccount
+
+    for line in raw_lines:
+        code = str(line.get("account_code", "")).strip()
+        name = str(line.get("account_name", "")).strip()
+        if not code or not name:
+            continue
+
+        section = _guess_section_from_code(code)
+
+        obj, created = EntityChartOfAccount.objects.update_or_create(
+            entity=entity,
+            account_code=code,
+            defaults={
+                "account_name": name,
+                "section": section,
+                "is_active": True,
+                "is_custom": True,
+            },
+        )
+        # If the account already existed with a maps_to, the update_or_create
+        # preserves it because maps_to is not in defaults.
 
 
 # ---------------------------------------------------------------------------
