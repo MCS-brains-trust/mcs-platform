@@ -378,6 +378,7 @@ class QuickBooksProvider(BaseProvider):
             beginning_balance = Decimal("0")
             net = Decimal("0")
 
+            last_balance = Decimal("0")
             for data_row in child_rows:
                 if data_row.get("type") == "Section":
                     continue
@@ -397,14 +398,21 @@ class QuickBooksProvider(BaseProvider):
                     amount_str = (cols[7].get("value") or "").strip()
                     if amount_str:
                         net += _to_decimal(amount_str)
+                # Capture running balance for sign convention detection
+                if len(cols) > 8:
+                    bal_str = (cols[8].get("value") or "").strip()
+                    if bal_str:
+                        last_balance = _to_decimal(bal_str)
+
+            ending_balance = last_balance
 
             if net == 0:
                 continue
 
-            # Determine sign convention from TB side and beginning balance
+            # Determine sign convention from TB side and ending balance
             key = account_code or account_name
             tb_side = tb_sides.get(key, "D")
-            use_credit_convention = (tb_side == "C") or (tb_side == "D" and beginning_balance < 0 and net < 0)
+            use_credit_convention = (tb_side == "C") or (tb_side == "D" and ending_balance < 0)
 
             if use_credit_convention:
                 if net > 0:
@@ -417,8 +425,8 @@ class QuickBooksProvider(BaseProvider):
                 else:
                     out_debit, out_credit = Decimal("0"), abs(net)
 
-            logger.info("QBO GL: %s tb=%s begin=%s net=%s → %s",
-                        account_name, tb_side, beginning_balance, net,
+            logger.info("QBO GL: %s tb=%s begin=%s end=%s net=%s → %s",
+                        account_name, tb_side, beginning_balance, ending_balance, net,
                         "D" if out_debit > 0 else "C")
 
             lines.append({
