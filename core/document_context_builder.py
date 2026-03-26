@@ -2033,6 +2033,8 @@ class DocumentContextBuilder:
             "additional_terms": additional_terms,
             "show_additional_terms": bool(additional_terms),
             "prior_year_letter_existed": prior_year_letter_existed,
+            # Dynamic section numbers — sequential, no gaps
+            **self._engagement_section_numbers(services, additional_terms, ctx),
             "apes_305_reference": (
                 "This engagement is conducted in accordance with APES 305 Terms of Engagement "
                 "issued by the Accounting Professional & Ethical Standards Board (APESB)."
@@ -2044,6 +2046,46 @@ class DocumentContextBuilder:
             "client_portal_url": ctx.get("practice_website", ""),
             "show_fusesign": False,  # Set to True when FuseSign is configured
         }
+
+    def _engagement_section_numbers(self, services, additional_terms, ctx):
+        """Compute sequential section numbers for the engagement letter.
+
+        Returns dict of section_X keys where X is the section key and
+        the value is the sequential number (int). Excluded sections
+        are not present in the dict so {% if section_X %} evaluates false.
+        """
+        # Define all sections in document order with their inclusion conditions
+        show_compilation = "compilation" in services
+        show_div7a = "div7a_monitoring" in services or "div7a" in services
+        show_trust_dist = (
+            ("trust_distribution" in services or "trust_distribution_planning" in services)
+            and ctx.get("is_trust", False)
+        )
+        show_additional = bool(additional_terms)
+
+        sections_ordered = [
+            ("scope", True),
+            ("fees", True),
+            ("client_resp", True),
+            ("firm_resp", True),
+            ("compilation", show_compilation),
+            ("div7a", show_div7a),
+            ("trust_dist", show_trust_dist),
+            ("standards", True),
+            ("privacy", True),
+            ("liability", True),
+            ("dispute", True),
+            ("additional", show_additional),
+            ("commencement", True),
+        ]
+
+        result = {}
+        num = 1
+        for key, included in sections_ordered:
+            if included:
+                result[f"section_{key}"] = num
+                num += 1
+        return result
 
     # ------------------------------------------------------------------
     # Part 18 — Client Cover Letter
