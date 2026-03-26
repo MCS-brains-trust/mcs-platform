@@ -956,33 +956,60 @@ def _guess_section_from_code(code):
 
 
 def _sync_source_accounts_to_entity_coa(entity, raw_lines):
-    """Upsert each imported source account into EntityChartOfAccount.
+    """Sync each imported source account into EntityChartOfAccount.
 
-    Creates new accounts or updates names for existing codes.
-    Does NOT overwrite maps_to — preserves any existing mappings.
+    Matches by account name first (case-insensitive), then by code.
+    Creates new entries only for genuinely new accounts.
+    Never overwrites maps_to — preserves existing mappings.
     """
     from core.models import EntityChartOfAccount
 
     for line in raw_lines:
         code = str(line.get("account_code", "")).strip()
         name = str(line.get("account_name", "")).strip()
-        if not code or not name:
+        if not name:
             continue
 
         section = _guess_section_from_code(code)
 
-        obj, created = EntityChartOfAccount.objects.update_or_create(
+        # Step 1: Match by account name (case-insensitive)
+        ea = EntityChartOfAccount.objects.filter(
             entity=entity,
-            account_code=code,
-            defaults={
-                "account_name": name,
-                "section": section,
-                "is_active": True,
-                "is_custom": True,
-            },
+            account_name__iexact=name,
+        ).first()
+
+        if ea:
+            # Name match found — update name casing and ensure active
+            ea.account_name = name
+            if not ea.section:
+                ea.section = section
+            ea.is_active = True
+            ea.save(update_fields=["account_name", "section", "is_active"])
+            continue
+
+        # Step 2: Match by account code
+        if code:
+            ea = EntityChartOfAccount.objects.filter(
+                entity=entity,
+                account_code=code,
+            ).first()
+
+            if ea:
+                # Code match but different name — update name
+                ea.account_name = name
+                ea.is_active = True
+                ea.save(update_fields=["account_name", "is_active"])
+                continue
+
+        # Step 3: No match — create new entry
+        EntityChartOfAccount.objects.create(
+            entity=entity,
+            account_code=code or name[:20],
+            account_name=name,
+            section=section,
+            is_active=True,
+            is_custom=True,
         )
-        # If the account already existed with a maps_to, the update_or_create
-        # preserves it because maps_to is not in defaults.
 
 
 # ---------------------------------------------------------------------------
