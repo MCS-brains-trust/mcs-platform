@@ -1027,15 +1027,23 @@ def _apply_learned_mappings(entity, raw_lines):
             "entity_acct_name": "",
         }
 
-        # Learned mappings and COA auto-suggestions are intentionally not applied here.
-        # The accountant must map every account manually in the wizard.
+        # Priority 1: ClientAccountMapping (learned from prior imports)
+        if cam and cam.mapped_line_item:
+            staged_line["mapped_id"] = str(cam.mapped_line_item.pk)
+            staged_line["mapped_label"] = cam.mapped_line_item.line_item_label
+            staged_line["confidence"] = "learned"
 
-        # Still populate entity_acct_code/name for display purposes (account identification only)
+        # Populate entity account fields and apply Priority 2 if no learned mapping
         ea = entity_coa.get(code.lower())
         if ea:
             staged_line["entity_acct_code"] = ea.account_code
             staged_line["entity_acct_name"] = ea.account_name
-            if staged_line["confidence"] == "new":
+            # Priority 2: EntityChartOfAccount.maps_to
+            if not staged_line["mapped_id"] and ea.maps_to:
+                staged_line["mapped_id"] = str(ea.maps_to.pk)
+                staged_line["mapped_label"] = ea.maps_to.line_item_label
+                staged_line["confidence"] = "matched"
+            elif not staged_line["mapped_id"]:
                 staged_line["confidence"] = "matched"
 
         staged.append(staged_line)
