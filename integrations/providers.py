@@ -330,7 +330,7 @@ class QuickBooksProvider(BaseProvider):
         resp.raise_for_status()
         accounts = resp.json().get("QueryResponse", {}).get("Account", [])
         return {
-            a["Id"]: a.get("AcctNum") or a.get("Name", "")
+            a["Id"]: a.get("AcctNum") or a["Id"]
             for a in accounts
         }
 
