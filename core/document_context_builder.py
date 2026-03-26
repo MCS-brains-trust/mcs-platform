@@ -158,7 +158,7 @@ def format_date_long(value):
     if not value:
         return ""
     if isinstance(value, (date, datetime)):
-        return value.strftime("%-d %B %Y")
+        return f"{value.day} {value.strftime('%B %Y')}"
     return str(value)
 
 
@@ -1966,11 +1966,22 @@ class DocumentContextBuilder:
             )
 
         # engagement_date: wizard sends key 'date', DCB also checks 'engagement_date'
-        _raw_date = (
+        # Parse string dates (ISO or long format) into a date object, then format.
+        _date_str = (
             self.wizard_data.get("engagement_date")
             or self.wizard_data.get("date")
-            or format_date_long(date.today())
+            or ""
         )
+        _doc_date = None
+        if _date_str:
+            if isinstance(_date_str, (date, datetime)):
+                _doc_date = _date_str
+            else:
+                try:
+                    _doc_date = date.fromisoformat(str(_date_str).strip())
+                except (ValueError, TypeError):
+                    pass
+        _raw_date = format_date_long(_doc_date or date.today())
 
         # Build dynamic selected_services list for row-repeat in template
         entity_type = (self.entity.entity_type or "company").lower()
