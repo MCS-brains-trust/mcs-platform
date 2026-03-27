@@ -282,10 +282,16 @@ def legal_doc_wizard(request, pk, doc_type):
     })
 
 
+@login_required
+@require_POST
 def engagement_letter_generate(request, pk):
     """Generate engagement letter via DocumentContextBuilder for correct selected_services."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
-    entity = fy.entity
+    entity = get_object_or_404(Entity, pk=pk)
+
+    params = json.loads(request.body) if request.content_type == "application/json" else request.POST.dict()
+
+    financial_year_id = params.get("financial_year_id")
+    fy = get_object_or_404(FinancialYear, pk=financial_year_id) if financial_year_id else None
 
     template = LegalDocumentTemplate.objects.filter(
         document_type="engagement_letter", is_active=True
@@ -293,10 +299,7 @@ def engagement_letter_generate(request, pk):
     if not template:
         return JsonResponse({"error": "No active engagement letter template."}, status=404)
 
-    params = json.loads(request.body) if request.content_type == "application/json" else request.POST.dict()
-
-    import logging as _logging
-    _logger = _logging.getLogger(__name__)
+    _logger = logging.getLogger(__name__)
     _logger.info("EL wizard_data: %s", params)
 
     from core.document_context_builder import DocumentContextBuilder
@@ -323,7 +326,14 @@ def engagement_letter_generate(request, pk):
             LegalDocument.objects.filter(pk=doc_id).update(
                 context_data=_sanitise_context_for_storage(context)
             )
-        return JsonResponse(result)
+        return JsonResponse({
+            "status": "ok",
+            "document_id": result.get("document_id"),
+            "docx_url": result.get("docx_url"),
+            "pdf_url": result.get("pdf_url"),
+            "message": "Engagement letter saved successfully.",
+            "redirect_url": None,
+        })
     return JsonResponse({"error": result.get("error", "Generation failed.")}, status=500)
 
 
