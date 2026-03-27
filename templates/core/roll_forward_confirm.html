@@ -14,40 +14,10 @@
                     <li>{{ fy.year_label }} will be linked as the comparative (prior) year</li>
                 </ul>
 
-                {% if engagement_letter_ok %}
-                <div class="alert alert-success d-flex align-items-start gap-2 mt-3 mb-3">
-                    <i class="bi bi-check-circle-fill mt-1 flex-shrink-0"></i>
-                    <div>
-                        <strong>Engagement Letter on File</strong><br>
-                        <small>An engagement letter for <strong>{{ target_year_label }}</strong> is already uploaded. You may proceed with the roll forward.</small>
-                    </div>
-                </div>
-                {% else %}
-                <div class="alert alert-warning d-flex align-items-start gap-2 mt-3 mb-3">
-                    <i class="bi bi-exclamation-triangle-fill mt-1 flex-shrink-0"></i>
-                    <div>
-                        <strong>Engagement Letter Required for {{ target_year_label }}</strong><br>
-                        <small>
-                            You must upload an engagement letter for <strong>{{ target_year_label }}</strong>
-                            before rolling forward. Upload it in the
-                            <a href="{% url 'core:entity_detail' pk=fy.entity.pk %}?tab=engagement_letters">Engagement Letters tab</a>
-                            on the entity page, then return here to roll forward.
-                        </small>
-                    </div>
-                </div>
-                {% endif %}
-
                 <form method="post">
                     {% csrf_token %}
                     <div class="d-flex gap-2">
-                        {% if engagement_letter_ok %}
                         <button type="submit" class="btn btn-primary">Confirm Roll Forward</button>
-                        {% else %}
-                        <a href="{% url 'core:entity_detail' pk=fy.entity.pk %}?tab=engagement_letters"
-                           class="btn btn-warning">
-                            <i class="bi bi-envelope-paper me-1"></i> Upload Engagement Letter First
-                        </a>
-                        {% endif %}
                         <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary">Cancel</a>
                     </div>
                 </form>
