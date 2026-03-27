@@ -6153,7 +6153,14 @@ def entity_officer_delete(request, pk):
     _log_action(request, "user_change",
                 f"Removed officer {name} from {entity.entity_name}",
                 officer)
-    officer.delete()
+    from django.db import transaction as txn
+    from core.models import OfficerDistributionHistory, EntityChartOfAccount
+    with txn.atomic():
+        OfficerDistributionHistory.objects.filter(officer=officer).delete()
+        EntityChartOfAccount.objects.filter(
+            beneficiary_officer=officer, auto_provisioned=True,
+        ).delete()
+        officer.delete()
     messages.success(request, f"Removed {name}.")
     return redirect("core:entity_officers", pk=entity.pk)
 
