@@ -348,8 +348,16 @@ def _render_docx(template, context):
 
     jinja_env = get_jinja_env()
 
-    # docxtpl handles XML escaping internally — no manual escaping needed.
-    tpl.render(context, jinja_env=jinja_env)
+    # Escape & in string values only — docxtpl does not auto-escape context values.
+    # Must NOT recurse into lists (breaks {%tr for %} row-repeat iteration).
+    import html as _html
+    safe_context = {}
+    for k, v in context.items():
+        if isinstance(v, str):
+            safe_context[k] = _html.escape(v, quote=False)
+        else:
+            safe_context[k] = v  # lists, bools, ints, InlineImage — pass through raw
+    tpl.render(safe_context, jinja_env=jinja_env)
 
     buffer = io.BytesIO()
     tpl.save(buffer)
