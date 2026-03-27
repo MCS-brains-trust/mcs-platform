@@ -348,24 +348,8 @@ def _render_docx(template, context):
 
     jinja_env = get_jinja_env()
 
-    # XML-escape all string values to prevent xmlParseEntityRef errors
-    # caused by unescaped & characters (e.g. "MC & S Pty Ltd") in context data.
-    import html as _html
-    def _xml_escape_context(obj):
-        if isinstance(obj, str):
-            return _html.escape(obj, quote=False)
-        if isinstance(obj, dict):
-            return {k: _xml_escape_context(v) for k, v in obj.items()}
-        if isinstance(obj, list):
-            return [_xml_escape_context(i) for i in obj]
-        return obj
-    safe_context = _xml_escape_context(context)
-    # Restore non-string objects that must not be escaped (InlineImage, bool, etc.)
-    for k, v in context.items():
-        if not isinstance(v, (str, dict, list)):
-            safe_context[k] = v
-
-    tpl.render(safe_context, jinja_env=jinja_env)
+    # docxtpl handles XML escaping internally — no manual escaping needed.
+    tpl.render(context, jinja_env=jinja_env)
 
     buffer = io.BytesIO()
     tpl.save(buffer)
