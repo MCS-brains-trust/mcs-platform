@@ -311,6 +311,13 @@ def engagement_letter_generate(request, pk):
     )
 
     if result.get("status") == "ok":
+        # Save sanitised context_data for re-rendering
+        from core.views_partnership_docs import _sanitise_context_for_storage
+        doc_id = result.get("document_id")
+        if doc_id:
+            LegalDocument.objects.filter(pk=doc_id).update(
+                context_data=_sanitise_context_for_storage(context)
+            )
         return JsonResponse(result)
     return JsonResponse({"error": result.get("error", "Generation failed.")}, status=500)
 
