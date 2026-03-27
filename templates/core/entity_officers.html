@@ -94,10 +94,14 @@
                         <a href="{% url 'core:entity_officer_edit' officer.pk %}" class="btn btn-sm btn-outline-primary">
                             <i class="bi bi-pencil"></i>
                         </a>
-                        <a href="{% url 'core:entity_officer_delete' officer.pk %}" class="btn btn-sm btn-outline-danger"
-                           onclick="return confirm('Are you sure you want to remove this officer?');">
-                            <i class="bi bi-trash"></i>
-                        </a>
+                        <form method="post" action="{% url 'core:entity_officer_delete' officer.pk %}"
+                              style="display:inline;"
+                              onsubmit="return confirm('Delete this officer? This cannot be undone.');">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-sm btn-outline-danger">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </form>
                     </td>
                 </tr>
                 {% endfor %}
