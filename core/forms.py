@@ -351,37 +351,14 @@ class EntityOfficerForm(forms.ModelForm):
             EntityOfficer.OfficerRole.UNIT_HOLDER,
             EntityOfficer.OfficerRole.BENEFICIARY,
         ]
-        # Clear distribution_percentage for non-distribution roles
         if role not in distribution_roles:
             cleaned_data["distribution_percentage"] = None
-            return cleaned_data
-        # Validate 100% sum rule for distribution roles
-        new_value = cleaned_data.get("distribution_percentage")
-        if new_value is None:
-            return cleaned_data
-        from django.db import models as db_models
-        from django.utils import timezone
-        entity = self.instance.entity
-        today = timezone.now().date()
-        active_officers = EntityOfficer.objects.filter(
-            entity=entity,
-            role__in=distribution_roles,
-            distribution_percentage__isnull=False,
-        ).filter(
-            db_models.Q(date_ceased__isnull=True) |
-            db_models.Q(date_ceased__gt=today)
-        )
-        if self.instance and self.instance.pk:
-            active_officers = active_officers.exclude(pk=self.instance.pk)
-        current_sum = active_officers.aggregate(
-            total=db_models.Sum("distribution_percentage")
-        )["total"] or 0
-        total = current_sum + new_value
-        if total != 100:
-            raise forms.ValidationError(
-                f"Distribution percentages for active unit holders/beneficiaries "
-                f"must total 100%. Current total: {total}%."
-            )
+        else:
+            pct = cleaned_data.get("distribution_percentage")
+            if pct is not None and not (0 <= pct <= 100):
+                raise forms.ValidationError(
+                    "Distribution percentage must be between 0 and 100."
+                )
         return cleaned_data
 
 
