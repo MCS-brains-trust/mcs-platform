@@ -315,6 +315,9 @@ def _render_docx(template, context):
     import tempfile as _tempfile
     import os as _os
 
+    # Shallow copy to avoid mutating the caller's context (InlineImage injection)
+    context = dict(context)
+
     tpl = DocxTemplate(template.template_file.path)
 
     # Inject InlineImage logo for Word documents
