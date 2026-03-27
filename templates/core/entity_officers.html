@@ -104,11 +104,23 @@
             </tbody>
             {% if entity.entity_type == 'trust' %}
             <tfoot>
-                <tr class="fw-bold">
-                    <td colspan="8" class="text-end">Total Distribution:</td>
+                <tr>
+                    <td colspan="8" class="text-end">Active:</td>
+                    <td>{{ dist_active }}%</td>
+                    <td colspan="2"></td>
+                </tr>
+                {% if dist_ceased %}
+                <tr>
+                    <td colspan="8" class="text-end text-muted">Ceased:</td>
+                    <td class="text-muted">{{ dist_ceased }}%</td>
+                    <td colspan="2"></td>
+                </tr>
+                {% endif %}
+                <tr class="fw-bold" style="border-top: 2px solid #dee2e6;">
+                    <td colspan="8" class="text-end">Total:</td>
                     <td>
-                        <span class="{% if distribution_total == 100 %}text-success{% else %}text-danger{% endif %}">
-                            {{ distribution_total }}% of 100%
+                        <span class="{% if dist_total == 100 %}text-success{% else %}text-danger{% endif %}">
+                            {{ dist_total }}%{% if dist_total == 100 %} &#10003;{% endif %}
                         </span>
                     </td>
                     <td colspan="2"></td>

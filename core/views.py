@@ -5987,8 +5987,10 @@ def entity_officers(request, pk):
     }
     officer_label = officer_label_map.get(entity.entity_type, "Officer")
 
-    # Calculate distribution total for active unit holders/beneficiaries
-    distribution_total = 0
+    # Calculate distribution totals for trust unit holders/beneficiaries
+    dist_active = 0
+    dist_ceased = 0
+    dist_total = 0
     if entity.entity_type == "trust":
         from decimal import Decimal
         from django.db.models import Q, Sum
@@ -5998,20 +6000,76 @@ def entity_officers(request, pk):
             EntityOfficer.OfficerRole.UNIT_HOLDER,
             EntityOfficer.OfficerRole.BENEFICIARY,
         ]
-        total = officers.filter(
+        base_qs = officers.filter(
             role__in=distribution_roles,
             distribution_percentage__isnull=False,
-        ).filter(
+        )
+        dist_active = base_qs.filter(
             Q(date_ceased__isnull=True) | Q(date_ceased__gt=today)
-        ).aggregate(total=Sum("distribution_percentage"))["total"]
-        distribution_total = total or Decimal("0")
+        ).aggregate(total=Sum("distribution_percentage"))["total"] or Decimal("0")
+        dist_ceased = base_qs.filter(
+            date_ceased__isnull=False, date_ceased__lte=today,
+        ).aggregate(total=Sum("distribution_percentage"))["total"] or Decimal("0")
+        dist_total = dist_active + dist_ceased
 
     return render(request, "core/entity_officers.html", {
         "entity": entity,
         "officers": officers,
         "officer_label": officer_label,
-        "distribution_total": distribution_total,
+        "dist_active": dist_active,
+        "dist_ceased": dist_ceased,
+        "dist_total": dist_total,
     })
+
+
+def _handle_ceased_redistribution(request, officer):
+    """Auto-redistribute distribution % when a unit holder/beneficiary is ceased."""
+    from django.db import transaction
+    from django.db.models import Q, Sum
+    from django.utils import timezone
+    from decimal import Decimal
+
+    if officer.role not in EntityOfficer.DISTRIBUTION_ROLES:
+        return
+    today = timezone.now().date()
+    if not officer.date_ceased or officer.date_ceased > today:
+        return
+    if not officer.distribution_percentage or officer.distribution_percentage <= 0:
+        return
+
+    ceased_pct = officer.distribution_percentage
+    entity = officer.entity
+    remaining = EntityOfficer.objects.filter(
+        entity=entity,
+        role__in=list(EntityOfficer.DISTRIBUTION_ROLES),
+    ).filter(
+        Q(date_ceased__isnull=True) | Q(date_ceased__gt=today)
+    ).exclude(pk=officer.pk)
+
+    count = remaining.count()
+    if count == 0:
+        return
+    if count == 1:
+        sole = remaining.first()
+        with transaction.atomic():
+            sole.distribution_percentage = Decimal("100.00")
+            sole._updated_by = getattr(request, "user", None)
+            sole.save()
+        messages.info(
+            request,
+            f"{sole.full_name} is now the sole active unit holder and has been "
+            f"set to 100.00% distribution."
+        )
+    else:
+        active_total = remaining.filter(
+            distribution_percentage__isnull=False,
+        ).aggregate(total=Sum("distribution_percentage"))["total"] or Decimal("0")
+        messages.warning(
+            request,
+            f"Warning: {officer.full_name} has been ceased. Their {ceased_pct}% "
+            f"distribution has not been reallocated. Active unit holders currently "
+            f"total {active_total}%. Please update distribution percentages manually."
+        )
 
 
 @login_required
@@ -6069,6 +6127,8 @@ def entity_officer_edit(request, pk):
                         f"Updated officer {officer.full_name} for {entity.entity_name}",
                         officer)
             messages.success(request, f"Updated {officer.full_name}.")
+            # Auto-redistribute distribution % when a unit holder/beneficiary is ceased
+            _handle_ceased_redistribution(request, obj)
             return redirect("core:entity_officers", pk=entity.pk)
     else:
         form = EntityOfficerForm(instance=officer, entity_type=entity.entity_type)
