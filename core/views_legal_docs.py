@@ -295,9 +295,14 @@ def engagement_letter_generate(request, pk):
 
     params = json.loads(request.body) if request.content_type == "application/json" else request.POST.dict()
 
+    import logging as _logging
+    _logger = _logging.getLogger(__name__)
+    _logger.info("EL wizard_data: %s", params)
+
     from core.document_context_builder import DocumentContextBuilder
     dcb = DocumentContextBuilder(entity, financial_year=fy, wizard_data=params)
     context = dcb.build("engagement_letter")
+    _logger.info("EL context selected_services: %s", context.get('selected_services'))
 
     result = render_and_create_document(
         entity=entity,

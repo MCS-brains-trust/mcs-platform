@@ -1999,6 +1999,7 @@ class DocumentContextBuilder:
             "client_address": ctx.get("entity_postal_address", ""),
             "engagement_date": _raw_date,
             "addressee_salutation": ctx.get("addressee_salutation", "Dear Client"),
+            "entity_type_label": self.entity.get_entity_type_display() if self.entity else "",
             "services_engaged": services,
             "selected_services": selected_services,
             # -------------------------------------------------------
