@@ -482,33 +482,10 @@ class EntityOfficer(models.Model):
         return self.date_ceased > timezone.now().date()
 
     def clean(self):
-        from django.core.exceptions import ValidationError
         super().clean()
         # Only unit holders and beneficiaries may have distribution_percentage
         if self.role not in self.DISTRIBUTION_ROLES:
             self.distribution_percentage = None
-        # Validate 100% sum rule for distribution roles
-        if self.role in self.DISTRIBUTION_ROLES and self.distribution_percentage is not None:
-            from decimal import Decimal
-            qs = EntityOfficer.objects.filter(
-                entity=self.entity,
-                role__in=list(self.DISTRIBUTION_ROLES),
-                distribution_percentage__isnull=False,
-            )
-            if self.pk:
-                qs = qs.exclude(pk=self.pk)
-            # Filter to active officers only
-            from django.db.models import Q
-            from django.utils import timezone
-            today = timezone.now().date()
-            qs = qs.filter(Q(date_ceased__isnull=True) | Q(date_ceased__gt=today))
-            others_total = qs.aggregate(total=models.Sum("distribution_percentage"))["total"] or Decimal("0")
-            new_total = others_total + self.distribution_percentage
-            if new_total != Decimal("100.00"):
-                raise ValidationError(
-                    f"Distribution percentages for active unit holders/beneficiaries "
-                    f"must total 100%. Current total: {new_total}%."
-                )
 
     def save(self, *args, **kwargs):
         # Auto-assign display_order on creation if still default 0
