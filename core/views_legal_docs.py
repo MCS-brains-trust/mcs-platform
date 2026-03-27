@@ -282,6 +282,39 @@ def legal_doc_wizard(request, pk, doc_type):
     })
 
 
+def engagement_letter_generate(request, pk):
+    """Generate engagement letter via DocumentContextBuilder for correct selected_services."""
+    fy = get_object_or_404(FinancialYear, pk=pk)
+    entity = fy.entity
+
+    template = LegalDocumentTemplate.objects.filter(
+        document_type="engagement_letter", is_active=True
+    ).first()
+    if not template:
+        return JsonResponse({"error": "No active engagement letter template."}, status=404)
+
+    params = json.loads(request.body) if request.content_type == "application/json" else request.POST.dict()
+
+    from core.document_context_builder import DocumentContextBuilder
+    dcb = DocumentContextBuilder(entity, financial_year=fy, wizard_data=params)
+    context = dcb.build("engagement_letter")
+
+    result = render_and_create_document(
+        entity=entity,
+        financial_year=fy,
+        template=template,
+        doc_type="engagement_letter",
+        context=context,
+        params=params,
+        user=request.user,
+        disclaimer_acknowledged=params.get("disclaimer_acknowledged", False),
+    )
+
+    if result.get("status") == "ok":
+        return JsonResponse(result)
+    return JsonResponse({"error": result.get("error", "Generation failed.")}, status=500)
+
+
 @login_required
 @require_POST
 def legal_doc_generate(request, pk, doc_type):
@@ -294,6 +327,7 @@ def legal_doc_generate(request, pk, doc_type):
 
     # Route to specific generators
     SPECIFIC_GENERATORS = {
+        "engagement_letter": engagement_letter_generate,
         "div7a_loan_agreement": div7a_generate,
         "trust_deed_change_trustee": change_of_trustee_generate,
         "unit_trust_deed": fixed_unit_trust_generate,
