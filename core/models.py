@@ -471,10 +471,156 @@ class EntityOfficer(models.Model):
             return role_value in self.roles
         return self.role == role_value
 
+    DISTRIBUTION_ROLES = {OfficerRole.UNIT_HOLDER, OfficerRole.BENEFICIARY}
+
     @property
     def is_active(self):
-        """Officer is active if they have not ceased."""
-        return self.date_ceased is None
+        """Officer is active if ceased date is null or in the future."""
+        if self.date_ceased is None:
+            return True
+        from django.utils import timezone
+        return self.date_ceased > timezone.now().date()
+
+    def clean(self):
+        from django.core.exceptions import ValidationError
+        super().clean()
+        # Only unit holders and beneficiaries may have distribution_percentage
+        if self.role not in self.DISTRIBUTION_ROLES:
+            self.distribution_percentage = None
+        # Validate 100% sum rule for distribution roles
+        if self.role in self.DISTRIBUTION_ROLES and self.distribution_percentage is not None:
+            from decimal import Decimal
+            qs = EntityOfficer.objects.filter(
+                entity=self.entity,
+                role__in=list(self.DISTRIBUTION_ROLES),
+                distribution_percentage__isnull=False,
+            )
+            if self.pk:
+                qs = qs.exclude(pk=self.pk)
+            # Filter to active officers only
+            from django.db.models import Q
+            from django.utils import timezone
+            today = timezone.now().date()
+            qs = qs.filter(Q(date_ceased__isnull=True) | Q(date_ceased__gt=today))
+            others_total = qs.aggregate(total=models.Sum("distribution_percentage"))["total"] or Decimal("0")
+            new_total = others_total + self.distribution_percentage
+            if new_total != Decimal("100.00"):
+                raise ValidationError(
+                    f"Distribution percentages for active unit holders/beneficiaries "
+                    f"must total 100%. Current total: {new_total}%."
+                )
+
+    def save(self, *args, **kwargs):
+        # Auto-assign display_order on creation if still default 0
+        if not self.pk or self._state.adding:
+            max_order = EntityOfficer.objects.filter(
+                entity=self.entity, role=self.role,
+            ).aggregate(m=models.Max("display_order"))["m"]
+            if self.display_order == 0:
+                self.display_order = (max_order or 0) + 1
+        # Track old distribution_percentage for history
+        self._old_distribution_percentage = None
+        if self.pk and not self._state.adding:
+            try:
+                old = EntityOfficer.objects.filter(pk=self.pk).values_list(
+                    "distribution_percentage", flat=True
+                ).first()
+                self._old_distribution_percentage = old
+            except EntityOfficer.DoesNotExist:
+                pass
+        super().save(*args, **kwargs)
+        # Create distribution history record if percentage changed
+        self._update_distribution_history()
+
+    def _update_distribution_history(self):
+        """Create/close distribution history records when percentage changes."""
+        if self.role not in self.DISTRIBUTION_ROLES:
+            return
+        if self.distribution_percentage is None:
+            return
+        old_pct = getattr(self, "_old_distribution_percentage", None)
+        # On creation or on change
+        if self._state.adding or old_pct != self.distribution_percentage:
+            from django.utils import timezone
+            today = timezone.now().date()
+            from datetime import timedelta
+            # Close the previous history record
+            OfficerDistributionHistory.objects.filter(
+                officer=self, effective_to__isnull=True,
+            ).update(effective_to=today - timedelta(days=1))
+            # Create new history record
+            OfficerDistributionHistory.objects.create(
+                officer=self,
+                distribution_pct=self.distribution_percentage,
+                effective_from=today,
+                created_by=getattr(self, "_updated_by", None),
+            )
+
+
+class OfficerDistributionHistory(models.Model):
+    """Tracks historical changes to officer distribution percentages."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    officer = models.ForeignKey(
+        EntityOfficer, on_delete=models.PROTECT,
+        related_name="distribution_history",
+    )
+    distribution_pct = models.DecimalField(max_digits=6, decimal_places=2)
+    effective_from = models.DateField()
+    effective_to = models.DateField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, null=True, on_delete=models.SET_NULL,
+        related_name="+",
+    )
+
+    class Meta:
+        ordering = ["-effective_from"]
+        verbose_name = "Distribution History"
+        verbose_name_plural = "Distribution Histories"
+
+    def __str__(self):
+        return f"{self.officer.full_name}: {self.distribution_pct}% from {self.effective_from}"
+
+
+# ---------------------------------------------------------------------------
+# Capital Account Template (trust beneficiary capital accounts)
+# ---------------------------------------------------------------------------
+class CapitalAccountTemplate(models.Model):
+    """Template line items for trust beneficiary/unit holder capital accounts."""
+    TRUST_ENTITY_TYPES = [
+        ("trust", "Trust"),
+    ]
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entity_type = models.CharField(
+        max_length=20, choices=TRUST_ENTITY_TYPES,
+        help_text="Entity type this template applies to (trust types only).",
+    )
+    account_name = models.CharField(
+        max_length=200,
+        help_text='Template account name, e.g. "Opening balance", "Distribution for year"',
+    )
+    classification = models.CharField(
+        max_length=200, blank=True, default="",
+        help_text='e.g. "Opening balance", "Capital credits", "Capital debits"',
+    )
+    maps_to = models.CharField(
+        max_length=200, blank=True, default="",
+        help_text="Financial statement line item this maps to",
+    )
+    sort_order = models.PositiveIntegerField(
+        default=0,
+        help_text="Display order within the capital section",
+    )
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["entity_type", "sort_order"]
+        verbose_name = "Capital Account Template"
+        verbose_name_plural = "Capital Account Templates"
+
+    def __str__(self):
+        return f"{self.account_name} ({self.get_entity_type_display()})"
 
 
 # ---------------------------------------------------------------------------
@@ -938,6 +1084,25 @@ class EntityChartOfAccount(models.Model):
     is_franking_credit = models.BooleanField(
         default=False,
         help_text="Franking credits account — grossed up in beneficiary calculations",
+    )
+    # Capital account provisioning fields (trust beneficiaries/unit holders)
+    beneficiary_officer = models.ForeignKey(
+        "EntityOfficer", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="capital_accounts_coa",
+        help_text="Unit holder or beneficiary this capital account belongs to",
+    )
+    capital_template_item = models.ForeignKey(
+        "CapitalAccountTemplate", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="provisioned_accounts",
+        help_text="Template line item that generated this account",
+    )
+    auto_provisioned = models.BooleanField(
+        default=False,
+        help_text="True if created by the capital account auto-provisioning engine",
+    )
+    is_ceased = models.BooleanField(
+        default=False,
+        help_text="True if the linked beneficiary/unit holder has ceased",
     )
     display_order = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)

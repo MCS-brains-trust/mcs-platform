@@ -547,6 +547,37 @@ def trigger_proactive_bank_classification(financial_year, classification_result)
         ).start()
 
 
+# ============================================================================
+# OFFICER CAPITAL ACCOUNT PROVISIONING (Trust beneficiaries/unit holders)
+# ============================================================================
+
+@receiver(post_save, sender="core.EntityOfficer")
+def handle_officer_saved(sender, instance, created, **kwargs):
+    """
+    When a new officer is created with a distribution role (unit_holder or
+    beneficiary) on a trust entity, auto-provision capital accounts.
+    When an existing officer is ceased, mark their accounts as ceased.
+    """
+    from core.models import EntityOfficer
+
+    if created and instance.role in EntityOfficer.DISTRIBUTION_ROLES:
+        try:
+            from core.capital_account_service import provision_capital_accounts
+            provision_capital_accounts(instance.pk)
+        except Exception:
+            logger.exception(
+                "Failed to provision capital accounts for officer %s", instance.pk
+            )
+    elif not created and instance.date_ceased:
+        try:
+            from core.capital_account_service import cease_officer_accounts
+            cease_officer_accounts(instance.pk)
+        except Exception:
+            logger.exception(
+                "Failed to cease capital accounts for officer %s", instance.pk
+            )
+
+
 @receiver(post_save, sender="core.EvaMessage")
 def handle_eva_message_created(sender, instance, created, **kwargs):
     """Log Eva chat messages to the activity trail."""

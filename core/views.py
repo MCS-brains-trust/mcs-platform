@@ -5987,10 +5987,30 @@ def entity_officers(request, pk):
     }
     officer_label = officer_label_map.get(entity.entity_type, "Officer")
 
+    # Calculate distribution total for active unit holders/beneficiaries
+    distribution_total = 0
+    if entity.entity_type == "trust":
+        from decimal import Decimal
+        from django.db.models import Q, Sum
+        from django.utils import timezone
+        today = timezone.now().date()
+        distribution_roles = [
+            EntityOfficer.OfficerRole.UNIT_HOLDER,
+            EntityOfficer.OfficerRole.BENEFICIARY,
+        ]
+        total = officers.filter(
+            role__in=distribution_roles,
+            distribution_percentage__isnull=False,
+        ).filter(
+            Q(date_ceased__isnull=True) | Q(date_ceased__gt=today)
+        ).aggregate(total=Sum("distribution_percentage"))["total"]
+        distribution_total = total or Decimal("0")
+
     return render(request, "core/entity_officers.html", {
         "entity": entity,
         "officers": officers,
         "officer_label": officer_label,
+        "distribution_total": distribution_total,
     })
 
 
@@ -6004,9 +6024,12 @@ def entity_officer_create(request, entity_pk):
 
     if request.method == "POST":
         form = EntityOfficerForm(request.POST, entity_type=entity.entity_type)
+        # Set entity on instance before validation so clean() can query siblings
+        form.instance.entity = entity
         if form.is_valid():
             officer = form.save(commit=False)
             officer.entity = entity
+            officer._updated_by = request.user
             officer.save()
             _log_action(request, "user_change",
                         f"Added officer {officer.full_name} to {entity.entity_name}",
@@ -6039,7 +6062,9 @@ def entity_officer_edit(request, pk):
     if request.method == "POST":
         form = EntityOfficerForm(request.POST, instance=officer, entity_type=entity.entity_type)
         if form.is_valid():
-            form.save()
+            obj = form.save(commit=False)
+            obj._updated_by = request.user
+            obj.save()
             _log_action(request, "user_change",
                         f"Updated officer {officer.full_name} for {entity.entity_name}",
                         officer)

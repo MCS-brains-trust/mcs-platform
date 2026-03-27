@@ -42,7 +42,29 @@
       "Bash(cd:*)",
       "Bash(pip show:*)",
       "Bash(rm:*)",
-      "Bash(git stash:*)"
+      "Bash(git stash:*)",
+      "Bash(find:*)",
+      "Bash(git pull:*)",
+      "Bash(git commit:*)",
+      "Bash(ls:*)",
+      "Bash(credit == 0: continue\" in _process_xero_tb_row\\(\\). Confirmed aligned:*)",
+      "Bash(cp \"C:/Users/Elio/mcs-platform/core/management/commands/Engagement_Letter_TEMPLATE_BW_v3.docx\" /tmp/el_inspect.docx)",
+      "Bash(cd /tmp)",
+      "Bash(mkdir -p el_unpacked)",
+      "Bash(unzip -o el_inspect.docx word/document.xml -d el_unpacked)",
+      "Read(//c/tmp/el_unpacked/**)",
+      "Read(//c//**)",
+      "Bash(cp mcs-platform/core/management/commands/Engagement_Letter_TEMPLATE_BW_v3.docx el_sections.docx)",
+      "Bash(unzip -o el_sections.docx word/document.xml -d el_sec)",
+      "Bash(cp mcs-platform/core/management/commands/Engagement_Letter_TEMPLATE_BW_v3.docx el_bas_fix.docx)",
+      "Bash(unzip -o el_bas_fix.docx word/document.xml -d el_bas)",
+      "Bash(PYTHONIOENCODING=utf-8 python -c \"\nwith open\\(r'C:\\\\Users\\\\Elio\\\\el_bas\\\\word\\\\document.xml', 'r', encoding='utf-8'\\) as f:\n    content = f.read\\(\\)\n\nidx = content.find\\('practice_bas_agent_number }}'\\)\nsnippet = content[idx:idx+400]\nprint\\(repr\\(snippet[:350]\\)\\)\n\" 2>&1)",
+      "Bash(cp mcs-platform/core/management/commands/Engagement_Letter_TEMPLATE_BW_v3.docx el_spacing.docx)",
+      "Bash(unzip -o el_spacing.docx word/document.xml -d el_spacing_unpacked)",
+      "Bash(PYTHONIOENCODING=utf-8 python -c \"\nimport zipfile, io, os\n\nsrc = r'C:\\\\Users\\\\Elio\\\\el_spacing.docx'\nmodified_xml = r'C:\\\\Users\\\\Elio\\\\el_spacing_unpacked\\\\word\\\\document.xml'\nout = r'C:\\\\Users\\\\Elio\\\\mcs-platform\\\\core\\\\management\\\\commands\\\\Engagement_Letter_TEMPLATE_BW_v3.docx'\n\nwith open\\(modified_xml, 'r', encoding='utf-8'\\) as f:\n    new_xml = f.read\\(\\)\n\nbuf = io.BytesIO\\(\\)\nwith zipfile.ZipFile\\(src, 'r'\\) as zin:\n    with zipfile.ZipFile\\(buf, 'w', zipfile.ZIP_DEFLATED\\) as zout:\n        for item in zin.infolist\\(\\):\n            if item.filename == 'word/document.xml':\n                zout.writestr\\(item, new_xml.encode\\('utf-8'\\)\\)\n            else:\n                zout.writestr\\(item, zin.read\\(item.filename\\)\\)\n\nwith open\\(out, 'wb'\\) as f:\n    f.write\\(buf.getvalue\\(\\)\\)\nprint\\(f'Written: {out} \\({os.path.getsize\\(out\\)} bytes\\)'\\)\n\" 2>&1)",
+      "Bash(PYTHONIOENCODING=utf-8 python -c \"\nimport zipfile\nwith zipfile.ZipFile\\(r'C:\\\\Users\\\\Elio\\\\mcs-platform\\\\core\\\\management\\\\commands\\\\Engagement_Letter_TEMPLATE_BW_v3.docx', 'r'\\) as z:\n    xml = z.read\\('word/document.xml'\\).decode\\('utf-8'\\)\nprint\\('tr endfor:', xml.count\\('tr endfor'\\)\\)\nprint\\('endfor:', xml.count\\('endfor'\\)\\)\nprint\\('selected_services:', xml.count\\('selected_services'\\)\\)\nprint\\('service.name:', xml.count\\('service.name'\\)\\)\n\" 2>&1)",
+      "Bash(PYTHONIOENCODING=utf-8 python -c \"\nimport re, zipfile\n\nwith zipfile.ZipFile\\(r'C:\\\\Users\\\\Elio\\\\mcs-platform\\\\core\\\\management\\\\commands\\\\Engagement_Letter_TEMPLATE_BW_v3.docx', 'r'\\) as z:\n    xml = z.read\\('word/document.xml'\\).decode\\('utf-8'\\)\n\ntags = re.findall\\(r'\\\\{%-?\\\\s*\\(.*?\\)\\\\s*-?%\\\\}', xml\\)\n\nprint\\('=== ALL JINJA2 TAGS IN ORDER ==='\\)\nfor i, tag in enumerate\\(tags\\):\n    print\\(f'{i+1:3}. {{% {tag} %}}'\\)\n\nprint\\(\\)\ndepth = 0\nfor tag in tags:\n    s = tag.strip\\(\\)\n    if s.startswith\\('for '\\) or s.startswith\\('tr for '\\):\n        depth += 1\n    elif 'endfor' in s:\n        depth -= 1\nprint\\(f'FOR balance: {depth} \\(should be 0\\)'\\)\n\ndepth = 0\nfor tag in tags:\n    s = tag.strip\\(\\)\n    if s.startswith\\('if '\\):\n        depth += 1\n    elif s == 'endif':\n        depth -= 1\nprint\\(f'IF balance: {depth} \\(should be 0\\)'\\)\n\" 2>&1)",
+      "Bash(xargs grep:*)"
     ]
   }
 }

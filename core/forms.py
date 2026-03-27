@@ -342,6 +342,40 @@ class EntityOfficerForm(forms.ModelForm):
         if entity_type != "trust":
             self.fields["distribution_percentage"].widget = forms.HiddenInput()
 
+        self._entity_type = entity_type
+
+    def clean(self):
+        cleaned_data = super().clean()
+        role = cleaned_data.get("role")
+        distribution_roles = {
+            EntityOfficer.OfficerRole.UNIT_HOLDER,
+            EntityOfficer.OfficerRole.BENEFICIARY,
+        }
+        # Clear distribution_percentage for non-distribution roles
+        if role not in distribution_roles:
+            cleaned_data["distribution_percentage"] = None
+        # Validate 100% sum rule
+        elif cleaned_data.get("distribution_percentage") is not None:
+            from decimal import Decimal
+            from django.db.models import Q, Sum
+            from django.utils import timezone
+            today = timezone.now().date()
+            qs = EntityOfficer.objects.filter(
+                entity=self.instance.entity if self.instance.pk else None,
+                role__in=list(distribution_roles),
+                distribution_percentage__isnull=False,
+            ).filter(Q(date_ceased__isnull=True) | Q(date_ceased__gt=today))
+            if self.instance.pk:
+                qs = qs.exclude(pk=self.instance.pk)
+            others_total = qs.aggregate(total=Sum("distribution_percentage"))["total"] or Decimal("0")
+            new_total = others_total + cleaned_data["distribution_percentage"]
+            if new_total != Decimal("100.00"):
+                raise forms.ValidationError(
+                    f"Distribution percentages for active unit holders/beneficiaries "
+                    f"must total 100%. Current total: {new_total}%."
+                )
+        return cleaned_data
+
 
 # ---------------------------------------------------------------------------
 # Client Associate Forms

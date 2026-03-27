@@ -86,11 +86,11 @@
             {% endif %}
 
             {% if entity.entity_type == 'trust' %}
-            <div class="row">
+            <div class="row" id="distribution-pct-row" style="display:none;">
                 <div class="col-md-4 mb-3">
                     <label for="{{ form.distribution_percentage.id_for_label }}" class="form-label">Distribution %</label>
                     {{ form.distribution_percentage }}
-                    <small class="text-muted">Percentage of trust distribution allocated to this beneficiary</small>
+                    <small class="text-muted">Percentage of trust distribution allocated to this beneficiary/unit holder</small>
                 </div>
             </div>
             {% endif %}
@@ -107,4 +107,20 @@
         </form>
     </div>
 </div>
+
+{% if entity.entity_type == 'trust' %}
+<script>
+(function() {
+    var roleSelect = document.getElementById('{{ form.role.id_for_label }}');
+    var distRow = document.getElementById('distribution-pct-row');
+    if (!roleSelect || !distRow) return;
+    function toggle() {
+        var val = roleSelect.value;
+        distRow.style.display = (val === 'unit_holder' || val === 'beneficiary') ? '' : 'none';
+    }
+    roleSelect.addEventListener('change', toggle);
+    toggle();
+})();
+</script>
+{% endif %}
 {% endblock %}

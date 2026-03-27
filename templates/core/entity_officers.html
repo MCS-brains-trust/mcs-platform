@@ -75,7 +75,13 @@
                     <td>{{ officer.profit_share_percentage|default:"-" }}{% if officer.profit_share_percentage %}%{% endif %}</td>
                     {% endif %}
                     {% if entity.entity_type == 'trust' %}
-                    <td>{{ officer.distribution_percentage|default:"-" }}{% if officer.distribution_percentage %}%{% endif %}</td>
+                    <td>
+                        {% if officer.role == 'unit_holder' or officer.role == 'beneficiary' %}
+                            {{ officer.distribution_percentage|default:"-" }}{% if officer.distribution_percentage %}%{% endif %}
+                        {% else %}
+                            <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
                     {% endif %}
                     <td>
                         {% if officer.date_ceased %}
@@ -96,6 +102,19 @@
                 </tr>
                 {% endfor %}
             </tbody>
+            {% if entity.entity_type == 'trust' %}
+            <tfoot>
+                <tr class="fw-bold">
+                    <td colspan="8" class="text-end">Total Distribution:</td>
+                    <td>
+                        <span class="{% if distribution_total == 100 %}text-success{% else %}text-danger{% endif %}">
+                            {{ distribution_total }}% of 100%
+                        </span>
+                    </td>
+                    <td colspan="2"></td>
+                </tr>
+            </tfoot>
+            {% endif %}
         </table>
     </div>
 </div>
