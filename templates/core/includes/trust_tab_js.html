@@ -319,6 +319,66 @@
         }
     }
 
+    // Track allocation mode per scenario: 'dollar' or 'percent'
+    const scenarioModes = {};
+
+    function getScenarioMode(scenarioId) {
+        return scenarioModes[scenarioId] || 'dollar';
+    }
+
+    window.toggleScenarioMode = function(scenarioId, mode) {
+        scenarioModes[scenarioId] = mode;
+        renderScenarioTabs();
+    };
+
+    // Apply a percentage split to a scenario: distribute each stream proportionally
+    window.applyPercentageAllocation = async function(scenarioId) {
+        const scenario = scenarios.find(s => s.id === scenarioId);
+        if (!scenario) return;
+
+        const activeProfiles = beneficiaryProfiles.filter(p => p.include_in_distribution);
+        const streams = ['ordinary', 'cgt_discount', 'cgt_non_discount', 'franked_dividends', 'franking_credits', 'tax_free'];
+
+        // Read the % inputs for this scenario
+        const percentages = {};
+        let totalPct = 0;
+        activeProfiles.forEach(p => {
+            const input = document.getElementById(`pct-input-${scenarioId}-${p.beneficiary_id}`);
+            const pct = parseFloat(input?.value) || 0;
+            percentages[p.beneficiary_id] = pct;
+            totalPct += pct;
+        });
+
+        if (Math.abs(totalPct - 100) > 0.01) {
+            alert(`Percentages must total 100%. Current total: ${totalPct.toFixed(2)}%`);
+            return;
+        }
+
+        // Build new allocations from percentages
+        const newAllocs = {};
+        activeProfiles.forEach(p => {
+            newAllocs[p.beneficiary_id] = {};
+            const pct = percentages[p.beneficiary_id] / 100;
+            streams.forEach(stream => {
+                const streamTotal = parseFloat(workspace?.income_streams?.[stream]) || 0;
+                newAllocs[p.beneficiary_id][stream] = parseFloat((streamTotal * pct).toFixed(2));
+            });
+        });
+
+        scenario.allocations = newAllocs;
+
+        try {
+            await fetch(`${BASE}/scenarios/`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+                body: JSON.stringify({ id: scenarioId, allocations: newAllocs }),
+            });
+            renderScenarioTabs();
+        } catch (e) {
+            console.error('Failed to apply percentage allocation:', e);
+        }
+    };
+
     function renderScenarioTabs() {
         const tabs = document.getElementById('scenario-tabs');
         const content = document.getElementById('scenario-content');
@@ -349,63 +409,157 @@
             ordinary: 'Ordinary', cgt_discount: 'CGT Discount', cgt_non_discount: 'CGT Non-Discount',
             franked_dividends: 'Franked Dividends', franking_credits: 'Franking Credits', tax_free: 'Tax-Free'
         };
+        const ndi = parseFloat(workspace?.net_distributable_income) || 0;
 
         scenarios.forEach((s, idx) => {
+            const mode = getScenarioMode(s.id);
             contentHtml += `<div class="tab-pane fade ${idx === 0 ? 'show active' : ''}" id="scenario-${s.id}">`;
             contentHtml += `
             <div class="d-flex justify-content-between align-items-center mb-2">
                 <input type="text" class="form-control form-control-sm" style="width: 200px;" value="${escapeHtml(s.name)}"
                        onchange="renameScenario('${s.id}', this.value)">
-                <div>
-                    ${!s.is_confirmed ? `<button class="btn btn-sm btn-success me-1" onclick="confirmScenario('${s.id}')"><i class="bi bi-check-lg"></i> Confirm</button>` : '<span class="badge bg-success me-1">Confirmed</span>'}
+                <div class="d-flex align-items-center gap-2">
+                    <div class="btn-group btn-group-sm" role="group" aria-label="Allocation mode">
+                        <button type="button" class="btn ${mode === 'dollar' ? 'btn-primary' : 'btn-outline-primary'}"
+                                onclick="toggleScenarioMode('${s.id}', 'dollar')" title="Enter dollar amounts per stream">
+                            <i class="bi bi-currency-dollar"></i> Dollar
+                        </button>
+                        <button type="button" class="btn ${mode === 'percent' ? 'btn-primary' : 'btn-outline-primary'}"
+                                onclick="toggleScenarioMode('${s.id}', 'percent')" title="Enter % of net profit per beneficiary">
+                            <i class="bi bi-percent"></i> Percentage
+                        </button>
+                    </div>
+                    ${!s.is_confirmed ? `<button class="btn btn-sm btn-success" onclick="confirmScenario('${s.id}')"><i class="bi bi-check-lg"></i> Confirm</button>` : '<span class="badge bg-success">Confirmed</span>'}
                     <button class="btn btn-sm btn-outline-danger" onclick="deleteScenario('${s.id}')"><i class="bi bi-trash"></i></button>
                 </div>
             </div>`;
 
-            // Allocation grid
-            contentHtml += '<div class="table-responsive"><table class="table table-sm table-bordered">';
-            contentHtml += '<thead class="table-light"><tr><th>Stream</th>';
-            activeProfiles.forEach(p => {
-                contentHtml += `<th class="text-center" style="min-width:120px;">${escapeHtml(p.beneficiary_name)}</th>`;
-            });
-            contentHtml += '<th class="text-center">Total</th></tr></thead><tbody>';
-
             const allocs = s.allocations || {};
 
-            streams.forEach(stream => {
-                const streamTotal = parseFloat(workspace?.income_streams?.[stream]) || 0;
-                contentHtml += `<tr><td class="fw-semibold small">${streamLabels[stream]}</td>`;
-                let rowTotal = 0;
-                activeProfiles.forEach(p => {
-                    const val = allocs[p.beneficiary_id]?.[stream] || 0;
-                    rowTotal += parseFloat(val) || 0;
-                    contentHtml += `<td><input type="number" class="form-control form-control-sm text-end scenario-alloc"
-                        data-scenario="${s.id}" data-beneficiary="${p.beneficiary_id}" data-stream="${stream}"
-                        value="${val}" step="0.01" onchange="updateAllocation('${s.id}', '${p.beneficiary_id}', '${stream}', this.value)"></td>`;
-                });
-                contentHtml += `<td class="text-end fw-semibold small">${formatCurrency(rowTotal)} / ${formatCurrency(streamTotal)}</td>`;
-                contentHtml += '</tr>';
-            });
+            if (mode === 'percent') {
+                // ---- PERCENTAGE MODE ----
+                // Show a single % input per beneficiary, auto-calculate dollar split on Apply
+                contentHtml += `<div class="alert alert-info small mb-2"><i class="bi bi-info-circle"></i>
+                    Enter the percentage of <strong>Net Distributable Income (${formatCurrency(ndi)})</strong> for each beneficiary.
+                    Percentages must total 100%. Click <strong>Apply</strong> to distribute proportionally across all income streams.
+                </div>`;
 
-            // Totals row
-            contentHtml += '<tr class="table-info fw-semibold"><td>TOTAL</td>';
-            activeProfiles.forEach(p => {
-                let benTotal = 0;
-                streams.forEach(stream => {
-                    benTotal += parseFloat(allocs[p.beneficiary_id]?.[stream]) || 0;
+                contentHtml += '<div class="table-responsive"><table class="table table-sm table-bordered">';
+                contentHtml += '<thead class="table-light"><tr><th></th>';
+                activeProfiles.forEach(p => {
+                    contentHtml += `<th class="text-center" style="min-width:140px;">${escapeHtml(p.beneficiary_name)}</th>`;
                 });
-                contentHtml += `<td class="text-end">${formatCurrency(benTotal)}</td>`;
-            });
-            let grandTotal = 0;
-            Object.values(allocs).forEach(benAlloc => {
-                Object.values(benAlloc).forEach(v => { grandTotal += parseFloat(v) || 0; });
-            });
-            contentHtml += `<td class="text-end">${formatCurrency(grandTotal)}</td></tr>`;
-            contentHtml += '</tbody></table></div>';
+                contentHtml += '<th class="text-center" style="min-width:80px;">Total %</th></tr></thead><tbody>';
+
+                // % input row
+                contentHtml += '<tr><td class="fw-semibold small">Allocation %</td>';
+                let totalPctDisplay = 0;
+                activeProfiles.forEach(p => {
+                    // Derive current % from existing dollar allocations if available
+                    let currentPct = 0;
+                    if (ndi > 0) {
+                        let benTotal = 0;
+                        streams.forEach(stream => { benTotal += parseFloat(allocs[p.beneficiary_id]?.[stream]) || 0; });
+                        currentPct = parseFloat(((benTotal / ndi) * 100).toFixed(4));
+                    }
+                    totalPctDisplay += currentPct;
+                    contentHtml += `<td class="text-center">
+                        <div class="input-group input-group-sm">
+                            <input type="number" id="pct-input-${s.id}-${p.beneficiary_id}"
+                                   class="form-control form-control-sm text-end"
+                                   value="${currentPct > 0 ? currentPct : ''}" step="0.01" min="0" max="100"
+                                   placeholder="0.00">
+                            <span class="input-group-text">%</span>
+                        </div>
+                    </td>`;
+                });
+                const totalPctClass = Math.abs(totalPctDisplay - 100) < 0.01 ? 'text-success fw-bold' : (totalPctDisplay > 0 ? 'text-warning fw-bold' : 'text-muted');
+                contentHtml += `<td class="text-center ${totalPctClass}" id="pct-total-${s.id}">${totalPctDisplay > 0 ? totalPctDisplay.toFixed(2) + '%' : '—'}</td>`;
+                contentHtml += '</tr>';
+
+                // Dollar equivalent row (read-only, shows current allocation)
+                contentHtml += '<tr class="table-light"><td class="fw-semibold small text-muted">Equivalent ($)</td>';
+                let grandTotal = 0;
+                activeProfiles.forEach(p => {
+                    let benTotal = 0;
+                    streams.forEach(stream => { benTotal += parseFloat(allocs[p.beneficiary_id]?.[stream]) || 0; });
+                    grandTotal += benTotal;
+                    contentHtml += `<td class="text-center text-muted small">${formatCurrency(benTotal)}</td>`;
+                });
+                contentHtml += `<td class="text-center text-muted small">${formatCurrency(grandTotal)}</td>`;
+                contentHtml += '</tr>';
+
+                contentHtml += '</tbody></table></div>';
+
+                // Live % total updater script + Apply button
+                contentHtml += `
+                <div class="d-flex align-items-center gap-2 mt-2">
+                    <button class="btn btn-sm btn-primary" onclick="applyPercentageAllocation('${s.id}')">
+                        <i class="bi bi-calculator"></i> Apply & Calculate
+                    </button>
+                    <span class="text-muted small">Percentages will be split proportionally across all income streams.</span>
+                </div>
+                <script>
+                (function() {
+                    const inputs = document.querySelectorAll('[id^="pct-input-${s.id}-"]');
+                    const totalEl = document.getElementById('pct-total-${s.id}');
+                    inputs.forEach(inp => {
+                        inp.addEventListener('input', function() {
+                            let t = 0;
+                            inputs.forEach(i => { t += parseFloat(i.value) || 0; });
+                            if (totalEl) {
+                                totalEl.textContent = t.toFixed(2) + '%';
+                                totalEl.className = 'text-center fw-bold ' + (Math.abs(t - 100) < 0.01 ? 'text-success' : (t > 100 ? 'text-danger' : 'text-warning'));
+                            }
+                        });
+                    });
+                })();
+                <\/script>`;
+
+            } else {
+                // ---- DOLLAR MODE (original) ----
+                contentHtml += '<div class="table-responsive"><table class="table table-sm table-bordered">';
+                contentHtml += '<thead class="table-light"><tr><th>Stream</th>';
+                activeProfiles.forEach(p => {
+                    contentHtml += `<th class="text-center" style="min-width:120px;">${escapeHtml(p.beneficiary_name)}</th>`;
+                });
+                contentHtml += '<th class="text-center">Total</th></tr></thead><tbody>';
+
+                streams.forEach(stream => {
+                    const streamTotal = parseFloat(workspace?.income_streams?.[stream]) || 0;
+                    contentHtml += `<tr><td class="fw-semibold small">${streamLabels[stream]}</td>`;
+                    let rowTotal = 0;
+                    activeProfiles.forEach(p => {
+                        const val = allocs[p.beneficiary_id]?.[stream] || 0;
+                        rowTotal += parseFloat(val) || 0;
+                        contentHtml += `<td><input type="number" class="form-control form-control-sm text-end scenario-alloc"
+                            data-scenario="${s.id}" data-beneficiary="${p.beneficiary_id}" data-stream="${stream}"
+                            value="${val}" step="0.01" onchange="updateAllocation('${s.id}', '${p.beneficiary_id}', '${stream}', this.value)"></td>`;
+                    });
+                    contentHtml += `<td class="text-end fw-semibold small">${formatCurrency(rowTotal)} / ${formatCurrency(streamTotal)}</td>`;
+                    contentHtml += '</tr>';
+                });
+
+                // Totals row
+                contentHtml += '<tr class="table-info fw-semibold"><td>TOTAL</td>';
+                activeProfiles.forEach(p => {
+                    let benTotal = 0;
+                    streams.forEach(stream => {
+                        benTotal += parseFloat(allocs[p.beneficiary_id]?.[stream]) || 0;
+                    });
+                    contentHtml += `<td class="text-end">${formatCurrency(benTotal)}</td>`;
+                });
+                let grandTotal = 0;
+                Object.values(allocs).forEach(benAlloc => {
+                    Object.values(benAlloc).forEach(v => { grandTotal += parseFloat(v) || 0; });
+                });
+                contentHtml += `<td class="text-end">${formatCurrency(grandTotal)}</td></tr>`;
+                contentHtml += '</tbody></table></div>';
+            }
 
             // Tax summary
             if (s.total_tax) {
-                contentHtml += `<div class="alert alert-light small">
+                contentHtml += `<div class="alert alert-light small mt-2">
                     <strong>Estimated Total Tax:</strong> ${formatCurrency(parseFloat(s.total_tax))}
                     ${s.tax_saved_vs_equal ? ` | <strong>Tax Saved vs Equal:</strong> ${formatCurrency(parseFloat(s.tax_saved_vs_equal))}` : ''}
                 </div>`;

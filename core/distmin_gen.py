@@ -93,10 +93,13 @@ def generate_distribution_minutes(financial_year_id):
     trustees = [o for o in all_officers if _officer_has_role(o, "trustee")]
 
     if not trustees:
-        raise ValueError(
-            f"No active trustees found for {entity.entity_name}. "
-            f"Please add at least one trustee in the Directors/Trustees/Beneficiaries tab."
-        )
+        # Fall back to the entity-level trustee_name field (e.g. trustee company name)
+        if entity.trustee_name:
+            trustee_names = [entity.trustee_name]
+        else:
+            trustee_names = ["[Trustee not set — please add in Directors/Trustees/Beneficiaries tab]"]
+    else:
+        trustee_names = [t.full_name for t in trustees]
 
     # Find chairperson — check `roles` JSONField first, then `is_chairperson` boolean as fallback
     chairperson = None
@@ -112,23 +115,22 @@ def generate_distribution_minutes(financial_year_id):
                 chairperson = o
                 break
 
+    # If still no chairperson, use the first trustee or a placeholder
     if not chairperson:
-        raise ValueError(
-            f"No chairperson found for {entity.entity_name}. "
-            f"Please assign the Chairperson role to the appropriate person "
-            f"in the Directors/Trustees/Beneficiaries tab."
-        )
-
-    # Build trustee name(s) string
-    trustee_names = [t.full_name for t in trustees]
+        if trustees:
+            chairperson_name = trustees[0].full_name
+        elif entity.trustee_name:
+            chairperson_name = entity.trustee_name
+        else:
+            chairperson_name = "[Chairperson not set — please assign in Directors/Trustees/Beneficiaries tab]"
+    else:
+        chairperson_name = chairperson.full_name
     if len(trustee_names) == 1:
         trustee_str = trustee_names[0]
     elif len(trustee_names) == 2:
         trustee_str = f"{trustee_names[0]} and {trustee_names[1]}"
     else:
         trustee_str = ", ".join(trustee_names[:-1]) + f", and {trustee_names[-1]}"
-
-    chairperson_name = chairperson.full_name
 
     # Determine the financial year number (e.g. "2025" from "FY2025" or end_date year)
     year_digits = "".join(c for c in fy.year_label if c.isdigit())

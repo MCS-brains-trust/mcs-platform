@@ -129,20 +129,16 @@ def resolve_distribution_minutes(financial_year_id) -> dict:
 
     trustees = _find_trustees(officers)
     if not trustees:
-        raise ValueError(
-            f"No active trustees found for {entity.entity_name}. "
-            f"Please add at least one trustee in the Directors/Trustees/Beneficiaries tab."
-        )
+        # Fall back to the entity-level trustee_name field (e.g. trustee company name)
+        if entity.trustee_name:
+            trustee_names = [entity.trustee_name]
+        else:
+            trustee_names = ["[Trustee not set — please add in Directors/Trustees/Beneficiaries tab]"]
+    else:
+        trustee_names = [t.full_name for t in trustees]
 
     chairperson = _find_chairperson(officers)
-    if not chairperson:
-        raise ValueError(
-            f"No chairperson found for {entity.entity_name}. "
-            f"Please assign the Chairperson role."
-        )
-
     fy_year = _get_fy_year(fy)
-    trustee_names = [t.full_name for t in trustees]
 
     # Get beneficiary data from tax planning worksheet if available
     beneficiary_rows = []
@@ -176,7 +172,7 @@ def resolve_distribution_minutes(financial_year_id) -> dict:
         "trust_name": entity.entity_name,
         "trustee_name": _format_name_list(trustee_names),
         "trustee_names_list": trustee_names,
-        "chairperson_name": chairperson.full_name,
+        "chairperson_name": chairperson.full_name if chairperson else "[Chairperson not set — please assign in Directors/Trustees/Beneficiaries tab]",
         "financial_year": fy_year,
         "financial_year_end": f"30 June {fy_year}",
         "minutes_date": f"30 June {fy_year}",
