@@ -518,7 +518,7 @@
 
             } else {
                 // ---- DOLLAR MODE (original) ----
-                contentHtml += '<div class="table-responsive"><table class="table table-sm table-bordered">';
+                contentHtml += '<div class="table-responsive"><table class="table table-sm table-bordered" id="alloc-table-' + s.id + '">';
                 contentHtml += '<thead class="table-light"><tr><th>Stream</th>';
                 activeProfiles.forEach(p => {
                     contentHtml += `<th class="text-center" style="min-width:120px;">${escapeHtml(p.beneficiary_name)}</th>`;
@@ -527,16 +527,18 @@
 
                 streams.forEach(stream => {
                     const streamTotal = parseFloat(workspace?.income_streams?.[stream]) || 0;
-                    contentHtml += `<tr><td class="fw-semibold small">${streamLabels[stream]}</td>`;
+                    contentHtml += `<tr data-stream="${stream}"><td class="fw-semibold small">${streamLabels[stream]}</td>`;
                     let rowTotal = 0;
                     activeProfiles.forEach(p => {
                         const val = allocs[p.beneficiary_id]?.[stream] || 0;
                         rowTotal += parseFloat(val) || 0;
                         contentHtml += `<td><input type="number" class="form-control form-control-sm text-end scenario-alloc"
                             data-scenario="${s.id}" data-beneficiary="${p.beneficiary_id}" data-stream="${stream}"
-                            value="${val}" step="0.01" onchange="updateAllocation('${s.id}', '${p.beneficiary_id}', '${stream}', this.value)"></td>`;
+                            value="${val !== 0 ? val : ''}" placeholder="0" step="0.01"
+                            oninput="liveUpdateTotals('${s.id}', this)"
+                            onchange="updateAllocation('${s.id}', '${p.beneficiary_id}', '${stream}', this.value)"></td>`;
                     });
-                    contentHtml += `<td class="text-end fw-semibold small">${formatCurrency(rowTotal)} / ${formatCurrency(streamTotal)}</td>`;
+                    contentHtml += `<td class="text-end fw-semibold small" id="row-total-${s.id}-${stream}">${formatCurrency(rowTotal)} / ${formatCurrency(streamTotal)}</td>`;
                     contentHtml += '</tr>';
                 });
 
@@ -547,13 +549,13 @@
                     streams.forEach(stream => {
                         benTotal += parseFloat(allocs[p.beneficiary_id]?.[stream]) || 0;
                     });
-                    contentHtml += `<td class="text-end">${formatCurrency(benTotal)}</td>`;
+                    contentHtml += `<td class="text-end" id="col-total-${s.id}-${p.beneficiary_id}">${formatCurrency(benTotal)}</td>`;
                 });
                 let grandTotal = 0;
                 Object.values(allocs).forEach(benAlloc => {
                     Object.values(benAlloc).forEach(v => { grandTotal += parseFloat(v) || 0; });
                 });
-                contentHtml += `<td class="text-end">${formatCurrency(grandTotal)}</td></tr>`;
+                contentHtml += `<td class="text-end" id="grand-total-${s.id}">${formatCurrency(grandTotal)}</td></tr>`;
                 contentHtml += '</tbody></table></div>';
             }
 
@@ -591,6 +593,46 @@
             }
         } catch (e) {
             console.error('Failed to add scenario:', e);
+        }
+    };
+
+    // Live DOM totals updater — called on every keystroke (oninput) in dollar mode
+    window.liveUpdateTotals = function(scenarioId, inputEl) {
+        const table = document.getElementById('alloc-table-' + scenarioId);
+        if (!table) return;
+
+        const stream = inputEl.dataset.stream;
+        const beneficiaryId = inputEl.dataset.beneficiary;
+
+        // 1. Update the row total (allocated / available) for this stream
+        const rowTotalEl = document.getElementById('row-total-' + scenarioId + '-' + stream);
+        if (rowTotalEl) {
+            const rowInputs = table.querySelectorAll(`input[data-stream="${stream}"]`);
+            let rowSum = 0;
+            rowInputs.forEach(i => { rowSum += parseFloat(i.value) || 0; });
+            // Preserve the "/ $X.XX" available part
+            const currentText = rowTotalEl.textContent;
+            const slashIdx = currentText.indexOf('/');
+            const available = slashIdx >= 0 ? currentText.substring(slashIdx) : '';
+            rowTotalEl.textContent = formatCurrency(rowSum) + (available ? ' ' + available.trim() : '');
+        }
+
+        // 2. Update the column total for this beneficiary
+        const colTotalEl = document.getElementById('col-total-' + scenarioId + '-' + beneficiaryId);
+        if (colTotalEl) {
+            const colInputs = table.querySelectorAll(`input[data-beneficiary="${beneficiaryId}"]`);
+            let colSum = 0;
+            colInputs.forEach(i => { colSum += parseFloat(i.value) || 0; });
+            colTotalEl.textContent = formatCurrency(colSum);
+        }
+
+        // 3. Update the grand total
+        const grandTotalEl = document.getElementById('grand-total-' + scenarioId);
+        if (grandTotalEl) {
+            const allInputs = table.querySelectorAll('input.scenario-alloc');
+            let grandSum = 0;
+            allInputs.forEach(i => { grandSum += parseFloat(i.value) || 0; });
+            grandTotalEl.textContent = formatCurrency(grandSum);
         }
     };
 
