@@ -429,7 +429,7 @@
                             <i class="bi bi-percent"></i> Percentage
                         </button>
                     </div>
-                    ${!s.is_confirmed ? `<button class="btn btn-sm btn-success" onclick="confirmScenario('${s.id}')"><i class="bi bi-check-lg"></i> Confirm</button>` : '<span class="badge bg-success">Confirmed</span>'}
+                    ${!s.is_confirmed ? `<button class="btn btn-sm btn-success" id="confirm-btn-${s.id}" onclick="confirmScenario('${s.id}')"><i class="bi bi-check-lg"></i> Confirm</button>` : '<span class="badge bg-success">Confirmed</span>'}
                     <button class="btn btn-sm btn-outline-danger" onclick="deleteScenario('${s.id}')"><i class="bi bi-trash"></i></button>
                 </div>
             </div>`;
@@ -517,28 +517,56 @@
                 <\/script>`;
 
             } else {
-                // ---- DOLLAR MODE (original) ----
+                // ---- DOLLAR MODE ----
+                // Pre-compute initial balance state for rendering
+                const streamAvailable = {};
+                streams.forEach(st => {
+                    streamAvailable[st] = parseFloat(workspace?.income_streams?.[st]) || 0;
+                });
+
+                let initGrandTotal = 0;
+                const initRowTotals = {};
+                streams.forEach(st => {
+                    let rt = 0;
+                    activeProfiles.forEach(p => { rt += parseFloat(allocs[p.beneficiary_id]?.[st]) || 0; });
+                    initRowTotals[st] = rt;
+                    initGrandTotal += rt;
+                });
+
+                const ndiAvail = parseFloat(workspace?.net_distributable_income) || 0;
+                const initDiff = initGrandTotal - ndiAvail;
+                const initBalanced = Math.abs(initDiff) < 0.005;
+                const initOver = initDiff > 0.005;
+
                 contentHtml += '<div class="table-responsive"><table class="table table-sm table-bordered" id="alloc-table-' + s.id + '">';
                 contentHtml += '<thead class="table-light"><tr><th>Stream</th>';
                 activeProfiles.forEach(p => {
                     contentHtml += `<th class="text-center" style="min-width:120px;">${escapeHtml(p.beneficiary_name)}</th>`;
                 });
-                contentHtml += '<th class="text-center">Total</th></tr></thead><tbody>';
+                contentHtml += '<th class="text-center" style="min-width:160px;">Allocated / Available</th></tr></thead><tbody>';
 
                 streams.forEach(stream => {
-                    const streamTotal = parseFloat(workspace?.income_streams?.[stream]) || 0;
-                    contentHtml += `<tr data-stream="${stream}"><td class="fw-semibold small">${streamLabels[stream]}</td>`;
-                    let rowTotal = 0;
+                    const streamTotal = streamAvailable[stream];
+                    const rowTotal = initRowTotals[stream];
+                    const rowOver = rowTotal > streamTotal + 0.005;
+                    const rowUnder = streamTotal > 0 && rowTotal < streamTotal - 0.005 && rowTotal > 0;
+                    const rowClass = rowOver ? 'table-danger' : (rowUnder ? 'table-warning' : '');
+                    contentHtml += `<tr data-stream="${stream}" data-available="${streamTotal}" id="stream-row-${s.id}-${stream}" class="${rowClass}">`;
+                    contentHtml += `<td class="fw-semibold small">${streamLabels[stream]}</td>`;
                     activeProfiles.forEach(p => {
                         const val = allocs[p.beneficiary_id]?.[stream] || 0;
-                        rowTotal += parseFloat(val) || 0;
                         contentHtml += `<td><input type="number" class="form-control form-control-sm text-end scenario-alloc"
                             data-scenario="${s.id}" data-beneficiary="${p.beneficiary_id}" data-stream="${stream}"
                             value="${val !== 0 ? val : ''}" placeholder="0" step="0.01"
                             oninput="liveUpdateTotals('${s.id}', this)"
                             onchange="updateAllocation('${s.id}', '${p.beneficiary_id}', '${stream}', this.value)"></td>`;
                     });
-                    contentHtml += `<td class="text-end fw-semibold small" id="row-total-${s.id}-${stream}">${formatCurrency(rowTotal)} / ${formatCurrency(streamTotal)}</td>`;
+                    let rowIcon = '';
+                    if (rowOver) rowIcon = ' <i class="bi bi-exclamation-triangle-fill text-danger" title="Over-allocated"></i>';
+                    else if (rowUnder) rowIcon = ' <i class="bi bi-exclamation-circle text-warning" title="Under-allocated"></i>';
+                    else if (streamTotal > 0 && Math.abs(rowTotal - streamTotal) < 0.005) rowIcon = ' <i class="bi bi-check-circle-fill text-success" title="Balanced"></i>';
+                    contentHtml += `<td class="text-end fw-semibold small" id="row-total-${s.id}-${stream}" data-available="${streamTotal}">`
+                        + `${formatCurrency(rowTotal)} / ${formatCurrency(streamTotal)}${rowIcon}</td>`;
                     contentHtml += '</tr>';
                 });
 
@@ -546,17 +574,39 @@
                 contentHtml += '<tr class="table-info fw-semibold"><td>TOTAL</td>';
                 activeProfiles.forEach(p => {
                     let benTotal = 0;
-                    streams.forEach(stream => {
-                        benTotal += parseFloat(allocs[p.beneficiary_id]?.[stream]) || 0;
-                    });
+                    streams.forEach(stream => { benTotal += parseFloat(allocs[p.beneficiary_id]?.[stream]) || 0; });
                     contentHtml += `<td class="text-end" id="col-total-${s.id}-${p.beneficiary_id}">${formatCurrency(benTotal)}</td>`;
                 });
-                let grandTotal = 0;
-                Object.values(allocs).forEach(benAlloc => {
-                    Object.values(benAlloc).forEach(v => { grandTotal += parseFloat(v) || 0; });
-                });
-                contentHtml += `<td class="text-end" id="grand-total-${s.id}">${formatCurrency(grandTotal)}</td></tr>`;
+                contentHtml += `<td class="text-end" id="grand-total-${s.id}">${formatCurrency(initGrandTotal)}</td></tr>`;
                 contentHtml += '</tbody></table></div>';
+
+                // Balance status banner
+                let bannerClass = initBalanced ? 'alert-success' : (initOver ? 'alert-danger' : 'alert-warning');
+                let bannerIcon = initBalanced ? 'bi-check-circle-fill' : (initOver ? 'bi-exclamation-triangle-fill' : 'bi-exclamation-circle');
+                let bannerText;
+                if (initBalanced) {
+                    bannerText = `<strong>Balanced.</strong> Total allocated ${formatCurrency(initGrandTotal)} matches Net Distributable Income.`;
+                } else if (initOver) {
+                    bannerText = `<strong>Over-allocated by ${formatCurrency(initDiff)}.</strong> Total allocated ${formatCurrency(initGrandTotal)} exceeds NDI of ${formatCurrency(ndiAvail)}. You cannot confirm until this is resolved.`;
+                } else {
+                    bannerText = `<strong>Under-allocated by ${formatCurrency(Math.abs(initDiff))}.</strong> Total allocated ${formatCurrency(initGrandTotal)} of NDI ${formatCurrency(ndiAvail)}. You cannot confirm until 100% is allocated.`;
+                }
+                contentHtml += `<div class="alert ${bannerClass} small mt-2 d-flex align-items-center gap-2" id="balance-banner-${s.id}">
+                    <i class="bi ${bannerIcon} flex-shrink-0"></i><span id="balance-text-${s.id}">${bannerText}</span>
+                </div>`;
+
+                // Disable Confirm button if not balanced (done via JS after render)
+                if (!s.is_confirmed) {
+                    contentHtml += `<script>(function(){
+                        var btn = document.getElementById('confirm-btn-${s.id}');
+                        if (btn) {
+                            var balanced = ${initBalanced ? 'true' : 'false'};
+                            btn.disabled = !balanced;
+                            btn.title = balanced ? 'Confirm this scenario as the final distribution' : 'Cannot confirm: allocation does not balance against NDI';
+                            if (!balanced) btn.classList.replace('btn-success', 'btn-secondary');
+                        }
+                    })();<\/script>`;
+                }
             }
 
             // Tax summary
@@ -603,18 +653,31 @@
 
         const stream = inputEl.dataset.stream;
         const beneficiaryId = inputEl.dataset.beneficiary;
+        const ndiAvail = parseFloat(workspace?.net_distributable_income) || 0;
 
-        // 1. Update the row total (allocated / available) for this stream
+        // 1. Update the row total cell + row highlight + row icon for this stream
         const rowTotalEl = document.getElementById('row-total-' + scenarioId + '-' + stream);
+        const streamRow = document.getElementById('stream-row-' + scenarioId + '-' + stream);
+        const streamAvail = parseFloat(rowTotalEl?.dataset?.available) || 0;
         if (rowTotalEl) {
             const rowInputs = table.querySelectorAll(`input[data-stream="${stream}"]`);
             let rowSum = 0;
             rowInputs.forEach(i => { rowSum += parseFloat(i.value) || 0; });
-            // Preserve the "/ $X.XX" available part
-            const currentText = rowTotalEl.textContent;
-            const slashIdx = currentText.indexOf('/');
-            const available = slashIdx >= 0 ? currentText.substring(slashIdx) : '';
-            rowTotalEl.textContent = formatCurrency(rowSum) + (available ? ' ' + available.trim() : '');
+            const rowOver  = rowSum > streamAvail + 0.005;
+            const rowUnder = streamAvail > 0 && rowSum < streamAvail - 0.005 && rowSum > 0;
+            const rowBal   = streamAvail > 0 && Math.abs(rowSum - streamAvail) < 0.005;
+            // Update row background
+            if (streamRow) {
+                streamRow.classList.remove('table-danger', 'table-warning');
+                if (rowOver)  streamRow.classList.add('table-danger');
+                else if (rowUnder) streamRow.classList.add('table-warning');
+            }
+            // Update cell text + icon
+            let icon = '';
+            if (rowOver)  icon = ' <i class="bi bi-exclamation-triangle-fill text-danger" title="Over-allocated"></i>';
+            else if (rowUnder) icon = ' <i class="bi bi-exclamation-circle text-warning" title="Under-allocated"></i>';
+            else if (rowBal)   icon = ' <i class="bi bi-check-circle-fill text-success" title="Balanced"></i>';
+            rowTotalEl.innerHTML = formatCurrency(rowSum) + ' / ' + formatCurrency(streamAvail) + icon;
         }
 
         // 2. Update the column total for this beneficiary
@@ -628,11 +691,49 @@
 
         // 3. Update the grand total
         const grandTotalEl = document.getElementById('grand-total-' + scenarioId);
+        let grandSum = 0;
         if (grandTotalEl) {
             const allInputs = table.querySelectorAll('input.scenario-alloc');
-            let grandSum = 0;
             allInputs.forEach(i => { grandSum += parseFloat(i.value) || 0; });
             grandTotalEl.textContent = formatCurrency(grandSum);
+        }
+
+        // 4. Update balance banner
+        const bannerEl  = document.getElementById('balance-banner-' + scenarioId);
+        const textEl    = document.getElementById('balance-text-' + scenarioId);
+        if (bannerEl && textEl) {
+            const diff     = grandSum - ndiAvail;
+            const balanced = Math.abs(diff) < 0.005;
+            const over     = diff > 0.005;
+            bannerEl.className = 'alert small mt-2 d-flex align-items-center gap-2 '
+                + (balanced ? 'alert-success' : (over ? 'alert-danger' : 'alert-warning'));
+            const iconEl = bannerEl.querySelector('i');
+            if (iconEl) {
+                iconEl.className = 'bi flex-shrink-0 '
+                    + (balanced ? 'bi-check-circle-fill' : (over ? 'bi-exclamation-triangle-fill' : 'bi-exclamation-circle'));
+            }
+            if (balanced) {
+                textEl.innerHTML = `<strong>Balanced.</strong> Total allocated ${formatCurrency(grandSum)} matches Net Distributable Income.`;
+            } else if (over) {
+                textEl.innerHTML = `<strong>Over-allocated by ${formatCurrency(diff)}.</strong> Total allocated ${formatCurrency(grandSum)} exceeds NDI of ${formatCurrency(ndiAvail)}. You cannot confirm until this is resolved.`;
+            } else {
+                textEl.innerHTML = `<strong>Under-allocated by ${formatCurrency(Math.abs(diff))}.</strong> Total allocated ${formatCurrency(grandSum)} of NDI ${formatCurrency(ndiAvail)}. You cannot confirm until 100% is allocated.`;
+            }
+
+            // 5. Enable/disable Confirm button
+            const confirmBtn = document.getElementById('confirm-btn-' + scenarioId);
+            if (confirmBtn) {
+                confirmBtn.disabled = !balanced;
+                if (balanced) {
+                    confirmBtn.classList.remove('btn-secondary');
+                    confirmBtn.classList.add('btn-success');
+                    confirmBtn.title = 'Confirm this scenario as the final distribution';
+                } else {
+                    confirmBtn.classList.remove('btn-success');
+                    confirmBtn.classList.add('btn-secondary');
+                    confirmBtn.title = 'Cannot confirm: allocation does not balance against NDI';
+                }
+            }
         }
     };
 
@@ -670,6 +771,24 @@
     };
 
     window.confirmScenario = async function(scenarioId) {
+        // Guard: check balance before allowing confirm
+        const ndiAvail = parseFloat(workspace?.net_distributable_income) || 0;
+        const scenario = scenarios.find(s => s.id === scenarioId);
+        if (scenario) {
+            const streams = ['ordinary', 'cgt_discount', 'cgt_non_discount', 'franked_dividends', 'franking_credits', 'tax_free'];
+            let grandSum = 0;
+            Object.values(scenario.allocations || {}).forEach(benAlloc => {
+                streams.forEach(st => { grandSum += parseFloat(benAlloc[st]) || 0; });
+            });
+            if (Math.abs(grandSum - ndiAvail) > 0.005) {
+                const diff = grandSum - ndiAvail;
+                const msg = diff > 0
+                    ? `Cannot confirm: distribution is over-allocated by ${formatCurrency(diff)}. Please reduce allocations to match NDI of ${formatCurrency(ndiAvail)}.`
+                    : `Cannot confirm: distribution is under-allocated by ${formatCurrency(Math.abs(diff))}. Please allocate the full NDI of ${formatCurrency(ndiAvail)}.`;
+                alert(msg);
+                return;
+            }
+        }
         if (!confirm('Confirm this scenario as the final distribution?')) return;
         try {
             await fetch(`${BASE}/scenarios/${scenarioId}/confirm/`, {
