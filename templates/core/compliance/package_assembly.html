@@ -156,7 +156,7 @@
                                         {% elif item.doc_type == 'client_cover_letter' %}
                                         <button class="btn btn-xs btn-outline-primary" onclick="generateDoc('{% url 'core:generate_cover_letter' pk=fy.pk %}', 'Cover Letter')">Generate</button>
                                         {% elif item.doc_type == 'distribution_minutes' %}
-                                        <a href="{% url 'core:generate_distribution_minutes' pk=fy.pk %}" class="btn btn-xs btn-outline-primary">Generate</a>
+                                        <button class="btn btn-xs btn-outline-primary" onclick="generateDistMinutes()">Generate</button>
                                         {% elif item.doc_type == 'partner_statement' %}
                                         <a href="{% url 'core:partner_statements' pk=fy.pk %}" class="btn btn-xs btn-outline-primary">Partner Wizard</a>
                                         {% elif item.doc_type == 'partnership_tax_summary' %}
@@ -408,8 +408,40 @@ const COMMENTARY_GENERATE_URL = '{% url "core:yearend_commentary_generate" pk=fy
 const COMMENTARY_POLL_URL = '{% url "core:yearend_commentary_poll" pk=fy.pk %}';
 const COMMENTARY_SAVE_URL = '{% url "core:yearend_commentary_save" pk=fy.pk %}';
 const COMMENTARY_MARK_REVIEWED_URL = '{% url "core:yearend_commentary_mark_reviewed" pk=fy.pk %}';
+const DIST_MINUTES_URL = '{% url "core:generate_distribution_minutes" pk=fy.pk %}';
 
 let pollInterval = null;
+
+function generateDistMinutes() {
+    if (!confirm('Generate Distribution Minutes? The document will be downloaded and the checklist will update.')) return;
+    const btn = event.target;
+    btn.disabled = true;
+    btn.textContent = 'Generating…';
+    // Use a form-based fetch so the browser downloads the file AND we can reload
+    fetch(DIST_MINUTES_URL, {method: 'GET'})
+    .then(r => {
+        if (!r.ok) return r.text().then(t => { throw new Error(t || r.statusText); });
+        return r.blob();
+    })
+    .then(blob => {
+        // Trigger download
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'Distribution_Minutes.docx';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        // Reload so the checklist shows Present and the checkbox is enabled
+        location.reload();
+    })
+    .catch(err => {
+        btn.disabled = false;
+        btn.textContent = 'Generate';
+        alert('Error generating distribution minutes: ' + err.message);
+    });
+}
 
 function generateDoc(url, label) {
     if (!confirm('Generate ' + label + '?')) return;

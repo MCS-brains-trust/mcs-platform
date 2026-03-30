@@ -5903,6 +5903,26 @@ def generate_distribution_minutes(request, pk):
     )
     doc.file.save(filename, ContentFile(file_content), save=True)
 
+    # Also create/update a LegalDocument record so the package assembly
+    # checklist detects distribution_minutes as present.
+    from core.models import LegalDocument
+    legal_doc, _created = LegalDocument.objects.update_or_create(
+        financial_year=fy,
+        document_type="distribution_minutes",
+        defaults={
+            "entity": entity,
+            "title": f"Distribution Minutes — {entity.entity_name} — {fy.year_label}",
+            "status": LegalDocument.Status.GENERATED,
+            "generated_by": request.user,
+        },
+    )
+    if file_format == "pdf":
+        from django.core.files.base import ContentFile as CF
+        legal_doc.pdf_file.save(filename, CF(file_content), save=True)
+    else:
+        from django.core.files.base import ContentFile as CF
+        legal_doc.generated_file.save(filename, CF(file_content), save=True)
+
     return response
 
 
