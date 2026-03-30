@@ -1656,6 +1656,11 @@ def financial_year_detail(request, pk):
     else:
         prior_year = 'Prior'
 
+    # Determine whether prior-year comparative data exists in the trial balance
+    has_prior_tb = bool(
+        fy.prior_year and fy.prior_year.trial_balance_lines.exists()
+    )
+
     # Audit Risk flags
     risk_flags = RiskFlag.objects.filter(financial_year=fy).order_by('-severity', '-created_at')
     open_risk_count = risk_flags.filter(status='open').count()
@@ -1900,6 +1905,7 @@ def financial_year_detail(request, pk):
         "prior_net_profit_abs": abs(prior_net_profit),
         "current_year": current_year,
         "prior_year": prior_year,
+        "has_prior_tb": has_prior_tb,
         # Audit Risk
         "risk_flags": risk_flags,
         "open_risk_count": open_risk_count,
@@ -5501,11 +5507,13 @@ def financial_statements_view(request, pk):
         elif item["mapped_line_item__financial_statement"] == "balance_sheet":
             balance_sheet.append(entry)
 
+    has_prior = bool(fy.prior_year and fy.prior_year.trial_balance_lines.exists())
     context = {
         "fy": fy,
         "entity": fy.entity,
         "income_statement": income_statement,
         "balance_sheet": balance_sheet,
+        "has_prior": has_prior,
     }
     return render(request, "core/financial_statements_view.html", context)
 

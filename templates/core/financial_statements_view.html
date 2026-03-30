@@ -29,7 +29,7 @@
                 <tr>
                     <th></th>
                     <th class="text-end" style="width: 150px;">{{ fy.year_label }}</th>
-                    {% if fy.prior_year %}
+                    {% if has_prior %}
                     <th class="text-end" style="width: 150px;">{{ fy.prior_year.year_label }}</th>
                     {% endif %}
                 </tr>
@@ -38,7 +38,7 @@
                 {% regroup income_statement by section as sections %}
                 {% for section in sections %}
                 <tr class="table-light">
-                    <td colspan="{% if fy.prior_year %}3{% else %}2{% endif %}" class="fw-bold">{{ section.grouper }}</td>
+                    <td colspan="{% if has_prior %}3{% else %}2{% endif %}" class="fw-bold">{{ section.grouper }}</td>
                 </tr>
                 {% for item in section.list %}
                 <tr>
@@ -50,7 +50,7 @@
                         {{ item.current|floatformat:2|intcomma }}
                         {% endif %}
                     </td>
-                    {% if fy.prior_year %}
+                    {% if has_prior %}
                     <td class="text-end text-muted">{{ item.prior|floatformat:2|intcomma }}</td>
                     {% endif %}
                 </tr>
@@ -72,7 +72,7 @@
                 <tr>
                     <th></th>
                     <th class="text-end" style="width: 150px;">{{ fy.year_label }}</th>
-                    {% if fy.prior_year %}
+                    {% if has_prior %}
                     <th class="text-end" style="width: 150px;">{{ fy.prior_year.year_label }}</th>
                     {% endif %}
                 </tr>
@@ -81,7 +81,7 @@
                 {% regroup balance_sheet by section as sections %}
                 {% for section in sections %}
                 <tr class="table-light">
-                    <td colspan="{% if fy.prior_year %}3{% else %}2{% endif %}" class="fw-bold">{{ section.grouper }}</td>
+                    <td colspan="{% if has_prior %}3{% else %}2{% endif %}" class="fw-bold">{{ section.grouper }}</td>
                 </tr>
                 {% for item in section.list %}
                 <tr>
@@ -93,7 +93,7 @@
                         {{ item.current|floatformat:2|intcomma }}
                         {% endif %}
                     </td>
-                    {% if fy.prior_year %}
+                    {% if has_prior %}
                     <td class="text-end text-muted">{{ item.prior|floatformat:2|intcomma }}</td>
                     {% endif %}
                 </tr>

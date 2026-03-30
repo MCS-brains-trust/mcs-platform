@@ -1000,7 +1000,7 @@ _SUBTOTAL_LABELS = [
 ]
 
 
-def _post_process_fs_doc(buffer, doc_type):
+def _post_process_fs_doc(buffer, doc_type, has_prior=True):
     """Post-process a rendered financial statement .docx.
 
     Applied to ALL document types to fix:
@@ -1263,10 +1263,80 @@ def _post_process_fs_doc(buffer, doc_type):
                 kn.set(qn('w:val'), '1')
                 ppPr.append(kn)
 
+    # ------------------------------------------------------------------
+    # Comparative column suppression
+    # When has_prior=False, strip the last column from every financial
+    # table in the document.  This handles templates that were designed
+    # with a comparative column but are being rendered for a first-year
+    # entity that has no prior-year trial balance data.
+    # ------------------------------------------------------------------
+    if not has_prior:
+        _strip_comparative_column(doc, qn)
+
     output = io.BytesIO()
     doc.save(output)
     output.seek(0)
     return output
+
+
+def _strip_comparative_column(doc, qn):
+    """Remove the last column from every table in the document.
+
+    Used when has_prior=False to suppress comparative year columns that
+    may have been rendered by the Jinja2 template.
+    Tables with only 1 or 2 columns are left untouched (they are likely
+    notes or label-only tables, not financial statement tables).
+    Also removes trailing tab characters from header/footer paragraphs
+    that would leave a dangling tab stop for the missing column.
+    """
+    from docx.oxml.ns import qn as _qn
+    # Strip last column from tables with 3+ columns
+    for table in doc.tables:
+        if len(table.columns) < 3:
+            continue
+        for row in table.rows:
+            tr = row._tr
+            cells = list(tr.findall(qn('w:tc')))
+            if not cells:
+                continue
+            last_tc = cells[-1]
+            # Skip if this cell has a gridSpan > 1 (merged header cell)
+            tcPr = last_tc.find(qn('w:tcPr'))
+            if tcPr is not None:
+                gs = tcPr.find(qn('w:gridSpan'))
+                if gs is not None:
+                    try:
+                        span_val = int(gs.get(qn('w:val'), '1'))
+                        if span_val > 1:
+                            # Reduce gridSpan by 1 instead of removing
+                            gs.set(qn('w:val'), str(span_val - 1))
+                            continue
+                    except (ValueError, TypeError):
+                        pass
+            tr.remove(last_tc)
+        # Update tblGrid to remove last gridCol
+        tbl = table._tbl
+        tblGrid = tbl.find(qn('w:tblGrid'))
+        if tblGrid is not None:
+            gridCols = list(tblGrid.findall(qn('w:gridCol')))
+            if gridCols:
+                tblGrid.remove(gridCols[-1])
+
+    # Strip trailing tab from header/footer paragraphs that had a
+    # right-aligned prior-year column tab stop.
+    def _strip_trailing_tab(para):
+        for run in para.runs:
+            if run.text and run.text.endswith('\t'):
+                run.text = run.text.rstrip('\t')
+
+    for section in doc.sections:
+        for container in [section.header, section.footer]:
+            for para in container.paragraphs:
+                _strip_trailing_tab(para)
+
+    # Also strip trailing tabs from body paragraphs (column headers)
+    for para in doc.paragraphs:
+        _strip_trailing_tab(para)
 
 
 def _fix_inline_py_in_row(row, qn, OxmlElement, copy, re):
@@ -2809,6 +2879,8 @@ def generate_financial_statements(financial_year_id, include_watermark=True):
     if entity_type != "trust":
         skip_types.add("DISTRIBUTION")
 
+    has_prior = context.get("has_prior", False)
+
     results = {}
     for doc_type in DOCUMENT_TYPE_ORDER:
         if doc_type in skip_types:
@@ -2824,7 +2896,7 @@ def generate_financial_statements(financial_year_id, include_watermark=True):
                         fy.pk,
                     )
                 else:
-                    buffer = _post_process_fs_doc(buffer, doc_type)
+                    buffer = _post_process_fs_doc(buffer, doc_type, has_prior=has_prior)
                     results[doc_type] = buffer
                     logger.info("Generated programmatic DEPRECIATION_REPORT for FY %s", fy.pk)
             except Exception as e:
@@ -2837,7 +2909,7 @@ def generate_financial_statements(financial_year_id, include_watermark=True):
         if doc_type == "NOTES":
             try:
                 buffer = _generate_notes_document(context)
-                buffer = _post_process_fs_doc(buffer, doc_type)
+                buffer = _post_process_fs_doc(buffer, doc_type, has_prior=has_prior)
                 results[doc_type] = buffer
                 logger.info("Generated programmatic NOTES for FY %s", fy.pk)
             except Exception as e:
@@ -2856,7 +2928,7 @@ def generate_financial_statements(financial_year_id, include_watermark=True):
 
         try:
             buffer = render_template(tmpl, context)
-            buffer = _post_process_fs_doc(buffer, doc_type)
+            buffer = _post_process_fs_doc(buffer, doc_type, has_prior=has_prior)
             results[doc_type] = buffer
             logger.info("Rendered %s for FY %s", doc_type, fy.pk)
         except Exception as e:
