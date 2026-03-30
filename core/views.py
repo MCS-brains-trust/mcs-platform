@@ -5826,7 +5826,8 @@ def generate_distribution_minutes(request, pk):
     entity = fy.entity
 
     # Only trusts have distribution minutes
-    if entity.entity_type != 'trust':
+    _TRUST_TYPES = ('trust', 'trust_unit', 'trust_discretionary', 'trust_hybrid')
+    if entity.entity_type not in _TRUST_TYPES:
         messages.error(request, "Distribution minutes are only applicable to trust entities.")
         return redirect("core:financial_year_detail", pk=pk)
 

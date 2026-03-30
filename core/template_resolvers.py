@@ -140,31 +140,41 @@ def resolve_distribution_minutes(financial_year_id) -> dict:
     chairperson = _find_chairperson(officers)
     fy_year = _get_fy_year(fy)
 
-    # Get beneficiary data from tax planning worksheet if available
+    # Get beneficiary data from confirmed DistributionScenario (Stage 3)
     beneficiary_rows = []
     total_distributed = Decimal("0")
     try:
-        from core.models import TaxPlanningWorksheet
-        worksheet = TaxPlanningWorksheet.objects.get(financial_year=fy)
-        rows = worksheet.beneficiary_rows.select_related("beneficiary").order_by(
-            "beneficiary__full_name"
-        )
-        for row in rows:
-            if row.proposed_distribution > 0:
-                beneficiary_rows.append({
-                    "name": row.beneficiary.full_name,
-                    "type": row.get_beneficiary_type_display(),
-                    "distribution": _fmt_money(row.proposed_distribution),
-                    "distribution_raw": row.proposed_distribution,
-                    "percentage": "",
-                })
-                total_distributed += row.proposed_distribution
-
-        # Calculate percentages
-        if total_distributed > 0:
-            for br in beneficiary_rows:
-                pct = (br["distribution_raw"] / total_distributed * 100).quantize(Decimal("0.01"))
-                br["percentage"] = f"{pct}%"
+        from core.models import TrustWorkspace, BeneficiaryProfile
+        workspace = TrustWorkspace.objects.get(financial_year=fy)
+        confirmed = workspace.confirmed_scenario
+        if confirmed and confirmed.allocations:
+            # Build a lookup of beneficiary_id -> name from BeneficiaryProfile
+            profiles = {
+                str(p.beneficiary_id): p
+                for p in workspace.beneficiary_profiles.select_related("beneficiary").all()
+            }
+            for ben_id, streams in confirmed.allocations.items():
+                total_for_ben = sum(Decimal(str(v)) for v in streams.values() if v)
+                if total_for_ben > 0:
+                    profile = profiles.get(str(ben_id))
+                    name = profile.beneficiary.full_name if profile else f"Beneficiary {ben_id[:8]}"
+                    ben_type = profile.get_beneficiary_type_display() if profile else ""
+                    beneficiary_rows.append({
+                        "name": name,
+                        "type": ben_type,
+                        "distribution": _fmt_money(total_for_ben),
+                        "distribution_raw": total_for_ben,
+                        "percentage": "",
+                        "streams": streams,
+                    })
+                    total_distributed += total_for_ben
+            # Sort by name
+            beneficiary_rows.sort(key=lambda r: r["name"])
+            # Calculate percentages
+            if total_distributed > 0:
+                for br in beneficiary_rows:
+                    pct = (br["distribution_raw"] / total_distributed * 100).quantize(Decimal("0.01"))
+                    br["percentage"] = f"{pct}%"
     except Exception:
         pass
 

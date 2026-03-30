@@ -1078,13 +1078,40 @@
     }
 
     window.generateBeneficiaryStatements = function() {
-        alert('Beneficiary statement generation will be available in the Legal Document Generation phase.');
+        window.location.href = BASE + '/generate/beneficiary-statements/';
     };
     window.generate100ASummary = function() {
-        alert('Section 100A summary generation will be available in the Legal Document Generation phase.');
+        window.location.href = BASE + '/generate/100a-summary/';
     };
     window.generateDistributionSummary = function() {
-        alert('Distribution summary generation will be available in the Legal Document Generation phase.');
+        window.location.href = BASE + '/generate/distribution-summary/';
+    };
+    window.postDistribution = function() {
+        if (!confirm('This will create a draft journal entry in the Journals tab for the confirmed distribution. Continue?')) return;
+        fetch(BASE + '/post-distribution/', {
+            method: 'POST',
+            headers: {'X-CSRFToken': CSRF, 'Content-Type': 'application/json'},
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                const btn = document.getElementById('post-distribution-btn');
+                if (btn) {
+                    btn.disabled = true;
+                    btn.innerHTML = '<i class="bi bi-check-circle-fill"></i> Journal Created';
+                    btn.classList.remove('btn-warning');
+                    btn.classList.add('btn-success');
+                }
+                const msg = document.getElementById('post-distribution-msg');
+                if (msg) {
+                    msg.textContent = data.message;
+                    msg.classList.remove('d-none');
+                }
+            } else {
+                alert('Error: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(err => alert('Network error: ' + err));
     };
 
     // ===== Auto-save =====

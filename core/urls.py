@@ -446,6 +446,10 @@ urlpatterns = [
     path("api/years/<uuid:pk>/trust-workspace/elections/", views_trust.trust_elections_api, name="trust_elections_api"),
     path("api/years/<uuid:pk>/trust-workspace/elections/<uuid:election_pk>/confirm/", views_trust.confirm_election, name="confirm_election"),
     path("api/years/<uuid:pk>/trust-workspace/eva-context/", views_trust.trust_eva_context, name="trust_eva_context"),
+    path("api/years/<uuid:pk>/trust-workspace/generate/beneficiary-statements/", views_trust.trust_generate_beneficiary_statements, name="trust_generate_beneficiary_statements"),
+    path("api/years/<uuid:pk>/trust-workspace/generate/distribution-summary/", views_trust.trust_generate_distribution_summary, name="trust_generate_distribution_summary"),
+    path("api/years/<uuid:pk>/trust-workspace/generate/100a-summary/", views_trust.trust_generate_100a_summary, name="trust_generate_100a_summary"),
+    path("api/years/<uuid:pk>/trust-workspace/post-distribution/", views_trust.trust_post_distribution, name="trust_post_distribution"),
 
     # ===== WORK PAPERS TAB =====
     path("years/<uuid:fy_pk>/workpapers/<uuid:template_pk>/download/", views_workpapers.workpaper_download, name="workpaper_download"),

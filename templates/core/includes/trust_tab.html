@@ -317,6 +317,21 @@
                 </div>
             </div>
 
+            <h6 class="fw-semibold mt-4 mb-3">Post Distribution to Trial Balance</h6>
+            <div class="card border-warning border-opacity-50 mb-4">
+                <div class="card-body">
+                    <h6 class="card-title"><i class="bi bi-journal-arrow-up text-warning"></i> Post Distribution Journal</h6>
+                    <p class="card-text small text-muted">
+                        Creates a draft journal entry in the Journals tab that records the confirmed distribution
+                        allocations against the trial balance. Review and post the journal when ready.
+                    </p>
+                    <button id="post-distribution-btn" class="btn btn-sm btn-warning" onclick="postDistribution()">
+                        <i class="bi bi-journal-plus"></i> Post Distribution to Trial Balance
+                    </button>
+                    <div id="post-distribution-msg" class="mt-2 text-success small d-none"></div>
+                </div>
+            </div>
+
             <h6 class="fw-semibold mt-4 mb-3">Document Library</h6>
             <div id="trust-document-library">
                 <p class="text-muted small">Generated documents will appear here.</p>

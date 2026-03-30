@@ -588,3 +588,479 @@ def _serialize_election(election):
         "confirmed_by": str(election.confirmed_by) if election.confirmed_by else None,
         "confirmed_at": election.confirmed_at.isoformat() if election.confirmed_at else None,
     }
+
+
+# =============================================================================
+# Stage 6 — Document Generation Views
+# =============================================================================
+
+def _get_confirmed_scenario_data(workspace):
+    """
+    Return a list of dicts describing each beneficiary's confirmed allocation.
+    Each dict: {name, type, total, streams, percentage}
+    Returns (rows, total_distributed, ndi)
+    """
+    confirmed = workspace.confirmed_scenario
+    if not confirmed or not confirmed.allocations:
+        return [], Decimal("0"), workspace.net_distributable_income or Decimal("0")
+
+    profiles = {
+        str(p.beneficiary_id): p
+        for p in workspace.beneficiary_profiles.select_related("beneficiary").all()
+    }
+
+    rows = []
+    total_distributed = Decimal("0")
+    for ben_id, streams in confirmed.allocations.items():
+        total_for_ben = sum(Decimal(str(v or 0)) for v in streams.values())
+        if total_for_ben <= 0:
+            continue
+        profile = profiles.get(str(ben_id))
+        name = profile.beneficiary.full_name if profile else f"Beneficiary {str(ben_id)[:8]}"
+        ben_type = profile.get_beneficiary_type_display() if profile else ""
+        rows.append({
+            "name": name,
+            "type": ben_type,
+            "total": total_for_ben,
+            "streams": {k: Decimal(str(v or 0)) for k, v in streams.items()},
+            "percentage": Decimal("0"),
+        })
+        total_distributed += total_for_ben
+
+    rows.sort(key=lambda r: r["name"])
+    if total_distributed > 0:
+        for r in rows:
+            r["percentage"] = (r["total"] / total_distributed * 100).quantize(Decimal("0.01"))
+
+    return rows, total_distributed, workspace.net_distributable_income or Decimal("0")
+
+
+@login_required
+def trust_generate_beneficiary_statements(request, pk):
+    """
+    GET /api/years/<pk>/trust-workspace/generate/beneficiary-statements/
+    Generate a single DOCX containing all beneficiary statements from the
+    confirmed distribution scenario.
+    """
+    import io
+    from docx import Document
+    from docx.shared import Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from django.http import HttpResponse
+
+    fy = get_object_or_404(FinancialYear, pk=pk)
+    try:
+        workspace = TrustWorkspace.objects.get(financial_year=fy)
+    except TrustWorkspace.DoesNotExist:
+        from django.http import JsonResponse as JR
+        return JR({"error": "No trust workspace found."}, status=404)
+
+    rows, total_distributed, ndi = _get_confirmed_scenario_data(workspace)
+    entity = fy.entity
+    fy_year = "".join(c for c in fy.year_label if c.isdigit()) or str(fy.end_date.year)
+    fy_end = f"30 June {fy_year}"
+
+    doc = Document()
+    style = doc.styles["Normal"]
+    style.font.name = "Calibri"
+    style.font.size = Pt(11)
+
+    STREAM_LABELS = {
+        "ordinary": "Ordinary Income",
+        "cgt_discount": "CGT Discount",
+        "cgt_non_discount": "CGT Non-Discount",
+        "franked_dividends": "Franked Dividends",
+        "franking_credits": "Franking Credits",
+        "tax_free": "Tax-Free Income",
+    }
+
+    for i, row in enumerate(rows):
+        if i > 0:
+            doc.add_page_break()
+
+        h = doc.add_heading(f"Beneficiary Distribution Statement", level=1)
+        h.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        doc.add_paragraph(f"Trust: {entity.entity_name}")
+        doc.add_paragraph(f"Financial Year: {fy.year_label}")
+        doc.add_paragraph(f"Year Ended: {fy_end}")
+        doc.add_paragraph(f"Beneficiary: {row['name']}")
+        if row["type"]:
+            doc.add_paragraph(f"Beneficiary Type: {row['type']}")
+        doc.add_paragraph(f"Share of Distribution: {row['percentage']}%")
+        doc.add_paragraph("")
+
+        table = doc.add_table(rows=1, cols=2)
+        table.style = "Table Grid"
+        hdr = table.rows[0].cells
+        hdr[0].text = "Income Stream"
+        hdr[1].text = "Amount"
+        for run in hdr[0].paragraphs[0].runs:
+            run.bold = True
+        for run in hdr[1].paragraphs[0].runs:
+            run.bold = True
+
+        for stream_key, amount in row["streams"].items():
+            if amount and Decimal(str(amount)) > 0:
+                r = table.add_row().cells
+                r[0].text = STREAM_LABELS.get(stream_key, stream_key.replace("_", " ").title())
+                r[1].text = f"${Decimal(str(amount)):,.2f}"
+
+        total_row = table.add_row().cells
+        total_row[0].text = "Total Distribution"
+        total_row[1].text = f"${row['total']:,.2f}"
+        for cell in total_row:
+            for para in cell.paragraphs:
+                for run in para.runs:
+                    run.bold = True
+
+        doc.add_paragraph("")
+        doc.add_paragraph(
+            "This statement is prepared for income tax purposes and shows your "
+            "entitlement to the net income of the trust for the year ended "
+            f"{fy_end}. Please retain this statement for your tax records."
+        )
+
+    if not rows:
+        doc.add_paragraph(
+            "No confirmed distribution scenario found. Please complete Stage 3 "
+            "(Distribution Modelling) and confirm a scenario before generating statements."
+        )
+
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+
+    entity_name = entity.entity_name.replace(" ", "_")
+    filename = f"{entity_name}_Beneficiary_Statements_{fy.year_label}.docx"
+    response = HttpResponse(
+        buffer.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
+@login_required
+def trust_generate_distribution_summary(request, pk):
+    """
+    GET /api/years/<pk>/trust-workspace/generate/distribution-summary/
+    Generate a DOCX distribution summary from the confirmed scenario.
+    """
+    import io
+    from docx import Document
+    from docx.shared import Pt
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from django.http import HttpResponse
+
+    fy = get_object_or_404(FinancialYear, pk=pk)
+    try:
+        workspace = TrustWorkspace.objects.get(financial_year=fy)
+    except TrustWorkspace.DoesNotExist:
+        from django.http import JsonResponse as JR
+        return JR({"error": "No trust workspace found."}, status=404)
+
+    rows, total_distributed, ndi = _get_confirmed_scenario_data(workspace)
+    entity = fy.entity
+    fy_year = "".join(c for c in fy.year_label if c.isdigit()) or str(fy.end_date.year)
+    fy_end = f"30 June {fy_year}"
+    confirmed = workspace.confirmed_scenario
+
+    doc = Document()
+    style = doc.styles["Normal"]
+    style.font.name = "Calibri"
+    style.font.size = Pt(11)
+
+    h = doc.add_heading("Trust Distribution Summary", level=1)
+    h.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    doc.add_paragraph(f"Trust: {entity.entity_name}")
+    doc.add_paragraph(f"Financial Year: {fy.year_label}  |  Year Ended: {fy_end}")
+    doc.add_paragraph(f"Scenario: {confirmed.name if confirmed else 'N/A'}")
+    doc.add_paragraph(f"Net Distributable Income: ${ndi:,.2f}")
+    doc.add_paragraph("")
+
+    if rows:
+        # Build column headers: Stream | Ben1 | Ben2 | ... | Total
+        STREAM_LABELS = {
+            "ordinary": "Ordinary",
+            "cgt_discount": "CGT Discount",
+            "cgt_non_discount": "CGT Non-Discount",
+            "franked_dividends": "Franked Dividends",
+            "franking_credits": "Franking Credits",
+            "tax_free": "Tax-Free",
+        }
+        all_streams = list(STREAM_LABELS.keys())
+        col_count = 1 + len(rows) + 1  # Stream + beneficiaries + Total
+
+        table = doc.add_table(rows=1, cols=col_count)
+        table.style = "Table Grid"
+        hdr = table.rows[0].cells
+        hdr[0].text = "Income Stream"
+        for i, row in enumerate(rows):
+            hdr[i + 1].text = row["name"]
+        hdr[-1].text = "Total"
+        for cell in hdr:
+            for para in cell.paragraphs:
+                for run in para.runs:
+                    run.bold = True
+
+        stream_totals = {s: Decimal("0") for s in all_streams}
+        for stream_key in all_streams:
+            label = STREAM_LABELS.get(stream_key, stream_key)
+            r = table.add_row().cells
+            r[0].text = label
+            row_total = Decimal("0")
+            for i, ben_row in enumerate(rows):
+                amt = ben_row["streams"].get(stream_key, Decimal("0"))
+                r[i + 1].text = f"${amt:,.2f}" if amt else "-"
+                row_total += amt
+                stream_totals[stream_key] += amt
+            r[-1].text = f"${row_total:,.2f}"
+
+        # Total row
+        total_row = table.add_row().cells
+        total_row[0].text = "TOTAL"
+        for i, ben_row in enumerate(rows):
+            total_row[i + 1].text = f"${ben_row['total']:,.2f}"
+        total_row[-1].text = f"${total_distributed:,.2f}"
+        for cell in total_row:
+            for para in cell.paragraphs:
+                for run in para.runs:
+                    run.bold = True
+
+        doc.add_paragraph("")
+
+        # Percentage summary
+        doc.add_heading("Distribution Percentages", level=2)
+        pct_table = doc.add_table(rows=1, cols=3)
+        pct_table.style = "Table Grid"
+        ph = pct_table.rows[0].cells
+        ph[0].text = "Beneficiary"
+        ph[1].text = "Amount"
+        ph[2].text = "Percentage"
+        for cell in ph:
+            for para in cell.paragraphs:
+                for run in para.runs:
+                    run.bold = True
+        for ben_row in rows:
+            pr = pct_table.add_row().cells
+            pr[0].text = ben_row["name"]
+            pr[1].text = f"${ben_row['total']:,.2f}"
+            pr[2].text = f"{ben_row['percentage']}%"
+    else:
+        doc.add_paragraph(
+            "No confirmed distribution scenario found. Please complete Stage 3 "
+            "(Distribution Modelling) and confirm a scenario before generating this summary."
+        )
+
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+
+    entity_name = entity.entity_name.replace(" ", "_")
+    filename = f"{entity_name}_Distribution_Summary_{fy.year_label}.docx"
+    response = HttpResponse(
+        buffer.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
+@login_required
+def trust_generate_100a_summary(request, pk):
+    """
+    GET /api/years/<pk>/trust-workspace/generate/100a-summary/
+    Generate a DOCX Section 100A risk assessment summary.
+    """
+    import io
+    from docx import Document
+    from docx.shared import Pt
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from django.http import HttpResponse
+
+    fy = get_object_or_404(FinancialYear, pk=pk)
+    try:
+        workspace = TrustWorkspace.objects.get(financial_year=fy)
+    except TrustWorkspace.DoesNotExist:
+        from django.http import JsonResponse as JR
+        return JR({"error": "No trust workspace found."}, status=404)
+
+    entity = fy.entity
+    fy_year = "".join(c for c in fy.year_label if c.isdigit()) or str(fy.end_date.year)
+    fy_end = f"30 June {fy_year}"
+
+    doc = Document()
+    style = doc.styles["Normal"]
+    style.font.name = "Calibri"
+    style.font.size = Pt(11)
+
+    h = doc.add_heading("Section 100A Risk Assessment Summary", level=1)
+    h.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    doc.add_paragraph(f"Trust: {entity.entity_name}")
+    doc.add_paragraph(f"Financial Year: {fy.year_label}  |  Year Ended: {fy_end}")
+    overall = workspace.section_100a_overall_risk or "Not assessed"
+    doc.add_paragraph(f"Overall Risk Rating: {overall.upper()}")
+    doc.add_paragraph("")
+
+    QUESTIONS = [
+        ("Q1", "Was the distribution made under a reimbursement agreement?"),
+        ("Q2", "Did the beneficiary receive the economic benefit of the distribution?"),
+        ("Q3", "Was the distribution part of a pre-arranged plan?"),
+        ("Q4", "Were funds redirected to another party?"),
+        ("Q5", "Is the beneficiary a related party of the trustee?"),
+        ("Q6", "Was there a tax benefit from the arrangement?"),
+        ("Q7", "Is the arrangement consistent with an ordinary family dealing? (protective)"),
+        ("Q8", "Does the arrangement fall within a safe harbour? (protective)"),
+    ]
+
+    assessments = workspace.section_100a_assessments.select_related("beneficiary").all()
+    if assessments:
+        for assessment in assessments:
+            doc.add_heading(assessment.beneficiary.full_name, level=2)
+            doc.add_paragraph(f"Risk Rating: {assessment.risk_rating.upper() if assessment.risk_rating else 'Not assessed'}")
+
+            table = doc.add_table(rows=1, cols=3)
+            table.style = "Table Grid"
+            hdr = table.rows[0].cells
+            hdr[0].text = "#"
+            hdr[1].text = "Question"
+            hdr[2].text = "Answer"
+            for cell in hdr:
+                for para in cell.paragraphs:
+                    for run in para.runs:
+                        run.bold = True
+
+            answers = [
+                assessment.q1, assessment.q2, assessment.q3, assessment.q4,
+                assessment.q5, assessment.q6, assessment.q7, assessment.q8,
+            ]
+            for (qnum, question), answer in zip(QUESTIONS, answers):
+                r = table.add_row().cells
+                r[0].text = qnum
+                r[1].text = question
+                r[2].text = (answer or "Not answered").title()
+
+            if assessment.resolution_strategy:
+                doc.add_paragraph(f"Resolution Strategy: {assessment.resolution_strategy}")
+            doc.add_paragraph("")
+    else:
+        doc.add_paragraph(
+            "No Section 100A assessments found. This stage may have been skipped "
+            "(e.g. unit trust) or not yet completed."
+        )
+
+    buffer = io.BytesIO()
+    doc.save(buffer)
+    buffer.seek(0)
+
+    entity_name = entity.entity_name.replace(" ", "_")
+    filename = f"{entity_name}_Section_100A_Summary_{fy.year_label}.docx"
+    response = HttpResponse(
+        buffer.getvalue(),
+        content_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
+# =============================================================================
+# Post Distribution — Create Journal Entries
+# =============================================================================
+
+@login_required
+@require_POST
+def trust_post_distribution(request, pk):
+    """
+    POST /api/years/<pk>/trust-workspace/post-distribution/
+    Creates journal entries in the trial balance from the confirmed distribution scenario.
+
+    For each beneficiary allocation:
+      DR  Distribution Payable — <Beneficiary Name>  (liability account)
+      CR  Net Income / Retained Earnings              (equity account)
+
+    The journal is created as DRAFT so the accountant can review before posting.
+    """
+    from core.models import AdjustingJournal, JournalLine
+    from django.utils import timezone as tz
+
+    fy = get_object_or_404(FinancialYear, pk=pk)
+    try:
+        workspace = TrustWorkspace.objects.get(financial_year=fy)
+    except TrustWorkspace.DoesNotExist:
+        return JsonResponse({"error": "No trust workspace found."}, status=404)
+
+    confirmed = workspace.confirmed_scenario
+    if not confirmed or not confirmed.allocations:
+        return JsonResponse(
+            {"error": "No confirmed distribution scenario. Please confirm a scenario in Stage 3 first."},
+            status=400,
+        )
+
+    rows, total_distributed, ndi = _get_confirmed_scenario_data(workspace)
+    if not rows:
+        return JsonResponse(
+            {"error": "Confirmed scenario has no allocations with positive amounts."},
+            status=400,
+        )
+
+    fy_year = "".join(c for c in fy.year_label if c.isdigit()) or str(fy.end_date.year)
+
+    with transaction.atomic():
+        journal = AdjustingJournal.objects.create(
+            financial_year=fy,
+            journal_type=AdjustingJournal.JournalType.YEAR_END,
+            status=AdjustingJournal.JournalStatus.DRAFT,
+            journal_date=fy.end_date,
+            description=f"Trust Distribution — {fy.entity.entity_name} — FY{fy_year}",
+            narration=(
+                f"Distribution journal generated from confirmed scenario '{confirmed.name}'. "
+                f"Total distributed: ${total_distributed:,.2f}. "
+                f"Review and post when ready."
+            ),
+            created_by=request.user,
+        )
+
+        line_num = 1
+        # CR side: Net Income / Retained Earnings account
+        # Use account 4000 (Equity/Retained Earnings) as the default CR account
+        JournalLine.objects.create(
+            journal=journal,
+            line_number=line_num,
+            account_code="4000",
+            account_name="Net Income — Trust Distribution",
+            description=f"Distribution of net income for year ended 30 June {fy_year}",
+            debit=Decimal("0"),
+            credit=total_distributed,
+        )
+        line_num += 1
+
+        # DR side: one line per beneficiary
+        for row in rows:
+            ben_name = row["name"]
+            JournalLine.objects.create(
+                journal=journal,
+                line_number=line_num,
+                account_code="3100",
+                account_name=f"Distribution Payable — {ben_name}",
+                description=f"{ben_name}: {row['percentage']}% = ${row['total']:,.2f}",
+                debit=row["total"],
+                credit=Decimal("0"),
+            )
+            line_num += 1
+
+        journal.recalculate_totals()
+
+    return JsonResponse({
+        "success": True,
+        "journal_id": str(journal.pk),
+        "journal_reference": journal.reference_number,
+        "total_distributed": str(total_distributed),
+        "beneficiary_count": len(rows),
+        "message": (
+            f"Distribution journal {journal.reference_number} created as DRAFT. "
+            f"Go to the Journals tab to review and post it."
+        ),
+    })
