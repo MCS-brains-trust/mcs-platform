@@ -112,6 +112,18 @@
                 green: 'success', amber: 'warning', red: 'danger'
             }[workspace.section_100a_overall_risk] || 'secondary');
         }
+
+        // For unit trusts / trusts with unitholders: hide Stage 4 UI chrome
+        if (workspace.entity_type === 'trust_unit' || workspace.has_unitholders) {
+            const riskInfo = document.getElementById('stage-4-risk-info');
+            const desc = document.getElementById('stage-4-description');
+            const completeBtn = document.getElementById('stage-4-complete-btn');
+            const riskBadge = document.getElementById('trust-100a-risk-badge');
+            if (riskInfo) riskInfo.style.display = 'none';
+            if (desc) desc.style.display = 'none';
+            if (completeBtn) completeBtn.style.display = 'none';
+            if (riskBadge) riskBadge.style.display = 'none';
+        }
     }
 
     // ===== Stage Navigation =====
@@ -832,6 +844,23 @@
 
     function renderAssessments() {
         const container = document.getElementById('section-100a-container');
+
+        // Unit trusts and trusts with unitholders are outside the scope of s.100A
+        if (workspace && (workspace.entity_type === 'trust_unit' || workspace.has_unitholders)) {
+            container.innerHTML = `
+                <div class="alert alert-info d-flex align-items-start gap-3">
+                    <i class="bi bi-info-circle-fill fs-5 flex-shrink-0 mt-1"></i>
+                    <div>
+                        <strong>Section 100A does not apply to this trust.</strong><br>
+                        Section 100A of the ITAA 1936 (reimbursement agreement provisions) only applies to
+                        discretionary trusts. This entity is a <strong>unit trust</strong> (or has unitholders),
+                        so the assessment has been automatically marked as complete and skipped.
+                        No action is required for this stage.
+                    </div>
+                </div>`;
+            return;
+        }
+
         const activeProfiles = beneficiaryProfiles.filter(p => p.include_in_distribution);
 
         if (!activeProfiles.length) {

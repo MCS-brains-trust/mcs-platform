@@ -16,7 +16,7 @@ import logging
 from decimal import Decimal, InvalidOperation
 
 from django.contrib.auth.decorators import login_required
-from django.db import transaction
+from django.db import models as django_models, transaction
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -52,6 +52,12 @@ def trust_workspace_api(request, pk):
             _auto_populate_income(workspace)
             # Auto-create beneficiary profiles from officers
             _auto_create_beneficiary_profiles(workspace)
+
+        # Auto-skip Stage 4 for unit trusts / trusts with unitholders
+        if _entity_has_unitholders(fy.entity):
+            if workspace.stage_4_status != TrustWorkspace.StageStatus.COMPLETED:
+                workspace.stage_4_status = TrustWorkspace.StageStatus.COMPLETED
+                workspace.save(update_fields=["stage_4_status", "updated_at"])
 
         return JsonResponse(_serialize_workspace(workspace))
 
@@ -484,11 +490,24 @@ def _update_overall_100a_risk(workspace):
     workspace.save(update_fields=["section_100a_overall_risk"])
 
 
+def _entity_has_unitholders(entity):
+    """Return True if the entity is a unit trust or has any unit holder officers."""
+    if entity.entity_type == 'trust_unit':
+        return True
+    return entity.officers.filter(
+        django_models.Q(role='unit_holder') | django_models.Q(roles__contains='unit_holder')
+    ).exists()
+
+
 def _serialize_workspace(workspace):
     """Serialize a TrustWorkspace to JSON."""
+    entity = workspace.financial_year.entity
+    has_unitholders = _entity_has_unitholders(entity)
     return {
         "id": str(workspace.pk),
         "financial_year_id": str(workspace.financial_year_id),
+        "entity_type": entity.entity_type,
+        "has_unitholders": has_unitholders,
         "stages": {
             "1": {"status": workspace.stage_1_status, "name": "Income Calculation"},
             "2": {"status": workspace.stage_2_status, "name": "Beneficiary Profiling"},
