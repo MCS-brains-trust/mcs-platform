@@ -1086,33 +1086,7 @@
     window.generateDistributionSummary = function() {
         window.location.href = BASE + '/generate/distribution-summary/';
     };
-    window.postDistribution = function() {
-        if (!confirm('This will create a draft journal entry in the Journals tab for the confirmed distribution. Continue?')) return;
-        fetch(BASE + '/post-distribution/', {
-            method: 'POST',
-            headers: {'X-CSRFToken': CSRF, 'Content-Type': 'application/json'},
-        })
-        .then(r => r.json())
-        .then(data => {
-            if (data.success) {
-                const btn = document.getElementById('post-distribution-btn');
-                if (btn) {
-                    btn.disabled = true;
-                    btn.innerHTML = '<i class="bi bi-check-circle-fill"></i> Journal Created';
-                    btn.classList.remove('btn-warning');
-                    btn.classList.add('btn-success');
-                }
-                const msg = document.getElementById('post-distribution-msg');
-                if (msg) {
-                    msg.textContent = data.message;
-                    msg.classList.remove('d-none');
-                }
-            } else {
-                alert('Error: ' + (data.error || 'Unknown error'));
-            }
-        })
-        .catch(err => alert('Network error: ' + err));
-    };
+
 
     // ===== Auto-save =====
     function startAutoSave() {

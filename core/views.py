@@ -3231,6 +3231,69 @@ def _populate_rolled_forward_fy(current_fy, new_fy):
         new_asset.save()
         dep_rolled += 1
 
+    # -----------------------------------------------------------------
+    # Pass 6: For trusts — allocate confirmed distribution to beneficiary
+    # payable accounts and reduce undistributed income accordingly.
+    # -----------------------------------------------------------------
+    dist_rolled = 0
+    TRUST_TYPES = {"trust", "trust_unit", "trust_discretionary", "trust_hybrid"}
+    if entity.entity_type in TRUST_TYPES:
+        try:
+            from core.models import TrustWorkspace, DistributionScenario, BeneficiaryProfile
+            workspace = TrustWorkspace.objects.filter(financial_year=current_fy).first()
+            if workspace:
+                confirmed = workspace.scenarios.filter(is_confirmed=True).first()
+                if confirmed and confirmed.allocations:
+                    # Build beneficiary name lookup: str(uuid) -> full_name
+                    bene_ids = list(confirmed.allocations.keys())
+                    officer_map = {}
+                    for bp in BeneficiaryProfile.objects.filter(
+                        trust_workspace=workspace
+                    ).select_related("beneficiary"):
+                        officer_map[str(bp.beneficiary_id)] = bp.beneficiary.full_name
+
+                    total_distributed = _D("0")
+                    suffix = 1
+                    for bene_id, streams in confirmed.allocations.items():
+                        bene_total = sum(
+                            _D(str(v)) for v in streams.values() if v
+                        )
+                        if bene_total <= _D("0"):
+                            continue
+                        bene_name = officer_map.get(bene_id, f"Beneficiary {suffix}")
+                        account_code = f"3100.{suffix:02d}"
+                        account_name = f"Distribution Payable — {bene_name}"
+                        TrialBalanceLine.objects.create(
+                            financial_year=new_fy,
+                            account_code=account_code,
+                            account_name=account_name,
+                            opening_balance=-bene_total,  # credit = liability
+                            debit=_D("0"),
+                            credit=_D("0"),
+                            closing_balance=-bene_total,
+                            prior_debit=_D("0"),
+                            prior_credit=_D("0"),
+                            mapped_line_item=None,
+                            is_adjustment=False,
+                            source="rollover",
+                        )
+                        total_distributed += bene_total
+                        dist_rolled += 1
+                        suffix += 1
+
+                    # Reduce the undistributed income / retained profits line
+                    # in new_fy by the total distributed amount so the BS balances.
+                    if total_distributed > _D("0"):
+                        rp_line = new_fy.trial_balance_lines.filter(
+                            account_code="4199", source="rollover"
+                        ).first()
+                        if rp_line:
+                            rp_line.opening_balance -= total_distributed
+                            rp_line.closing_balance -= total_distributed
+                            rp_line.save(update_fields=["opening_balance", "closing_balance"])
+        except Exception:
+            pass  # Distribution allocation is best-effort; never block roll-forward
+
     return {
         "carried_bs": carried_bs,
         "carried_pl": carried_pl,
@@ -3239,6 +3302,7 @@ def _populate_rolled_forward_fy(current_fy, new_fy):
         "dep_rolled": dep_rolled,
         "net_pl_result": net_pl_result,
         "tax_amount": tax_amount,
+        "dist_rolled": dist_rolled,
     }
 
 
@@ -3298,6 +3362,7 @@ def roll_forward(request, pk):
         dep_rolled = rf["dep_rolled"]
         net_pl_result = rf["net_pl_result"]
         tax_amount = rf["tax_amount"]
+        dist_rolled = rf.get("dist_rolled", 0)
 
         total_carried = carried_bs + carried_pl
         pl_direction = "profit" if net_pl_result < 0 else "loss"
@@ -3305,8 +3370,9 @@ def roll_forward(request, pk):
         stock_msg = f" {stock_converted} closing stock entries converted to opening stock." if stock_converted else ""
         stock_items_msg = f" {stock_rolled} stock items rolled forward." if stock_rolled else ""
         dep_msg = f" {dep_rolled} depreciation assets rolled forward." if dep_rolled else ""
-        _log_action(request, "import", f"Rolled forward to {new_label} with {carried_bs} BS items, {carried_pl} P&L comparatives. Net {pl_direction} of ${abs(net_pl_result):,.2f} closed to retained earnings.{tax_msg}{stock_msg}{stock_items_msg}{dep_msg}", new_fy)
-        messages.success(request, f"Rolled forward to {new_label}. {carried_bs} balance sheet items carried, {carried_pl} P&L comparatives. Net {pl_direction} of ${abs(net_pl_result):,.2f} less tax ${abs(tax_amount):,.2f} closed to retained earnings.{stock_msg}{stock_items_msg}{dep_msg}")
+        dist_msg = f" {dist_rolled} distribution payable accounts created from confirmed trust distribution." if dist_rolled else ""
+        _log_action(request, "import", f"Rolled forward to {new_label} with {carried_bs} BS items, {carried_pl} P&L comparatives. Net {pl_direction} of ${abs(net_pl_result):,.2f} closed to retained earnings.{tax_msg}{stock_msg}{stock_items_msg}{dep_msg}{dist_msg}", new_fy)
+        messages.success(request, f"Rolled forward to {new_label}. {carried_bs} balance sheet items carried, {carried_pl} P&L comparatives. Net {pl_direction} of ${abs(net_pl_result):,.2f} less tax ${abs(tax_amount):,.2f} closed to retained earnings.{stock_msg}{stock_items_msg}{dep_msg}{dist_msg}")
         return redirect("core:financial_year_detail", pk=new_fy.pk)
 
     return render(request, "core/roll_forward_confirm.html", {
