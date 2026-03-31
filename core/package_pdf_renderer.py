@@ -142,6 +142,10 @@ def render_legal_doc_to_pdf_bytes(doc):
             if len(abn_digits) == 11 else abn_raw
         )
     context["acn_abn"] = _build_acn_abn(context.get("acn", ""), context.get("abn", ""))
+    # Ensure entity_name is always available — stored context_data may not have it
+    if doc.entity:
+        context.setdefault("entity_name", doc.entity.entity_name)
+        context.setdefault("trust_name", doc.entity.entity_name)
     context.setdefault("is_final", True)
     context.setdefault("watermark_text", "")
     if doc.financial_year and doc.financial_year.end_date:
