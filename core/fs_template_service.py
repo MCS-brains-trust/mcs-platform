@@ -173,6 +173,10 @@ def _get_tb_sections(fy):
             sections["equity"].append(entry)
         elif code_num < 6000:
             sections["cogs"].append(entry)
+        elif 9000 <= code_num < 10000:
+            # Capital accounts (9000 series) — trust unit holder / beneficiary
+            # capital provisioned by capital_account_service.  These are equity.
+            sections["equity"].append(entry)
 
     # Aggregate lines with the same account within each section.
     # Primary merge key: account_code (stable across renames in Xero/QBO).
@@ -974,7 +978,7 @@ def build_trust_context(financial_year, include_watermark=True):
             _missing_names.append(ben.pk)
         pct = ben.distribution_percentage or Decimal("0")
         amount = (net_profit_raw * pct / 100).quantize(
-            Decimal("1"), rounding=ROUND_HALF_UP
+            Decimal("0.01"), rounding=ROUND_HALF_UP
         )
         distributions.append({
             "beneficiary_name": name or "— Name missing —",
@@ -1249,40 +1253,52 @@ def _post_process_fs_doc(buffer, doc_type, has_prior=True):
                     trPr.append(cantSplit)
 
                     # Apply borders to AMOUNT columns only (last 2 cells).
-                    # Account name and Note columns get no border.
+                    # Explicitly nil borders on label / Note columns.
                     num_cells = len(row.cells)
                     for cell_idx, cell in enumerate(row.cells):
                         is_amount_col = cell_idx >= num_cells - 2
-                        if not is_amount_col:
-                            continue
                         tc = cell._tc
                         tcPr = tc.get_or_add_tcPr()
-                        tcBorders = tcPr.find(qn('w:tcBorders'))
-                        if tcBorders is None:
-                            tcBorders = OxmlElement('w:tcBorders')
-                            tcPr.append(tcBorders)
-                        # Top border: single thin
-                        top_el = tcBorders.find(qn('w:top'))
-                        if top_el is None:
-                            top_el = OxmlElement('w:top')
-                            tcBorders.append(top_el)
-                        top_el.set(qn('w:val'), 'single')
-                        top_el.set(qn('w:sz'), '6')
-                        top_el.set(qn('w:space'), '0')
-                        top_el.set(qn('w:color'), '000000')
-                        # Bottom border
-                        bot_el = tcBorders.find(qn('w:bottom'))
-                        if bot_el is None:
-                            bot_el = OxmlElement('w:bottom')
-                            tcBorders.append(bot_el)
+                        # Remove existing tcBorders completely and rebuild
+                        existing_borders = tcPr.find(qn('w:tcBorders'))
+                        if existing_borders is not None:
+                            tcPr.remove(existing_borders)
+                        tcBorders = OxmlElement('w:tcBorders')
+                        tcPr.append(tcBorders)
+                        if not is_amount_col:
+                            # Nil all borders on label/Note columns
+                            for side in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
+                                el = OxmlElement(f'w:{side}')
+                                el.set(qn('w:val'), 'nil')
+                                el.set(qn('w:sz'), '0')
+                                el.set(qn('w:color'), 'auto')
+                                tcBorders.append(el)
+                            continue
+                        # Amount columns: full box border
+                        for side in ('top', 'left', 'right'):
+                            el = OxmlElement(f'w:{side}')
+                            el.set(qn('w:val'), 'single')
+                            el.set(qn('w:sz'), '4')
+                            el.set(qn('w:space'), '0')
+                            el.set(qn('w:color'), '000000')
+                            tcBorders.append(el)
+                        bot_el = OxmlElement('w:bottom')
                         if is_grand:
                             bot_el.set(qn('w:val'), 'double')
-                            bot_el.set(qn('w:sz'), '12')
+                            bot_el.set(qn('w:sz'), '4')
                         else:
                             bot_el.set(qn('w:val'), 'single')
-                            bot_el.set(qn('w:sz'), '6')
+                            bot_el.set(qn('w:sz'), '4')
                         bot_el.set(qn('w:space'), '0')
                         bot_el.set(qn('w:color'), '000000')
+                        tcBorders.append(bot_el)
+                        # Nil inside borders
+                        for side in ('insideH', 'insideV'):
+                            el = OxmlElement(f'w:{side}')
+                            el.set(qn('w:val'), 'nil')
+                            el.set(qn('w:sz'), '0')
+                            el.set(qn('w:color'), 'auto')
+                            tcBorders.append(el)
                     # Bold all text in summary rows
                     for cell in row.cells:
                         for para in cell.paragraphs:

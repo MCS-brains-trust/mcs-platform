@@ -187,15 +187,23 @@ def _apply_cell_border(cell, **kwargs):
 
 
 def _apply_subtotal_borders(row, amount_col_indices=None):
-    """Subtotal row: full box border (single weight) on ALL cells. Bold all text."""
-    border_kwargs = {
-        "top": {"val": "single", "sz": "6", "color": "000000"},
-        "bottom": {"val": "single", "sz": "6", "color": "000000"},
-        "left": {"val": "single", "sz": "6", "color": "000000"},
-        "right": {"val": "single", "sz": "6", "color": "000000"},
+    """Subtotal row: full box border (single weight) on AMOUNT columns only.
+
+    Amount columns are the last 2 cells in the row (CY, PY figures).
+    Label and Note columns are explicitly nil'd.  Bold all text.
+    """
+    num_cells = len(row.cells)
+    subtotal_kwargs = {
+        "top": {"val": "single", "sz": "4", "color": "000000"},
+        "bottom": {"val": "single", "sz": "4", "color": "000000"},
+        "left": {"val": "single", "sz": "4", "color": "000000"},
+        "right": {"val": "single", "sz": "4", "color": "000000"},
     }
-    for cell in row.cells:
-        _apply_cell_border(cell, **border_kwargs)
+    for idx, cell in enumerate(row.cells):
+        if idx >= num_cells - 2:
+            _apply_cell_border(cell, **subtotal_kwargs)
+        else:
+            _apply_cell_border(cell)  # nil all borders
     for cell in row.cells:
         for para in cell.paragraphs:
             for run in para.runs:
@@ -203,15 +211,23 @@ def _apply_subtotal_borders(row, amount_col_indices=None):
 
 
 def _apply_grand_total_borders(row, amount_col_indices=None):
-    """Grand total row: full box border with DOUBLE bottom line on ALL cells. Bold all text."""
-    border_kwargs = {
-        "top": {"val": "single", "sz": "6", "color": "000000"},
-        "bottom": {"val": "double", "sz": "12", "color": "000000"},
-        "left": {"val": "single", "sz": "6", "color": "000000"},
-        "right": {"val": "single", "sz": "6", "color": "000000"},
+    """Grand total row: full box border with DOUBLE bottom on AMOUNT columns only.
+
+    Amount columns are the last 2 cells in the row (CY, PY figures).
+    Label and Note columns are explicitly nil'd.  Bold all text.
+    """
+    num_cells = len(row.cells)
+    grand_kwargs = {
+        "top": {"val": "single", "sz": "4", "color": "000000"},
+        "bottom": {"val": "double", "sz": "4", "color": "000000"},
+        "left": {"val": "single", "sz": "4", "color": "000000"},
+        "right": {"val": "single", "sz": "4", "color": "000000"},
     }
-    for cell in row.cells:
-        _apply_cell_border(cell, **border_kwargs)
+    for idx, cell in enumerate(row.cells):
+        if idx >= num_cells - 2:
+            _apply_cell_border(cell, **grand_kwargs)
+        else:
+            _apply_cell_border(cell)  # nil all borders
     for cell in row.cells:
         for para in cell.paragraphs:
             for run in para.runs:
@@ -318,16 +334,7 @@ def _add_repeating_header(doc, document_title, date_field="{{ date_text }}"):
     run4.font.size = Pt(9)
     p4.paragraph_format.space_after = Pt(4)
     p4.paragraph_format.space_before = Pt(0)
-    # Horizontal rule — bottom border on this paragraph
-    pPr = p4._p.get_or_add_pPr()
-    pBdr = OxmlElement('w:pBdr')
-    bottom_border = OxmlElement('w:bottom')
-    bottom_border.set(qn('w:val'), 'single')
-    bottom_border.set(qn('w:sz'), '6')
-    bottom_border.set(qn('w:space'), '1')
-    bottom_border.set(qn('w:color'), '000000')
-    pBdr.append(bottom_border)
-    pPr.append(pBdr)
+    # No horizontal rule — clean header without bottom border line
 
     # DRAFT watermark — right-aligned, red, only visible when non-empty
     pw = header.add_paragraph()
