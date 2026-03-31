@@ -278,8 +278,11 @@ def _add_total_row(doc, label, cy_tag, py_tag, size=None, grand_total=False):
                 run.font.name = FONT_NAME
                 run.font.size = font_size
                 run.bold = True
-    # Fix 5: grand total borders (single top + double bottom on amount cells)
-    _apply_grand_total_borders(row, [2, 3])
+    # Apply correct border style based on grand_total flag
+    if grand_total:
+        _apply_grand_total_borders(row, [2, 3])
+    else:
+        _apply_subtotal_borders(row, [2, 3])
 
 
 def _add_repeating_header(doc, document_title, date_field="{{ date_text }}"):
@@ -629,9 +632,12 @@ def _build_detailed_pl(entity_type):
     _add_spacer(doc)
 
     # Net Profit section — shows tax breakdown when income tax exists
-    # Pre-tax profit (subtotal)
+    # Pre-tax profit — grand_total=True because when has_income_tax is false
+    # this IS the final "Net Profit / (Loss)" line with double bottom.
+    # When has_income_tax is true, the post-processor reclassifies by label.
     _add_total_row(doc, "{% if has_income_tax %}Operating profit before income tax{% else %}Net Profit / (Loss){% endif %}",
-                   "{{ net_profit_pretax_cy }}", "{{ net_profit_pretax_py }}")
+                   "{{ net_profit_pretax_cy }}", "{{ net_profit_pretax_py }}",
+                   grand_total=True)
 
     # Income tax line (only when tax exists) — use conditional Jinja2 block
     _add_para(doc, "{% if has_income_tax %}", size=Pt(1))
@@ -655,9 +661,10 @@ def _build_detailed_pl(entity_type):
                 run.font.size = FONT_SIZE
         _apply_cell_border(tax_row.cells[i])
 
-    # After-tax profit (grand total)
+    # After-tax profit (grand total — double bottom on amount columns)
     _add_total_row(doc, "Operating profit after income tax",
-                   "{{ net_profit_cy }}", "{{ net_profit_py }}")
+                   "{{ net_profit_cy }}", "{{ net_profit_py }}",
+                   grand_total=True)
 
     _add_para(doc, "{% endif %}", size=Pt(1))
 

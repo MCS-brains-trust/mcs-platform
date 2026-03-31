@@ -632,7 +632,7 @@ def build_company_context(financial_year, include_watermark=True):
         if any(kw in _name_l for kw in ["retained", "accumulated"]):
             _retained_opening_raw_cy += _item.get("cy_amount", Decimal("0")) or Decimal("0")
             _retained_opening_raw_py += _item.get("py_amount", Decimal("0")) or Decimal("0")
-        elif "dividend" in _name_l:
+        elif any(kw in _name_l for kw in ["dividend", "distribution"]):
             _dividends_cy += abs(_item.get("cy_amount", Decimal("0")) or Decimal("0"))
             _dividends_py += abs(_item.get("py_amount", Decimal("0")) or Decimal("0"))
 
@@ -1078,7 +1078,7 @@ _SUMMARY_LABELS = [
 
 _GRAND_TOTAL_LABELS = [
     "net profit", "net loss", "net profit / (loss)", "net profit/(loss)",
-    "total assets", "total liabilities", "net assets", "total equity",
+    "operating profit after income tax",
 ]
 
 _SUB_HEADING_LABELS = [
@@ -1090,7 +1090,9 @@ _SUBTOTAL_LABELS = [
     "total income", "total expenses", "total revenue",
     "total current assets", "total non-current assets",
     "total current liabilities", "total non-current liabilities",
+    "total assets", "total liabilities", "net assets", "total equity",
     "gross profit",
+    "operating profit before income tax",
 ]
 
 
