@@ -945,6 +945,37 @@ def build_trust_context(financial_year, include_watermark=True):
     context["declaration_title"] = "Trustee's Declaration"
     context["compilation_responsible_party"] = "director of the trustee company"
 
+    # Relabel unit holder capital/loan accounts in the equity section.
+    # Accounts containing "loan" or "fund" keywords that also contain a
+    # beneficiary/unit holder name are relabelled to
+    # "Unitholders' funds introduced — [Unit Holder Name]".
+    beneficiary_names_for_match = []
+    _all_officers = EntityOfficer.objects.filter(
+        entity=entity,
+        role__in=["beneficiary", "unitholder"],
+        date_ceased__isnull=True,
+    )
+    for _off in _all_officers:
+        if _off.full_name:
+            beneficiary_names_for_match.append(_off.full_name)
+
+    _loan_keywords = ["loan", "fund", "capital introduced", "funds introduced"]
+    equity_items = context.get("equity", [])
+    for item in equity_items:
+        acct_lower = item.get("account_name", "").lower()
+        if any(kw in acct_lower for kw in _loan_keywords):
+            # Try to match a beneficiary name in the account name
+            matched_name = None
+            for bn in beneficiary_names_for_match:
+                if bn.lower() in acct_lower:
+                    matched_name = bn
+                    break
+            if matched_name:
+                item["account_name"] = f"Unitholders' funds introduced — {matched_name}"
+            else:
+                # Generic relabel if no name match found
+                item["account_name"] = "Unitholders' funds introduced"
+
     # Get trustees and beneficiaries
     trustees = EntityOfficer.objects.filter(
         entity=entity,
@@ -980,10 +1011,18 @@ def build_trust_context(financial_year, include_watermark=True):
         amount = (net_profit_raw * pct / 100).quantize(
             Decimal("0.01"), rounding=ROUND_HALF_UP
         )
+        # Format percentage to 2dp; format amount as currency with 2dp
+        pct_display = f"{pct:.2f}" if pct else "0.00"
+        if amount == 0:
+            amount_display = "-"
+        elif amount < 0:
+            amount_display = f"({abs(amount):,.2f})"
+        else:
+            amount_display = f"{amount:,.2f}"
         distributions.append({
             "beneficiary_name": name or "— Name missing —",
-            "percentage": str(pct),
-            "amount": format_amount(amount),
+            "percentage": pct_display,
+            "amount": amount_display,
             "amount_raw": amount,
         })
 
@@ -1026,8 +1065,23 @@ def build_trust_context(financial_year, include_watermark=True):
         except Exception as _e:
             logger.error("Could not create beneficiary_name_missing finding: %s", _e)
 
+    # Debug log for distribution context verification
+    logger.info(
+        "Distribution context for %s FY %s: %d beneficiaries, net_profit_raw=%s, "
+        "distributions=%s",
+        entity.entity_name, financial_year.pk, len(distributions),
+        net_profit_raw,
+        [{k: v for k, v in d.items() if k != "amount_raw"} for d in distributions],
+    )
+
     context["beneficiaries"] = distributions
-    context["total_distribution"] = format_amount(net_profit_raw)
+    # Format total distribution to 2dp for the Distribution Summary
+    if net_profit_raw == 0:
+        context["total_distribution"] = "-"
+    elif net_profit_raw < 0:
+        context["total_distribution"] = f"({abs(net_profit_raw):,.2f})"
+    else:
+        context["total_distribution"] = f"{net_profit_raw:,.2f}"
 
     return context
 

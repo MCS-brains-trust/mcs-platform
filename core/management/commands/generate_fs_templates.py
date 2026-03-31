@@ -987,11 +987,39 @@ def _build_distribution(entity_type):
             if i >= 1:
                 p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
 
-    # Jinja2 loop rows
-    row = table.add_row()
-    row.cells[0].text = "{% for b in beneficiaries %}\n{{ b.beneficiary_name }}"
-    row.cells[1].text = "{{ b.percentage }}%"
-    row.cells[2].text = "{{ b.amount }}\n{% endfor %}"
+    # Jinja2 row-level loop — {%tr for %} creates a new table row per beneficiary
+    for_row = table.add_row()
+    for_row.cells[0].text = "{%tr for b in beneficiaries %}"
+    # Set minimum row height so docxtpl loop tag row doesn't create a visible gap
+    tr_for = for_row._tr
+    trPr_for = tr_for.get_or_add_trPr()
+    trHeight = OxmlElement('w:trHeight')
+    trHeight.set(qn('w:val'), '1')
+    trHeight.set(qn('w:hRule'), 'exact')
+    trPr_for.append(trHeight)
+
+    # Data row with beneficiary fields
+    data_row = table.add_row()
+    data_row.cells[0].text = "{{ b.beneficiary_name }}"
+    data_row.cells[1].text = "{{ b.percentage }}%"
+    data_row.cells[2].text = "{{ b.amount }}"
+    for i in range(3):
+        for p in data_row.cells[i].paragraphs:
+            for run in p.runs:
+                run.font.name = FONT_NAME
+                run.font.size = FONT_SIZE
+            if i >= 1:
+                p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+
+    # End loop row
+    endfor_row = table.add_row()
+    endfor_row.cells[0].text = "{%tr endfor %}"
+    tr_end = endfor_row._tr
+    trPr_end = tr_end.get_or_add_trPr()
+    trHeight_end = OxmlElement('w:trHeight')
+    trHeight_end.set(qn('w:val'), '1')
+    trHeight_end.set(qn('w:hRule'), 'exact')
+    trPr_end.append(trHeight_end)
 
     # Total row
     total_row = table.add_row()
