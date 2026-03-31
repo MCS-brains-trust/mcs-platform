@@ -367,7 +367,12 @@ def build_package_bundle(fy, include_types=None):
                 shutil.rmtree(_tmpdir, ignore_errors=True)
 
             except Exception as e:
-                logger.error("Failed to add Compilation Report: %s", e, exc_info=True)
+                logger.error(
+                    "CRITICAL: Compilation Report MISSING from package for FY %s "
+                    "(%s %s). Error: %s",
+                    fy.pk, entity.entity_type, entity.entity_name,
+                    e, exc_info=True,
+                )
             continue
 
         # LegalDocument types
