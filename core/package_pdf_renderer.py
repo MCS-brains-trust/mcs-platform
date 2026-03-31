@@ -230,11 +230,11 @@ def build_package_bundle(fy, include_types=None):
                 from core.fs_template_service import generate_combined_pdf
 
                 logger.info("Regenerating clean FS for package bundle FY %s", fy.pk)
-                # COMPILATION always excluded — appended last per APES 315.
                 # DECLARATION excluded for companies (directors_declaration is a
                 # standalone LegalDocument).  Trusts include DECLARATION in the FS
                 # bundle because Trustee's Declaration has no separate legal doc.
-                _fs_exclude = {"COMPILATION"}
+                # COMPILATION is included in the combined PDF for all entity types.
+                _fs_exclude = set()
                 if entity.entity_type == "company":
                     _fs_exclude.add("DECLARATION")
                 pdf_buffer = generate_combined_pdf(
@@ -285,99 +285,10 @@ def build_package_bundle(fy, include_types=None):
                     logger.error("No stored FS document found for fallback FY %s", fy.pk)
             continue
 
-        # Compilation Report — docxtpl template, not an HTML legal doc.
-        # Rendered separately so it appears after all legal documents.
+        # Compilation Report — now included in the combined FS PDF via
+        # generate_combined_pdf (no longer excluded from the merge).
+        # Skip the dedicated render path to avoid duplicating it.
         if doc_type == "compilation_report":
-            logger.info("Generating Compilation Report for package FY %s", fy.pk)
-            try:
-                from core.fs_template_service import (
-                    build_company_context, build_trust_context,
-                    build_sole_trader_context, render_template,
-                    _post_process_fs_doc,
-                )
-                from core.models import FinancialStatementTemplate
-                from core.libreoffice_utils import convert_docx_to_pdf
-                import tempfile as _tmpfile
-
-                # Build context for this entity type
-                ctx_builders = {
-                    "company": build_company_context,
-                    "trust": build_trust_context,
-                    "sole_trader": build_sole_trader_context,
-                }
-                ctx_builder = ctx_builders.get(entity.entity_type, build_company_context)
-                context = ctx_builder(fy, include_watermark=False)
-
-                # Enrich with DocumentContextBuilder (practice_* namespace + filters)
-                try:
-                    from core.document_context_builder import DocumentContextBuilder
-                    dcb = DocumentContextBuilder(entity, financial_year=fy)
-                    enriched = dcb.build("compilation_report")
-                    for k, v in enriched.items():
-                        if k not in context or k.startswith("practice_"):
-                            context[k] = v
-                except Exception as _e:
-                    logger.warning("DCB enrichment skipped in package renderer: %s", _e)
-
-                # Find the COMPILATION template
-                comp_tmpl = FinancialStatementTemplate.objects.filter(
-                    document_type="COMPILATION",
-                    entity_type=entity.entity_type,
-                    is_active=True,
-                ).first()
-
-                if comp_tmpl:
-                    # Render from registered DB template
-                    comp_buffer = render_template(comp_tmpl, context)
-                else:
-                    # Self-healing: build template on-the-fly if DB record missing
-                    logger.warning(
-                        "No COMPILATION template in DB for %s — building on-the-fly",
-                        entity.entity_type,
-                    )
-                    from core.management.commands.generate_fs_templates import _build_compilation
-                    from docxtpl import DocxTemplate
-
-                    comp_doc = _build_compilation(entity.entity_type)
-                    tmp_tmpl = io.BytesIO()
-                    comp_doc.save(tmp_tmpl)
-                    tmp_tmpl.seek(0)
-                    tpl = DocxTemplate(tmp_tmpl)
-                    tpl.render(context)
-                    comp_buffer = io.BytesIO()
-                    tpl.save(comp_buffer)
-                    comp_buffer.seek(0)
-
-                comp_buffer = _post_process_fs_doc(comp_buffer, "COMPILATION")
-
-                # Convert .docx to PDF
-                _tmpdir = _tmpfile.mkdtemp(prefix="shub_comp_")
-                comp_docx = os.path.join(_tmpdir, "COMPILATION.docx")
-                with open(comp_docx, "wb") as _f:
-                    _f.write(comp_buffer.read())
-
-                convert_docx_to_pdf(comp_docx, _tmpdir, timeout=60)
-                comp_pdf = os.path.join(_tmpdir, "COMPILATION.pdf")
-
-                if os.path.exists(comp_pdf):
-                    comp_reader = PdfReader(comp_pdf)
-                    for page in comp_reader.pages:
-                        writer.add_page(page)
-                    docs_added += 1
-                    logger.info("Added Compilation Report (%d pages)", len(comp_reader.pages))
-                else:
-                    logger.error("Compilation Report PDF conversion produced no output")
-
-                import shutil
-                shutil.rmtree(_tmpdir, ignore_errors=True)
-
-            except Exception as e:
-                logger.error(
-                    "CRITICAL: Compilation Report MISSING from package for FY %s "
-                    "(%s %s). Error: %s",
-                    fy.pk, entity.entity_type, entity.entity_name,
-                    e, exc_info=True,
-                )
             continue
 
         # LegalDocument types
