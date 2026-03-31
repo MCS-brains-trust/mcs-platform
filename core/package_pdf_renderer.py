@@ -225,11 +225,16 @@ def build_package_bundle(fy, include_types=None):
                 from core.fs_template_service import generate_combined_pdf
 
                 logger.info("Regenerating clean FS for package bundle FY %s", fy.pk)
-                # Exclude DECLARATION (standalone legal doc) and COMPILATION
-                # (appended last per APES 315 after all legal documents).
+                # COMPILATION always excluded — appended last per APES 315.
+                # DECLARATION excluded for companies (directors_declaration is a
+                # standalone LegalDocument).  Trusts include DECLARATION in the FS
+                # bundle because Trustee's Declaration has no separate legal doc.
+                _fs_exclude = {"COMPILATION"}
+                if entity.entity_type == "company":
+                    _fs_exclude.add("DECLARATION")
                 pdf_buffer = generate_combined_pdf(
                     fy.pk, include_watermark=False,
-                    exclude_types={"DECLARATION", "COMPILATION"},
+                    exclude_types=_fs_exclude,
                 )
 
                 reader = PdfReader(pdf_buffer)

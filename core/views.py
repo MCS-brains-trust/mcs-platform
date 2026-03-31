@@ -2098,6 +2098,28 @@ def financial_year_status(request, pk):
         messages.success(request, f"Status changed to {fy.get_status_display()}. All Eva findings and risk flags have been cleared.")
         return redirect("core:financial_year_detail", pk=pk)
 
+    # Block finalisation if trust balance sheet does not reconcile
+    if new_status == "finalised" and fy.entity.entity_type == "trust":
+        try:
+            from core.fs_template_service import _get_tb_sections, _sum_section
+            from decimal import Decimal
+            _sections = _get_tb_sections(fy)
+            _eq = -_sum_section(_sections["equity"])
+            _liab = -(_sum_section(_sections["current_liabilities"])
+                       + _sum_section(_sections["noncurrent_liabilities"]))
+            _assets = (_sum_section(_sections["current_assets"])
+                        + _sum_section(_sections["noncurrent_assets"]))
+            _na = _assets - _liab
+            if abs(_na - _eq) > Decimal("0.01"):
+                messages.error(
+                    request,
+                    f"Cannot finalise: Net Assets ({_na:,.0f}) ≠ Total Equity ({_eq:,.0f}). "
+                    f"Investigate the equity section before finalising."
+                )
+                return redirect("core:financial_year_detail", pk=pk)
+        except Exception as _e:
+            logger.warning("Balance sheet reconciliation check failed: %s", _e)
+
     old_status = fy.status
     fy.status = new_status
     if new_status == "finalised":

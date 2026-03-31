@@ -1279,6 +1279,49 @@ def _eval_tax_provision(rule, fy, tb, ref, ctx, config):
     }
 
 
+def _eval_prior_year_all_zeros(rule, fy, tb, ref, ctx, config):
+    """Check if ALL prior year comparatives are zero or null."""
+    if not tb["lines"]:
+        return None
+
+    has_any_prior = False
+    for line in tb["lines"]:
+        prior_dr = getattr(line, "prior_debit", None) or ZERO
+        prior_cr = getattr(line, "prior_credit", None) or ZERO
+        if prior_dr != ZERO or prior_cr != ZERO:
+            has_any_prior = True
+            break
+
+    if has_any_prior:
+        return None  # At least one line has prior data — rule does not trigger
+
+    # All prior year values are zero — trigger
+    import hashlib, json as _json
+    finding_key = hashlib.sha256(_json.dumps({
+        "entity_id": str(fy.entity_id),
+        "financial_year_id": str(fy.pk),
+        "rule": "prior_year_all_zeros",
+    }, sort_keys=True).encode()).hexdigest()
+
+    return {
+        "rule_id": rule.rule_id,
+        "tier": 2,
+        "severity": rule.severity,
+        "title": rule.title,
+        "description": rule.description.format(
+            entity_name=ctx.get("entity_name", ""),
+            year_label=ctx.get("year_label", ""),
+        ),
+        "affected_accounts": [],
+        "calculated_values": {
+            "finding_key": finding_key,
+            "total_lines": len(tb["lines"]),
+        },
+        "recommended_action": rule.recommended_action,
+        "legislation_ref": rule.legislation_ref,
+    }
+
+
 # Evaluator registry
 TIER2_EVALUATORS = {
     "account_threshold": _eval_account_threshold,
@@ -1291,6 +1334,7 @@ TIER2_EVALUATORS = {
     "trust_distribution": _eval_trust_distribution,
     "expense_benchmark": _eval_expense_benchmark,
     "tax_provision": _eval_tax_provision,
+    "prior_year_all_zeros": _eval_prior_year_all_zeros,
 }
 
 

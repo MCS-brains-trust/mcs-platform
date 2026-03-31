@@ -1611,6 +1611,30 @@ RISK_RULES = [
         ),
         "legislation_ref": "",
     },
+    {
+        "rule_id": "GEN-10",
+        "category": "general",
+        "title": "All prior year comparatives are zero",
+        "description": (
+            "All prior year comparative figures for {entity_name} are zero or null. "
+            "If this is the entity's first year of operation, confirm this is correct "
+            "and suppress this finding. If the entity has prior year data, the trial "
+            "balance import may be incomplete."
+        ),
+        "severity": "MEDIUM",
+        "tier": 2,
+        "applicable_entities": ["company", "trust", "partnership", "sole_trader", "smsf"],
+        "trigger_config": {
+            "type": "prior_year_all_zeros",
+        },
+        "recommended_action": (
+            "Verify that prior year comparatives are correct. If this is the entity's "
+            "first financial year, no action is required — suppress this finding with "
+            "reason 'First year of operation — confirmed'. Otherwise, confirm opening "
+            "balances are properly recorded in the trial balance."
+        ),
+        "legislation_ref": "AASB 101 (Presentation of Financial Statements)",
+    },
 
     # -----------------------------------------------------------------------
     # SMSF-SPECIFIC (Rules SMSF-01 to SMSF-05)

@@ -187,15 +187,15 @@ def _apply_cell_border(cell, **kwargs):
 
 
 def _apply_subtotal_borders(row, amount_col_indices=None):
-    """Subtotal row: single thin top + bottom on AMOUNT columns only. Bold all text."""
-    num_cells = len(row.cells)
-    for idx, cell in enumerate(row.cells):
-        if idx >= num_cells - 2:  # last 2 columns = CY, PY amounts
-            _apply_cell_border(
-                cell,
-                top={"val": "single", "sz": "6", "color": "000000"},
-                bottom={"val": "single", "sz": "6", "color": "000000"},
-            )
+    """Subtotal row: full box border (single weight) on ALL cells. Bold all text."""
+    border_kwargs = {
+        "top": {"val": "single", "sz": "6", "color": "000000"},
+        "bottom": {"val": "single", "sz": "6", "color": "000000"},
+        "left": {"val": "single", "sz": "6", "color": "000000"},
+        "right": {"val": "single", "sz": "6", "color": "000000"},
+    }
+    for cell in row.cells:
+        _apply_cell_border(cell, **border_kwargs)
     for cell in row.cells:
         for para in cell.paragraphs:
             for run in para.runs:
@@ -203,15 +203,15 @@ def _apply_subtotal_borders(row, amount_col_indices=None):
 
 
 def _apply_grand_total_borders(row, amount_col_indices=None):
-    """Grand total row: single thin top + double bottom on AMOUNT columns only. Bold all text."""
-    num_cells = len(row.cells)
-    for idx, cell in enumerate(row.cells):
-        if idx >= num_cells - 2:  # last 2 columns = CY, PY amounts
-            _apply_cell_border(
-                cell,
-                top={"val": "single", "sz": "6", "color": "000000"},
-                bottom={"val": "double", "sz": "12", "color": "000000"},
-            )
+    """Grand total row: full box border with DOUBLE bottom line on ALL cells. Bold all text."""
+    border_kwargs = {
+        "top": {"val": "single", "sz": "6", "color": "000000"},
+        "bottom": {"val": "double", "sz": "12", "color": "000000"},
+        "left": {"val": "single", "sz": "6", "color": "000000"},
+        "right": {"val": "single", "sz": "6", "color": "000000"},
+    }
+    for cell in row.cells:
+        _apply_cell_border(cell, **border_kwargs)
     for cell in row.cells:
         for para in cell.paragraphs:
             for run in para.runs:
