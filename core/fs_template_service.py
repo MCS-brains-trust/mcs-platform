@@ -34,20 +34,21 @@ logger = logging.getLogger(__name__)
 # 1. format_amount
 # ---------------------------------------------------------------------------
 def format_amount(value, show_negative_brackets=True):
-    """Format a Decimal to financial string.
+    """Format a Decimal to financial string — Handiledger standard.
 
-    - Zero / None → "-"
-    - Negative with brackets → "(1,234)"
-    - No $ sign in cells
+    - Zero / None → "—"
+    - Negative with brackets → "(1,234.56)"
+    - Positive → "1,234.56"
+    - Always 2 decimal places, comma separators, no $ sign
     """
     if value is None:
-        return "-"
-    d = Decimal(str(value)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
+        return "—"
+    d = Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     if d == 0:
-        return "-"
+        return "—"
     if d < 0 and show_negative_brackets:
-        return f"({abs(d):,.0f})"
-    return f"{d:,.0f}"
+        return f"({abs(d):,.2f})"
+    return f"{d:,.2f}"
 
 
 # ---------------------------------------------------------------------------
@@ -1124,32 +1125,34 @@ def build_sole_trader_context(financial_year, include_watermark=True):
 # ---------------------------------------------------------------------------
 # Post-processing — borders, page numbers, page-break prevention, ampersand
 # ---------------------------------------------------------------------------
-_SUMMARY_LABELS = [
-    "net profit", "net loss", "net profit / (loss)", "net profit/(loss)",
+# Handiledger row type classification for post-processor border application.
+# Section totals: single above + double below on amount cols
+_SECTION_TOTAL_LABELS = [
     "total income", "total expenses", "total revenue",
-    "total current assets", "total non-current assets", "total assets",
+    "total current assets", "total non-current assets",
     "total current liabilities", "total non-current liabilities",
-    "total liabilities", "net assets", "total equity",
+    "total equity",
     "gross profit",
 ]
 
+# Major totals: double below only on amount cols
+_MAJOR_TOTAL_LABELS = [
+    "total assets", "total liabilities", "net assets",
+]
+
+# Grand totals: double below only on amount cols
 _GRAND_TOTAL_LABELS = [
     "net profit", "net loss", "net profit / (loss)", "net profit/(loss)",
     "operating profit after income tax",
+    "operating profit before income tax",
 ]
+
+# All summary labels (union of above — used for detecting any total row)
+_SUMMARY_LABELS = _SECTION_TOTAL_LABELS + _MAJOR_TOTAL_LABELS + _GRAND_TOTAL_LABELS
 
 _SUB_HEADING_LABELS = [
     "cash assets", "receivables", "other current assets",
     "payables", "tax liabilities", "other current liabilities",
-]
-
-_SUBTOTAL_LABELS = [
-    "total income", "total expenses", "total revenue",
-    "total current assets", "total non-current assets",
-    "total current liabilities", "total non-current liabilities",
-    "total assets", "total liabilities", "net assets", "total equity",
-    "gross profit",
-    "operating profit before income tax",
 ]
 
 
@@ -1297,9 +1300,10 @@ def _post_process_fs_doc(buffer, doc_type, has_prior=True):
                     continue
                 first_cell_text = row.cells[0].text.strip().lower()
 
-                is_grand = any(lbl in first_cell_text for lbl in _GRAND_TOTAL_LABELS)
-                is_sub = any(lbl in first_cell_text for lbl in _SUBTOTAL_LABELS)
-                is_summary = is_grand or is_sub
+                is_section_total = any(lbl in first_cell_text for lbl in _SECTION_TOTAL_LABELS)
+                is_major_total = any(lbl in first_cell_text for lbl in _MAJOR_TOTAL_LABELS)
+                is_grand_total = any(lbl in first_cell_text for lbl in _GRAND_TOTAL_LABELS)
+                is_summary = is_section_total or is_major_total or is_grand_total
 
                 if is_summary:
                     # cantSplit — prevent the row itself from splitting
@@ -1311,21 +1315,27 @@ def _post_process_fs_doc(buffer, doc_type, has_prior=True):
                     cantSplit.set(qn('w:val'), '1')
                     trPr.append(cantSplit)
 
-                    # Apply borders to AMOUNT columns only (last 2 cells).
-                    # Explicitly nil borders on label / Note columns.
+                    # Determine border style per Handiledger standard
+                    if is_section_total:
+                        # Single above + double below
+                        amount_top = {'val': 'single', 'sz': '4'}
+                        amount_bot = {'val': 'double', 'sz': '8'}
+                    else:
+                        # Major total / grand total: double below only
+                        amount_top = {'val': 'nil', 'sz': '0'}
+                        amount_bot = {'val': 'double', 'sz': '8'}
+
                     num_cells = len(row.cells)
                     for cell_idx, cell in enumerate(row.cells):
                         is_amount_col = cell_idx >= num_cells - 2
                         tc = cell._tc
                         tcPr = tc.get_or_add_tcPr()
-                        # Remove existing tcBorders completely and rebuild
                         existing_borders = tcPr.find(qn('w:tcBorders'))
                         if existing_borders is not None:
                             tcPr.remove(existing_borders)
                         tcBorders = OxmlElement('w:tcBorders')
                         tcPr.append(tcBorders)
                         if not is_amount_col:
-                            # Nil all borders on label/Note columns
                             for side in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
                                 el = OxmlElement(f'w:{side}')
                                 el.set(qn('w:val'), 'nil')
@@ -1333,26 +1343,20 @@ def _post_process_fs_doc(buffer, doc_type, has_prior=True):
                                 el.set(qn('w:color'), 'auto')
                                 tcBorders.append(el)
                             continue
-                        # Amount columns: full box border
-                        for side in ('top', 'left', 'right'):
-                            el = OxmlElement(f'w:{side}')
-                            el.set(qn('w:val'), 'single')
-                            el.set(qn('w:sz'), '4')
-                            el.set(qn('w:space'), '0')
-                            el.set(qn('w:color'), '000000')
-                            tcBorders.append(el)
+                        # Amount columns: apply per row type
+                        top_el = OxmlElement('w:top')
+                        top_el.set(qn('w:val'), amount_top['val'])
+                        top_el.set(qn('w:sz'), amount_top['sz'])
+                        top_el.set(qn('w:space'), '0')
+                        top_el.set(qn('w:color'), '000000')
+                        tcBorders.append(top_el)
                         bot_el = OxmlElement('w:bottom')
-                        if is_grand:
-                            bot_el.set(qn('w:val'), 'double')
-                            bot_el.set(qn('w:sz'), '4')
-                        else:
-                            bot_el.set(qn('w:val'), 'single')
-                            bot_el.set(qn('w:sz'), '4')
+                        bot_el.set(qn('w:val'), amount_bot['val'])
+                        bot_el.set(qn('w:sz'), amount_bot['sz'])
                         bot_el.set(qn('w:space'), '0')
                         bot_el.set(qn('w:color'), '000000')
                         tcBorders.append(bot_el)
-                        # Nil inside borders
-                        for side in ('insideH', 'insideV'):
+                        for side in ('left', 'right', 'insideH', 'insideV'):
                             el = OxmlElement(f'w:{side}')
                             el.set(qn('w:val'), 'nil')
                             el.set(qn('w:sz'), '0')

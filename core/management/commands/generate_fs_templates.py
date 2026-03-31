@@ -149,11 +149,24 @@ def _clear_table_borders(table):
 
 
 # ---------------------------------------------------------------------------
-# Border helpers — Australian special-purpose FS presentation
+# Border helpers — Handiledger professional standard
 # ---------------------------------------------------------------------------
+
+# Row type constants for border application
+ROW_TYPE_DATA = "data"
+ROW_TYPE_HEADER = "header"
+ROW_TYPE_SUBCATEGORY_SUBTOTAL = "subcategory_subtotal"
+ROW_TYPE_SECTION_TOTAL = "section_total"
+ROW_TYPE_MAJOR_TOTAL = "major_total"
+ROW_TYPE_GRAND_TOTAL = "grand_total"
+
+_NIL = {"val": "nil", "sz": "0", "color": "auto"}
+_SINGLE = {"val": "single", "sz": "4", "color": "000000"}
+_DOUBLE = {"val": "double", "sz": "8", "color": "000000"}
+
+
 def _apply_cell_border(cell, **kwargs):
-    """
-    Apply borders to a cell.
+    """Apply borders to a cell.
 
     kwargs: named sides (top, bottom, left, right, insideH, insideV) with
     {val, sz, color} dicts for sides that should be visible.
@@ -172,12 +185,10 @@ def _apply_cell_border(cell, **kwargs):
             attrs = kwargs[side]
             el = OxmlElement(f'w:{side}')
             el.set(qn('w:val'), attrs.get('val', 'single'))
-            el.set(qn('w:sz'), str(attrs.get('sz', 6)))
+            el.set(qn('w:sz'), str(attrs.get('sz', 4)))
             el.set(qn('w:space'), '0')
             el.set(qn('w:color'), attrs.get('color', '000000'))
         else:
-            # Explicitly nil every unspecified side — prevents LibreOffice
-            # from inheriting the table style border on that edge.
             el = OxmlElement(f'w:{side}')
             el.set(qn('w:val'), 'nil')
             el.set(qn('w:sz'), '0')
@@ -186,52 +197,43 @@ def _apply_cell_border(cell, **kwargs):
     tcPr.append(tcBorders)
 
 
-def _apply_subtotal_borders(row, amount_col_indices=None):
-    """Subtotal row: full box border (single weight) on AMOUNT columns only.
+def _apply_row_borders(row, row_type=ROW_TYPE_DATA):
+    """Apply Handiledger-standard borders to a row based on row_type.
 
-    Amount columns are the last 2 cells in the row (CY, PY figures).
-    Label and Note columns are explicitly nil'd.  Bold all text.
+    Border rules (cols 2 & 3 only — cols 0 & 1 always nil):
+      data / heading       → all nil
+      header               → bottom single on cols 2,3
+      subcategory_subtotal → top single on cols 2,3
+      section_total        → top single + bottom double on cols 2,3
+      major_total          → bottom double on cols 2,3
+      grand_total          → bottom double on cols 2,3
     """
     num_cells = len(row.cells)
-    subtotal_kwargs = {
-        "top": {"val": "single", "sz": "4", "color": "000000"},
-        "bottom": {"val": "single", "sz": "4", "color": "000000"},
-        "left": {"val": "single", "sz": "4", "color": "000000"},
-        "right": {"val": "single", "sz": "4", "color": "000000"},
-    }
+
+    # Determine border kwargs for amount columns based on row_type
+    if row_type == ROW_TYPE_HEADER:
+        amount_kwargs = {"bottom": _SINGLE}
+    elif row_type == ROW_TYPE_SUBCATEGORY_SUBTOTAL:
+        amount_kwargs = {"top": _SINGLE}
+    elif row_type == ROW_TYPE_SECTION_TOTAL:
+        amount_kwargs = {"top": _SINGLE, "bottom": _DOUBLE}
+    elif row_type in (ROW_TYPE_MAJOR_TOTAL, ROW_TYPE_GRAND_TOTAL):
+        amount_kwargs = {"bottom": _DOUBLE}
+    else:
+        amount_kwargs = {}  # data / heading — all nil
+
     for idx, cell in enumerate(row.cells):
-        if idx >= num_cells - 2:
-            _apply_cell_border(cell, **subtotal_kwargs)
+        if idx >= num_cells - 2 and amount_kwargs:
+            _apply_cell_border(cell, **amount_kwargs)
         else:
             _apply_cell_border(cell)  # nil all borders
-    for cell in row.cells:
-        for para in cell.paragraphs:
-            for run in para.runs:
-                run.bold = True
 
-
-def _apply_grand_total_borders(row, amount_col_indices=None):
-    """Grand total row: full box border with DOUBLE bottom on AMOUNT columns only.
-
-    Amount columns are the last 2 cells in the row (CY, PY figures).
-    Label and Note columns are explicitly nil'd.  Bold all text.
-    """
-    num_cells = len(row.cells)
-    grand_kwargs = {
-        "top": {"val": "single", "sz": "4", "color": "000000"},
-        "bottom": {"val": "double", "sz": "4", "color": "000000"},
-        "left": {"val": "single", "sz": "4", "color": "000000"},
-        "right": {"val": "single", "sz": "4", "color": "000000"},
-    }
-    for idx, cell in enumerate(row.cells):
-        if idx >= num_cells - 2:
-            _apply_cell_border(cell, **grand_kwargs)
-        else:
-            _apply_cell_border(cell)  # nil all borders
-    for cell in row.cells:
-        for para in cell.paragraphs:
-            for run in para.runs:
-                run.bold = True
+    # Bold all text for total rows
+    if row_type not in (ROW_TYPE_DATA, ROW_TYPE_HEADER):
+        for cell in row.cells:
+            for para in cell.paragraphs:
+                for run in para.runs:
+                    run.bold = True
 
 
 # ---------------------------------------------------------------------------
@@ -251,8 +253,15 @@ def _add_page_number_footer(doc):
     p.text = ""
 
 
-def _add_total_row(doc, label, cy_tag, py_tag, size=None, grand_total=False):
-    """Add a single-row 4-column table for a total/summary line (label, note, CY, PY)."""
+def _add_total_row(doc, label, cy_tag, py_tag, size=None,
+                   row_type=ROW_TYPE_SECTION_TOTAL, grand_total=False):
+    """Add a single-row 4-column table for a total/summary line.
+
+    row_type controls the Handiledger border style applied.
+    grand_total is a legacy parameter — if True, overrides row_type to GRAND_TOTAL.
+    """
+    if grand_total:
+        row_type = ROW_TYPE_GRAND_TOTAL
     font_size = size or FONT_SIZE
     table = doc.add_table(rows=1, cols=4, style='Normal Table')
     _set_table_full_width(table)
@@ -278,11 +287,7 @@ def _add_total_row(doc, label, cy_tag, py_tag, size=None, grand_total=False):
                 run.font.name = FONT_NAME
                 run.font.size = font_size
                 run.bold = True
-    # Apply correct border style based on grand_total flag
-    if grand_total:
-        _apply_grand_total_borders(row, [2, 3])
-    else:
-        _apply_subtotal_borders(row, [2, 3])
+    _apply_row_borders(row, row_type)
 
 
 def _add_repeating_header(doc, document_title, date_field="{{ date_text }}"):
@@ -436,9 +441,8 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
                 run.font.name = FONT_NAME
                 run.font.size = FONT_SIZE
                 run.bold = True
-    # Nil ALL borders on header cells
-    for cell in hdr.cells:
-        _apply_cell_border(cell)
+    # Header row: single line below on cols 2,3; nil on cols 0,1
+    _apply_row_borders(hdr, ROW_TYPE_HEADER)
     # Keep header with first data row
     tr = hdr._tr
     trPr = tr.get_or_add_trPr()
@@ -498,8 +502,8 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
                 run.font.name = FONT_NAME
                 run.font.size = FONT_SIZE
                 run.bold = True
-    # Fix 5: subtotal borders on amount cells
-    _apply_subtotal_borders(total_row, [2, 3])
+    # Section total: single above + double below on amount cells
+    _apply_row_borders(total_row, ROW_TYPE_SECTION_TOTAL)
 
     return table
 
@@ -690,8 +694,9 @@ def _build_balance_sheet(entity_type):
                          "{{ total_noncurrent_assets_cy }}", "{{ total_noncurrent_assets_py }}")
     _add_spacer(doc)
 
-    # Total Assets
-    _add_total_row(doc, "Total Assets", "{{ total_assets_cy }}", "{{ total_assets_py }}")
+    # Total Assets — major total (double underline below)
+    _add_total_row(doc, "Total Assets", "{{ total_assets_cy }}", "{{ total_assets_py }}",
+                   row_type=ROW_TYPE_MAJOR_TOTAL)
     _add_spacer(doc)
 
     # Current Liabilities
@@ -706,12 +711,14 @@ def _build_balance_sheet(entity_type):
                          "{{ total_noncurrent_liab_cy }}", "{{ total_noncurrent_liab_py }}")
     _add_spacer(doc)
 
-    # Total Liabilities
-    _add_total_row(doc, "Total Liabilities", "{{ total_liabilities_cy }}", "{{ total_liabilities_py }}")
+    # Total Liabilities — major total (double underline below)
+    _add_total_row(doc, "Total Liabilities", "{{ total_liabilities_cy }}", "{{ total_liabilities_py }}",
+                   row_type=ROW_TYPE_MAJOR_TOTAL)
     _add_spacer(doc)
 
-    # Net Assets
-    _add_total_row(doc, "Net Assets", "{{ net_assets_cy }}", "{{ net_assets_py }}", size=Pt(12))
+    # Net Assets — major total (double underline below)
+    _add_total_row(doc, "Net Assets", "{{ net_assets_cy }}", "{{ net_assets_py }}",
+                   size=Pt(12), row_type=ROW_TYPE_MAJOR_TOTAL)
 
     # Equity — flows directly after Net Assets without forced page break
     _add_financial_table(doc, "Equity", "equity", "Total Equity",
