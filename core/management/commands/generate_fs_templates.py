@@ -608,8 +608,8 @@ def _build_cover(entity_type):
         contents.append("Proprietor Declaration")
     elif entity_type == "partnership":
         contents.append("Partners' Declaration")
-    contents.append("Management Representation Letter")
     contents.append("Compilation Report")
+    contents.append("Management Representation Letter")
 
     for i, item in enumerate(contents, 1):
         _add_para(doc, f"{i}.\t{item}", size=Pt(11))
