@@ -783,9 +783,9 @@ def _build_summary_pl(entity_type):
         for cell in table.rows[r].cells:
             _apply_cell_border(cell)
         if border_type == "subtotal":
-            _apply_subtotal_borders(table.rows[r])
+            _apply_row_borders(table.rows[r], row_type=ROW_TYPE_SECTION_TOTAL)
         elif border_type == "grand_total":
-            _apply_grand_total_borders(table.rows[r])
+            _apply_row_borders(table.rows[r], row_type=ROW_TYPE_GRAND_TOTAL)
 
     return doc
 
