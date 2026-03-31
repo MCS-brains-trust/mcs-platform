@@ -952,7 +952,7 @@ def build_trust_context(financial_year, include_watermark=True):
     beneficiary_names_for_match = []
     _all_officers = EntityOfficer.objects.filter(
         entity=entity,
-        role__in=["beneficiary", "unitholder"],
+        role__in=["beneficiary", "unit_holder"],
         date_ceased__isnull=True,
     )
     for _off in _all_officers:
@@ -985,7 +985,7 @@ def build_trust_context(financial_year, include_watermark=True):
 
     beneficiaries = EntityOfficer.objects.filter(
         entity=entity,
-        role="beneficiary",
+        role__in=["beneficiary", "unit_holder"],
         date_ceased__isnull=True,
     ).order_by("display_order", "full_name")
 
