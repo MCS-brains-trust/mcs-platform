@@ -34,21 +34,21 @@ logger = logging.getLogger(__name__)
 # 1. format_amount
 # ---------------------------------------------------------------------------
 def format_amount(value, show_negative_brackets=True):
-    """Format a Decimal to financial string — Handiledger standard.
+    """Format a Decimal to financial string — whole dollars.
 
     - Zero / None → "—"
-    - Negative with brackets → "(1,234.56)"
-    - Positive → "1,234.56"
-    - Always 2 decimal places, comma separators, no $ sign
+    - Negative with brackets → "(1,234)"
+    - Positive → "1,234"
+    - Whole dollars, comma separators, no $ sign
     """
     if value is None:
         return "—"
-    d = Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    d = Decimal(str(value)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
     if d == 0:
         return "—"
     if d < 0 and show_negative_brackets:
-        return f"({abs(d):,.2f})"
-    return f"{d:,.2f}"
+        return f"({abs(d):,.0f})"
+    return f"{d:,.0f}"
 
 
 # ---------------------------------------------------------------------------
