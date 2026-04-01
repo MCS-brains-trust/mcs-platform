@@ -22,13 +22,16 @@ from docx.oxml import OxmlElement
 from core.models import FinancialStatementTemplate
 
 
-# Template layout constants from DOCGEN.md
-FONT_NAME = "Calibri"
+# Template layout constants — Handiledger reference standard
+FONT_HEADING = "Palatino Linotype"  # Entity name, ABN, title, section headers, footer
+FONT_BODY = "Times New Roman"       # Line items, column headers, totals, notes
+FONT_NAME = FONT_BODY               # Legacy alias used by existing helpers
 FONT_SIZE = Pt(10)
-PAGE_MARGIN_TOP = Cm(2)
-PAGE_MARGIN_BOTTOM = Cm(2)
-PAGE_MARGIN_LEFT = Cm(2.5)
-PAGE_MARGIN_RIGHT = Cm(2)
+FONT_SIZE_HEADING = Pt(11)
+PAGE_MARGIN_TOP = Cm(1.6)       # 16mm
+PAGE_MARGIN_BOTTOM = Cm(1.7)    # 17mm
+PAGE_MARGIN_LEFT = Cm(2.0)      # 20mm
+PAGE_MARGIN_RIGHT = Cm(2.4)     # 24mm
 
 # Column widths for 4-column table: name(8.5cm) note(1.5cm) cy(3cm) py(3cm)
 COL_WIDTHS = [Cm(8.5), Cm(1.5), Cm(3), Cm(3)]
@@ -305,44 +308,53 @@ def _add_repeating_header(doc, document_title, date_field="{{ date_text }}"):
     for para in list(header.paragraphs):
         para.clear()
 
-    # Entity name — bold, 11pt, centred
+    # Entity name — Palatino Linotype 13pt Bold, centred
     p1 = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
     p1.text = ""
     p1.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = p1.add_run("{{ entity_name }}")
-    run.font.name = FONT_NAME
-    run.font.size = Pt(11)
+    run.font.name = FONT_HEADING
+    run.font.size = Pt(13)
     run.bold = True
     p1.paragraph_format.space_after = Pt(0)
     p1.paragraph_format.space_before = Pt(0)
 
-    # ABN — 9pt, centred
+    # ABN — Palatino Linotype 11pt, centred
     p2 = header.add_paragraph()
     p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run2 = p2.add_run("ABN {{ abn }}")
-    run2.font.name = FONT_NAME
-    run2.font.size = Pt(9)
+    run2.font.name = FONT_HEADING
+    run2.font.size = Pt(11)
     p2.paragraph_format.space_after = Pt(0)
     p2.paragraph_format.space_before = Pt(0)
 
-    # Document title — 9pt, centred
+    # Document title — Palatino Linotype 11pt, centred
     p3 = header.add_paragraph()
     p3.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run3 = p3.add_run(document_title)
-    run3.font.name = FONT_NAME
-    run3.font.size = Pt(9)
+    run3.font.name = FONT_HEADING
+    run3.font.size = Pt(11)
     p3.paragraph_format.space_after = Pt(0)
     p3.paragraph_format.space_before = Pt(0)
 
-    # Date / period — 9pt, centred, with bottom border (horizontal rule)
+    # Date / period — Palatino Linotype 11pt, centred, with bottom border (horizontal rule)
     p4 = header.add_paragraph()
     p4.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run4 = p4.add_run(date_field)
-    run4.font.name = FONT_NAME
-    run4.font.size = Pt(9)
+    run4.font.name = FONT_HEADING
+    run4.font.size = Pt(11)
     p4.paragraph_format.space_after = Pt(4)
     p4.paragraph_format.space_before = Pt(0)
-    # No horizontal rule — clean header without bottom border line
+    # Full-width horizontal rule below the header block
+    pPr = p4._p.get_or_add_pPr()
+    pBdr = OxmlElement('w:pBdr')
+    bottom_border = OxmlElement('w:bottom')
+    bottom_border.set(qn('w:val'), 'single')
+    bottom_border.set(qn('w:sz'), '6')
+    bottom_border.set(qn('w:space'), '1')
+    bottom_border.set(qn('w:color'), '000000')
+    pBdr.append(bottom_border)
+    pPr.append(pBdr)
 
     # DRAFT watermark — right-aligned, red, only visible when non-empty
     pw = header.add_paragraph()
@@ -371,8 +383,8 @@ def _add_footer(doc, text="These financial statements are unaudited. They must b
     p.text = ""
     p.alignment = WD_ALIGN_PARAGRAPH.LEFT
     run = p.add_run(text)
-    run.font.name = FONT_NAME
-    run.font.size = Pt(8)
+    run.font.name = FONT_HEADING  # Palatino Linotype for footer
+    run.font.size = Pt(9)
     run.font.italic = True
 
 
@@ -406,7 +418,7 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
     for i, width in enumerate(COL_WIDTHS):
         table.columns[i].width = width
 
-    # Row 0 — Section title (spans visually; only col 0 has text)
+    # Row 0 — Section title — Palatino Linotype 11pt Bold
     title_row = table.rows[0]
     title_row.cells[0].text = section_title
     for i in range(4):
@@ -415,8 +427,8 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
             p.paragraph_format.space_before = Pt(0)
             p.paragraph_format.space_after = Pt(0)
             for run in p.runs:
-                run.font.name = FONT_NAME
-                run.font.size = FONT_SIZE
+                run.font.name = FONT_HEADING
+                run.font.size = FONT_SIZE_HEADING
                 run.bold = True
         _apply_cell_border(title_row.cells[i])
     # Keep title row with the header row below it
@@ -426,23 +438,40 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
     cantSplit_title.set(qn('w:val'), '1')
     trPr_title.append(cantSplit_title)
 
-    # Row 1 — Column headers (Note / year / prior_year)
+    # Row 1 — Column headers: year numbers (TNR Bold 10pt)
     hdr = table.rows[1]
     hdr.cells[0].text = ""
     hdr.cells[1].text = "Note"
-    hdr.cells[2].text = "{{ year }}\n$"
-    hdr.cells[3].text = "{{ prior_year }}\n$"
+    hdr.cells[2].text = "{{ year }}"
+    hdr.cells[3].text = "{{ prior_year }}"
     for i in range(4):
         for p in hdr.cells[i].paragraphs:
             p.alignment = WD_ALIGN_PARAGRAPH.RIGHT if i >= 2 else WD_ALIGN_PARAGRAPH.LEFT
             p.paragraph_format.space_before = Pt(0)
             p.paragraph_format.space_after = Pt(0)
             for run in p.runs:
-                run.font.name = FONT_NAME
+                run.font.name = FONT_BODY
                 run.font.size = FONT_SIZE
                 run.bold = True
-    # Header row: single line below on cols 2,3; nil on cols 0,1
-    _apply_row_borders(hdr, ROW_TYPE_HEADER)
+    _apply_row_borders(hdr, ROW_TYPE_DATA)  # no borders on year row
+
+    # Row 1b — Dollar sign row: "$" below each year column
+    dollar_row = table.add_row()
+    dollar_row.cells[0].text = ""
+    dollar_row.cells[1].text = ""
+    dollar_row.cells[2].text = "$"
+    dollar_row.cells[3].text = "$"
+    for i in range(4):
+        for p in dollar_row.cells[i].paragraphs:
+            p.alignment = WD_ALIGN_PARAGRAPH.RIGHT if i >= 2 else WD_ALIGN_PARAGRAPH.LEFT
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(0)
+            for run in p.runs:
+                run.font.name = FONT_BODY
+                run.font.size = FONT_SIZE
+                run.bold = True
+    # Single line below $ row separating headers from data
+    _apply_row_borders(dollar_row, ROW_TYPE_HEADER)
     # Keep header with first data row
     tr = hdr._tr
     trPr = tr.get_or_add_trPr()
@@ -688,11 +717,13 @@ def _build_balance_sheet(entity_type):
                          "{{ total_current_assets_cy }}", "{{ total_current_assets_py }}")
     _add_spacer(doc)
 
-    # Non-Current Assets
+    # Non-Current Assets — suppressed when zero
+    _add_para(doc, "{% if has_noncurrent_assets %}", size=Pt(1))
     _add_financial_table(doc, "Non-Current Assets", "noncurrent_assets",
                          "Total Non-Current Assets",
                          "{{ total_noncurrent_assets_cy }}", "{{ total_noncurrent_assets_py }}")
     _add_spacer(doc)
+    _add_para(doc, "{% endif %}", size=Pt(1))
 
     # Total Assets — major total (double underline below)
     _add_total_row(doc, "Total Assets", "{{ total_assets_cy }}", "{{ total_assets_py }}",
@@ -705,11 +736,13 @@ def _build_balance_sheet(entity_type):
                          "{{ total_current_liab_cy }}", "{{ total_current_liab_py }}")
     _add_spacer(doc)
 
-    # Non-Current Liabilities
+    # Non-Current Liabilities — suppressed when zero
+    _add_para(doc, "{% if has_noncurrent_liabilities %}", size=Pt(1))
     _add_financial_table(doc, "Non-Current Liabilities", "noncurrent_liabilities",
                          "Total Non-Current Liabilities",
                          "{{ total_noncurrent_liab_cy }}", "{{ total_noncurrent_liab_py }}")
     _add_spacer(doc)
+    _add_para(doc, "{% endif %}", size=Pt(1))
 
     # Total Liabilities — major total (double underline below)
     _add_total_row(doc, "Total Liabilities", "{{ total_liabilities_cy }}", "{{ total_liabilities_py }}",

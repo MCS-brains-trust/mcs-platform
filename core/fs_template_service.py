@@ -799,6 +799,10 @@ def build_company_context(financial_year, include_watermark=True):
     total_liab_cy = total_current_liab_cy + total_noncurrent_liab_cy
     total_liab_py = total_current_liab_py + total_noncurrent_liab_py
 
+    # Zero section suppression flags for Balance Sheet
+    has_noncurrent_assets = total_noncurrent_assets_cy != 0 or total_noncurrent_assets_py != 0
+    has_noncurrent_liabilities = total_noncurrent_liab_cy != 0 or total_noncurrent_liab_py != 0
+
     net_assets_cy = total_assets_cy - total_liab_cy
     net_assets_py = total_assets_py - total_liab_py
 
@@ -886,8 +890,10 @@ def build_company_context(financial_year, include_watermark=True):
         # Balance Sheet
         "current_assets": current_assets,
         "noncurrent_assets": noncurrent_assets,
+        "has_noncurrent_assets": has_noncurrent_assets,
         "current_liabilities": current_liabilities,
         "noncurrent_liabilities": noncurrent_liabilities,
+        "has_noncurrent_liabilities": has_noncurrent_liabilities,
         "equity": equity,
         "total_current_assets_cy": format_amount(total_current_assets_cy),
         "total_current_assets_py": format_amount(total_current_assets_py),
@@ -1652,12 +1658,12 @@ def render_template(template_db_record, context):
 # ---------------------------------------------------------------------------
 
 # Reuse constants from generate_fs_templates for visual consistency
-_NOTES_FONT = "Calibri"
+_NOTES_FONT = "Times New Roman"
 _NOTES_FONT_SIZE = Pt(10)
-_NOTES_MARGIN_TOP = Cm(2)
-_NOTES_MARGIN_BOTTOM = Cm(2)
-_NOTES_MARGIN_LEFT = Cm(2.5)
-_NOTES_MARGIN_RIGHT = Cm(2)
+_NOTES_MARGIN_TOP = Cm(1.6)     # 16mm
+_NOTES_MARGIN_BOTTOM = Cm(1.7)  # 17mm
+_NOTES_MARGIN_LEFT = Cm(2.0)    # 20mm
+_NOTES_MARGIN_RIGHT = Cm(2.4)   # 24mm
 _NOTES_COL_WIDTHS_3 = [Cm(10), Cm(3), Cm(3)]  # label, CY, PY
 
 
@@ -2708,7 +2714,7 @@ def _generate_depreciation_report(context):
             return ""
         return d.strftime("%d/%m/%y")
 
-    FONT = "Calibri"
+    FONT = "Times New Roman"
     FONT_SZ = Pt(7)
     FONT_SZ_HDR = Pt(7)
     FONT_SZ_TITLE = Pt(9)
@@ -2751,10 +2757,10 @@ def _generate_depreciation_report(context):
     for section in doc.sections:
         section.page_width = _Cm(29.7)
         section.page_height = _Cm(21.0)
-        section.top_margin = _Cm(2)
-        section.bottom_margin = _Cm(2)
-        section.left_margin = _Cm(1.5)
-        section.right_margin = _Cm(1.5)
+        section.top_margin = _Cm(1.6)
+        section.bottom_margin = _Cm(1.7)
+        section.left_margin = _Cm(2.0)
+        section.right_margin = _Cm(2.4)
         section.orientation = 1  # WD_ORIENT.LANDSCAPE
 
     # Set default font
@@ -3208,29 +3214,31 @@ def _build_distribution_docx(financial_year, context):
     buf = _io.BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=A4,
-        leftMargin=2.5 * cm, rightMargin=2 * cm,
-        topMargin=2 * cm, bottomMargin=2 * cm,
+        leftMargin=2.0 * cm, rightMargin=2.4 * cm,
+        topMargin=1.6 * cm, bottomMargin=1.7 * cm,
     )
 
     styles = getSampleStyleSheet()
+    # Helvetica = Palatino substitute (reportlab built-in)
+    # Times-Roman = Times New Roman substitute
     centre = ParagraphStyle(
         "centre", parent=styles["Normal"],
         alignment=TA_CENTER, fontName="Helvetica", fontSize=11)
     centre_sm = ParagraphStyle(
         "centre_sm", parent=styles["Normal"],
-        alignment=TA_CENTER, fontName="Helvetica", fontSize=9)
+        alignment=TA_CENTER, fontName="Helvetica", fontSize=11)
     centre_bold = ParagraphStyle(
         "centre_bold", parent=styles["Normal"],
-        alignment=TA_CENTER, fontName="Helvetica-Bold", fontSize=11)
+        alignment=TA_CENTER, fontName="Helvetica-Bold", fontSize=13)
     normal = ParagraphStyle(
         "norm", parent=styles["Normal"],
-        fontName="Helvetica", fontSize=10)
+        fontName="Times-Roman", fontSize=10)
     bold_style = ParagraphStyle(
         "bold", parent=styles["Normal"],
-        fontName="Helvetica-Bold", fontSize=10)
+        fontName="Times-Bold", fontSize=10)
     small_italic = ParagraphStyle(
         "si", parent=styles["Normal"],
-        fontName="Helvetica-Oblique", fontSize=8)
+        fontName="Helvetica-Oblique", fontSize=9)
 
     abn_raw = entity.abn or ""
     abn_digits = "".join(c for c in str(abn_raw) if c.isdigit())
@@ -3268,9 +3276,10 @@ def _build_distribution_docx(financial_year, context):
 
     tbl = Table(table_data, colWidths=col_widths)
     tbl.setStyle(TableStyle([
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME", (0, 0), (-1, 0), "Times-Bold"),
+        ("FONTNAME", (0, 1), (-1, -2), "Times-Roman"),
         ("FONTSIZE", (0, 0), (-1, -1), 10),
-        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("FONTNAME", (0, -1), (-1, -1), "Times-Bold"),
         ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
         ("ALIGN", (0, 0), (0, -1), "LEFT"),
         ("LINEBELOW", (0, 0), (-1, 0), 0.5, colors.black),
