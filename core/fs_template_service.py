@@ -3172,11 +3172,20 @@ def _stamp_page_numbers(pdf_bytes):
 
 
 def _build_distribution_docx(financial_year, context):
-    from docx import Document as _Doc
-    from docx.shared import Pt as _Pt, Cm as _Cm
-    from docx.enum.text import WD_ALIGN_PARAGRAPH as _ALIGN
-    from docx.oxml.ns import qn as _qn
-    from docx.oxml import OxmlElement as _El
+    """Generate Distribution Summary as PDF directly via reportlab.
+
+    Returns BytesIO containing PDF bytes (NOT docx).
+    python-docx cannot reliably produce 3-column tables that survive
+    LibreOffice conversion on this server.
+    """
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import cm, mm
+    from reportlab.lib import colors
+    from reportlab.platypus import (
+        SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer,
+    )
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
     import io as _io
 
     entity = financial_year.entity
@@ -3185,124 +3194,92 @@ def _build_distribution_docx(financial_year, context):
     beneficiaries = context.get("beneficiaries", [])
     total_distribution = context.get("total_distribution", "—")
 
-    doc = _Doc()
-    for section in doc.sections:
-        section.top_margin = _Cm(2)
-        section.bottom_margin = _Cm(2)
-        section.left_margin = _Cm(2.5)
-        section.right_margin = _Cm(2)
+    buf = _io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=2.5 * cm, rightMargin=2 * cm,
+        topMargin=2 * cm, bottomMargin=2 * cm,
+    )
 
-    def _run(para, text, bold=False, size=10, name="Calibri"):
-        r = para.add_run(text)
-        r.bold = bold
-        r.font.name = name
-        r.font.size = _Pt(size)
-        return r
-
-    h = doc.add_paragraph()
-    h.alignment = _ALIGN.CENTER
-    _run(h, _safe_amp(entity.entity_name), bold=True, size=11)
+    styles = getSampleStyleSheet()
+    centre = ParagraphStyle(
+        "centre", parent=styles["Normal"],
+        alignment=TA_CENTER, fontName="Helvetica", fontSize=11)
+    centre_sm = ParagraphStyle(
+        "centre_sm", parent=styles["Normal"],
+        alignment=TA_CENTER, fontName="Helvetica", fontSize=9)
+    centre_bold = ParagraphStyle(
+        "centre_bold", parent=styles["Normal"],
+        alignment=TA_CENTER, fontName="Helvetica-Bold", fontSize=11)
+    normal = ParagraphStyle(
+        "norm", parent=styles["Normal"],
+        fontName="Helvetica", fontSize=10)
+    bold_style = ParagraphStyle(
+        "bold", parent=styles["Normal"],
+        fontName="Helvetica-Bold", fontSize=10)
+    small_italic = ParagraphStyle(
+        "si", parent=styles["Normal"],
+        fontName="Helvetica-Oblique", fontSize=8)
 
     abn_raw = entity.abn or ""
     abn_digits = "".join(c for c in str(abn_raw) if c.isdigit())
-    abn_fmt = f"{abn_digits[:2]} {abn_digits[2:5]} {abn_digits[5:8]} {abn_digits[8:]}" if len(abn_digits) == 11 else abn_raw
-    p_abn = doc.add_paragraph()
-    p_abn.alignment = _ALIGN.CENTER
-    _run(p_abn, f"ABN {abn_fmt}", size=9)
+    abn_fmt = (
+        f"{abn_digits[:2]} {abn_digits[2:5]} {abn_digits[5:8]} {abn_digits[8:]}"
+        if len(abn_digits) == 11 else abn_raw
+    )
 
-    t = doc.add_paragraph()
-    t.alignment = _ALIGN.CENTER
-    _run(t, "Beneficiaries Distribution Summary", size=9)
+    story = []
+    story.append(Paragraph(_safe_amp(entity.entity_name), centre_bold))
+    story.append(Spacer(1, 2 * mm))
+    story.append(Paragraph(f"ABN {abn_fmt}", centre_sm))
+    story.append(Spacer(1, 2 * mm))
+    story.append(Paragraph("Beneficiaries Distribution Summary", centre_sm))
+    story.append(Spacer(1, 2 * mm))
+    story.append(Paragraph(date_text, centre_sm))
+    story.append(Spacer(1, 6 * mm))
+    story.append(Paragraph(
+        f"Net Income Available for Distribution: {total_distribution}",
+        bold_style))
+    story.append(Spacer(1, 6 * mm))
 
-    p_date = doc.add_paragraph()
-    p_date.alignment = _ALIGN.CENTER
-    _run(p_date, date_text, size=9)
+    # Table data
+    page_width = A4[0] - 2.5 * cm - 2 * cm
+    col_widths = [page_width * 0.60, page_width * 0.20, page_width * 0.20]
 
-    doc.add_paragraph()
-
-    p_net = doc.add_paragraph()
-    _run(p_net, f"Net Income Available for Distribution: {total_distribution}", bold=True, size=10)
-
-    doc.add_paragraph()
-
-    COL_W = [5580, 1860, 1920]
-
-    table = doc.add_table(rows=1, cols=3)
-    table.autofit = False
-
-    tbl = table._tbl
-    tblGrid = tbl.find(_qn("w:tblGrid"))
-    if tblGrid is None:
-        tblGrid = _El("w:tblGrid")
-        tbl.insert(1, tblGrid)
-    for gc in list(tblGrid):
-        tblGrid.remove(gc)
-    for cw in COL_W:
-        gc = _El("w:gridCol")
-        gc.set(_qn("w:w"), str(cw))
-        tblGrid.append(gc)
-
-    def set_w(cell, w):
-        tc = cell._tc
-        tcPr = tc.get_or_add_tcPr()
-        for ex in tcPr.findall(_qn("w:tcW")):
-            tcPr.remove(ex)
-        tcW = _El("w:tcW")
-        tcW.set(_qn("w:w"), str(w))
-        tcW.set(_qn("w:type"), "dxa")
-        tcPr.append(tcW)
-
-    def style_cell(cell, bold=False, right=False):
-        for para in cell.paragraphs:
-            if right:
-                para.alignment = _ALIGN.RIGHT
-            for run in para.runs:
-                run.font.name = "Calibri"
-                run.font.size = _Pt(10)
-                run.bold = bold
-
-    hdr = table.rows[0].cells
-    hdr[0].text = "Beneficiary"
-    hdr[1].text = "Percentage"
-    hdr[2].text = "Amount"
-    for i, c in enumerate(hdr):
-        set_w(c, COL_W[i])
-        style_cell(c, bold=True, right=(i >= 1))
-
+    table_data = [["Beneficiary", "Percentage", "Amount\n$"]]
     for b in beneficiaries:
-        row = table.add_row().cells
-        row[0].text = b.get("beneficiary_name", "")
-        row[1].text = f"{b.get('percentage', '')}%"
-        row[2].text = b.get("amount", "")
-        for i, c in enumerate(row):
-            set_w(c, COL_W[i])
-            style_cell(c, right=(i >= 1))
+        table_data.append([
+            b.get("beneficiary_name", ""),
+            f"{b.get('percentage', '')}%",
+            b.get("amount", ""),
+        ])
+    table_data.append(["Total", "100%", total_distribution])
 
-    tot = table.add_row().cells
-    tot[0].text = "Total"
-    tot[1].text = "100%"
-    tot[2].text = total_distribution
-    for i, c in enumerate(tot):
-        set_w(c, COL_W[i])
-        style_cell(c, bold=True, right=(i >= 1))
-
-    doc.add_paragraph()
-
-    p_f = doc.add_paragraph()
-    r_f = p_f.add_run(
+    tbl = Table(table_data, colWidths=col_widths)
+    tbl.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 10),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+        ("ALIGN", (0, 0), (0, -1), "LEFT"),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.5, colors.black),
+        ("LINEABOVE", (0, -1), (-1, -1), 0.5, colors.black),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ]))
+    story.append(tbl)
+    story.append(Spacer(1, 8 * mm))
+    story.append(Paragraph(
         "These financial statements are unaudited. They must be read "
         "in conjunction with the attached Accountant\u2019s Compilation "
-        "Report and Notes which form part of these financial statements."
-    )
-    r_f.font.name = "Calibri"
-    r_f.font.size = _Pt(8)
-    r_f.font.italic = True
+        "Report and Notes which form part of these financial statements.",
+        small_italic,
+    ))
 
-    buf = _io.BytesIO()
-    doc.save(buf)
+    doc.build(story)
     buf.seek(0)
     logger.info(
-        "Built programmatic DISTRIBUTION for %s: %d beneficiaries",
+        "Built programmatic DISTRIBUTION (PDF) for %s: %d beneficiaries",
         entity.entity_name, len(beneficiaries),
     )
     return buf
@@ -3380,12 +3357,21 @@ def generate_combined_pdf(financial_year_id, include_watermark=True, exclude_typ
     try:
         for doc_type in ordered_keys:
             buffer = docs[doc_type]
+
+            # DISTRIBUTION is already PDF (generated by reportlab) — merge directly
+            if doc_type == "DISTRIBUTION":
+                buffer.seek(0)
+                dist_reader = PdfReader(buffer)
+                for page in dist_reader.pages:
+                    writer.add_page(page)
+                pdfs_merged += 1
+                logger.info("Merged DISTRIBUTION PDF directly (reportlab) (%d pages)",
+                            len(dist_reader.pages))
+                continue
+
             docx_path = os.path.join(tmpdir, f"{doc_type}.docx")
             with open(docx_path, "wb") as f:
                 f.write(buffer.read())
-
-            # Column width re-application no longer needed — DISTRIBUTION
-            # is now built programmatically via _build_distribution_docx.
 
             try:
                 convert_docx_to_pdf(docx_path, tmpdir, timeout=60)
