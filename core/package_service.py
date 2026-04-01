@@ -89,7 +89,7 @@ DOCUMENT_ORDER = [
     "solvency_resolution",
     "directors_report",
     "dividend_statement",
-    "trust_distribution_minutes",
+    # trust_distribution_minutes excluded — standalone legal doc, not part of FS package
     "partner_statement",
     "partnership_tax_summary",
     "shareholder_loan_acknowledgment",
