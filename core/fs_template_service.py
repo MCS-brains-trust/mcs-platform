@@ -764,6 +764,17 @@ def build_company_context(financial_year, include_watermark=True):
         rendered_total_expenses_cy = total_expenses_cy
         rendered_total_expenses_py = total_expenses_py
 
+    # Suppress zero line items — if both CY and PY are zero, exclude the row.
+    # Keep sub-headings and subtotals (they have is_heading/is_subtotal flags).
+    def _is_zero_line(item):
+        if item.get("is_heading") or item.get("is_subtotal"):
+            return False
+        cy = item.get("cy_amount", 0) or 0
+        py = item.get("py_amount", 0) or 0
+        return cy == 0 and py == 0
+    rendered_income = [i for i in rendered_income if not _is_zero_line(i)]
+    rendered_expenses = [i for i in rendered_expenses if not _is_zero_line(i)]
+
     # Balance Sheet — sub-grouped current assets and current liabilities
     current_assets = _build_subgrouped_items(
         sections["current_assets"], _classify_current_asset)
