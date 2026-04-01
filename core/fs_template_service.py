@@ -3158,6 +3158,38 @@ def _stamp_page_numbers(pdf_bytes):
     return output.getvalue()
 
 
+def _reapply_distribution_widths(docx_path):
+    """Re-apply explicit column widths to Distribution Summary table.
+
+    docxtpl strips w:tcW attributes during Jinja2 XML processing, causing
+    LibreOffice to collapse the amount column during PDF conversion.
+    Must be called on the rendered docx before LibreOffice conversion.
+    """
+    from docx import Document as _DocxDoc
+    from docx.oxml.ns import qn as _qn
+    from docx.oxml import OxmlElement as _OxmlEl
+
+    col_widths = [5580, 1860, 1920]  # dxa (twips)
+    doc = _DocxDoc(docx_path)
+    if not doc.tables:
+        return
+    table = doc.tables[0]
+    for row in table.rows:
+        for k, cell in enumerate(row.cells):
+            if k >= len(col_widths):
+                continue
+            tc = cell._tc
+            tcPr = tc.get_or_add_tcPr()
+            for existing in tcPr.findall(_qn('w:tcW')):
+                tcPr.remove(existing)
+            tcW = _OxmlEl('w:tcW')
+            tcW.set(_qn('w:w'), str(col_widths[k]))
+            tcW.set(_qn('w:type'), 'dxa')
+            tcPr.append(tcW)
+    doc.save(docx_path)
+    logger.info("Re-applied column widths to DISTRIBUTION docx: %s", docx_path)
+
+
 # ---------------------------------------------------------------------------
 # generate_combined_pdf — render each template to PDF individually, merge
 # ---------------------------------------------------------------------------
@@ -3199,6 +3231,11 @@ def generate_combined_pdf(financial_year_id, include_watermark=True, exclude_typ
             docx_path = os.path.join(tmpdir, f"{doc_type}.docx")
             with open(docx_path, "wb") as f:
                 f.write(buffer.read())
+
+            # Re-apply column widths for DISTRIBUTION — docxtpl strips
+            # w:tcW attributes during Jinja2 XML processing.
+            if doc_type == "DISTRIBUTION":
+                _reapply_distribution_widths(docx_path)
 
             try:
                 convert_docx_to_pdf(docx_path, tmpdir, timeout=60)
