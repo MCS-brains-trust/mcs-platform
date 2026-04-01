@@ -972,19 +972,47 @@ def _build_distribution(entity_type):
     _add_para(doc, "Net Income Available for Distribution: {{ total_distribution }}", bold=True)
     doc.add_paragraph("")
 
-    # Distribution table
-    table = doc.add_table(rows=1, cols=3)
-    _set_table_full_width(table)
+    # Distribution table — explicit column widths so LibreOffice does not
+    # collapse the amount column during PDF conversion.
+    DIST_COL_WIDTHS = [5580, 1860, 1920]  # twips (dxa), total = 9360
+
+    def _set_cell_width(cell, width_twips):
+        tc = cell._tc
+        tcPr = tc.get_or_add_tcPr()
+        # Remove any existing tcW
+        existing = tcPr.find(qn('w:tcW'))
+        if existing is not None:
+            tcPr.remove(existing)
+        tcW = OxmlElement('w:tcW')
+        tcW.set(qn('w:w'), str(width_twips))
+        tcW.set(qn('w:type'), 'dxa')
+        tcPr.append(tcW)
+
+    def _set_row_widths(row):
+        for idx, cell in enumerate(row.cells):
+            _set_cell_width(cell, DIST_COL_WIDTHS[idx])
+
+    table = doc.add_table(rows=1, cols=3, style='Normal Table')
+    # Set table preferred width
+    tbl = table._tbl
+    tblPr = tbl.tblPr
+    tblW = OxmlElement('w:tblW')
+    tblW.set(qn('w:w'), '9360')
+    tblW.set(qn('w:type'), 'dxa')
+    tblPr.append(tblW)
     _clear_table_borders(table)
     table.autofit = False
-    table.columns[0].width = Cm(8)
-    table.columns[1].width = Cm(4)
-    table.columns[2].width = Cm(4)
+    # Set column widths via python-docx API as well (belt and braces)
+    table.columns[0].width = 5580
+    table.columns[1].width = 1860
+    table.columns[2].width = 1920
 
+    # Header row
     hdr = table.rows[0]
     hdr.cells[0].text = "Beneficiary"
     hdr.cells[1].text = "Percentage"
     hdr.cells[2].text = "Amount\n$"
+    _set_row_widths(hdr)
     for i in range(3):
         for p in hdr.cells[i].paragraphs:
             for run in p.runs:
@@ -997,7 +1025,7 @@ def _build_distribution(entity_type):
     # Jinja2 row-level loop — {%tr for %} creates a new table row per beneficiary
     for_row = table.add_row()
     for_row.cells[0].text = "{%tr for b in beneficiaries %}"
-    # Set minimum row height so docxtpl loop tag row doesn't create a visible gap
+    _set_row_widths(for_row)
     tr_for = for_row._tr
     trPr_for = tr_for.get_or_add_trPr()
     trHeight = OxmlElement('w:trHeight')
@@ -1010,6 +1038,7 @@ def _build_distribution(entity_type):
     data_row.cells[0].text = "{{ b.beneficiary_name }}"
     data_row.cells[1].text = "{{ b.percentage }}%"
     data_row.cells[2].text = "{{ b.amount }}"
+    _set_row_widths(data_row)
     for i in range(3):
         for p in data_row.cells[i].paragraphs:
             for run in p.runs:
@@ -1021,6 +1050,7 @@ def _build_distribution(entity_type):
     # End loop row
     endfor_row = table.add_row()
     endfor_row.cells[0].text = "{%tr endfor %}"
+    _set_row_widths(endfor_row)
     tr_end = endfor_row._tr
     trPr_end = tr_end.get_or_add_trPr()
     trHeight_end = OxmlElement('w:trHeight')
@@ -1033,6 +1063,7 @@ def _build_distribution(entity_type):
     total_row.cells[0].text = "Total"
     total_row.cells[1].text = "100%"
     total_row.cells[2].text = "{{ total_distribution }}"
+    _set_row_widths(total_row)
     for i in range(3):
         for p in total_row.cells[i].paragraphs:
             for run in p.runs:

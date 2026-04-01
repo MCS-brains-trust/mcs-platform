@@ -3097,17 +3097,6 @@ def generate_financial_statements(financial_year_id, include_watermark=True):
 
         try:
             buffer = render_template(tmpl, context)
-            # DEBUG: save DISTRIBUTION docx before post-processing for inspection
-            if doc_type == "DISTRIBUTION":
-                try:
-                    _debug_path = "/tmp/dist_debug.docx"
-                    buffer.seek(0)
-                    with open(_debug_path, "wb") as _df:
-                        _df.write(buffer.read())
-                    buffer.seek(0)
-                    logger.info("DEBUG: saved rendered DISTRIBUTION to %s", _debug_path)
-                except Exception as _de:
-                    logger.warning("DEBUG: could not save DISTRIBUTION debug: %s", _de)
             buffer = _post_process_fs_doc(buffer, doc_type, has_prior=has_prior)
             results[doc_type] = buffer
             logger.info("Rendered %s for FY %s", doc_type, fy.pk)
