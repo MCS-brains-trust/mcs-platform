@@ -3087,6 +3087,19 @@ def generate_financial_statements(financial_year_id, include_watermark=True):
                 )
             continue
 
+        # DISTRIBUTION: programmatic generation — docxtpl strips column widths
+        if doc_type == "DISTRIBUTION":
+            try:
+                buffer = _build_distribution_docx(fy, context)
+                buffer = _post_process_fs_doc(buffer, doc_type, has_prior=has_prior)
+                results[doc_type] = buffer
+                logger.info("Generated programmatic DISTRIBUTION for FY %s", fy.pk)
+            except Exception as e:
+                logger.error(
+                    "Failed to generate DISTRIBUTION for FY %s: %s", fy.pk, e
+                )
+            continue
+
         tmpl = templates.filter(document_type=doc_type).first()
         if not tmpl:
             logger.warning(
@@ -3158,6 +3171,194 @@ def _stamp_page_numbers(pdf_bytes):
     return output.getvalue()
 
 
+def _build_distribution_docx(financial_year, context):
+    """Build Beneficiaries Distribution Summary with python-docx directly.
+
+    Bypasses docxtpl which strips w:tcW column width attributes during
+    Jinja2 XML processing, causing LibreOffice to collapse the amount column.
+    """
+    from docx import Document as _DocxDoc
+    from docx.shared import Pt as _Pt, Cm as _Cm
+    from docx.enum.text import WD_ALIGN_PARAGRAPH as _ALIGN
+    from docx.oxml.ns import qn as _qn
+    from docx.oxml import OxmlElement as _El
+
+    entity = financial_year.entity
+    end_date = financial_year.end_date
+    date_text = f"For the Year Ended {end_date.strftime('%d %B %Y')}" if end_date else ""
+    beneficiaries = context.get("beneficiaries", [])
+    total_distribution = context.get("total_distribution", "—")
+
+    doc = _DocxDoc()
+
+    # Page margins — match other statements
+    for section in doc.sections:
+        section.top_margin = _Cm(2)
+        section.bottom_margin = _Cm(2)
+        section.left_margin = _Cm(2.5)
+        section.right_margin = _Cm(2)
+
+    # Default font
+    style = doc.styles["Normal"]
+    style.font.name = "Calibri"
+    style.font.size = _Pt(10)
+
+    # Header: entity name
+    h = doc.add_paragraph()
+    h.alignment = _ALIGN.CENTER
+    run = h.add_run(_safe_amp(entity.entity_name))
+    run.bold = True
+    run.font.name = "Calibri"
+    run.font.size = _Pt(11)
+
+    # ABN
+    abn_raw = entity.abn or ""
+    abn_digits = "".join(c for c in str(abn_raw) if c.isdigit())
+    if len(abn_digits) == 11:
+        abn_fmt = f"{abn_digits[:2]} {abn_digits[2:5]} {abn_digits[5:8]} {abn_digits[8:]}"
+    else:
+        abn_fmt = abn_raw
+    p_abn = doc.add_paragraph()
+    p_abn.alignment = _ALIGN.CENTER
+    run_abn = p_abn.add_run(f"ABN {abn_fmt}")
+    run_abn.font.name = "Calibri"
+    run_abn.font.size = _Pt(9)
+
+    # Document title
+    t = doc.add_paragraph()
+    t.alignment = _ALIGN.CENTER
+    run_t = t.add_run("Beneficiaries Distribution Summary")
+    run_t.font.name = "Calibri"
+    run_t.font.size = _Pt(9)
+
+    # Period
+    p_date = doc.add_paragraph()
+    p_date.alignment = _ALIGN.CENTER
+    run_d = p_date.add_run(date_text)
+    run_d.font.name = "Calibri"
+    run_d.font.size = _Pt(9)
+
+    doc.add_paragraph()
+
+    # Net income line
+    p_net = doc.add_paragraph()
+    run_net = p_net.add_run(f"Net Income Available for Distribution: {total_distribution}")
+    run_net.bold = True
+    run_net.font.name = "Calibri"
+    run_net.font.size = _Pt(10)
+
+    doc.add_paragraph()
+
+    # --- Distribution table — 3 columns with explicit widths ---
+    COL_W = [5580, 1860, 1920]  # dxa (twips)
+
+    def _set_cell_w(cell, w):
+        tc = cell._tc
+        tcPr = tc.get_or_add_tcPr()
+        for ex in tcPr.findall(_qn('w:tcW')):
+            tcPr.remove(ex)
+        tcW = _El('w:tcW')
+        tcW.set(_qn('w:w'), str(w))
+        tcW.set(_qn('w:type'), 'dxa')
+        tcPr.append(tcW)
+
+    def _style_cell(cell, bold=False, align_right=False):
+        for para in cell.paragraphs:
+            if align_right:
+                para.alignment = _ALIGN.RIGHT
+            for run in para.runs:
+                run.font.name = "Calibri"
+                run.font.size = _Pt(10)
+                run.bold = bold
+
+    table = doc.add_table(rows=0, cols=3, style="Normal Table")
+    table.autofit = False
+    # Set table preferred width
+    tbl = table._tbl
+    tblPr = tbl.tblPr
+    tblW = _El('w:tblW')
+    tblW.set(_qn('w:w'), '9360')
+    tblW.set(_qn('w:type'), 'dxa')
+    tblPr.append(tblW)
+    # Clear table-level borders
+    tblBorders = _El('w:tblBorders')
+    for edge in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
+        el = _El(f'w:{edge}')
+        el.set(_qn('w:val'), 'nil')
+        el.set(_qn('w:sz'), '0')
+        el.set(_qn('w:color'), 'auto')
+        tblBorders.append(el)
+    tblPr.append(tblBorders)
+
+    # Header row
+    hdr_row = table.add_row()
+    hdr_row.cells[0].text = "Beneficiary"
+    hdr_row.cells[1].text = "Percentage"
+    hdr_row.cells[2].text = "Amount\n$"
+    for i, cell in enumerate(hdr_row.cells):
+        _set_cell_w(cell, COL_W[i])
+        _style_cell(cell, bold=True, align_right=(i >= 1))
+
+    # Data rows — one per beneficiary
+    for b in beneficiaries:
+        row = table.add_row()
+        row.cells[0].text = b.get("beneficiary_name", "")
+        row.cells[1].text = f"{b.get('percentage', '')}%"
+        row.cells[2].text = b.get("amount", "—")
+        for i, cell in enumerate(row.cells):
+            _set_cell_w(cell, COL_W[i])
+            _style_cell(cell, align_right=(i >= 1))
+
+    # Total row
+    total_row = table.add_row()
+    total_row.cells[0].text = "Total"
+    total_row.cells[1].text = "100%"
+    total_row.cells[2].text = total_distribution
+    for i, cell in enumerate(total_row.cells):
+        _set_cell_w(cell, COL_W[i])
+        _style_cell(cell, bold=True, align_right=(i >= 1))
+
+    # Nil all cell borders explicitly
+    for row in table.rows:
+        for cell in row.cells:
+            tc = cell._tc
+            tcPr = tc.get_or_add_tcPr()
+            for ex in tcPr.findall(_qn('w:tcBorders')):
+                tcPr.remove(ex)
+            tcBorders = _El('w:tcBorders')
+            for side in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
+                el = _El(f'w:{side}')
+                el.set(_qn('w:val'), 'nil')
+                el.set(_qn('w:sz'), '0')
+                el.set(_qn('w:color'), 'auto')
+                tcBorders.append(el)
+            tcPr.append(tcBorders)
+
+    doc.add_paragraph()
+
+    # Footer disclaimer
+    p_footer = doc.add_paragraph()
+    run_f = p_footer.add_run(
+        "These financial statements are unaudited. They must be read in conjunction "
+        "with the attached Accountant\u2019s Compilation Report and Notes which form "
+        "part of these financial statements."
+    )
+    run_f.font.name = "Calibri"
+    run_f.font.size = _Pt(8)
+    run_f.font.italic = True
+
+    buf = io.BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    logger.info(
+        "Built programmatic DISTRIBUTION for %s: %d beneficiaries",
+        entity.entity_name, len(beneficiaries),
+    )
+    return buf
+
+
+# _reapply_distribution_widths — kept for reference but no longer called.
+# Programmatic generation via _build_distribution_docx bypasses docxtpl entirely.
 def _reapply_distribution_widths(docx_path):
     """Re-apply explicit column widths to Distribution Summary table.
 
@@ -3232,10 +3433,8 @@ def generate_combined_pdf(financial_year_id, include_watermark=True, exclude_typ
             with open(docx_path, "wb") as f:
                 f.write(buffer.read())
 
-            # Re-apply column widths for DISTRIBUTION — docxtpl strips
-            # w:tcW attributes during Jinja2 XML processing.
-            if doc_type == "DISTRIBUTION":
-                _reapply_distribution_widths(docx_path)
+            # Column width re-application no longer needed — DISTRIBUTION
+            # is now built programmatically via _build_distribution_docx.
 
             try:
                 convert_docx_to_pdf(docx_path, tmpdir, timeout=60)
