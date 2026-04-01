@@ -3091,7 +3091,7 @@ def generate_financial_statements(financial_year_id, include_watermark=True):
         if doc_type == "DISTRIBUTION":
             try:
                 buffer = _build_distribution_docx(fy, context)
-                buffer = _post_process_fs_doc(buffer, doc_type, has_prior=has_prior)
+                # DISTRIBUTION is already PDF (reportlab) — skip docx post-processing
                 results[doc_type] = buffer
                 logger.info("Generated programmatic DISTRIBUTION for FY %s", fy.pk)
             except Exception as e:
