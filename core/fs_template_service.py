@@ -3172,16 +3172,12 @@ def _stamp_page_numbers(pdf_bytes):
 
 
 def _build_distribution_docx(financial_year, context):
-    """Build Beneficiaries Distribution Summary with python-docx directly.
-
-    Bypasses docxtpl which strips w:tcW column width attributes during
-    Jinja2 XML processing, causing LibreOffice to collapse the amount column.
-    """
-    from docx import Document as _DocxDoc
+    from docx import Document as _Doc
     from docx.shared import Pt as _Pt, Cm as _Cm
     from docx.enum.text import WD_ALIGN_PARAGRAPH as _ALIGN
     from docx.oxml.ns import qn as _qn
     from docx.oxml import OxmlElement as _El
+    import io as _io
 
     entity = financial_year.entity
     end_date = financial_year.end_date
@@ -3189,165 +3185,120 @@ def _build_distribution_docx(financial_year, context):
     beneficiaries = context.get("beneficiaries", [])
     total_distribution = context.get("total_distribution", "—")
 
-    doc = _DocxDoc()
-
-    # Page margins — match other statements
+    doc = _Doc()
     for section in doc.sections:
         section.top_margin = _Cm(2)
         section.bottom_margin = _Cm(2)
         section.left_margin = _Cm(2.5)
         section.right_margin = _Cm(2)
 
-    # Default font
-    style = doc.styles["Normal"]
-    style.font.name = "Calibri"
-    style.font.size = _Pt(10)
+    def _run(para, text, bold=False, size=10, name="Calibri"):
+        r = para.add_run(text)
+        r.bold = bold
+        r.font.name = name
+        r.font.size = _Pt(size)
+        return r
 
-    # Header: entity name
     h = doc.add_paragraph()
     h.alignment = _ALIGN.CENTER
-    run = h.add_run(_safe_amp(entity.entity_name))
-    run.bold = True
-    run.font.name = "Calibri"
-    run.font.size = _Pt(11)
+    _run(h, _safe_amp(entity.entity_name), bold=True, size=11)
 
-    # ABN
     abn_raw = entity.abn or ""
     abn_digits = "".join(c for c in str(abn_raw) if c.isdigit())
-    if len(abn_digits) == 11:
-        abn_fmt = f"{abn_digits[:2]} {abn_digits[2:5]} {abn_digits[5:8]} {abn_digits[8:]}"
-    else:
-        abn_fmt = abn_raw
+    abn_fmt = f"{abn_digits[:2]} {abn_digits[2:5]} {abn_digits[5:8]} {abn_digits[8:]}" if len(abn_digits) == 11 else abn_raw
     p_abn = doc.add_paragraph()
     p_abn.alignment = _ALIGN.CENTER
-    run_abn = p_abn.add_run(f"ABN {abn_fmt}")
-    run_abn.font.name = "Calibri"
-    run_abn.font.size = _Pt(9)
+    _run(p_abn, f"ABN {abn_fmt}", size=9)
 
-    # Document title
     t = doc.add_paragraph()
     t.alignment = _ALIGN.CENTER
-    run_t = t.add_run("Beneficiaries Distribution Summary")
-    run_t.font.name = "Calibri"
-    run_t.font.size = _Pt(9)
+    _run(t, "Beneficiaries Distribution Summary", size=9)
 
-    # Period
     p_date = doc.add_paragraph()
     p_date.alignment = _ALIGN.CENTER
-    run_d = p_date.add_run(date_text)
-    run_d.font.name = "Calibri"
-    run_d.font.size = _Pt(9)
+    _run(p_date, date_text, size=9)
 
     doc.add_paragraph()
 
-    # Net income line
     p_net = doc.add_paragraph()
-    run_net = p_net.add_run(f"Net Income Available for Distribution: {total_distribution}")
-    run_net.bold = True
-    run_net.font.name = "Calibri"
-    run_net.font.size = _Pt(10)
+    _run(p_net, f"Net Income Available for Distribution: {total_distribution}", bold=True, size=10)
 
     doc.add_paragraph()
 
-    # --- Distribution table — 3 columns with explicit widths ---
-    COL_W = [5580, 1860, 1920]  # dxa (twips)
+    COL_W = [5580, 1860, 1920]
 
-    def _set_cell_w(cell, w):
+    table = doc.add_table(rows=1, cols=3)
+    table.autofit = False
+
+    tbl = table._tbl
+    tblGrid = tbl.find(_qn("w:tblGrid"))
+    if tblGrid is None:
+        tblGrid = _El("w:tblGrid")
+        tbl.insert(1, tblGrid)
+    for gc in list(tblGrid):
+        tblGrid.remove(gc)
+    for cw in COL_W:
+        gc = _El("w:gridCol")
+        gc.set(_qn("w:w"), str(cw))
+        tblGrid.append(gc)
+
+    def set_w(cell, w):
         tc = cell._tc
         tcPr = tc.get_or_add_tcPr()
-        for ex in tcPr.findall(_qn('w:tcW')):
+        for ex in tcPr.findall(_qn("w:tcW")):
             tcPr.remove(ex)
-        tcW = _El('w:tcW')
-        tcW.set(_qn('w:w'), str(w))
-        tcW.set(_qn('w:type'), 'dxa')
+        tcW = _El("w:tcW")
+        tcW.set(_qn("w:w"), str(w))
+        tcW.set(_qn("w:type"), "dxa")
         tcPr.append(tcW)
 
-    def _style_cell(cell, bold=False, align_right=False):
+    def style_cell(cell, bold=False, right=False):
         for para in cell.paragraphs:
-            if align_right:
+            if right:
                 para.alignment = _ALIGN.RIGHT
             for run in para.runs:
                 run.font.name = "Calibri"
                 run.font.size = _Pt(10)
                 run.bold = bold
 
-    table = doc.add_table(rows=0, cols=3, style="Normal Table")
-    table.autofit = False
-    # Set table preferred width
-    tbl = table._tbl
-    tblPr = tbl.tblPr
-    tblW = _El('w:tblW')
-    tblW.set(_qn('w:w'), '9360')
-    tblW.set(_qn('w:type'), 'dxa')
-    tblPr.append(tblW)
-    # Clear table-level borders
-    tblBorders = _El('w:tblBorders')
-    for edge in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
-        el = _El(f'w:{edge}')
-        el.set(_qn('w:val'), 'nil')
-        el.set(_qn('w:sz'), '0')
-        el.set(_qn('w:color'), 'auto')
-        tblBorders.append(el)
-    tblPr.append(tblBorders)
+    hdr = table.rows[0].cells
+    hdr[0].text = "Beneficiary"
+    hdr[1].text = "Percentage"
+    hdr[2].text = "Amount"
+    for i, c in enumerate(hdr):
+        set_w(c, COL_W[i])
+        style_cell(c, bold=True, right=(i >= 1))
 
-    # Header row
-    hdr_row = table.add_row()
-    hdr_row.cells[0].text = "Beneficiary"
-    hdr_row.cells[1].text = "Percentage"
-    hdr_row.cells[2].text = "Amount\n$"
-    for i, cell in enumerate(hdr_row.cells):
-        _set_cell_w(cell, COL_W[i])
-        _style_cell(cell, bold=True, align_right=(i >= 1))
-
-    # Data rows — one per beneficiary
     for b in beneficiaries:
-        row = table.add_row()
-        row.cells[0].text = b.get("beneficiary_name", "")
-        row.cells[1].text = f"{b.get('percentage', '')}%"
-        row.cells[2].text = b.get("amount", "—")
-        for i, cell in enumerate(row.cells):
-            _set_cell_w(cell, COL_W[i])
-            _style_cell(cell, align_right=(i >= 1))
+        row = table.add_row().cells
+        row[0].text = b.get("beneficiary_name", "")
+        row[1].text = f"{b.get('percentage', '')}%"
+        row[2].text = b.get("amount", "")
+        for i, c in enumerate(row):
+            set_w(c, COL_W[i])
+            style_cell(c, right=(i >= 1))
 
-    # Total row
-    total_row = table.add_row()
-    total_row.cells[0].text = "Total"
-    total_row.cells[1].text = "100%"
-    total_row.cells[2].text = total_distribution
-    for i, cell in enumerate(total_row.cells):
-        _set_cell_w(cell, COL_W[i])
-        _style_cell(cell, bold=True, align_right=(i >= 1))
-
-    # Nil all cell borders explicitly
-    for row in table.rows:
-        for cell in row.cells:
-            tc = cell._tc
-            tcPr = tc.get_or_add_tcPr()
-            for ex in tcPr.findall(_qn('w:tcBorders')):
-                tcPr.remove(ex)
-            tcBorders = _El('w:tcBorders')
-            for side in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
-                el = _El(f'w:{side}')
-                el.set(_qn('w:val'), 'nil')
-                el.set(_qn('w:sz'), '0')
-                el.set(_qn('w:color'), 'auto')
-                tcBorders.append(el)
-            tcPr.append(tcBorders)
+    tot = table.add_row().cells
+    tot[0].text = "Total"
+    tot[1].text = "100%"
+    tot[2].text = total_distribution
+    for i, c in enumerate(tot):
+        set_w(c, COL_W[i])
+        style_cell(c, bold=True, right=(i >= 1))
 
     doc.add_paragraph()
 
-    # Footer disclaimer
-    p_footer = doc.add_paragraph()
-    run_f = p_footer.add_run(
-        "These financial statements are unaudited. They must be read in conjunction "
-        "with the attached Accountant\u2019s Compilation Report and Notes which form "
-        "part of these financial statements."
+    p_f = doc.add_paragraph()
+    r_f = p_f.add_run(
+        "These financial statements are unaudited. They must be read "
+        "in conjunction with the attached Accountant\u2019s Compilation "
+        "Report and Notes which form part of these financial statements."
     )
-    run_f.font.name = "Calibri"
-    run_f.font.size = _Pt(8)
-    run_f.font.italic = True
+    r_f.font.name = "Calibri"
+    r_f.font.size = _Pt(8)
+    r_f.font.italic = True
 
-    buf = io.BytesIO()
+    buf = _io.BytesIO()
     doc.save(buf)
     buf.seek(0)
     logger.info(
