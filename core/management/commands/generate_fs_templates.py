@@ -164,7 +164,7 @@ ROW_TYPE_MAJOR_TOTAL = "major_total"
 ROW_TYPE_GRAND_TOTAL = "grand_total"
 
 _NIL = {"val": "nil", "sz": "0", "color": "auto"}
-_SINGLE = {"val": "single", "sz": "4", "color": "000000"}
+_SINGLE = {"val": "single", "sz": "6", "color": "000000"}
 _DOUBLE = {"val": "double", "sz": "8", "color": "000000"}
 
 
@@ -924,71 +924,88 @@ def _build_declaration(entity_type):
 
 
 def _build_compilation(entity_type):
-    """Build Compilation Report (APES 315) template."""
+    """Build Compilation Report (APES 315) template — single page."""
     doc = Document()
     _set_default_font(doc)
     _set_page_setup(doc)
     _add_repeating_header(doc, "Compilation Report", "{{ date_text }}")
     _add_page_number_footer(doc)
 
+    # Tight spacing to fit on one page
+    SP_BODY = Pt(4)    # space after body paragraphs
+    SP_HEAD = Pt(6)    # space before section headings
 
-    _add_para(doc, "To the {{ compilation_responsible_party }} of {{ entity_name }}")
-    doc.add_paragraph("")
+    p = _add_para(doc, "To the {{ compilation_responsible_party }} of {{ entity_name }}")
+    p.paragraph_format.space_after = SP_BODY
 
-    _add_para(doc, "Scope", bold=True)
-    _add_para(doc,
+    p = _add_para(doc, "Scope", bold=True, keep_with_next=True)
+    p.paragraph_format.space_before = SP_HEAD
+    p.paragraph_format.space_after = Pt(2)
+    p = _add_para(doc,
               "We have compiled the accompanying special purpose financial statements of "
               "{{ entity_name }}, which comprise the balance sheet as at {{ year_end_date }}, "
               "the profit and loss statement for the year then ended, and notes to the "
               "financial statements including a summary of significant accounting policies.")
-    doc.add_paragraph("")
+    p.paragraph_format.space_after = SP_BODY
 
-    _add_para(doc, "The Responsibility of the {{ compilation_responsible_party | capitalize }}", bold=True)
-    _add_para(doc,
+    p = _add_para(doc, "The Responsibility of the {{ compilation_responsible_party | capitalize }}", bold=True, keep_with_next=True)
+    p.paragraph_format.space_before = SP_HEAD
+    p.paragraph_format.space_after = Pt(2)
+    p = _add_para(doc,
               "The {{ compilation_responsible_party }} of {{ entity_name }} are solely "
               "responsible for the information contained in the special purpose financial "
               "statements, and have determined that the accounting policies used are "
               "consistent and are appropriate to satisfy the requirements of the "
               "{{ compilation_responsible_party }}.")
-    doc.add_paragraph("")
+    p.paragraph_format.space_after = SP_BODY
 
-    _add_para(doc, "Our Responsibility", bold=True)
-    _add_para(doc,
+    p = _add_para(doc, "Our Responsibility", bold=True, keep_with_next=True)
+    p.paragraph_format.space_before = SP_HEAD
+    p.paragraph_format.space_after = Pt(2)
+    p = _add_para(doc,
               "On the basis of information provided by the {{ compilation_responsible_party }}, "
               "we have compiled the accompanying special purpose financial statements in "
               "accordance with the applicable financial reporting framework and APES 315 "
               "Compilation of Financial Information.")
-    doc.add_paragraph("")
+    p.paragraph_format.space_after = SP_BODY
 
-    _add_para(doc,
+    p = _add_para(doc,
               "We have applied our expertise in accounting and financial reporting to compile "
               "these financial statements in accordance with the applicable financial reporting "
               "framework. We have complied with the relevant ethical requirements of APES 110 "
               "Code of Ethics for Professional Accountants (including Independence Standards).")
-    doc.add_paragraph("")
+    p.paragraph_format.space_after = SP_BODY
 
-    _add_para(doc, "Assurance Disclaimer", bold=True, keep_with_next=True)
-    _add_para(doc,
+    p = _add_para(doc, "Assurance Disclaimer", bold=True, keep_with_next=True)
+    p.paragraph_format.space_before = SP_HEAD
+    p.paragraph_format.space_after = Pt(2)
+    p = _add_para(doc,
               "Since a compilation engagement is not an assurance engagement, we are not "
               "required to verify the reliability, accuracy or completeness of the information "
               "provided to us by management and the {{ compilation_responsible_party }} to "
               "compile these financial statements. Accordingly, we do not express an audit "
               "opinion or a review conclusion on these financial statements.")
-    doc.add_paragraph("")
+    p.paragraph_format.space_after = SP_BODY
 
-    _add_para(doc, "The special purpose financial statements were compiled exclusively for "
+    p = _add_para(doc, "The special purpose financial statements were compiled exclusively for "
               "the benefit of the {{ compilation_responsible_party }} who are responsible for "
               "the reliability, accuracy and completeness of the information compiled. We do "
               "not accept responsibility for the contents of the special purpose financial "
               "statements.", keep_with_next=True)
-    doc.add_paragraph("")
+    p.paragraph_format.space_after = SP_BODY
 
-    _add_para(doc, "{{ practice_name or firm_name }}", bold=True, keep_with_next=True)
-    _add_para(doc, "{{ practice_registered_address or (firm_address_1 + ', ' + firm_address_2) }}", keep_with_next=True)
-    _add_para(doc, "Registered Tax Agent No: {{ practice_tax_agent_number }}", keep_with_next=True)
-    _add_para(doc, "{{ practice_signatory_designation }}", keep_with_next=True)
-    doc.add_paragraph("")
-    _add_para(doc, "Dated: {{ signing_date }}")
+    # Firm details block — all keep_with_next to prevent orphaning
+    p = _add_para(doc, "{{ practice_name or firm_name }}", bold=True, keep_with_next=True)
+    p.paragraph_format.space_before = SP_HEAD
+    p.paragraph_format.space_after = Pt(0)
+    p = _add_para(doc, "{{ practice_registered_address or (firm_address_1 + ', ' + firm_address_2) }}", keep_with_next=True)
+    p.paragraph_format.space_after = Pt(0)
+    p = _add_para(doc, "Registered Tax Agent No: {{ practice_tax_agent_number }}", keep_with_next=True)
+    p.paragraph_format.space_after = Pt(0)
+    p = _add_para(doc, "{{ practice_signatory_designation }}", keep_with_next=True)
+    p.paragraph_format.space_after = SP_BODY
+    p = _add_para(doc, "Dated: {{ signing_date }}")
+    p.paragraph_format.space_after = Pt(0)
 
     return doc
 
