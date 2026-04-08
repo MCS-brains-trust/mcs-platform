@@ -373,7 +373,7 @@ function updateGstTreatment(select) {
     const row = document.getElementById('pending-row-' + txnId);
 
     let gstAmt = 0, netAmt = amount;
-    if (treatment === 'gst') {
+    if (treatment === 'taxable') {
         const credPct = parseFloat(row?.dataset.creditablePct || 100);
         const fullGst = amount / 11;
         gstAmt = fullGst * credPct / 100;
@@ -391,7 +391,7 @@ function updateGstTreatment(select) {
 
     // Show/hide creditable % display and Override link based on treatment
     if (credPctCell) {
-        if (treatment === 'gst') {
+        if (treatment === 'taxable') {
             const credPctVal = row?.dataset.creditablePct || '100';
             const isOverridden = credPctVal !== '100';
             credPctCell.innerHTML = `<span class="creditable-pct-display${isOverridden ? ' fw-bold text-warning' : ''}" data-txn-id="${txnId}" id="cred-pct-display-${txnId}" style="font-size:0.8rem;">${credPctVal}%</span>`;
@@ -405,7 +405,7 @@ function updateGstTreatment(select) {
     if (gstTreatmentCell) {
         const existingOverrideLink = gstTreatmentCell.querySelector('.gst-override-link-wrapper');
         if (existingOverrideLink) existingOverrideLink.remove();
-        if (treatment === 'gst') {
+        if (treatment === 'taxable') {
             const linkDiv = document.createElement('div');
             linkDiv.className = 'mt-1 gst-override-link-wrapper';
             linkDiv.innerHTML = '<a href="#" class="gst-override-link text-muted" style="font-size:0.65rem; text-decoration:none;" onclick="openGstOverride(event, \'' + txnId + '\')"><i class="bi bi-pencil" style="font-size:0.55rem;"></i> Override</a>';
@@ -434,7 +434,7 @@ function updateGstTreatment(select) {
     if (form) {
         const gstFlag = form.querySelector('.review-gst-flag');
         const gstAmtInput = form.querySelector('.review-gst-amount');
-        if (gstFlag) gstFlag.value = treatment === 'gst' ? '1' : '0';
+        if (gstFlag) gstFlag.value = treatment === 'taxable' ? '1' : '0';
         if (gstAmtInput) gstAmtInput.value = gstAmt.toFixed(2);
     }
 
@@ -981,7 +981,7 @@ function addSplitLine(txnId, amount, code, name) {
         </div>
         <div class="col-md-2">
             <select class="form-select form-select-sm split-gst">
-                <option value="gst">GST 10%</option>
+                <option value="taxable">GST 10%</option>
                 <option value="gst_free">GST-Free</option>
                 <option value="input_taxed">Input Taxed</option>
                 <option value="out_of_scope">Out of Scope</option>
@@ -1095,7 +1095,7 @@ function confirmSplit(txnId) {
         const code = line.querySelector('.split-account-code')?.value || '';
         const name = line.querySelector('.split-account-name')?.value || '';
         const amount = parseFloat(line.querySelector('.split-amount')?.value || 0);
-        const gst = line.querySelector('.split-gst')?.value || 'gst';
+        const gst = line.querySelector('.split-gst')?.value || 'taxable';
         const credPct = parseFloat(line.querySelector('.split-cred-pct')?.value || 100);
         if (amount > 0) {
             lines.push({ account_code: code, account_name: name, amount: amount, gst_treatment: gst, creditable_percentage: credPct });
@@ -1161,7 +1161,7 @@ function confirmSaveRule() {
             match_type: 'contains',
             account_code: pendingRuleData.account_code,
             account_name: pendingRuleData.account_name,
-            gst_treatment: pendingRuleData.gst_treatment || 'gst',
+            gst_treatment: pendingRuleData.gst_treatment || 'taxable',
             creditable_percentage: credPct
         })
     })
@@ -1271,7 +1271,7 @@ function _addRowToPendingTable(data) {
         ? '<span class="badge bg-secondary" style="font-size:0.75rem;">Out of Scope</span>'
         : `<div class="d-flex align-items-center justify-content-center gap-1">
                <select class="form-select form-select-sm gst-treatment-select py-0" data-txn-id="${data.id}" data-amount="${data.amount}" onchange="updateGstTreatment(this)" style="font-size:0.78rem;">
-                   <option value="gst" selected>GST 10%</option>
+                   <option value="taxable" selected>GST 10%</option>
                    <option value="gst_free">GST-Free</option>
                    <option value="input_taxed">Input Taxed</option>
                    <option value="out_of_scope">Out of Scope</option>
@@ -1286,7 +1286,7 @@ function _addRowToPendingTable(data) {
 
     const row = `<tr id="pending-row-${data.id}" class="review-row"
         data-description="${data.description}" data-amount="${data.amount}" data-date="${data.date}"
-        data-code="${data.ai_code || ''}" data-gst-treatment="gst" data-creditable-pct="100"
+        data-code="${data.ai_code || ''}" data-gst-treatment="taxable" data-creditable-pct="100"
         data-has-gst-override="false" data-is-gst-manual="false"
         data-status="classified" data-is-split="false" data-apportionment-type="" data-apportionment-reason="">
         <td><input type="checkbox" class="row-select" value="${data.id}" onclick="updateBulkSelection()"></td>
@@ -1895,7 +1895,7 @@ function _taxCodeToGstTreatment(taxCode) {
     // Map EntityChartOfAccount.tax_code to the GST treatment select value
     const code = (taxCode || '').toUpperCase().trim();
     const map = {
-        'GST': 'gst', 'INP': 'gst', 'CAP': 'gst', 'GNR': 'gst', 'ADS': 'gst',
+        'GST': 'taxable', 'INP': 'taxable', 'CAP': 'taxable', 'GNR': 'taxable', 'ADS': 'taxable',
         'FRE': 'gst_free', 'FOA': 'gst_free',
         'ITS': 'input_taxed', 'IOA': 'input_taxed',
         'N-T': 'out_of_scope',

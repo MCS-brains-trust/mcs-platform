@@ -229,7 +229,7 @@
             <div class="col-md-2">
                 <select id="reviewGstFilter" class="form-select form-select-sm" onchange="applyEnhancedSearch()">
                     <option value="">All GST</option>
-                    <option value="gst">Taxable (GST)</option>
+                    <option value="taxable">Taxable (GST)</option>
                     <option value="gst_free">GST-Free</option>
                     <option value="input_taxed">Input Taxed</option>
                     <option value="out_of_scope">Out of Scope</option>
@@ -261,7 +261,7 @@
                 {% if entity_is_gst_registered %}
                 <select id="bulkGstSelect" class="form-select form-select-sm" style="width:160px;">
                     <option value="">Set GST...</option>
-                    <option value="gst">Taxable (GST)</option>
+                    <option value="taxable">Taxable (GST)</option>
                     <option value="gst_free">GST-Free</option>
                     <option value="input_taxed">Input Taxed</option>
                     <option value="out_of_scope">Out of Scope</option>
@@ -412,7 +412,7 @@
                 data-amount="{{ txn.amount }}"
                 data-date="{{ txn.date }}"
                 data-code="{{ txn.ai_suggested_code|default:'' }}"
-                data-gst-treatment="{{ txn.gst_treatment|default:'gst' }}"
+                data-gst-treatment="{{ txn.gst_treatment|default:'taxable' }}"
                 data-creditable-pct="{{ txn.creditable_percentage|default:'100' }}"
                 data-has-gst-override="{% if txn.gst_amount_override %}true{% else %}false{% endif %}"
                 data-is-gst-manual="{{ txn.is_gst_manual|yesno:'true,false' }}"
@@ -440,14 +440,14 @@
                         <select class="form-select form-select-sm gst-treatment-select py-0"
                                 data-txn-id="{{ txn.pk }}" data-amount="{{ txn.amount }}"
                                 onchange="updateGstTreatment(this)" style="font-size:0.78rem;{% if txn.is_gst_manual %} border-color:#f59e0b;{% endif %}">
-                            <option value="gst" {% if txn.gst_treatment == 'gst' or not txn.gst_treatment %}selected{% endif %}>GST 10%</option>
+                            <option value="taxable" {% if txn.gst_treatment == 'taxable' or not txn.gst_treatment %}selected{% endif %}>GST 10%</option>
                             <option value="gst_free" {% if txn.gst_treatment == 'gst_free' %}selected{% endif %}>GST-Free</option>
                             <option value="input_taxed" {% if txn.gst_treatment == 'input_taxed' %}selected{% endif %}>Input Taxed</option>
                             <option value="out_of_scope" {% if txn.gst_treatment == 'out_of_scope' %}selected{% endif %}>Out of Scope</option>
                             <option value="bas_excluded" {% if txn.gst_treatment == 'bas_excluded' %}selected{% endif %}>BAS Excluded</option>
                         </select>
                     </div>
-                    {% if txn.gst_treatment == 'gst' or not txn.gst_treatment %}
+                    {% if txn.gst_treatment == 'taxable' or not txn.gst_treatment %}
                     <div class="mt-1">
                         <a href="#" class="gst-override-link text-muted" style="font-size:0.65rem; text-decoration:none;"
                            onclick="openGstOverride(event, '{{ txn.pk }}')">
@@ -459,7 +459,7 @@
                 </td>
                 {# --- Creditable Percentage Column (read-only, set by AI/rules) --- #}
                 <td class="text-end creditable-pct-cell" id="cred-pct-cell-{{ txn.pk }}">
-                    {% if txn.gst_treatment == 'gst' or not txn.gst_treatment %}
+                    {% if txn.gst_treatment == 'taxable' or not txn.gst_treatment %}
                     <span class="creditable-pct-display{% if txn.creditable_percentage != 100 %} fw-bold text-warning{% endif %}" data-txn-id="{{ txn.pk }}" id="cred-pct-display-{{ txn.pk }}"
                           style="font-size:0.8rem;">{{ txn.creditable_percentage|default:'100' }}%</span>
                     {% if txn.gst_amount_override %}
@@ -474,13 +474,13 @@
                 {# --- GST Amount Column (display only, override editor is in a separate row) --- #}
                 <td class="text-end gst-amount-cell" id="gst-amt-{{ txn.pk }}">
                     <span id="gst-amt-display-{{ txn.pk }}">
-                    {% if txn.gst_treatment == 'gst' or not txn.gst_treatment %}
+                    {% if txn.gst_treatment == 'taxable' or not txn.gst_treatment %}
                     ${{ txn.gst_amount|floatformat:2|intcomma }}{% if txn.gst_amount_override %} <i class="bi bi-pencil-fill text-warning" style="font-size:0.6rem;" title="Overridden"></i>{% endif %}
                     {% else %}$0.00{% endif %}
                     </span>
                 </td>
                 <td class="text-end net-amount-cell" id="net-amt-{{ txn.pk }}">
-                    {% if txn.gst_treatment == 'gst' or not txn.gst_treatment %}
+                    {% if txn.gst_treatment == 'taxable' or not txn.gst_treatment %}
                     ${{ txn.net_amount|floatformat:2|intcomma }}
                     {% else %}${{ txn.amount|floatformat:2|intcomma }}{% endif %}
                 </td>
@@ -519,7 +519,7 @@
                         <input type="hidden" name="confirmed_code" value="{{ txn.ai_suggested_code }}" class="review-code-input">
                         <input type="hidden" name="confirmed_name" value="{{ txn.ai_suggested_name }}" class="review-name-input">
                         <input type="hidden" name="confirmed_tax_type" value="{{ txn.ai_suggested_tax_type }}" class="review-tax-input">
-                        <input type="hidden" name="has_gst" value="{% if txn.gst_treatment == 'gst' or not txn.gst_treatment %}1{% else %}0{% endif %}" class="review-gst-flag">
+                        <input type="hidden" name="has_gst" value="{% if txn.gst_treatment == 'taxable' or not txn.gst_treatment %}1{% else %}0{% endif %}" class="review-gst-flag">
                         <input type="hidden" name="gst_amount" value="{{ txn.gst_amount|default:'0.00' }}" class="review-gst-amount">
                         <input type="hidden" name="creditable_percentage" value="{{ txn.creditable_percentage|default:'100' }}" class="review-cred-pct">
                         <button type="submit" class="btn btn-sm btn-outline-success py-0 px-1" title="Approve &amp; push to TB">
@@ -714,7 +714,7 @@
                 <td class="text-end">
                     {% if txn.creditable_percentage and txn.creditable_percentage != 100 %}
                     <span class="fw-bold text-warning">{{ txn.creditable_percentage }}%</span>
-                    {% elif txn.gst_treatment == 'gst' or txn.confirmed_tax_type == 'GST on Income' or txn.confirmed_tax_type == 'GST on Expenses' %}
+                    {% elif txn.gst_treatment == 'taxable' or txn.confirmed_tax_type == 'GST on Income' or txn.confirmed_tax_type == 'GST on Expenses' %}
                     100%
                     {% else %}&mdash;{% endif %}
                 </td>

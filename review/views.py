@@ -1144,13 +1144,20 @@ def upload_bank_statement(request):
         for txn in transactions:
             amount = Decimal(str(txn.get("amount", 0)))
             abs_amount = abs(amount)
+            # Default GST calc: if GST-registered, assume taxable (1/11)
+            if is_gst:
+                gst_amt = (abs_amount / Decimal("11")).quantize(Decimal("0.01"))
+                net_amt = (abs_amount - gst_amt).quantize(Decimal("0.01"))
+            else:
+                gst_amt = Decimal("0.00")
+                net_amt = abs_amount
             pending_objs.append(PendingTransaction(
                 job=job,
                 date=txn.get("date", ""),
                 description=txn.get("description", ""),
                 amount=amount,
-                gst_amount=Decimal("0.00"),
-                net_amount=abs_amount,
+                gst_amount=gst_amt,
+                net_amount=net_amt,
                 ai_suggested_code="",
                 ai_suggested_name="",
                 ai_suggested_tax_type="",
@@ -2354,13 +2361,21 @@ def confirm_import(request):
         pending_objs = []
         for txn in transactions:
             amount = Decimal(str(txn.get('amount', 0)))
+            abs_amount = abs(amount)
+            # Default GST calc: if GST-registered, assume taxable (1/11)
+            if is_gst:
+                gst_amt = (abs_amount / Decimal("11")).quantize(Decimal("0.01"))
+                net_amt = (abs_amount - gst_amt).quantize(Decimal("0.01"))
+            else:
+                gst_amt = Decimal("0.00")
+                net_amt = abs_amount
             pending_objs.append(PendingTransaction(
                 job=job,
                 date=txn.get('date', ''),
                 description=txn.get('description', ''),
                 amount=amount,
-                gst_amount=Decimal('0.00'),
-                net_amount=abs(amount),
+                gst_amount=gst_amt,
+                net_amount=net_amt,
                 ai_suggested_code='',
                 ai_suggested_name='',
                 ai_suggested_tax_type='',
