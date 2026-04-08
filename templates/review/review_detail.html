@@ -306,6 +306,10 @@
     .group-status-confirmed { background: #e8f5e9; color: #2e7d32; }
     .group-checkbox { width: 16px; height: 16px; cursor: pointer; }
     .filter-active { border-color: #1565c0; box-shadow: 0 0 0 2px rgba(21,101,192,0.15); }
+
+    /* Credits / Debits toggle */
+    #credit-debit-toggle .btn { font-size: 0.78rem; padding: 4px 8px; }
+    #credit-debit-toggle.filter-active { border-radius: 6px; box-shadow: 0 0 0 2px rgba(21,101,192,0.15); }
 </style>
 {% endblock %}
 
@@ -413,7 +417,7 @@
 <div class="bg-white rounded-3 mb-3 p-3" style="box-shadow: 0 1px 3px rgba(0,0,0,0.08);">
     <div class="row g-2 align-items-center">
         <!-- Natural Language Search Bar -->
-        <div class="col-12 col-md-5">
+        <div class="col-12 col-md-4">
             <div class="nl-search-container">
                 <i class="bi bi-search nl-search-icon"></i>
                 <input type="text" id="nl-search" class="nl-search-input"
@@ -453,6 +457,14 @@
                 <option value="out_of_scope">Out of Scope</option>
                 <option value="not_registered">Not Registered</option>
             </select>
+        </div>
+        <!-- Credits / Debits Toggle -->
+        <div class="col-6 col-md-2">
+            <div class="btn-group w-100" id="credit-debit-toggle" role="group" aria-label="Credit/Debit filter">
+                <button type="button" class="btn btn-sm btn-outline-secondary" id="btn-filter-all-types" onclick="setTypeFilter('all')" title="Show all transactions">All</button>
+                <button type="button" class="btn btn-sm btn-outline-success" id="btn-filter-credits" onclick="setTypeFilter('credits')" title="Credits only (money in)"><i class="bi bi-arrow-down-circle"></i> Credits</button>
+                <button type="button" class="btn btn-sm btn-outline-danger" id="btn-filter-debits" onclick="setTypeFilter('debits')" title="Debits only (money out)"><i class="bi bi-arrow-up-circle"></i> Debits</button>
+            </div>
         </div>
         <!-- Group toggle + filter count -->
         <div class="col-6 col-md-1 text-end">
@@ -541,7 +553,8 @@
                     data-amount="{{ txn.amount }}"
                     data-creditable-pct="{{ txn.creditable_percentage }}"
                     data-has-override="{{ txn.gst_amount_override|yesno:'true,false' }}"
-                    data-is-gst-manual="{{ txn.is_gst_manual|yesno:'true,false' }}">
+                    data-is-gst-manual="{{ txn.is_gst_manual|yesno:'true,false' }}"
+                    data-txn-type="{% if txn.amount >= 0 %}credit{% else %}debit{% endif %}">
                     <td>
                         {% if not txn.is_split %}
                         <input type="checkbox" class="form-check-input txn-checkbox" data-txn-id="{{ txn.pk }}" onchange="onCheckboxChange()" style="width:14px;height:14px;">
@@ -775,6 +788,7 @@ let searchDebounceTimer = null;
 let undoTimer = null;
 let undoData = null;
 let lastRulePromptTxnId = null;
+let activeTypeFilter = 'all'; // 'all' | 'credits' | 'debits'
 
 // ========================================================================
 // Account Picker
@@ -1128,6 +1142,30 @@ function parseSearchQuery(query) {
 }
 
 // ========================================================================
+// Credits / Debits Type Filter
+// ========================================================================
+function setTypeFilter(type) {
+    activeTypeFilter = type;
+
+    // Update button active states
+    const btnAll     = document.getElementById('btn-filter-all-types');
+    const btnCredits = document.getElementById('btn-filter-credits');
+    const btnDebits  = document.getElementById('btn-filter-debits');
+
+    // Reset all to outline variants
+    btnAll.className     = 'btn btn-sm btn-outline-secondary';
+    btnCredits.className = 'btn btn-sm btn-outline-success';
+    btnDebits.className  = 'btn btn-sm btn-outline-danger';
+
+    // Activate the selected button (solid fill)
+    if (type === 'all')     btnAll.className     = 'btn btn-sm btn-secondary';
+    if (type === 'credits') btnCredits.className = 'btn btn-sm btn-success';
+    if (type === 'debits')  btnDebits.className  = 'btn btn-sm btn-danger';
+
+    applyFilters();
+}
+
+// ========================================================================
 // Filters
 // ========================================================================
 function applyFilters() {
@@ -1188,6 +1226,14 @@ function applyFilters() {
             if ((row.dataset.gstTreatment || '') !== gstVal) show = false;
         }
 
+        // Credits / Debits type filter
+        // Credits: amount >= 0 (money in), Debits: amount < 0 (money out)
+        if (activeTypeFilter !== 'all') {
+            const amt = parseFloat(row.dataset.amount || 0);
+            if (activeTypeFilter === 'credits' && amt < 0) show = false;
+            if (activeTypeFilter === 'debits'  && amt >= 0) show = false;
+        }
+
         row.style.display = show ? '' : 'none';
         // Also show/hide the split editor row
         const editorRow = document.getElementById('split-editor-row-' + row.dataset.txnId);
@@ -1209,6 +1255,9 @@ function applyFilters() {
         const el = document.getElementById(id);
         if (el) el.classList.toggle('filter-active', el.value !== 'all');
     });
+    // Highlight credit/debit toggle container when a type filter is active
+    const toggleContainer = document.getElementById('credit-debit-toggle');
+    if (toggleContainer) toggleContainer.classList.toggle('filter-active', activeTypeFilter !== 'all');
 
     if (isGroupView) buildGroupView();
 }
