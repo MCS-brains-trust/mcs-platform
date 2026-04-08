@@ -1144,13 +1144,14 @@ def upload_bank_statement(request):
         for txn in transactions:
             amount = Decimal(str(txn.get("amount", 0)))
             abs_amount = abs(amount)
+            sign = Decimal("-1") if amount < 0 else Decimal("1")
             # Default GST calc: if GST-registered, assume taxable (1/11)
             if is_gst:
-                gst_amt = (abs_amount / Decimal("11")).quantize(Decimal("0.01"))
-                net_amt = (abs_amount - gst_amt).quantize(Decimal("0.01"))
+                gst_amt = (abs_amount / Decimal("11")).quantize(Decimal("0.01")) * sign
+                net_amt = (abs_amount - abs(gst_amt)).quantize(Decimal("0.01")) * sign
             else:
                 gst_amt = Decimal("0.00")
-                net_amt = abs_amount
+                net_amt = amount
             pending_objs.append(PendingTransaction(
                 job=job,
                 date=txn.get("date", ""),
@@ -2362,13 +2363,14 @@ def confirm_import(request):
         for txn in transactions:
             amount = Decimal(str(txn.get('amount', 0)))
             abs_amount = abs(amount)
+            sign = Decimal("-1") if amount < 0 else Decimal("1")
             # Default GST calc: if GST-registered, assume taxable (1/11)
             if is_gst:
-                gst_amt = (abs_amount / Decimal("11")).quantize(Decimal("0.01"))
-                net_amt = (abs_amount - gst_amt).quantize(Decimal("0.01"))
+                gst_amt = (abs_amount / Decimal("11")).quantize(Decimal("0.01")) * sign
+                net_amt = (abs_amount - abs(gst_amt)).quantize(Decimal("0.01")) * sign
             else:
                 gst_amt = Decimal("0.00")
-                net_amt = abs_amount
+                net_amt = amount
             pending_objs.append(PendingTransaction(
                 job=job,
                 date=txn.get('date', ''),

@@ -47,10 +47,11 @@ class Command(BaseCommand):
         updated = 0
         for txn in qs.iterator():
             abs_amount = abs(txn.amount)
+            sign = Decimal("-1") if txn.amount < 0 else Decimal("1")
             cred_pct = txn.creditable_percentage or Decimal("100")
             full_gst = (abs_amount / Decimal("11")).quantize(Decimal("0.01"))
-            gst_amt = (full_gst * cred_pct / Decimal("100")).quantize(Decimal("0.01"))
-            net_amt = (abs_amount - full_gst).quantize(Decimal("0.01"))
+            gst_amt = (full_gst * cred_pct / Decimal("100")).quantize(Decimal("0.01")) * sign
+            net_amt = (abs_amount - full_gst).quantize(Decimal("0.01")) * sign
 
             if apply:
                 txn.gst_amount = gst_amt
