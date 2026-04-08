@@ -206,11 +206,11 @@
 <div class="card border-0 bg-light mb-3" id="reviewToolbar">
     <div class="card-body py-2 px-3">
         <div class="row g-2 align-items-center">
-            <div class="col-md-5">
+            <div class="col-md-3">
                 <div class="input-group input-group-sm">
                     <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
                     <input type="text" class="form-control" id="reviewSearchBox"
-                           placeholder="Search descriptions, amounts (e.g. over $500), dates..."
+                           placeholder="Search descriptions, amounts, dates..."
                            oninput="applyEnhancedSearch()">
                     <button class="btn btn-outline-secondary d-none" type="button" id="searchClearBtn" onclick="clearSearch()">
                         <i class="bi bi-x-lg"></i>
@@ -240,6 +240,13 @@
                 <select id="aiClassFilter" class="form-select form-select-sm" onchange="applyEnhancedSearch()">
                     <option value="">All Account Codes</option>
                 </select>
+            </div>
+            <div class="col-md-2">
+                <div class="btn-group w-100" id="credit-debit-toggle" role="group" aria-label="Credit/Debit filter">
+                    <button type="button" class="btn btn-sm btn-outline-secondary active" id="btn-all-types" onclick="setTypeFilter('all')">All</button>
+                    <button type="button" class="btn btn-sm btn-outline-success" id="btn-credits" onclick="setTypeFilter('credits')"><i class="bi bi-arrow-down-circle"></i> Credits</button>
+                    <button type="button" class="btn btn-sm btn-outline-danger" id="btn-debits" onclick="setTypeFilter('debits')"><i class="bi bi-arrow-up-circle"></i> Debits</button>
+                </div>
             </div>
             <div class="col-md-1 text-end">
                 <span id="filterCount" class="text-muted" style="font-size: 0.78rem;"></span>

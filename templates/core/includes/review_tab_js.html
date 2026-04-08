@@ -226,6 +226,17 @@ function showReviewView(view) {
     }
 }
 
+// ===== Credits / Debits Type Filter =====
+let activeTypeFilter = 'all';
+
+function setTypeFilter(type) {
+    activeTypeFilter = type;
+    document.getElementById('btn-all-types').classList.toggle('active', type === 'all');
+    document.getElementById('btn-credits').classList.toggle('active', type === 'credits');
+    document.getElementById('btn-debits').classList.toggle('active', type === 'debits');
+    applyEnhancedSearch();
+}
+
 // ===== Enhanced Search & Filter =====
 function applyEnhancedSearch() {
     const query = (document.getElementById('reviewSearchBox')?.value || '').toLowerCase().trim();
@@ -278,6 +289,9 @@ function applyEnhancedSearch() {
         if (gstFilter && gst !== gstFilter) show = false;
         // Code filter
         if (codeFilter && code !== codeFilter) show = false;
+        // Credits / Debits type filter
+        if (activeTypeFilter === 'credits' && amount < 0) show = false;
+        if (activeTypeFilter === 'debits' && amount >= 0) show = false;
 
         row.style.display = show ? '' : 'none';
         // Also hide/show associated rows
@@ -292,7 +306,7 @@ function applyEnhancedSearch() {
 
     const filterCount = document.getElementById('filterCount');
     if (filterCount) {
-        if (query || statusFilter || gstFilter || codeFilter) {
+        if (query || statusFilter || gstFilter || codeFilter || activeTypeFilter !== 'all') {
             filterCount.textContent = visibleCount + ' of ' + totalCount;
         } else {
             filterCount.textContent = '';
