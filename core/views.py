@@ -9369,8 +9369,9 @@ def _recalc_bank_contra(fy):
     Internal helper: recalculate bank contra TB line from scratch for all
     confirmed+posted transactions in this financial year.
 
-    Idempotent — sets the TB line to the correct values rather than
-    incrementing, so calling it 1 or 1000 times produces the same result.
+    Fully idempotent — calculates correct totals from scratch and uses
+    update_or_create to atomically SET values (never increment).
+    Calling it 1 or 1000 times produces identical results.
     """
     import logging
     logger = logging.getLogger('core.views')
@@ -9379,14 +9380,15 @@ def _recalc_bank_contra(fy):
 
     confirmed_txns = PendingTransaction.objects.filter(
         job__entity=fy.entity,
+        job__financial_year=fy,
         is_confirmed=True,
         posted_to_tb=True,
-    ).select_related('job')
+    )
 
     if not confirmed_txns.exists():
         return {"status": "ok", "posted": 0}
 
-    sample_txn = confirmed_txns.first()
+    sample_txn = confirmed_txns.select_related('job').first()
     bank_mapping = _get_bank_mapping_for_txn(sample_txn)
     if not bank_mapping:
         logger.warning(
@@ -9398,45 +9400,58 @@ def _recalc_bank_contra(fy):
     bank_name = bank_mapping.tb_account_name
 
     # Calculate correct totals from scratch
-    expected_debit = Decimal('0')
-    expected_credit = Decimal('0')
+    # Receipts (amount > 0) → debit the bank account
+    # Payments (amount < 0) → credit the bank account
+    total_debit = Decimal('0')
+    total_credit = Decimal('0')
     for txn in confirmed_txns:
         gross = abs(txn.amount)
         if txn.amount > 0:
-            expected_debit += gross
+            total_debit += gross
         elif txn.amount < 0:
-            expected_credit += gross
+            total_credit += gross
 
-    # Find or create the bank_statement TB line and SET values (not increment)
-    tb_line, created = _get_or_create_tb_line(
+    # Find the bank_statement TB line (or create it) and SET values from scratch.
+    # Multiple bank_statement lines may exist for the same account code, so we
+    # cannot rely on update_or_create alone.  Filter explicitly and consolidate.
+    bs_lines = TrialBalanceLine.objects.filter(
         financial_year=fy,
         account_code=bank_code,
-        defaults={
-            "account_name": bank_name,
-            "debit": expected_debit,
-            "credit": expected_credit,
-            "closing_balance": expected_debit - expected_credit,
-            "tax_type": "",
-            "source": "bank_statement",
-        },
+        source='bank_statement',
     )
-    if not created:
-        tb_line.debit = expected_debit
-        tb_line.credit = expected_credit
-        tb_line.closing_balance = expected_debit - expected_credit
-        if not tb_line.source:
-            tb_line.source = 'bank_statement'
-        tb_line.save()
+    if bs_lines.count() > 1:
+        # Consolidate: keep the first, delete the rest
+        keep = bs_lines.first()
+        bs_lines.exclude(pk=keep.pk).delete()
+        tb_line = keep
+        created = False
+    elif bs_lines.count() == 1:
+        tb_line = bs_lines.first()
+        created = False
+    else:
+        tb_line = TrialBalanceLine(
+            financial_year=fy,
+            account_code=bank_code,
+            source='bank_statement',
+        )
+        created = True
+
+    tb_line.account_name = bank_name
+    tb_line.debit = total_debit
+    tb_line.credit = total_credit
+    tb_line.closing_balance = total_debit - total_credit
+    tb_line.tax_type = ""
+    tb_line.save()
 
     logger.info(
         f"Recalculated bank contra for entity {fy.entity.pk} FY {fy.pk}: "
-        f"SET Dr={expected_debit}, Cr={expected_credit} on {bank_code} ({bank_name})"
+        f"SET Dr={total_debit}, Cr={total_credit} on {bank_code} ({bank_name})"
     )
 
     return {
         "status": "ok",
-        "posted_debit": str(expected_debit),
-        "posted_credit": str(expected_credit),
+        "posted_debit": str(total_debit),
+        "posted_credit": str(total_credit),
         "bank_code": bank_code,
         "bank_name": bank_name,
     }
