@@ -88,6 +88,9 @@
             <div class="col">
                 <small class="text-muted d-block">Balance Status</small>
                 <span id="summaryBalanceStatus" class="badge bg-secondary">—</span>
+                <i class="bi bi-info-circle text-muted d-none" id="mismatchInfoIcon" style="cursor:help; font-size:0.85rem;"
+                   data-bs-toggle="tooltip" data-bs-placement="top"
+                   title="A balance mismatch is expected when this statement period overlaps with previously imported statements. The platform only imports new transactions — transactions already in the system are excluded to prevent duplicates. If the opening balance matches your trial balance, you can safely proceed with the import."></i>
             </div>
             <div class="col">
                 <small class="text-muted d-block">Order</small>
@@ -517,12 +520,15 @@
         document.getElementById('importCount').textContent = totalTxns;
 
         const statusEl = document.getElementById('summaryBalanceStatus');
+        const infoIcon = document.getElementById('mismatchInfoIcon');
         if (allBalanced) {
             statusEl.className = 'badge bg-success';
             statusEl.innerHTML = '<i class="bi bi-check-circle"></i> All Balanced';
+            if (infoIcon) infoIcon.classList.add('d-none');
         } else {
             statusEl.className = 'badge bg-warning text-dark';
             statusEl.innerHTML = '<i class="bi bi-exclamation-triangle"></i> Mismatch';
+            if (infoIcon) infoIcon.classList.remove('d-none');
         }
 
         // Enable/disable import button
@@ -632,6 +638,11 @@
     // Start
     // =====================================================================
     init();
+
+    // Initialise Bootstrap tooltips
+    document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(function(el) {
+        new bootstrap.Tooltip(el);
+    });
 
 })();
 </script>
