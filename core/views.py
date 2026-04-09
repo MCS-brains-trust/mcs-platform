@@ -9364,69 +9364,37 @@ def review_bank_account_mapping(request, pk):
 # ---------------------------------------------------------------------------
 # Recalculate Bank Contra Entries
 # ---------------------------------------------------------------------------
-@login_required
-@require_POST
-def recalculate_bank_contra_entries(request, pk):
-    """Recalculate and post missing bank contra entries for all confirmed
-    transactions in this financial year.
+def _recalc_bank_contra(fy):
+    """
+    Internal helper: recalculate and post missing bank contra entries for
+    all confirmed transactions in this financial year.
 
-    This fixes the scenario where transactions were approved before a
-    BankAccountMapping was configured (or when the mapping lookup failed),
-    leaving the TB out of balance because the bank-side of the double entry
-    was silently skipped.
-
-    The function:
-      1. Finds the current BankAccountMapping for the entity.
-      2. Iterates every confirmed PendingTransaction for the entity.
-      3. Calculates the expected gross contra amount per transaction.
-      4. Compares the expected total with the actual TB line for the
-         mapped bank account and posts the difference.
-
-    This is idempotent: running it multiple times will not double-post.
+    Idempotent — safe to call multiple times.  Returns a dict with results.
     """
     import logging
     logger = logging.getLogger('core.views')
 
-    fy = get_financial_year_for_user(request, pk)
-    if not request.user.can_do_accounting:
-        return JsonResponse({"status": "error", "message": "Permission denied."}, status=403)
-
     from review.models import PendingTransaction
 
-    # Gather all confirmed transactions for this entity
     confirmed_txns = PendingTransaction.objects.filter(
         job__entity=fy.entity,
         is_confirmed=True,
     ).select_related('job')
 
     if not confirmed_txns.exists():
-        return JsonResponse({
-            "status": "ok",
-            "message": "No confirmed transactions found.",
-            "posted": 0,
-        })
+        return {"status": "ok", "posted": 0}
 
-    # Resolve the bank mapping (same logic used during posting)
-    # We try from the first transaction; all txns for the entity should
-    # resolve to the same mapping.
     sample_txn = confirmed_txns.first()
     bank_mapping = _get_bank_mapping_for_txn(sample_txn)
-
     if not bank_mapping:
-        return JsonResponse({
-            "status": "error",
-            "message": (
-                "No bank account mapping found for this entity. "
-                "Please configure a bank account mapping first."
-            ),
-        }, status=400)
+        logger.warning(
+            f"_recalc_bank_contra: No bank mapping for entity {fy.entity.pk} FY {fy.pk}"
+        )
+        return {"status": "no_mapping", "posted": 0}
 
     bank_code = bank_mapping.tb_account_code
     bank_name = bank_mapping.tb_account_name
 
-    # Calculate the expected total contra: sum of gross amounts
-    # Receipts (amount > 0) → debit the bank account
-    # Payments (amount < 0) → credit the bank account
     expected_debit = Decimal('0')
     expected_credit = Decimal('0')
     for txn in confirmed_txns:
@@ -9436,7 +9404,6 @@ def recalculate_bank_contra_entries(request, pk):
         elif txn.amount < 0:
             expected_credit += gross
 
-    # Get the current bank TB line (non-adjustment, bank_statement source)
     bank_tb_lines = TrialBalanceLine.objects.filter(
         financial_year=fy,
         account_code=bank_code,
@@ -9448,20 +9415,15 @@ def recalculate_bank_contra_entries(request, pk):
         current_debit += bl.debit or Decimal('0')
         current_credit += bl.credit or Decimal('0')
 
-    # Calculate the shortfall
     missing_debit = expected_debit - current_debit
     missing_credit = expected_credit - current_credit
 
     if missing_debit == 0 and missing_credit == 0:
-        return JsonResponse({
-            "status": "ok",
-            "message": "Bank contra entries are already balanced. No adjustment needed.",
-            "posted": 0,
-            "bank_code": bank_code,
-            "bank_name": bank_name,
-        })
+        return {
+            "status": "ok", "posted": 0,
+            "bank_code": bank_code, "bank_name": bank_name,
+        }
 
-    # Post the missing amounts
     tb_line, created = _get_or_create_tb_line(
         financial_year=fy,
         account_code=bank_code,
@@ -9485,23 +9447,66 @@ def recalculate_bank_contra_entries(request, pk):
             tb_line.source = 'bank_statement'
         tb_line.save()
 
-    net_posted = missing_debit - missing_credit
     logger.info(
         f"Recalculated bank contra for entity {fy.entity.pk} FY {fy.pk}: "
         f"posted Dr={missing_debit}, Cr={missing_credit} to {bank_code} ({bank_name})"
     )
 
-    return JsonResponse({
+    return {
         "status": "ok",
-        "message": (
-            f"Bank contra entries recalculated. "
-            f"Posted ${missing_debit:,.2f} Dr / ${missing_credit:,.2f} Cr "
-            f"to {bank_code} — {bank_name}."
-        ),
         "posted_debit": str(missing_debit),
         "posted_credit": str(missing_credit),
         "bank_code": bank_code,
         "bank_name": bank_name,
+    }
+
+
+@login_required
+@require_POST
+def recalculate_bank_contra_entries(request, pk):
+    """HTTP endpoint for Recalc Contra button — delegates to _recalc_bank_contra."""
+    fy = get_financial_year_for_user(request, pk)
+    if not request.user.can_do_accounting:
+        return JsonResponse({"status": "error", "message": "Permission denied."}, status=403)
+
+    result = _recalc_bank_contra(fy)
+
+    if result.get("status") == "no_mapping":
+        return JsonResponse({
+            "status": "error",
+            "message": (
+                "No bank account mapping found for this entity. "
+                "Please configure a bank account mapping first."
+            ),
+        }, status=400)
+
+    if result.get("posted", 0) == 0 and "posted_debit" not in result:
+        if not result.get("bank_code"):
+            return JsonResponse({
+                "status": "ok",
+                "message": "No confirmed transactions found.",
+                "posted": 0,
+            })
+        return JsonResponse({
+            "status": "ok",
+            "message": "Bank contra entries are already balanced. No adjustment needed.",
+            "posted": 0,
+            "bank_code": result["bank_code"],
+            "bank_name": result["bank_name"],
+        })
+
+    return JsonResponse({
+        "status": "ok",
+        "message": (
+            f"Bank contra entries recalculated. "
+            f"Posted ${Decimal(result['posted_debit']):,.2f} Dr / "
+            f"${Decimal(result['posted_credit']):,.2f} Cr "
+            f"to {result['bank_code']} — {result['bank_name']}."
+        ),
+        "posted_debit": result["posted_debit"],
+        "posted_credit": result["posted_credit"],
+        "bank_code": result["bank_code"],
+        "bank_name": result["bank_name"],
     })
 
 

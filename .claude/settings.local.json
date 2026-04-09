@@ -71,7 +71,8 @@
       "Bash(grep -r \"trustee_declaration\\\\|trustee declaration\" C:/Users/Elio/mcs-platform --include=*.py --include=*.html)",
       "Bash(grep:*)",
       "Bash(liabilities\", \"net assets\", \"total equity\" from _GRAND_TOTAL_LABELS:*)",
-      "Bash(git rebase:*)"
+      "Bash(git rebase:*)",
+      "Bash(git fetch:*)"
     ]
   }
 }

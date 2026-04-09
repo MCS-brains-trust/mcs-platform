@@ -622,6 +622,11 @@ def confirm_transaction(request, pk):
     # Post to trial balance (expense/income + GST + bank contra)
     _post_confirmed_txn_to_tb(txn)
 
+    # Recalc bank contra to ensure TB stays balanced
+    if txn.job and txn.job.financial_year:
+        from core.views import _recalc_bank_contra
+        _recalc_bank_contra(txn.job.financial_year)
+
     # Update job confirmed count
     job = txn.job
     job.confirmed_count = job.transactions.filter(is_confirmed=True).count()
@@ -843,6 +848,11 @@ def accept_all_suggestions(request, pk):
         # Post to trial balance (expense/income + GST + bank contra)
         _post_confirmed_txn_to_tb(txn)
 
+    # Recalc bank contra to ensure TB stays balanced
+    if job.financial_year:
+        from core.views import _recalc_bank_contra
+        _recalc_bank_contra(job.financial_year)
+
     job.confirmed_count = job.transactions.filter(is_confirmed=True).count()
     if job.status == "awaiting_review":
         job.status = "in_progress"
@@ -934,6 +944,11 @@ def bulk_approve_group(request, pk):
 
         # Post to trial balance (expense/income + GST + bank contra)
         _post_confirmed_txn_to_tb(txn)
+
+    # Recalc bank contra to ensure TB stays balanced
+    if job.financial_year:
+        from core.views import _recalc_bank_contra
+        _recalc_bank_contra(job.financial_year)
 
     job.confirmed_count = job.transactions.filter(is_confirmed=True).count()
     if job.status == "awaiting_review":
@@ -1833,6 +1848,11 @@ def classify_batch(request, pk):
             "is_confirmed": txn.is_confirmed,
             "gst_treatment": txn.gst_treatment,
         })
+
+    # Recalc bank contra if any auto-confirmed transactions were posted
+    if any(r.get("is_confirmed") for r in classified_results) and job.financial_year:
+        from core.views import _recalc_bank_contra
+        _recalc_bank_contra(job.financial_year)
 
     # Update job counts
     job.auto_coded_count = job.transactions.exclude(
