@@ -101,7 +101,7 @@
     </div>
 </div>
 
-<!-- Bank Statement Transactions -->
+<!-- Bank Statement Transactions (coded to this account via confirmed_code) -->
 {% if bank_txns %}
 <div class="card mb-4">
     <div class="card-header py-2 d-flex justify-content-between align-items-center">
@@ -195,6 +195,85 @@
                         </td>
                         <td></td>
                         {% if is_asset_account %}<td></td><td></td>{% endif %}
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<!-- Bank Account Transactions (for balance sheet bank accounts — shows all transactions flowing through) -->
+{% if is_bank_account and bank_acct_txns %}
+<div class="card mb-4">
+    <div class="card-header py-2 d-flex justify-content-between align-items-center">
+        <h6 class="mb-0"><i class="bi bi-bank2 me-1"></i> Bank Account Transactions <span class="badge bg-warning text-dark ms-2">{{ bank_acct_txn_count }}</span></h6>
+        <small class="text-muted">All transactions flowing through this bank account</small>
+    </div>
+    <div class="card-body p-0">
+        <div class="table-responsive">
+            <table class="table table-sm table-hover mb-0" style="font-size: 0.85rem;">
+                <thead class="table-light">
+                    <tr class="border-bottom border-2 border-dark">
+                        <th style="width: 40px;" class="text-center">#</th>
+                        <th style="width: 100px;">Date</th>
+                        <th>Description</th>
+                        <th class="text-center" style="width: 120px;">Coded To</th>
+                        <th class="text-center" style="width: 100px;">Tax Type</th>
+                        <th class="text-end" style="width: 110px;">GST</th>
+                        <th class="text-end" style="width: 110px;">Net</th>
+                        <th class="text-end" style="width: 120px;">Amount (Gross)</th>
+                        <th class="text-center" style="width: 100px;">Source</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for txn in bank_acct_txns %}
+                    <tr>
+                        <td class="text-center text-muted">{{ forloop.counter }}</td>
+                        <td class="text-muted">{{ txn.date }}</td>
+                        <td>{{ txn.description }}</td>
+                        <td class="text-center"><code class="text-muted">{{ txn.confirmed_code }}</code> {{ txn.confirmed_name|truncatechars:20 }}</td>
+                        <td class="text-center">
+                            {% if txn.confirmed_tax_type %}
+                            <span class="badge bg-light text-dark" style="font-size: 0.7rem;">{{ txn.confirmed_tax_type }}</span>
+                            {% else %}
+                            <span class="text-muted">&mdash;</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            {% if txn.gst_amount and txn.gst_amount != 0 %}
+                            {{ txn.gst_amount|floatformat:2|intcomma }}
+                            {% endif %}
+                        </td>
+                        <td class="text-end">
+                            {% if txn.net_amount and txn.net_amount != 0 %}
+                            {{ txn.net_amount|floatformat:2|intcomma }}
+                            {% endif %}
+                        </td>
+                        <td class="text-end {% if txn.amount < 0 %}text-danger{% else %}text-success{% endif %}">
+                            {% if txn.amount < 0 %}-{% endif %}${{ txn.amount|floatformat:2|intcomma }}
+                        </td>
+                        <td class="text-center">
+                            <span class="badge bg-warning text-dark" style="font-size: 0.7rem;">
+                                <i class="bi bi-bank me-1"></i>{{ txn.job.file_name|truncatechars:20 }}
+                            </span>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+                <tfoot>
+                    <tr class="border-top border-2 border-dark fw-bold" style="background-color: #fff8e1;">
+                        <td></td>
+                        <td></td>
+                        <td>Total ({{ bank_acct_txn_count }} transaction{{ bank_acct_txn_count|pluralize }})</td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td class="text-end {% if bank_acct_txn_total < 0 %}text-danger{% else %}text-success{% endif %}">
+                            {% if bank_acct_txn_total < 0 %}-{% endif %}${{ bank_acct_txn_total|floatformat:2|intcomma }}
+                        </td>
+                        <td></td>
                     </tr>
                 </tfoot>
             </table>

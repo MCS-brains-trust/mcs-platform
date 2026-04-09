@@ -4426,13 +4426,48 @@ def account_code_breakdown(request, pk, account_code):
     from review.models import PendingTransaction
     bank_txns = PendingTransaction.objects.filter(
         job__entity=fy.entity,
+        job__financial_year=fy,
         confirmed_code=account_code,
         is_confirmed=True,
-    ).order_by('date', 'description')
+    ).select_related('job').order_by('date', 'description')
 
     bank_txn_total = Decimal('0')
     for bt in bank_txns:
         bank_txn_total += bt.amount or Decimal('0')
+
+    # For bank/balance-sheet accounts, transactions flow through via the
+    # contra entry system — confirmed_code points to the expense/income
+    # account, not the bank account.  Detect this via BankAccountMapping
+    # and query all confirmed+posted transactions for matching jobs.
+    is_bank_account = False
+    bank_acct_txns = PendingTransaction.objects.none()
+    bank_acct_txn_total = Decimal('0')
+    bank_mappings = BankAccountMapping.objects.filter(
+        entity=fy.entity, tb_account_code=account_code,
+    )
+    if bank_mappings.exists():
+        is_bank_account = True
+        from django.db.models import Q
+        mapping_filter = Q()
+        for bm in bank_mappings:
+            q = Q()
+            if bm.bsb and bm.account_number:
+                q = Q(job__bsb=bm.bsb, job__account_number=bm.account_number)
+            elif bm.bank_account_name:
+                q = Q(job__bank_account_name=bm.bank_account_name)
+            else:
+                continue
+            mapping_filter |= q
+        if mapping_filter:
+            bank_acct_txns = PendingTransaction.objects.filter(
+                mapping_filter,
+                job__entity=fy.entity,
+                job__financial_year=fy,
+                is_confirmed=True,
+                posted_to_tb=True,
+            ).select_related('job').order_by('date', 'description')
+            for bt in bank_acct_txns:
+                bank_acct_txn_total += bt.amount or Decimal('0')
 
     # For the GST payable control account (3380), the individual bank
     # transactions are coded to expense/income accounts — not to 3380
@@ -4510,6 +4545,10 @@ def account_code_breakdown(request, pk, account_code):
         'journal_total_dr': journal_total_dr,
         'journal_total_cr': journal_total_cr,
         'is_asset_account': is_asset_account,
+        'is_bank_account': is_bank_account,
+        'bank_acct_txns': bank_acct_txns,
+        'bank_acct_txn_count': bank_acct_txns.count() if is_bank_account else 0,
+        'bank_acct_txn_total': bank_acct_txn_total,
     })
 
 
