@@ -4456,7 +4456,8 @@ def account_code_breakdown(request, pk, account_code):
             elif bm.bank_account_name:
                 q = Q(job__bank_account_name=bm.bank_account_name)
             else:
-                continue
+                # catch-all mapping (no bsb/account_number/name) — match all jobs for entity
+                q = Q(job__entity=fy.entity)
             mapping_filter |= q
         if mapping_filter:
             bank_acct_txns = PendingTransaction.objects.filter(
