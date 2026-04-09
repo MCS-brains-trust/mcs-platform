@@ -4428,7 +4428,38 @@ def account_code_breakdown(request, pk, account_code):
         job__entity=fy.entity,
         confirmed_code=account_code,
         is_confirmed=True,
-    ).order_by('date', 'description')
+    ).select_related('job').order_by('date', 'description')
+
+    # For bank accounts (balance sheet), transactions are posted via the
+    # contra entry system — confirmed_code points to the expense/income
+    # account, not the bank account.  So also query all confirmed
+    # transactions from jobs whose bank mapping points to this account.
+    is_bank_account = False
+    bank_mappings = BankAccountMapping.objects.filter(
+        entity=fy.entity, tb_account_code=account_code,
+    )
+    if bank_mappings.exists():
+        is_bank_account = True
+        from django.db.models import Q
+        mapping_filter = Q()
+        for bm in bank_mappings:
+            q = Q(job__entity=fy.entity)
+            if bm.bsb and bm.account_number:
+                q &= Q(job__bsb=bm.bsb, job__account_number=bm.account_number)
+            elif bm.bank_account_name:
+                q &= Q(job__bank_account_name=bm.bank_account_name)
+            else:
+                continue
+            mapping_filter |= q
+        if mapping_filter:
+            contra_txns = PendingTransaction.objects.filter(
+                mapping_filter,
+                is_confirmed=True,
+                posted_to_tb=True,
+            ).select_related('job').order_by('date', 'description')
+            # Use contra txns for bank accounts (these are the actual
+            # transactions that moved money through this bank account)
+            bank_txns = contra_txns
 
     bank_txn_total = Decimal('0')
     for bt in bank_txns:
@@ -4510,6 +4541,7 @@ def account_code_breakdown(request, pk, account_code):
         'journal_total_dr': journal_total_dr,
         'journal_total_cr': journal_total_cr,
         'is_asset_account': is_asset_account,
+        'is_bank_account': is_bank_account,
     })
 
 
