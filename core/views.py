@@ -9366,10 +9366,11 @@ def review_bank_account_mapping(request, pk):
 # ---------------------------------------------------------------------------
 def _recalc_bank_contra(fy):
     """
-    Internal helper: recalculate and post missing bank contra entries for
-    all confirmed transactions in this financial year.
+    Internal helper: recalculate bank contra TB line from scratch for all
+    confirmed+posted transactions in this financial year.
 
-    Idempotent — safe to call multiple times.  Returns a dict with results.
+    Idempotent — sets the TB line to the correct values rather than
+    incrementing, so calling it 1 or 1000 times produces the same result.
     """
     import logging
     logger = logging.getLogger('core.views')
@@ -9379,6 +9380,7 @@ def _recalc_bank_contra(fy):
     confirmed_txns = PendingTransaction.objects.filter(
         job__entity=fy.entity,
         is_confirmed=True,
+        posted_to_tb=True,
     ).select_related('job')
 
     if not confirmed_txns.exists():
@@ -9395,6 +9397,7 @@ def _recalc_bank_contra(fy):
     bank_code = bank_mapping.tb_account_code
     bank_name = bank_mapping.tb_account_name
 
+    # Calculate correct totals from scratch
     expected_debit = Decimal('0')
     expected_credit = Decimal('0')
     for txn in confirmed_txns:
@@ -9404,58 +9407,36 @@ def _recalc_bank_contra(fy):
         elif txn.amount < 0:
             expected_credit += gross
 
-    bank_tb_lines = TrialBalanceLine.objects.filter(
-        financial_year=fy,
-        account_code=bank_code,
-        is_adjustment=False,
-    )
-    current_debit = Decimal('0')
-    current_credit = Decimal('0')
-    for bl in bank_tb_lines:
-        current_debit += bl.debit or Decimal('0')
-        current_credit += bl.credit or Decimal('0')
-
-    missing_debit = expected_debit - current_debit
-    missing_credit = expected_credit - current_credit
-
-    if missing_debit == 0 and missing_credit == 0:
-        return {
-            "status": "ok", "posted": 0,
-            "bank_code": bank_code, "bank_name": bank_name,
-        }
-
+    # Find or create the bank_statement TB line and SET values (not increment)
     tb_line, created = _get_or_create_tb_line(
         financial_year=fy,
         account_code=bank_code,
         defaults={
             "account_name": bank_name,
-            "debit": max(Decimal('0'), missing_debit),
-            "credit": max(Decimal('0'), missing_credit),
-            "closing_balance": missing_debit - missing_credit,
+            "debit": expected_debit,
+            "credit": expected_credit,
+            "closing_balance": expected_debit - expected_credit,
             "tax_type": "",
             "source": "bank_statement",
         },
     )
     if not created:
-        if missing_debit > 0:
-            tb_line.debit += missing_debit
-            tb_line.closing_balance += missing_debit
-        if missing_credit > 0:
-            tb_line.credit += missing_credit
-            tb_line.closing_balance -= missing_credit
+        tb_line.debit = expected_debit
+        tb_line.credit = expected_credit
+        tb_line.closing_balance = expected_debit - expected_credit
         if not tb_line.source:
             tb_line.source = 'bank_statement'
         tb_line.save()
 
     logger.info(
         f"Recalculated bank contra for entity {fy.entity.pk} FY {fy.pk}: "
-        f"posted Dr={missing_debit}, Cr={missing_credit} to {bank_code} ({bank_name})"
+        f"SET Dr={expected_debit}, Cr={expected_credit} on {bank_code} ({bank_name})"
     )
 
     return {
         "status": "ok",
-        "posted_debit": str(missing_debit),
-        "posted_credit": str(missing_credit),
+        "posted_debit": str(expected_debit),
+        "posted_credit": str(expected_credit),
         "bank_code": bank_code,
         "bank_name": bank_name,
     }
