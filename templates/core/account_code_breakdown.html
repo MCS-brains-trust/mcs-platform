@@ -106,7 +106,7 @@
 <div class="card mb-4">
     <div class="card-header py-2 d-flex justify-content-between align-items-center">
         <h6 class="mb-0"><i class="bi bi-bank me-1"></i> Bank Statement Transactions <span class="badge bg-warning text-dark ms-2">{{ bank_txn_count }}</span></h6>
-        <small class="text-muted">{% if is_bank_account %}All transactions flowing through this bank account{% else %}Individual transactions coded to this account{% endif %}</small>
+        <small class="text-muted">Individual transactions coded to this account</small>
     </div>
     <div class="card-body p-0">
         <div class="table-responsive">
@@ -116,9 +116,6 @@
                         <th style="width: 40px;" class="text-center">#</th>
                         <th style="width: 100px;">Date</th>
                         <th>Description</th>
-                        {% if is_bank_account %}
-                        <th class="text-center" style="width: 90px;">Coded To</th>
-                        {% endif %}
                         <th class="text-center" style="width: 100px;">Tax Type</th>
                         <th class="text-end" style="width: 110px;">GST</th>
                         <th class="text-end" style="width: 110px;">Net</th>
@@ -136,9 +133,6 @@
                         <td class="text-center text-muted">{{ forloop.counter }}</td>
                         <td class="text-muted">{{ txn.date }}</td>
                         <td>{{ txn.description }}</td>
-                        {% if is_bank_account %}
-                        <td class="text-center"><code class="text-muted">{{ txn.confirmed_code }}</code></td>
-                        {% endif %}
                         <td class="text-center">
                             {% if txn.confirmed_tax_type %}
                             <span class="badge bg-light text-dark" style="font-size: 0.7rem;">{{ txn.confirmed_tax_type }}</span>
@@ -193,7 +187,6 @@
                         <td></td>
                         <td></td>
                         <td>Total ({{ bank_txn_count }} transaction{{ bank_txn_count|pluralize }})</td>
-                        {% if is_bank_account %}<td></td>{% endif %}
                         <td></td>
                         <td></td>
                         <td></td>
