@@ -578,6 +578,40 @@ def handle_officer_saved(sender, instance, created, **kwargs):
             )
 
 
+# ============================================================================
+# TRUST CHART OF ACCOUNTS AUTO-SEED
+# ============================================================================
+
+@receiver(post_save, sender="core.Entity")
+def handle_trust_entity_created(sender, instance, created, **kwargs):
+    """
+    When a new trust entity is created, seed its EntityChartOfAccount from
+    the global ChartOfAccount template (entity_type='trust') by calling
+    EntityChartOfAccount.seed_from_template(instance).
+
+    Fires only on creation, only for trust entities. Any failure is logged
+    and swallowed — a COA seed error must never block entity creation.
+    """
+    if not created:
+        return
+
+    from core.models import Entity, EntityChartOfAccount
+
+    if instance.entity_type != Entity.EntityType.TRUST:
+        return
+
+    try:
+        result = EntityChartOfAccount.seed_from_template(instance)
+        logger.info(
+            "Trust COA seeded for entity %s: %s accounts created",
+            instance.id, result,
+        )
+    except Exception:
+        logger.exception(
+            "Failed to seed trust COA for entity %s", instance.id,
+        )
+
+
 @receiver(post_save, sender="core.EvaMessage")
 def handle_eva_message_created(sender, instance, created, **kwargs):
     """Log Eva chat messages to the activity trail."""
