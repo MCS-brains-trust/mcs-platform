@@ -1129,6 +1129,72 @@ class EntityChartOfAccount(models.Model):
 
 
 # ---------------------------------------------------------------------------
+# Account Range Alias (global reference taxonomy for FS preparation)
+# ---------------------------------------------------------------------------
+class AccountRangeAlias(models.Model):
+    """
+    Global reference taxonomy of account code range aliases used when
+    preparing financial statements. Each row defines an alias (e.g.
+    "RevRental") that covers a contiguous range of real account codes
+    (e.g. 0700-0715) within a specific entity type, together with the
+    natural debit/credit sign of that range.
+
+    This is HandiLedger-style reference data. It is global (scoped only
+    by entity_type), not per-entity, and shared across all entities of
+    that type. It is independent of ChartOfAccount / EntityChartOfAccount,
+    which store the per-entity working chart of accounts.
+    """
+
+    class DcSign(models.TextChoices):
+        DEBIT = "D", "Debit"
+        CREDIT = "C", "Credit"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entity_type = models.CharField(
+        max_length=20,
+        choices=Entity.EntityType.choices,
+        help_text="Entity type this alias applies to",
+    )
+    alias = models.CharField(
+        max_length=50,
+        help_text='Alias key, e.g. "RevAll", "ExpSalaryWages"',
+    )
+    description = models.CharField(
+        max_length=255,
+        help_text='Human-readable description, e.g. "Revenue"',
+    )
+    dc_sign = models.CharField(
+        max_length=1,
+        choices=DcSign.choices,
+        help_text="Natural sign of the range — Debit or Credit",
+    )
+    range_from = models.CharField(
+        max_length=10,
+        help_text='First account code in the range, e.g. "0001"',
+    )
+    range_to = models.CharField(
+        max_length=10,
+        help_text='Last account code in the range (inclusive)',
+    )
+    section = models.CharField(
+        max_length=50,
+        blank=True,
+        default="",
+        help_text='Grouping label, e.g. "Revenue", "Current Assets"',
+    )
+
+    class Meta:
+        ordering = ["entity_type", "range_from", "alias"]
+        unique_together = ["entity_type", "alias"]
+        indexes = [
+            models.Index(fields=["entity_type", "range_from", "range_to"]),
+        ]
+
+    def __str__(self):
+        return f"{self.alias} [{self.range_from}-{self.range_to}] ({self.get_dc_sign_display()})"
+
+
+# ---------------------------------------------------------------------------
 # Client Account Mapping (per-entity mapping of client codes to standard codes)
 # ---------------------------------------------------------------------------
 class ClientAccountMapping(models.Model):
