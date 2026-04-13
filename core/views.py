@@ -6244,6 +6244,7 @@ def entity_officer_create(request, entity_pk):
         if form.is_valid():
             officer = form.save(commit=False)
             officer.entity = entity
+            officer.roles = form.cleaned_data["roles_multi"]
             officer._updated_by = request.user
             officer.save()
             _log_action(request, "user_change",
@@ -6278,6 +6279,7 @@ def entity_officer_edit(request, pk):
         form = EntityOfficerForm(request.POST, instance=officer, entity_type=entity.entity_type)
         if form.is_valid():
             obj = form.save(commit=False)
+            obj.roles = form.cleaned_data["roles_multi"]
             obj._updated_by = request.user
             obj.save()
             _log_action(request, "user_change",

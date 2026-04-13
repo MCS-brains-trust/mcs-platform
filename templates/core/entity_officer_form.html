@@ -19,6 +19,7 @@
     <div class="card-body">
         <form method="post">
             {% csrf_token %}
+            {{ form.role }}
 
             {% if form.errors %}
             <div class="alert alert-danger">
@@ -34,8 +35,18 @@
                     <small class="text-muted">As it should appear on the financial statements</small>
                 </div>
                 <div class="col-md-3 mb-3">
-                    <label for="{{ form.role.id_for_label }}" class="form-label">{% if entity.entity_type == 'sole_trader' %}Capacity{% else %}Role{% endif %} *</label>
-                    {{ form.role }}
+                    <label class="form-label">{% if entity.entity_type == 'sole_trader' %}Capacity{% else %}Roles{% endif %} *</label>
+                    <div style="display: inline-flex; flex-wrap: wrap; gap: 1rem; padding-top: 0.25rem;">
+                        {% for checkbox in form.roles_multi %}
+                        <div class="form-check">
+                            {{ checkbox.tag }}
+                            <label class="form-check-label" for="{{ checkbox.id_for_label }}">{{ checkbox.choice_label }}</label>
+                        </div>
+                        {% endfor %}
+                    </div>
+                    {% if form.roles_multi.errors %}
+                    <div class="invalid-feedback d-block">{{ form.roles_multi.errors }}</div>
+                    {% endif %}
                 </div>
                 <div class="col-md-3 mb-3">
                     <label for="{{ form.title.id_for_label }}" class="form-label">Title</label>
@@ -111,14 +122,16 @@
 {% if entity.entity_type == 'trust' %}
 <script>
 (function() {
-    var roleSelect = document.getElementById('{{ form.role.id_for_label }}');
     var distRow = document.getElementById('distribution-pct-row');
-    if (!roleSelect || !distRow) return;
+    if (!distRow) return;
+    var checkboxes = document.querySelectorAll('input[name="roles_multi"]');
+    var distRoles = ['unit_holder', 'beneficiary'];
     function toggle() {
-        var val = roleSelect.value;
-        distRow.style.display = (val === 'unit_holder' || val === 'beneficiary') ? '' : 'none';
+        var checked = Array.from(checkboxes).filter(function(cb) { return cb.checked; });
+        var show = checked.some(function(cb) { return distRoles.indexOf(cb.value) !== -1; });
+        distRow.style.display = show ? '' : 'none';
     }
-    roleSelect.addEventListener('change', toggle);
+    checkboxes.forEach(function(cb) { cb.addEventListener('change', toggle); });
     toggle();
 })();
 </script>

@@ -286,6 +286,13 @@ JournalLineFormSet = forms.inlineformset_factory(
 # Entity Officer Forms
 # ---------------------------------------------------------------------------
 class EntityOfficerForm(forms.ModelForm):
+    roles_multi = forms.MultipleChoiceField(
+        choices=[],
+        widget=forms.CheckboxSelectMultiple,
+        label="Roles",
+        required=True,
+    )
+
     class Meta:
         model = EntityOfficer
         fields = (
@@ -306,35 +313,47 @@ class EntityOfficerForm(forms.ModelForm):
             else:
                 field.widget.attrs["class"] = "form-control"
 
-        # Filter role choices based on entity type
+        # Build entity-type-filtered choices for roles_multi
+        role_map = {
+            "company": [
+                EntityOfficer.OfficerRole.DIRECTOR,
+                EntityOfficer.OfficerRole.SECRETARY,
+                EntityOfficer.OfficerRole.PUBLIC_OFFICER,
+            ],
+            "trust": [
+                EntityOfficer.OfficerRole.TRUSTEE,
+                EntityOfficer.OfficerRole.BENEFICIARY,
+                EntityOfficer.OfficerRole.UNIT_HOLDER,
+                EntityOfficer.OfficerRole.DIRECTOR,  # directors of trustee company
+            ],
+            "partnership": [
+                EntityOfficer.OfficerRole.PARTNER,
+            ],
+            "sole_trader": [
+                EntityOfficer.OfficerRole.SOLE_TRADER,
+            ],
+            "smsf": [
+                EntityOfficer.OfficerRole.TRUSTEE,
+                EntityOfficer.OfficerRole.DIRECTOR,  # corporate trustee directors
+            ],
+        }
         if entity_type:
-            role_map = {
-                "company": [
-                    EntityOfficer.OfficerRole.DIRECTOR,
-                    EntityOfficer.OfficerRole.SECRETARY,
-                    EntityOfficer.OfficerRole.PUBLIC_OFFICER,
-                ],
-                "trust": [
-                    EntityOfficer.OfficerRole.TRUSTEE,
-                    EntityOfficer.OfficerRole.BENEFICIARY,
-                    EntityOfficer.OfficerRole.UNIT_HOLDER,
-                    EntityOfficer.OfficerRole.DIRECTOR,  # directors of trustee company
-                ],
-                "partnership": [
-                    EntityOfficer.OfficerRole.PARTNER,
-                ],
-                "sole_trader": [
-                    EntityOfficer.OfficerRole.SOLE_TRADER,
-                ],
-                "smsf": [
-                    EntityOfficer.OfficerRole.TRUSTEE,
-                    EntityOfficer.OfficerRole.DIRECTOR,  # corporate trustee directors
-                ],
-            }
             allowed_roles = role_map.get(entity_type, EntityOfficer.OfficerRole.choices)
-            self.fields["role"].choices = [
-                (r.value, r.label) for r in allowed_roles
-            ]
+            choices = [(r.value, r.label) for r in allowed_roles]
+        else:
+            choices = EntityOfficer.OfficerRole.choices
+        self.fields["roles_multi"].choices = choices
+
+        # Hide legacy role field — it is set programmatically in clean()
+        self.fields["role"].widget = forms.HiddenInput()
+        self.fields["role"].required = False
+
+        # Pre-populate roles_multi from instance
+        if self.instance and self.instance.pk:
+            if self.instance.roles:
+                self.initial["roles_multi"] = self.instance.roles
+            elif self.instance.role:
+                self.initial["roles_multi"] = [self.instance.role]
 
         # Show/hide partnership and trust specific fields
         if entity_type != "partnership":
@@ -346,12 +365,18 @@ class EntityOfficerForm(forms.ModelForm):
 
     def clean(self):
         cleaned_data = super().clean()
-        role = cleaned_data.get("role")
+        roles_multi = cleaned_data.get("roles_multi", [])
+
+        # Set legacy role from first selected checkbox for backward compat
+        if roles_multi:
+            cleaned_data["role"] = roles_multi[0]
+
         distribution_roles = [
             EntityOfficer.OfficerRole.UNIT_HOLDER,
             EntityOfficer.OfficerRole.BENEFICIARY,
         ]
-        if role not in distribution_roles:
+        has_distribution_role = any(r in distribution_roles for r in roles_multi)
+        if not has_distribution_role:
             cleaned_data["distribution_percentage"] = None
         else:
             pct = cleaned_data.get("distribution_percentage")
