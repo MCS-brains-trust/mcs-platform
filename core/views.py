@@ -2075,6 +2075,17 @@ def financial_year_finalise_full(request, pk):
                 + _sum_section(_sections.get("pl_appropriation", []))
                 + _sum_section(_sections.get("capital_accounts", []))
             )
+            # Include net profit (revenue - expenses) in equity
+            _income = (
+                _sum_section(_sections.get("income", []))
+                + _sum_section(_sections.get("trading_income", []))
+            )
+            _expenses = (
+                _sum_section(_sections.get("expenses", []))
+                + _sum_section(_sections.get("cogs", []))
+            )
+            _net_profit = -(_income + _expenses)
+            _eq = _eq + _net_profit
             _liab = -(
                 _sum_section(_sections.get("current_liabilities", []))
                 + _sum_section(_sections.get("noncurrent_liabilities", []))
@@ -2226,6 +2237,17 @@ def financial_year_status(request, pk):
                 + _sum_section(_sections.get("pl_appropriation", []))
                 + _sum_section(_sections.get("capital_accounts", []))
             )
+            # Include net profit (revenue - expenses) in equity
+            _income = (
+                _sum_section(_sections.get("income", []))
+                + _sum_section(_sections.get("trading_income", []))
+            )
+            _expenses = (
+                _sum_section(_sections.get("expenses", []))
+                + _sum_section(_sections.get("cogs", []))
+            )
+            _net_profit = -(_income + _expenses)
+            _eq = _eq + _net_profit
             _liab = -(
                 _sum_section(_sections.get("current_liabilities", []))
                 + _sum_section(_sections.get("noncurrent_liabilities", []))
