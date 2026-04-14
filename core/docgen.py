@@ -80,6 +80,10 @@ class _LazyFirmStr:
         return other + self._resolve()
     def __format__(self, fmt):
         return format(self._resolve(), fmt)
+    def __iter__(self):
+        return iter(self._resolve())
+    def __len__(self):
+        return len(self._resolve())
 
 
 FIRM_NAME = _LazyFirmStr("firm_name", "MC & S Pty Ltd")
