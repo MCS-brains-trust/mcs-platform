@@ -782,7 +782,7 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
         // draft/reopened → in_review → finalised in one action.
         var form = document.createElement('form');
         form.method = 'POST';
-        form.action = '/entities/years/' + fyPk + '/finalise-full/';
+        form.action = '{% url "core:financial_year_finalise_full" pk=fy.pk %}';
         var csrf = document.createElement('input');
         csrf.type = 'hidden';
         csrf.name = 'csrfmiddlewaretoken';
