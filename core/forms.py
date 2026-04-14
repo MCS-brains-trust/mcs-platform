@@ -306,9 +306,19 @@ class EntityOfficerForm(forms.ModelForm):
         }
 
     def __init__(self, *args, entity_type=None, **kwargs):
+        # Pre-populate roles_multi initial before super() so it merges
+        # into self.initial alongside model-field values from instance.
+        instance = kwargs.get("instance")
+        if instance and instance.pk:
+            initial = kwargs.setdefault("initial", {})
+            if instance.roles:
+                initial.setdefault("roles_multi", list(instance.roles))
+            elif instance.role:
+                initial.setdefault("roles_multi", [instance.role])
+
         super().__init__(*args, **kwargs)
         for name, field in self.fields.items():
-            if isinstance(field.widget, forms.CheckboxInput):
+            if isinstance(field.widget, (forms.CheckboxInput, forms.CheckboxSelectMultiple)):
                 field.widget.attrs["class"] = "form-check-input"
             else:
                 field.widget.attrs["class"] = "form-control"
@@ -347,13 +357,6 @@ class EntityOfficerForm(forms.ModelForm):
         # Hide legacy role field — it is set programmatically in clean()
         self.fields["role"].widget = forms.HiddenInput()
         self.fields["role"].required = False
-
-        # Pre-populate roles_multi from instance
-        if self.instance and self.instance.pk:
-            if self.instance.roles:
-                self.initial["roles_multi"] = self.instance.roles
-            elif self.instance.role:
-                self.initial["roles_multi"] = [self.instance.role]
 
         # Show/hide partnership and trust specific fields
         if entity_type != "partnership":
