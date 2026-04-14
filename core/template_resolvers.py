@@ -25,8 +25,11 @@ Tax Planning Summary:
   undistributed_balance, scenario_name, accountant_recommendation,
   summary_items
 """
+import logging
 import re
 from decimal import Decimal
+
+logger = logging.getLogger(__name__)
 
 
 def resolve_context(document_category: str, financial_year_id) -> dict:
@@ -145,7 +148,9 @@ def resolve_distribution_minutes(financial_year_id) -> dict:
     total_distributed = Decimal("0")
     try:
         from core.models import TrustWorkspace, EntityOfficer
-        workspace = TrustWorkspace.objects.get(financial_year=fy)
+        workspace = TrustWorkspace.objects.select_related(
+            "selected_tax_scenario"
+        ).get(financial_year=fy)
         scenario = workspace.selected_tax_scenario
         if scenario and scenario.distributions:
             officer_map = {
@@ -170,8 +175,8 @@ def resolve_distribution_minutes(financial_year_id) -> dict:
                 for br in beneficiary_rows:
                     pct = (br["distribution_raw"] / total_distributed * 100).quantize(Decimal("0.01"))
                     br["percentage"] = f"{pct}%"
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.exception("Failed to load distribution data for Distribution Minutes: %s", exc)
 
     return {
         "trust_name": entity.entity_name,
