@@ -270,7 +270,7 @@
                 html += `<table class="table table-sm table-bordered mb-0">
                     <thead class="table-light"><tr><th>Beneficiary</th><th class="text-end">Amount</th></tr></thead><tbody>`;
                 sc.distributions.forEach(d => {
-                    const dAmt = parseFloat(d.proposed_amount) || 0;
+                    const dAmt = parseFloat(d.proposed_distribution) || 0;
                     if (dAmt > 0) {
                         html += `<tr><td class="small">${escapeHtml(d.beneficiary_name)}</td><td class="text-end small">${formatCurrency(dAmt)}</td></tr>`;
                     }

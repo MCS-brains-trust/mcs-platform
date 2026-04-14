@@ -202,7 +202,7 @@ def tax_planning_scenarios_api(request, pk):
             distributions.append({
                 "beneficiary_id": ben_id,
                 "beneficiary_name": officer_map.get(ben_id, f"Unknown ({ben_id[:8]})"),
-                "proposed_amount": str(entry.get("proposed_amount", 0)),
+                "proposed_distribution": str(entry.get("proposed_distribution", 0)),
             })
         result.append({
             "id": str(sc.pk),
@@ -344,7 +344,7 @@ def section_100a_api(request, pk):
         if workspace.selected_tax_scenario:
             active_ben_ids = set()
             for entry in (workspace.selected_tax_scenario.distributions or []):
-                amt = Decimal(str(entry.get("proposed_amount", 0)))
+                amt = Decimal(str(entry.get("proposed_distribution", 0)))
                 if amt > 0:
                     active_ben_ids.add(str(entry.get("beneficiary_id", "")))
             if active_ben_ids:
@@ -1090,7 +1090,7 @@ def trust_post_distribution(request, pk):
     rows = []
     total_distributed = Decimal("0")
     for entry in (scenario.distributions or []):
-        amount = Decimal(str(entry.get("proposed_amount", 0)))
+        amount = Decimal(str(entry.get("proposed_distribution", 0)))
         if amount <= 0:
             continue
         ben_id = str(entry.get("beneficiary_id", ""))
