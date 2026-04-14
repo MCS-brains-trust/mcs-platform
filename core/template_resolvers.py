@@ -140,37 +140,32 @@ def resolve_distribution_minutes(financial_year_id) -> dict:
     chairperson = _find_chairperson(officers)
     fy_year = _get_fy_year(fy)
 
-    # Get beneficiary data from confirmed DistributionScenario (Stage 3)
+    # Get beneficiary data from selected TaxPlanningScenario (Stage 2)
     beneficiary_rows = []
     total_distributed = Decimal("0")
     try:
-        from core.models import TrustWorkspace, BeneficiaryProfile
+        from core.models import TrustWorkspace, EntityOfficer
         workspace = TrustWorkspace.objects.get(financial_year=fy)
-        confirmed = workspace.confirmed_scenario
-        if confirmed and confirmed.allocations:
-            # Build a lookup of beneficiary_id -> name from BeneficiaryProfile
-            profiles = {
-                str(p.beneficiary_id): p
-                for p in workspace.beneficiary_profiles.select_related("beneficiary").all()
+        scenario = workspace.selected_tax_scenario
+        if scenario and scenario.distributions:
+            officer_map = {
+                str(o.pk): o.full_name
+                for o in EntityOfficer.objects.filter(entity=entity)
             }
-            for ben_id, streams in confirmed.allocations.items():
-                total_for_ben = sum(Decimal(str(v)) for v in streams.values() if v)
-                if total_for_ben > 0:
-                    profile = profiles.get(str(ben_id))
-                    name = profile.beneficiary.full_name if profile else f"Beneficiary {ben_id[:8]}"
-                    ben_type = profile.get_beneficiary_type_display() if profile else ""
+            for entry in scenario.distributions:
+                amount = Decimal(str(entry.get("proposed_distribution", 0)))
+                if amount > 0:
+                    ben_id = str(entry.get("beneficiary_id", ""))
+                    name = officer_map.get(ben_id, f"Beneficiary {ben_id[:8]}")
                     beneficiary_rows.append({
                         "name": name,
-                        "type": ben_type,
-                        "distribution": _fmt_money(total_for_ben),
-                        "distribution_raw": total_for_ben,
+                        "type": entry.get("beneficiary_type", ""),
+                        "distribution": _fmt_money(amount),
+                        "distribution_raw": amount,
                         "percentage": "",
-                        "streams": streams,
                     })
-                    total_distributed += total_for_ben
-            # Sort by name
+                    total_distributed += amount
             beneficiary_rows.sort(key=lambda r: r["name"])
-            # Calculate percentages
             if total_distributed > 0:
                 for br in beneficiary_rows:
                     pct = (br["distribution_raw"] / total_distributed * 100).quantize(Decimal("0.01"))
