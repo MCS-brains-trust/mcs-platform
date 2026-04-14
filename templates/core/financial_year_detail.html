@@ -127,9 +127,13 @@
                     <!-- Finalise Button -->
                     {% if fy.status == 'draft' or fy.status == 'in_review' or fy.status == 'reopened' %}
                         {% if can_finalise %}
-                        <button type="button" class="btn btn-sm btn-success" id="finaliseBtn" onclick="evaFinalise()">
-                            <i class="bi bi-lock-fill"></i> Finalise
-                        </button>
+                        <form method="post" action="{% url 'core:financial_year_finalise_full' pk=fy.pk %}" class="d-inline"
+                              onsubmit="return confirm('Finalise this financial year? This will run risk checks, lock the trial balance, and enable document generation.');">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-sm btn-success" id="finaliseBtn">
+                                <i class="bi bi-lock-fill"></i> Finalise
+                            </button>
+                        </form>
                         {% endif %}
                     {% elif fy.status == 'finalised' %}
                     <span class="badge bg-success fs-6 py-2 px-3">
