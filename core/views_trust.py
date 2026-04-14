@@ -2,13 +2,12 @@
 Trust Distribution Tab Views
 =============================
 
-Handles the 6-stage trust distribution workflow:
+Handles the 5-stage trust distribution workflow:
   Stage 1: Income Calculation
-  Stage 2: Beneficiary Profiling
-  Stage 3: Distribution Modelling
-  Stage 4: Section 100A Assessment
-  Stage 5: Trust Elections
-  Stage 6: Documents
+  Stage 2: Distribution Modelling (select Tax Planning scenario + post to TB)
+  Stage 3: Section 100A Assessment
+  Stage 4: Trust Elections
+  Stage 5: Documents
 """
 
 import json
@@ -25,7 +24,8 @@ from django.views.decorators.http import require_POST
 from core.models import (
     FinancialYear, TrustWorkspace, BeneficiaryProfile,
     DistributionScenario, Section100AAssessment, TrustElectionRecord,
-    EntityOfficer, ActivityLog,
+    EntityOfficer, ActivityLog, TaxPlanningScenario,
+    AdjustingJournal, JournalLine,
 )
 
 logger = logging.getLogger(__name__)
@@ -53,11 +53,11 @@ def trust_workspace_api(request, pk):
             # Auto-create beneficiary profiles from officers
             _auto_create_beneficiary_profiles(workspace)
 
-        # Auto-skip Stage 4 for unit trusts / trusts with unitholders
+        # Auto-skip Stage 3 (Section 100A) for unit trusts / trusts with unitholders
         if _entity_has_unitholders(fy.entity):
-            if workspace.stage_4_status != TrustWorkspace.StageStatus.COMPLETED:
-                workspace.stage_4_status = TrustWorkspace.StageStatus.COMPLETED
-                workspace.save(update_fields=["stage_4_status", "updated_at"])
+            if workspace.stage_3_status != TrustWorkspace.StageStatus.COMPLETED:
+                workspace.stage_3_status = TrustWorkspace.StageStatus.COMPLETED
+                workspace.save(update_fields=["stage_3_status", "updated_at"])
 
         return JsonResponse(_serialize_workspace(workspace))
 
@@ -100,9 +100,9 @@ def trust_stage_update(request, pk, stage_num):
     workspace.save(update_fields=[field_name, "updated_at"])
 
     stage_names = {
-        1: "Income Calculation", 2: "Beneficiary Profiling",
-        3: "Distribution Modelling", 4: "Section 100A Assessment",
-        5: "Trust Elections", 6: "Documents",
+        1: "Income Calculation", 2: "Distribution Modelling",
+        3: "Section 100A Assessment", 4: "Trust Elections",
+        5: "Documents",
     }
 
     ActivityLog.objects.create(
@@ -166,7 +166,69 @@ def beneficiary_profiles_api(request, pk):
 
 
 # ---------------------------------------------------------------------------
-# Stage 3: Distribution Scenarios
+# Stage 2: Tax Planning Scenario Selection
+# ---------------------------------------------------------------------------
+@login_required
+def tax_planning_scenarios_api(request, pk):
+    """
+    GET  — List TaxPlanningScenarios for this FY for Stage 2 display.
+    POST — Select a scenario for distribution posting.
+    """
+    fy = get_object_or_404(FinancialYear, pk=pk)
+    workspace, _ = TrustWorkspace.objects.get_or_create(financial_year=fy)
+
+    if request.method == "POST":
+        data = json.loads(request.body)
+        scenario_id = data.get("scenario_id")
+        if not scenario_id:
+            return JsonResponse({"error": "scenario_id required"}, status=400)
+        scenario = get_object_or_404(TaxPlanningScenario, pk=scenario_id, financial_year=fy)
+        workspace.selected_tax_scenario = scenario
+        workspace.save(update_fields=["selected_tax_scenario", "updated_at"])
+        return JsonResponse({"status": "ok", "selected_tax_scenario_id": str(scenario.pk)})
+
+    # GET — return all scenarios with beneficiary name resolution
+    scenarios = TaxPlanningScenario.objects.filter(financial_year=fy).order_by("created_at")
+    officer_map = {
+        str(o.pk): o.full_name
+        for o in EntityOfficer.objects.filter(entity=fy.entity)
+    }
+
+    result = []
+    for sc in scenarios:
+        distributions = []
+        for entry in (sc.distributions or []):
+            ben_id = str(entry.get("beneficiary_id", ""))
+            distributions.append({
+                "beneficiary_id": ben_id,
+                "beneficiary_name": officer_map.get(ben_id, f"Unknown ({ben_id[:8]})"),
+                "proposed_amount": str(entry.get("proposed_amount", 0)),
+            })
+        result.append({
+            "id": str(sc.pk),
+            "scenario_name": sc.scenario_name,
+            "total_distributed": str(sc.total_distributed),
+            "total_tax": str(sc.total_tax),
+            "distributions": distributions,
+        })
+
+    # Check if a distribution journal already exists
+    fy_year = "".join(c for c in fy.year_label if c.isdigit()) or str(fy.end_date.year)
+    ref_prefix = f"DIST-{fy_year}"
+    existing_journal = AdjustingJournal.objects.filter(
+        financial_year=fy, description__startswith="Trust distribution"
+    ).first()
+
+    return JsonResponse({
+        "scenarios": result,
+        "selected_tax_scenario_id": str(workspace.selected_tax_scenario_id) if workspace.selected_tax_scenario_id else None,
+        "distribution_journal_exists": existing_journal is not None,
+        "distribution_journal_ref": existing_journal.reference_number if existing_journal else None,
+    })
+
+
+# ---------------------------------------------------------------------------
+# Stage 3 (old): Distribution Scenarios (workspace-local, kept for compat)
 # ---------------------------------------------------------------------------
 @login_required
 def distribution_scenarios_api(request, pk):
@@ -277,6 +339,17 @@ def section_100a_api(request, pk):
 
     if request.method == "GET":
         assessments = workspace.section_100a_assessments.select_related("beneficiary").all()
+
+        # Filter to only beneficiaries with distribution > 0 in selected scenario
+        if workspace.selected_tax_scenario:
+            active_ben_ids = set()
+            for entry in (workspace.selected_tax_scenario.distributions or []):
+                amt = Decimal(str(entry.get("proposed_amount", 0)))
+                if amt > 0:
+                    active_ben_ids.add(str(entry.get("beneficiary_id", "")))
+            if active_ben_ids:
+                assessments = [a for a in assessments if str(a.beneficiary_id) in active_ben_ids]
+
         return JsonResponse({
             "assessments": [_serialize_100a(a) for a in assessments],
         })
@@ -510,17 +583,17 @@ def _serialize_workspace(workspace):
         "has_unitholders": has_unitholders,
         "stages": {
             "1": {"status": workspace.stage_1_status, "name": "Income Calculation"},
-            "2": {"status": workspace.stage_2_status, "name": "Beneficiary Profiling"},
-            "3": {"status": workspace.stage_3_status, "name": "Distribution Modelling"},
-            "4": {"status": workspace.stage_4_status, "name": "Section 100A Assessment"},
-            "5": {"status": workspace.stage_5_status, "name": "Trust Elections"},
-            "6": {"status": workspace.stage_6_status, "name": "Documents"},
+            "2": {"status": workspace.stage_2_status, "name": "Distribution Modelling"},
+            "3": {"status": workspace.stage_3_status, "name": "Section 100A Assessment"},
+            "4": {"status": workspace.stage_4_status, "name": "Trust Elections"},
+            "5": {"status": workspace.stage_5_status, "name": "Documents"},
         },
         "all_completed": workspace.all_stages_completed(),
         "net_distributable_income": str(workspace.net_distributable_income or 0),
         "income_streams": workspace.income_streams,
         "section_100a_overall_risk": workspace.section_100a_overall_risk,
         "confirmed_scenario_id": str(workspace.confirmed_scenario_id) if workspace.confirmed_scenario_id else None,
+        "selected_tax_scenario_id": str(workspace.selected_tax_scenario_id) if workspace.selected_tax_scenario_id else None,
     }
 
 
@@ -975,16 +1048,14 @@ def trust_generate_100a_summary(request, pk):
 def trust_post_distribution(request, pk):
     """
     POST /api/years/<pk>/trust-workspace/post-distribution/
-    Creates journal entries in the trial balance from the confirmed distribution scenario.
+    Creates and posts journal entries from the selected TaxPlanningScenario.
 
-    For each beneficiary allocation:
-      DR  Distribution Payable — <Beneficiary Name>  (liability account)
-      CR  Net Income / Retained Earnings              (equity account)
+    DR  Retained Profits / P&L Appropriation (4199)
+    CR  Distribution Payable — <Beneficiary Name> (3100) per beneficiary
 
-    The journal is created as DRAFT so the accountant can review before posting.
+    Journal is created as POSTED and written to TB via _post_journal_to_tb.
     """
-    from core.models import AdjustingJournal, JournalLine
-    from django.utils import timezone as tz
+    from core.views import _post_journal_to_tb
 
     fy = get_object_or_404(FinancialYear, pk=pk)
     try:
@@ -992,75 +1063,109 @@ def trust_post_distribution(request, pk):
     except TrustWorkspace.DoesNotExist:
         return JsonResponse({"error": "No trust workspace found."}, status=404)
 
-    confirmed = workspace.confirmed_scenario
-    if not confirmed or not confirmed.allocations:
+    scenario = workspace.selected_tax_scenario
+    if not scenario:
         return JsonResponse(
-            {"error": "No confirmed distribution scenario. Please confirm a scenario in Stage 3 first."},
+            {"error": "No Tax Planning scenario selected. Select a scenario in Stage 2 first."},
             status=400,
         )
 
-    rows, total_distributed, ndi = _get_confirmed_scenario_data(workspace)
+    # Guard against double-posting
+    existing = AdjustingJournal.objects.filter(
+        financial_year=fy, description__startswith="Trust distribution"
+    ).first()
+    if existing:
+        return JsonResponse(
+            {"error": f"Distribution journal {existing.reference_number} already exists. "
+                      "Delete it from the Journals tab first to repost."},
+            status=400,
+        )
+
+    # Build distribution rows from TaxPlanningScenario.distributions
+    officer_map = {
+        str(o.pk): o.full_name
+        for o in EntityOfficer.objects.filter(entity=fy.entity)
+    }
+
+    rows = []
+    total_distributed = Decimal("0")
+    for entry in (scenario.distributions or []):
+        amount = Decimal(str(entry.get("proposed_amount", 0)))
+        if amount <= 0:
+            continue
+        ben_id = str(entry.get("beneficiary_id", ""))
+        ben_name = officer_map.get(ben_id, f"Beneficiary {ben_id[:8]}")
+        rows.append({"name": ben_name, "amount": amount})
+        total_distributed += amount
+
     if not rows:
         return JsonResponse(
-            {"error": "Confirmed scenario has no allocations with positive amounts."},
+            {"error": "Selected scenario has no allocations with positive amounts."},
             status=400,
         )
 
     fy_year = "".join(c for c in fy.year_label if c.isdigit()) or str(fy.end_date.year)
 
-    with transaction.atomic():
-        journal = AdjustingJournal.objects.create(
-            financial_year=fy,
-            journal_type=AdjustingJournal.JournalType.YEAR_END,
-            status=AdjustingJournal.JournalStatus.DRAFT,
-            journal_date=fy.end_date,
-            description=f"Trust Distribution — {fy.entity.entity_name} — FY{fy_year}",
-            narration=(
-                f"Distribution journal generated from confirmed scenario '{confirmed.name}'. "
-                f"Total distributed: ${total_distributed:,.2f}. "
-                f"Review and post when ready."
-            ),
-            created_by=request.user,
-        )
+    try:
+        with transaction.atomic():
+            journal = AdjustingJournal.objects.create(
+                financial_year=fy,
+                journal_type=AdjustingJournal.JournalType.YEAR_END,
+                status=AdjustingJournal.JournalStatus.POSTED,
+                journal_date=fy.end_date,
+                description=f"Trust distribution — {scenario.scenario_name}",
+                narration=(
+                    f"Distribution from Tax Planning scenario '{scenario.scenario_name}'. "
+                    f"Total: ${total_distributed:,.2f}."
+                ),
+                created_by=request.user,
+                posted_by=request.user,
+                posted_at=timezone.now(),
+                total_debit=total_distributed,
+                total_credit=total_distributed,
+            )
 
-        line_num = 1
-        # CR side: Net Income / Retained Earnings account
-        # Use account 4000 (Equity/Retained Earnings) as the default CR account
-        JournalLine.objects.create(
-            journal=journal,
-            line_number=line_num,
-            account_code="4000",
-            account_name="Net Income — Trust Distribution",
-            description=f"Distribution of net income for year ended 30 June {fy_year}",
-            debit=Decimal("0"),
-            credit=total_distributed,
-        )
-        line_num += 1
-
-        # DR side: one line per beneficiary
-        for row in rows:
-            ben_name = row["name"]
+            line_num = 1
+            # DR side: Retained Profits / P&L appropriation
             JournalLine.objects.create(
                 journal=journal,
                 line_number=line_num,
-                account_code="3100",
-                account_name=f"Distribution Payable — {ben_name}",
-                description=f"{ben_name}: {row['percentage']}% = ${row['total']:,.2f}",
-                debit=row["total"],
+                account_code="4199",
+                account_name="Profit Distribution — Appropriation",
+                description=f"Trust distribution for year ended 30 June {fy_year}",
+                debit=total_distributed,
                 credit=Decimal("0"),
             )
             line_num += 1
 
-        journal.recalculate_totals()
+            # CR side: one line per beneficiary
+            for row in rows:
+                JournalLine.objects.create(
+                    journal=journal,
+                    line_number=line_num,
+                    account_code="3100",
+                    account_name=f"Distribution Payable — {row['name']}",
+                    description=f"{row['name']}: ${row['amount']:,.2f}",
+                    debit=Decimal("0"),
+                    credit=row["amount"],
+                )
+                line_num += 1
 
-    return JsonResponse({
-        "success": True,
-        "journal_id": str(journal.pk),
-        "journal_reference": journal.reference_number,
-        "total_distributed": str(total_distributed),
-        "beneficiary_count": len(rows),
-        "message": (
-            f"Distribution journal {journal.reference_number} created as DRAFT. "
-            f"Go to the Journals tab to review and post it."
-        ),
-    })
+            # Post to trial balance
+            _post_journal_to_tb(journal, fy)
+
+        return JsonResponse({
+            "success": True,
+            "journal_id": str(journal.pk),
+            "journal_reference": journal.reference_number,
+            "total_distributed": str(total_distributed),
+            "beneficiary_count": len(rows),
+            "message": (
+                f"Distribution journal {journal.reference_number} posted to trial balance. "
+                f"Total: ${total_distributed:,.2f} across {len(rows)} beneficiaries."
+            ),
+        })
+
+    except Exception as e:
+        logger.exception("trust_post_distribution failed: %s", e)
+        return JsonResponse({"error": str(e)}, status=500)

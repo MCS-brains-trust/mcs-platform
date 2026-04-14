@@ -6,8 +6,10 @@
                  || "{{ csrf_token }}";
     const BASE = `/api/years/${FY_ID}/trust-workspace`;
 
+    const TOTAL_STAGES = 5;
     let workspace = null;
     let beneficiaryProfiles = [];
+    let taxPlanningScenarios = [];
     let scenarios = [];
     let assessments = [];
     let elections = [];
@@ -39,7 +41,7 @@
             });
             workspace = await resp.json();
             renderWorkspaceState();
-            loadBeneficiaryProfiles();
+            loadTaxPlanningScenarios();
             loadScenarios();
             loadAssessments();
             loadElections();
@@ -54,7 +56,7 @@
 
         // Update stage badges and progress
         let completed = 0;
-        for (let i = 1; i <= 6; i++) {
+        for (let i = 1; i <= TOTAL_STAGES; i++) {
             const status = workspace.stages[i].status;
             const badge = document.getElementById(`stage-badge-${i}`);
             const check = document.getElementById(`stage-check-${i}`);
@@ -83,9 +85,9 @@
         }
 
         // Progress bar
-        const pct = Math.round((completed / 6) * 100);
+        const pct = Math.round((completed / TOTAL_STAGES) * 100);
         document.getElementById('trust-progress-bar').style.width = pct + '%';
-        document.getElementById('trust-progress-text').textContent = `${completed}/6`;
+        document.getElementById('trust-progress-text').textContent = `${completed}/${TOTAL_STAGES}`;
 
         // Income data
         const streams = workspace.income_streams || {};
@@ -113,11 +115,11 @@
             }[workspace.section_100a_overall_risk] || 'secondary');
         }
 
-        // For unit trusts / trusts with unitholders: hide Stage 4 UI chrome
+        // For unit trusts / trusts with unitholders: hide Stage 3 (Section 100A) UI chrome
         if (workspace.entity_type === 'trust_unit' || workspace.has_unitholders) {
-            const riskInfo = document.getElementById('stage-4-risk-info');
-            const desc = document.getElementById('stage-4-description');
-            const completeBtn = document.getElementById('stage-4-complete-btn');
+            const riskInfo = document.getElementById('stage-3-risk-info');
+            const desc = document.getElementById('stage-3-description');
+            const completeBtn = document.getElementById('stage-3-complete-btn');
             const riskBadge = document.getElementById('trust-100a-risk-badge');
             if (riskInfo) riskInfo.style.display = 'none';
             if (desc) desc.style.display = 'none';
@@ -212,112 +214,144 @@
         }
     }
 
-    // ===== Stage 2: Beneficiary Profiles =====
-    async function loadBeneficiaryProfiles() {
+    // ===== Stage 2: Tax Planning Scenario Selection =====
+    async function loadTaxPlanningScenarios() {
         try {
-            const resp = await fetch(`${BASE}/beneficiaries/`, {
+            const resp = await fetch(`${BASE}/tax-scenarios/`, {
                 headers: { 'X-CSRFToken': CSRF },
             });
             const data = await resp.json();
-            beneficiaryProfiles = data.profiles || [];
-            renderBeneficiaryProfiles();
+            taxPlanningScenarios = data.scenarios || [];
+            renderTaxPlanningScenarios(data.selected_tax_scenario_id, data.distribution_journal_exists, data.distribution_journal_ref);
         } catch (e) {
-            console.error('Failed to load beneficiary profiles:', e);
+            console.error('Failed to load tax planning scenarios:', e);
         }
     }
 
-    function renderBeneficiaryProfiles() {
-        const container = document.getElementById('beneficiary-profiles-container');
-        if (!beneficiaryProfiles.length) {
-            container.innerHTML = '<div class="alert alert-info"><i class="bi bi-info-circle"></i> No beneficiaries found. Add officers/beneficiaries to the entity first.</div>';
+    function renderTaxPlanningScenarios(selectedId, journalExists, journalRef) {
+        const container = document.getElementById('tax-scenarios-container');
+        const postContainer = document.getElementById('post-distribution-container');
+        const postedAlert = document.getElementById('distribution-posted-alert');
+
+        if (!taxPlanningScenarios.length) {
+            container.innerHTML = '<div class="alert alert-info"><i class="bi bi-info-circle"></i> No Tax Planning scenarios found. Create scenarios in the Tax Planning tab first.</div>';
+            postContainer.classList.add('d-none');
             return;
         }
 
         let html = '<div class="row g-3">';
-        beneficiaryProfiles.forEach(p => {
-            html += `
-            <div class="col-md-6">
-                <div class="card ${p.include_in_distribution ? '' : 'border-secondary opacity-50'}">
+        taxPlanningScenarios.forEach(sc => {
+            const isSelected = sc.id === selectedId;
+            const amt = parseFloat(sc.total_distributed) || 0;
+            const tax = parseFloat(sc.total_tax) || 0;
+
+            html += `<div class="col-md-6">
+                <div class="card ${isSelected ? 'border-success border-2' : ''}">
                     <div class="card-header d-flex justify-content-between align-items-center">
-                        <strong>${escapeHtml(p.beneficiary_name)}</strong>
-                        <div class="form-check form-switch">
-                            <input class="form-check-input" type="checkbox" ${p.include_in_distribution ? 'checked' : ''}
-                                   onchange="toggleBeneficiary('${p.id}', this.checked)">
-                            <label class="form-check-label small">Include</label>
-                        </div>
+                        <strong>${escapeHtml(sc.scenario_name)}</strong>
+                        ${isSelected
+                            ? '<span class="badge bg-success"><i class="bi bi-check-circle-fill"></i> Selected</span>'
+                            : `<button class="btn btn-sm btn-outline-primary" onclick="selectTaxScenario('${sc.id}')"><i class="bi bi-check-lg"></i> Select</button>`
+                        }
                     </div>
                     <div class="card-body">
-                        <div class="row g-2">
+                        <div class="row g-2 mb-2">
                             <div class="col-6">
-                                <label class="form-label small text-muted">Type</label>
-                                <select class="form-select form-select-sm" onchange="updateBeneficiaryField('${p.id}', 'beneficiary_type', this.value)">
-                                    <option value="adult" ${p.beneficiary_type === 'adult' ? 'selected' : ''}>Adult Individual</option>
-                                    <option value="minor" ${p.beneficiary_type === 'minor' ? 'selected' : ''}>Minor</option>
-                                    <option value="company" ${p.beneficiary_type === 'company' ? 'selected' : ''}>Company</option>
-                                    <option value="trust" ${p.beneficiary_type === 'trust' ? 'selected' : ''}>Trust</option>
-                                    <option value="smsf" ${p.beneficiary_type === 'smsf' ? 'selected' : ''}>SMSF</option>
-                                </select>
+                                <span class="small text-muted">Total Distributed</span>
+                                <div class="fw-semibold">${formatCurrency(amt)}</div>
                             </div>
                             <div class="col-6">
-                                <label class="form-label small text-muted">Tax Residency</label>
-                                <select class="form-select form-select-sm" onchange="updateBeneficiaryField('${p.id}', 'tax_residency', this.value)">
-                                    <option value="AU" ${p.tax_residency === 'AU' ? 'selected' : ''}>Australian</option>
-                                    <option value="NR" ${p.tax_residency === 'NR' ? 'selected' : ''}>Non-Resident</option>
-                                </select>
+                                <span class="small text-muted">Total Tax</span>
+                                <div class="fw-semibold">${formatCurrency(tax)}</div>
                             </div>
-                            <div class="col-6">
-                                <label class="form-label small text-muted">Other Income ($)</label>
-                                <input type="number" class="form-control form-control-sm" value="${p.other_income || ''}"
-                                       onchange="updateBeneficiaryField('${p.id}', 'other_income', this.value)" step="0.01">
-                            </div>
-                            <div class="col-6">
-                                <label class="form-label small text-muted">Marginal Rate (%)</label>
-                                <input type="number" class="form-control form-control-sm"
-                                       value="${p.marginal_rate ? (parseFloat(p.marginal_rate) * 100).toFixed(1) : ''}"
-                                       onchange="updateBeneficiaryField('${p.id}', 'marginal_rate', this.value / 100)" step="0.1" min="0" max="47">
-                            </div>
-                            <div class="col-6">
-                                <label class="form-label small text-muted">Bracket Remaining ($)</label>
-                                <input type="number" class="form-control form-control-sm" value="${p.bracket_remaining || ''}"
-                                       onchange="updateBeneficiaryField('${p.id}', 'bracket_remaining', this.value)" step="0.01">
-                            </div>
-                            <div class="col-6">
-                                <label class="form-label small text-muted">Franking Surplus ($)</label>
-                                <input type="number" class="form-control form-control-sm" value="${p.franking_surplus || ''}"
-                                       onchange="updateBeneficiaryField('${p.id}', 'franking_surplus', this.value)" step="0.01">
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>`;
+                        </div>`;
+
+            if (sc.distributions && sc.distributions.length) {
+                html += `<table class="table table-sm table-bordered mb-0">
+                    <thead class="table-light"><tr><th>Beneficiary</th><th class="text-end">Amount</th></tr></thead><tbody>`;
+                sc.distributions.forEach(d => {
+                    const dAmt = parseFloat(d.proposed_amount) || 0;
+                    if (dAmt > 0) {
+                        html += `<tr><td class="small">${escapeHtml(d.beneficiary_name)}</td><td class="text-end small">${formatCurrency(dAmt)}</td></tr>`;
+                    }
+                });
+                html += '</tbody></table>';
+            }
+
+            html += `</div></div></div>`;
         });
         html += '</div>';
         container.innerHTML = html;
+
+        // Show/hide post button
+        if (selectedId && !journalExists) {
+            postContainer.classList.remove('d-none');
+            postedAlert.classList.add('d-none');
+            document.getElementById('post-distribution-btn').disabled = false;
+            document.getElementById('post-distribution-status').textContent = '';
+        } else if (journalExists) {
+            postContainer.classList.add('d-none');
+            postedAlert.classList.remove('d-none');
+            document.getElementById('posted-journal-ref').textContent = journalRef || '';
+        } else {
+            postContainer.classList.add('d-none');
+            postedAlert.classList.add('d-none');
+        }
     }
 
-    window.toggleBeneficiary = function(profileId, included) {
-        updateBeneficiaryField(profileId, 'include_in_distribution', included);
-    };
-
-    window.updateBeneficiaryField = async function(profileId, field, value) {
+    window.selectTaxScenario = async function(scenarioId) {
         try {
-            const body = { id: profileId };
-            body[field] = value;
-            await fetch(`${BASE}/beneficiaries/`, {
+            const resp = await fetch(`${BASE}/tax-scenarios/`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
-                body: JSON.stringify(body),
+                body: JSON.stringify({ scenario_id: scenarioId }),
             });
-            // Refresh profiles
-            const profile = beneficiaryProfiles.find(p => p.id === profileId);
-            if (profile) profile[field] = value;
-            if (field === 'include_in_distribution') renderBeneficiaryProfiles();
+            const data = await resp.json();
+            if (data.status === 'ok') {
+                loadTaxPlanningScenarios();
+            }
         } catch (e) {
-            console.error('Failed to update beneficiary:', e);
+            console.error('Failed to select scenario:', e);
         }
     };
 
-    // ===== Stage 3: Distribution Scenarios =====
+    window.postDistribution = async function() {
+        if (!confirm('Post the distribution to the Trial Balance? This will create journal entries.')) return;
+
+        const btn = document.getElementById('post-distribution-btn');
+        const status = document.getElementById('post-distribution-status');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Posting...';
+        status.textContent = '';
+
+        try {
+            const resp = await fetch(`${BASE}/post-distribution/`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+            });
+            const data = await resp.json();
+            if (data.success) {
+                status.textContent = data.message;
+                status.className = 'text-success small';
+                loadTaxPlanningScenarios();
+                // Auto-mark stage 2 complete
+                updateStageStatus(2, 'completed');
+            } else {
+                status.textContent = data.error || 'Failed to post distribution';
+                status.className = 'text-danger small';
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-journal-arrow-up"></i> Post Distribution to Trial Balance';
+            }
+        } catch (e) {
+            console.error('Failed to post distribution:', e);
+            status.textContent = 'Network error';
+            status.className = 'text-danger small';
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-journal-arrow-up"></i> Post Distribution to Trial Balance';
+        }
+    };
+
+    // ===== Stage 3 (old): Distribution Scenarios =====
     async function loadScenarios() {
         try {
             const resp = await fetch(`${BASE}/scenarios/`, {

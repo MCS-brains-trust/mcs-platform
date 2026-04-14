@@ -4267,6 +4267,11 @@ class TrustWorkspace(models.Model):
         "DistributionScenario", on_delete=models.SET_NULL,
         null=True, blank=True, related_name="+",
     )
+    selected_tax_scenario = models.ForeignKey(
+        "TaxPlanningScenario", on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="selected_for_workspaces",
+        help_text="TaxPlanningScenario chosen in Stage 2 for distribution posting.",
+    )
     section_100a_overall_risk = models.CharField(
         max_length=10, choices=RiskRating.choices, blank=True, default="",
     )
@@ -4277,13 +4282,13 @@ class TrustWorkspace(models.Model):
         return f"Trust Workspace for {self.financial_year}"
 
     def all_stages_completed(self):
+        """Check stages 1-5 (stage 6 is unused after the 5-stage redesign)."""
         return all([
             self.stage_1_status == self.StageStatus.COMPLETED,
             self.stage_2_status == self.StageStatus.COMPLETED,
             self.stage_3_status == self.StageStatus.COMPLETED,
             self.stage_4_status == self.StageStatus.COMPLETED,
             self.stage_5_status == self.StageStatus.COMPLETED,
-            self.stage_6_status == self.StageStatus.COMPLETED,
         ])
 
 

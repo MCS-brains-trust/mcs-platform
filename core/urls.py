@@ -440,6 +440,7 @@ urlpatterns = [
     path("api/years/<uuid:pk>/trust-workspace/", views_trust.trust_workspace_api, name="trust_workspace_api"),
     path("api/years/<uuid:pk>/trust-workspace/stage/<int:stage_num>/", views_trust.trust_stage_update, name="trust_stage_update"),
     path("api/years/<uuid:pk>/trust-workspace/beneficiaries/", views_trust.beneficiary_profiles_api, name="beneficiary_profiles_api"),
+    path("api/years/<uuid:pk>/trust-workspace/tax-scenarios/", views_trust.tax_planning_scenarios_api, name="tax_planning_scenarios_api"),
     path("api/years/<uuid:pk>/trust-workspace/scenarios/", views_trust.distribution_scenarios_api, name="distribution_scenarios_api"),
     path("api/years/<uuid:pk>/trust-workspace/scenarios/<uuid:scenario_pk>/confirm/", views_trust.confirm_scenario, name="confirm_scenario"),
     path("api/years/<uuid:pk>/trust-workspace/scenarios/<uuid:scenario_pk>/delete/", views_trust.delete_scenario, name="delete_scenario"),
