@@ -728,30 +728,44 @@ def trust_generate_beneficiary_statements(request, pk):
         from django.http import JsonResponse as JR
         return JR({"error": "No trust workspace found."}, status=404)
 
-    rows, total_distributed, ndi = _get_confirmed_scenario_data(workspace)
     entity = fy.entity
     fy_year = "".join(c for c in fy.year_label if c.isdigit()) or str(fy.end_date.year)
     fy_end = f"30 June {fy_year}"
+
+    # Build rows from selected TaxPlanningScenario
+    scenario = workspace.selected_tax_scenario
+    rows = []
+    total_distributed = Decimal("0")
+    if scenario and scenario.distributions:
+        officer_map = {
+            str(o.pk): o.full_name
+            for o in EntityOfficer.objects.filter(entity=entity)
+        }
+        for entry in scenario.distributions:
+            amount = Decimal(str(entry.get("proposed_distribution", 0)))
+            if amount > 0:
+                ben_id = str(entry.get("beneficiary_id", ""))
+                rows.append({
+                    "name": officer_map.get(ben_id, f"Beneficiary {ben_id[:8]}"),
+                    "type": entry.get("beneficiary_type", "Individual").title(),
+                    "total": amount,
+                })
+                total_distributed += amount
+        rows.sort(key=lambda r: r["name"])
+        if total_distributed > 0:
+            for r in rows:
+                r["percentage"] = (r["total"] / total_distributed * 100).quantize(Decimal("0.01"))
 
     doc = Document()
     style = doc.styles["Normal"]
     style.font.name = "Calibri"
     style.font.size = Pt(11)
 
-    STREAM_LABELS = {
-        "ordinary": "Ordinary Income",
-        "cgt_discount": "CGT Discount",
-        "cgt_non_discount": "CGT Non-Discount",
-        "franked_dividends": "Franked Dividends",
-        "franking_credits": "Franking Credits",
-        "tax_free": "Tax-Free Income",
-    }
-
     for i, row in enumerate(rows):
         if i > 0:
             doc.add_page_break()
 
-        h = doc.add_heading(f"Beneficiary Distribution Statement", level=1)
+        h = doc.add_heading("Beneficiary Distribution Statement", level=1)
         h.alignment = WD_ALIGN_PARAGRAPH.CENTER
 
         doc.add_paragraph(f"Trust: {entity.entity_name}")
@@ -760,24 +774,18 @@ def trust_generate_beneficiary_statements(request, pk):
         doc.add_paragraph(f"Beneficiary: {row['name']}")
         if row["type"]:
             doc.add_paragraph(f"Beneficiary Type: {row['type']}")
-        doc.add_paragraph(f"Share of Distribution: {row['percentage']}%")
+        doc.add_paragraph(f"Share of Distribution: {row.get('percentage', '')}%")
         doc.add_paragraph("")
 
         table = doc.add_table(rows=1, cols=2)
         table.style = "Table Grid"
         hdr = table.rows[0].cells
-        hdr[0].text = "Income Stream"
+        hdr[0].text = "Description"
         hdr[1].text = "Amount"
         for run in hdr[0].paragraphs[0].runs:
             run.bold = True
         for run in hdr[1].paragraphs[0].runs:
             run.bold = True
-
-        for stream_key, amount in row["streams"].items():
-            if amount and Decimal(str(amount)) > 0:
-                r = table.add_row().cells
-                r[0].text = STREAM_LABELS.get(stream_key, stream_key.replace("_", " ").title())
-                r[1].text = f"${Decimal(str(amount)):,.2f}"
 
         total_row = table.add_row().cells
         total_row[0].text = "Total Distribution"
@@ -796,8 +804,8 @@ def trust_generate_beneficiary_statements(request, pk):
 
     if not rows:
         doc.add_paragraph(
-            "No confirmed distribution scenario found. Please complete Stage 3 "
-            "(Distribution Modelling) and confirm a scenario before generating statements."
+            "No Tax Planning scenario selected. Please complete Stage 2 "
+            "(Distribution Modelling) and select a scenario before generating statements."
         )
 
     buffer = io.BytesIO()

@@ -170,7 +170,7 @@ def resolve_distribution_minutes(financial_year_id) -> dict:
                     name = officer_map.get(ben_id, f"Beneficiary {ben_id[:8]}")
                     beneficiary_rows.append({
                         "name": name,
-                        "type": entry.get("beneficiary_type", ""),
+                        "type": entry.get("beneficiary_type", "Individual").title(),
                         "distribution": _fmt_money(amount),
                         "distribution_raw": amount,
                         "percentage": "",
