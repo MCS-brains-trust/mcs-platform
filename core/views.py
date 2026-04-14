@@ -2070,11 +2070,20 @@ def financial_year_finalise_full(request, pk):
             from core.fs_template_service import _get_tb_sections, _sum_section
             from decimal import Decimal
             _sections = _get_tb_sections(fy)
-            _eq = -_sum_section(_sections["equity"])
-            _liab = -(_sum_section(_sections["current_liabilities"])
-                       + _sum_section(_sections["noncurrent_liabilities"]))
-            _assets = (_sum_section(_sections["current_assets"])
-                        + _sum_section(_sections["noncurrent_assets"]))
+            _eq = -(
+                _sum_section(_sections.get("equity", []))
+                + _sum_section(_sections.get("pl_appropriation", []))
+                + _sum_section(_sections.get("capital_accounts", []))
+            )
+            _liab = -(
+                _sum_section(_sections.get("current_liabilities", []))
+                + _sum_section(_sections.get("noncurrent_liabilities", []))
+                + _sum_section(_sections.get("liabilities", []))
+            )
+            _assets = (
+                _sum_section(_sections.get("current_assets", []))
+                + _sum_section(_sections.get("noncurrent_assets", []))
+            )
             _na = _assets - _liab
             if abs(_na - _eq) > Decimal("0.01"):
                 messages.error(
@@ -2212,11 +2221,20 @@ def financial_year_status(request, pk):
             from core.fs_template_service import _get_tb_sections, _sum_section
             from decimal import Decimal
             _sections = _get_tb_sections(fy)
-            _eq = -_sum_section(_sections["equity"])
-            _liab = -(_sum_section(_sections["current_liabilities"])
-                       + _sum_section(_sections["noncurrent_liabilities"]))
-            _assets = (_sum_section(_sections["current_assets"])
-                        + _sum_section(_sections["noncurrent_assets"]))
+            _eq = -(
+                _sum_section(_sections.get("equity", []))
+                + _sum_section(_sections.get("pl_appropriation", []))
+                + _sum_section(_sections.get("capital_accounts", []))
+            )
+            _liab = -(
+                _sum_section(_sections.get("current_liabilities", []))
+                + _sum_section(_sections.get("noncurrent_liabilities", []))
+                + _sum_section(_sections.get("liabilities", []))
+            )
+            _assets = (
+                _sum_section(_sections.get("current_assets", []))
+                + _sum_section(_sections.get("noncurrent_assets", []))
+            )
             _na = _assets - _liab
             if abs(_na - _eq) > Decimal("0.01"):
                 messages.error(
