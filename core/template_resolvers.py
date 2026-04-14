@@ -152,6 +152,12 @@ def resolve_distribution_minutes(financial_year_id) -> dict:
             "selected_tax_scenario"
         ).get(financial_year=fy)
         scenario = workspace.selected_tax_scenario
+        logger.info(
+            "distmin resolver: fy=%s workspace=%s scenario=%s distributions=%s",
+            fy.pk, workspace.pk,
+            scenario.scenario_name if scenario else None,
+            scenario.distributions if scenario else None,
+        )
         if scenario and scenario.distributions:
             officer_map = {
                 str(o.pk): o.full_name
@@ -175,10 +181,12 @@ def resolve_distribution_minutes(financial_year_id) -> dict:
                 for br in beneficiary_rows:
                     pct = (br["distribution_raw"] / total_distributed * 100).quantize(Decimal("0.01"))
                     br["percentage"] = f"{pct}%"
+    except TrustWorkspace.DoesNotExist:
+        logger.warning("distmin resolver: No TrustWorkspace for fy=%s", fy.pk)
     except Exception as exc:
         logger.exception("Failed to load distribution data for Distribution Minutes: %s", exc)
 
-    return {
+    context = {
         "trust_name": entity.entity_name,
         "trustee_name": _format_name_list(trustee_names),
         "trustee_names_list": trustee_names,
@@ -191,6 +199,11 @@ def resolve_distribution_minutes(financial_year_id) -> dict:
         "total_distributed_raw": total_distributed,
         "has_beneficiaries": len(beneficiary_rows) > 0,
     }
+    logger.info(
+        "distmin context: has_beneficiaries=%s rows=%d total=%s",
+        context["has_beneficiaries"], len(beneficiary_rows), context["total_distributed"],
+    )
+    return context
 
 
 # =============================================================================
