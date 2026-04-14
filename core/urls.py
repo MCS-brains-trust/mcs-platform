@@ -116,6 +116,7 @@ urlpatterns = [
     path("entities/<uuid:entity_pk>/years/create/", views.financial_year_create, name="financial_year_create"),
     path("years/<uuid:pk>/", views.financial_year_detail, name="financial_year_detail"),
     path("years/<uuid:pk>/status/", views.financial_year_status, name="financial_year_status"),
+    path("years/<uuid:pk>/finalise-full/", views.financial_year_finalise_full, name="financial_year_finalise_full"),
     path("years/<uuid:pk>/roll-forward/", views.roll_forward, name="roll_forward"),
     path("years/<uuid:pk>/reopen/", views.reopen_financial_year, name="reopen_financial_year"),
     path("years/<uuid:pk>/reroll-forward/", views.reroll_forward, name="reroll_forward"),

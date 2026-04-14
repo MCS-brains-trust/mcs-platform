@@ -117,21 +117,6 @@
         <div class="card">
             <div class="card-body py-2">
                 <div class="d-flex flex-wrap align-items-center gap-3">
-                    <!-- Status Change -->
-                    <form method="post" action="{% url 'core:financial_year_status' pk=fy.pk %}" class="d-flex align-items-center gap-2" id="statusForm">
-                        {% csrf_token %}
-                        <label class="form-label mb-0 text-nowrap"><strong>Status:</strong></label>
-                        <select name="status" class="form-select form-select-sm" style="max-width: 180px;" id="statusSelect">
-                            <option value="draft" {% if fy.status == 'draft' %}selected{% endif %}>Draft</option>
-                            <option value="in_review" {% if fy.status == 'in_review' %}selected{% endif %}>In Review</option>
-                            <option value="finalised" {% if fy.status == 'finalised' %}selected{% endif %}>Finalised</option>
-                            <option value="reopened" {% if fy.status == 'reopened' %}selected{% endif %}>Reopened</option>
-                        </select>
-                        <button type="submit" class="btn btn-sm btn-primary">Update</button>
-                    </form>
-
-                    <div class="vr d-none d-md-block"></div>
-
                     <!-- Ask Eva to Review Button -->
                     {% if fy.can_ask_eva %}
                     <button type="button" class="btn btn-sm btn-outline-info" id="askEvaBtn" onclick="document.getElementById('eva-review-card').scrollIntoView({behavior:'smooth'}); askEvaToReview();">
@@ -140,7 +125,7 @@
                     {% endif %}
 
                     <!-- Finalise Button -->
-                    {% if fy.status == 'in_review' %}
+                    {% if fy.status == 'draft' or fy.status == 'in_review' or fy.status == 'reopened' %}
                         {% if can_finalise %}
                         <button type="button" class="btn btn-sm btn-success" id="finaliseBtn" onclick="evaFinalise()">
                             <i class="bi bi-lock-fill"></i> Finalise

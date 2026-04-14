@@ -770,7 +770,7 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
 
     // ── Finalise ──
     window.evaFinalise = function() {
-        if (!confirm('Finalise this financial year? This will lock the trial balance and enable document generation.')) return;
+        if (!confirm('Finalise this financial year? This will run risk checks, lock the trial balance, and enable document generation.')) return;
 
         var btn = document.getElementById('finaliseBtn') || document.getElementById('eva-finalise-btn');
         if (btn) {
@@ -778,26 +778,18 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
             btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Finalising...';
         }
 
-        fetch('/api/financial-years/' + fyPk + '/eva-finalise/', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'X-CSRFToken': csrfToken,
-                'X-Requested-With': 'XMLHttpRequest',
-            },
-        })
-        .then(function(r) { return r.json(); })
-        .then(function(data) {
-            if (data.status === 'ok') {
-                location.reload();
-            } else {
-                alert(data.error || 'Failed to finalise');
-                if (btn) {
-                    btn.disabled = false;
-                    btn.innerHTML = '<i class="bi bi-lock-fill"></i> Finalise';
-                }
-            }
-        });
+        // Use the combined finalise-full endpoint which handles
+        // draft/reopened → in_review → finalised in one action.
+        var form = document.createElement('form');
+        form.method = 'POST';
+        form.action = '/entities/years/' + fyPk + '/finalise-full/';
+        var csrf = document.createElement('input');
+        csrf.type = 'hidden';
+        csrf.name = 'csrfmiddlewaretoken';
+        csrf.value = csrfToken;
+        form.appendChild(csrf);
+        document.body.appendChild(form);
+        form.submit();
     };
 
     // ── Auto-poll if Eva review is running ──

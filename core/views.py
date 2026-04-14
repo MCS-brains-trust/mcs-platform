@@ -1963,8 +1963,8 @@ def financial_year_detail(request, pk):
             applicable_entities__contains=fy.entity.entity_type
         ).order_by('financial_statement', 'line_item_label'),
         "active_tab": request.GET.get("tab", ""),
-        # Finalise button state
-        "can_finalise": fy.can_finalise,
+        # Finalise button state — show for draft, reopened, and in_review
+        "can_finalise": fy.status in ("draft", "reopened", "in_review"),
         # Eva review running state (check for running/pending review records)
         "eva_review_running": fy.eva_reviews.filter(status__in=["pending", "running"]).exists(),
         # Reopen feature: list of subsequent finalised years for cascade info
@@ -2007,6 +2007,102 @@ def financial_year_detail(request, pk):
     context["fy_end_iso"] = fy.end_date.isoformat()
 
     return render(request, "core/financial_year_detail.html", context)
+
+
+@login_required
+def financial_year_finalise_full(request, pk):
+    """One-click finalise: draft/reopened → in_review → finalised atomically.
+
+    If the FY is already in_review, skips straight to finalisation.
+    Runs all in_review side effects (Tier 1+2 risk recalc, Tier 3 AI)
+    then finalises (locks TB, records finalised_at).
+    """
+    if request.method != "POST":
+        return redirect("core:financial_year_detail", pk=pk)
+
+    fy = get_financial_year_for_user(request, pk)
+
+    if not request.user.can_finalise:
+        messages.error(request, "Only senior accountants or admins can finalise.")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    if fy.status not in ("draft", "reopened", "in_review"):
+        messages.error(request, "This financial year cannot be finalised from its current status.")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    # ── Step 1: Transition to in_review (if not already) ─────────────
+    if fy.status in ("draft", "reopened"):
+        fy.status = "in_review"
+        fy.save(update_fields=["status"])
+
+        # Replicate in_review side effects from financial_year_status
+        from core.signals import trigger_risk_recalc
+        trigger_risk_recalc(fy, "status_in_review", force=True)
+        try:
+            from .ai_service import batch_analyse_flags
+            ai_result = batch_analyse_flags(fy, force=False)
+            _log_action(
+                request, "audit_run",
+                f"Auto Tier 3 AI analysis on status→In Review: "
+                f"{ai_result.get('analysed', 0)} analysed, "
+                f"{ai_result.get('skipped', 0)} cached",
+                fy
+            )
+        except Exception as e:
+            import logging
+            logging.getLogger(__name__).error(f"Auto Tier 3 on In Review failed: {e}")
+
+    # ── Step 2: Block finalisation if trust balance sheet doesn't reconcile
+    if fy.entity.entity_type == "trust":
+        try:
+            from core.fs_template_service import _get_tb_sections, _sum_section
+            from decimal import Decimal
+            _sections = _get_tb_sections(fy)
+            _eq = -_sum_section(_sections["equity"])
+            _liab = -(_sum_section(_sections["current_liabilities"])
+                       + _sum_section(_sections["noncurrent_liabilities"]))
+            _assets = (_sum_section(_sections["current_assets"])
+                        + _sum_section(_sections["noncurrent_assets"]))
+            _na = _assets - _liab
+            if abs(_na - _eq) > Decimal("0.01"):
+                messages.error(
+                    request,
+                    f"Cannot finalise: Net Assets ({_na:,.0f}) ≠ Total Equity ({_eq:,.0f}). "
+                    f"Investigate the equity section before finalising."
+                )
+                return redirect("core:financial_year_detail", pk=pk)
+        except Exception as _e:
+            import logging
+            logging.getLogger(__name__).warning("Balance sheet reconciliation check failed: %s", _e)
+
+    # ── Step 3: Finalise (in_review → finalised) ─────────────────────
+    fy.status = FinancialYear.Status.FINALISED
+    fy.finalised_at = timezone.now()
+    fy.save(update_fields=["status", "finalised_at"])
+    fy.trial_balance_lines.update(comparatives_locked=True)
+
+    _log_action(
+        request, "status_change",
+        f"{request.user.get_full_name() or request.user.email} finalised this financial year. "
+        f"Trial balance locked. Eva compliance review now available.",
+        fy,
+    )
+
+    ActivityLog.objects.create(
+        user=request.user,
+        financial_year=fy,
+        entity=fy.entity,
+        event_type="year_finalised",
+        title=f"Finalised by {request.user.get_full_name() or request.user.username}",
+        description=(
+            f"Financial year finalised at {timezone.now().strftime('%d %b %Y %H:%M')}. "
+            f"Eva compliance review is now available."
+        ),
+        url=f"/entities/years/{fy.pk}/",
+    )
+
+    messages.success(request, "Financial year finalised. Eva's compliance review is now available.")
+    return redirect("core:financial_year_detail", pk=pk)
 
 
 @login_required
