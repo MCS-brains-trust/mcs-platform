@@ -235,6 +235,14 @@ class TemplateRenderer:
         data_source = section.get("data_source", "")
         rows_data = self.context.get(data_source, [])
 
+        logger.info(
+            "renderer table: data_source=%s rows=%d columns=%s",
+            data_source, len(rows_data) if rows_data else 0,
+            [c.get("field") for c in columns],
+        )
+        if rows_data:
+            logger.info("renderer table: first_row=%r", rows_data[0])
+
         if not columns:
             return
 
@@ -380,6 +388,13 @@ class TemplateRenderer:
         condition = bool(value)
         if negate:
             condition = not condition
+
+        logger.info(
+            "renderer conditional: field=%s value=%r condition=%s negate=%s children=%d else=%d",
+            field, value, condition, negate,
+            len(section.get("children", [])),
+            len(section.get("else_children", [])),
+        )
 
         if condition:
             children = section.get("children", [])

@@ -55,6 +55,13 @@ def generate_from_template(document_category: str, entity_type: str, financial_y
     # 2. Resolve merge fields
     context = resolve_context(document_category, financial_year_id)
 
+    logger.info(
+        "template_docgen context keys: %s | has_beneficiaries=%s beneficiary_rows=%d",
+        list(context.keys()),
+        context.get("has_beneficiaries"),
+        len(context.get("beneficiary_rows", [])),
+    )
+
     # 3. Render
     renderer = TemplateRenderer(tpl.structure, context)
     buffer = renderer.render()
