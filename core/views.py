@@ -2030,6 +2030,18 @@ def financial_year_finalise_full(request, pk):
         messages.error(request, "This financial year cannot be finalised from its current status.")
         return redirect("core:financial_year_detail", pk=pk)
 
+    # ── Pre-check: Trust distribution must be complete ───────────────
+    if fy.entity.entity_type == "trust":
+        trust_ws = getattr(fy, "trust_workspace", None)
+        if not trust_ws or not trust_ws.all_stages_completed():
+            messages.warning(
+                request,
+                "Trust Distribution tab has not been completed for this "
+                "financial year. Please complete the trust distribution "
+                "before finalising."
+            )
+            return redirect("core:financial_year_detail", pk=pk)
+
     # ── Step 1: Transition to in_review (if not already) ─────────────
     if fy.status in ("draft", "reopened"):
         fy.status = "in_review"
