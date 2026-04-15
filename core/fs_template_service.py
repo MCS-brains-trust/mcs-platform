@@ -2748,12 +2748,24 @@ def _generate_depreciation_report(context):
     fy = context["_fy"]
     entity = context["_entity"]
 
-    assets = DepreciationAsset.objects.filter(
+    assets_qs = DepreciationAsset.objects.filter(
         financial_year=fy
-    ).order_by("category", "display_order", "asset_name")
+    ).order_by("category", "display_order", "asset_name", "id")
 
-    if not assets.exists():
+    if not assets_qs.exists():
         return None
+
+    # Deduplicate by (category, asset_name) — first occurrence wins.
+    # Safeguards against duplicate DepreciationAsset records created by
+    # repeated imports/backfills (bulk_create without existence check).
+    seen = set()
+    assets = []
+    for a in assets_qs:
+        key = (a.category, a.asset_name)
+        if key in seen:
+            continue
+        seen.add(key)
+        assets.append(a)
 
     # Group by category
     categories = OrderedDict()
@@ -2897,7 +2909,7 @@ def _generate_depreciation_report(context):
     first_category = True
     for cat_name, cat_assets in categories.items():
         if not first_category:
-            doc.add_paragraph().paragraph_format.space_after = Pt(6)
+            doc.add_page_break()
         first_category = False
 
         # Category heading
