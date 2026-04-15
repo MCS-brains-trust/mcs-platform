@@ -136,7 +136,7 @@ def _clear_table_borders(table):
     tblBorders = OxmlElement('w:tblBorders')
     for edge in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
         el = OxmlElement(f'w:{edge}')
-        el.set(qn('w:val'), 'nil')
+        el.set(qn('w:val'), 'none')
         el.set(qn('w:sz'), '0')
         el.set(qn('w:color'), 'auto')
         tblBorders.append(el)
@@ -163,7 +163,7 @@ ROW_TYPE_SECTION_TOTAL = "section_total"
 ROW_TYPE_MAJOR_TOTAL = "major_total"
 ROW_TYPE_GRAND_TOTAL = "grand_total"
 
-_NIL = {"val": "nil", "sz": "0", "color": "auto"}
+_NIL = {"val": "none", "sz": "0", "color": "auto"}
 _SINGLE = {"val": "single", "sz": "6", "color": "000000"}
 _DOUBLE = {"val": "double", "sz": "8", "color": "000000"}
 
@@ -193,7 +193,7 @@ def _apply_cell_border(cell, **kwargs):
             el.set(qn('w:color'), attrs.get('color', '000000'))
         else:
             el = OxmlElement(f'w:{side}')
-            el.set(qn('w:val'), 'nil')
+            el.set(qn('w:val'), 'none')
             el.set(qn('w:sz'), '0')
             el.set(qn('w:color'), 'auto')
         tcBorders.append(el)
