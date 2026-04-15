@@ -23,7 +23,7 @@ from core.models import FinancialStatementTemplate
 
 
 # Template layout constants — Handiledger reference standard
-FONT_HEADING = "Palatino Linotype"  # Entity name, ABN, title, section headers, footer
+FONT_HEADING = "Arial"  # Entity name, ABN, title, section headers, footer (Handiledger-aligned)
 FONT_BODY = "Times New Roman"       # Line items, column headers, totals, notes
 FONT_NAME = FONT_BODY               # Legacy alias used by existing helpers
 FONT_SIZE = Pt(10)
@@ -86,9 +86,17 @@ def _set_default_font(doc):
 
 def _add_para(doc, text, bold=False, italic=False, alignment=WD_ALIGN_PARAGRAPH.LEFT,
               size=None, color=None, keep_with_next=False):
-    """Add a styled paragraph."""
+    """Add a styled paragraph.
+
+    Default space_after = Pt(3) — gives ~15pt effective row height on
+    10pt body text, matching the Handiledger reference. Callers that need
+    different spacing can override `p.paragraph_format.space_after` on
+    the returned paragraph.
+    """
     p = doc.add_paragraph()
     p.alignment = alignment
+    p.paragraph_format.space_before = Pt(0)
+    p.paragraph_format.space_after = Pt(3)
     run = p.add_run(text)
     run.font.name = FONT_NAME
     run.font.size = size or FONT_SIZE
@@ -219,9 +227,11 @@ def _apply_row_borders(row, row_type=ROW_TYPE_DATA):
     elif row_type == ROW_TYPE_SUBCATEGORY_SUBTOTAL:
         amount_kwargs = {"top": _SINGLE}
     elif row_type == ROW_TYPE_SECTION_TOTAL:
-        amount_kwargs = {"top": _SINGLE, "bottom": _DOUBLE}
+        # Handiledger: section subtotal = single above + single below
+        amount_kwargs = {"top": _SINGLE, "bottom": _SINGLE}
     elif row_type in (ROW_TYPE_MAJOR_TOTAL, ROW_TYPE_GRAND_TOTAL):
-        amount_kwargs = {"bottom": _DOUBLE}
+        # Handiledger: major/grand total = single above + double below
+        amount_kwargs = {"top": _SINGLE, "bottom": _DOUBLE}
     else:
         amount_kwargs = {}  # data / heading — all nil
 
@@ -286,6 +296,8 @@ def _add_total_row(doc, label, cy_tag, py_tag, size=None,
     for i in range(4):
         for p in row.cells[i].paragraphs:
             p.alignment = WD_ALIGN_PARAGRAPH.RIGHT if i >= 2 else WD_ALIGN_PARAGRAPH.LEFT
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(3)
             for run in p.runs:
                 run.font.name = FONT_NAME
                 run.font.size = font_size
@@ -308,7 +320,7 @@ def _add_repeating_header(doc, document_title, date_field="{{ date_text }}"):
     for para in list(header.paragraphs):
         para.clear()
 
-    # Entity name — Palatino Linotype 13pt Bold, centred
+    # Entity name — Arial 13pt Bold, centred
     p1 = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
     p1.text = ""
     p1.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -319,7 +331,7 @@ def _add_repeating_header(doc, document_title, date_field="{{ date_text }}"):
     p1.paragraph_format.space_after = Pt(0)
     p1.paragraph_format.space_before = Pt(0)
 
-    # ABN — Palatino Linotype 11pt, centred
+    # ABN — Arial 11pt, centred
     p2 = header.add_paragraph()
     p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run2 = p2.add_run("ABN {{ abn }}")
@@ -328,7 +340,7 @@ def _add_repeating_header(doc, document_title, date_field="{{ date_text }}"):
     p2.paragraph_format.space_after = Pt(0)
     p2.paragraph_format.space_before = Pt(0)
 
-    # Document title — Palatino Linotype 11pt, centred
+    # Document title — Arial 11pt, centred
     p3 = header.add_paragraph()
     p3.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run3 = p3.add_run(document_title)
@@ -337,7 +349,7 @@ def _add_repeating_header(doc, document_title, date_field="{{ date_text }}"):
     p3.paragraph_format.space_after = Pt(0)
     p3.paragraph_format.space_before = Pt(0)
 
-    # Date / period — Palatino Linotype 11pt, centred, with bottom border (horizontal rule)
+    # Date / period — Arial 11pt, centred, with bottom border (horizontal rule)
     p4 = header.add_paragraph()
     p4.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run4 = p4.add_run(date_field)
@@ -383,7 +395,7 @@ def _add_footer(doc, text="These financial statements are unaudited. They must b
     p.text = ""
     p.alignment = WD_ALIGN_PARAGRAPH.LEFT
     run = p.add_run(text)
-    run.font.name = FONT_HEADING  # Palatino Linotype for footer
+    run.font.name = FONT_HEADING  # Arial for footer
     run.font.size = Pt(9)
     run.font.italic = True
 
@@ -418,7 +430,7 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
     for i, width in enumerate(COL_WIDTHS):
         table.columns[i].width = width
 
-    # Row 0 — Section title — Palatino Linotype 11pt Bold
+    # Row 0 — Section title — Arial 11pt Bold
     title_row = table.rows[0]
     title_row.cells[0].text = section_title
     for i in range(4):
@@ -438,7 +450,7 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
     cantSplit_title.set(qn('w:val'), '1')
     trPr_title.append(cantSplit_title)
 
-    # Row 1 — Column headers: year numbers (TNR Bold 10pt)
+    # Row 1 — Column headers: year numbers (Arial Bold 9pt — Handiledger-aligned)
     hdr = table.rows[1]
     hdr.cells[0].text = ""
     hdr.cells[1].text = "Note"
@@ -450,8 +462,8 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
             p.paragraph_format.space_before = Pt(0)
             p.paragraph_format.space_after = Pt(0)
             for run in p.runs:
-                run.font.name = FONT_BODY
-                run.font.size = FONT_SIZE
+                run.font.name = FONT_HEADING  # Arial
+                run.font.size = Pt(9)
                 run.bold = True
     _apply_row_borders(hdr, ROW_TYPE_DATA)  # no borders on year row
 
@@ -467,8 +479,8 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
             p.paragraph_format.space_before = Pt(0)
             p.paragraph_format.space_after = Pt(0)
             for run in p.runs:
-                run.font.name = FONT_BODY
-                run.font.size = FONT_SIZE
+                run.font.name = FONT_HEADING  # Arial
+                run.font.size = Pt(9)
                 run.bold = True
     # Single line below $ row separating headers from data
     _apply_row_borders(dollar_row, ROW_TYPE_HEADER)
@@ -501,6 +513,8 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
     for i in range(4):
         for p in data_row.cells[i].paragraphs:
             p.alignment = WD_ALIGN_PARAGRAPH.RIGHT if i >= 2 else WD_ALIGN_PARAGRAPH.LEFT
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(3)  # ~15pt effective row height (Handiledger)
             for run in p.runs:
                 run.font.name = FONT_NAME
                 run.font.size = FONT_SIZE
@@ -527,11 +541,13 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
     for i in range(4):
         for p in total_row.cells[i].paragraphs:
             p.alignment = WD_ALIGN_PARAGRAPH.RIGHT if i >= 2 else WD_ALIGN_PARAGRAPH.LEFT
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(3)
             for run in p.runs:
                 run.font.name = FONT_NAME
                 run.font.size = FONT_SIZE
                 run.bold = True
-    # Section total: single above + double below on amount cells
+    # Section subtotal: single above + single below on amount cells (Handiledger)
     _apply_row_borders(total_row, ROW_TYPE_SECTION_TOTAL)
 
     return table
@@ -689,6 +705,8 @@ def _build_detailed_pl(entity_type):
     for i in range(4):
         for p in tax_row.cells[i].paragraphs:
             p.alignment = WD_ALIGN_PARAGRAPH.RIGHT if i >= 2 else WD_ALIGN_PARAGRAPH.LEFT
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(3)
             for run in p.runs:
                 run.font.name = FONT_NAME
                 run.font.size = FONT_SIZE
@@ -808,6 +826,8 @@ def _build_summary_pl(entity_type):
         for i in range(3):
             for p in table.rows[r].cells[i].paragraphs:
                 p.alignment = WD_ALIGN_PARAGRAPH.RIGHT if i >= 1 else WD_ALIGN_PARAGRAPH.LEFT
+                p.paragraph_format.space_before = Pt(0)
+                p.paragraph_format.space_after = Pt(3)
                 for run in p.runs:
                     run.font.name = FONT_NAME
                     run.font.size = FONT_SIZE
@@ -1076,6 +1096,8 @@ def _build_distribution(entity_type):
     _set_row_widths(hdr)
     for i in range(3):
         for p in hdr.cells[i].paragraphs:
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(3)
             for run in p.runs:
                 run.font.name = FONT_NAME
                 run.font.size = FONT_SIZE
@@ -1102,6 +1124,8 @@ def _build_distribution(entity_type):
     _set_row_widths(data_row)
     for i in range(3):
         for p in data_row.cells[i].paragraphs:
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(3)
             for run in p.runs:
                 run.font.name = FONT_NAME
                 run.font.size = FONT_SIZE
@@ -1127,6 +1151,8 @@ def _build_distribution(entity_type):
     _set_row_widths(total_row)
     for i in range(3):
         for p in total_row.cells[i].paragraphs:
+            p.paragraph_format.space_before = Pt(0)
+            p.paragraph_format.space_after = Pt(3)
             for run in p.runs:
                 run.font.name = FONT_NAME
                 run.font.size = FONT_SIZE
