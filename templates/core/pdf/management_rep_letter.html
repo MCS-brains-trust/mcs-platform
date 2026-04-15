@@ -46,7 +46,15 @@
 {% if superannuation_applicable %}<p class="numbered">{% if div7a_applicable %}4{% else %}3{% endif %}. All superannuation guarantee obligations have been met in full and on time for the financial year.</p>{% endif %}
 
 <h2>Authorised Signatures</h2>
-{% if signatories %}
+{% if declaration_signatories %}
+  {% for sig in declaration_signatories %}
+  <div class="sig-block">
+    <div class="sig-line"></div>
+    <p><strong>{{ sig.name }}</strong><br>Director of {{ sig.trustee_company }}<br>As Trustee of {{ sig.trust_name }}</p>
+    <p>Date: ___________________</p>
+  </div>
+  {% endfor %}
+{% elif signatories %}
   {% for s in signatories %}
   <div class="sig-block">
     <div class="sig-line"></div>

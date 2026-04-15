@@ -434,6 +434,8 @@ def generate_management_rep_letter(request, pk):
     fy = get_object_or_404(FinancialYear, pk=pk)
     entity = fy.entity
 
+    from django.db import models as _m
+
     directors = EntityOfficer.objects.filter(
         entity=entity,
         role__in=["director", "director_shareholder", "trustee", "partner"],
@@ -449,6 +451,29 @@ def generate_management_rep_letter(request, pk):
         "financial_year_end": fy_end_formatted,
         "signatories": [{"name": d.full_name, "role": d.get_role_display()} for d in directors],
     }
+
+    # Trust corporate-trustee structure: build declaration_signatories
+    # so the HTML template renders one block per individual director-signatory
+    if entity.entity_type == "trust":
+        trustee_officer = EntityOfficer.objects.filter(
+            entity=entity, date_ceased__isnull=True,
+        ).filter(
+            _m.Q(role="trustee") | _m.Q(roles__contains="trustee")
+        ).first()
+        trustee_company = trustee_officer.full_name if trustee_officer else (
+            getattr(entity, "trustee_name", "") or ""
+        )
+        signatory_officers = EntityOfficer.objects.filter(
+            entity=entity, is_signatory=True, date_ceased__isnull=True,
+        ).order_by("display_order", "full_name")
+        context["declaration_signatories"] = [
+            {
+                "name": o.full_name,
+                "trustee_company": trustee_company,
+                "trust_name": entity.entity_name,
+            }
+            for o in signatory_officers
+        ]
 
     # Enrich with DocumentContextBuilder
     try:
