@@ -1050,8 +1050,8 @@ def build_trust_context(financial_year, include_watermark=True):
             else:
                 name = ""
             pct = (amount / scenario_total * 100) if scenario_total else Decimal("0")
-            pct_display = f"{pct:.2f}%"
-            amount_display = f"{amount:,.2f}"
+            pct_display = f"{pct:.2f}"
+            amount_display = f"{amount:,.0f}"
             distributions.append({
                 "beneficiary_name": name or "— Name missing —",
                 "percentage": pct_display,
@@ -1074,9 +1074,9 @@ def build_trust_context(financial_year, include_watermark=True):
             if amount == 0:
                 amount_display = "-"
             elif amount < 0:
-                amount_display = f"({abs(amount):,.2f})"
+                amount_display = f"({abs(amount):,.0f})"
             else:
-                amount_display = f"{amount:,.2f}"
+                amount_display = f"{amount:,.0f}"
             distributions.append({
                 "beneficiary_name": name or "— Name missing —",
                 "percentage": pct_display,
@@ -1134,13 +1134,13 @@ def build_trust_context(financial_year, include_watermark=True):
     )
 
     context["beneficiaries"] = distributions
-    # Format total distribution to 2dp for the Distribution Summary
+    # Format total distribution as whole dollars for the Distribution Summary
     if total_for_summary == 0:
         context["total_distribution"] = "-"
     elif total_for_summary < 0:
-        context["total_distribution"] = f"({abs(total_for_summary):,.2f})"
+        context["total_distribution"] = f"({abs(total_for_summary):,.0f})"
     else:
-        context["total_distribution"] = f"{total_for_summary:,.2f}"
+        context["total_distribution"] = f"{total_for_summary:,.0f}"
 
     return context
 
