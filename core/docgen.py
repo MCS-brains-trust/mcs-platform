@@ -2733,11 +2733,27 @@ def _add_declaration(doc, entity, fy):
             "Signed in accordance with a resolution of the trustee by:",
             size=FONT_SIZE_BODY, space_after=20)
 
+        # Find the trustee company (officer with role/roles == "trustee")
+        trustee_officer = None
+        for o in entity.officers.filter(date_ceased__isnull=True):
+            if o.role == "trustee" or (o.roles and "trustee" in o.roles):
+                trustee_officer = o
+                break
+        trustee_company = trustee_officer.full_name if trustee_officer else (
+            entity.trustee_name or ""
+        )
+        date_str = fy.end_date.strftime('%-d %B %Y')
+
         for officer in signatories:
             doc.add_paragraph().paragraph_format.space_after = Pt(20)
             _add_paragraph(doc, "_" * 50, size=FONT_SIZE_BODY, space_after=0)
-            _add_paragraph(doc, f"{officer.full_name}", size=FONT_SIZE_BODY, space_after=0)
-            _add_paragraph(doc, "(Trustee)", size=FONT_SIZE_BODY, space_after=6)
+            _add_paragraph(doc, officer.full_name, size=FONT_SIZE_BODY, space_after=0)
+            if trustee_company:
+                _add_paragraph(doc, f"Director of {trustee_company}",
+                               size=FONT_SIZE_BODY, space_after=0)
+            _add_paragraph(doc, f"As Trustee of {entity.entity_name}",
+                           size=FONT_SIZE_BODY, space_after=0)
+            _add_paragraph(doc, f"Dated: {date_str}", size=FONT_SIZE_BODY, space_after=6)
 
     elif entity_type == "partnership":
         _start_report_section(doc, entity, "Partner Declaration",
@@ -2810,7 +2826,9 @@ def _add_declaration(doc, entity, fy):
             _add_paragraph(doc, officer.full_name, size=FONT_SIZE_BODY, space_after=0)
             _add_paragraph(doc, "Proprietor", size=FONT_SIZE_BODY, space_after=6)
 
-    _add_paragraph(doc, "Dated:", size=FONT_SIZE_BODY, space_after=2)
+    # Trust signatories already include per-signatory "Dated:" lines
+    if entity_type != "trust":
+        _add_paragraph(doc, "Dated:", size=FONT_SIZE_BODY, space_after=2)
 
 
 # =============================================================================

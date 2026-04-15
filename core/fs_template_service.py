@@ -1030,7 +1030,6 @@ def build_trust_context(financial_year, include_watermark=True):
     _missing_names = []
     workspace = getattr(financial_year, "trust_workspace", None)
     scenario = workspace.selected_tax_scenario if workspace else None
-    is_unit_trust = getattr(entity, "trust_type", "") == "unit"
 
     if scenario and scenario.distributions:
         # Use selected Tax Planning scenario
@@ -1050,8 +1049,8 @@ def build_trust_context(financial_year, include_watermark=True):
                     _missing_names.append(officer.pk)
             else:
                 name = ""
-            pct = (amount / scenario_total * 100) if (is_unit_trust and scenario_total) else None
-            pct_display = f"{pct:.2f}" if pct is not None else "—"
+            pct = (amount / scenario_total * 100) if scenario_total else Decimal("0")
+            pct_display = f"{pct:.2f}%"
             amount_display = f"{amount:,.2f}"
             distributions.append({
                 "beneficiary_name": name or "— Name missing —",
