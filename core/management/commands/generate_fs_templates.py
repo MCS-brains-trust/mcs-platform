@@ -910,15 +910,26 @@ def _build_declaration(entity_type):
     doc.add_paragraph("")
     doc.add_paragraph("")
 
-    # Signature block using Jinja2 for loop
-    _add_para(doc, "{% for d in directors %}")
-    _add_para(doc, "____________________________")
-    _add_para(doc, "{{ d.name }}")
-    _add_para(doc, "{{ d.title }}")
-    _add_para(doc, "")
-    _add_para(doc, "{% endfor %}")
-
-    _add_para(doc, "Dated: {{ signing_date }}")
+    # Signature block — trust uses corporate-trustee structure with individual signatories;
+    # other entity types use the legacy directors loop.
+    if entity_type == "trust":
+        _add_para(doc, "{%p for sig in declaration_signatories %}")
+        _add_para(doc, "____________________________")
+        _add_para(doc, "{{ sig.name }}")
+        _add_para(doc, "Director of {{ sig.trustee_company }}")
+        _add_para(doc, "As Trustee of {{ sig.trust_name }}")
+        _add_para(doc, "")
+        _add_para(doc, "Dated: ___________________")
+        _add_para(doc, "")
+        _add_para(doc, "{%p endfor %}")
+    else:
+        _add_para(doc, "{%p for d in directors %}")
+        _add_para(doc, "____________________________")
+        _add_para(doc, "{{ d.name }}")
+        _add_para(doc, "{{ d.title }}")
+        _add_para(doc, "")
+        _add_para(doc, "{%p endfor %}")
+        _add_para(doc, "Dated: {{ signing_date }}")
 
     return doc
 

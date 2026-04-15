@@ -1018,6 +1018,29 @@ def build_trust_context(financial_year, include_watermark=True):
         for t in trustees
     ]
 
+    # Build declaration_signatories — individual directors of the corporate trustee
+    from django.db import models as _m
+    _trustee_officer = EntityOfficer.objects.filter(
+        entity=entity, date_ceased__isnull=True,
+    ).filter(
+        _m.Q(role="trustee") | _m.Q(roles__contains="trustee")
+    ).first()
+    _trustee_company = _trustee_officer.full_name if _trustee_officer else (
+        entity.trustee_name or ""
+    )
+    _signatories = EntityOfficer.objects.filter(
+        entity=entity, is_signatory=True, date_ceased__isnull=True,
+    ).order_by("display_order", "full_name")
+    context["declaration_signatories"] = [
+        {
+            "name": o.full_name,
+            "trustee_company": _trustee_company,
+            "trust_name": entity.entity_name,
+            "is_chairperson": o.is_chairperson,
+        }
+        for o in _signatories
+    ]
+
     # Distribution data — read from selected TaxPlanningScenario (Stage 2)
     from core.models import TrustWorkspace
     net_profit_raw = Decimal("0")
