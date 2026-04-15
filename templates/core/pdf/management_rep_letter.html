@@ -12,7 +12,6 @@
   p { margin: 6px 0; }
   .numbered { margin: 4px 0 4px 22px; text-indent: -22px; }
   .sig-block { margin-top: 36px; page-break-inside: avoid; }
-  .sig-line { border-top: 1px solid #333; width: 55%; margin-top: 38px; margin-bottom: 4px; }
   .disclaimer { margin-top: 28px; padding: 9px; background: #ffffff; border-left: 3px solid #000000; font-size: 8pt; color: #000000; }
 </style>
 </head>
@@ -49,7 +48,7 @@
 {% if declaration_signatories %}
   {% for sig in declaration_signatories %}
   <div class="sig-block">
-    <div class="sig-line"></div>
+    <p>____________________________</p>
     <p><strong>{{ sig.name }}</strong><br>Director of {{ sig.trustee_company }}<br>As Trustee of {{ sig.trust_name }}</p>
     <p>Date: ___________________</p>
   </div>
@@ -57,14 +56,14 @@
 {% elif signatories %}
   {% for s in signatories %}
   <div class="sig-block">
-    <div class="sig-line"></div>
+    <p>____________________________</p>
     <p><strong>{{ s.name }}</strong><br>{{ s.role }}<br>{{ entity_name }}</p>
     <p>Date: ___________________</p>
   </div>
   {% endfor %}
 {% else %}
   <div class="sig-block">
-    <div class="sig-line"></div>
+    <p>____________________________</p>
     <p><strong>Director / Management</strong><br>{{ entity_name }}</p>
     <p>Date: ___________________</p>
   </div>
