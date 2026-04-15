@@ -969,7 +969,7 @@ def build_trust_context(financial_year, include_watermark=True):
     # Relabel unit holder capital/loan accounts in the equity section.
     # Accounts containing "loan" or "fund" keywords that also contain a
     # beneficiary/unit holder name are relabelled to
-    # "Unitholders' funds introduced — [Unit Holder Name]".
+    # "Funds loaned to trust — [Unit Holder Name]".
     beneficiary_names_for_match = []
     _all_officers = EntityOfficer.objects.filter(
         entity=entity,
@@ -992,10 +992,10 @@ def build_trust_context(financial_year, include_watermark=True):
                     matched_name = bn
                     break
             if matched_name:
-                item["account_name"] = f"Unitholders' funds introduced — {matched_name}"
+                item["account_name"] = f"Funds loaned to trust — {matched_name}"
             else:
                 # Generic relabel if no name match found
-                item["account_name"] = "Unitholders' funds introduced"
+                item["account_name"] = "Funds loaned to trust"
 
     # Get trustees and beneficiaries — check both legacy `role` and `roles` JSONField
     from django.db import models as django_models

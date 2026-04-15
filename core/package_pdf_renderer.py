@@ -159,9 +159,13 @@ def render_legal_doc_to_pdf_bytes(doc):
     # Always rebuild signatories from current entity officers so stale
     # context_data (e.g. generated before directors were entered) is corrected.
     if doc.entity and doc.document_type in (
-        "directors_declaration", "solvency_resolution", "management_representation_letter",
+        "directors_declaration", "solvency_resolution",
+        "management_representation_letter", "management_rep_letter",
+        "management_rep_letter_trust", "management_rep_letter_partnership",
     ):
         from core.models import EntityOfficer
+        from django.db import models as _m
+
         officers = EntityOfficer.objects.filter(
             entity=doc.entity,
             role__in=["director", "director_shareholder", "trustee", "partner"],
@@ -171,6 +175,31 @@ def render_legal_doc_to_pdf_bytes(doc):
             context["signatories"] = [
                 {"name": o.full_name, "role": o.get_role_display()}
                 for o in officers
+            ]
+
+        # For trusts, also rebuild declaration_signatories (corporate-trustee
+        # structure: per-director signature blocks) so stale context_data
+        # frozen before the structured-signatories fix is corrected at render
+        # time. Mirrors build_trust_context / _build_compliance_context logic.
+        if doc.entity.entity_type == "trust":
+            trustee_officer = EntityOfficer.objects.filter(
+                entity=doc.entity, date_ceased__isnull=True,
+            ).filter(
+                _m.Q(role="trustee") | _m.Q(roles__contains="trustee")
+            ).first()
+            trustee_company = trustee_officer.full_name if trustee_officer else (
+                getattr(doc.entity, "trustee_name", "") or ""
+            )
+            signatory_officers = EntityOfficer.objects.filter(
+                entity=doc.entity, is_signatory=True, date_ceased__isnull=True,
+            ).order_by("display_order", "full_name")
+            context["declaration_signatories"] = [
+                {
+                    "name": o.full_name,
+                    "trustee_company": trustee_company,
+                    "trust_name": doc.entity.entity_name,
+                }
+                for o in signatory_officers
             ]
 
     try:
