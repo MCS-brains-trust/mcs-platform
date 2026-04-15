@@ -997,17 +997,20 @@ def build_trust_context(financial_year, include_watermark=True):
                 # Generic relabel if no name match found
                 item["account_name"] = "Unitholders' funds introduced"
 
-    # Get trustees and beneficiaries
+    # Get trustees and beneficiaries — check both legacy `role` and `roles` JSONField
+    from django.db import models as django_models
     trustees = EntityOfficer.objects.filter(
-        entity=entity,
-        role="trustee",
-        date_ceased__isnull=True,
+        entity=entity, date_ceased__isnull=True,
+    ).filter(
+        django_models.Q(role="trustee") | django_models.Q(roles__contains="trustee")
     ).order_by("display_order", "full_name")
 
     beneficiaries = EntityOfficer.objects.filter(
-        entity=entity,
-        role__in=["beneficiary", "unit_holder"],
-        date_ceased__isnull=True,
+        entity=entity, date_ceased__isnull=True,
+    ).filter(
+        django_models.Q(role__in=["beneficiary", "unit_holder"])
+        | django_models.Q(roles__contains="beneficiary")
+        | django_models.Q(roles__contains="unit_holder")
     ).order_by("display_order", "full_name")
 
     context["directors"] = [
@@ -1015,7 +1018,8 @@ def build_trust_context(financial_year, include_watermark=True):
         for t in trustees
     ]
 
-    # Distribution data
+    # Distribution data — read from selected TaxPlanningScenario (Stage 2)
+    from core.models import TrustWorkspace
     net_profit_raw = Decimal("0")
     sections = _get_tb_sections(financial_year)
     total_income = -_sum_section(sections["trading_income"]) + -_sum_section(sections["income"])
@@ -1024,28 +1028,63 @@ def build_trust_context(financial_year, include_watermark=True):
 
     distributions = []
     _missing_names = []
-    for ben in beneficiaries:
-        name = (ben.full_name or "").strip()
-        if not name:
-            _missing_names.append(ben.pk)
-        pct = ben.distribution_percentage or Decimal("0")
-        amount = (net_profit_raw * pct / 100).quantize(
-            Decimal("0.01"), rounding=ROUND_HALF_UP
+    workspace = getattr(financial_year, "trust_workspace", None)
+    scenario = workspace.selected_tax_scenario if workspace else None
+    is_unit_trust = getattr(entity, "trust_type", "") == "unit"
+
+    if scenario and scenario.distributions:
+        # Use selected Tax Planning scenario
+        scenario_total = sum(
+            Decimal(str(e.get("proposed_distribution", 0)))
+            for e in scenario.distributions
+            if Decimal(str(e.get("proposed_distribution", 0))) > 0
         )
-        # Format percentage to 2dp; format amount as currency with 2dp
-        pct_display = f"{pct:.2f}" if pct else "0.00"
-        if amount == 0:
-            amount_display = "-"
-        elif amount < 0:
-            amount_display = f"({abs(amount):,.2f})"
-        else:
+        for entry in scenario.distributions:
+            amount = Decimal(str(entry.get("proposed_distribution", 0)))
+            if amount <= 0:
+                continue
+            officer = EntityOfficer.objects.filter(pk=entry.get("beneficiary_id")).first()
+            if officer:
+                name = (officer.full_name or "").strip()
+                if not name:
+                    _missing_names.append(officer.pk)
+            else:
+                name = ""
+            pct = (amount / scenario_total * 100) if (is_unit_trust and scenario_total) else None
+            pct_display = f"{pct:.2f}" if pct is not None else "—"
             amount_display = f"{amount:,.2f}"
-        distributions.append({
-            "beneficiary_name": name or "— Name missing —",
-            "percentage": pct_display,
-            "amount": amount_display,
-            "amount_raw": amount,
-        })
+            distributions.append({
+                "beneficiary_name": name or "— Name missing —",
+                "percentage": pct_display,
+                "amount": amount_display,
+                "amount_raw": amount,
+            })
+        # Override total_distribution to reflect actual scenario total
+        total_for_summary = scenario_total
+    else:
+        # Fallback — no scenario selected; use static distribution_percentage
+        for ben in beneficiaries:
+            name = (ben.full_name or "").strip()
+            if not name:
+                _missing_names.append(ben.pk)
+            pct = ben.distribution_percentage or Decimal("0")
+            amount = (net_profit_raw * pct / 100).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+            pct_display = f"{pct:.2f}" if pct else "0.00"
+            if amount == 0:
+                amount_display = "-"
+            elif amount < 0:
+                amount_display = f"({abs(amount):,.2f})"
+            else:
+                amount_display = f"{amount:,.2f}"
+            distributions.append({
+                "beneficiary_name": name or "— Name missing —",
+                "percentage": pct_display,
+                "amount": amount_display,
+                "amount_raw": amount,
+            })
+        total_for_summary = net_profit_raw
 
     # Raise CRITICAL Eva finding if any beneficiary name is missing
     if _missing_names:
@@ -1097,12 +1136,12 @@ def build_trust_context(financial_year, include_watermark=True):
 
     context["beneficiaries"] = distributions
     # Format total distribution to 2dp for the Distribution Summary
-    if net_profit_raw == 0:
+    if total_for_summary == 0:
         context["total_distribution"] = "-"
-    elif net_profit_raw < 0:
-        context["total_distribution"] = f"({abs(net_profit_raw):,.2f})"
+    elif total_for_summary < 0:
+        context["total_distribution"] = f"({abs(total_for_summary):,.2f})"
     else:
-        context["total_distribution"] = f"{net_profit_raw:,.2f}"
+        context["total_distribution"] = f"{total_for_summary:,.2f}"
 
     return context
 
@@ -2773,14 +2812,19 @@ def _generate_depreciation_report(context):
     header.is_linked_to_previous = False
     for para in list(header.paragraphs):
         para.clear()
+    _entity_name = context.get("entity_name", entity.entity_name)
+    _abn = context.get("abn", "")
+    _date_text = context.get("date_text", "")
+    _watermark = context.get("watermark", "")
+
     p1 = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
     p1.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r1 = p1.add_run("{{ entity_name }}")
+    r1 = p1.add_run(_entity_name)
     r1.font.name = FONT; r1.font.size = Pt(10); r1.bold = True
     p1.paragraph_format.space_after = Pt(0)
     p2 = header.add_paragraph()
     p2.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r2 = p2.add_run("ABN {{ abn }}")
+    r2 = p2.add_run(f"ABN {_abn}" if _abn else "")
     r2.font.name = FONT; r2.font.size = Pt(8)
     p2.paragraph_format.space_after = Pt(0)
     p3 = header.add_paragraph()
@@ -2790,7 +2834,7 @@ def _generate_depreciation_report(context):
     p3.paragraph_format.space_after = Pt(0)
     p4 = header.add_paragraph()
     p4.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    r4 = p4.add_run("{{ date_text }}")
+    r4 = p4.add_run(_date_text)
     r4.font.name = FONT; r4.font.size = Pt(8)
     p4.paragraph_format.space_after = Pt(4)
     pPr = p4._p.get_or_add_pPr()
@@ -2799,12 +2843,13 @@ def _generate_depreciation_report(context):
     bb.set(qn('w:val'), 'single'); bb.set(qn('w:sz'), '6')
     bb.set(qn('w:space'), '1'); bb.set(qn('w:color'), '000000')
     pBdr.append(bb); pPr.append(pBdr)
-    pw = header.add_paragraph()
-    pw.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    rw = pw.add_run("{{ watermark }}")
-    rw.font.name = FONT; rw.font.size = Pt(12)
-    rw.font.color.rgb = RGBColor(0xFF, 0x00, 0x00); rw.bold = True
-    pw.paragraph_format.space_after = Pt(0)
+    if _watermark:
+        pw = header.add_paragraph()
+        pw.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        rw = pw.add_run(_watermark)
+        rw.font.name = FONT; rw.font.size = Pt(12)
+        rw.font.color.rgb = RGBColor(0xFF, 0x00, 0x00); rw.bold = True
+        pw.paragraph_format.space_after = Pt(0)
 
     # Footer
     footer = doc.sections[0].footer
