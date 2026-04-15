@@ -215,7 +215,7 @@ def _apply_row_borders(row, row_type=ROW_TYPE_DATA):
 
     # Determine border kwargs for amount columns based on row_type
     if row_type == ROW_TYPE_HEADER:
-        amount_kwargs = {"bottom": _SINGLE}
+        amount_kwargs = {}
     elif row_type == ROW_TYPE_SUBCATEGORY_SUBTOTAL:
         amount_kwargs = {"top": _SINGLE}
     elif row_type == ROW_TYPE_SECTION_TOTAL:
