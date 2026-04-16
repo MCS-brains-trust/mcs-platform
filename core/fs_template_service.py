@@ -1395,12 +1395,12 @@ def _post_process_fs_doc(buffer, doc_type, has_prior=True):
 
                     # Determine border style per Handiledger standard
                     if is_section_total:
-                        # Single above + double below
-                        amount_top = {'val': 'single', 'sz': '4'}
-                        amount_bot = {'val': 'double', 'sz': '8'}
+                        # Section subtotal: single above + single below
+                        amount_top = {'val': 'single', 'sz': '6'}
+                        amount_bot = {'val': 'single', 'sz': '6'}
                     else:
-                        # Major total / grand total: double below only
-                        amount_top = {'val': 'nil', 'sz': '0'}
+                        # Major total / grand total: single above + double below
+                        amount_top = {'val': 'single', 'sz': '6'}
                         amount_bot = {'val': 'double', 'sz': '8'}
 
                     num_cells = len(row.cells)
@@ -1416,7 +1416,7 @@ def _post_process_fs_doc(buffer, doc_type, has_prior=True):
                         if not is_amount_col:
                             for side in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
                                 el = OxmlElement(f'w:{side}')
-                                el.set(qn('w:val'), 'nil')
+                                el.set(qn('w:val'), 'none')
                                 el.set(qn('w:sz'), '0')
                                 el.set(qn('w:color'), 'auto')
                                 tcBorders.append(el)
@@ -1436,7 +1436,7 @@ def _post_process_fs_doc(buffer, doc_type, has_prior=True):
                         tcBorders.append(bot_el)
                         for side in ('left', 'right', 'insideH', 'insideV'):
                             el = OxmlElement(f'w:{side}')
-                            el.set(qn('w:val'), 'nil')
+                            el.set(qn('w:val'), 'none')
                             el.set(qn('w:sz'), '0')
                             el.set(qn('w:color'), 'auto')
                             tcBorders.append(el)
