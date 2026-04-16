@@ -2161,19 +2161,32 @@ def _generate_notes_document(context):
     pw.paragraph_format.space_before = Pt(0)
 
     # --- Footer ---
+    # Centre-aligned Times New Roman italic 9pt with 0.5pt top border
+    # (horizontal rule above), matching Handiledger standard.
     footer = section.footer
     footer.is_linked_to_previous = False
     fp = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
     fp.text = ""
-    fp.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
     fr = fp.add_run(
         "These financial statements are unaudited. They must be read in "
         "conjunction with the attached Accountant\u2019s Compilation Report "
         "and Notes which form part of these financial statements."
     )
-    fr.font.name = _NOTES_FONT
-    fr.font.size = Pt(8)
+    fr.font.name = "Times New Roman"
+    fr.font.size = Pt(9)
     fr.font.italic = True
+    _fpPr = fp._p.get_or_add_pPr()
+    for _existing in _fpPr.findall(qn('w:pBdr')):
+        _fpPr.remove(_existing)
+    _fpBdr = OxmlElement('w:pBdr')
+    _fpTop = OxmlElement('w:top')
+    _fpTop.set(qn('w:val'), 'single')
+    _fpTop.set(qn('w:sz'), '4')
+    _fpTop.set(qn('w:space'), '4')
+    _fpTop.set(qn('w:color'), '000000')
+    _fpBdr.append(_fpTop)
+    _fpPr.append(_fpBdr)
 
     # ==================================================================
     # NOTE 1: Statement of Significant Accounting Policies
@@ -2889,17 +2902,30 @@ def _generate_depreciation_report(context):
         rw.font.color.rgb = RGBColor(0xFF, 0x00, 0x00); rw.bold = True
         pw.paragraph_format.space_after = Pt(0)
 
-    # Footer
+    # Footer — centred Times New Roman italic 9pt with 0.5pt top border
     footer = doc.sections[0].footer
     footer.is_linked_to_previous = False
     fp = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
     fp.text = ""
-    fp.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
     fr = fp.add_run(
         "These financial statements are unaudited. They must be read in conjunction with the "
         "attached Accountant\u2019s Compilation Report and Notes which form part of these financial statements."
     )
-    fr.font.name = FONT; fr.font.size = Pt(7); fr.font.italic = True
+    fr.font.name = "Times New Roman"
+    fr.font.size = Pt(9)
+    fr.font.italic = True
+    _fpPr = fp._p.get_or_add_pPr()
+    for _existing in _fpPr.findall(qn('w:pBdr')):
+        _fpPr.remove(_existing)
+    _fpBdr = OxmlElement('w:pBdr')
+    _fpTop = OxmlElement('w:top')
+    _fpTop.set(qn('w:val'), 'single')
+    _fpTop.set(qn('w:sz'), '4')
+    _fpTop.set(qn('w:space'), '4')
+    _fpTop.set(qn('w:color'), '000000')
+    _fpBdr.append(_fpTop)
+    _fpPr.append(_fpBdr)
 
     # Grand totals accumulators
     grand_cost = Decimal("0")
@@ -3336,15 +3362,42 @@ def _build_distribution_docx(financial_year, context):
         ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
     ]))
     story.append(tbl)
-    story.append(Spacer(1, 8 * mm))
-    story.append(Paragraph(
+
+    # Per-page footer — centred Times Italic 9pt with 0.5pt horizontal rule
+    # above, matching the Handiledger-aligned docx footer.
+    FOOTER_TEXT = (
         "These financial statements are unaudited. They must be read "
         "in conjunction with the attached Accountant\u2019s Compilation "
-        "Report and Notes which form part of these financial statements.",
-        small_italic,
-    ))
+        "Report and Notes which form part of these financial statements."
+    )
 
-    doc.build(story)
+    def _draw_footer(canvas, _doc):
+        canvas.saveState()
+        page_w = A4[0]
+        left_x = 2.0 * cm
+        right_x = page_w - 2.4 * cm
+        # Horizontal rule just above the footer text
+        canvas.setLineWidth(0.5)
+        canvas.setStrokeColorRGB(0, 0, 0)
+        canvas.line(left_x, 1.3 * cm, right_x, 1.3 * cm)
+        # Footer text (centred, Times Italic 9pt)
+        canvas.setFont("Times-Italic", 9)
+        canvas.setFillColorRGB(0, 0, 0)
+        # Wrap to two lines if wider than usable area
+        usable_w = right_x - left_x
+        text_w = canvas.stringWidth(FOOTER_TEXT, "Times-Italic", 9)
+        if text_w <= usable_w:
+            canvas.drawCentredString(page_w / 2, 0.9 * cm, FOOTER_TEXT)
+        else:
+            # Split at the roughly-midway "the" word for a balanced break
+            split = FOOTER_TEXT.rfind("conjunction with")
+            line1 = FOOTER_TEXT[:split].strip()
+            line2 = FOOTER_TEXT[split:].strip()
+            canvas.drawCentredString(page_w / 2, 1.0 * cm, line1)
+            canvas.drawCentredString(page_w / 2, 0.65 * cm, line2)
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=_draw_footer, onLaterPages=_draw_footer)
     buf.seek(0)
     logger.info(
         "Built programmatic DISTRIBUTION (PDF) for %s: %d beneficiaries",

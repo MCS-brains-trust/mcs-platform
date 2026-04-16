@@ -385,9 +385,9 @@ def _add_repeating_header(doc, document_title, date_field="{{ date_text }}"):
 def _add_footer(doc, text="These financial statements are unaudited. They must be read in conjunction with the attached Accountant\u2019s Compilation Report and Notes which form part of these financial statements."):
     """Add standard footer with full unaudited disclaimer text.
 
-    Page numbers are NOT added here — they are stamped on the final
-    merged PDF by _stamp_page_numbers() so numbering runs continuously
-    across the entire assembled package.
+    - Centre-aligned, Times New Roman italic 9pt (Handiledger standard).
+    - Top border (0.5pt black) creates a horizontal rule above the text,
+      repeating on every page because this is a section footer.
     """
     section = doc.sections[0]
     footer = section.footer
@@ -395,11 +395,25 @@ def _add_footer(doc, text="These financial statements are unaudited. They must b
 
     p = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
     p.text = ""
-    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = p.add_run(text)
-    run.font.name = FONT_HEADING  # Arial for footer
+    run.font.name = FONT_BODY  # Times New Roman
     run.font.size = Pt(9)
     run.font.italic = True
+
+    # Top border on the footer paragraph — 0.5pt solid black, full width
+    pPr = p._p.get_or_add_pPr()
+    # Remove any existing pBdr first to avoid duplicates
+    for existing in pPr.findall(qn('w:pBdr')):
+        pPr.remove(existing)
+    pBdr = OxmlElement('w:pBdr')
+    top_border = OxmlElement('w:top')
+    top_border.set(qn('w:val'), 'single')
+    top_border.set(qn('w:sz'), '4')       # 4/8 = 0.5pt
+    top_border.set(qn('w:space'), '4')
+    top_border.set(qn('w:color'), '000000')
+    pBdr.append(top_border)
+    pPr.append(pBdr)
 
 
 def _add_spacer(doc, pts=4):
