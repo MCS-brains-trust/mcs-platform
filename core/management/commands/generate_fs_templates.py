@@ -69,8 +69,10 @@ ENTITY_DOC_TYPES = {
 
 
 def _set_page_setup(doc):
-    """Set A4 portrait margins per DOCGEN.md spec."""
+    """Set A4 portrait page size and margins per DOCGEN.md spec."""
     for section in doc.sections:
+        section.page_width = Cm(21.0)
+        section.page_height = Cm(29.7)
         section.top_margin = PAGE_MARGIN_TOP
         section.bottom_margin = PAGE_MARGIN_BOTTOM
         section.left_margin = PAGE_MARGIN_LEFT

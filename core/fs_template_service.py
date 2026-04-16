@@ -1457,10 +1457,14 @@ def _post_process_fs_doc(buffer, doc_type, has_prior=True):
                                 run.bold = True
 
                 # Sub-group subtotal rows — empty label, amounts present,
-                # single top border on AMOUNT columns only
+                # single top border on AMOUNT columns only.
+                # Exclude column-header rows (year number or "$" in cell 2).
+                _cell2 = row.cells[2].text.strip() if len(row.cells) >= 3 else ""
+                _is_col_header = _cell2.startswith("$") or (_cell2.isdigit() and len(_cell2) == 4)
                 if (not first_cell_text
                         and len(row.cells) >= 3
-                        and row.cells[2].text.strip()):
+                        and _cell2
+                        and not _is_col_header):
                     num_cells = len(row.cells)
                     for cell in row.cells:
                         for para in cell.paragraphs:
