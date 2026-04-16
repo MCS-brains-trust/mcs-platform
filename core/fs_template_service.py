@@ -3225,50 +3225,15 @@ def generate_financial_statements(financial_year_id, include_watermark=True):
 # Page-number stamping — absolute numbering on the final merged PDF
 # ---------------------------------------------------------------------------
 def _stamp_page_numbers(pdf_bytes):
-    """Stamp centred page numbers at the bottom of every page of a merged PDF.
+    """No-op passthrough — page numbers are intentionally suppressed.
 
-    Uses reportlab to create a transparent overlay with just the page number,
-    then merges it onto each page using pypdf.  Falls back gracefully if
-    reportlab is not installed.
+    Previously stamped centred page numbers at the bottom of every page
+    via a reportlab overlay. Removed per client requirement: no page
+    numbers anywhere in generated FS / package outputs. The call sites
+    (generate_combined_pdf, build_package_bundle) are retained so the
+    function can be re-enabled by restoring the original body.
     """
-    try:
-        from reportlab.lib.pagesizes import A4
-        from reportlab.pdfgen import canvas as rl_canvas
-    except ImportError:
-        logger.warning(
-            "reportlab not installed — skipping page number stamping. "
-            "Install with: pip install reportlab"
-        )
-        return pdf_bytes
-
-    from pypdf import PdfWriter, PdfReader
-
-    reader = PdfReader(io.BytesIO(pdf_bytes))
-    writer = PdfWriter()
-
-    for page_idx, page in enumerate(reader.pages):
-        if page_idx == 0:
-            # Skip page numbering on the cover page (page 1)
-            writer.add_page(page)
-            continue
-
-        # Create a single-page overlay with the page number
-        packet = io.BytesIO()
-        page_width = float(page.mediabox.width)
-        page_height = float(page.mediabox.height)
-        c = rl_canvas.Canvas(packet, pagesize=(page_width, page_height))
-        c.setFont("Helvetica", 9)
-        c.drawCentredString(page_width / 2, 28, str(page_idx + 1))
-        c.save()
-        packet.seek(0)
-
-        overlay = PdfReader(packet)
-        page.merge_page(overlay.pages[0])
-        writer.add_page(page)
-
-    output = io.BytesIO()
-    writer.write(output)
-    return output.getvalue()
+    return pdf_bytes
 
 
 def _build_distribution_docx(financial_year, context):

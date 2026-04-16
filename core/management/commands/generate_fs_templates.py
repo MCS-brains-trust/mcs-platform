@@ -678,7 +678,7 @@ def _build_cover(entity_type):
 
     # Two-column borderless table
     #   Left: document name (bold Times New Roman 11pt, left)
-    #   Right: "See within" (italic grey Times New Roman 10pt, right)
+    #   Right: empty (reserved for future page-number wiring)
     contents_table = doc.add_table(rows=len(contents), cols=2, style='Normal Table')
     _set_table_full_width(contents_table)
     _clear_table_borders(contents_table)
@@ -710,18 +710,14 @@ def _build_cover(entity_type):
         left_run.bold = True
         _apply_cell_border(left)
 
-        # Right cell — "See within" (italic grey)
+        # Right cell — intentionally empty (column preserved for future
+        # page-number wiring; page numbers currently suppressed globally).
         right = row.cells[1]
         right.width = Cm(4.0)
         right_p = right.paragraphs[0]
         right_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
         right_p.paragraph_format.space_before = Pt(0)
         right_p.paragraph_format.space_after = Pt(6)
-        right_run = right_p.add_run("See within")
-        right_run.font.name = "Times New Roman"
-        right_run.font.size = Pt(10)
-        right_run.font.italic = True
-        right_run.font.color.rgb = RGBColor(0x80, 0x80, 0x80)
         _apply_cell_border(right)
 
     return doc
