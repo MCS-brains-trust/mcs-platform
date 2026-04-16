@@ -634,9 +634,28 @@ def _build_cover(entity_type):
     doc.add_page_break()
 
     # --- Contents page (page 2) ---
-    _add_para(doc, "Contents", bold=True, size=Pt(14),
-              alignment=WD_ALIGN_PARAGRAPH.LEFT)
+    # Heading — Palatino Linotype (fallback Georgia) 16pt Bold, with a
+    # thin horizontal rule beneath it.
+    heading = doc.add_paragraph()
+    heading.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    heading_run = heading.add_run("Contents")
+    heading_run.font.name = "Palatino Linotype"
+    heading_run.font.size = Pt(16)
+    heading_run.bold = True
+    heading.paragraph_format.space_before = Pt(0)
+    heading.paragraph_format.space_after = Pt(48)
+    # Thin horizontal rule (0.5pt, black) below the heading text
+    hPr = heading._p.get_or_add_pPr()
+    hBdr = OxmlElement('w:pBdr')
+    hBot = OxmlElement('w:bottom')
+    hBot.set(qn('w:val'), 'single')
+    hBot.set(qn('w:sz'), '4')      # 4/8 = 0.5pt
+    hBot.set(qn('w:space'), '4')
+    hBot.set(qn('w:color'), '000000')
+    hBdr.append(hBot)
+    hPr.append(hBdr)
 
+    # Build the contents list — conditional per entity_type (unchanged)
     contents = [
         "Detailed Profit and Loss Statement",
         "Detailed Balance Sheet",
@@ -657,8 +676,53 @@ def _build_cover(entity_type):
     contents.append("Compilation Report")
     contents.append("Management Representation Letter")
 
-    for i, item in enumerate(contents, 1):
-        _add_para(doc, f"{i}.\t{item}", size=Pt(11))
+    # Two-column borderless table
+    #   Left: document name (bold Times New Roman 11pt, left)
+    #   Right: "See within" (italic grey Times New Roman 10pt, right)
+    contents_table = doc.add_table(rows=len(contents), cols=2, style='Normal Table')
+    _set_table_full_width(contents_table)
+    _clear_table_borders(contents_table)
+    contents_table.autofit = False
+    # Column widths — approx 75% / 25% of text area (16cm usable width)
+    contents_table.columns[0].width = Cm(12.0)
+    contents_table.columns[1].width = Cm(4.0)
+
+    for row_idx, item in enumerate(contents):
+        row = contents_table.rows[row_idx]
+        # Enforce minimum row height 18pt
+        tr = row._tr
+        trPr = tr.get_or_add_trPr()
+        trHeight = OxmlElement('w:trHeight')
+        trHeight.set(qn('w:val'), '360')       # 18pt = 360 twips
+        trHeight.set(qn('w:hRule'), 'atLeast')
+        trPr.append(trHeight)
+
+        # Left cell — document name
+        left = row.cells[0]
+        left.width = Cm(12.0)
+        left_p = left.paragraphs[0]
+        left_p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        left_p.paragraph_format.space_before = Pt(0)
+        left_p.paragraph_format.space_after = Pt(6)
+        left_run = left_p.add_run(item)
+        left_run.font.name = "Times New Roman"
+        left_run.font.size = Pt(11)
+        left_run.bold = True
+        _apply_cell_border(left)
+
+        # Right cell — "See within" (italic grey)
+        right = row.cells[1]
+        right.width = Cm(4.0)
+        right_p = right.paragraphs[0]
+        right_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        right_p.paragraph_format.space_before = Pt(0)
+        right_p.paragraph_format.space_after = Pt(6)
+        right_run = right_p.add_run("See within")
+        right_run.font.name = "Times New Roman"
+        right_run.font.size = Pt(10)
+        right_run.font.italic = True
+        right_run.font.color.rgb = RGBColor(0x80, 0x80, 0x80)
+        _apply_cell_border(right)
 
     return doc
 
