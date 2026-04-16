@@ -1026,9 +1026,19 @@ def _build_compilation(entity_type):
               "statements.", keep_with_next=True)
     p.paragraph_format.space_after = SP_BODY
 
+    # Signature gap — leave ~45pt of whitespace for wet signature
+    sig_gap = _add_para(doc, "", keep_with_next=True)
+    sig_gap.paragraph_format.space_before = Pt(45)
+    sig_gap.paragraph_format.space_after = Pt(0)
+
+    # Signature line (28 underscores — matches Trustee Declaration + Mgmt Rep Letter)
+    sig_line = _add_para(doc, "____________________________", keep_with_next=True)
+    sig_line.paragraph_format.space_before = Pt(0)
+    sig_line.paragraph_format.space_after = Pt(0)
+
     # Firm details block — all keep_with_next to prevent orphaning
     p = _add_para(doc, "{{ practice_name or firm_name }}", bold=True, keep_with_next=True)
-    p.paragraph_format.space_before = SP_HEAD
+    p.paragraph_format.space_before = Pt(0)
     p.paragraph_format.space_after = Pt(0)
     p = _add_para(doc, "{{ practice_registered_address or (firm_address_1 + ', ' + firm_address_2) }}", keep_with_next=True)
     p.paragraph_format.space_after = Pt(0)
