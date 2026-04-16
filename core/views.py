@@ -5940,6 +5940,7 @@ def generate_document(request, pk):
     entity = fy.entity
     if entity.entity_type == "trust":
         from core.models import LegalDocument
+        from core.views_compliance_docs import _sanitise_context_for_storage
         try:
             from core.document_context_builder import DocumentContextBuilder
             _dcb = DocumentContextBuilder(entity, financial_year=fy)
@@ -5956,7 +5957,7 @@ def generate_document(request, pk):
             document_type="distribution_minutes",
             defaults={
                 "title": f"Trust Distribution Minutes — {entity.entity_name} — {fy.end_date.year}",
-                "context_data": _dist_ctx,
+                "context_data": _sanitise_context_for_storage(_dist_ctx),
                 "generated_by": request.user,
                 "status": "generated",
             },

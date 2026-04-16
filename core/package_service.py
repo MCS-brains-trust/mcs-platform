@@ -394,6 +394,10 @@ def _invoke_compliance_generator(doc_type, fy, entity, user=None):
         label = type_labels.get(doc_type, doc_type.replace("_", " ").title())
         title = f"{label} \u2014 {entity.entity_name} \u2014 {fy.end_date.year}"
 
+        # Sanitise context before storing — Decimal/date values are not JSON-safe
+        from core.views_compliance_docs import _sanitise_context_for_storage
+        safe_context = _sanitise_context_for_storage(context)
+
         # Create LegalDocument record
         doc = LegalDocument.objects.create(
             entity=entity,
@@ -402,7 +406,7 @@ def _invoke_compliance_generator(doc_type, fy, entity, user=None):
             title=title,
             status="generated",
             generated_by=user,
-            context_data=context,
+            context_data=safe_context,
         )
 
         logger.info("Auto-generated %s for FY %s", doc_type, fy.pk)
