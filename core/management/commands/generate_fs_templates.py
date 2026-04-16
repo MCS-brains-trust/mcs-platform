@@ -484,8 +484,8 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
                 run.font.name = FONT_HEADING  # Arial
                 run.font.size = Pt(9)
                 run.bold = True
-    # Single line below $ row separating headers from data
-    _apply_row_borders(dollar_row, ROW_TYPE_HEADER)
+    # No borders on dollar row — matches Handiledger
+    _apply_row_borders(dollar_row, ROW_TYPE_DATA)
     # Keep header with first data row
     tr = hdr._tr
     trPr = tr.get_or_add_trPr()
