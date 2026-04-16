@@ -424,52 +424,51 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
     This eliminates the LibreOffice paragraph-before-table bottom-border
     artefact that produced an unwanted horizontal line above the year headers.
     """
-    # Build the table — section title row + header row + data rows + total row
-    table = doc.add_table(rows=2, cols=4, style='Normal Table')
+    # Build the table — combined heading+years row + dollar row + data rows + total
+    table = doc.add_table(rows=1, cols=4, style='Normal Table')
     _set_table_full_width(table)
     _clear_table_borders(table)
     table.autofit = False
     for i, width in enumerate(COL_WIDTHS):
         table.columns[i].width = width
 
-    # Row 0 — Section title — Arial 11pt Bold
-    title_row = table.rows[0]
-    title_row.cells[0].text = section_title
-    for i in range(4):
-        for p in title_row.cells[i].paragraphs:
-            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
-            p.paragraph_format.space_before = Pt(0)
-            p.paragraph_format.space_after = Pt(0)
-            for run in p.runs:
-                run.font.name = FONT_HEADING
-                run.font.size = FONT_SIZE_HEADING
-                run.bold = True
-        _apply_cell_border(title_row.cells[i])
-    # Keep title row with the header row below it
-    tr_title = title_row._tr
-    trPr_title = tr_title.get_or_add_trPr()
-    cantSplit_title = OxmlElement('w:cantSplit')
-    cantSplit_title.set(qn('w:val'), '1')
-    trPr_title.append(cantSplit_title)
-
-    # Row 1 — Column headers: year numbers (Arial Bold 9pt — Handiledger-aligned)
-    hdr = table.rows[1]
-    hdr.cells[0].text = ""
-    hdr.cells[1].text = "Note"
-    hdr.cells[2].text = "{{ year }}"
-    hdr.cells[3].text = "{{ prior_year }}"
-    for i in range(4):
-        for p in hdr.cells[i].paragraphs:
+    # Row 0 — Combined section heading + column headers (Handiledger layout)
+    # cells[0]: section title (Arial Bold 11pt, left-aligned)
+    # cells[1-3]: Note / year / prior_year (Arial Bold 9pt, right-aligned)
+    heading_row = table.rows[0]
+    heading_row.cells[0].text = section_title
+    heading_row.cells[1].text = "Note"
+    heading_row.cells[2].text = "{{ year }}"
+    heading_row.cells[3].text = "{{ prior_year }}"
+    # Style cell 0 (section title) — Arial Bold 11pt
+    for p in heading_row.cells[0].paragraphs:
+        p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.space_after = Pt(0)
+        for run in p.runs:
+            run.font.name = FONT_HEADING
+            run.font.size = FONT_SIZE_HEADING
+            run.bold = True
+    # Style cells 1-3 (column headers) — Arial Bold 9pt
+    for i in range(1, 4):
+        for p in heading_row.cells[i].paragraphs:
             p.alignment = WD_ALIGN_PARAGRAPH.RIGHT if i >= 2 else WD_ALIGN_PARAGRAPH.LEFT
             p.paragraph_format.space_before = Pt(0)
             p.paragraph_format.space_after = Pt(0)
             for run in p.runs:
-                run.font.name = FONT_HEADING  # Arial
+                run.font.name = FONT_HEADING
                 run.font.size = Pt(9)
                 run.bold = True
-    _apply_row_borders(hdr, ROW_TYPE_DATA)  # no borders on year row
+    for i in range(4):
+        _apply_cell_border(heading_row.cells[i])
+    # Keep heading row with the dollar row below it
+    tr_heading = heading_row._tr
+    trPr_heading = tr_heading.get_or_add_trPr()
+    cantSplit_heading = OxmlElement('w:cantSplit')
+    cantSplit_heading.set(qn('w:val'), '1')
+    trPr_heading.append(cantSplit_heading)
 
-    # Row 1b — Dollar sign row: "$" below each year column
+    # Row 1 — Dollar sign row: "$" below each year column
     dollar_row = table.add_row()
     dollar_row.cells[0].text = ""
     dollar_row.cells[1].text = ""
@@ -486,12 +485,12 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
                 run.bold = True
     # No borders on dollar row — matches Handiledger
     _apply_row_borders(dollar_row, ROW_TYPE_DATA)
-    # Keep header with first data row
-    tr = hdr._tr
-    trPr = tr.get_or_add_trPr()
-    kn_tr = OxmlElement('w:keepNext')
-    kn_tr.set(qn('w:val'), '1')
-    trPr.append(kn_tr)
+    # Keep dollar row with first data row
+    tr_dollar = dollar_row._tr
+    trPr_dollar = tr_dollar.get_or_add_trPr()
+    kn_dollar = OxmlElement('w:keepNext')
+    kn_dollar.set(qn('w:val'), '1')
+    trPr_dollar.append(kn_dollar)
 
     # Row 2 — {%tr for %} tag in its own row (docxtpl requirement)
     for_row = table.add_row()
