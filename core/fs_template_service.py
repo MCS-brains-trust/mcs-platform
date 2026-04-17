@@ -224,6 +224,91 @@ def _sum_section(items, field="cy_amount"):
     return sum(item[field] for item in items)
 
 
+def _net_beneficiary_accounts(fy, sections):
+    """Net beneficiary-linked capital accounts per beneficiary and route to assets/liabilities.
+
+    For trust entities only. Removes individual capital-account line items
+    from sections["equity"] and injects a single "Beneficiary loan: [Name]"
+    line per beneficiary into current_assets (debit balance) or
+    current_liabilities (credit balance).
+    """
+    from core.models import EntityChartOfAccount
+
+    ben_accounts = EntityChartOfAccount.objects.filter(
+        entity=fy.entity,
+        beneficiary_officer__isnull=False,
+    ).select_related("beneficiary_officer")
+
+    if not ben_accounts.exists():
+        return
+
+    # Build {account_code: beneficiary_name}
+    code_to_ben = {}
+    for acct in ben_accounts:
+        name = acct.beneficiary_officer.full_name if acct.beneficiary_officer else "Unknown"
+        code_to_ben[acct.account_code] = name
+
+    # Identify all beneficiary account codes that appear in equity
+    ben_codes_in_equity = set()
+    for item in sections["equity"]:
+        if item["account_code"] in code_to_ben:
+            ben_codes_in_equity.add(item["account_code"])
+
+    if not ben_codes_in_equity:
+        return
+
+    # Net per beneficiary
+    from collections import defaultdict
+    nets = defaultdict(lambda: {"cy": Decimal("0"), "py": Decimal("0"), "name": ""})
+    for item in sections["equity"]:
+        code = item["account_code"]
+        if code not in ben_codes_in_equity:
+            continue
+        ben_name = code_to_ben[code]
+        nets[ben_name]["cy"] += item["cy_amount"]
+        nets[ben_name]["py"] += item["py_amount"]
+        nets[ben_name]["name"] = ben_name
+
+    # Remove beneficiary items from equity
+    sections["equity"] = [
+        item for item in sections["equity"]
+        if item["account_code"] not in ben_codes_in_equity
+    ]
+
+    # Route each beneficiary net to assets or liabilities.
+    # Raw TB sign: credit-normal equity accounts have NEGATIVE cy_amount
+    # (debit - credit).  So:
+    #   net_cy < 0 → credit balance → trust owes beneficiary → liability
+    #   net_cy > 0 → debit balance → beneficiary owes trust → asset
+    for ben_name, vals in nets.items():
+        net_cy = vals["cy"]
+        net_py = vals["py"]
+        if net_cy == 0 and net_py == 0:
+            continue
+
+        label = f"Beneficiary loan: {ben_name}"
+        entry = {
+            "account_code": f"_ben_{ben_name}",
+            "account_name": label,
+            "cy_amount": net_cy,
+            "py_amount": net_py,
+        }
+
+        # Route by CY sign (primary); PY follows as comparative
+        if net_cy > 0:
+            # Debit balance → asset (beneficiary owes trust)
+            sections["current_assets"].append(entry)
+        elif net_cy < 0:
+            # Credit balance → liability (trust owes beneficiary)
+            sections["current_liabilities"].append(entry)
+        else:
+            # CY is zero but PY is not — route by PY sign
+            if net_py > 0:
+                sections["current_assets"].append(entry)
+            else:
+                sections["current_liabilities"].append(entry)
+
+
 # Placeholder for ampersand to survive docxtpl XML rendering.
 # docxtpl's Jinja2→XML pipeline strips bare "&" from values.
 # We replace "&" with this placeholder before template rendering,
@@ -539,6 +624,11 @@ def build_company_context(financial_year, include_watermark=True):
     fy = financial_year
     entity = fy.entity
     sections = _get_tb_sections(fy)
+
+    # Trust only: net beneficiary capital accounts into assets/liabilities
+    if entity.entity_type == "trust":
+        _net_beneficiary_accounts(fy, sections)
+
     has_prior = _has_prior_year(fy)
     has_trading = len(sections["trading_income"]) > 0 or len(sections["cogs"]) > 0
 
