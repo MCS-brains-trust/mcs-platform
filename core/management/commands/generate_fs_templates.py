@@ -757,7 +757,11 @@ def _build_detailed_pl(entity_type):
     # Income section
     _add_financial_table(doc, "Income", "income", "Total Income",
                          "{{ total_income_cy }}", "{{ total_income_py }}")
-    _add_spacer(doc)
+
+    # Pt(18) gap before Expenses heading (larger than standard _add_spacer)
+    _exp_spacer = doc.add_paragraph()
+    _exp_spacer.paragraph_format.space_before = Pt(18)
+    _exp_spacer.paragraph_format.space_after = Pt(0)
 
     # Expenses section
     _add_financial_table(doc, "Expenses", "expenses", "Total Expenses",
