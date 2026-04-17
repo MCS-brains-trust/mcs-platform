@@ -1073,7 +1073,7 @@ def build_trust_context(financial_year, include_watermark=True):
             else:
                 name = ""
             pct = (amount / scenario_total * 100) if scenario_total else Decimal("0")
-            pct_display = f"{pct:.2f}"
+            pct_display = f"{pct:.0f}"
             amount_display = f"{amount:,.0f}"
             distributions.append({
                 "beneficiary_name": name or "— Name missing —",
@@ -1093,7 +1093,7 @@ def build_trust_context(financial_year, include_watermark=True):
             amount = (net_profit_raw * pct / 100).quantize(
                 Decimal("0.01"), rounding=ROUND_HALF_UP
             )
-            pct_display = f"{pct:.2f}" if pct else "0.00"
+            pct_display = f"{pct:.0f}" if pct else "0"
             if amount == 0:
                 amount_display = "-"
             elif amount < 0:
