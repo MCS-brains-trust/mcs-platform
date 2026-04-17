@@ -748,7 +748,7 @@ def _build_detailed_pl(entity_type):
 
     # 0.5cm gap between header rule and first body content
     _p0 = doc.add_paragraph()
-    _p0.paragraph_format.space_before = Emu(142100)
+    _p0.paragraph_format.space_before = Emu(71050)
     _p0.paragraph_format.space_after = Pt(0)
 
     # Income section
@@ -813,7 +813,7 @@ def _build_balance_sheet(entity_type):
 
     # 0.5cm gap between header rule and first body content
     _p0 = doc.add_paragraph()
-    _p0.paragraph_format.space_before = Emu(142100)
+    _p0.paragraph_format.space_before = Emu(71050)
     _p0.paragraph_format.space_after = Pt(0)
 
     # Current Assets
@@ -874,7 +874,7 @@ def _build_summary_pl(entity_type):
 
     # 0.5cm gap between header rule and first body content
     _p0 = doc.add_paragraph()
-    _p0.paragraph_format.space_before = Emu(142100)
+    _p0.paragraph_format.space_before = Emu(71050)
     _p0.paragraph_format.space_after = Pt(0)
 
     # Summary table
@@ -944,7 +944,7 @@ def _build_notes(entity_type):
 
     # 0.5cm gap between header rule and first body content
     _p0 = doc.add_paragraph()
-    _p0.paragraph_format.space_before = Emu(142100)
+    _p0.paragraph_format.space_before = Emu(71050)
     _p0.paragraph_format.space_after = Pt(0)
 
     _add_para(doc, "Note 1: Statement of Significant Accounting Policies",
@@ -989,7 +989,7 @@ def _build_declaration(entity_type):
 
     # 0.5cm gap between header rule and first body content
     _p0 = doc.add_paragraph()
-    _p0.paragraph_format.space_before = Emu(142100)
+    _p0.paragraph_format.space_before = Emu(71050)
     _p0.paragraph_format.space_after = Pt(0)
 
     if entity_type == "company":
@@ -1063,7 +1063,7 @@ def _build_compilation(entity_type):
 
     # 0.5cm gap between header rule and first body content
     _p0 = doc.add_paragraph()
-    _p0.paragraph_format.space_before = Emu(142100)
+    _p0.paragraph_format.space_before = Emu(71050)
     _p0.paragraph_format.space_after = Pt(0)
 
     # Tight spacing to fit on one page
@@ -1165,7 +1165,7 @@ def _build_distribution(entity_type):
 
     # 0.5cm gap between header rule and first body content
     _p0 = doc.add_paragraph()
-    _p0.paragraph_format.space_before = Emu(142100)
+    _p0.paragraph_format.space_before = Emu(71050)
     _p0.paragraph_format.space_after = Pt(0)
 
     _add_para(doc, "Net Income Available for Distribution: {{ total_distribution }}", bold=True)

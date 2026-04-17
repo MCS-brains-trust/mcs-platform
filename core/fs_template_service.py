@@ -2191,7 +2191,7 @@ def _generate_notes_document(context):
 
     # 0.5cm gap between header rule and first body content
     _p0 = doc.add_paragraph()
-    _p0.paragraph_format.space_before = Emu(142100)
+    _p0.paragraph_format.space_before = Emu(71050)
     _p0.paragraph_format.space_after = Pt(0)
 
     # ==================================================================
@@ -2950,7 +2950,7 @@ def _generate_depreciation_report(context):
         else:
             # 0.5cm gap between header rule and first body content (first page only)
             _p0 = doc.add_paragraph()
-            _p0.paragraph_format.space_before = Emu(142100)
+            _p0.paragraph_format.space_before = Emu(71050)
             _p0.paragraph_format.space_after = Pt(0)
         first_category = False
 
