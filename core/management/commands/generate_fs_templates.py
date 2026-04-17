@@ -1163,8 +1163,6 @@ def _build_compilation(entity_type):
     p.paragraph_format.space_after = Pt(0)
     p = _add_para(doc, "{{ practice_registered_address or (firm_address_1 + ', ' + firm_address_2) }}", keep_with_next=True)
     p.paragraph_format.space_after = Pt(0)
-    p = _add_para(doc, "Registered Tax Agent No: {{ practice_tax_agent_number }}", keep_with_next=True)
-    p.paragraph_format.space_after = Pt(0)
     p = _add_para(doc, "{{ practice_signatory_designation }}", keep_with_next=True)
     p.paragraph_format.space_after = SP_BODY
     p = _add_para(doc, "Dated: {{ signing_date }}")
