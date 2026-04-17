@@ -839,7 +839,15 @@ def _build_balance_sheet(entity_type):
     # Total Assets — major total (double underline below)
     _add_total_row(doc, "Total Assets", "{{ total_assets_cy }}", "{{ total_assets_py }}",
                    row_type=ROW_TYPE_MAJOR_TOTAL)
-    _add_spacer(doc)
+
+    # Page break — liabilities section starts on a new page
+    _pb = doc.add_paragraph()
+    _pb.paragraph_format.space_before = Pt(0)
+    _pb.paragraph_format.space_after = Pt(0)
+    _pbPr = _pb._p.get_or_add_pPr()
+    _pageBreak = OxmlElement('w:pageBreakBefore')
+    _pageBreak.set(qn('w:val'), '1')
+    _pbPr.append(_pageBreak)
 
     # Current Liabilities
     _add_financial_table(doc, "Current Liabilities", "current_liabilities",
