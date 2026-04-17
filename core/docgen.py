@@ -2750,10 +2750,12 @@ def _add_declaration(doc, entity, fy):
             _add_paragraph(doc, officer.full_name, size=FONT_SIZE_BODY, space_after=0)
             if trustee_company:
                 _add_paragraph(doc, f"Director of {trustee_company}",
-                               size=FONT_SIZE_BODY, space_after=0)
-            _add_paragraph(doc, f"As Trustee of {entity.entity_name}",
-                           size=FONT_SIZE_BODY, space_after=0)
-            _add_paragraph(doc, f"Dated: {date_str}", size=FONT_SIZE_BODY, space_after=6)
+                               size=FONT_SIZE_BODY, space_after=Pt(36))
+            else:
+                _add_paragraph(doc, "Director",
+                               size=FONT_SIZE_BODY, space_after=Pt(36))
+
+        _add_paragraph(doc, "Dated: ___________________", size=FONT_SIZE_BODY, space_after=6)
 
     elif entity_type == "partnership":
         _start_report_section(doc, entity, "Partner Declaration",
@@ -2826,7 +2828,8 @@ def _add_declaration(doc, entity, fy):
             _add_paragraph(doc, officer.full_name, size=FONT_SIZE_BODY, space_after=0)
             _add_paragraph(doc, "Proprietor", size=FONT_SIZE_BODY, space_after=6)
 
-    # Trust signatories already include per-signatory "Dated:" lines
+    # Shared "Dated:" line for non-trust entity types.
+    # Trust declaration adds its own "Dated: ___" after the signatory loop above.
     if entity_type != "trust":
         _add_paragraph(doc, "Dated:", size=FONT_SIZE_BODY, space_after=2)
 

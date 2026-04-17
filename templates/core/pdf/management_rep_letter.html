@@ -47,12 +47,14 @@
 <h2>Authorised Signatures</h2>
 {% if declaration_signatories %}
   {% for sig in declaration_signatories %}
-  <div class="sig-block">
+  <div class="sig-block" style="margin-bottom: 36pt;">
     <p>____________________________</p>
-    <p><strong>{{ sig.name }}</strong><br>Director of {{ sig.trustee_company }}<br>As Trustee of {{ sig.trust_name }}</p>
-    <p>Date: ___________________</p>
+    <p><strong>{{ sig.name }}</strong><br>Director of {{ sig.trustee_company }}</p>
   </div>
   {% endfor %}
+  <div style="margin-top: 12pt;">
+    <p>Date: ___________________</p>
+  </div>
 {% elif signatories %}
   {% for s in signatories %}
   <div class="sig-block">
