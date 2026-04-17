@@ -872,7 +872,12 @@ def _build_balance_sheet(entity_type):
     _add_total_row(doc, "Net Assets", "{{ net_assets_cy }}", "{{ net_assets_py }}",
                    size=Pt(12), row_type=ROW_TYPE_MAJOR_TOTAL)
 
-    # Equity — flows directly after Net Assets without forced page break
+    # Pt(18) gap before Equity heading (matches Expenses gap in P&L)
+    _eq_spacer = doc.add_paragraph()
+    _eq_spacer.paragraph_format.space_before = Pt(18)
+    _eq_spacer.paragraph_format.space_after = Pt(0)
+
+    # Equity
     _add_financial_table(doc, "Equity", "equity", "Total Equity",
                          "{{ total_equity_cy }}", "{{ total_equity_py }}")
 
