@@ -863,9 +863,9 @@ def _build_balance_sheet(entity_type):
     _add_spacer(doc)
     _add_para(doc, "{% endif %}", size=Pt(1))
 
-    # Total Liabilities — major total (double underline below)
+    # Total Liabilities — single top only, no bottom line (flows into Net Assets)
     _add_total_row(doc, "Total Liabilities", "{{ total_liabilities_cy }}", "{{ total_liabilities_py }}",
-                   row_type=ROW_TYPE_MAJOR_TOTAL)
+                   row_type=ROW_TYPE_SUBCATEGORY_SUBTOTAL)
     _add_spacer(doc)
 
     # Net Assets — major total (double underline below)

@@ -1215,7 +1215,9 @@ _SECTION_TOTAL_LABELS = [
 
 # Major totals: double below only on amount cols
 _MAJOR_TOTAL_LABELS = [
-    "total assets", "total liabilities", "net assets",
+    "total assets", "net assets",
+    # "total liabilities" intentionally excluded — rendered with single-top
+    # only (no bottom) so it flows into Net Assets without a double underline.
 ]
 
 # Grand totals: double below only on amount cols
