@@ -351,25 +351,28 @@ def _add_repeating_header(doc, document_title, date_field="{{ date_text }}"):
     p3.paragraph_format.space_after = Pt(0)
     p3.paragraph_format.space_before = Pt(0)
 
-    # Date / period — Arial 11pt, centred, with bottom border (horizontal rule)
-    # space_after = ~1cm (284,200 EMUs) — gap between header text and rule
+    # Date / period — Arial 11pt, centred. Pt(6) gap before the rule.
     p4 = header.add_paragraph()
     p4.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run4 = p4.add_run(date_field)
     run4.font.name = FONT_HEADING
     run4.font.size = Pt(11)
-    p4.paragraph_format.space_after = Emu(284200)
+    p4.paragraph_format.space_after = Pt(6)
     p4.paragraph_format.space_before = Pt(0)
-    # Full-width horizontal rule below the header block
-    pPr = p4._p.get_or_add_pPr()
+
+    # Separate rule paragraph — empty, with bottom border (0.5pt black)
+    p_rule = header.add_paragraph()
+    p_rule.paragraph_format.space_before = Pt(0)
+    p_rule.paragraph_format.space_after = Pt(0)
+    pPr_rule = p_rule._p.get_or_add_pPr()
     pBdr = OxmlElement('w:pBdr')
     bottom_border = OxmlElement('w:bottom')
     bottom_border.set(qn('w:val'), 'single')
-    bottom_border.set(qn('w:sz'), '6')
-    bottom_border.set(qn('w:space'), '1')
+    bottom_border.set(qn('w:sz'), '4')    # 4/8 = 0.5pt
+    bottom_border.set(qn('w:space'), '0')
     bottom_border.set(qn('w:color'), '000000')
     pBdr.append(bottom_border)
-    pPr.append(pBdr)
+    pPr_rule.append(pBdr)
 
     # DRAFT watermark — right-aligned, red, only visible when non-empty
     pw = header.add_paragraph()

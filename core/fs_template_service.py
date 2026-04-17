@@ -2136,19 +2136,22 @@ def _generate_notes_document(context):
     r4 = p4.add_run(date_text)
     r4.font.name = _NOTES_FONT
     r4.font.size = Pt(9)
-    # space_after = ~1cm (284,200 EMUs) — gap between header text and rule
-    p4.paragraph_format.space_after = Emu(284200)
+    p4.paragraph_format.space_after = Pt(6)
     p4.paragraph_format.space_before = Pt(0)
-    # Horizontal rule
-    pPr = p4._p.get_or_add_pPr()
+
+    # Separate rule paragraph — empty, with bottom border (0.5pt black)
+    p_rule = header.add_paragraph()
+    p_rule.paragraph_format.space_before = Pt(0)
+    p_rule.paragraph_format.space_after = Pt(0)
+    pPr_rule = p_rule._p.get_or_add_pPr()
     pBdr = OxmlElement('w:pBdr')
     bottom_border = OxmlElement('w:bottom')
     bottom_border.set(qn('w:val'), 'single')
-    bottom_border.set(qn('w:sz'), '6')
-    bottom_border.set(qn('w:space'), '1')
+    bottom_border.set(qn('w:sz'), '4')
+    bottom_border.set(qn('w:space'), '0')
     bottom_border.set(qn('w:color'), '000000')
     pBdr.append(bottom_border)
-    pPr.append(pBdr)
+    pPr_rule.append(pBdr)
 
     # Watermark placeholder
     pw = header.add_paragraph()
@@ -2893,14 +2896,18 @@ def _generate_depreciation_report(context):
     p4.alignment = WD_ALIGN_PARAGRAPH.CENTER
     r4 = p4.add_run(_date_text)
     r4.font.name = FONT; r4.font.size = Pt(8)
-    # space_after = ~1cm (284,200 EMUs) — gap between header text and rule
-    p4.paragraph_format.space_after = Emu(284200)
-    pPr = p4._p.get_or_add_pPr()
+    p4.paragraph_format.space_after = Pt(6)
+
+    # Separate rule paragraph — empty, with bottom border (0.5pt black)
+    p_rule = header.add_paragraph()
+    p_rule.paragraph_format.space_before = Pt(0)
+    p_rule.paragraph_format.space_after = Pt(0)
+    pPr_rule = p_rule._p.get_or_add_pPr()
     pBdr = OxmlElement('w:pBdr')
     bb = OxmlElement('w:bottom')
-    bb.set(qn('w:val'), 'single'); bb.set(qn('w:sz'), '6')
-    bb.set(qn('w:space'), '1'); bb.set(qn('w:color'), '000000')
-    pBdr.append(bb); pPr.append(pBdr)
+    bb.set(qn('w:val'), 'single'); bb.set(qn('w:sz'), '4')
+    bb.set(qn('w:space'), '0'); bb.set(qn('w:color'), '000000')
+    pBdr.append(bb); pPr_rule.append(pBdr)
     if _watermark:
         pw = header.add_paragraph()
         pw.alignment = WD_ALIGN_PARAGRAPH.RIGHT
