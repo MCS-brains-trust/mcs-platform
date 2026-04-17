@@ -14,7 +14,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand
 
 from docx import Document
-from docx.shared import Inches, Pt, Cm, RGBColor
+from docx.shared import Inches, Pt, Cm, Emu, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
@@ -352,12 +352,13 @@ def _add_repeating_header(doc, document_title, date_field="{{ date_text }}"):
     p3.paragraph_format.space_before = Pt(0)
 
     # Date / period — Arial 11pt, centred, with bottom border (horizontal rule)
+    # space_after = ~1cm (284,200 EMUs) — gap between header text and rule
     p4 = header.add_paragraph()
     p4.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run4 = p4.add_run(date_field)
     run4.font.name = FONT_HEADING
     run4.font.size = Pt(11)
-    p4.paragraph_format.space_after = Pt(4)
+    p4.paragraph_format.space_after = Emu(284200)
     p4.paragraph_format.space_before = Pt(0)
     # Full-width horizontal rule below the header block
     pPr = p4._p.get_or_add_pPr()

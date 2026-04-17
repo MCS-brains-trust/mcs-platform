@@ -22,7 +22,7 @@ from collections import OrderedDict
 from decimal import Decimal, ROUND_HALF_UP
 
 from django.conf import settings
-from docx.shared import Pt, Cm, RGBColor
+from docx.shared import Pt, Cm, Emu, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 from core.libreoffice_utils import convert_docx_to_pdf
@@ -2136,7 +2136,8 @@ def _generate_notes_document(context):
     r4 = p4.add_run(date_text)
     r4.font.name = _NOTES_FONT
     r4.font.size = Pt(9)
-    p4.paragraph_format.space_after = Pt(4)
+    # space_after = ~1cm (284,200 EMUs) — gap between header text and rule
+    p4.paragraph_format.space_after = Emu(284200)
     p4.paragraph_format.space_before = Pt(0)
     # Horizontal rule
     pPr = p4._p.get_or_add_pPr()
@@ -2753,7 +2754,7 @@ def _generate_depreciation_report(context):
     Returns a BytesIO buffer containing the .docx, or None if no assets exist.
     """
     from docx import Document
-    from docx.shared import Cm, Pt, RGBColor
+    from docx.shared import Cm, Pt, Emu, RGBColor
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from docx.enum.table import WD_TABLE_ALIGNMENT
     from docx.oxml.ns import qn
@@ -2887,7 +2888,8 @@ def _generate_depreciation_report(context):
     p4.alignment = WD_ALIGN_PARAGRAPH.CENTER
     r4 = p4.add_run(_date_text)
     r4.font.name = FONT; r4.font.size = Pt(8)
-    p4.paragraph_format.space_after = Pt(4)
+    # space_after = ~1cm (284,200 EMUs) — gap between header text and rule
+    p4.paragraph_format.space_after = Emu(284200)
     pPr = p4._p.get_or_add_pPr()
     pBdr = OxmlElement('w:pBdr')
     bb = OxmlElement('w:bottom')
