@@ -2189,6 +2189,11 @@ def _generate_notes_document(context):
     _fpBdr.append(_fpTop)
     _fpPr.append(_fpBdr)
 
+    # 0.5cm gap between header rule and first body content
+    _p0 = doc.add_paragraph()
+    _p0.paragraph_format.space_before = Emu(142100)
+    _p0.paragraph_format.space_after = Pt(0)
+
     # ==================================================================
     # NOTE 1: Statement of Significant Accounting Policies
     # ==================================================================
@@ -2942,6 +2947,11 @@ def _generate_depreciation_report(context):
     for cat_name, cat_assets in categories.items():
         if not first_category:
             doc.add_page_break()
+        else:
+            # 0.5cm gap between header rule and first body content (first page only)
+            _p0 = doc.add_paragraph()
+            _p0.paragraph_format.space_before = Emu(142100)
+            _p0.paragraph_format.space_after = Pt(0)
         first_category = False
 
         # Category heading

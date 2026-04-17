@@ -746,6 +746,11 @@ def _build_detailed_pl(entity_type):
     _add_repeating_header(doc, "Detailed Profit and Loss Statement", "{{ date_text }}")
     _add_footer(doc)
 
+    # 0.5cm gap between header rule and first body content
+    _p0 = doc.add_paragraph()
+    _p0.paragraph_format.space_before = Emu(142100)
+    _p0.paragraph_format.space_after = Pt(0)
+
     # Income section
     _add_financial_table(doc, "Income", "income", "Total Income",
                          "{{ total_income_cy }}", "{{ total_income_py }}")
@@ -806,6 +811,11 @@ def _build_balance_sheet(entity_type):
     _add_repeating_header(doc, "Detailed Balance Sheet", "As at {{ year_end_date }}")
     _add_footer(doc)
 
+    # 0.5cm gap between header rule and first body content
+    _p0 = doc.add_paragraph()
+    _p0.paragraph_format.space_before = Emu(142100)
+    _p0.paragraph_format.space_after = Pt(0)
+
     # Current Assets
     _add_financial_table(doc, "Current Assets", "current_assets", "Total Current Assets",
                          "{{ total_current_assets_cy }}", "{{ total_current_assets_py }}")
@@ -861,6 +871,11 @@ def _build_summary_pl(entity_type):
     _set_page_setup(doc)
     _add_repeating_header(doc, "Summary Profit and Loss Statement", "{{ date_text }}")
     _add_footer(doc)
+
+    # 0.5cm gap between header rule and first body content
+    _p0 = doc.add_paragraph()
+    _p0.paragraph_format.space_before = Emu(142100)
+    _p0.paragraph_format.space_after = Pt(0)
 
     # Summary table
     # Rows:
@@ -927,6 +942,10 @@ def _build_notes(entity_type):
     _add_repeating_header(doc, "Notes to the Financial Statements", "{{ date_text }}")
     _add_footer(doc)
 
+    # 0.5cm gap between header rule and first body content
+    _p0 = doc.add_paragraph()
+    _p0.paragraph_format.space_before = Emu(142100)
+    _p0.paragraph_format.space_after = Pt(0)
 
     _add_para(doc, "Note 1: Statement of Significant Accounting Policies",
               bold=True, keep_with_next=True)
@@ -968,6 +987,10 @@ def _build_declaration(entity_type):
     _add_repeating_header(doc, "{{ declaration_title }}", "{{ date_text }}")
     _add_page_number_footer(doc)
 
+    # 0.5cm gap between header rule and first body content
+    _p0 = doc.add_paragraph()
+    _p0.paragraph_format.space_before = Emu(142100)
+    _p0.paragraph_format.space_after = Pt(0)
 
     if entity_type == "company":
         _add_para(doc,
@@ -1037,6 +1060,11 @@ def _build_compilation(entity_type):
     _set_page_setup(doc)
     _add_repeating_header(doc, "Compilation Report", "{{ date_text }}")
     _add_page_number_footer(doc)
+
+    # 0.5cm gap between header rule and first body content
+    _p0 = doc.add_paragraph()
+    _p0.paragraph_format.space_before = Emu(142100)
+    _p0.paragraph_format.space_after = Pt(0)
 
     # Tight spacing to fit on one page
     SP_BODY = Pt(4)    # space after body paragraphs
@@ -1135,6 +1163,10 @@ def _build_distribution(entity_type):
     _add_repeating_header(doc, "Beneficiaries Distribution Summary", "{{ date_text }}")
     _add_footer(doc)
 
+    # 0.5cm gap between header rule and first body content
+    _p0 = doc.add_paragraph()
+    _p0.paragraph_format.space_before = Emu(142100)
+    _p0.paragraph_format.space_after = Pt(0)
 
     _add_para(doc, "Net Income Available for Distribution: {{ total_distribution }}", bold=True)
     doc.add_paragraph("")
