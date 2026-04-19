@@ -3924,9 +3924,15 @@ class EvaClarification(models.Model):
 class EvaFindingSuppression(models.Model):
     """
     Prevents a resolved Eva finding from being re-raised on re-run.
-    The fingerprint is a deterministic hash of:
-    entity_id + financial_year_id + rule_category + sorted account references.
-    It must NOT include dollar amounts or narrative text — only structural identifiers.
+
+    Fingerprint v2 uses: entity_id + financial_year_id + finding_key.
+    finding_key is deterministic and already incorporates the check identifier
+    and the account codes that triggered the finding, so resolving one finding
+    no longer suppresses sibling findings that differ by account.
+
+    Legacy v1 fingerprints (entity_id + financial_year_id + rule_category)
+    are marked requires_review=True and do NOT suppress until a partner
+    re-confirms them.
     """
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     financial_year = models.ForeignKey(
@@ -3941,6 +3947,18 @@ class EvaFindingSuppression(models.Model):
     )
     suppressed_at = models.DateTimeField(auto_now_add=True)
     accountant_note = models.TextField(blank=True)
+    fingerprint_version = models.PositiveSmallIntegerField(
+        default=2,
+        help_text="1 = legacy coarse fingerprint, 2 = finding_key-based fingerprint",
+    )
+    requires_review = models.BooleanField(
+        default=False,
+        help_text=(
+            "True if this suppression predates the fingerprint v2 composition "
+            "and must be re-confirmed by a partner before it applies to a new "
+            "compliance run."
+        ),
+    )
 
     class Meta:
         unique_together = ('financial_year', 'fingerprint')
@@ -3949,20 +3967,16 @@ class EvaFindingSuppression(models.Model):
         return f"Suppression {self.fingerprint[:12]}… on {self.financial_year}"
 
     @staticmethod
-    def generate_fingerprint(entity_id, financial_year_id, rule_category, account_refs=None):
+    def generate_fingerprint(entity_id, financial_year_id, finding_key):
         """
-        Generate a stable fingerprint from structural identifiers only.
-        account_refs should be a list of account codes/numbers — sort before hashing.
+        Fingerprint v2.  Uses finding_key as the discriminator.
+        finding_key is deterministic and already incorporates the check
+        identifier and the account codes that triggered the finding, so
+        resolving one finding no longer suppresses sibling findings that
+        differ by account or counterparty.
         """
-        payload = {
-            'entity_id': str(entity_id),
-            'financial_year_id': str(financial_year_id),
-            'rule_category': str(rule_category),
-            'account_refs': sorted([str(r) for r in (account_refs or [])]),
-        }
-        return hashlib.sha256(
-            json.dumps(payload, sort_keys=True).encode()
-        ).hexdigest()
+        fp_input = f"{entity_id}|{financial_year_id}|{finding_key}"
+        return hashlib.sha256(fp_input.encode("utf-8")).hexdigest()
 
 
 # ---------------------------------------------------------------------------

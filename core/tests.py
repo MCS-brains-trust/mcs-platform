@@ -1732,3 +1732,176 @@ class FrankingAccountTests(TestCase):
         )
         data = resp.json()
         self.assertEqual(Decimal(data["opening_balance"]), Decimal("8000.00"))
+
+
+# ---------------------------------------------------------------------------
+# Suppression Fingerprint v2 Tests
+# ---------------------------------------------------------------------------
+@override_settings(**STORAGES_OVERRIDE)
+class SuppressionFingerprintV2Tests(TestCase):
+    """Test that suppression fingerprints are precise and do not bleed across
+    accounts, years, or entities.  Covers the 7-case suppression matrix."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.admin = User.objects.create_superuser(
+            username="supp_admin", email="supp@test.com", password="test1234",
+        )
+        cls.client_obj = Client.objects.create(
+            client_name="Suppression Test Client", created_by=cls.admin
+        )
+        cls.entity = Entity.objects.create(
+            client=cls.client_obj,
+            entity_name="Test Company Pty Ltd",
+            entity_type="company",
+            created_by=cls.admin,
+        )
+        cls.entity_b = Entity.objects.create(
+            client=cls.client_obj,
+            entity_name="Other Company Pty Ltd",
+            entity_type="company",
+            created_by=cls.admin,
+        )
+        cls.fy = FinancialYear.objects.create(
+            entity=cls.entity,
+            start_date=date(2025, 7, 1),
+            end_date=date(2026, 6, 30),
+            year_label="FY2026",
+        )
+        cls.fy_prior = FinancialYear.objects.create(
+            entity=cls.entity,
+            start_date=date(2024, 7, 1),
+            end_date=date(2025, 6, 30),
+            year_label="FY2025",
+        )
+        cls.fy_entity_b = FinancialYear.objects.create(
+            entity=cls.entity_b,
+            start_date=date(2025, 7, 1),
+            end_date=date(2026, 6, 30),
+            year_label="FY2026",
+        )
+        # Create reviews to attach findings to
+        cls.review = EvaReview.objects.create(
+            financial_year=cls.fy,
+            status="findings_raised",
+            model_used="sonnet",
+            applicable_checks=["div7a"],
+        )
+        cls.review_prior = EvaReview.objects.create(
+            financial_year=cls.fy_prior,
+            status="findings_raised",
+            model_used="sonnet",
+            applicable_checks=["div7a"],
+        )
+        cls.review_entity_b = EvaReview.objects.create(
+            financial_year=cls.fy_entity_b,
+            status="findings_raised",
+            model_used="sonnet",
+            applicable_checks=["div7a"],
+        )
+
+    def _create_v2_suppression(self, financial_year, finding_key):
+        """Helper: create a v2 suppression for a given FY + finding_key."""
+        fingerprint = EvaFindingSuppression.generate_fingerprint(
+            str(financial_year.entity_id),
+            str(financial_year.pk),
+            finding_key,
+        )
+        return EvaFindingSuppression.objects.create(
+            financial_year=financial_year,
+            fingerprint=fingerprint,
+            rule_category=finding_key.split("_")[0],
+            suppressed_by=self.admin,
+            accountant_note="Test suppression",
+            fingerprint_version=2,
+            requires_review=False,
+        )
+
+    def test_1_same_check_same_account_same_year_suppressed(self):
+        """Exact match: same check, same account, same FY → suppressed."""
+        from core.eva_engine import _is_finding_suppressed
+        finding_key = EvaFinding.build_finding_key("div7a", account_codes=["1200"])
+        self._create_v2_suppression(self.fy, finding_key)
+        self.assertTrue(_is_finding_suppressed(self.fy, finding_key))
+
+    def test_2_same_check_different_account_not_suppressed(self):
+        """Same check, DIFFERENT account → not suppressed."""
+        from core.eva_engine import _is_finding_suppressed
+        finding_key_a = EvaFinding.build_finding_key("div7a", account_codes=["1200"])
+        finding_key_b = EvaFinding.build_finding_key("div7a", account_codes=["1201"])
+        self._create_v2_suppression(self.fy, finding_key_a)
+        self.assertFalse(_is_finding_suppressed(self.fy, finding_key_b))
+
+    def test_3_same_check_same_account_different_fy_not_suppressed(self):
+        """Same check and account, DIFFERENT FY → not suppressed."""
+        from core.eva_engine import _is_finding_suppressed
+        finding_key = EvaFinding.build_finding_key("div7a", account_codes=["1200"])
+        self._create_v2_suppression(self.fy, finding_key)
+        self.assertFalse(_is_finding_suppressed(self.fy_prior, finding_key))
+
+    def test_4_different_check_same_account_not_suppressed(self):
+        """DIFFERENT check on same account → not suppressed."""
+        from core.eva_engine import _is_finding_suppressed
+        finding_key_div7a = EvaFinding.build_finding_key("div7a", account_codes=["1200"])
+        finding_key_rp = EvaFinding.build_finding_key("related_party", account_codes=["1200"])
+        self._create_v2_suppression(self.fy, finding_key_div7a)
+        self.assertFalse(_is_finding_suppressed(self.fy, finding_key_rp))
+
+    def test_5_different_entity_same_everything_not_suppressed(self):
+        """DIFFERENT entity, same check + account + year_label → not suppressed."""
+        from core.eva_engine import _is_finding_suppressed
+        finding_key = EvaFinding.build_finding_key("div7a", account_codes=["1200"])
+        self._create_v2_suppression(self.fy, finding_key)
+        # fy_entity_b is a different entity even though same year_label
+        self.assertFalse(_is_finding_suppressed(self.fy_entity_b, finding_key))
+
+    def test_6_legacy_v1_suppression_not_suppressed(self):
+        """Legacy suppression (fingerprint_version=1) → not suppressed even
+        if the fingerprint happens to match."""
+        from core.eva_engine import _is_finding_suppressed
+        finding_key = EvaFinding.build_finding_key("div7a", account_codes=["3000"])
+        fingerprint = EvaFindingSuppression.generate_fingerprint(
+            str(self.fy.entity_id), str(self.fy.pk), finding_key,
+        )
+        EvaFindingSuppression.objects.create(
+            financial_year=self.fy,
+            fingerprint=fingerprint,
+            rule_category="div7a",
+            suppressed_by=self.admin,
+            accountant_note="Legacy suppression",
+            fingerprint_version=1,
+            requires_review=True,
+        )
+        self.assertFalse(_is_finding_suppressed(self.fy, finding_key))
+
+    def test_7_requires_review_true_not_suppressed(self):
+        """requires_review=True → not suppressed even on exact match."""
+        from core.eva_engine import _is_finding_suppressed
+        finding_key = EvaFinding.build_finding_key("sgc", account_codes=["5100"])
+        fingerprint = EvaFindingSuppression.generate_fingerprint(
+            str(self.fy.entity_id), str(self.fy.pk), finding_key,
+        )
+        EvaFindingSuppression.objects.create(
+            financial_year=self.fy,
+            fingerprint=fingerprint,
+            rule_category="sgc",
+            suppressed_by=self.admin,
+            accountant_note="Needs re-confirmation",
+            fingerprint_version=2,
+            requires_review=True,
+        )
+        self.assertFalse(_is_finding_suppressed(self.fy, finding_key))
+
+    def test_8_cluster_style_finding_suppresses_same_check_not_different(self):
+        """Cluster-style finding (finding_key = check_name, no account codes):
+        resolving suppresses the same check on the same entity/FY, but does
+        NOT suppress a different check_name on the same entity."""
+        from core.eva_engine import _is_finding_suppressed
+        # Cluster modules produce finding_key = check_name (e.g. "section100a")
+        cluster_key_a = "section100a"
+        cluster_key_b = "cluster_rp"
+        self._create_v2_suppression(self.fy, cluster_key_a)
+        # Same check → suppressed
+        self.assertTrue(_is_finding_suppressed(self.fy, cluster_key_a))
+        # Different check → not suppressed
+        self.assertFalse(_is_finding_suppressed(self.fy, cluster_key_b))

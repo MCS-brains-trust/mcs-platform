@@ -37,18 +37,24 @@ logger = logging.getLogger(__name__)
 ZERO = Decimal("0")
 
 
-def _is_finding_suppressed(financial_year, rule_category, account_refs=None):
-    """Check if a finding with this fingerprint has been suppressed."""
+def _is_finding_suppressed(financial_year, finding_key):
+    """Check if a finding with this fingerprint has been suppressed.
+
+    Only v2 suppressions (fingerprint_version=2) that do NOT require
+    re-confirmation are honoured.  Legacy v1 suppressions are ignored so
+    previously-suppressed findings resurface for partner review.
+    """
     from core.models import EvaFindingSuppression
     fingerprint = EvaFindingSuppression.generate_fingerprint(
         str(financial_year.entity_id),
         str(financial_year.pk),
-        rule_category,
-        account_refs or [],
+        finding_key,
     )
     return EvaFindingSuppression.objects.filter(
         financial_year=financial_year,
         fingerprint=fingerprint,
+        fingerprint_version=2,
+        requires_review=False,
     ).exists()
 
 
@@ -1509,16 +1515,16 @@ def _run_eva_review_background(fy_pk, user_pk):
                         except Exception:
                             pass
 
-                # Check suppression before creating finding
+                # Build finding_key first (needed for both suppression check and dedup)
                 _account_refs = result.get("affected_account_codes", []) or []
-                if _is_finding_suppressed(fy, check_def["id"], _account_refs):
-                    print(f"[Eva] SUPPRESSED finding for {check_def['id']} — skipping creation", flush=True)
-                else:
-                    # Build a deterministic finding_key for cross-review dedup
-                    _finding_key = EvaFinding.build_finding_key(
-                        check_def["id"], account_codes=_account_refs,
-                    )
+                _finding_key = EvaFinding.build_finding_key(
+                    check_def["id"], account_codes=_account_refs,
+                )
 
+                # Check suppression before creating finding
+                if _is_finding_suppressed(fy, _finding_key):
+                    print(f"[Eva] SUPPRESSED finding for {check_def['id']} (key={_finding_key}) — skipping creation", flush=True)
+                else:
                     # Skip if this finding was previously addressed
                     if _is_finding_addressed(fy, _finding_key):
                         print(f"[Eva] ADDRESSED finding for {check_def['id']} (key={_finding_key}) — skipping", flush=True)
@@ -1581,19 +1587,18 @@ def _run_eva_review_background(fy_pk, user_pk):
                     flag_severity = (flag.severity or "advisory").lower()
                     if flag_severity not in ("critical", "advisory"):
                         flag_severity = "advisory"
-                    # Extract account codes for suppression fingerprint
+                    # Extract account codes and build finding_key first
                     flag_codes = [
                         a["account_code"] for a in (flag.affected_accounts or [])
                         if isinstance(a, dict) and a.get("account_code")
                     ]
-                    # Check suppression before creating fallback finding
-                    if _is_finding_suppressed(fy, check_def["id"], flag_codes):
-                        print(f"[Eva] SUPPRESSED fallback finding for {check_def['id']} — skipping", flush=True)
-                        continue
-                    # Build finding_key for fallback findings too
                     _fb_finding_key = EvaFinding.build_finding_key(
                         check_def["id"], account_codes=flag_codes,
                     )
+                    # Check suppression before creating fallback finding
+                    if _is_finding_suppressed(fy, _fb_finding_key):
+                        print(f"[Eva] SUPPRESSED fallback finding for {check_def['id']} (key={_fb_finding_key}) — skipping", flush=True)
+                        continue
                     if _is_finding_addressed(fy, _fb_finding_key):
                         print(f"[Eva] ADDRESSED fallback finding for {check_def['id']} (key={_fb_finding_key}) — skipping", flush=True)
                         continue
@@ -2124,8 +2129,15 @@ def eva_finding_resolve(request, pk):
 
             # (b) Create suppression record so this finding isn't re-raised on re-run
             from core.models import EvaFindingSuppression
+            if not finding.finding_key:
+                raise ValueError(
+                    f"Cannot create suppression: EvaFinding {finding.pk} has no "
+                    f"finding_key (check_name={finding.check_name!r}). "
+                    f"This is a data integrity bug — every finding must have a "
+                    f"finding_key before it can be suppressed."
+                )
             fingerprint = EvaFindingSuppression.generate_fingerprint(
-                str(fy.entity_id), str(fy.pk), finding.check_name, [],
+                str(fy.entity_id), str(fy.pk), finding.finding_key,
             )
             suppression, _ = EvaFindingSuppression.objects.get_or_create(
                 financial_year=fy,
@@ -2134,6 +2146,8 @@ def eva_finding_resolve(request, pk):
                     "rule_category": finding.check_name,
                     "suppressed_by": request.user,
                     "accountant_note": resolution_note,
+                    "fingerprint_version": 2,
+                    "requires_review": False,
                 },
             )
 
@@ -2292,8 +2306,15 @@ def eva_auto_disclose_rp(request, pk):
 
     # Create suppression record
     from core.models import EvaFindingSuppression
+    if not finding.finding_key:
+        raise ValueError(
+            f"Cannot create suppression: EvaFinding {finding.pk} has no "
+            f"finding_key (check_name={finding.check_name!r}). "
+            f"This is a data integrity bug — every finding must have a "
+            f"finding_key before it can be suppressed."
+        )
     fingerprint = EvaFindingSuppression.generate_fingerprint(
-        str(fy.entity_id), str(fy.pk), finding.check_name, [],
+        str(fy.entity_id), str(fy.pk), finding.finding_key,
     )
     EvaFindingSuppression.objects.get_or_create(
         financial_year=fy,
@@ -2301,7 +2322,9 @@ def eva_auto_disclose_rp(request, pk):
         defaults={
             "rule_category": finding.check_name,
             "suppressed_by": request.user,
-            "accountant_note": f"Auto-disclosed in workpaper notes (AASB 124 format).",
+            "accountant_note": "Auto-disclosed in workpaper notes (AASB 124 format).",
+            "fingerprint_version": 2,
+            "requires_review": False,
         },
     )
 

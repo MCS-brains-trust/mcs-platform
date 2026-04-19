@@ -163,6 +163,17 @@ class BaseDetectionModule:
         # Determine the check_name for this module
         check_name = self.eva_check_name
 
+        # finding_key: use caller-supplied key if present in the card,
+        # otherwise fall back to check_name (cluster-style one-card modules).
+        finding_key = card.get("finding_key") or check_name
+        if not finding_key:
+            logger.error(
+                "BUG: finding_key is empty for module %s on %s — "
+                "this will break suppression fingerprints",
+                self.module_id, self.entity.entity_name,
+            )
+            finding_key = check_name  # last-resort guard
+
         # Upsert finding by eva_review + check_name
         finding, created = EvaFinding.objects.update_or_create(
             eva_review=review,
@@ -176,6 +187,7 @@ class BaseDetectionModule:
                 "legislation_reference": (card.get("legislation_ref", "") or "")[:255],
                 "confidence": "high",
                 "status": "open" if self.overall_severity != "CLEAR" else "closed",
+                "finding_key": finding_key,
             },
         )
 
