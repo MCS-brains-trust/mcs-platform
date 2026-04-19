@@ -1748,19 +1748,17 @@ class SuppressionFingerprintV2Tests(TestCase):
             username="supp_admin", email="supp@test.com", password="test1234",
         )
         cls.client_obj = Client.objects.create(
-            client_name="Suppression Test Client", created_by=cls.admin
+            name="Suppression Test Client"
         )
         cls.entity = Entity.objects.create(
             client=cls.client_obj,
             entity_name="Test Company Pty Ltd",
             entity_type="company",
-            created_by=cls.admin,
         )
         cls.entity_b = Entity.objects.create(
             client=cls.client_obj,
             entity_name="Other Company Pty Ltd",
             entity_type="company",
-            created_by=cls.admin,
         )
         cls.fy = FinancialYear.objects.create(
             entity=cls.entity,
