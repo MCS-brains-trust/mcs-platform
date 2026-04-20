@@ -202,6 +202,7 @@ def _get_tb_sections(fy):
                 )
             else:
                 agg[merge_key] = {
+                    "account_code": entry.get("account_code", ""),
                     "account_name": entry["account_name"],
                     "cy_amount": entry["cy_amount"],
                     "py_amount": entry["py_amount"],
@@ -227,15 +228,16 @@ def _sum_section(items, field="cy_amount"):
 def _net_beneficiary_accounts(fy, sections):
     """Net beneficiary-linked capital accounts per beneficiary and route to assets/liabilities.
 
-    For trust entities only. Queries TrialBalanceLine directly (matching
-    the CY/PY sign convention used by _get_tb_sections), removes individual
-    items from sections["equity"] by account_code, and injects a single
-    "Beneficiary loan: [Name]" line into current_assets or current_liabilities.
+    For trust entities only. Scans sections["equity"] (which now includes
+    account_code on each item), nets amounts per officer via the
+    EntityChartOfAccount.beneficiary_officer FK, removes matched items
+    from equity, and injects a single "Beneficiary loan: [Name]" line
+    into current_assets or current_liabilities.
     """
     from collections import defaultdict
-    from core.models import EntityChartOfAccount, TrialBalanceLine
+    from core.models import EntityChartOfAccount
 
-    # STEP 1 — beneficiary account codes and officer names
+    # STEP 1 — build code-to-officer mapping
     ben_coa = EntityChartOfAccount.objects.filter(
         entity=fy.entity,
         beneficiary_officer__isnull=False,
@@ -244,60 +246,42 @@ def _net_beneficiary_accounts(fy, sections):
     if not ben_coa.exists():
         return
 
-    code_to_officer = {}          # {account_code: display_name}
-    officer_to_codes = defaultdict(list)  # {display_name: [codes]}
-    all_ben_codes = set()
-
+    code_to_officer = {}
     for acct in ben_coa:
         name = acct.beneficiary_officer.full_name if acct.beneficiary_officer else "Unknown"
         code_to_officer[acct.account_code] = name
-        officer_to_codes[name].append(acct.account_code)
-        all_ben_codes.add(acct.account_code)
 
-    if not all_ben_codes:
+    # STEP 2 — scan equity, net per officer, collect items to remove
+    officer_nets = defaultdict(lambda: {"cy": Decimal("0"), "py": Decimal("0")})
+    to_remove = []
+    for item in sections["equity"]:
+        code = item.get("account_code", "")
+        if code in code_to_officer:
+            officer = code_to_officer[code]
+            officer_nets[officer]["cy"] += item["cy_amount"]
+            officer_nets[officer]["py"] += item["py_amount"]
+            to_remove.append(item)
+
+    if not to_remove:
         return
 
-    # STEP 2 — query TrialBalanceLine directly for CY and PY amounts.
-    # CY: closing_balance on current FY.  PY: prior_debit − prior_credit
-    # on current FY (mirrors _get_tb_sections line 126-127).
-    cy_by_code = {}
-    py_by_code = {}
-    for tb in TrialBalanceLine.objects.filter(
-        financial_year=fy, account_code__in=all_ben_codes,
-    ):
-        cy_by_code[tb.account_code] = (
-            cy_by_code.get(tb.account_code, Decimal("0")) + tb.closing_balance
-        )
-        py_by_code[tb.account_code] = (
-            py_by_code.get(tb.account_code, Decimal("0"))
-            + tb.prior_debit - tb.prior_credit
-        )
-
-    # Net per officer
-    officer_nets = {}
-    for officer_name, codes in officer_to_codes.items():
-        net_cy = sum(cy_by_code.get(c, Decimal("0")) for c in codes)
-        net_py = sum(py_by_code.get(c, Decimal("0")) for c in codes)
-        officer_nets[officer_name] = (net_cy, net_py)
-
-    # STEP 3 — remove beneficiary items from sections["equity"] by account_code
-    sections["equity"] = [
-        item for item in sections["equity"]
-        if item.get("account_code") not in all_ben_codes
-    ]
+    # STEP 3 — remove matched items from equity
+    for item in to_remove:
+        sections["equity"].remove(item)
 
     # STEP 4 — route each officer net to assets or liabilities.
     # Raw TB sign (debit-normal): positive = debit, negative = credit.
-    # For capital accounts:
     #   net_cy < 0 → credit balance → trust owes beneficiary → liability
     #   net_cy > 0 → debit balance → beneficiary owes trust → asset
-    for officer_name, (net_cy, net_py) in officer_nets.items():
+    for officer_name, vals in officer_nets.items():
+        net_cy = vals["cy"]
+        net_py = vals["py"]
         if net_cy == 0 and net_py == 0:
             continue
 
         label = f"Beneficiary loan: {officer_name}"
         entry = {
-            "account_code": f"_ben_{officer_name}",
+            "account_code": "BEN_LOAN",
             "account_name": label,
             "cy_amount": net_cy,
             "py_amount": net_py,
