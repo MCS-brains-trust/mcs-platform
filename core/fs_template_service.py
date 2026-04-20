@@ -615,13 +615,15 @@ def build_company_context(financial_year, include_watermark=True):
     # Trust only: net beneficiary capital accounts into assets/liabilities
     if entity.entity_type == "trust":
         _net_beneficiary_accounts(fy, sections)
-        # Remove Profit Distribution — Appropriation (4199) from equity.
+        # Remove Profit Distribution — Appropriation (4199*) from equity.
         # This journal entry moves profit to beneficiary loans and should
         # not appear as a separate equity line item.
+        # Uses startswith to catch sub-accounts (4199.01, 4199.02 etc.)
+        # and name substring checks as fallback.
         sections["equity"] = [
             item for item in sections["equity"]
             if not (
-                item.get("account_code") == "4199"
+                item.get("account_code", "").startswith("4199")
                 or "appropriation" in item.get("account_name", "").lower()
                 or "profit distribution" in item.get("account_name", "").lower()
             )
