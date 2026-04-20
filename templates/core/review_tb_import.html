@@ -153,6 +153,7 @@
                                     <th style="width: 70px;">Status</th>
                                     <th>Entity Account (COA)</th>
                                     <th>Maps To (Statement Line)</th>
+                                    {% if is_trust %}<th style="width: 160px;">Beneficiary</th>{% endif %}
                                 </tr>
                             </thead>
                             <tbody>
@@ -211,6 +212,18 @@
                                         </small>
                                         {% endif %}
                                     </td>
+                                    {% if is_trust %}
+                                    <td>
+                                        {% if line.account_code|slice:":1" == "4" %}
+                                        <select name="beneficiary_{{ forloop.counter0 }}" class="form-select form-select-sm">
+                                            <option value="">— None —</option>
+                                            {% for officer in beneficiary_officers %}
+                                            <option value="{{ officer.pk }}" {% if line.current_beneficiary_id == officer.pk|stringformat:"s" %}selected{% endif %}>{{ officer.full_name }}</option>
+                                            {% endfor %}
+                                        </select>
+                                        {% endif %}
+                                    </td>
+                                    {% endif %}
                                 </tr>
                                 {% endfor %}
                             </tbody>
@@ -219,7 +232,7 @@
                                     <td colspan="3" class="text-end">Totals:</td>
                                     <td class="amount-cell" id="totalDebit">0.00</td>
                                     <td class="amount-cell" id="totalCredit">0.00</td>
-                                    <td colspan="3"></td>
+                                    <td colspan="{% if is_trust %}4{% else %}3{% endif %}"></td>
                                 </tr>
                             </tfoot>
                         </table>

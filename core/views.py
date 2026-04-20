@@ -4093,6 +4093,30 @@ def review_tb_import(request, pk):
     balance_blocked = balance_diff > TOLERANCE
     balance_warning = Decimal("0") < balance_diff <= TOLERANCE
 
+    # Beneficiary officers for the Beneficiary column (trust entities only)
+    from django.db import models as _m
+    beneficiary_officers = []
+    if entity.entity_type == "trust":
+        beneficiary_officers = list(
+            EntityOfficer.objects.filter(
+                entity=entity,
+                date_ceased__isnull=True,
+            ).filter(
+                _m.Q(role__in=["beneficiary", "unit_holder"])
+                | _m.Q(roles__contains="beneficiary")
+                | _m.Q(roles__contains="unit_holder")
+            ).order_by("display_order", "full_name")
+        )
+        # Attach current beneficiary_officer_id to each line from ClientAccountMapping
+        ben_map = dict(
+            ClientAccountMapping.objects.filter(
+                entity=entity,
+                beneficiary_officer__isnull=False,
+            ).values_list("client_account_code", "beneficiary_officer_id")
+        )
+        for line in lines:
+            line["current_beneficiary_id"] = str(ben_map.get(line["account_code"], ""))
+
     context = {
         "fy": fy,
         "lines": lines,
@@ -4107,6 +4131,8 @@ def review_tb_import(request, pk):
         "balance_diff": balance_diff,
         "balance_blocked": balance_blocked,
         "balance_warning": balance_warning,
+        "beneficiary_officers": beneficiary_officers,
+        "is_trust": entity.entity_type == "trust",
     }
     return render(request, "core/review_tb_import.html", context)
 
@@ -4256,12 +4282,21 @@ def commit_tb_import(request, pk):
 
             # Update the learning system
             resolved_name = _resolve_account_name(entity, line["account_code"], line["account_name"])
+            # Beneficiary officer (trust entities — from the Beneficiary dropdown)
+            _ben_officer_id = request.POST.get(f"beneficiary_{i}", "").strip() or None
+            _ben_officer = None
+            if _ben_officer_id:
+                try:
+                    _ben_officer = EntityOfficer.objects.get(pk=_ben_officer_id)
+                except EntityOfficer.DoesNotExist:
+                    _ben_officer = None
             ClientAccountMapping.objects.update_or_create(
                 entity=entity,
                 client_account_code=account_code,
                 defaults={
                     "client_account_name": resolved_name,
                     "mapped_line_item": mapped_item,
+                    "beneficiary_officer": _ben_officer,
                 },
             )
             # ── Sync EntityChartOfAccount ──────────────────────────────────────────

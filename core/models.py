@@ -1213,6 +1213,14 @@ class ClientAccountMapping(models.Model):
         blank=True,
         related_name="client_mappings",
     )
+    beneficiary_officer = models.ForeignKey(
+        "EntityOfficer",
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="client_account_mappings",
+        help_text="Beneficiary/unit holder this account belongs to (trust entities only).",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

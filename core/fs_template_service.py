@@ -226,78 +226,74 @@ def _sum_section(items, field="cy_amount"):
 
 
 def _net_beneficiary_accounts(fy, sections):
-    """Net beneficiary-linked capital accounts per beneficiary and route to assets/liabilities.
+    """Net all TB lines linked to a beneficiary officer via ClientAccountMapping.
 
-    For trust entities only. Scans sections["equity"] (which now includes
-    account_code on each item), nets amounts per officer via the
-    EntityChartOfAccount.beneficiary_officer FK, removes matched items
-    from equity, and injects a single "Beneficiary loan: [Name]" line
-    into current_assets or current_liabilities.
+    For trust entities only. Removes matched items from sections["equity"]
+    and routes a single "Beneficiary loan: [Name]" line per officer into
+    sections["current_liabilities"] (credit balance) or
+    sections["current_assets"] (debit balance).
     """
     from collections import defaultdict
-    from core.models import EntityChartOfAccount
+    from core.models import ClientAccountMapping
 
-    # STEP 1 — build code-to-officer mapping
-    ben_coa = EntityChartOfAccount.objects.filter(
+    # Get all mappings with a beneficiary_officer assigned
+    mappings = ClientAccountMapping.objects.filter(
         entity=fy.entity,
         beneficiary_officer__isnull=False,
     ).select_related("beneficiary_officer")
 
-    if not ben_coa.exists():
-        return
+    if not mappings.exists():
+        return  # No beneficiary mappings configured — do nothing
 
+    # Build {account_code: (officer_id_str, display_name)}
     code_to_officer = {}
-    for acct in ben_coa:
-        name = acct.beneficiary_officer.full_name if acct.beneficiary_officer else "Unknown"
-        code_to_officer[acct.account_code] = name
+    for m in mappings:
+        officer = m.beneficiary_officer
+        display_name = officer.full_name if officer else "Unknown"
+        code_to_officer[m.client_account_code] = (str(officer.pk), display_name)
 
-    # STEP 2 — scan equity, net per officer, collect items to remove
-    officer_nets = defaultdict(lambda: {"cy": Decimal("0"), "py": Decimal("0")})
+    # Per-officer net accumulators
+    officer_nets = {}
+    for officer_id, display_name in code_to_officer.values():
+        if officer_id not in officer_nets:
+            officer_nets[officer_id] = {"name": display_name, "cy": Decimal("0"), "py": Decimal("0")}
+
+    # Scan equity, net per officer, mark for removal
     to_remove = []
-    for item in sections["equity"]:
-        code = item.get("account_code", "")
-        if code in code_to_officer:
-            officer = code_to_officer[code]
-            officer_nets[officer]["cy"] += item["cy_amount"]
-            officer_nets[officer]["py"] += item["py_amount"]
+    for item in sections.get("equity", []):
+        code = item.get("account_code")
+        if code and code in code_to_officer:
+            officer_id, _ = code_to_officer[code]
+            officer_nets[officer_id]["cy"] += item.get("cy_amount", Decimal("0"))
+            officer_nets[officer_id]["py"] += item.get("py_amount", Decimal("0"))
             to_remove.append(item)
 
-    if not to_remove:
-        return
-
-    # STEP 3 — remove matched items from equity
+    # Remove matched items from equity
     for item in to_remove:
         sections["equity"].remove(item)
 
-    # STEP 4 — route each officer net to assets or liabilities.
-    # Raw TB sign (debit-normal): positive = debit, negative = credit.
-    #   net_cy < 0 → credit balance → trust owes beneficiary → liability
-    #   net_cy > 0 → debit balance → beneficiary owes trust → asset
-    for officer_name, vals in officer_nets.items():
-        net_cy = vals["cy"]
-        net_py = vals["py"]
+    # Route each officer net to assets or liabilities.
+    # Sign convention: equity lines are credit-normal, stored negative for credits.
+    #   net_cy < 0 = credit balance (trust owes beneficiary) → Current Liabilities
+    #   net_cy > 0 = debit balance (beneficiary owes trust) → Current Assets
+    for officer_id, data in officer_nets.items():
+        net_cy = data["cy"]
+        net_py = data["py"]
         if net_cy == 0 and net_py == 0:
             continue
 
-        label = f"Beneficiary loan: {officer_name}"
+        label = f"Beneficiary loan: {data['name']}"
         entry = {
-            "account_code": "BEN_LOAN",
+            "account_code": f"BEN_{officer_id[:8]}",
             "account_name": label,
             "cy_amount": net_cy,
             "py_amount": net_py,
         }
 
-        # Route by CY sign; PY follows as comparative on the same line
-        if net_cy > 0:
-            sections["current_assets"].append(entry)
-        elif net_cy < 0:
-            sections["current_liabilities"].append(entry)
+        if net_cy <= 0:
+            sections.setdefault("current_liabilities", []).append(entry)
         else:
-            # CY zero, PY non-zero — route by PY sign
-            if net_py > 0:
-                sections["current_assets"].append(entry)
-            else:
-                sections["current_liabilities"].append(entry)
+            sections.setdefault("current_assets", []).append(entry)
 
 
 # Placeholder for ampersand to survive docxtpl XML rendering.
@@ -619,6 +615,17 @@ def build_company_context(financial_year, include_watermark=True):
     # Trust only: net beneficiary capital accounts into assets/liabilities
     if entity.entity_type == "trust":
         _net_beneficiary_accounts(fy, sections)
+        # Remove Profit Distribution — Appropriation (4199) from equity.
+        # This journal entry moves profit to beneficiary loans and should
+        # not appear as a separate equity line item.
+        sections["equity"] = [
+            item for item in sections["equity"]
+            if not (
+                item.get("account_code") == "4199"
+                or "appropriation" in item.get("account_name", "").lower()
+                or "profit distribution" in item.get("account_name", "").lower()
+            )
+        ]
 
     has_prior = _has_prior_year(fy)
     has_trading = len(sections["trading_income"]) > 0 or len(sections["cogs"]) > 0
