@@ -755,6 +755,15 @@ def build_company_context(financial_year, include_watermark=True):
             "py_amount": -net_profit_py,
         })
 
+    # Trust only: suppress "Current year profit / (loss)" from equity.
+    # For trusts with beneficiary loan netting, the profit is already
+    # absorbed into the beneficiary loan balances in current liabilities.
+    if entity.entity_type == "trust":
+        sections["equity"] = [
+            item for item in sections["equity"]
+            if "current year profit" not in item.get("account_name", "").lower()
+        ]
+
     # Post-injection balance sheet integrity check.
     # Tolerance of $1 matches the pre-injection threshold above — sub-dollar
     # differences are expected rounding artefacts from the net profit
