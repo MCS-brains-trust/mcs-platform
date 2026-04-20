@@ -1100,17 +1100,23 @@ def trust_post_distribution(request, pk):
 
     # Build a lookup: {officer_pk_str: (account_code, account_name)} for
     # the beneficiary's loan account from ClientAccountMapping.
+    # Priority: prefer 4004.x (Funds loaned to trust) over other codes.
     ben_loan_accounts = {}
-    for cam in ClientAccountMapping.objects.filter(
+    all_ben_mappings = ClientAccountMapping.objects.filter(
         entity=fy.entity,
         beneficiary_officer__isnull=False,
-    ).select_related("beneficiary_officer"):
-        # Use the first mapping found per officer (the loan account)
+    ).select_related("beneficiary_officer").order_by("client_account_code")
+
+    for cam in all_ben_mappings:
         officer_pk = str(cam.beneficiary_officer_id)
-        if officer_pk not in ben_loan_accounts:
+        is_4004 = cam.client_account_code.startswith("4004")
+        existing = ben_loan_accounts.get(officer_pk)
+        # Take this mapping if: no existing yet, OR this is 4004.x and existing isn't
+        if existing is None or (is_4004 and not existing[2]):
             ben_loan_accounts[officer_pk] = (
                 cam.client_account_code,
                 cam.client_account_name,
+                is_4004,  # flag for priority comparison
             )
 
     rows = []
