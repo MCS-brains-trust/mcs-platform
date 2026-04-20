@@ -1059,7 +1059,8 @@ def trust_post_distribution(request, pk):
     Creates and posts journal entries from the selected TaxPlanningScenario.
 
     DR  Retained Profits / P&L Appropriation (4199)
-    CR  Distribution Payable — <Beneficiary Name> (3100) per beneficiary
+    CR  Beneficiary loan account per beneficiary (from ClientAccountMapping,
+        falls back to 3100 Distribution Payable if no mapping configured)
 
     Journal is created as POSTED and written to TB via _post_journal_to_tb.
     """
@@ -1090,10 +1091,27 @@ def trust_post_distribution(request, pk):
         )
 
     # Build distribution rows from TaxPlanningScenario.distributions
+    from core.models import ClientAccountMapping
+
     officer_map = {
         str(o.pk): o.full_name
         for o in EntityOfficer.objects.filter(entity=fy.entity)
     }
+
+    # Build a lookup: {officer_pk_str: (account_code, account_name)} for
+    # the beneficiary's loan account from ClientAccountMapping.
+    ben_loan_accounts = {}
+    for cam in ClientAccountMapping.objects.filter(
+        entity=fy.entity,
+        beneficiary_officer__isnull=False,
+    ).select_related("beneficiary_officer"):
+        # Use the first mapping found per officer (the loan account)
+        officer_pk = str(cam.beneficiary_officer_id)
+        if officer_pk not in ben_loan_accounts:
+            ben_loan_accounts[officer_pk] = (
+                cam.client_account_code,
+                cam.client_account_name,
+            )
 
     rows = []
     total_distributed = Decimal("0")
@@ -1103,7 +1121,14 @@ def trust_post_distribution(request, pk):
             continue
         ben_id = str(entry.get("beneficiary_id", ""))
         ben_name = officer_map.get(ben_id, f"Beneficiary {ben_id[:8]}")
-        rows.append({"name": ben_name, "amount": amount})
+        # Look up beneficiary's mapped loan account
+        loan_acct = ben_loan_accounts.get(ben_id)
+        rows.append({
+            "name": ben_name,
+            "amount": amount,
+            "cr_code": loan_acct[0] if loan_acct else "3100",
+            "cr_name": loan_acct[1] if loan_acct else f"Distribution Payable — {ben_name}",
+        })
         total_distributed += amount
 
     if not rows:
@@ -1146,13 +1171,14 @@ def trust_post_distribution(request, pk):
             )
             line_num += 1
 
-            # CR side: one line per beneficiary
+            # CR side: one line per beneficiary — posts to their mapped
+            # loan account if configured, otherwise falls back to 3100.
             for row in rows:
                 JournalLine.objects.create(
                     journal=journal,
                     line_number=line_num,
-                    account_code="3100",
-                    account_name=f"Distribution Payable — {row['name']}",
+                    account_code=row["cr_code"],
+                    account_name=row["cr_name"],
                     description=f"{row['name']}: ${row['amount']:,.2f}",
                     debit=Decimal("0"),
                     credit=row["amount"],
