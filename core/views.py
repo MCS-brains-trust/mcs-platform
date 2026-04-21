@@ -1486,19 +1486,24 @@ def financial_year_detail(request, pk):
         'Current Liabilities': 'Current Liabilities', 'Non-Current Liabilities': 'Non Current Liabilities',
         'Equity': 'Equity', 'Income Tax': 'Equity',
     }
-    # Annotate TB lines with display Dr/Cr values FIRST (before grouping/totals)
-    # Always use closing_balance for display — it includes opening + movements.
-    # Only fall back to debit/credit when closing_balance is zero AND there are movements.
+    tb_lines = list(tb_lines)
     for line in tb_lines:
-        cb = line.closing_balance if line.closing_balance else Decimal('0')
-        if cb > 0:
-            line.display_dr = cb
-            line.display_cr = Decimal('0')
-        elif cb < 0:
-            line.display_dr = Decimal('0')
-            line.display_cr = abs(cb)
+        if line.source == 'rollover':
+            line._cy = Decimal('0')
+            line._py = (line.prior_debit or Decimal('0')) - (line.prior_credit or Decimal('0'))
         else:
-            # closing_balance is zero — show debit/credit movements (e.g. P&L items)
+            line._cy = line.closing_balance or Decimal('0')
+            line._py = Decimal('0')
+
+    for line in tb_lines:
+        cy = line._cy
+        if cy > 0:
+            line.display_dr = cy
+            line.display_cr = Decimal('0')
+        elif cy < 0:
+            line.display_dr = Decimal('0')
+            line.display_cr = abs(cy)
+        else:
             line.display_dr = line.debit if line.debit else Decimal('0')
             line.display_cr = line.credit if line.credit else Decimal('0')
 
@@ -1635,8 +1640,20 @@ def financial_year_detail(request, pk):
         for line in agg_lines:
             dr = line.display_dr or Decimal('0')
             cr = line.display_cr or Decimal('0')
-            pdr = line.prior_debit or Decimal('0')
-            pcr = line.prior_credit or Decimal('0')
+            py = getattr(line, '_py', None)
+            if py is None:
+                pdr = line.prior_debit or Decimal('0')
+                pcr = line.prior_credit or Decimal('0')
+            else:
+                if py > 0:
+                    pdr = py
+                    pcr = Decimal('0')
+                elif py < 0:
+                    pdr = Decimal('0')
+                    pcr = abs(py)
+                else:
+                    pdr = Decimal('0')
+                    pcr = Decimal('0')
             total_debit += dr
             total_credit += cr
             total_prior_debit += pdr
