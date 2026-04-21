@@ -1035,16 +1035,20 @@ def _aggregate_tb_lines(ordered_sections, entity=None):
             agg_prior_cr = Decimal('0')
             first = group[0]
             for l in group:
-                cb = l.closing_balance if l.closing_balance else Decimal('0')
-                if cb > 0:
-                    raw_dr += cb
-                elif cb < 0:
-                    raw_cr += abs(cb)
-                else:
-                    raw_dr += l.debit if l.debit else Decimal('0')
-                    raw_cr += l.credit if l.credit else Decimal('0')
-                agg_prior_dr += l.prior_debit if l.prior_debit else Decimal('0')
-                agg_prior_cr += l.prior_credit if l.prior_credit else Decimal('0')
+                cy = getattr(l, '_cy', None)
+                if cy is None:
+                    cy = l.closing_balance or Decimal('0')
+                if cy > 0:
+                    raw_dr += cy
+                elif cy < 0:
+                    raw_cr += abs(cy)
+                py = getattr(l, '_py', None)
+                if py is None:
+                    py = (l.prior_debit or Decimal('0')) - (l.prior_credit or Decimal('0'))
+                if py > 0:
+                    agg_prior_dr += py
+                elif py < 0:
+                    agg_prior_cr += abs(py)
 
             if len(group) == 1:
                 # Resolve name for single-line accounts too
@@ -11053,7 +11057,16 @@ def trial_balance_download(request, pk):
     entity = fy.entity
     tb_lines = TrialBalanceLine.objects.filter(
         financial_year=fy
-    ).select_related('mapped_line_item').order_by('account_code')
+    ).select_related('mapped_line_item').order_by('account_code', 'source')
+
+    for line in tb_lines:
+        if line.source == 'rollover':
+            line._cy = Decimal('0')
+            line._py = (line.prior_debit or Decimal('0')) - (line.prior_credit or Decimal('0'))
+        else:
+            line._cy = line.closing_balance or Decimal('0')
+            line._py = Decimal('0')
+
     _coa_lookup = _build_coa_section_lookup(entity)
     # Section ordering
     SECTION_ORDER = [
@@ -11086,17 +11099,16 @@ def trial_balance_download(request, pk):
         else:
             display_section = _coa_lookup.get(line.account_code, 'Unmapped')
         sections.setdefault(display_section, []).append(line)
-        # Use closing_balance split into Dr/Cr for current year totals
-        cb = line.closing_balance or Decimal('0')
-        if cb > 0:
-            grand_dr += cb
-        elif cb < 0:
-            grand_cr += abs(cb)
-        else:
-            grand_dr += line.debit or Decimal('0')
-            grand_cr += line.credit or Decimal('0')
-        grand_prior_dr += line.prior_debit or Decimal('0')
-        grand_prior_cr += line.prior_credit or Decimal('0')
+        cy = line._cy
+        if cy > 0:
+            grand_dr += cy
+        elif cy < 0:
+            grand_cr += abs(cy)
+        py = line._py
+        if py > 0:
+            grand_prior_dr += py
+        elif py < 0:
+            grand_prior_cr += abs(py)
 
     ordered = OrderedDict()
     seen = set()

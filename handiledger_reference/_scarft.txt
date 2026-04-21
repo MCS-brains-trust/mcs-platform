@@ -1,0 +1,432 @@
+SCARTON FAMILY TRUST
+
+           ABN 49 461 985 101
+
+          Financial Statements
+   For the year ended 30 June 2024
+
+             M C & S Pty Ltd
+
+                    PO Box 4440
+         Dandenong South VIC 3164
+
+             Phone: (03) 9794 0000
+          Email: info@mcands.com.au
+         Website: www.mcands.com.au
+                                      SCARTON FAMILY TRUST
+
+                                                   ABN 49 461 985 101
+
+Contents
+
+Detailed Profit and Loss Statement
+Detailed Balance Sheet
+Notes to the Financial Statements
+Beneficiaries Profit Distribution Summary
+Depreciation Schedule
+Trustee's Declaration
+Compilation Report
+   SCARTON FAMILY TRUST
+
+           ABN 49 461 985 101
+Detailed Profit and Loss Statement
+
+ For the year ended 30 June 2024
+
+                                                       2024           2023
+                                                         $              $
+
+Income                                                             -         39,660
+                                                                   -            400
+Distribution from MC&S                                       11,093                -
+Management Fees - Method Auditing                                  -
+Professional fees                                            11,093        180,556
+Profit on sale of property, plant, equip                                   220,616
+Total income
+                                                                                323
+Expenses                                                           -         69,038
+                                                                   -          2,000
+Bank fees & charges                                                -
+Depreciation                                                   291              582
+Donations                                                    1,702              582
+General expenses                                               877              877
+Hire purchase charges                                          304
+Printing & stationery                                        3,174                 -
+Rates & land taxes                                                           73,402
+Total expenses                                               7,919        147,214
+Net Profit from Ordinary Activities before income tax
+
+These financial statements are unaudited. They must be read in conjunction with the attached Accountant's
+                      Compilation Report and Notes which form part of these financial statements.
+                      SCARTON FAMILY TRUST
+
+                              ABN 49 461 985 101
+              Detailed Balance Sheet as at 30 June 2024
+
+                                           Note  2024        2023
+                                                   $           $
+
+Current Assets                                       364          19,146
+                                                     100             100
+Cash Assets                                          464
+                                                                  19,246
+ANZ #11733                                        85,035
+Cash on hand                                      85,035          85,035
+                                                 85,499           85,035
+Receivables                                                    104,281
+
+Beneficiary loan: Method Auditing Pty Ltd                       200,000
+                                                                      12
+Total Current Assets
+                                                                108,045
+Non-Current Assets                                200,000       308,057
+                                                        12
+Other Financial Assets                                             2,257
+                                                  108,045         (2,257)
+Shares in MCS                                     308,057         90,111
+Shares in Method Auditing                                        (68,108)
+Units in MC&S Property Unit Trust                    2,257        22,003
+                                                    (2,257)    330,060
+Property, Plant and Equipment                      90,111      434,341
+                                                  (68,108)
+Office equipment                                   22,003
+Less: Accumulated amortisation
+Motor vehicles - At cost                         330,060
+Less: Accumulated depreciation
+
+Total Non-Current Assets
+
+Total Assets                                     415,559
+
+These financial statements are unaudited. They must be read in conjunction with the attached Accountant's
+                      Compilation Report and Notes which form part of these financial statements.
+                                 SCARTON FAMILY TRUST
+
+                                         ABN 49 461 985 101
+                         Detailed Balance Sheet as at 30 June 2024
+
+                                  Note  2024                             2023
+                                          $                                $
+
+Current Liabilities                       33,671                              52,912
+                                           (2,064)                            (4,902)
+Financial Liabilities                    113,647                              94,407
+                                         269,621                            291,240
+Unsecured:                               414,875                            433,657
+Hire purchase - BMW
+Less: Unexpired interest charges              584                                584
+Beneficiary loan: Elio Scarton                584                                584
+Beneficiary loan: Jess Scarton                                             434,241
+                                        415,459                            434,241
+Current Tax Liabilities                                                         100
+
+GST payable control account                                                      100
+                                                                                100
+Total Current Liabilities
+
+Total Liabilities                       415,459
+
+Net Assets                                    100
+
+Equity
+
+Contribution by settlor                                             100
+
+Total Equity                                  100
+
+These financial statements are unaudited. They must be read in conjunction with the attached Accountant's
+                      Compilation Report and Notes which form part of these financial statements.
+                                      SCARTON FAMILY TRUST
+
+                                                   ABN 49 461 985 101
+                                         Notes to the Financial Statements
+                                          For the year ended 30 June 2024
+
+Note 1: Summary of Significant Accounting Policies
+
+Basis of Preparation
+The directors of the trustee company have prepared the financial statements of the trust on the basis that the
+trust is a non-reporting entity because there are no users dependent on general purpose financial statements.
+The financial statements are therefore special purpose financial statements that have been prepared in order to
+meet the requirements of the trust deed, the information needs of the beneficiaries and for the basis of
+preparation of the income tax return.
+The financial statements have been prepared in accordance with the significant accounting policies disclosed
+below, which the directors of the trustee company have determined are appropriate to meet the purposes of
+preparation. Such accounting policies are consistent with the previous period unless stated otherwise.
+The financial statements have been prepared on an accrual basis and are based on historical costs unless
+otherwise stated in the notes. The accounting policies that have been adopted in the preparation of the
+statements are as follows:
+
+(a) Property, Plant and Equipment (PPE)
+       Property, plant and equipment are carried at cost or at independent of directors' valuation. All assets,
+       excluding freehold land and buildings are depreciated over the useful lives of the assets to the trust.
+       Increases in the carrying amount arising on revaluation of land and buildings are credited to a revaluation
+       reserve in shareholders' equity. Decreases that offset previous increases of the same asset are charged
+       against fair value reserves directly in equity; all other decreases are charged to the income statement. Each
+       year the difference between depreciation based on the revalued carrying amount of the assets charged to
+       the income statement and depreciation based on the asset's original cost is transferred from the
+       revaluation reserve to retained earnings.
+       The carrying amount of plant and equipment is reviewed annually by directors to ensure it is not in excess
+       of the recoverable amount from these assets. The recoverable amount is assessed on the basis of the
+       expected net cash flows that will be received from the asset's employment and subsequent disposal. The
+       expected net cash flows have not been discounted in determining recoverable amounts.
+       Subsequent costs are included in the asset's carrying amount or recognised as a separate asset, as
+       appropriate, only when it is probable that future economic benefits associated with the item will flow to
+       the company and the cost of the item can be measured reliably. All other repairs and maintenance are
+       recognised as expenses in profit or loss during the financial period in which they are incurred.
+
+(b) Cash and Cash Equivalents
+       Cash and cash equivalents include cash on hand, deposits held at call with banks, other short-term highly
+       liquid investments with original maturities of three months or less, and bank overdrafts. Bank overdrafts
+       are shown within borrowings in current liabilities on the balance sheet.
+
+ These notes should be read in conjunction with the attached financial statements and compilation report of M C
+                                                                        & S Pty Ltd.
+                                      SCARTON FAMILY TRUST
+
+                                                   ABN 49 461 985 101
+                                         Notes to the Financial Statements
+                                          For the year ended 30 June 2024
+
+(c) Revenue and Other Income
+       Revenue is measured at the fair value of the consideration received or receivable after taking into account
+       any trade discounts and volume rebates allowed. For this purpose, deferred consideration is not
+       discounted to present values when recognising revenue.
+       Interest revenue is recognised using the effective interest rate method, which, for floating rate financial
+       assets, is the rate inherent in the instrument. Dividend revenue is recognised when the right to receive a
+       dividend has been established.
+       Revenue recognised related to the provision of services is determined with reference to the stage of
+       completion of the transaction at the reporting date and where outcome of the contract can be estimated
+       reliably. Stage of completion is determined with reference to the services performed to date as a
+       percentage of total anticipated services to be performed. Where the outcome cannot be estimated reliably,
+       revenue is recognised only to the extent that related expenditure is recoverable.
+       All revenue is stated net of the amount of goods and services tax (GST).
+
+(d) Goods and Services Tax (GST)
+       Revenues, expenses and assets are recognised net of the amount of GST, except where the amount of GST
+       incurred is not recoverable from the Australian Taxation Office (ATO). In these circumstances, the GST is
+       recognised as part of the cost of acquisition of the asset or as part of an item of the expense. Receivables
+       and payables in the balance sheet are shown inclusive of GST.
+
+(e) Leases
+     The trust as lessee
+       Leases are classified as right of use assets whenever the contract conveys the right to control the use of
+       an identified asset for a period of time in exchange for consideration. Where the lease term is 12 months or
+       less or the lease value is less than $5000 it will be classified as operating leases.
+       At inception the rights to use assets held are recognised as such as part of property, plant and equipment
+       in the same way as owned assets. The corresponding liability to the lessor is included in the balance sheet
+       as a lease liability. Lease payments are apportioned between the interest component and the reduction of
+       the lease liability. The interest component is recognised in profit or loss in the period in which it arises.
+       Rentals payable under operating leases are recognised in profit or loss.
+
+ These notes should be read in conjunction with the attached financial statements and compilation report of M C
+                                                                        & S Pty Ltd.
+   SCARTON FAMILY TRUST                                           2023
+
+          ABN 49 461 985 101                                           180,556
+Notes to the Financial Statements                                              -
+For the year ended 30 June 2024
+                                                                            930
+                                         2024                               930
+                                                                            582
+Note 2: Profit from Ordinary Activities                        -         69,038
+                                                               -         69,038
+Profit (loss) from ordinary activities before income tax
+has been determined after:                                     -
+                                                               -
+Crediting as Income:                                      1,702
+                                                               -
+Net gain on disposal of property, plant & equipment            -
+
+Charging as Expense:
+
+Amortisation of non-current assets:
+- Leased assets
+Total amortisation expenses
+Borrowing costs
+Depreciation of non-current assets:
+- Other
+Total depreciation expenses
+
+These notes should be read in conjunction with the attached financial statements and compilation report of M C
+                                                                       & S Pty Ltd.
+                                      SCARTON FAMILY TRUST
+
+                                               ABN 49 461 985 101
+                               Beneficiaries Profit Distribution Summary
+
+                                     For the year ended 30 June 2024
+
+Beneficiaries Share of Profit  2024                                       2023
+- Elio Scarton                   $                                          $
+- Jess Scarton
+- Method Auditing Pty Ltd                   -                                    51,125
+                                       7,919                                     51,124
+Total Profit                                                                     44,965
+                                            -                                  147,214
+                                       7,919
+
+These financial statements are unaudited. They must be read in conjunction with the attached Accountant's
+                      Compilation Report and Notes which form part of these financial statements.
+                                      SCARTON FAMILY TRUST
+
+                                               ABN 49 461 985 101
+                               Beneficiaries Profit Distribution Summary
+
+                                     For the year ended 30 June 2024
+
+Elio Scarton                   2024                                       2023
+Opening balance - Beneficiary    $                                          $
+Funds loaned to trust
+Profit distribution for year          94,407                                    (10,176)
+                                      19,241                                     53,458
+Jess Scarton                                                                     51,125
+Opening balance - Beneficiary               -                                    94,407
+Funds loaned to trust               113,647                                      94,407
+Profit distribution for year        113,647
+                                                                               200,243
+Less:                               291,240                                      37,873
+Physical distribution                (29,538)                                    51,124
+                                                                               289,240
+Method Auditing Pty Ltd                7,919
+Opening balance - Beneficiary       269,621                                       2,000
+Funds loaned to trust                                                          291,240
+Profit distribution for year                -
+                                    269,621                                            -
+                                                                              (130,000)
+                                     (85,035)
+                                            -                                    44,965
+                                            -                                   (85,035)
+                                                                                (85,035)
+                                     (85,035)
+                                     (85,035)
+
+Total of beneficiary loans     298,234                                    300,612
+Total Beneficiary Funds        298,234                                    300,612
+
+These financial statements are unaudited. They must be read in conjunction with the attached Accountant's
+                      Compilation Report and Notes which form part of these financial statements.
+                                                           SCARTON FAMILY TRUST
+
+                                                                     ABN 49 461 985 101
+
+                                           Depreciation Schedule for the year ended 30 June, 2024
+
+                                                 DISPOSAL          ADDITION                DEPRECIATION                         PROFIT         LOSS
+
+                              Total  Priv  OWDV  Date      Consid  Date      Cost   Value T Rate            Deprec  Priv  CWDV  Upto +  Above  Total -                     Priv
+
+Office equipment
+
+1 Coffee machine        0.00  1,327  0.00  0               0                 1,327  1,327 W 0.00            1,327   0     0     0       0      0                           0
+
+2 Google Nest           0.00  314    0.00  0               0                 314    314 W 0.00              314     0     0     0       0      0                           0
+
+3 Google Hub            0.00  72     0.00  0               0                 72     72 W 0.00               72      0     0     0       0      0                           0
+
+4 Shark Vacuum Cleaner  0.00  544    0.00  0               0                 544    544 W 0.00              544     0     0     0       0      0                           0
+
+                              2,257        0               0                 2,257  2,257                   2,257   0     0
+
+                                                                                    Deduct Private Portion  0
+
+                                                                                    Net Depreciation        2,257
+
+These financial statements are unaudited. They must be read in conjunction with the attached Accountant's Compilation Report and Notes which form part of these financial
+                                                                                                                  statements.
+                                                                  SCARTON FAMILY TRUST
+
+                                                                            ABN 49 461 985 101
+
+                                                  Depreciation Schedule for the year ended 30 June, 2024
+
+                                                          DISPOSAL          ADDITION                  DEPRECIATION                        PROFIT         LOSS
+
+                                    Total   Priv  OWDV    Date      Consid  Date      Cost  Value T Rate            Deprec  Priv  CWDV    Upto +  Above  Total -                  Priv
+
+Motor Vehicles
+
+1 BMW X1 2023 - to dep limit  0.00  68,108 39.19  0                 0                 0     0 W 25.00               0       0     0       0       0      0                        0
+
+2 BMW X1 2023 - above dep     0.00  22,003  0.00  22,003            0                 0     22,003 D  0.00          0       0     22,003  0       0      0                        0
+
+limit
+
+                                    90,111        22,003            0                 0     22,003                  0       0     22,003
+
+                                                                                            Deduct Private Portion  0
+
+                                                                                            Net Depreciation        0
+
+       These financial statements are unaudited. They must be read in conjunction with the attached Accountant's Compilation Report and Notes which form part of these financial
+                                                                                                                         statements.
+                                      SCARTON FAMILY TRUST
+
+                                                   ABN 49 461 985 101
+                                                 Trustee's Declaration
+
+The directors of Benita Pty Ltd declare that the trust is not a reporting entity and that this special purpose
+financial report should be prepared in accordance with the accounting policies outlined in Note 1 to the financial
+statements
+The directors of the trustee company declare that:
+(i) the financial statements and notes, present fairly the trust's financial position as at 30 June 2024 and its
+
+       performance for the year ended on that date in accordance with the accounting policies described in Note
+       1 to the financial statements; and
+(ii) in the directors' opinion there are reasonable grounds to believe that the trust will be able to pay its debts
+       as and when they become due and payable.
+The declaration is made in accordance with a resolution of the Board of Directors of the trustee company.
+
+________________________________________
+Elio Scarton , (Director)
+
+________________________________________
+Jessica Scarton , (Director)
+
+Date
+                                      SCARTON FAMILY TRUST
+
+                                                   ABN 49 461 985 101
+                             Compilation Report to SCARTON FAMILY TRUST
+
+We have compiled the accompanying special purpose financial statements of SCARTON FAMILY TRUST,
+which comprise the balance sheet as at 30 June 2024, the Statement of Profit and Loss for the year then ended, a
+summary of significant accounting policies and other explanatory notes. The specific purpose for which the
+special purpose financial statements have been prepared is to provide information relating to the performance
+and financial position of the trust that satisfies the information needs of the directors of the trustee company
+and of the beneficiaries.
+
+The Responsibility of the Directors of the Trustee Company
+The directors of the trustee company are solely responsible for the information contained in the special purpose
+financial statements, the reliability, accuracy and completeness of the information and for the determination that
+the significant accounting policies used are appropriate to meet their needs and for the purpose that the
+financial statements were prepared.
+
+Our Responsibility
+On the basis of information provided by the directors of the trustee company, we have compiled the
+accompanying special purpose financial statements in accordance with the significant accounting policies as
+described in Note 1 to the financial statements and APES 315 Compilation of Financial Information.
+
+We have applied our expertise in accounting and financial reporting to compile these financial statements in
+accordance with the significant accounting policies described in Note 1 to the financial statements. We have
+complied with the relevant ethical requirements of APES 110 Code of Ethics for Professional Accountants
+(including Independence Standards).
+
+Assurance Disclaimer
+Since a compilation engagement is not an assurance engagement, we are not required to verify the reliability,
+accuracy or completeness of the information provided to us by management to compile these financial
+statements. Accordingly, we do not express an audit opinion or a review conclusion on these financial
+statements.
+
+The special purpose financial statements were compiled exclusively for the benefit of the directors of the trustee
+company who are responsible for the reliability, accuracy and completeness of the information used to compile
+them. Accordingly, these special purpose financial statements may not be suitable for other purposes. We do
+not accept responsibility for the contents of the special purpose financial statements.
+
+________________________________________
+M C & S Pty Ltd
+PO Box 4440
+Dandenong South VIC 3164
+
+15 April, 2026
+
