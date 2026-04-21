@@ -11191,7 +11191,7 @@ def _tb_download_word(fy, entity, sections, current_year, prior_year,
     run = p.add_run(entity.entity_name.upper())
     run.bold = True
     run.font.size = Pt(14)
-    run.font.name = 'Times New Roman'
+    run.font.name = 'Arial'
 
     # ABN
     if abn_display:
@@ -11199,7 +11199,7 @@ def _tb_download_word(fy, entity, sections, current_year, prior_year,
         p.alignment = WD_ALIGN_PARAGRAPH.CENTER
         run = p.add_run(abn_display)
         run.font.size = Pt(10)
-        run.font.name = 'Times New Roman'
+        run.font.name = 'Arial'
 
     # Title
     p = doc.add_paragraph()
@@ -11207,7 +11207,7 @@ def _tb_download_word(fy, entity, sections, current_year, prior_year,
     run = p.add_run(f"Comparative Trial Balance as at {fy.end_date.strftime('%d %B %Y')}")
     run.bold = True
     run.font.size = Pt(11)
-    run.font.name = 'Times New Roman'
+    run.font.name = 'Arial'
     p.space_after = Pt(12)
 
     def fmt_val(val):
@@ -11246,7 +11246,7 @@ def _tb_download_word(fy, entity, sections, current_year, prior_year,
                 for run in paragraph.runs:
                     run.bold = True
                     run.font.size = Pt(9)
-                    run.font.name = 'Times New Roman'
+                    run.font.name = 'Arial'
                 if col_idx >= 2:
                     paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
 
@@ -11257,7 +11257,7 @@ def _tb_download_word(fy, entity, sections, current_year, prior_year,
         run = p.add_run(section_name)
         run.bold = True
         run.font.size = Pt(11)
-        run.font.name = 'Times New Roman'
+        run.font.name = 'Arial'
         p.space_before = Pt(8)
         p.space_after = Pt(4)
 
@@ -11284,7 +11284,7 @@ def _tb_download_word(fy, entity, sections, current_year, prior_year,
                 for paragraph in cells[col_idx].paragraphs:
                     for run in paragraph.runs:
                         run.font.size = Pt(9)
-                        run.font.name = 'Times New Roman'
+                        run.font.name = 'Arial'
                         if col_idx == 0:
                             run.bold = True
                     if col_idx >= 2:
@@ -11307,7 +11307,7 @@ def _tb_download_word(fy, entity, sections, current_year, prior_year,
             for run in paragraph.runs:
                 run.bold = True
                 run.font.size = Pt(9)
-                run.font.name = 'Times New Roman'
+                run.font.name = 'Arial'
             if col_idx >= 2:
                 paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
 
@@ -11328,7 +11328,7 @@ def _tb_download_word(fy, entity, sections, current_year, prior_year,
             for run in paragraph.runs:
                 run.bold = True
                 run.font.size = Pt(9)
-                run.font.name = 'Times New Roman'
+                run.font.name = 'Arial'
             if col_idx >= 2:
                 paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
 

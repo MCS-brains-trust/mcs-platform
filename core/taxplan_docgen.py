@@ -35,7 +35,7 @@ from docx.oxml import parse_xml
 # =============================================================================
 # Constants
 # =============================================================================
-FONT_NAME = "Times New Roman"
+FONT_NAME = "Arial"
 FONT_SIZE_BODY = Pt(11)
 FONT_SIZE_HEADING = Pt(14)
 FONT_SIZE_SUBHEADING = Pt(12)

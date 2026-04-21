@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 # Default Styles
 # =============================================================================
 DEFAULT_STYLES = {
-    "font_name": "Times New Roman",
+    "font_name": "Arial",
     "font_size_body": 11,
     "font_size_heading": 14,
     "font_size_subheading": 12,

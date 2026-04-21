@@ -17,7 +17,7 @@ from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.oxml.ns import qn, nsdecls
 from docx.oxml import parse_xml
 
-FONT_NAME = "Times New Roman"
+FONT_NAME = "Arial"
 FONT_SIZE_BODY = Pt(10)
 FONT_SIZE_SUBHEADING = Pt(12)
 

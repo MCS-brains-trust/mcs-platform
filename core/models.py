@@ -1814,7 +1814,7 @@ class DocumentTemplate(models.Model):
             "page_setup": {"orientation": "portrait", "margin_top": 2.54, ...}
         },
         "styles": {
-            "font_name": "Times New Roman",
+            "font_name": "Arial",
             "font_size_body": 11,
             "font_size_heading": 14,
             ...

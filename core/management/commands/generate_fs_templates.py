@@ -24,7 +24,7 @@ from core.models import FinancialStatementTemplate
 
 # Template layout constants — Handiledger reference standard
 FONT_HEADING = "Arial"  # Entity name, ABN, title, section headers, footer (Handiledger-aligned)
-FONT_BODY = "Times New Roman"       # Line items, column headers, totals, notes
+FONT_BODY = "Arial"       # Line items, column headers, totals, notes
 FONT_NAME = FONT_BODY               # Legacy alias used by existing helpers
 FONT_SIZE = Pt(10)
 FONT_SIZE_HEADING = Pt(11)
@@ -389,7 +389,7 @@ def _add_repeating_header(doc, document_title, date_field="{{ date_text }}"):
 def _add_footer(doc, text="These financial statements are unaudited. They must be read in conjunction with the attached Accountant\u2019s Compilation Report and Notes which form part of these financial statements."):
     """Add standard footer with full unaudited disclaimer text.
 
-    - Centre-aligned, Times New Roman italic 9pt (Handiledger standard).
+    - Centre-aligned, Arial italic 9pt.
     - Top border (0.5pt black) creates a horizontal rule above the text,
       repeating on every page because this is a section footer.
     """
@@ -401,7 +401,7 @@ def _add_footer(doc, text="These financial statements are unaudited. They must b
     p.text = ""
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     run = p.add_run(text)
-    run.font.name = FONT_BODY  # Times New Roman
+    run.font.name = FONT_BODY  # Arial
     run.font.size = Pt(9)
     run.font.italic = True
 
@@ -695,7 +695,7 @@ def _build_cover(entity_type):
     contents.append("Management Representation Letter")
 
     # Two-column borderless table
-    #   Left: document name (bold Times New Roman 11pt, left)
+    #   Left: document name (bold Arial 11pt, left)
     #   Right: empty (reserved for future page-number wiring)
     contents_table = doc.add_table(rows=len(contents), cols=2, style='Normal Table')
     _set_table_full_width(contents_table)
@@ -723,7 +723,7 @@ def _build_cover(entity_type):
         left_p.paragraph_format.space_before = Pt(0)
         left_p.paragraph_format.space_after = Pt(6)
         left_run = left_p.add_run(item)
-        left_run.font.name = "Times New Roman"
+        left_run.font.name = "Arial"
         left_run.font.size = Pt(11)
         left_run.bold = True
         _apply_cell_border(left)

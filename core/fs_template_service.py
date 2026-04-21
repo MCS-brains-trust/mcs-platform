@@ -1852,7 +1852,7 @@ def render_template(template_db_record, context):
 # ---------------------------------------------------------------------------
 
 # Reuse constants from generate_fs_templates for visual consistency
-_NOTES_FONT = "Times New Roman"
+_NOTES_FONT = "Arial"
 _NOTES_FONT_SIZE = Pt(10)
 _NOTES_MARGIN_TOP = Cm(1.6)     # 16mm
 _NOTES_MARGIN_BOTTOM = Cm(1.7)  # 17mm
@@ -2294,7 +2294,7 @@ def _generate_notes_document(context):
     pw.paragraph_format.space_before = Pt(0)
 
     # --- Footer ---
-    # Centre-aligned Times New Roman italic 9pt with 0.5pt top border
+    # Centre-aligned Arial italic 9pt with 0.5pt top border
     # (horizontal rule above), matching Handiledger standard.
     footer = section.footer
     footer.is_linked_to_previous = False
@@ -2306,7 +2306,7 @@ def _generate_notes_document(context):
         "conjunction with the attached Accountant\u2019s Compilation Report "
         "and Notes which form part of these financial statements."
     )
-    fr.font.name = "Times New Roman"
+    fr.font.name = "Arial"
     fr.font.size = Pt(9)
     fr.font.italic = True
     _fpPr = fp._p.get_or_add_pPr()
@@ -2942,7 +2942,7 @@ def _generate_depreciation_report(context):
             return ""
         return d.strftime("%d/%m/%y")
 
-    FONT = "Times New Roman"
+    FONT = "Arial"
     FONT_SZ = Pt(7)
     FONT_SZ_HDR = Pt(7)
     FONT_SZ_TITLE = Pt(9)
@@ -3045,7 +3045,7 @@ def _generate_depreciation_report(context):
         rw.font.color.rgb = RGBColor(0xFF, 0x00, 0x00); rw.bold = True
         pw.paragraph_format.space_after = Pt(0)
 
-    # Footer — centred Times New Roman italic 9pt with 0.5pt top border
+    # Footer — centred Arial italic 9pt with 0.5pt top border
     footer = doc.sections[0].footer
     footer.is_linked_to_previous = False
     fp = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
@@ -3055,7 +3055,7 @@ def _generate_depreciation_report(context):
         "These financial statements are unaudited. They must be read in conjunction with the "
         "attached Accountant\u2019s Compilation Report and Notes which form part of these financial statements."
     )
-    fr.font.name = "Times New Roman"
+    fr.font.name = "Arial"
     fr.font.size = Pt(9)
     fr.font.italic = True
     _fpPr = fp._p.get_or_add_pPr()
@@ -3441,8 +3441,7 @@ def _build_distribution_docx(financial_year, context):
     )
 
     styles = getSampleStyleSheet()
-    # Helvetica = Palatino substitute (reportlab built-in)
-    # Times-Roman = Times New Roman substitute
+    # Helvetica = Arial/Palatino substitute (reportlab built-in)
     centre = ParagraphStyle(
         "centre", parent=styles["Normal"],
         alignment=TA_CENTER, fontName="Helvetica", fontSize=11)

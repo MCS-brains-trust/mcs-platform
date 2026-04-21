@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # Constants
 # =============================================================================
-FONT_NAME = "Times New Roman"
+FONT_NAME = "Arial"
 FONT_SIZE_BODY = Pt(10)
 FONT_SIZE_HEADING = Pt(14)
 FONT_SIZE_SUBHEADING = Pt(12)

@@ -471,7 +471,7 @@ def _get_default_structure(document_category):
             }
         },
         "styles": {
-            "font_name": "Times New Roman",
+            "font_name": "Arial",
             "font_size_body": 11,
             "font_size_heading": 14,
             "font_size_subheading": 12,
