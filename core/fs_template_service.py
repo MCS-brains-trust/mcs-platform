@@ -2932,6 +2932,14 @@ def _generate_depreciation_report(context):
             return ""
         return f"{val:,.0f}"
 
+    def _fmt_zero(val):
+        """Like _fmt but returns '0' instead of '' for zero values."""
+        if val is None:
+            return "0"
+        if val == 0:
+            return "0"
+        return f"{val:,.0f}"
+
     def _fmt_rate(val):
         if val is None or val == 0:
             return "0.00"
@@ -3143,7 +3151,7 @@ def _generate_depreciation_report(context):
                 _fmt_rate(asset.rate),
                 _fmt(asset.depreciation_amount),
                 _fmt(asset.private_depreciation),
-                _fmt(asset.closing_wdv),
+                _fmt_zero(asset.closing_wdv),
             ]
             for i, val in enumerate(vals):
                 cell = row.cells[i]
@@ -3171,7 +3179,7 @@ def _generate_depreciation_report(context):
             "", _fmt(cat_disp),
             "", _fmt(cat_add),
             "", "", "",
-            _fmt(cat_deprec), _fmt(cat_priv), _fmt(cat_cwdv),
+            _fmt(cat_deprec), _fmt(cat_priv), _fmt_zero(cat_cwdv),
         ]
         for i, val in enumerate(sub_vals):
             cell = sub_row.cells[i]
@@ -3185,7 +3193,7 @@ def _generate_depreciation_report(context):
         # Net depreciation line
         net_dep = cat_deprec - cat_priv
         pn = doc.add_paragraph()
-        rn = pn.add_run(f"Deduct Private Portion: {_fmt(cat_priv)}     Net Depreciation: {_fmt(net_dep)}")
+        rn = pn.add_run(f"Deduct Private Portion: {_fmt(cat_priv)}     Net Depreciation: {_fmt_zero(net_dep)}")
         rn.font.size = Pt(8); rn.font.name = FONT; rn.bold = True; rn.underline = True
         pn.paragraph_format.space_after = Pt(4)
 
@@ -3213,7 +3221,7 @@ def _generate_depreciation_report(context):
         "", _fmt(grand_disp),
         "", _fmt(grand_add),
         "", "", "",
-        _fmt(grand_deprec), _fmt(grand_priv), _fmt(grand_cwdv),
+        _fmt(grand_deprec), _fmt(grand_priv), _fmt_zero(grand_cwdv),
     ]
     gt_row = gt_table.rows[0]
     for i, val in enumerate(gt_vals):
@@ -3229,7 +3237,7 @@ def _generate_depreciation_report(context):
     grand_net = grand_deprec - grand_priv
     pgn = doc.add_paragraph()
     rgn = pgn.add_run(
-        f"Total Private Portion: {_fmt(grand_priv)}     Total Net Depreciation: {_fmt(grand_net)}"
+        f"Total Private Portion: {_fmt(grand_priv)}     Total Net Depreciation: {_fmt_zero(grand_net)}"
     )
     rgn.font.size = Pt(9); rgn.font.name = FONT; rgn.bold = True; rgn.underline = True
 

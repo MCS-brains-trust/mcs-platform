@@ -72,7 +72,16 @@
       "Bash(grep:*)",
       "Bash(liabilities\", \"net assets\", \"total equity\" from _GRAND_TOTAL_LABELS:*)",
       "Bash(git rebase:*)",
-      "Bash(git fetch:*)"
+      "Bash(git fetch:*)",
+      "Bash(SECRET_KEY=dummy-local-only DEBUG=False ALLOWED_HOSTS=localhost DATABASE_URL=sqlite:///test_db.sqlite3 python manage.py makemigrations core --dry-run)",
+      "Bash(SECRET_KEY=dummy-local-only DEBUG=False ALLOWED_HOSTS=localhost DATABASE_URL=sqlite:///test_db.sqlite3 python manage.py makemigrations core)",
+      "Bash(SECRET_KEY=dummy-local-only DEBUG=False ALLOWED_HOSTS=localhost DATABASE_URL=sqlite:///test_db.sqlite3 python manage.py seed_trust_coa --help)",
+      "Bash(SECRET_KEY=dummy-local-only DEBUG=False ALLOWED_HOSTS=localhost DATABASE_URL=sqlite:///test_db.sqlite3 python manage.py backfill_trust_coa --help)",
+      "Bash(awk -F. '{print $NF}')",
+      "Bash(python3 -c \"import pdfplumber; print\\(pdfplumber.__version__\\)\")",
+      "Bash(python3 -c \"import sys; print\\(sys.executable\\)\")",
+      "Bash(xargs -I{} basename \"{}\")",
+      "Bash(git *)"
     ]
   }
 }
