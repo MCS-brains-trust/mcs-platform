@@ -2006,6 +2006,8 @@ def financial_year_detail(request, pk):
     context["fy_start_iso"] = fy.start_date.isoformat()
     context["fy_end_iso"] = fy.end_date.isoformat()
 
+    # RDTI Drafter — pass application to template for tab badge
+    context["rdti_application"] = getattr(fy, "rdti_application", None)
     return render(request, "core/financial_year_detail.html", context)
 
 

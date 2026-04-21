@@ -31,3 +31,5 @@ Thumbs.db
 
 # Docker
 docker-compose.override.yml
+test.db
+test.db-journal

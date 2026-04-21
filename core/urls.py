@@ -25,6 +25,7 @@ from . import views_webhooks
 from . import views_franking
 from . import views_firm_settings
 from . import views_family_trust_election
+from . import views_rdti
 
 app_name = "core"
 
@@ -471,4 +472,20 @@ urlpatterns = [
     # ===== WEBHOOKS (third-party callbacks) =====
     path("webhooks/fusesign/", views_webhooks.fusesign_webhook, name="fusesign_webhook"),
     path("webhooks/textract/", views_webhooks.textract_webhook, name="textract_webhook"),
+
+    # ===== R&D TAX INCENTIVE (RDTI) DRAFTER =====
+    path("years/<uuid:pk>/rdti/", views_rdti.rdti_dashboard, name="rdti_dashboard"),
+    path("years/<uuid:pk>/rdti/create/", views_rdti.rdti_application_create, name="rdti_application_create"),
+    path("years/<uuid:pk>/rdti/intake/phase1/", views_rdti.rdti_intake_phase1, name="rdti_intake_phase1"),
+    path("years/<uuid:pk>/rdti/intake/phase2/<uuid:project_pk>/", views_rdti.rdti_intake_phase2, name="rdti_intake_phase2"),
+    path("years/<uuid:pk>/rdti/projects/<uuid:project_pk>/draft/", views_rdti.rdti_draft_project_fields, name="rdti_draft_project_fields"),
+    path("years/<uuid:pk>/rdti/activities/<uuid:activity_pk>/", views_rdti.rdti_activity_detail, name="rdti_activity_detail"),
+    path("years/<uuid:pk>/rdti/activities/<uuid:activity_pk>/draft-all/", views_rdti.rdti_draft_all_fields, name="rdti_draft_all_fields"),
+    path("years/<uuid:pk>/rdti/activities/<uuid:activity_pk>/draft-field/", views_rdti.rdti_draft_single_field, name="rdti_draft_single_field"),
+    path("years/<uuid:pk>/rdti/activities/<uuid:activity_pk>/save-field/", views_rdti.rdti_save_field, name="rdti_save_field"),
+    path("years/<uuid:pk>/rdti/activities/<uuid:activity_pk>/validate/", views_rdti.rdti_validate_activity, name="rdti_validate_activity"),
+    path("years/<uuid:pk>/rdti/activities/<uuid:activity_pk>/supporting/create/", views_rdti.rdti_supporting_activity_create, name="rdti_supporting_activity_create"),
+    path("years/<uuid:pk>/rdti/flags/<uuid:flag_pk>/resolve/", views_rdti.rdti_resolve_flag, name="rdti_resolve_flag"),
+    path("years/<uuid:pk>/rdti/export/docx/", views_rdti.rdti_export_docx, name="rdti_export_docx"),
+    path("years/<uuid:pk>/rdti/status/update/", views_rdti.rdti_status_update, name="rdti_status_update"),
 ]

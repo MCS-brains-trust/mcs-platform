@@ -1,0 +1,60 @@
+{% load humanize %}
+{# Partial: all narrative field cards — returned by HTMX after "Draft All" #}
+{% for field_name, field_label, field_help, char_limit in narrative_fields %}
+{% with current_value=field_values|get_item:field_name char_count=char_counts|get_item:field_name field_flags=flags_by_field|get_item:field_name %}
+<div class="rdti-field-card" id="field-card-{{ field_name }}">
+    <div class="field-header d-flex justify-content-between align-items-center">
+        <div>
+            <strong style="font-size: 0.9rem;">{{ field_label }}</strong>
+            <small class="text-muted d-block">{{ field_help }}</small>
+        </div>
+        <div class="d-flex align-items-center gap-2">
+            <span class="rdti-char-counter {% if char_count > char_limit %}rdti-char-danger{% elif char_count > char_limit|add:"-200" %}rdti-char-warn{% else %}rdti-char-ok{% endif %}"
+                  id="counter-{{ field_name }}">
+                {{ char_count|default:0 }}/{{ char_limit }}
+            </span>
+            {% if field_flags %}
+            {% for flag in field_flags %}
+            <span class="rdti-flag-badge-{{ flag.severity }}">
+                {% if flag.severity == 'red' %}<i class="bi bi-x-circle me-1"></i>{% else %}<i class="bi bi-exclamation-triangle me-1"></i>{% endif %}
+                {{ flag.message|truncatechars:50 }}
+            </span>
+            {% endfor %}
+            {% endif %}
+            <button class="btn btn-sm btn-outline-primary"
+                    hx-post="{% url 'core:rdti_draft_single_field' pk=fy.pk activity_pk=activity.pk %}"
+                    hx-vals='{"field_name": "{{ field_name }}"}'
+                    hx-target="#field-card-{{ field_name }}"
+                    hx-swap="outerHTML"
+                    hx-indicator="#spinner-{{ field_name }}">
+                <span id="spinner-{{ field_name }}" class="htmx-indicator spinner-border spinner-border-sm me-1"></span>
+                <i class="bi bi-stars me-1"></i>Re-Draft
+            </button>
+        </div>
+    </div>
+    <div class="field-body">
+        <form hx-post="{% url 'core:rdti_save_field' pk=fy.pk activity_pk=activity.pk %}"
+              hx-vals='{"field_name": "{{ field_name }}"}'
+              hx-target="#field-card-{{ field_name }}"
+              hx-swap="outerHTML"
+              hx-trigger="change delay:1500ms">
+            {% csrf_token %}
+            <input type="hidden" name="field_name" value="{{ field_name }}">
+            <textarea name="field_value"
+                      class="form-control font-monospace"
+                      style="font-size: 0.82rem; line-height: 1.5;"
+                      rows="{% if char_limit > 2000 %}8{% else %}5{% endif %}"
+                      maxlength="{{ char_limit|add:'500' }}"
+                      id="textarea-{{ field_name }}"
+                      oninput="updateCounter('{{ field_name }}', this.value.length, {{ char_limit }})">{{ current_value|default:'' }}</textarea>
+            <div class="d-flex justify-content-between mt-1">
+                <small class="text-muted">{{ field_help }}</small>
+                <button type="submit" class="btn btn-sm btn-outline-success">
+                    <i class="bi bi-check me-1"></i>Save
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endwith %}
+{% endfor %}

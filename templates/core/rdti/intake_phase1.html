@@ -1,0 +1,256 @@
+{% extends "base.html" %}
+{% load humanize %}
+{% block title %}R&D Intake — {{ fy.entity.entity_name }} {{ fy.year_label }}{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}?tab=rdti">{{ fy.year_label }} — R&amp;D</a></li>
+        <li class="breadcrumb-item active">Project Intake</li>
+    </ol>
+</nav>
+
+<div class="row justify-content-center">
+<div class="col-lg-9">
+
+<div class="card shadow-sm">
+    <div class="card-header d-flex align-items-center gap-2" style="background: linear-gradient(135deg, #1a1a2e, #16213e); color: #fff;">
+        <i class="bi bi-flask fs-5"></i>
+        <div>
+            <strong>R&amp;D Tax Incentive — Project Intake</strong>
+            <small class="d-block opacity-75">{{ entity.entity_name }} &mdash; {{ fy.year_label }}</small>
+        </div>
+        <div class="ms-auto">
+            <span class="badge bg-light text-dark">Phase 1 of 2</span>
+        </div>
+    </div>
+    <div class="card-body">
+
+    <form method="post">
+        {% csrf_token %}
+
+        {# ===== SECTION 1: Company Details ===== #}
+        <h6 class="text-uppercase text-muted fw-semibold mb-3 border-bottom pb-2">
+            <i class="bi bi-building me-1"></i>Company Details
+        </h6>
+        <div class="row g-3 mb-4">
+            <div class="col-md-6">
+                <label class="form-label fw-semibold">Company Name <span class="text-danger">*</span></label>
+                <input type="text" name="company_name" class="form-control" required
+                       value="{{ application.company_name|default:entity.entity_name }}">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label fw-semibold">ABN</label>
+                <input type="text" name="abn" class="form-control" maxlength="11"
+                       value="{{ application.abn|default:entity.abn }}">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label fw-semibold">ACN</label>
+                <input type="text" name="acn" class="form-control" maxlength="9"
+                       value="{{ application.acn|default:entity.acn }}">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label fw-semibold">Contact Name</label>
+                <input type="text" name="contact_name" class="form-control"
+                       value="{{ application.contact_name }}">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label fw-semibold">Contact Email</label>
+                <input type="email" name="contact_email" class="form-control"
+                       value="{{ application.contact_email }}">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label fw-semibold">Contact Phone</label>
+                <input type="text" name="contact_phone" class="form-control"
+                       value="{{ application.contact_phone }}">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label fw-semibold">Aggregated Turnover ($)</label>
+                <input type="text" name="aggregated_turnover" class="form-control"
+                       placeholder="e.g. 1500000"
+                       value="{{ application.aggregated_turnover|default:'' }}">
+                <small class="text-muted">Under $20M = 43.5% refundable offset</small>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label fw-semibold">Employee Count</label>
+                <input type="number" name="employee_count" class="form-control" min="1"
+                       value="{{ application.employee_count|default:'' }}">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label fw-semibold">ANZSIC Division</label>
+                <select name="anzsic_division" class="form-select">
+                    <option value="">— Select —</option>
+                    {% for code, label in anzsic_divisions %}
+                    <option value="{{ code }}" {% if application.anzsic_division == code %}selected{% endif %}>{{ code }} — {{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </div>
+
+        {# ===== SECTION 2: Eligibility Confirmations ===== #}
+        <h6 class="text-uppercase text-muted fw-semibold mb-3 border-bottom pb-2">
+            <i class="bi bi-shield-check me-1"></i>Eligibility Confirmations
+        </h6>
+        <div class="row g-3 mb-4">
+            <div class="col-md-4">
+                <label class="form-label fw-semibold">IP owned by this entity?</label>
+                <div>
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="radio" name="ip_owned_by_entity" value="yes"
+                               {% if application.ip_owned_by_entity %}checked{% endif %}>
+                        <label class="form-check-label">Yes</label>
+                    </div>
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="radio" name="ip_owned_by_entity" value="no"
+                               {% if application.ip_owned_by_entity == False %}checked{% endif %}>
+                        <label class="form-check-label">No</label>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label fw-semibold">Entity bears financial burden?</label>
+                <div>
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="radio" name="entity_bears_financial_burden" value="yes"
+                               {% if application.entity_bears_financial_burden %}checked{% endif %}>
+                        <label class="form-check-label">Yes</label>
+                    </div>
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="radio" name="entity_bears_financial_burden" value="no"
+                               {% if application.entity_bears_financial_burden == False %}checked{% endif %}>
+                        <label class="form-check-label">No</label>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label fw-semibold">Entity controls activities?</label>
+                <div>
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="radio" name="entity_controls_activities" value="yes"
+                               {% if application.entity_controls_activities %}checked{% endif %}>
+                        <label class="form-check-label">Yes</label>
+                    </div>
+                    <div class="form-check form-check-inline">
+                        <input class="form-check-input" type="radio" name="entity_controls_activities" value="no"
+                               {% if application.entity_controls_activities == False %}checked{% endif %}>
+                        <label class="form-check-label">No</label>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        {# ===== SECTION 3: Project Details ===== #}
+        <h6 class="text-uppercase text-muted fw-semibold mb-3 border-bottom pb-2">
+            <i class="bi bi-folder2-open me-1"></i>R&amp;D Project
+        </h6>
+        <div class="alert alert-info py-2 mb-3">
+            <i class="bi bi-info-circle me-1"></i>
+            A <strong>project</strong> is the overarching research initiative. Each project contains one or more <strong>core activities</strong> (the specific experiments). Most SME claims have 1–3 projects.
+        </div>
+
+        <div class="row g-3 mb-4">
+            <div class="col-12">
+                <label class="form-label fw-semibold">Project Title <span class="text-danger">*</span></label>
+                <input type="text" name="project_title" class="form-control" required
+                       placeholder="e.g. Development of AI-Powered Predictive Maintenance System"
+                       value="{{ projects.first.project_title|default:'' }}">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label fw-semibold">Project Start Date</label>
+                <input type="date" name="project_start_date" class="form-control"
+                       value="{{ projects.first.project_start_date|date:'Y-m-d'|default:'' }}">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label fw-semibold">Project End Date</label>
+                <input type="date" name="project_end_date" class="form-control"
+                       value="{{ projects.first.project_end_date|date:'Y-m-d'|default:'' }}">
+            </div>
+            <div class="col-md-3">
+                <label class="form-label fw-semibold">ANZSRC Division</label>
+                <select name="anzsrc_division" class="form-select">
+                    <option value="">— Select —</option>
+                    {% for code, label in anzsrc_divisions %}
+                    <option value="{{ code }}" {% if projects.first.anzsrc_division == code %}selected{% endif %}>{{ code }} — {{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label fw-semibold">Est. R&amp;D Expenditure ($)</label>
+                <input type="text" name="expenditure_estimate" class="form-control"
+                       placeholder="e.g. 150000"
+                       value="{{ projects.first.intake_expenditure_estimate|default:'' }}">
+            </div>
+            <div class="col-12">
+                <label class="form-label fw-semibold">
+                    What business problem were you trying to solve? <span class="text-danger">*</span>
+                </label>
+                <textarea name="business_problem" class="form-control" rows="4" required
+                          placeholder="Describe the technical problem or challenge that initiated this R&D project. What was the gap between what existing technology could do and what you needed?">{{ projects.first.intake_business_problem|default:'' }}</textarea>
+                <small class="text-muted">Be specific about the technical limitation, not the business outcome.</small>
+            </div>
+            <div class="col-12">
+                <label class="form-label fw-semibold">
+                    What existing knowledge did you start with? <span class="text-danger">*</span>
+                </label>
+                <textarea name="existing_knowledge" class="form-control" rows="3"
+                          placeholder="What did you already know at the start? What prior work, literature, or technology did you build on?">{{ projects.first.intake_existing_knowledge|default:'' }}</textarea>
+            </div>
+            <div class="col-12">
+                <label class="form-label fw-semibold">
+                    What was the core technical uncertainty? <span class="text-danger">*</span>
+                </label>
+                <textarea name="uncertainty" class="form-control" rows="3"
+                          placeholder="What specifically could you NOT determine in advance? What made this technically uncertain rather than just difficult?">{{ projects.first.intake_uncertainty|default:'' }}</textarea>
+                <small class="text-muted">This is the most important field — be precise about WHY the outcome was unknowable.</small>
+            </div>
+            <div class="col-12">
+                <label class="form-label fw-semibold">
+                    Who in the industry could have known the answer?
+                </label>
+                <textarea name="who_could_have_known" class="form-control" rows="2"
+                          placeholder="Could a leading expert in this field have determined the outcome without experimentation? Why not?">{{ projects.first.intake_who_could_have_known|default:'' }}</textarea>
+            </div>
+        </div>
+
+        <div class="d-flex justify-content-between">
+            <a href="{% url 'core:financial_year_detail' pk=fy.pk %}?tab=rdti" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left me-1"></i>Back
+            </a>
+            <div class="d-flex gap-2">
+                <button type="submit" name="action" value="save_and_activities" class="btn btn-primary">
+                    Save &amp; Add Activities <i class="bi bi-arrow-right ms-1"></i>
+                </button>
+                <button type="submit" class="btn btn-outline-primary">
+                    <i class="bi bi-check me-1"></i>Save
+                </button>
+            </div>
+        </div>
+
+    </form>
+    </div>
+</div>
+
+{# Existing projects list #}
+{% if projects.count > 1 %}
+<div class="mt-4">
+    <h6 class="text-muted">Other Projects in This Application</h6>
+    {% for project in projects %}
+    {% if not forloop.first %}
+    <div class="card mb-2 border-0 bg-light">
+        <div class="card-body py-2 d-flex justify-content-between align-items-center">
+            <span><i class="bi bi-folder2-open me-2 text-primary"></i>{{ project.project_title }}</span>
+            <a href="{% url 'core:rdti_intake_phase2' pk=fy.pk project_pk=project.pk %}" class="btn btn-sm btn-outline-primary">
+                View Activities
+            </a>
+        </div>
+    </div>
+    {% endif %}
+    {% endfor %}
+</div>
+{% endif %}
+
+</div>
+</div>
+{% endblock %}

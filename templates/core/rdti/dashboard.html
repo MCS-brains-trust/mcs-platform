@@ -1,0 +1,294 @@
+{% load humanize %}
+{# RDTI Dashboard — loaded via HTMX into the R&D tab pane #}
+
+<style>
+.rdti-status-bar { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); color: #fff; border-radius: 8px 8px 0 0; }
+.rdti-card { border: 1px solid #e5e7eb; border-radius: 8px; }
+.rdti-flag-red { border-left: 4px solid #DC2626; background: #fef2f2; }
+.rdti-flag-amber { border-left: 4px solid #D97706; background: #fffbeb; }
+.rdti-flag-green { border-left: 4px solid #16A34A; background: #f0fdf4; }
+.rdti-progress-step { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 0.8rem; font-weight: 600; }
+.rdti-progress-step.done { background: #16A34A; color: #fff; }
+.rdti-progress-step.active { background: #6c8cff; color: #fff; }
+.rdti-progress-step.pending { background: #e5e7eb; color: #9ca3af; }
+.rdti-field-status-ok { color: #16A34A; }
+.rdti-field-status-warn { color: #D97706; }
+.rdti-field-status-error { color: #DC2626; }
+.rdti-field-status-empty { color: #9ca3af; }
+</style>
+
+{% if not has_application %}
+{# ===== NO APPLICATION YET ===== #}
+<div class="p-4">
+    <div class="text-center py-5">
+        <div style="font-size: 4rem; color: #6c8cff; margin-bottom: 1rem;">
+            <i class="bi bi-flask"></i>
+        </div>
+        <h5 class="mb-2">R&amp;D Tax Incentive Drafter</h5>
+        <p class="text-muted mb-4" style="max-width: 480px; margin: 0 auto;">
+            Start an R&amp;D Tax Incentive registration for <strong>{{ entity.entity_name }}</strong> — {{ fy.year_label }}.
+            The AI drafter will guide you through the intake process and generate compliant AusIndustry narratives.
+        </p>
+        <div class="row g-3 justify-content-center mb-4" style="max-width: 700px; margin: 0 auto;">
+            <div class="col-md-4">
+                <div class="card h-100 border-0 bg-light text-center p-3">
+                    <i class="bi bi-1-circle-fill text-primary mb-2" style="font-size: 1.5rem;"></i>
+                    <small class="fw-semibold">Intake Questionnaire</small>
+                    <small class="text-muted d-block">Capture project and activity details</small>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card h-100 border-0 bg-light text-center p-3">
+                    <i class="bi bi-2-circle-fill text-primary mb-2" style="font-size: 1.5rem;"></i>
+                    <small class="fw-semibold">AI Drafting</small>
+                    <small class="text-muted d-block">Generate all 8 narrative fields per activity</small>
+                </div>
+            </div>
+            <div class="col-md-4">
+                <div class="card h-100 border-0 bg-light text-center p-3">
+                    <i class="bi bi-3-circle-fill text-primary mb-2" style="font-size: 1.5rem;"></i>
+                    <small class="fw-semibold">Review &amp; Export</small>
+                    <small class="text-muted d-block">Compliance flags, .docx export, lodge</small>
+                </div>
+            </div>
+        </div>
+        <form method="post" action="{% url 'core:rdti_application_create' pk=fy.pk %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-primary btn-lg px-5">
+                <i class="bi bi-plus-circle me-2"></i>Start R&amp;D Application
+            </button>
+        </form>
+        <p class="text-muted mt-3 small">
+            <i class="bi bi-info-circle me-1"></i>
+            The R&amp;D Tax Incentive provides a 43.5% refundable tax offset for eligible entities with aggregated turnover under $20M,
+            or a 38.5% non-refundable offset for larger entities.
+        </p>
+    </div>
+</div>
+
+{% else %}
+{# ===== APPLICATION EXISTS ===== #}
+
+{# Status bar #}
+<div class="rdti-status-bar p-3 d-flex justify-content-between align-items-center">
+    <div>
+        <span class="fw-semibold">R&amp;D Tax Incentive — {{ fy.year_label }}</span>
+        <span class="ms-3">
+            {% if application.status == 'intake' %}<span class="badge bg-secondary">Intake in Progress</span>
+            {% elif application.status == 'drafting' %}<span class="badge" style="background:#6c8cff;">Drafting</span>
+            {% elif application.status == 'review' %}<span class="badge bg-warning text-dark">Under Review</span>
+            {% elif application.status == 'ready' %}<span class="badge bg-primary">Ready to Lodge</span>
+            {% elif application.status == 'lodged' %}<span class="badge bg-success">Lodged</span>
+            {% endif %}
+        </span>
+        {% if application.aggregated_turnover %}
+        <span class="ms-3 text-light small">
+            Turnover: ${{ application.aggregated_turnover|floatformat:0|intcomma }}
+            {% if application.is_refundable %}
+            <span class="badge bg-success ms-1">43.5% Refundable</span>
+            {% else %}
+            <span class="badge bg-info ms-1">38.5% Non-refundable</span>
+            {% endif %}
+        </span>
+        {% endif %}
+    </div>
+    <div class="d-flex gap-2">
+        {% if red_flags > 0 %}
+        <span class="badge bg-danger"><i class="bi bi-x-circle me-1"></i>{{ red_flags }} Red</span>
+        {% endif %}
+        {% if amber_flags > 0 %}
+        <span class="badge bg-warning text-dark"><i class="bi bi-exclamation-triangle me-1"></i>{{ amber_flags }} Amber</span>
+        {% endif %}
+        <a href="{% url 'core:rdti_export_docx' pk=fy.pk %}" class="btn btn-sm btn-outline-light">
+            <i class="bi bi-file-earmark-word me-1"></i>Export .docx
+        </a>
+        <a href="{% url 'core:rdti_intake_phase1' pk=fy.pk %}" class="btn btn-sm btn-outline-light">
+            <i class="bi bi-pencil me-1"></i>Edit Intake
+        </a>
+    </div>
+</div>
+
+<div class="p-3">
+    {# Application-level info strip #}
+    <div class="row g-2 mb-3">
+        <div class="col-auto">
+            <small class="text-muted">ABN:</small>
+            <strong class="ms-1">{{ application.abn|default:"—" }}</strong>
+        </div>
+        <div class="col-auto">
+            <small class="text-muted">ANZSIC:</small>
+            <strong class="ms-1">{{ application.anzsic_code|default:"—" }}</strong>
+        </div>
+        {% if application.contact_name %}
+        <div class="col-auto">
+            <small class="text-muted">Contact:</small>
+            <strong class="ms-1">{{ application.contact_name }}</strong>
+        </div>
+        {% endif %}
+        <div class="col-auto ms-auto">
+            {# Status update form #}
+            <form method="post" action="{% url 'core:rdti_status_update' pk=fy.pk %}" class="d-inline">
+                {% csrf_token %}
+                <select name="status" class="form-select form-select-sm d-inline-block w-auto" onchange="this.form.submit()">
+                    {% for val, label in application.Status.choices %}
+                    <option value="{{ val }}" {% if application.status == val %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </form>
+        </div>
+    </div>
+
+    {% if not projects %}
+    {# No projects yet #}
+    <div class="text-center py-4 text-muted border rounded">
+        <i class="bi bi-folder-plus" style="font-size: 2rem;"></i>
+        <p class="mt-2 mb-1">No R&amp;D projects added yet.</p>
+        <a href="{% url 'core:rdti_intake_phase1' pk=fy.pk %}" class="btn btn-primary btn-sm mt-2">
+            <i class="bi bi-plus-circle me-1"></i>Add Project &amp; Activities
+        </a>
+    </div>
+    {% else %}
+
+    {# Projects accordion #}
+    <div class="accordion" id="rdtiProjectsAccordion">
+    {% for project in projects %}
+    <div class="accordion-item rdti-card mb-2">
+        <h2 class="accordion-header">
+            <button class="accordion-button {% if not forloop.first %}collapsed{% endif %}" type="button"
+                    data-bs-toggle="collapse" data-bs-target="#rdti-project-{{ project.pk }}">
+                <div class="d-flex align-items-center gap-3 w-100">
+                    <i class="bi bi-folder2-open text-primary"></i>
+                    <div>
+                        <strong>{{ project.project_title }}</strong>
+                        <small class="text-muted ms-2">{{ project.core_activities.count }} core activit{{ project.core_activities.count|pluralize:"y,ies" }}</small>
+                    </div>
+                    {% if project.intake_expenditure_estimate %}
+                    <span class="badge bg-light text-dark ms-auto me-3">
+                        Est. ${{ project.intake_expenditure_estimate|floatformat:0|intcomma }}
+                    </span>
+                    {% endif %}
+                    <div class="ms-auto me-3 d-flex gap-1">
+                        {% if project.objectives %}<span class="badge bg-success" title="Objectives drafted"><i class="bi bi-check"></i></span>{% else %}<span class="badge bg-light text-muted" title="Objectives not drafted"><i class="bi bi-dash"></i></span>{% endif %}
+                        {% if project.documents_kept %}<span class="badge bg-success" title="Documents drafted"><i class="bi bi-check"></i></span>{% else %}<span class="badge bg-light text-muted" title="Documents not drafted"><i class="bi bi-dash"></i></span>{% endif %}
+                        {% if project.beneficiary_description %}<span class="badge bg-success" title="Beneficiary drafted"><i class="bi bi-check"></i></span>{% else %}<span class="badge bg-light text-muted" title="Beneficiary not drafted"><i class="bi bi-dash"></i></span>{% endif %}
+                    </div>
+                </div>
+            </button>
+        </h2>
+        <div id="rdti-project-{{ project.pk }}" class="accordion-collapse collapse {% if forloop.first %}show{% endif %}">
+            <div class="accordion-body p-0">
+                {# Project actions bar #}
+                <div class="d-flex gap-2 p-2 border-bottom bg-light">
+                    <a href="{% url 'core:rdti_intake_phase2' pk=fy.pk project_pk=project.pk %}" class="btn btn-sm btn-outline-primary">
+                        <i class="bi bi-plus-circle me-1"></i>Add Activity
+                    </a>
+                    <button class="btn btn-sm btn-outline-secondary"
+                            hx-post="{% url 'core:rdti_draft_project_fields' pk=fy.pk project_pk=project.pk %}"
+                            hx-confirm="Draft all project-level fields (Objectives, Documents, Beneficiary) using AI?"
+                            hx-target="closest .accordion-item"
+                            hx-swap="outerHTML">
+                        <i class="bi bi-stars me-1"></i>Draft Project Fields
+                    </button>
+                </div>
+
+                {# Core activities list #}
+                {% for activity in project.core_activities.all %}
+                <div class="p-3 border-bottom">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <a href="{% url 'core:rdti_activity_detail' pk=fy.pk activity_pk=activity.pk %}" class="fw-semibold text-decoration-none">
+                                <i class="bi bi-lightning-charge-fill text-warning me-1"></i>
+                                {{ activity.activity_title }}
+                            </a>
+                            {% if activity.draft_complete %}
+                            <span class="badge bg-success ms-2" style="font-size: 0.65rem;">Draft Complete</span>
+                            {% else %}
+                            <span class="badge bg-secondary ms-2" style="font-size: 0.65rem;">In Progress</span>
+                            {% endif %}
+                        </div>
+                        <div class="d-flex gap-1">
+                            <button class="btn btn-sm btn-primary"
+                                    hx-post="{% url 'core:rdti_draft_all_fields' pk=fy.pk activity_pk=activity.pk %}"
+                                    hx-confirm="Draft all 8 narrative fields for '{{ activity.activity_title }}' using AI? This will overwrite any existing drafts."
+                                    hx-indicator="#rdti-spinner-{{ activity.pk }}"
+                                    hx-target="#rdti-activity-status-{{ activity.pk }}"
+                                    hx-swap="innerHTML">
+                                <span id="rdti-spinner-{{ activity.pk }}" class="htmx-indicator spinner-border spinner-border-sm me-1" role="status"></span>
+                                <i class="bi bi-stars me-1"></i>Draft All Fields
+                            </button>
+                            <a href="{% url 'core:rdti_activity_detail' pk=fy.pk activity_pk=activity.pk %}" class="btn btn-sm btn-outline-secondary">
+                                <i class="bi bi-pencil"></i>
+                            </a>
+                        </div>
+                    </div>
+
+                    {# Field completion indicators #}
+                    <div class="mt-2 d-flex flex-wrap gap-1" id="rdti-activity-status-{{ activity.pk }}">
+                        {% with cc=activity.char_counts %}
+                        {% for field_name, label in activity.NARRATIVE_FIELD_LABELS %}
+                        {% with count=cc|get_item:field_name %}
+                        <span class="badge {% if count and count > 0 %}{% if count > 4000 %}bg-danger{% else %}bg-success{% endif %}{% else %}bg-light text-muted border{% endif %}"
+                              title="{{ label }}: {{ count|default:0 }}/4,000 chars"
+                              style="font-size: 0.65rem;">
+                            {% if count and count > 0 %}<i class="bi bi-check-circle me-1"></i>{% else %}<i class="bi bi-circle me-1"></i>{% endif %}
+                            {{ label|truncatechars:20 }}
+                        </span>
+                        {% endwith %}
+                        {% endfor %}
+                        {% endwith %}
+                    </div>
+
+                    {# Supporting activities #}
+                    {% if activity.supporting_activities.exists %}
+                    <div class="mt-2">
+                        <small class="text-muted">Supporting activities:</small>
+                        {% for sa in activity.supporting_activities.all %}
+                        <span class="badge bg-info text-dark ms-1" style="font-size: 0.65rem;">{{ sa.activity_title|truncatechars:30 }}</span>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                </div>
+                {% empty %}
+                <div class="p-3 text-muted text-center">
+                    <small>No core activities added yet. <a href="{% url 'core:rdti_intake_phase2' pk=fy.pk project_pk=project.pk %}">Add one now.</a></small>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+    </div>
+
+    {# Add another project button #}
+    <div class="mt-3">
+        <a href="{% url 'core:rdti_intake_phase1' pk=fy.pk %}" class="btn btn-outline-primary btn-sm">
+            <i class="bi bi-folder-plus me-1"></i>Add Another Project
+        </a>
+    </div>
+
+    {% endif %}{# end projects #}
+
+    {# Unresolved flags summary #}
+    {% if red_flags > 0 or amber_flags > 0 %}
+    <div class="mt-4">
+        <h6 class="mb-2"><i class="bi bi-flag-fill text-danger me-1"></i>Unresolved Compliance Flags</h6>
+        {% for flag in application.flags.filter.is_resolved.False %}
+        <div class="rdti-flag-{{ flag.severity }} p-2 rounded mb-1 d-flex justify-content-between align-items-start">
+            <div>
+                <span class="badge {% if flag.severity == 'red' %}bg-danger{% elif flag.severity == 'amber' %}bg-warning text-dark{% endif %} me-2">{{ flag.severity|upper }}</span>
+                <small><strong>{{ flag.field_name }}</strong>: {{ flag.message }}</small>
+                {% if flag.suggestion %}<br><small class="text-muted ms-4">→ {{ flag.suggestion }}</small>{% endif %}
+            </div>
+            <button class="btn btn-sm btn-outline-secondary"
+                    hx-post="{% url 'core:rdti_resolve_flag' pk=fy.pk flag_pk=flag.pk %}"
+                    hx-target="closest div.rdti-flag-{{ flag.severity }}"
+                    hx-swap="outerHTML">
+                <i class="bi bi-check"></i>
+            </button>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+</div>{# end p-3 #}
+{% endif %}{# end has_application #}

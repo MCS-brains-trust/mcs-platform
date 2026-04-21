@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% load humanize %}
+{% block title %}R&D Activities — {{ fy.entity.entity_name }} {{ fy.year_label }}{% endblock %}
+
+{% block content %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}?tab=rdti">{{ fy.year_label }} — R&amp;D</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:rdti_intake_phase1' pk=fy.pk %}">Project Intake</a></li>
+        <li class="breadcrumb-item active">Core Activities</li>
+    </ol>
+</nav>
+
+<div class="row justify-content-center">
+<div class="col-lg-9">
+
+<div class="card shadow-sm">
+    <div class="card-header d-flex align-items-center gap-2" style="background: linear-gradient(135deg, #1a1a2e, #16213e); color: #fff;">
+        <i class="bi bi-lightning-charge-fill fs-5 text-warning"></i>
+        <div>
+            <strong>Core Activities — {{ project.project_title }}</strong>
+            <small class="d-block opacity-75">{{ entity.entity_name }} &mdash; {{ fy.year_label }}</small>
+        </div>
+        <div class="ms-auto">
+            <span class="badge bg-light text-dark">Phase 2 of 2</span>
+        </div>
+    </div>
+    <div class="card-body">
+
+    <div class="alert alert-info py-2 mb-4">
+        <i class="bi bi-info-circle me-1"></i>
+        A <strong>core R&amp;D activity</strong> is an experimental activity conducted for the purpose of generating new knowledge. It must involve a <strong>hypothesis, experiment, observation, and evaluation</strong>. Each core activity should be a distinct experiment.
+    </div>
+
+    {# Existing activities #}
+    {% if activities %}
+    <h6 class="text-muted mb-3">Existing Core Activities</h6>
+    {% for activity in activities %}
+    <div class="card mb-2 border-0 bg-light">
+        <div class="card-body py-2 d-flex justify-content-between align-items-center">
+            <div>
+                <i class="bi bi-lightning-charge-fill text-warning me-2"></i>
+                <strong>{{ activity.activity_title }}</strong>
+                {% if activity.draft_complete %}
+                <span class="badge bg-success ms-2" style="font-size: 0.65rem;">Draft Complete</span>
+                {% else %}
+                <span class="badge bg-secondary ms-2" style="font-size: 0.65rem;">In Progress</span>
+                {% endif %}
+            </div>
+            <a href="{% url 'core:rdti_activity_detail' pk=fy.pk activity_pk=activity.pk %}" class="btn btn-sm btn-outline-primary">
+                <i class="bi bi-pencil me-1"></i>Edit &amp; Draft
+            </a>
+        </div>
+    </div>
+    {% endfor %}
+    <hr>
+    {% endif %}
+
+    {# Add new activity form #}
+    <h6 class="mb-3">{% if activities %}Add Another Core Activity{% else %}Add First Core Activity{% endif %}</h6>
+    <form method="post">
+        {% csrf_token %}
+        <div class="row g-3 mb-4">
+            <div class="col-12">
+                <label class="form-label fw-semibold">Activity Title <span class="text-danger">*</span></label>
+                <input type="text" name="activity_title" class="form-control" required
+                       placeholder="e.g. Development and testing of novel neural network architecture for anomaly detection">
+                <small class="text-muted">Be specific — this becomes the heading in the AusIndustry registration.</small>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label fw-semibold">Activity Start Date</label>
+                <input type="date" name="activity_start_date" class="form-control">
+            </div>
+            <div class="col-md-6">
+                <label class="form-label fw-semibold">Activity End Date</label>
+                <input type="date" name="activity_end_date" class="form-control">
+            </div>
+            <div class="col-12">
+                <label class="form-label fw-semibold">What was the hypothesis being tested? <span class="text-danger">*</span></label>
+                <textarea name="hypothesis" class="form-control" rows="3" required
+                          placeholder="State the specific hypothesis. What did you believe might be true, and what were you testing to confirm or refute?"></textarea>
+            </div>
+            <div class="col-12">
+                <label class="form-label fw-semibold">What experiments / methods were used?</label>
+                <textarea name="experiments" class="form-control" rows="3"
+                          placeholder="Describe the experimental approach. What did you build, test, measure, or observe? What iterations did you go through?"></textarea>
+            </div>
+            <div class="col-12">
+                <label class="form-label fw-semibold">What were the outcomes / results?</label>
+                <textarea name="outcomes" class="form-control" rows="3"
+                          placeholder="What did you learn? Did the hypothesis hold? What new knowledge was generated, even if the experiment 'failed'?"></textarea>
+            </div>
+            <div class="col-12">
+                <label class="form-label fw-semibold">What records / evidence do you have?</label>
+                <textarea name="evidence" class="form-control" rows="2"
+                          placeholder="e.g. Git commits, lab notebooks, test logs, Jira tickets, meeting notes, prototype builds, performance benchmarks..."></textarea>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label fw-semibold">Est. R&amp;D Labour Cost ($)</label>
+                <input type="text" name="labour_cost" class="form-control" placeholder="e.g. 80000">
+            </div>
+            <div class="col-md-6">
+                <label class="form-label fw-semibold">Est. Contractor Cost ($)</label>
+                <input type="text" name="contractor_cost" class="form-control" placeholder="e.g. 20000">
+            </div>
+        </div>
+
+        <div class="d-flex justify-content-between">
+            <a href="{% url 'core:rdti_intake_phase1' pk=fy.pk %}" class="btn btn-outline-secondary">
+                <i class="bi bi-arrow-left me-1"></i>Back to Project
+            </a>
+            <div class="d-flex gap-2">
+                <button type="submit" name="action" value="save_and_draft" class="btn btn-primary">
+                    <i class="bi bi-stars me-1"></i>Save &amp; Draft with AI
+                </button>
+                <button type="submit" name="action" value="save_and_add_another" class="btn btn-outline-primary">
+                    Save &amp; Add Another
+                </button>
+                <a href="{% url 'core:financial_year_detail' pk=fy.pk %}?tab=rdti" class="btn btn-outline-secondary">
+                    Done
+                </a>
+            </div>
+        </div>
+    </form>
+
+    </div>
+</div>
+
+</div>
+</div>
+{% endblock %}

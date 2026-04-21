@@ -6094,3 +6094,17 @@ class FamilyTrustElectionDocument(models.Model):
     def __str__(self):
         fy_label = f" — FY{self.financial_year.year_label}" if self.financial_year else ""
         return f"FTE Document — {self.entity.entity_name}{fy_label}"
+
+
+# ---------------------------------------------------------------------------
+# R&D Tax Incentive (RDTI) Drafter models
+# ---------------------------------------------------------------------------
+from core.models_rdti import (  # noqa: E402, F401
+    RdtiApplication,
+    RdtiProject,
+    RdtiCoreActivity,
+    RdtiSupportingActivity,
+    RdtiExpenditureYear,
+    RdtiDraftVersion,
+    RdtiFlag,
+)

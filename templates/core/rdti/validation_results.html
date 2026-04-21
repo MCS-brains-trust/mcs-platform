@@ -1,0 +1,26 @@
+{% load humanize %}
+{# Partial: validation results returned by HTMX #}
+{% if flags %}
+<div class="alert alert-warning mb-3">
+    <h6 class="mb-2"><i class="bi bi-shield-exclamation me-1"></i>Validation Results — {{ flags|length }} issue{{ flags|length|pluralize }} found</h6>
+    {% for flag in flags %}
+    <div class="d-flex align-items-start gap-2 mb-1 p-2 rounded {% if flag.severity == 'red' %}bg-danger bg-opacity-10{% else %}bg-warning bg-opacity-10{% endif %}">
+        <span class="badge {% if flag.severity == 'red' %}bg-danger{% else %}bg-warning text-dark{% endif %} mt-1">{{ flag.severity|upper }}</span>
+        <div>
+            <strong>{{ flag.field_name }}</strong>: {{ flag.message }}
+            {% if flag.suggestion %}<br><small class="text-muted">→ {{ flag.suggestion }}</small>{% endif %}
+        </div>
+        <button class="btn btn-sm btn-outline-secondary ms-auto"
+                hx-post="{% url 'core:rdti_resolve_flag' pk=fy.pk flag_pk=flag.pk %}"
+                hx-target="closest div"
+                hx-swap="outerHTML">
+            <i class="bi bi-check"></i>
+        </button>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="alert alert-success mb-3">
+    <i class="bi bi-check-circle me-1"></i><strong>Validation passed.</strong> No compliance issues detected for this activity.
+</div>
+{% endif %}

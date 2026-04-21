@@ -714,6 +714,18 @@ function quickGenerateEngagementLetter(entityPk, fyPk) {
     </li>
     {% endif %}
     <li class="nav-item">
+        <button class="nav-link{% if active_tab == 'rdti' %} active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-rdti" data-tab-name="rdti" type="button">
+            <i class="bi bi-flask"></i> R&amp;D
+            {% if rdti_application %}
+                {% if rdti_application.status == 'lodged' %}<span class="badge bg-success ms-1" style="font-size:0.6rem;">Lodged</span>
+                {% elif rdti_application.status == 'ready' %}<span class="badge bg-primary ms-1" style="font-size:0.6rem;">Ready</span>
+                {% elif rdti_application.status == 'review' %}<span class="badge bg-warning text-dark ms-1" style="font-size:0.6rem;">Review</span>
+                {% elif rdti_application %}<span class="badge bg-secondary ms-1" style="font-size:0.6rem;">Draft</span>
+                {% endif %}
+            {% endif %}
+        </button>
+    </li>
+    <li class="nav-item">
         <button class="nav-link{% if active_tab == 'activity' %} active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-activity" data-tab-name="activity" type="button">
             <i class="bi bi-clock-history"></i> Activity ({{ activity_logs.count }})
         </button>
@@ -1552,6 +1564,17 @@ function quickGenerateEngagementLetter(entityPk, fyPk) {
             <p class="small">Activity will appear here as journals are created, posted, or deleted.</p>
         </div>
         {% endif %}
+    </div>
+
+    <!-- ===== R&D TAX INCENTIVE TAB ===== -->
+    <div class="tab-pane fade{% if active_tab == 'rdti' %} show active{% endif %} p-0" id="tab-rdti"
+         hx-get="{% url 'core:rdti_dashboard' pk=fy.pk %}"
+         hx-trigger="intersect once"
+         hx-swap="innerHTML">
+        <div class="text-center py-5 text-muted">
+            <div class="spinner-border spinner-border-sm me-2" role="status"></div>
+            Loading R&amp;D Tax Incentive Drafter&hellip;
+        </div>
     </div>
 
 </div>
