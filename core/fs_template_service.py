@@ -3369,11 +3369,16 @@ def generate_financial_statements(financial_year_id, include_watermark=True):
                 )
             continue
 
-        # DISTRIBUTION: programmatic generation — docxtpl strips column widths
+        # DISTRIBUTION: full Beneficiaries Profit Distribution Summary (reportlab PDF)
         if doc_type == "DISTRIBUTION":
             try:
-                buffer = _build_distribution_docx(fy, context)
-                # DISTRIBUTION is already PDF (reportlab) — skip docx post-processing
+                buffer = _build_beneficiary_distribution_summary(context)
+                if buffer is None:
+                    logger.info(
+                        "No beneficiary mappings for FY %s — skipping DISTRIBUTION",
+                        fy.pk,
+                    )
+                    continue
                 results[doc_type] = buffer
                 logger.info("Generated programmatic DISTRIBUTION for FY %s", fy.pk)
             except Exception as e:
@@ -3418,12 +3423,351 @@ def _stamp_page_numbers(pdf_bytes):
     return pdf_bytes
 
 
-def _build_distribution_docx(financial_year, context):
-    """Generate Distribution Summary as PDF directly via reportlab.
+def _build_beneficiary_distribution_summary(context):
+    """Build the full Handiledger-style Beneficiaries Profit Distribution Summary.
 
-    Returns BytesIO containing PDF bytes (NOT docx).
-    python-docx cannot reliably produce 3-column tables that survive
-    LibreOffice conversion on this server.
+    Page 1 — Profit share summary per beneficiary (CY vs PY)
+    Page 2 — Loan account reconciliation per beneficiary (opening, movements,
+             closing) tying directly to the Balance Sheet's beneficiary loan
+             rows.
+
+    Returns BytesIO containing PDF bytes, or None if the entity has no
+    ClientAccountMapping with a beneficiary_officer assigned (no distribution
+    document is rendered in that case).
+    """
+    from collections import OrderedDict
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import cm, mm
+    from reportlab.lib import colors
+    from reportlab.platypus import (
+        SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak,
+    )
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.enums import TA_CENTER
+    import io as _io
+    from core.models import ClientAccountMapping, TrialBalanceLine
+
+    fy = context["_fy"]
+    entity = fy.entity
+
+    mappings = ClientAccountMapping.objects.filter(
+        entity=entity,
+        beneficiary_officer__isnull=False,
+    ).select_related("beneficiary_officer")
+
+    if not mappings.exists():
+        return None
+
+    # officer_id -> {name, account_codes:[...]}
+    officer_meta = OrderedDict()
+    code_to_officer = {}
+    for m in mappings:
+        oid = str(m.beneficiary_officer.pk)
+        if oid not in officer_meta:
+            officer_meta[oid] = {
+                "name": (m.beneficiary_officer.full_name or "").strip() or "—",
+                "account_codes": [],
+            }
+        officer_meta[oid]["account_codes"].append(m.client_account_code)
+        code_to_officer[m.client_account_code] = oid
+
+    def _figures_for_year(target_fy):
+        """Return {officer_id: {opening, credits, debits, profit_dist}}.
+
+        Sign convention: amounts are reported as "trust owes beneficiary"
+        (credit-normal flipped to positive).
+        Opening = PY closing balance for these accounts (from rollover lines
+        of *target_fy*: prior_credit - prior_debit).
+        Credits/debits = current-year movements (non-rollover lines).
+        Profit_dist = beneficiary's allocated share from selected tax scenario.
+        """
+        result = {oid: {
+            "opening": Decimal("0"),
+            "credits": Decimal("0"),
+            "debits": Decimal("0"),
+            "profit_dist": Decimal("0"),
+        } for oid in officer_meta}
+        if target_fy is None:
+            return result
+
+        codes = list(code_to_officer.keys())
+        if not codes:
+            return result
+
+        tb_lines = TrialBalanceLine.objects.filter(
+            financial_year=target_fy,
+            account_code__in=codes,
+        )
+        for line in tb_lines:
+            oid = code_to_officer.get(line.account_code)
+            if not oid:
+                continue
+            if line.source == "rollover":
+                # prior_credit - prior_debit = PY closing for credit-normal
+                # equity flipped to positive.
+                opening = (line.prior_credit or Decimal("0")) - (line.prior_debit or Decimal("0"))
+                result[oid]["opening"] += opening
+            else:
+                result[oid]["credits"] += (line.credit or Decimal("0"))
+                result[oid]["debits"] += (line.debit or Decimal("0"))
+
+        try:
+            workspace = getattr(target_fy, "trust_workspace", None)
+            scenario = workspace.selected_tax_scenario if workspace else None
+        except Exception:
+            scenario = None
+
+        if scenario and scenario.distributions:
+            for entry in scenario.distributions:
+                bid = str(entry.get("beneficiary_id", ""))
+                if bid in result:
+                    amount = Decimal(str(entry.get("proposed_distribution", 0)))
+                    result[bid]["profit_dist"] = amount
+
+        return result
+
+    cy_fig = _figures_for_year(fy)
+    py_fig = _figures_for_year(fy.prior_year)
+
+    def _resolve(figs):
+        """Derive funds_loaned, physical_dist, closing from raw figs."""
+        out = {}
+        for oid, f in figs.items():
+            funds_loaned = f["credits"] - f["profit_dist"]
+            physical = f["debits"]
+            closing = f["opening"] + funds_loaned + f["profit_dist"] - physical
+            out[oid] = {
+                "opening": f["opening"],
+                "funds_loaned": funds_loaned,
+                "profit_dist": f["profit_dist"],
+                "physical_dist": physical,
+                "closing": closing,
+            }
+        return out
+
+    cy = _resolve(cy_fig)
+    py = _resolve(py_fig)
+
+    end_date = fy.end_date
+    date_text = (
+        f"For the year ended {end_date.strftime('%d %B %Y')}" if end_date else ""
+    )
+    cy_year = str(end_date.year) if end_date else ""
+    if fy.prior_year and fy.prior_year.end_date:
+        py_year = str(fy.prior_year.end_date.year)
+    elif cy_year:
+        py_year = str(int(cy_year) - 1)
+    else:
+        py_year = ""
+
+    abn_raw = entity.abn or ""
+    abn_digits = "".join(c for c in str(abn_raw) if c.isdigit())
+    abn_fmt = (
+        f"{abn_digits[:2]} {abn_digits[2:5]} {abn_digits[5:8]} {abn_digits[8:]}"
+        if len(abn_digits) == 11 else abn_raw
+    )
+
+    EM_DASH = "—"
+
+    def _fmt(val):
+        if val is None or val == 0:
+            return EM_DASH
+        if val < 0:
+            return f"({abs(val):,.0f})"
+        return f"{val:,.0f}"
+
+    buf = _io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=2.0 * cm, rightMargin=2.4 * cm,
+        topMargin=1.6 * cm, bottomMargin=1.7 * cm,
+    )
+    styles = getSampleStyleSheet()
+    centre_bold = ParagraphStyle(
+        "centre_bold", parent=styles["Normal"],
+        alignment=TA_CENTER, fontName="Helvetica-Bold", fontSize=11)
+    centre_sm = ParagraphStyle(
+        "centre_sm", parent=styles["Normal"],
+        alignment=TA_CENTER, fontName="Helvetica", fontSize=9)
+    h_section = ParagraphStyle(
+        "h_section", parent=styles["Normal"],
+        fontName="Helvetica-Bold", fontSize=10, spaceBefore=8, spaceAfter=4)
+
+    page_width = A4[0] - 2.0 * cm - 2.4 * cm
+    col_widths = [page_width * 0.55, page_width * 0.225, page_width * 0.225]
+
+    def _header_block():
+        return [
+            Paragraph(_safe_amp(entity.entity_name), centre_bold),
+            Spacer(1, 1 * mm),
+            Paragraph(f"ABN {abn_fmt}", centre_sm),
+            Spacer(1, 1 * mm),
+            Paragraph("Beneficiaries Profit Distribution Summary", centre_sm),
+            Spacer(1, 1 * mm),
+            Paragraph(date_text, centre_sm),
+            Spacer(1, 6 * mm),
+        ]
+
+    story = []
+    # ---- Page 1: Profit share summary ----
+    story.extend(_header_block())
+
+    p1_rows = [["", f"{cy_year} $", f"{py_year} $"]]
+    p1_rows.append(["Beneficiaries Share of Profit", "", ""])
+    cy_profit_total = Decimal("0")
+    py_profit_total = Decimal("0")
+    for oid, meta in officer_meta.items():
+        cy_amt = cy[oid]["profit_dist"]
+        py_amt = py[oid]["profit_dist"]
+        cy_profit_total += cy_amt
+        py_profit_total += py_amt
+        p1_rows.append([
+            f"- {meta['name']}",
+            _fmt(cy_amt),
+            _fmt(py_amt),
+        ])
+    p1_rows.append(["Total Profit", _fmt(cy_profit_total), _fmt(py_profit_total)])
+
+    p1_table = Table(p1_rows, colWidths=col_widths)
+    p1_table.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME", (0, 1), (-1, 1), "Helvetica-Bold"),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 10),
+        ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+        ("ALIGN", (0, 0), (0, -1), "LEFT"),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.5, colors.black),
+        ("LINEABOVE", (1, -1), (-1, -1), 0.5, colors.black),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ]))
+    story.append(p1_table)
+
+    story.append(PageBreak())
+
+    # ---- Page 2: Loan account reconciliation per beneficiary ----
+    story.extend(_header_block())
+
+    cy_total_closing = Decimal("0")
+    py_total_closing = Decimal("0")
+
+    for oid, meta in officer_meta.items():
+        cy_b = cy[oid]
+        py_b = py[oid]
+
+        cy_subtotal = cy_b["opening"] + cy_b["funds_loaned"] + cy_b["profit_dist"]
+        py_subtotal = py_b["opening"] + py_b["funds_loaned"] + py_b["profit_dist"]
+        show_physical = cy_b["physical_dist"] != 0 or py_b["physical_dist"] != 0
+
+        story.append(Paragraph(_safe_amp(meta["name"]), h_section))
+
+        rows = [
+            ["", f"{cy_year} $", f"{py_year} $"],
+            ["Opening balance - Beneficiary",
+             _fmt(cy_b["opening"]), _fmt(py_b["opening"])],
+            ["Funds loaned to trust",
+             _fmt(cy_b["funds_loaned"]), _fmt(py_b["funds_loaned"])],
+            ["Profit distribution for year",
+             _fmt(cy_b["profit_dist"]), _fmt(py_b["profit_dist"])],
+        ]
+        subtotal_idx = len(rows)
+        rows.append(["", _fmt(cy_subtotal), _fmt(py_subtotal)])
+
+        if show_physical:
+            rows.append(["Less:", "", ""])
+            rows.append([
+                "Physical distribution",
+                _fmt(-cy_b["physical_dist"]) if cy_b["physical_dist"] else EM_DASH,
+                _fmt(-py_b["physical_dist"]) if py_b["physical_dist"] else EM_DASH,
+            ])
+
+        rows.append(["Closing balance",
+                     _fmt(cy_b["closing"]), _fmt(py_b["closing"])])
+
+        cy_total_closing += cy_b["closing"]
+        py_total_closing += py_b["closing"]
+
+        bf_table = Table(rows, colWidths=col_widths)
+        last_idx = len(rows) - 1
+        style_cmds = [
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 10),
+            ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+            ("ALIGN", (0, 0), (0, -1), "LEFT"),
+            ("LINEBELOW", (0, 0), (-1, 0), 0.5, colors.black),
+            ("LINEABOVE", (1, subtotal_idx), (-1, subtotal_idx),
+             0.5, colors.black),
+            ("FONTNAME", (0, last_idx), (-1, last_idx), "Helvetica-Bold"),
+            ("LINEABOVE", (1, last_idx), (-1, last_idx), 0.5, colors.black),
+            ("TOPPADDING", (0, 0), (-1, -1), 2),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ]
+        bf_table.setStyle(TableStyle(style_cmds))
+        story.append(bf_table)
+        story.append(Spacer(1, 4 * mm))
+
+    totals_rows = [
+        ["Total of beneficiary loans",
+         _fmt(cy_total_closing), _fmt(py_total_closing)],
+        ["Total Beneficiary Funds",
+         _fmt(cy_total_closing), _fmt(py_total_closing)],
+    ]
+    totals_table = Table(totals_rows, colWidths=col_widths)
+    totals_table.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 10),
+        ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+        ("ALIGN", (0, 0), (0, -1), "LEFT"),
+        ("LINEABOVE", (0, 0), (-1, 0), 0.5, colors.black),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+    ]))
+    story.append(Spacer(1, 4 * mm))
+    story.append(totals_table)
+
+    FOOTER_TEXT = (
+        "These financial statements are unaudited. They must be read "
+        "in conjunction with the attached Accountant’s Compilation "
+        "Report and Notes which form part of these financial statements."
+    )
+
+    def _draw_footer(canvas, _doc):
+        canvas.saveState()
+        page_w = A4[0]
+        left_x = 2.0 * cm
+        right_x = page_w - 2.4 * cm
+        canvas.setLineWidth(0.5)
+        canvas.setStrokeColorRGB(0, 0, 0)
+        canvas.line(left_x, 1.3 * cm, right_x, 1.3 * cm)
+        canvas.setFont("Helvetica-Oblique", 9)
+        canvas.setFillColorRGB(0, 0, 0)
+        usable_w = right_x - left_x
+        text_w = canvas.stringWidth(FOOTER_TEXT, "Helvetica-Oblique", 9)
+        if text_w <= usable_w:
+            canvas.drawCentredString(page_w / 2, 0.9 * cm, FOOTER_TEXT)
+        else:
+            split = FOOTER_TEXT.rfind("conjunction with")
+            line1 = FOOTER_TEXT[:split].strip()
+            line2 = FOOTER_TEXT[split:].strip()
+            canvas.drawCentredString(page_w / 2, 1.0 * cm, line1)
+            canvas.drawCentredString(page_w / 2, 0.65 * cm, line2)
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=_draw_footer, onLaterPages=_draw_footer)
+    buf.seek(0)
+    logger.info(
+        "Built Beneficiaries Profit Distribution Summary for %s: %d beneficiaries",
+        entity.entity_name, len(officer_meta),
+    )
+    return buf
+
+
+def _build_distribution_docx(financial_year, context):
+    """Legacy simplified DISTRIBUTION builder.
+
+    Kept for any out-of-tree callers but no longer used by
+    generate_financial_statements (replaced by
+    _build_beneficiary_distribution_summary).
     """
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.units import cm, mm
