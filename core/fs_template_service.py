@@ -3471,20 +3471,27 @@ def _build_beneficiary_distribution_summary(context):
         officer_meta[oid]["account_codes"].append(m.client_account_code)
         code_to_officer[m.client_account_code] = oid
 
-    def _figures_for_year(target_fy):
+    def _figures_for_year(target_fy, is_prior=False):
         """Return {officer_id: {opening, closing, physical_dist, profit_dist}}.
 
         Sign convention: amounts are reported as "trust owes beneficiary"
         (credit-normal flipped to positive).
 
         Opening = PY closing balance — from rollover lines of *target_fy*
-        (prior_credit - prior_debit).
+        (prior_credit - prior_debit). 0 if no rollover line exists.
         Closing = sum of -closing_balance from non-rollover lines for the
         officer's mapped accounts (sign-flipped credit-normal).
+            * When *is_prior* is True and an account has NO non-rollover
+              lines in target_fy, the rollover line's closing_balance is
+              used as a fallback so that prior-year-only entities (where
+              fy.prior_year has tb_import data without a separate rollover
+              import) still produce non-zero PY closing figures.
         Physical_dist = sum of (debit - credit) from non-rollover lines on
         accounts whose code starts with "4053" (Handiledger convention for
         physical distribution accounts). Zero when no 4053 account exists.
         Profit_dist = beneficiary's allocated share from selected tax scenario.
+        Falls back to 0 when target_fy.trust_workspace is missing or has no
+        selected scenario — guarded with getattr.
         """
         result = {oid: {
             "opening": Decimal("0"),
@@ -3499,33 +3506,49 @@ def _build_beneficiary_distribution_summary(context):
         if not codes:
             return result
 
-        tb_lines = TrialBalanceLine.objects.filter(
+        from collections import defaultdict as _dd
+        lines_by_code = _dd(list)
+        for line in TrialBalanceLine.objects.filter(
             financial_year=target_fy,
             account_code__in=codes,
-        )
-        for line in tb_lines:
-            oid = code_to_officer.get(line.account_code)
+        ):
+            lines_by_code[line.account_code].append(line)
+
+        for code, lines in lines_by_code.items():
+            oid = code_to_officer.get(code)
             if not oid:
                 continue
-            is_physical = str(line.account_code).startswith("4053")
-            if line.source == "rollover":
-                opening = (line.prior_credit or Decimal("0")) - (line.prior_debit or Decimal("0"))
-                result[oid]["opening"] += opening
-            else:
-                cb = line.closing_balance or Decimal("0")
-                result[oid]["closing"] += -cb
-                if is_physical:
-                    result[oid]["physical_dist"] += (
-                        (line.debit or Decimal("0")) - (line.credit or Decimal("0"))
+            is_physical = str(code).startswith("4053")
+            has_non_rollover = any(l.source != "rollover" for l in lines)
+            for line in lines:
+                if line.source == "rollover":
+                    opening = (
+                        (line.prior_credit or Decimal("0"))
+                        - (line.prior_debit or Decimal("0"))
                     )
+                    result[oid]["opening"] += opening
+                    if is_prior and not has_non_rollover:
+                        cb = line.closing_balance or Decimal("0")
+                        result[oid]["closing"] += -cb
+                else:
+                    cb = line.closing_balance or Decimal("0")
+                    result[oid]["closing"] += -cb
+                    if is_physical:
+                        result[oid]["physical_dist"] += (
+                            (line.debit or Decimal("0"))
+                            - (line.credit or Decimal("0"))
+                        )
 
         try:
             workspace = getattr(target_fy, "trust_workspace", None)
-            scenario = workspace.selected_tax_scenario if workspace else None
+            scenario = (
+                getattr(workspace, "selected_tax_scenario", None)
+                if workspace else None
+            )
         except Exception:
             scenario = None
 
-        if scenario and scenario.distributions:
+        if scenario and getattr(scenario, "distributions", None):
             for entry in scenario.distributions:
                 bid = str(entry.get("beneficiary_id", ""))
                 if bid in result:
@@ -3534,8 +3557,8 @@ def _build_beneficiary_distribution_summary(context):
 
         return result
 
-    cy_fig = _figures_for_year(fy)
-    py_fig = _figures_for_year(fy.prior_year)
+    cy_fig = _figures_for_year(fy, is_prior=False)
+    py_fig = _figures_for_year(fy.prior_year, is_prior=True)
 
     def _resolve(figs):
         """Derive funds_loaned from closing/opening/profit_dist/physical_dist.
