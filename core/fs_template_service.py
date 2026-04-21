@@ -419,10 +419,22 @@ def _format_lines(items, credit_normal=False):
 
 
 def _classify_current_asset(name_lower):
-    """Classify a current asset into a sub-group by keyword matching."""
-    if any(kw in name_lower for kw in ["cash", "bank", "petty cash", "on hand"]):
+    """Classify a current asset into a sub-group by keyword matching.
+
+    Bank names are treated as Cash Assets so accounts like "ANZ #11733" or
+    "NAB Business Account" group correctly even without the word "bank".
+    Any loan recorded as a current asset (e.g. beneficiary/shareholder/director
+    loans) is a loan receivable, so "loan" routes to Receivables.
+    """
+    if any(kw in name_lower for kw in [
+        "cash", "bank", "petty cash", "on hand",
+        "anz", "nab", "cba", "commonwealth bank", "westpac", "bendigo",
+        "suncorp", "macquarie", "bankwest", "st george", "stgeorge",
+    ]):
         return "Cash Assets"
-    if any(kw in name_lower for kw in ["debtor", "receivable", "trade debtor"]):
+    if any(kw in name_lower for kw in [
+        "debtor", "receivable", "trade debtor", "loan",
+    ]):
         return "Receivables"
     return "Other Current Assets"
 
