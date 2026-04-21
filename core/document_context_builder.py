@@ -971,6 +971,12 @@ class DocumentContextBuilder:
         net_assets = total_assets - total_liabilities
         net_assets_py = total_assets_py - total_liabilities_py
 
+        # For trust entities, beneficiary loans are in liabilities not equity.
+        # Override total_equity so the balance check passes.
+        if self.entity.entity_type == "trust":
+            total_equity = net_assets
+            total_equity_py = net_assets_py
+
         # Ratios (total_current_liabilities is already abs'd above)
         current_ratio = (
             total_current_assets / total_current_liabilities
