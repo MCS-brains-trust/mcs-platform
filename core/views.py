@@ -1852,7 +1852,7 @@ def financial_year_detail(request, pk):
 
     # Check if this entity has bank statement uploads
     has_bank_statements = (
-        tb_lines.filter(source='bank_statement').exists()
+        TrialBalanceLine.objects.filter(financial_year=fy, source='bank_statement').exists()
         or review_jobs.exists()
     )
 
