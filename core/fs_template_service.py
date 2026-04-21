@@ -3472,19 +3472,24 @@ def _build_beneficiary_distribution_summary(context):
         code_to_officer[m.client_account_code] = oid
 
     def _figures_for_year(target_fy):
-        """Return {officer_id: {opening, credits, debits, profit_dist}}.
+        """Return {officer_id: {opening, closing, physical_dist, profit_dist}}.
 
         Sign convention: amounts are reported as "trust owes beneficiary"
         (credit-normal flipped to positive).
-        Opening = PY closing balance for these accounts (from rollover lines
-        of *target_fy*: prior_credit - prior_debit).
-        Credits/debits = current-year movements (non-rollover lines).
+
+        Opening = PY closing balance — from rollover lines of *target_fy*
+        (prior_credit - prior_debit).
+        Closing = sum of -closing_balance from non-rollover lines for the
+        officer's mapped accounts (sign-flipped credit-normal).
+        Physical_dist = sum of (debit - credit) from non-rollover lines on
+        accounts whose code starts with "4053" (Handiledger convention for
+        physical distribution accounts). Zero when no 4053 account exists.
         Profit_dist = beneficiary's allocated share from selected tax scenario.
         """
         result = {oid: {
             "opening": Decimal("0"),
-            "credits": Decimal("0"),
-            "debits": Decimal("0"),
+            "closing": Decimal("0"),
+            "physical_dist": Decimal("0"),
             "profit_dist": Decimal("0"),
         } for oid in officer_meta}
         if target_fy is None:
@@ -3502,14 +3507,17 @@ def _build_beneficiary_distribution_summary(context):
             oid = code_to_officer.get(line.account_code)
             if not oid:
                 continue
+            is_physical = str(line.account_code).startswith("4053")
             if line.source == "rollover":
-                # prior_credit - prior_debit = PY closing for credit-normal
-                # equity flipped to positive.
                 opening = (line.prior_credit or Decimal("0")) - (line.prior_debit or Decimal("0"))
                 result[oid]["opening"] += opening
             else:
-                result[oid]["credits"] += (line.credit or Decimal("0"))
-                result[oid]["debits"] += (line.debit or Decimal("0"))
+                cb = line.closing_balance or Decimal("0")
+                result[oid]["closing"] += -cb
+                if is_physical:
+                    result[oid]["physical_dist"] += (
+                        (line.debit or Decimal("0")) - (line.credit or Decimal("0"))
+                    )
 
         try:
             workspace = getattr(target_fy, "trust_workspace", None)
@@ -3530,18 +3538,23 @@ def _build_beneficiary_distribution_summary(context):
     py_fig = _figures_for_year(fy.prior_year)
 
     def _resolve(figs):
-        """Derive funds_loaned, physical_dist, closing from raw figs."""
+        """Derive funds_loaned from closing/opening/profit_dist/physical_dist.
+
+        Identity:
+          closing = opening + funds_loaned + profit_dist - physical_dist
+        => funds_loaned = closing - opening - profit_dist + physical_dist
+        """
         out = {}
         for oid, f in figs.items():
-            funds_loaned = f["credits"] - f["profit_dist"]
-            physical = f["debits"]
-            closing = f["opening"] + funds_loaned + f["profit_dist"] - physical
+            funds_loaned = (
+                f["closing"] - f["opening"] - f["profit_dist"] + f["physical_dist"]
+            )
             out[oid] = {
                 "opening": f["opening"],
                 "funds_loaned": funds_loaned,
                 "profit_dist": f["profit_dist"],
-                "physical_dist": physical,
-                "closing": closing,
+                "physical_dist": f["physical_dist"],
+                "closing": f["closing"],
             }
         return out
 
@@ -3567,11 +3580,11 @@ def _build_beneficiary_distribution_summary(context):
         if len(abn_digits) == 11 else abn_raw
     )
 
-    EM_DASH = "—"
+    ZERO_GLYPH = "-"
 
     def _fmt(val):
         if val is None or val == 0:
-            return EM_DASH
+            return ZERO_GLYPH
         if val < 0:
             return f"({abs(val):,.0f})"
         return f"{val:,.0f}"
@@ -3596,9 +3609,11 @@ def _build_beneficiary_distribution_summary(context):
     page_width = A4[0] - 2.0 * cm - 2.4 * cm
     col_widths = [page_width * 0.55, page_width * 0.225, page_width * 0.225]
 
+    entity_display = _safe_amp((entity.entity_name or "").upper())
+
     def _header_block():
         return [
-            Paragraph(_safe_amp(entity.entity_name), centre_bold),
+            Paragraph(entity_display, centre_bold),
             Spacer(1, 1 * mm),
             Paragraph(f"ABN {abn_fmt}", centre_sm),
             Spacer(1, 1 * mm),
@@ -3608,12 +3623,29 @@ def _build_beneficiary_distribution_summary(context):
             Spacer(1, 6 * mm),
         ]
 
+    def _year_columns_table():
+        """Two-row column header: year row, then '$' row."""
+        rows = [
+            ["", cy_year, py_year],
+            ["", "$", "$"],
+        ]
+        t = Table(rows, colWidths=col_widths)
+        t.setStyle(TableStyle([
+            ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 10),
+            ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+            ("TOPPADDING", (0, 0), (-1, -1), 1),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+        ]))
+        return t
+
     story = []
     # ---- Page 1: Profit share summary ----
     story.extend(_header_block())
+    story.append(_year_columns_table())
+    story.append(Spacer(1, 2 * mm))
 
-    p1_rows = [["", f"{cy_year} $", f"{py_year} $"]]
-    p1_rows.append(["Beneficiaries Share of Profit", "", ""])
+    p1_rows = [["Beneficiaries Share of Profit", "", ""]]
     cy_profit_total = Decimal("0")
     py_profit_total = Decimal("0")
     for oid, meta in officer_meta.items():
@@ -3631,12 +3663,10 @@ def _build_beneficiary_distribution_summary(context):
     p1_table = Table(p1_rows, colWidths=col_widths)
     p1_table.setStyle(TableStyle([
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTNAME", (0, 1), (-1, 1), "Helvetica-Bold"),
         ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, -1), 10),
         ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
         ("ALIGN", (0, 0), (0, -1), "LEFT"),
-        ("LINEBELOW", (0, 0), (-1, 0), 0.5, colors.black),
         ("LINEABOVE", (1, -1), (-1, -1), 0.5, colors.black),
         ("TOPPADDING", (0, 0), (-1, -1), 3),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
@@ -3647,6 +3677,8 @@ def _build_beneficiary_distribution_summary(context):
 
     # ---- Page 2: Loan account reconciliation per beneficiary ----
     story.extend(_header_block())
+    story.append(_year_columns_table())
+    story.append(Spacer(1, 2 * mm))
 
     cy_total_closing = Decimal("0")
     py_total_closing = Decimal("0")
@@ -3662,7 +3694,6 @@ def _build_beneficiary_distribution_summary(context):
         story.append(Paragraph(_safe_amp(meta["name"]), h_section))
 
         rows = [
-            ["", f"{cy_year} $", f"{py_year} $"],
             ["Opening balance - Beneficiary",
              _fmt(cy_b["opening"]), _fmt(py_b["opening"])],
             ["Funds loaned to trust",
@@ -3677,8 +3708,8 @@ def _build_beneficiary_distribution_summary(context):
             rows.append(["Less:", "", ""])
             rows.append([
                 "Physical distribution",
-                _fmt(-cy_b["physical_dist"]) if cy_b["physical_dist"] else EM_DASH,
-                _fmt(-py_b["physical_dist"]) if py_b["physical_dist"] else EM_DASH,
+                _fmt(cy_b["physical_dist"]) if cy_b["physical_dist"] else ZERO_GLYPH,
+                _fmt(py_b["physical_dist"]) if py_b["physical_dist"] else ZERO_GLYPH,
             ])
 
         rows.append(["Closing balance",
@@ -3690,11 +3721,9 @@ def _build_beneficiary_distribution_summary(context):
         bf_table = Table(rows, colWidths=col_widths)
         last_idx = len(rows) - 1
         style_cmds = [
-            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
             ("FONTSIZE", (0, 0), (-1, -1), 10),
             ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
             ("ALIGN", (0, 0), (0, -1), "LEFT"),
-            ("LINEBELOW", (0, 0), (-1, 0), 0.5, colors.black),
             ("LINEABOVE", (1, subtotal_idx), (-1, subtotal_idx),
              0.5, colors.black),
             ("FONTNAME", (0, last_idx), (-1, last_idx), "Helvetica-Bold"),
