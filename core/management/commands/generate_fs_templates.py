@@ -870,7 +870,7 @@ def _build_balance_sheet(entity_type):
 
     # Net Assets — major total (double underline below)
     _add_total_row(doc, "Net Assets", "{{ net_assets_cy }}", "{{ net_assets_py }}",
-                   size=Pt(12), row_type=ROW_TYPE_MAJOR_TOTAL)
+                   row_type=ROW_TYPE_MAJOR_TOTAL)
 
     # Pt(18) gap before Equity heading (matches Expenses gap in P&L)
     _eq_spacer = doc.add_paragraph()
