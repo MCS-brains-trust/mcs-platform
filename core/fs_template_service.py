@@ -123,8 +123,16 @@ def _get_tb_sections(fy):
         except (ValueError, TypeError):
             continue
 
-        cy = line.closing_balance
-        py = line.prior_debit - line.prior_credit
+        # Rollover lines represent prior year data only — their closing_balance
+        # IS the prior year figure. They must not contribute to CY.
+        # All other sources (tb_import, manual_journal, etc.) are current year.
+        if getattr(line, "source", "") == "rollover":
+            cy = Decimal("0")
+            py = line.closing_balance
+        else:
+            cy = line.closing_balance
+            py = line.prior_debit - line.prior_credit
+
         entry = {
             "account_code": line.account_code,
             "account_name": line.account_name,
