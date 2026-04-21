@@ -910,6 +910,12 @@ def build_company_context(financial_year, include_watermark=True):
     total_equity_cy = -_sum_section(sections["equity"])
     total_equity_py = -_sum_section(sections["equity"], "py_amount")
 
+    # For trust entities, equity = net assets (beneficiary loans absorbed into liabilities)
+    # Override total_equity for context validation only — rendered equity remains unchanged
+    if entity.entity_type == "trust":
+        total_equity_cy = net_assets_cy
+        total_equity_py = net_assets_py
+
     # Officers
     directors = EntityOfficer.objects.filter(
         entity=entity,
