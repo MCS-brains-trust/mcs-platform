@@ -33,3 +33,9 @@ Thumbs.db
 docker-compose.override.yml
 test.db
 test.db-journal
+
+# Intermediate text extracts
+*.txt
+handiledger_reference/_pl_table.txt
+handiledger_reference/_scarft.txt
+handiledger_reference/_scarft_raw.txt
