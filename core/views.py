@@ -11055,9 +11055,9 @@ def trial_balance_download(request, pk):
     fmt = request.GET.get("format", "pdf").lower()
     fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
-    tb_lines = TrialBalanceLine.objects.filter(
+    tb_lines = list(TrialBalanceLine.objects.filter(
         financial_year=fy
-    ).select_related('mapped_line_item').order_by('account_code', 'source')
+    ).select_related('mapped_line_item').order_by('account_code', 'source'))
 
     for line in tb_lines:
         if line.source == 'rollover':
