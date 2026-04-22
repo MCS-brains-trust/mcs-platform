@@ -17,7 +17,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ("core", "0117_rdti_drafter"),
+        ("core", "0118_alter_rdtiapplication_aggregated_turnover_and_more"),
     ]
 
     operations = [
