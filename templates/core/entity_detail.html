@@ -293,6 +293,26 @@
                         </table>
                     </div>
                 </div>
+
+                <!-- Services -->
+                <div class="card mt-3">
+                    <div class="card-header"><h6 class="mb-0"><i class="bi bi-ui-checks"></i> Services</h6></div>
+                    <div class="card-body">
+                        <table class="table table-sm table-borderless mb-0">
+                            <tbody>
+                                <tr>
+                                    <td class="text-muted" style="width:60%">Financial Statement Preparation</td>
+                                    <td>{% if entity.provides_financial_statements %}<span class="badge bg-success">Yes</span>{% else %}<span class="badge bg-secondary">No</span>{% endif %}</td>
+                                </tr>
+                                <tr>
+                                    <td class="text-muted">R&amp;D Tax Incentive Drafting</td>
+                                    <td>{% if entity.provides_rdti %}<span class="badge bg-success">Yes</span>{% else %}<span class="badge bg-secondary">No</span>{% endif %}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
                 {% if entity.entity_type == 'company' %}
                 <!-- Tax Classification (Companies Only) -->
                 <div class="card mt-3">

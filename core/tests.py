@@ -2094,3 +2094,40 @@ class RdtiSmokeTests(TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'data-bs-target="#tab-rdti"')
+
+    # -- Test 6: EntityForm persists service scope toggles -----------------
+    def test_entity_form_saves_service_scope_flags(self):
+        """EntityForm round-trips provides_financial_statements and provides_rdti."""
+        from django.forms.models import model_to_dict
+        from core.forms import EntityForm
+
+        entity = Entity.objects.create(
+            entity_name="Services Toggle Trust",
+            entity_type="trust",
+            client=self.client_obj,
+            industry="94110",
+            abn="12345678901",
+            tfn="123456789",
+            reporting_framework="GPFR_tier1",
+            contact_email="trustee@example.com",
+            address_line_1="1 Test St",
+            suburb="Sydney",
+            state="NSW",
+            postcode="2000",
+            country="Australia",
+            bas_frequency="quarterly",
+            provides_financial_statements=True,
+            provides_rdti=False,
+        )
+
+        data = model_to_dict(entity)
+        data["provides_financial_statements"] = False
+        data["provides_rdti"] = True
+
+        form = EntityForm(data=data, instance=entity, user=self.admin_user)
+        self.assertTrue(form.is_valid(), msg=form.errors.as_json())
+        form.save()
+
+        entity.refresh_from_db()
+        self.assertFalse(entity.provides_financial_statements)
+        self.assertTrue(entity.provides_rdti)

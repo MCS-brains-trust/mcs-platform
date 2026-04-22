@@ -31,7 +31,9 @@ class EntityForm(forms.ModelForm):
         model = Entity
         fields = (
             "entity_name", "trading_as", "entity_type", "industry", "abn", "acn", "tfn",
-            "reporting_framework", "company_size", "show_cents",
+            "reporting_framework", "company_size",
+            "provides_financial_statements", "provides_rdti",
+            "show_cents",
             "is_small_business_entity", "is_base_rate_entity",
             "is_gst_registered", "bas_frequency",
             "contact_email",
