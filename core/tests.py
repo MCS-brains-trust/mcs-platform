@@ -2131,3 +2131,24 @@ class RdtiSmokeTests(TestCase):
         entity.refresh_from_db()
         self.assertFalse(entity.provides_financial_statements)
         self.assertTrue(entity.provides_rdti)
+
+    # -- Test 7: R&DTI dashboard renders without TemplateSyntaxError -------
+    def test_rdti_dashboard_renders_without_template_errors(self):
+        """Guards against missing {% load mcs_filters %} in rdti templates.
+
+        Any TemplateSyntaxError (e.g. Invalid filter: 'get_item') surfaces as a
+        500 here. A 200 OK or a 302 redirect to intake are both acceptable —
+        we're specifically catching template-level breakage.
+        """
+        self._login_admin()
+        # raise_request_exception=False makes the client return 500 responses
+        # instead of re-raising — matching what a real browser/HTMX sees.
+        self.client.raise_request_exception = False
+        response = self.client.get(
+            reverse("core:rdti_dashboard", kwargs={"pk": self.fy_rdti.pk})
+        )
+        self.assertNotEqual(
+            response.status_code, 500,
+            msg=f"rdti_dashboard returned 500 — likely a template load or syntax error. "
+                f"Response content: {response.content[:500]!r}",
+        )

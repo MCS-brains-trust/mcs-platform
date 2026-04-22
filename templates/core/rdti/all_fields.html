@@ -1,4 +1,5 @@
 {% load humanize %}
+{% load mcs_filters %}
 {# Partial: all narrative field cards — returned by HTMX after "Draft All" #}
 {% for field_name, field_label, field_help, char_limit in narrative_fields %}
 {% with current_value=field_values|get_item:field_name char_count=char_counts|get_item:field_name field_flags=flags_by_field|get_item:field_name %}
