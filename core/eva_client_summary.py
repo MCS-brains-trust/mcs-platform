@@ -145,7 +145,7 @@ def _build_summary_context(fy, entity):
     # Eva findings
     review = EvaReview.objects.filter(financial_year=fy).order_by("-created_at").first()
     if review:
-        findings = EvaFinding.objects.filter(review=review)
+        findings = EvaFinding.objects.for_domain('financial_statements').filter(review=review)  # Sprint 1b: scope to FS domain
         context["eva_findings"] = {
             "total": findings.count(),
             "critical": findings.filter(severity="critical").count(),

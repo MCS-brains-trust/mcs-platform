@@ -319,6 +319,14 @@ class Entity(models.Model):
         default=False,
         help_text="Set to True when the user dismisses the post-creation legal document prompt.",
     )
+    provides_financial_statements = models.BooleanField(
+        default=True,
+        help_text="Entity uses StatementHub for financial statement preparation.",
+    )
+    provides_rdti = models.BooleanField(
+        default=False,
+        help_text="Entity uses StatementHub for R&D Tax Incentive registration drafting.",
+    )
     metadata = models.JSONField(
         default=dict, blank=True,
         help_text="Flexible storage: directors, trustees, partners, registered address, etc.",
@@ -3727,6 +3735,19 @@ class EvaReview(models.Model):
         return f"Eva Review for {self.financial_year} — {self.get_status_display()}"
 
 
+class EvaFindingQuerySet(models.QuerySet):
+    def for_domain(self, domain="financial_statements"):
+        return self.filter(domain=domain)
+
+
+class EvaFindingManager(models.Manager):
+    def get_queryset(self):
+        return EvaFindingQuerySet(self.model, using=self._db)
+
+    def for_domain(self, domain="financial_statements"):
+        return self.get_queryset().for_domain(domain)
+
+
 class EvaFinding(models.Model):
     """An individual compliance finding raised by Eva during a review."""
 
@@ -3749,6 +3770,12 @@ class EvaFinding(models.Model):
         RISK_ENGINE = "risk_engine", "Risk Engine"
         EVA_ANALYSIS = "eva_analysis", "Eva Analysis"
 
+    class Domain(models.TextChoices):
+        FINANCIAL_STATEMENTS = "financial_statements", "Financial Statements"
+        RDTI = "rdti", "R&DTI"
+
+    objects = EvaFindingManager()
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     eva_review = models.ForeignKey(
         EvaReview, on_delete=models.CASCADE, related_name="findings"
@@ -3756,6 +3783,13 @@ class EvaFinding(models.Model):
     check_name = models.CharField(
         max_length=50,
         help_text="e.g. division_7a, sgc, ato_benchmarks, trust_distributions",
+    )
+    domain = models.CharField(
+        max_length=30,
+        choices=Domain.choices,
+        default=Domain.FINANCIAL_STATEMENTS,
+        db_index=True,
+        help_text="Which compliance domain this finding belongs to.",
     )
     severity = models.CharField(
         max_length=10, choices=Severity.choices, default=Severity.ADVISORY

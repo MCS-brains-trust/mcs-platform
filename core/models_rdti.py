@@ -167,6 +167,20 @@ class RdtiApplication(models.Model):
             "green": flags.filter(severity="green").count(),
         }
 
+    # --- Status transition constants ---
+    VALID_TRANSITIONS = {
+        'intake':   ['drafting'],
+        'drafting': ['review', 'intake'],
+        'review':   ['ready', 'drafting'],
+        'ready':    ['lodged', 'review'],
+        'lodged':   [],
+    }
+
+    def can_transition_to(self, new_status):
+        """Returns True if the requested status change is a valid transition."""
+        allowed = self.VALID_TRANSITIONS.get(self.status, [])
+        return new_status in allowed
+
 
 # ---------------------------------------------------------------------------
 # RdtiProject — one project may span multiple FYs

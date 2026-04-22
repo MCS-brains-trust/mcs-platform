@@ -411,7 +411,7 @@ def build_financial_year_context(financial_year):
     eva_findings = []
     latest_review = EvaReview.objects.filter(financial_year=fy).first()
     if latest_review:
-        for f in latest_review.findings.all():
+        for f in latest_review.findings.filter(domain='financial_statements'):  # Sprint 1b: scope to FS domain
             eva_findings.append({
                 "check": f.get_check_name_display(),
                 "severity": f.get_severity_display(),
@@ -863,21 +863,22 @@ Please conduct your compliance review now and return the JSON array of findings.
         review.checks_completed = len(applicable_checks)
         review.completed_at = timezone.now()
 
-        if review.findings.exists():
+        fs_findings = review.findings.filter(domain='financial_statements')  # Sprint 1b: scope to FS domain
+        if fs_findings.exists():
             review.status = EvaReview.Status.FINDINGS_RAISED
             AuditLog.objects.create(
                 user=user,
                 action=AuditLog.Action.EVA_REVIEW,
                 description=(
-                    f"Eva has identified {review.findings.count()} matter(s) "
+                    f"Eva has identified {fs_findings.count()} matter(s) "
                     f"requiring attention before this year can be finalised."
                 ),
                 affected_object_type="FinancialYear",
                 affected_object_id=str(financial_year.pk),
                 metadata={
                     "review_id": str(review.pk),
-                    "finding_count": review.findings.count(),
-                    "critical_count": review.findings.filter(severity="critical").count(),
+                    "finding_count": fs_findings.count(),
+                    "critical_count": fs_findings.filter(severity="critical").count(),
                 },
             )
         else:
@@ -970,7 +971,7 @@ def resolve_eva_finding(finding, user, resolution_note):
 
     # Check if all findings are now addressed
     review = finding.eva_review
-    open_count = review.findings.filter(status=EvaFinding.FindingStatus.OPEN).count()
+    open_count = review.findings.filter(domain='financial_statements', status=EvaFinding.FindingStatus.OPEN).count()  # Sprint 1b: scope to FS domain
     should_rerun = (open_count == 0)
 
     return finding, should_rerun
@@ -1712,7 +1713,7 @@ def _reevaluate_finding(finding, clarification):
     clarification.save(update_fields=["outcome"])
 
     review = finding.eva_review
-    open_count = review.findings.filter(status="open").count()
+    open_count = review.findings.filter(domain='financial_statements', status="open").count()  # Sprint 1b: scope to FS domain
 
     return {
         "finding_id": str(finding.pk),

@@ -23,6 +23,7 @@ import json
 import logging
 from datetime import datetime
 
+from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse, HttpResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -178,6 +179,10 @@ def rdti_application_create(request, pk):
     """Create a new RDTI application for this financial year."""
     fy = _get_fy(request, pk)
 
+    if not request.user.is_admin:
+        messages.error(request, "Only administrators can edit R&DTI applications.")
+        return redirect("core:rdti_dashboard", pk=fy.pk)
+
     if hasattr(fy, 'rdti_application'):
         return JsonResponse({"error": "Application already exists for this financial year."}, status=400)
 
@@ -204,6 +209,10 @@ def rdti_intake_phase1(request, pk):
     """Phase 1 intake: project framing."""
     fy = _get_fy(request, pk)
     application = get_object_or_404(RdtiApplication, financial_year=fy)
+
+    if not request.user.is_admin:
+        messages.error(request, "Only administrators can edit R&DTI applications.")
+        return redirect("core:rdti_dashboard", pk=fy.pk)
 
     if request.method == "POST":
         # Save application-level fields
@@ -296,6 +305,10 @@ def rdti_intake_phase2(request, pk, project_pk):
     application = get_object_or_404(RdtiApplication, financial_year=fy)
     project = get_object_or_404(RdtiProject, id=project_pk, application=application)
 
+    if not request.user.is_admin:
+        messages.error(request, "Only administrators can edit R&DTI applications.")
+        return redirect("core:rdti_dashboard", pk=fy.pk)
+
     if request.method == "POST":
         activity_id = request.POST.get("activity_id")
         if activity_id:
@@ -364,6 +377,12 @@ def rdti_draft_single_field(request, pk, activity_pk):
     application = get_object_or_404(RdtiApplication, financial_year=fy)
     activity = get_object_or_404(RdtiCoreActivity, id=activity_pk, application=application)
     project = activity.project
+
+    if not request.user.is_admin:
+        return JsonResponse(
+            {"error": "R&DTI editing is restricted to administrators."},
+            status=403,
+        )
 
     field_name = request.POST.get("field_name")
     if not field_name:
@@ -463,6 +482,12 @@ def rdti_draft_all_fields(request, pk, activity_pk):
     activity = get_object_or_404(RdtiCoreActivity, id=activity_pk, application=application)
     project = activity.project
 
+    if not request.user.is_admin:
+        return JsonResponse(
+            {"error": "R&DTI editing is restricted to administrators."},
+            status=403,
+        )
+
     from core.rdti_ai_service import draft_all_core_activity_fields, validate_field
 
     results = draft_all_core_activity_fields(activity, project, application)
@@ -550,6 +575,12 @@ def rdti_save_field(request, pk, activity_pk):
     application = get_object_or_404(RdtiApplication, financial_year=fy)
     activity = get_object_or_404(RdtiCoreActivity, id=activity_pk, application=application)
 
+    if not request.user.is_admin:
+        return JsonResponse(
+            {"error": "R&DTI editing is restricted to administrators."},
+            status=403,
+        )
+
     field_name = request.POST.get("field_name")
     content = request.POST.get("content", "")
 
@@ -620,6 +651,12 @@ def rdti_draft_project_fields(request, pk, project_pk):
     application = get_object_or_404(RdtiApplication, financial_year=fy)
     project = get_object_or_404(RdtiProject, id=project_pk, application=application)
 
+    if not request.user.is_admin:
+        return JsonResponse(
+            {"error": "R&DTI editing is restricted to administrators."},
+            status=403,
+        )
+
     from core.rdti_ai_service import draft_project_fields
     results = draft_project_fields(project, application)
 
@@ -652,6 +689,12 @@ def rdti_validate_activity(request, pk, activity_pk):
     fy = _get_fy(request, pk)
     application = get_object_or_404(RdtiApplication, financial_year=fy)
     activity = get_object_or_404(RdtiCoreActivity, id=activity_pk, application=application)
+
+    if not request.user.is_admin:
+        return JsonResponse(
+            {"error": "R&DTI editing is restricted to administrators."},
+            status=403,
+        )
 
     from core.rdti_ai_service import validate_field, check_cross_field_consistency
 
@@ -711,6 +754,10 @@ def rdti_export_docx(request, pk):
     fy = _get_fy(request, pk)
     application = get_object_or_404(RdtiApplication, financial_year=fy)
 
+    if not request.user.is_admin:
+        messages.error(request, "Only administrators can export R&DTI applications.")
+        return redirect("core:rdti_dashboard", pk=fy.pk)
+
     try:
         from core.rdti_docx_export import generate_rdti_docx
         docx_bytes = generate_rdti_docx(application)
@@ -738,6 +785,12 @@ def rdti_status_update(request, pk):
     fy = _get_fy(request, pk)
     application = get_object_or_404(RdtiApplication, financial_year=fy)
 
+    if not request.user.is_admin:
+        return JsonResponse(
+            {"error": "R&DTI editing is restricted to administrators."},
+            status=403,
+        )
+
     new_status = request.POST.get("status")
     valid_statuses = [s[0] for s in RdtiApplication.Status.choices]
 
@@ -751,6 +804,16 @@ def rdti_status_update(request, pk):
             return JsonResponse({
                 "error": f"Cannot mark as Ready to Lodge: {red_flags} unresolved red flag(s) must be resolved first."
             }, status=400)
+
+    # Validate transition against whitelist
+    if not application.can_transition_to(new_status):
+        allowed = application.VALID_TRANSITIONS.get(application.status, [])
+        return JsonResponse({
+            "error": (
+                f"Cannot transition from {application.get_status_display()} to '{new_status}'. "
+                f"Allowed transitions: {allowed}"
+            )
+        }, status=400)
 
     if new_status == "lodged":
         application.lodged_at = timezone.now()
@@ -772,6 +835,12 @@ def rdti_supporting_activity_create(request, pk, activity_pk):
     fy = _get_fy(request, pk)
     application = get_object_or_404(RdtiApplication, financial_year=fy)
     core_activity = get_object_or_404(RdtiCoreActivity, id=activity_pk, application=application)
+
+    if not request.user.is_admin:
+        return JsonResponse(
+            {"error": "R&DTI editing is restricted to administrators."},
+            status=403,
+        )
 
     sa = RdtiSupportingActivity.objects.create(
         core_activity=core_activity,
@@ -799,6 +868,12 @@ def rdti_resolve_flag(request, pk, flag_pk):
     fy = _get_fy(request, pk)
     application = get_object_or_404(RdtiApplication, financial_year=fy)
     flag = get_object_or_404(RdtiFlag, id=flag_pk, application=application)
+
+    if not request.user.is_admin:
+        return JsonResponse(
+            {"error": "R&DTI editing is restricted to administrators."},
+            status=403,
+        )
 
     flag.is_resolved = True
     flag.resolved_at = timezone.now()

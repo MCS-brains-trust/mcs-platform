@@ -1167,13 +1167,13 @@ def _create_consolidated_finding(ctx, assessment):
         }
 
         # Use finding_key as dedup key within the review (preferred over title__contains)
-        existing = EvaFinding.objects.filter(
+        existing = EvaFinding.objects.for_domain('financial_statements').filter(  # Sprint 1b: scope to FS domain
             eva_review=review,
             finding_key=fk,
         ).first()
         if not existing:
             # Fallback: legacy dedup via title
-            existing = EvaFinding.objects.filter(
+            existing = EvaFinding.objects.for_domain('financial_statements').filter(  # Sprint 1b: scope to FS domain
                 eva_review=review,
                 check_name="div7a",
                 title__contains=acct_code,
@@ -1215,12 +1215,12 @@ def _create_consolidated_finding(ctx, assessment):
                 + "\n\n".join(non_loan_lines)
             )
 
-            existing_other = EvaFinding.objects.filter(
+            existing_other = EvaFinding.objects.for_domain('financial_statements').filter(  # Sprint 1b: scope to FS domain
                 eva_review=review,
                 finding_key=other_fk,
             ).first()
             if not existing_other:
-                existing_other = EvaFinding.objects.filter(
+                existing_other = EvaFinding.objects.for_domain('financial_statements').filter(  # Sprint 1b: scope to FS domain
                     eva_review=review,
                     check_name="div7a",
                     title__contains="Other Exposures",

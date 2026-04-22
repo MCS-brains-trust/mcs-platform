@@ -713,6 +713,7 @@ function quickGenerateEngagementLetter(entityPk, fyPk) {
         </button>
     </li>
     {% endif %}
+    {% if fy.entity.provides_rdti %}
     <li class="nav-item">
         <button class="nav-link{% if active_tab == 'rdti' %} active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-rdti" data-tab-name="rdti" type="button">
             <i class="bi bi-flask"></i> R&amp;D
@@ -725,6 +726,7 @@ function quickGenerateEngagementLetter(entityPk, fyPk) {
             {% endif %}
         </button>
     </li>
+    {% endif %}
     <li class="nav-item">
         <button class="nav-link{% if active_tab == 'activity' %} active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-activity" data-tab-name="activity" type="button">
             <i class="bi bi-clock-history"></i> Activity ({{ activity_logs.count }})
@@ -1567,6 +1569,7 @@ function quickGenerateEngagementLetter(entityPk, fyPk) {
     </div>
 
     <!-- ===== R&D TAX INCENTIVE TAB ===== -->
+    {% if fy.entity.provides_rdti %}
     <div class="tab-pane fade{% if active_tab == 'rdti' %} show active{% endif %} p-0" id="tab-rdti"
          hx-get="{% url 'core:rdti_dashboard' pk=fy.pk %}"
          hx-trigger="intersect once"
@@ -1576,6 +1579,7 @@ function quickGenerateEngagementLetter(entityPk, fyPk) {
             Loading R&amp;D Tax Incentive Drafter&hellip;
         </div>
     </div>
+    {% endif %}
 
 </div>
 

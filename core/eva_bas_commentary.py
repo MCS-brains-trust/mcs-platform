@@ -281,8 +281,9 @@ Commentary Period: {period_label} ({period_start} to {period_end})
             financial_year=fy
         ).order_by("-triggered_at").first()
         if latest_review:
-            gst_findings = latest_review.findings.filter(
-                check_name__in=["gst_compliance", "ato_benchmarks", "bas_reconciliation"]
+            gst_findings = latest_review.findings.filter(  # Sprint 1b: scope to FS domain
+                domain='financial_statements',
+                check_name__in=["gst_compliance", "ato_benchmarks", "bas_reconciliation"],
             )
             if gst_findings.exists():
                 find_section = ["=== RELEVANT EVA FINDINGS ==="]

@@ -60,6 +60,7 @@
             {% endif %}
         </button>
     </li>
+    {% if entity.provides_financial_statements %}
     <li class="nav-item" role="presentation">
         <button class="nav-link" id="software-tab" data-bs-toggle="tab" data-bs-target="#software" type="button" role="tab">
             <i class="bi bi-laptop"></i> Software
@@ -68,6 +69,7 @@
             {% endif %}
         </button>
     </li>
+    {% endif %}
     <li class="nav-item" role="presentation">
         <button class="nav-link" id="notes-tab" data-bs-toggle="tab" data-bs-target="#notes" type="button" role="tab">
             <i class="bi bi-journal-text"></i> Meeting Notes
@@ -76,12 +78,14 @@
             {% endif %}
         </button>
     </li>
+    {% if entity.provides_financial_statements %}
     <li class="nav-item" role="presentation">
         <button class="nav-link" id="rules-tab" data-bs-toggle="tab" data-bs-target="#rules" type="button" role="tab">
             <i class="bi bi-bookmark-star"></i> Classification Rules
             <span class="badge bg-info" id="rules-count-badge" style="display:none;">0</span>
         </button>
     </li>
+    {% endif %}
     <li class="nav-item" role="presentation">
         <button class="nav-link" id="govdocs-tab" data-bs-toggle="tab" data-bs-target="#govdocs" type="button" role="tab">
             <i class="bi bi-file-earmark-lock"></i>
@@ -638,6 +642,7 @@
     </div>
 
     <!-- ============ SOFTWARE TAB ============ -->
+    {% if entity.provides_financial_statements %}
     <div class="tab-pane fade" id="software" role="tabpanel">
         <div class="d-flex justify-content-between align-items-center mb-3">
             <h5 class="mb-0">Connected Software</h5>
@@ -753,6 +758,7 @@
         </div>
         {% endif %}
     </div>
+    {% endif %}
 
     <!-- ============ MEETING NOTES TAB ============ -->
     <div class="tab-pane fade" id="notes" role="tabpanel">
@@ -818,6 +824,7 @@
     </div>
 
     <!-- ============ CLASSIFICATION RULES TAB ============ -->
+    {% if entity.provides_financial_statements %}
     <div class="tab-pane fade" id="rules" role="tabpanel">
         <div class="card">
             <div class="card-header d-flex justify-content-between align-items-center">
@@ -910,6 +917,7 @@
             </div>
         </div>
     </div>
+    {% endif %}
 
     <!-- ============ GOVERNING DOCUMENTS TAB ============ -->
     <div class="tab-pane fade" id="govdocs" role="tabpanel">

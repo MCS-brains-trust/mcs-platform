@@ -1755,8 +1755,9 @@ def financial_year_detail(request, pk):
         .first()
     )
     if latest_review:
-        for ef in latest_review.findings.filter(
-            status__in=["open", "reopened"]
+        for ef in latest_review.findings.filter(  # Sprint 1b: scope to FS domain
+            domain='financial_statements',
+            status__in=["open", "reopened"],
         ).values("check_name", "title", "severity"):
             eva_finding_meta[ef["check_name"]] = {
                 "title": ef["title"],

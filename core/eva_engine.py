@@ -68,7 +68,7 @@ def _is_finding_addressed(financial_year, finding_key):
     if not finding_key:
         return False
     from core.models import EvaFinding
-    return EvaFinding.objects.filter(
+    return EvaFinding.objects.for_domain('financial_statements').filter(  # Sprint 1b: scope to FS domain
         eva_review__financial_year=financial_year,
         finding_key=finding_key,
         status__in=["addressed", "closed"],
@@ -405,7 +405,7 @@ def _collect_module_flags(financial_year):
     # ── Section 100A (from EvaFinding created by module) ─────────────
     try:
         from core.models import EvaFinding
-        s100a_findings = EvaFinding.objects.filter(
+        s100a_findings = EvaFinding.objects.for_domain('financial_statements').filter(  # Sprint 1b: scope to FS domain
             eva_review__financial_year=financial_year,
             check_name="trust_distribution",
             source="risk_engine",
@@ -426,7 +426,7 @@ def _collect_module_flags(financial_year):
     # ── SGC / Super Guarantee (from EvaFinding created by module) ────
     try:
         from core.models import EvaFinding
-        sgc_findings = EvaFinding.objects.filter(
+        sgc_findings = EvaFinding.objects.for_domain('financial_statements').filter(  # Sprint 1b: scope to FS domain
             eva_review__financial_year=financial_year,
             check_name="super_guarantee",
             source="risk_engine",
@@ -447,7 +447,7 @@ def _collect_module_flags(financial_year):
     # ── TPAR (from EvaFinding created by module) ─────────────────────
     try:
         from core.models import EvaFinding
-        tpar_findings = EvaFinding.objects.filter(
+        tpar_findings = EvaFinding.objects.for_domain('financial_statements').filter(  # Sprint 1b: scope to FS domain
             eva_review__financial_year=financial_year,
             check_name="tpar",
             source="risk_engine",
@@ -468,7 +468,7 @@ def _collect_module_flags(financial_year):
     # ── Related Party (from EvaFinding created by module) ────────────
     try:
         from core.models import EvaFinding
-        rp_findings = EvaFinding.objects.filter(
+        rp_findings = EvaFinding.objects.for_domain('financial_statements').filter(  # Sprint 1b: scope to FS domain
             eva_review__financial_year=financial_year,
             check_name="related_party",
             source="risk_engine",
@@ -1432,7 +1432,7 @@ def _run_eva_review_background(fy_pk, user_pk):
             if previous_reviews:
                 prev_review = previous_reviews[0]
                 prior_findings = list(
-                    prev_review.findings.values(
+                    prev_review.findings.filter(domain='financial_statements').values(  # Sprint 1b: scope to FS domain
                         "check_name", "title", "severity", "status",
                         "plain_english_explanation",
                     )
@@ -1506,7 +1506,7 @@ def _run_eva_review_background(fy_pk, user_pk):
                     if matching_priors:
                         # Try to find the actual prior finding object
                         try:
-                            prior_finding_link = EvaFinding.objects.filter(
+                            prior_finding_link = EvaFinding.objects.for_domain('financial_statements').filter(  # Sprint 1b: scope to FS domain
                                 eva_review__financial_year=fy,
                                 check_name=check_def['id'],
                             ).exclude(
@@ -1639,7 +1639,7 @@ def _run_eva_review_background(fy_pk, user_pk):
             try:
                 # Get all check_names that raised findings in this review
                 new_finding_checks = set(
-                    review.findings.values_list('check_name', flat=True)
+                    review.findings.filter(domain='financial_statements').values_list('check_name', flat=True)  # Sprint 1b: scope to FS domain
                 )
                 # Get the previous review
                 previous_reviews = EvaReview.objects.filter(
@@ -1649,7 +1649,7 @@ def _run_eva_review_background(fy_pk, user_pk):
                 if previous_reviews:
                     prev_review = previous_reviews[0]
                     # Mark prior findings as CLOSED if they were NOT re-raised
-                    for prior_f in prev_review.findings.filter(status__in=["open", "reopened"]):
+                    for prior_f in prev_review.findings.filter(domain='financial_statements', status__in=["open", "reopened"]):  # Sprint 1b: scope to FS domain
                         if prior_f.check_name not in new_finding_checks:
                             prior_f.status = "closed"
                             prior_f.resolution_note = (
@@ -1665,7 +1665,7 @@ def _run_eva_review_background(fy_pk, user_pk):
         # ── STEP 4: Post-processing — link cross-references ─────
         print(f"[Eva] Post-processing: linking cross-references...", flush=True)
         try:
-            all_findings = list(review.findings.all())
+            all_findings = list(review.findings.filter(domain='financial_statements'))  # Sprint 1b: scope to FS domain
             # Build a map of check_name -> finding for cross-referencing
             finding_by_check = {f.check_name: f for f in all_findings}
 
@@ -1725,7 +1725,7 @@ def _run_eva_review_background(fy_pk, user_pk):
         else:
             # Collect categories of findings
             finding_checks = list(
-                review.findings.values_list('check_name', flat=True).distinct()
+                review.findings.filter(domain='financial_statements').values_list('check_name', flat=True).distinct()  # Sprint 1b: scope to FS domain
             )
             _activity_title = f"Eva Review Complete — {findings_created} finding(s) raised"
             _activity_desc = (
@@ -1902,7 +1902,7 @@ def eva_review_status(request, pk):
 
         if age > stale_threshold:
             # Auto-recover: the background thread likely died
-            findings_count = review.findings.count()
+            findings_count = review.findings.filter(domain='financial_statements').count()  # Sprint 1b: scope to FS domain
             progress = (review.raw_response or {}).get("progress", {})
             last_check = progress.get("current_check", "unknown")
 
@@ -1946,7 +1946,7 @@ def eva_review_status(request, pk):
             })
 
     # Review is complete (cleared, findings_raised, or error)
-    findings = list(review.findings.values(
+    findings = list(review.findings.filter(domain='financial_statements').values(  # Sprint 1b: scope to FS domain
         "id", "check_name", "severity", "title",
         "plain_english_explanation", "recommendation",
         "legislation_reference", "knowledge_brain_citation",
@@ -2011,7 +2011,7 @@ def eva_review_detail(request, pk):
         output_field=IntegerField(),
     )
     ordered_findings = (
-        review.findings
+        review.findings.filter(domain='financial_statements')  # Sprint 1b: scope to FS domain
         .select_related("resolved_by")
         .prefetch_related("related_findings", "clarifications__answered_by")
         .exclude(status__in=["addressed", "closed"])
@@ -2187,7 +2187,7 @@ def eva_finding_resolve(request, pk):
 
     # Check if all findings are now addressed (outside the atomic block
     # so we read committed state)
-    open_findings = review.findings.filter(status="open").count()
+    open_findings = review.findings.filter(domain='financial_statements', status="open").count()  # Sprint 1b: scope to FS domain
 
     if open_findings == 0:
         # All findings addressed — mark review as cleared
@@ -2330,7 +2330,7 @@ def eva_auto_disclose_rp(request, pk):
 
     # Check if all findings are now addressed
     review = finding.eva_review
-    open_findings = review.findings.filter(status="open").count()
+    open_findings = review.findings.filter(domain='financial_statements', status="open").count()  # Sprint 1b: scope to FS domain
 
     if open_findings == 0:
         review.status = "cleared"

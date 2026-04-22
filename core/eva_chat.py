@@ -355,7 +355,7 @@ Status: {fy.get_status_display()}
     ).order_by("-triggered_at").first()
 
     if latest_review:
-        findings = latest_review.findings.all()
+        findings = latest_review.findings.filter(domain='financial_statements')  # Sprint 1b: scope to FS domain
         if findings.exists():
             find_text = ["=== EVA FINDINGS ==="]
             for f in findings:

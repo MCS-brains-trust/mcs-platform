@@ -1903,3 +1903,194 @@ class SuppressionFingerprintV2Tests(TestCase):
         self.assertTrue(_is_finding_suppressed(self.fy, cluster_key_a))
         # Different check → not suppressed
         self.assertFalse(_is_finding_suppressed(self.fy, cluster_key_b))
+
+
+# ---------------------------------------------------------------------------
+# Sprint 1b — R&DTI smoke tests
+# ---------------------------------------------------------------------------
+@override_settings(STORAGES=STORAGES_OVERRIDE)
+class RdtiSmokeTests(TestCase):
+    """Smoke tests for Sprint 1b R&DTI additions."""
+
+    # Expected FIELD_PROMPTS keys — guards against accidental deletion.
+    EXPECTED_CORE_ACTIVITY_FIELDS = {
+        "description",
+        "outcome_not_known_in_advance",
+        "competent_professional",
+        "hypothesis",
+        "experiment",
+        "evaluation_method",
+        "conclusions",
+        "new_knowledge",
+    }
+    EXPECTED_PROJECT_FIELDS = {
+        "objectives",
+        "documents_kept",
+        "beneficiary_description",
+    }
+    EXPECTED_SUPPORTING_FIELDS = {
+        "supporting_description",
+        "direct_relation",
+    }
+
+    @classmethod
+    def setUpTestData(cls):
+        two_fa_kwargs = {"totp_secret": "TESTSECRET", "totp_confirmed": True}
+        cls.admin_user = User.objects.create_user(
+            username="rdti_admin",
+            password="testpass123",
+            role=User.Role.ADMIN,
+            **two_fa_kwargs,
+        )
+        # Use OFFICE_ADMIN so the user has entity-access (can_view_all_entities)
+        # but fails the is_admin check — this isolates the admin gate behaviour
+        # from the FY access check in _get_fy().
+        cls.non_admin = User.objects.create_user(
+            username="rdti_staff",
+            password="testpass123",
+            role=User.Role.OFFICE_ADMIN,
+            **two_fa_kwargs,
+        )
+        cls.client_obj = Client.objects.create(name="R&DTI Test Client")
+        cls.entity_rdti = Entity.objects.create(
+            entity_name="RDTI Provider Co",
+            entity_type="company",
+            client=cls.client_obj,
+            provides_rdti=True,
+        )
+        cls.fy_rdti = FinancialYear.objects.create(
+            entity=cls.entity_rdti,
+            year_label="FY2025",
+            start_date=date(2024, 7, 1),
+            end_date=date(2025, 6, 30),
+        )
+        cls.entity_no_rdti = Entity.objects.create(
+            entity_name="No RDTI Co",
+            entity_type="company",
+            client=cls.client_obj,
+            provides_rdti=False,
+        )
+        cls.fy_no_rdti = FinancialYear.objects.create(
+            entity=cls.entity_no_rdti,
+            year_label="FY2025",
+            start_date=date(2024, 7, 1),
+            end_date=date(2025, 6, 30),
+        )
+
+    def setUp(self):
+        self.client = TestClient()
+
+    def _login_admin(self):
+        self.client.force_login(self.admin_user)
+
+    def _login_non_admin(self):
+        self.client.force_login(self.non_admin)
+
+    # -- Test 1: FIELD_PROMPTS completeness --------------------------------
+    def test_field_prompts_cover_all_narrative_fields(self):
+        """Guard against accidental deletion of a FIELD_PROMPTS entry."""
+        from core.rdti_ai_service import FIELD_PROMPTS
+        expected = (
+            self.EXPECTED_CORE_ACTIVITY_FIELDS
+            | self.EXPECTED_PROJECT_FIELDS
+            | self.EXPECTED_SUPPORTING_FIELDS
+        )
+        for key in expected:
+            self.assertIn(
+                key, FIELD_PROMPTS,
+                f"FIELD_PROMPTS missing key: {key}",
+            )
+
+    # -- Test 2: FIELD_PROMPTS formattability ------------------------------
+    def test_field_prompts_accept_standard_context(self):
+        """Every user_template must format cleanly against the full context dict."""
+        from core.rdti_ai_service import FIELD_PROMPTS
+        dummy_context = {
+            "project_title": "Test Project",
+            "business_problem": "Test problem",
+            "existing_knowledge": "Test knowledge",
+            "uncertainty": "Test uncertainty",
+            "activity_title": "Test Activity",
+            "technical_question": "Test question",
+            "prior_search": "Test search",
+            "why_unpredictable": "Test reason",
+            "sources_investigated": "Test sources",
+            "who_could_have_known": "Test who",
+            "hypothesis_raw": "Test hypothesis",
+            "experiments_run": "Test experiments",
+            "measurement": "Test measurement",
+            "hypothesis": "Test hypothesis drafted",
+            "learnings": "Test learnings",
+            "conclusions": "Test conclusions drafted",
+            "evidence_kept": "Test evidence",
+            "records_kept": "Test records",
+            "activity_titles": "Test A, Test B",
+            "company_name": "Test Co",
+            "ip_owned": "Yes",
+            "entity_controls": "Yes",
+            "financial_burden": "Yes",
+            "core_activity_title": "Test Core Activity",
+            "intake_description": "Test description",
+            "intake_relation": "Test relation",
+        }
+        for key, entry in FIELD_PROMPTS.items():
+            template = entry["user_template"]
+            try:
+                template.format(**dummy_context)
+            except KeyError as e:
+                self.fail(
+                    f"Prompt '{key}' references missing context key: {e}. "
+                    f"Update dummy_context in RdtiSmokeTests."
+                )
+
+    # -- Test 3: RdtiApplication transition whitelist ----------------------
+    def _make_rdti_application(self, status="intake"):
+        from core.models_rdti import RdtiApplication
+        return RdtiApplication.objects.create(
+            financial_year=self.fy_rdti,
+            status=status,
+            created_by=self.admin_user,
+        )
+
+    def test_cannot_transition_lodged_back_to_intake(self):
+        from core.models_rdti import RdtiApplication
+        app = self._make_rdti_application(status=RdtiApplication.Status.LODGED)
+        self.assertFalse(app.can_transition_to(RdtiApplication.Status.INTAKE))
+
+    def test_cannot_skip_from_intake_to_lodged(self):
+        from core.models_rdti import RdtiApplication
+        app = self._make_rdti_application(status=RdtiApplication.Status.INTAKE)
+        self.assertFalse(app.can_transition_to(RdtiApplication.Status.LODGED))
+
+    def test_valid_forward_transition_permitted(self):
+        from core.models_rdti import RdtiApplication
+        app = self._make_rdti_application(status=RdtiApplication.Status.INTAKE)
+        self.assertTrue(app.can_transition_to(RdtiApplication.Status.DRAFTING))
+
+    # -- Test 4: Non-admin blocked from rdti_status_update -----------------
+    def test_non_admin_blocked_from_status_update(self):
+        """rdti_status_update returns 403 for non-admin users."""
+        self._make_rdti_application(status="intake")
+        self._login_non_admin()
+        response = self.client.post(
+            reverse("core:rdti_status_update", kwargs={"pk": self.fy_rdti.pk}),
+            {"status": "drafting"},
+        )
+        self.assertEqual(response.status_code, 403)
+
+    # -- Test 5: R&D tab visibility gated by provides_rdti -----------------
+    def test_rdti_tab_hidden_when_entity_does_not_provide_rdti(self):
+        self._login_admin()
+        response = self.client.get(
+            reverse("core:financial_year_detail", kwargs={"pk": self.fy_no_rdti.pk})
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'data-bs-target="#tab-rdti"')
+
+    def test_rdti_tab_renders_when_entity_provides_rdti(self):
+        self._login_admin()
+        response = self.client.get(
+            reverse("core:financial_year_detail", kwargs={"pk": self.fy_rdti.pk})
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-bs-target="#tab-rdti"')
