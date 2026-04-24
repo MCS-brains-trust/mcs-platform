@@ -989,9 +989,11 @@ def compute_amber_indicators(financial_year, materiality_pct_revenue=15, materia
     1. Significant variance — $ (exceeds section materiality threshold)
     2. Significant variance — % (>15% revenue, >20% expenses)
     3. Account dropped (non-zero PY, zero CY)
-    4. Account added (non-zero CY, no PY)
-    5. Opening balance mismatch
-    6. Balance sign change
+    4. Opening balance mismatch
+    5. Balance sign change
+
+    Note: "Account added" was removed — a new account appearing is almost always
+    intentional and provides no meaningful analytical signal.
     """
     from core.models import TrialBalanceLine
     from collections import defaultdict
@@ -1056,17 +1058,7 @@ def compute_amber_indicators(financial_year, materiality_pct_revenue=15, materia
                 "pct": "-100.0",
             })
 
-        # 4: Account added
-        if net_prior == ZERO and net_current != ZERO:
-            triggers.append({
-                "type": "Account added",
-                "prior": "0.00",
-                "current": str(net_current),
-                "movement": str(net_current),
-                "pct": "N/A",
-            })
-
-        # 5: Opening balance mismatch
+        # 4: Opening balance mismatch
         if d["prior_closing"] != ZERO and d["opening"] != d["prior_closing"]:
             triggers.append({
                 "type": "Opening balance mismatch",
@@ -1076,7 +1068,7 @@ def compute_amber_indicators(financial_year, materiality_pct_revenue=15, materia
                 "pct": "N/A",
             })
 
-        # 6: Balance sign change
+        # 5: Balance sign change
         if net_prior != ZERO and net_current != ZERO:
             if (net_prior > ZERO and net_current < ZERO) or (net_prior < ZERO and net_current > ZERO):
                 triggers.append({

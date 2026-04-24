@@ -1,13 +1,17 @@
 """
 Eva Amber Indicators — Layer 1 Inline Variance Indicators
 
-Computes six types of amber indicators for trial balance lines:
+Computes five types of amber indicators for trial balance lines:
 1. Significant Variance ($) — absolute dollar movement exceeds threshold
 2. Significant Variance (%) — percentage movement exceeds threshold
 3. Account Dropped — account existed in PY but has zero CY balance
-4. Account Added — new account with no PY balance
-5. Opening Balance Mismatch — CY opening != PY closing
-6. Balance Sign Change — account changed from debit to credit or vice versa
+4. Opening Balance Mismatch — CY opening != PY closing
+5. Balance Sign Change — account changed from debit to credit or vice versa
+
+Note: "Account Added" (formerly Trigger 4) was removed because a new account
+appearing in the trial balance is almost always intentional and provides no
+meaningful analytical signal — it simply duplicates information already visible
+on screen.
 
 These are informational only — no workflow, no dismiss, no resolution.
 Displayed as amber ⚠ icons inline after the account name in the TB.
@@ -115,84 +119,102 @@ def compute_amber_indicators(line):
     section = _derive_section(getattr(line, "mapped_line_item", None))
     if section == "revenue":
         pct_threshold = REVENUE_PCT_THRESHOLD
+        threshold_label = f"15% revenue materiality threshold"
     elif section in ("expenses", "cost_of_sales"):
         pct_threshold = EXPENSE_PCT_THRESHOLD
+        threshold_label = f"20% expense materiality threshold"
     else:
         pct_threshold = VARIANCE_PCT_THRESHOLD
+        threshold_label = f"20% materiality threshold"
 
     # ── Indicator 1: Significant Variance ($) ─────────────────────────
+    # Fires when the movement is both material in dollar terms (≥$5,000)
+    # and material as a percentage of the prior year balance.
     if abs_variance >= VARIANCE_ABS_THRESHOLD and abs_pct >= pct_threshold:
         direction = "increased" if variance_dollar > 0 else "decreased"
+        sign = "+" if variance_dollar > 0 else ""
         indicators.append({
             "type": "significant_variance_dollar",
             "message": (
-                f"Significant variance: Prior year ${_fmt(prior_net)}. "
-                f"Current year ${_fmt(current_net)}. "
-                f"Movement: ${_fmt(variance_dollar)} ({variance_pct}%). "
-                f"Balance {direction} by ${_fmt(abs_variance)}."
+                f"⚠ Significant Variance — this account has moved by "
+                f"${_fmt(abs_variance)} ({sign}{variance_pct}%) compared to prior year. "
+                f"Prior year: ${_fmt(prior_net)} → Current year: ${_fmt(current_net)}. "
+                f"This exceeds the {threshold_label} of ${_fmt(VARIANCE_ABS_THRESHOLD)} "
+                f"and requires explanation or review."
             ),
         })
 
     # ── Indicator 2: Significant Variance (%) ─────────────────────────
-    # Only trigger if $ indicator didn't already fire and % is very high
+    # Fires when the percentage movement is very large (≥50%) even if the
+    # dollar amount is below the $5,000 threshold. Only fires if Indicator 1
+    # did not already fire to avoid duplicate messages.
     if abs_pct >= Decimal("50") and abs_variance >= Decimal("1000") and not indicators:
+        sign = "+" if variance_dollar > 0 else ""
         indicators.append({
             "type": "significant_variance_pct",
             "message": (
-                f"Large percentage movement: {variance_pct}%. "
-                f"Prior year ${_fmt(prior_net)}. Current year ${_fmt(current_net)}."
+                f"⚠ Large Percentage Movement — this account has moved by "
+                f"{sign}{variance_pct}% compared to prior year. "
+                f"Prior year: ${_fmt(prior_net)} → Current year: ${_fmt(current_net)}. "
+                f"While the dollar amount (${_fmt(abs_variance)}) is below the $5,000 "
+                f"materiality threshold, the percentage movement is significant and "
+                f"warrants review."
             ),
         })
 
     # ── Indicator 3: Account Dropped ──────────────────────────────────
+    # Fires when an account had a balance last year but is zero this year.
+    # This may indicate a write-off, disposal, settlement, or data omission.
     if prior_net != ZERO and current_net == ZERO:
         indicators.append({
             "type": "account_dropped",
             "message": (
-                f"Account dropped: Had a prior year balance of ${_fmt(prior_net)} "
-                f"but has zero balance this year."
+                f"⚠ Account Dropped — this account had a prior year balance of "
+                f"${_fmt(prior_net)} but has a zero balance this year. "
+                f"This may indicate a write-off, disposal, settlement, or that "
+                f"the account was omitted from this year's trial balance import. "
+                f"Confirm the nil balance is correct."
             ),
         })
 
-    # ── Indicator 4: Account Added ────────────────────────────────────
-    if prior_net == ZERO and current_net != ZERO and abs(current_net) >= Decimal("1000"):
-        indicators.append({
-            "type": "account_added",
-            "message": (
-                f"New account: No prior year balance. "
-                f"Current year balance is ${_fmt(current_net)}."
-            ),
-        })
-
-    # ── Indicator 5: Opening Balance Mismatch ─────────────────────────
-    # Check if the line has opening balance data
+    # ── Indicator 4: Opening Balance Mismatch ─────────────────────────
+    # Fires when the current year opening balance does not match the prior
+    # year closing balance, which indicates a rollover or data integrity issue.
     opening_dr = getattr(line, "opening_debit", None)
     opening_cr = getattr(line, "opening_credit", None)
     if opening_dr is not None and opening_cr is not None:
         opening_net = (opening_dr or ZERO) - (opening_cr or ZERO)
         if opening_net != prior_net and prior_net != ZERO:
             diff = opening_net - prior_net
+            sign = "+" if diff > 0 else ""
             indicators.append({
                 "type": "opening_balance_mismatch",
                 "message": (
-                    f"Opening balance mismatch: Prior year closing was ${_fmt(prior_net)} "
-                    f"but current year opening is ${_fmt(opening_net)}. "
-                    f"Difference: ${_fmt(diff)}."
+                    f"⚠ Opening Balance Mismatch — the prior year closing balance "
+                    f"(${_fmt(prior_net)}) does not match the current year opening balance "
+                    f"(${_fmt(opening_net)}). Difference: {sign}${_fmt(diff)}. "
+                    f"This may indicate an incorrect roll-forward, a manual adjustment "
+                    f"to opening balances, or a data import issue. Investigate before finalising."
                 ),
             })
 
-    # ── Indicator 6: Balance Sign Change ──────────────────────────────
+    # ── Indicator 5: Balance Sign Change ──────────────────────────────
+    # Fires when an account has flipped from debit to credit or vice versa.
+    # This is almost always significant and warrants explanation.
     if prior_net != ZERO and current_net != ZERO:
         prior_is_debit = prior_net > ZERO
         current_is_debit = current_net > ZERO
         if prior_is_debit != current_is_debit:
             old_side = "debit" if prior_is_debit else "credit"
-            new_side = "debit" if current_is_debit else "credit"
+            new_side = "credit" if prior_is_debit else "debit"
             indicators.append({
                 "type": "balance_sign_change",
                 "message": (
-                    f"Balance sign change: Was {old_side} (${_fmt(prior_net)}) in prior year, "
-                    f"now {new_side} (${_fmt(current_net)}) this year."
+                    f"⚠ Balance Side Change — this account was on the {old_side} side "
+                    f"(${_fmt(prior_net)}) last year but is now on the {new_side} side "
+                    f"(${_fmt(current_net)}) this year. "
+                    f"This is unusual and almost always requires explanation — it may "
+                    f"indicate an overpayment, reversal, reclassification, or data error."
                 ),
             })
 
