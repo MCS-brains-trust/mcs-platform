@@ -1433,8 +1433,9 @@ def financial_year_create(request, entity_pk):
 @login_required
 def financial_year_detail(request, pk):
     fy = get_financial_year_for_user(request, pk)
+    entity = fy.entity
     # Audit log: data access
-    _log_action(request, "view", f"Viewed financial year: {fy.year_label} for {fy.entity.entity_name}", fy)
+    _log_action(request, "view", f"Viewed financial year: {fy.year_label} for {entity.entity_name}", fy)
     tb_lines = fy.trial_balance_lines.select_related("mapped_line_item").all()
     adjustments = fy.adjusting_journals.all().order_by('-posted_at', '-created_at')
     # Count unmapped accounts, excluding system/clearing accounts that don't
@@ -1678,8 +1679,11 @@ def financial_year_detail(request, pk):
         prior_year = 'Prior'
 
     # Determine whether prior-year comparative data exists in the trial balance
+    # and whether the entity wants comparatives shown.
     has_prior_tb = bool(
-        fy.prior_year and fy.prior_year.trial_balance_lines.exists()
+        entity.include_comparative_figures
+        and fy.prior_year
+        and fy.prior_year.trial_balance_lines.exists()
     )
 
     # Audit Risk flags
@@ -5842,7 +5846,11 @@ def financial_statements_view(request, pk):
         elif item["mapped_line_item__financial_statement"] == "balance_sheet":
             balance_sheet.append(entry)
 
-    has_prior = bool(fy.prior_year and fy.prior_year.trial_balance_lines.exists())
+    has_prior = bool(
+        fy.entity.include_comparative_figures
+        and fy.prior_year
+        and fy.prior_year.trial_balance_lines.exists()
+    )
     context = {
         "fy": fy,
         "entity": fy.entity,
@@ -6614,6 +6622,11 @@ def trial_balance_pdf(request, pk):
 
     fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
+    show_comparative = bool(
+        entity.include_comparative_figures
+        and fy.prior_year
+        and fy.prior_year.trial_balance_lines.exists()
+    )
     tb_lines = TrialBalanceLine.objects.filter(financial_year=fy).select_related('mapped_line_item').order_by('account_code')
     _coa_lookup = _build_coa_section_lookup(entity)
     # Determine section ordering and groupingg
@@ -6763,16 +6776,26 @@ def trial_balance_pdf(request, pk):
     elements.append(Paragraph(entity.entity_name.upper(), s_entity))
     if abn_display:
         elements.append(Paragraph(abn_display, s_abn))
-    elements.append(Paragraph(
-        f"Comparative Trial Balance as at {fy.end_date.strftime('%d %B %Y')}", s_title
-    ))
+    tb_title = (
+        f"Comparative Trial Balance as at {fy.end_date.strftime('%d %B %Y')}"
+        if show_comparative
+        else f"Trial Balance as at {fy.end_date.strftime('%d %B %Y')}"
+    )
+    elements.append(Paragraph(tb_title, s_title))
 
-    # Column header table
-    col_widths = [50, 165, 75, 75, 75, 75]
-    header_data = [
-        ['', '', current_year, current_year, prior_year, prior_year],
-        ['', '', '$ Dr', '$ Cr', '$ Dr', '$ Cr'],
-    ]
+    # Column header table — 6 columns when comparative, 4 when not
+    if show_comparative:
+        col_widths = [50, 165, 75, 75, 75, 75]
+        header_data = [
+            ['', '', current_year, current_year, prior_year, prior_year],
+            ['', '', '$ Dr', '$ Cr', '$ Dr', '$ Cr'],
+        ]
+    else:
+        col_widths = [50, 265, 75, 75]
+        header_data = [
+            ['', '', current_year, current_year],
+            ['', '', '$ Dr', '$ Cr'],
+        ]
     header_table = Table(header_data, colWidths=col_widths)
     header_table.setStyle(TableStyle([
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
@@ -6829,14 +6852,22 @@ def trial_balance_pdf(request, pk):
                 pl_prior_dr += prior_dr
                 pl_prior_cr += prior_cr
 
-            row = [
-                Paragraph(f"<b>{line.account_code}</b>", ParagraphStyle('Code', fontName='Helvetica-Bold', fontSize=9)),
-                Paragraph(line.account_name, s_cell),
-                fmt(dr),
-                fmt(cr),
-                fmt(prior_dr),
-                fmt(prior_cr),
-            ]
+            if show_comparative:
+                row = [
+                    Paragraph(f"<b>{line.account_code}</b>", ParagraphStyle('Code', fontName='Helvetica-Bold', fontSize=9)),
+                    Paragraph(line.account_name, s_cell),
+                    fmt(dr),
+                    fmt(cr),
+                    fmt(prior_dr),
+                    fmt(prior_cr),
+                ]
+            else:
+                row = [
+                    Paragraph(f"<b>{line.account_code}</b>", ParagraphStyle('Code', fontName='Helvetica-Bold', fontSize=9)),
+                    Paragraph(line.account_name, s_cell),
+                    fmt(dr),
+                    fmt(cr),
+                ]
             data.append(row)
 
         if data:
@@ -6854,13 +6885,20 @@ def trial_balance_pdf(request, pk):
 
     # Grand totals
     elements.append(Spacer(1, 3*mm))
-    totals_data = [[
-        '', '',
-        f"{grand_total_dr:,.2f}",
-        f"{grand_total_cr:,.2f}",
-        f"{grand_total_prior_dr:,.2f}",
-        f"{grand_total_prior_cr:,.2f}",
-    ]]
+    if show_comparative:
+        totals_data = [[
+            '', '',
+            f"{grand_total_dr:,.2f}",
+            f"{grand_total_cr:,.2f}",
+            f"{grand_total_prior_dr:,.2f}",
+            f"{grand_total_prior_cr:,.2f}",
+        ]]
+    else:
+        totals_data = [[
+            '', '',
+            f"{grand_total_dr:,.2f}",
+            f"{grand_total_cr:,.2f}",
+        ]]
     totals_table = Table(totals_data, colWidths=col_widths)
     totals_table.setStyle(TableStyle([
         ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
@@ -6888,11 +6926,17 @@ def trial_balance_pdf(request, pk):
     else:
         np_prior_str = f"(${abs(net_profit_prior):,.2f})"
 
-    profit_data = [[
-        '', Paragraph('<b>Net Profit / (Loss)</b>', s_cell_bold),
-        '', np_current_str,
-        '', np_prior_str,
-    ]]
+    if show_comparative:
+        profit_data = [[
+            '', Paragraph('<b>Net Profit / (Loss)</b>', s_cell_bold),
+            '', np_current_str,
+            '', np_prior_str,
+        ]]
+    else:
+        profit_data = [[
+            '', Paragraph('<b>Net Profit / (Loss)</b>', s_cell_bold),
+            '', np_current_str,
+        ]]
     profit_table = Table(profit_data, colWidths=col_widths)
     profit_table.setStyle(TableStyle([
         ('FONTNAME', (0, 0), (-1, -1), 'Helvetica-Bold'),
@@ -6907,7 +6951,8 @@ def trial_balance_pdf(request, pk):
     doc.build(elements)
     buffer.seek(0)
 
-    filename = f"Comparative_TB_{entity.entity_name.replace(' ', '_')}_{fy.year_label}.pdf"
+    tb_prefix = "Comparative_TB" if show_comparative else "Trial_Balance"
+    filename = f"{tb_prefix}_{entity.entity_name.replace(' ', '_')}_{fy.year_label}.pdf"
     response = HttpResponse(buffer, content_type='application/pdf')
     response['Content-Disposition'] = f'attachment; filename="{filename}"'
     return response
@@ -11073,6 +11118,11 @@ def trial_balance_download(request, pk):
     fmt = request.GET.get("format", "pdf").lower()
     fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
+    show_comparative = bool(
+        entity.include_comparative_figures
+        and fy.prior_year
+        and fy.prior_year.trial_balance_lines.exists()
+    )
     tb_lines = list(TrialBalanceLine.objects.filter(
         financial_year=fy
     ).select_related('mapped_line_item').order_by('account_code', 'source'))
@@ -11178,12 +11228,14 @@ def trial_balance_download(request, pk):
     if fmt == "docx":
         return _tb_download_word(
             fy, entity, aggregated, current_year, prior_year,
-            abn_display, grand_dr, grand_cr, grand_prior_dr, grand_prior_cr, safe_name
+            abn_display, grand_dr, grand_cr, grand_prior_dr, grand_prior_cr, safe_name,
+            show_comparative=show_comparative,
         )
     elif fmt == "xlsx":
         return _tb_download_excel(
             fy, entity, aggregated, current_year, prior_year,
-            abn_display, grand_dr, grand_cr, grand_prior_dr, grand_prior_cr, safe_name
+            abn_display, grand_dr, grand_cr, grand_prior_dr, grand_prior_cr, safe_name,
+            show_comparative=show_comparative,
         )
     else:
         # Reuse existing trial_balance_pdf
@@ -11191,8 +11243,9 @@ def trial_balance_download(request, pk):
 
 
 def _tb_download_word(fy, entity, sections, current_year, prior_year,
-                      abn_display, grand_dr, grand_cr, grand_prior_dr, grand_prior_cr, safe_name):
-    """Generate a Word document for the comparative trial balance."""
+                      abn_display, grand_dr, grand_cr, grand_prior_dr, grand_prior_cr, safe_name,
+                      show_comparative=True):
+    """Generate a Word document for the trial balance (comparative or single-year)."""
     from io import BytesIO
     from decimal import Decimal
     from docx import Document
@@ -11234,7 +11287,12 @@ def _tb_download_word(fy, entity, sections, current_year, prior_year,
     # Title
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    run = p.add_run(f"Comparative Trial Balance as at {fy.end_date.strftime('%d %B %Y')}")
+    tb_title = (
+        f"Comparative Trial Balance as at {fy.end_date.strftime('%d %B %Y')}"
+        if show_comparative
+        else f"Trial Balance as at {fy.end_date.strftime('%d %B %Y')}"
+    )
+    run = p.add_run(tb_title)
     run.bold = True
     run.font.size = Pt(11)
     run.font.name = 'Arial'
@@ -11245,8 +11303,9 @@ def _tb_download_word(fy, entity, sections, current_year, prior_year,
             return f"{val:,.2f}"
         return ''
 
-    # Column header table
-    header_table = doc.add_table(rows=2, cols=6)
+    # Column header table — 6 columns when comparative, 4 when not
+    num_cols = 6 if show_comparative else 4
+    header_table = doc.add_table(rows=2, cols=num_cols)
     header_table.alignment = WD_TABLE_ALIGNMENT.CENTER
     header_table.autofit = True
 
@@ -11256,8 +11315,9 @@ def _tb_download_word(fy, entity, sections, current_year, prior_year,
     cells[1].text = ''
     cells[2].text = current_year
     cells[3].text = current_year
-    cells[4].text = prior_year
-    cells[5].text = prior_year
+    if show_comparative:
+        cells[4].text = prior_year
+        cells[5].text = prior_year
 
     # Header row 2
     cells = header_table.rows[1].cells
@@ -11265,12 +11325,13 @@ def _tb_download_word(fy, entity, sections, current_year, prior_year,
     cells[1].text = ''
     cells[2].text = '$ Dr'
     cells[3].text = '$ Cr'
-    cells[4].text = '$ Dr'
-    cells[5].text = '$ Cr'
+    if show_comparative:
+        cells[4].text = '$ Dr'
+        cells[5].text = '$ Cr'
 
     # Style header rows
     for row_idx in range(2):
-        for col_idx in range(6):
+        for col_idx in range(num_cols):
             cell = header_table.rows[row_idx].cells[col_idx]
             for paragraph in cell.paragraphs:
                 for run in paragraph.runs:
@@ -11291,7 +11352,7 @@ def _tb_download_word(fy, entity, sections, current_year, prior_year,
         p.space_before = Pt(8)
         p.space_after = Pt(4)
 
-        table = doc.add_table(rows=len(lines), cols=6)
+        table = doc.add_table(rows=len(lines), cols=num_cols)
         table.alignment = WD_TABLE_ALIGNMENT.CENTER
         table.autofit = True
 
@@ -11307,10 +11368,11 @@ def _tb_download_word(fy, entity, sections, current_year, prior_year,
             cells[1].text = line.account_name
             cells[2].text = fmt_val(dr)
             cells[3].text = fmt_val(cr)
-            cells[4].text = fmt_val(prior_dr)
-            cells[5].text = fmt_val(prior_cr)
+            if show_comparative:
+                cells[4].text = fmt_val(prior_dr)
+                cells[5].text = fmt_val(prior_cr)
 
-            for col_idx in range(6):
+            for col_idx in range(num_cols):
                 for paragraph in cells[col_idx].paragraphs:
                     for run in paragraph.runs:
                         run.font.size = Pt(9)
@@ -11323,16 +11385,17 @@ def _tb_download_word(fy, entity, sections, current_year, prior_year,
     # Grand totals
     p = doc.add_paragraph()
     p.space_before = Pt(8)
-    totals_table = doc.add_table(rows=1, cols=6)
+    totals_table = doc.add_table(rows=1, cols=num_cols)
     totals_table.alignment = WD_TABLE_ALIGNMENT.CENTER
     cells = totals_table.rows[0].cells
     cells[0].text = ''
     cells[1].text = 'TOTALS'
     cells[2].text = f"{grand_dr:,.2f}"
     cells[3].text = f"{grand_cr:,.2f}"
-    cells[4].text = f"{grand_prior_dr:,.2f}"
-    cells[5].text = f"{grand_prior_cr:,.2f}"
-    for col_idx in range(6):
+    if show_comparative:
+        cells[4].text = f"{grand_prior_dr:,.2f}"
+        cells[5].text = f"{grand_prior_cr:,.2f}"
+    for col_idx in range(num_cols):
         for paragraph in cells[col_idx].paragraphs:
             for run in paragraph.runs:
                 run.bold = True
@@ -11344,16 +11407,17 @@ def _tb_download_word(fy, entity, sections, current_year, prior_year,
     # Net profit
     net_profit_current = grand_cr - grand_dr
     net_profit_prior = grand_prior_cr - grand_prior_dr
-    profit_table = doc.add_table(rows=1, cols=6)
+    profit_table = doc.add_table(rows=1, cols=num_cols)
     profit_table.alignment = WD_TABLE_ALIGNMENT.CENTER
     cells = profit_table.rows[0].cells
     cells[0].text = ''
     cells[1].text = 'Net Profit'
     cells[2].text = ''
     cells[3].text = f"{abs(net_profit_current):,.2f}"
-    cells[4].text = ''
-    cells[5].text = f"{abs(net_profit_prior):,.2f}"
-    for col_idx in range(6):
+    if show_comparative:
+        cells[4].text = ''
+        cells[5].text = f"{abs(net_profit_prior):,.2f}"
+    for col_idx in range(num_cols):
         for paragraph in cells[col_idx].paragraphs:
             for run in paragraph.runs:
                 run.bold = True
@@ -11366,7 +11430,8 @@ def _tb_download_word(fy, entity, sections, current_year, prior_year,
     doc.save(buffer)
     buffer.seek(0)
 
-    filename = f"Comparative_TB_{safe_name}_{fy.year_label}.docx"
+    tb_prefix = "Comparative_TB" if show_comparative else "Trial_Balance"
+    filename = f"{tb_prefix}_{safe_name}_{fy.year_label}.docx"
     response = HttpResponse(
         buffer,
         content_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document'
@@ -11376,8 +11441,9 @@ def _tb_download_word(fy, entity, sections, current_year, prior_year,
 
 
 def _tb_download_excel(fy, entity, sections, current_year, prior_year,
-                       abn_display, grand_dr, grand_cr, grand_prior_dr, grand_prior_cr, safe_name):
-    """Generate an Excel workbook for the comparative trial balance."""
+                       abn_display, grand_dr, grand_cr, grand_prior_dr, grand_prior_cr, safe_name,
+                       show_comparative=True):
+    """Generate an Excel workbook for the trial balance (comparative or single-year)."""
     from io import BytesIO
     from decimal import Decimal
     from openpyxl import Workbook
@@ -11433,14 +11499,23 @@ def _tb_download_excel(fy, entity, sections, current_year, prior_year,
         row = 3
 
     ws.merge_cells(f'A{row}:F{row}')
-    ws[f'A{row}'] = f"Comparative Trial Balance as at {fy.end_date.strftime('%d %B %Y')}"
+    tb_title = (
+        f"Comparative Trial Balance as at {fy.end_date.strftime('%d %B %Y')}"
+        if show_comparative
+        else f"Trial Balance as at {fy.end_date.strftime('%d %B %Y')}"
+    )
+    ws[f'A{row}'] = tb_title
     ws[f'A{row}'].font = Font(name='Calibri', size=11, bold=True)
     ws[f'A{row}'].alignment = Alignment(horizontal='center')
     row += 2
 
-    # Header rows
-    headers_row1 = ['', '', current_year, current_year, prior_year, prior_year, '', '']
-    headers_row2 = ['Code', 'Account Name', '$ Dr', '$ Cr', '$ Dr', '$ Cr', 'Variance $', 'Var %']
+    # Header rows — include prior year columns only when show_comparative is True
+    if show_comparative:
+        headers_row1 = ['', '', current_year, current_year, prior_year, prior_year, '', '']
+        headers_row2 = ['Code', 'Account Name', '$ Dr', '$ Cr', '$ Dr', '$ Cr', 'Variance $', 'Var %']
+    else:
+        headers_row1 = ['', '', current_year, current_year]
+        headers_row2 = ['Code', 'Account Name', '$ Dr', '$ Cr']
 
     for col_idx, val in enumerate(headers_row1, 1):
         cell = ws.cell(row=row, column=col_idx, value=val)
@@ -11478,15 +11553,6 @@ def _tb_download_excel(fy, entity, sections, current_year, prior_year,
             prior_dr = float(prior_dr_val) if prior_dr_val != 0 else None
             prior_cr = float(prior_cr_val) if prior_cr_val != 0 else None
 
-            # Variance calculation
-            current_net = float(dr_val - cr_val)
-            prior_net = float(prior_dr_val - prior_cr_val)
-            variance = current_net - prior_net
-            if prior_net != 0:
-                var_pct = (variance / abs(prior_net)) * 100
-            else:
-                var_pct = None
-
             # Write row
             code_cell = ws.cell(row=row, column=1, value=line.account_code)
             code_cell.font = code_font
@@ -11496,26 +11562,40 @@ def _tb_download_excel(fy, entity, sections, current_year, prior_year,
             name_cell.font = data_font
             name_cell.border = thin_border
 
-            for col_idx, val in [(3, dr), (4, cr), (5, prior_dr), (6, prior_cr)]:
-                cell = ws.cell(row=row, column=col_idx, value=val)
-                cell.font = data_font
-                cell.number_format = num_fmt
-                cell.alignment = Alignment(horizontal='right')
-                cell.border = thin_border
+            if show_comparative:
+                # Variance calculation
+                current_net = float(dr_val - cr_val)
+                prior_net = float(prior_dr_val - prior_cr_val)
+                variance = current_net - prior_net
+                var_pct = (variance / abs(prior_net)) * 100 if prior_net != 0 else None
 
-            var_cell = ws.cell(row=row, column=7, value=round(variance, 2) if variance != 0 else None)
-            var_cell.font = data_font
-            var_cell.number_format = num_fmt
-            var_cell.alignment = Alignment(horizontal='right')
-            var_cell.border = thin_border
+                for col_idx, val in [(3, dr), (4, cr), (5, prior_dr), (6, prior_cr)]:
+                    cell = ws.cell(row=row, column=col_idx, value=val)
+                    cell.font = data_font
+                    cell.number_format = num_fmt
+                    cell.alignment = Alignment(horizontal='right')
+                    cell.border = thin_border
 
-            pct_cell = ws.cell(row=row, column=8, value=round(var_pct, 1) if var_pct is not None else None)
-            pct_cell.font = data_font
-            pct_cell.number_format = '0.0%' if var_pct is not None else 'General'
-            if var_pct is not None:
-                pct_cell.value = round(var_pct / 100, 3)  # Store as decimal for % format
-            pct_cell.alignment = Alignment(horizontal='right')
-            pct_cell.border = thin_border
+                var_cell = ws.cell(row=row, column=7, value=round(variance, 2) if variance != 0 else None)
+                var_cell.font = data_font
+                var_cell.number_format = num_fmt
+                var_cell.alignment = Alignment(horizontal='right')
+                var_cell.border = thin_border
+
+                pct_cell = ws.cell(row=row, column=8, value=round(var_pct, 1) if var_pct is not None else None)
+                pct_cell.font = data_font
+                pct_cell.number_format = '0.0%' if var_pct is not None else 'General'
+                if var_pct is not None:
+                    pct_cell.value = round(var_pct / 100, 3)  # Store as decimal for % format
+                pct_cell.alignment = Alignment(horizontal='right')
+                pct_cell.border = thin_border
+            else:
+                for col_idx, val in [(3, dr), (4, cr)]:
+                    cell = ws.cell(row=row, column=col_idx, value=val)
+                    cell.font = data_font
+                    cell.number_format = num_fmt
+                    cell.alignment = Alignment(horizontal='right')
+                    cell.border = thin_border
 
             row += 1
 
@@ -11527,18 +11607,28 @@ def _tb_download_excel(fy, entity, sections, current_year, prior_year,
     total_label.fill = total_fill
     total_label.border = total_border
 
-    for col_idx, val in [(3, float(grand_dr)), (4, float(grand_cr)),
-                          (5, float(grand_prior_dr)), (6, float(grand_prior_cr))]:
-        cell = ws.cell(row=row, column=col_idx, value=val)
-        cell.font = total_font
-        cell.fill = total_fill
-        cell.number_format = num_fmt
-        cell.alignment = Alignment(horizontal='right')
-        cell.border = total_border
-
-    for col_idx in [1, 7, 8]:
-        ws.cell(row=row, column=col_idx).fill = total_fill
-        ws.cell(row=row, column=col_idx).border = total_border
+    if show_comparative:
+        for col_idx, val in [(3, float(grand_dr)), (4, float(grand_cr)),
+                              (5, float(grand_prior_dr)), (6, float(grand_prior_cr))]:
+            cell = ws.cell(row=row, column=col_idx, value=val)
+            cell.font = total_font
+            cell.fill = total_fill
+            cell.number_format = num_fmt
+            cell.alignment = Alignment(horizontal='right')
+            cell.border = total_border
+        for col_idx in [1, 7, 8]:
+            ws.cell(row=row, column=col_idx).fill = total_fill
+            ws.cell(row=row, column=col_idx).border = total_border
+    else:
+        for col_idx, val in [(3, float(grand_dr)), (4, float(grand_cr))]:
+            cell = ws.cell(row=row, column=col_idx, value=val)
+            cell.font = total_font
+            cell.fill = total_fill
+            cell.number_format = num_fmt
+            cell.alignment = Alignment(horizontal='right')
+            cell.border = total_border
+        ws.cell(row=row, column=1).fill = total_fill
+        ws.cell(row=row, column=1).border = total_border
 
     # Net profit row - calculate from P&L sections only
     row += 1
@@ -11567,14 +11657,15 @@ def _tb_download_excel(fy, entity, sections, current_year, prior_year,
         net_cell.font = loss_font
     net_cell.number_format = num_fmt
     net_cell.alignment = Alignment(horizontal='right')
-    if net_prior >= 0:
-        prior_net_cell = ws.cell(row=row, column=6, value=net_prior)
-        prior_net_cell.font = profit_font
-    else:
-        prior_net_cell = ws.cell(row=row, column=6, value=net_prior)
-        prior_net_cell.font = loss_font
-    prior_net_cell.number_format = num_fmt
-    prior_net_cell.alignment = Alignment(horizontal='right')
+    if show_comparative:
+        if net_prior >= 0:
+            prior_net_cell = ws.cell(row=row, column=6, value=net_prior)
+            prior_net_cell.font = profit_font
+        else:
+            prior_net_cell = ws.cell(row=row, column=6, value=net_prior)
+            prior_net_cell.font = loss_font
+        prior_net_cell.number_format = num_fmt
+        prior_net_cell.alignment = Alignment(horizontal='right')
 
     # Freeze panes (freeze below header)
     ws.freeze_panes = 'A8' if abn_display else 'A7'
@@ -11589,7 +11680,8 @@ def _tb_download_excel(fy, entity, sections, current_year, prior_year,
     wb.save(buffer)
     buffer.seek(0)
 
-    filename = f"Comparative_TB_{safe_name}_{fy.year_label}.xlsx"
+    tb_prefix = "Comparative_TB" if show_comparative else "Trial_Balance"
+    filename = f"{tb_prefix}_{safe_name}_{fy.year_label}.xlsx"
     response = HttpResponse(
         buffer,
         content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'

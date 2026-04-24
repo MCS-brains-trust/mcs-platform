@@ -246,6 +246,13 @@ class Entity(models.Model):
         default=False,
         help_text="Show amounts with cents (2 decimal places). Default for trusts and sole traders.",
     )
+    include_comparative_figures = models.BooleanField(
+        default=True,
+        help_text=(
+            "Include prior-year comparative figures in the trial balance and financial statement "
+            "documents. Uncheck for first-year entities or when comparatives are not required."
+        ),
+    )
     xpm_client_id = models.CharField(
         max_length=100, blank=True, verbose_name="XPM Client ID",
         help_text="Xero Practice Manager reference",

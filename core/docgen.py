@@ -652,7 +652,9 @@ def _get_prior_balance(fy, account_code):
 
 
 def _has_prior_year(fy):
-    """Check if there is prior year data."""
+    """Check if there is prior year data and the entity wants comparatives shown."""
+    if not getattr(fy.entity, 'include_comparative_figures', True):
+        return False
     if not fy.prior_year:
         return False
     return fy.prior_year.trial_balance_lines.exists()

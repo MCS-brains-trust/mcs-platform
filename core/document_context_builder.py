@@ -829,9 +829,16 @@ class DocumentContextBuilder:
         fy = self.financial_year
         year_int = fy.end_date.year
 
-        # Prior year
-        has_prior_year = fy.prior_year is not None
-        prior_year_label = str(fy.prior_year.end_date.year) if has_prior_year else ""
+        # Prior year — also respect the entity-level comparative figures setting
+        _has_prior_data = (
+            fy.prior_year is not None
+            and fy.prior_year.trial_balance_lines.exists()
+        )
+        has_prior_year = (
+            getattr(fy.entity, 'include_comparative_figures', True)
+            and _has_prior_data
+        )
+        prior_year_label = str(fy.prior_year.end_date.year) if fy.prior_year is not None else ""
 
         # Finalised by
         finalised_by = ""
@@ -842,8 +849,8 @@ class DocumentContextBuilder:
                 pass
 
         # Prior year end/start dates
-        fy_prior_end_date = format_date_long(fy.prior_year.end_date) if has_prior_year else ""
-        fy_prior_start_date = format_date_long(fy.prior_year.start_date) if has_prior_year else ""
+        fy_prior_end_date = format_date_long(fy.prior_year.end_date) if fy.prior_year is not None else ""
+        fy_prior_start_date = format_date_long(fy.prior_year.start_date) if fy.prior_year is not None else ""
         today_str = format_date_long(date.today())
 
         return {
