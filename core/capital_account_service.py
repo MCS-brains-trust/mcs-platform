@@ -22,6 +22,7 @@ def provision_capital_accounts(officer_id):
     """
     from core.models import (
         EntityOfficer, EntityChartOfAccount, CapitalAccountTemplate,
+        ClientAccountMapping,
     )
 
     try:
@@ -81,7 +82,7 @@ def provision_capital_accounts(officer_id):
 
             account_name = f"{tpl.account_name} — {officer.full_name}"
 
-            EntityChartOfAccount.objects.create(
+            eca = EntityChartOfAccount.objects.create(
                 entity=entity,
                 account_code=account_code,
                 account_name=account_name,
@@ -96,6 +97,16 @@ def provision_capital_accounts(officer_id):
                 display_order=tpl.sort_order,
             )
             created_count += 1
+
+            if eca.beneficiary_officer is not None:
+                ClientAccountMapping.objects.update_or_create(
+                    entity=eca.entity,
+                    client_account_code=eca.account_code,
+                    defaults={
+                        'client_account_name': eca.account_name,
+                        'beneficiary_officer': eca.beneficiary_officer,
+                    }
+                )
 
     if created_count:
         logger.info(

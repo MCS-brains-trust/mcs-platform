@@ -6540,6 +6540,55 @@ def entity_officer_delete(request, pk):
     return redirect("core:entity_officers", pk=entity.pk)
 
 
+@login_required
+@require_POST
+def auto_map_capital_accounts(request, entity_pk):
+    """One-time backfill: for all EntityChartOfAccount records on a trust
+    entity that have a beneficiary_officer set, create or update the
+    corresponding ClientAccountMapping.beneficiary_officer assignment.
+    Only available for trust entities."""
+    entity = get_object_or_404(Entity, pk=entity_pk)
+    get_entity_for_user(request, entity.pk)  # IDOR check
+
+    if entity.entity_type != "trust":
+        return JsonResponse(
+            {"status": "error", "message": "Only available for trust entities."},
+            status=400,
+        )
+
+    capital_accounts = EntityChartOfAccount.objects.filter(
+        entity=entity,
+        beneficiary_officer__isnull=False,
+    ).select_related("beneficiary_officer")
+
+    created_count = 0
+    updated_count = 0
+
+    for eca in capital_accounts:
+        _obj, created = ClientAccountMapping.objects.update_or_create(
+            entity=entity,
+            client_account_code=eca.account_code,
+            defaults={
+                "client_account_name": eca.account_name,
+                "beneficiary_officer": eca.beneficiary_officer,
+            },
+        )
+        if created:
+            created_count += 1
+        else:
+            updated_count += 1
+
+    return JsonResponse({
+        "status": "success",
+        "message": (
+            f"Auto-mapped {created_count} new and updated "
+            f"{updated_count} existing capital account mappings."
+        ),
+        "created": created_count,
+        "updated": updated_count,
+    })
+
+
 # ---------------------------------------------------------------------------
 # Access Ledger Import
 # ---------------------------------------------------------------------------

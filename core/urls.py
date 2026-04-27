@@ -172,6 +172,7 @@ urlpatterns = [
     path("entities/<uuid:entity_pk>/officers/create/", views.entity_officer_create, name="entity_officer_create"),
     path("officers/<uuid:pk>/edit/", views.entity_officer_edit, name="entity_officer_edit"),
     path("officers/<uuid:pk>/delete/", views.entity_officer_delete, name="entity_officer_delete"),
+    path("entities/<uuid:entity_pk>/auto-map-capital-accounts/", views.auto_map_capital_accounts, name="auto_map_capital_accounts"),
 
     # Access Ledger Import (admin)
     path("import/access-ledger/", views.access_ledger_import, name="access_ledger_import"),
