@@ -148,6 +148,17 @@
         outline: none;
     }
     .notes-editor:focus { border-color: #86b7fe; box-shadow: 0 0 0 0.25rem rgba(13,110,253,.25); }
+    /* Unsaved-changes indicator on a beneficiary row — typed value differs
+       from data-saved-value. Cleared automatically after the HTMX auto-save
+       round-trip rerenders the row (data-saved-value then matches value). */
+    tr.row-unsaved { background-color: #fff8e1; }
+    tr.row-unsaved td:first-child::before {
+        content: "● Unsaved";
+        color: #d97706;
+        font-size: 0.72rem;
+        font-weight: 600;
+        margin-right: 0.5rem;
+    }
 </style>
 {% endblock %}
 
@@ -323,58 +334,7 @@
                     </thead>
                     <tbody id="beneficiaryTableBody">
                         {% for row in rows %}
-                        <tr data-beneficiary-id="{{ row.beneficiary.pk }}" data-type="{{ row.beneficiary_type }}">
-                            <td>
-                                <strong>{{ row.beneficiary.full_name }}</strong>
-                                {% if row.beneficiary_type == 'company' %}
-                                <br><small class="text-muted">
-                                    <i class="bi bi-building"></i>
-                                    {% if row.company_tax_rate_override %}
-                                        Non-base rate ({{ row.company_tax_rate_override|floatformat:0 }}%)
-                                    {% else %}
-                                        Base rate (25%)
-                                        {% if not entity.is_base_rate_entity %}
-                                        <span class="text-warning" title="Base-rate flag not set on company entity. Defaulting to 25%."><i class="bi bi-exclamation-triangle-fill"></i></span>
-                                        {% endif %}
-                                    {% endif %}
-                                </small>
-                                {% endif %}
-                                {% if row.beneficiary_type == 'trust' %}
-                                <br><span class="trust-row-note"><i class="bi bi-info-circle"></i> Prepare a separate tax plan for this sub-trust.</span>
-                                {% endif %}
-                            </td>
-                            <td>
-                                <select class="form-select form-select-sm ben-type-select" {% if is_finalised %}disabled{% endif %}>
-                                    <option value="individual" {% if row.beneficiary_type == 'individual' %}selected{% endif %}>Individual</option>
-                                    <option value="company" {% if row.beneficiary_type == 'company' %}selected{% endif %}>Company</option>
-                                    <option value="trust" {% if row.beneficiary_type == 'trust' %}selected{% endif %}>Trust</option>
-                                </select>
-                            </td>
-                            <td class="text-end">
-                                {% if row.beneficiary_type != 'company' %}
-                                <input type="number" class="form-control form-control-sm beneficiary-input outside-income"
-                                       value="{{ row.outside_income|floatformat:2 }}" step="0.01" min="0"
-                                       {% if is_finalised %}disabled{% endif %}>
-                                {% else %}
-                                <span class="text-muted">N/A</span>
-                                {% endif %}
-                            </td>
-                            <td class="text-end">
-                                <input type="number" class="form-control form-control-sm beneficiary-input proposed-dist"
-                                       value="{{ row.proposed_distribution|floatformat:2 }}" step="0.01" min="0"
-                                       {% if is_finalised %}disabled{% endif %}>
-                            </td>
-                            <!-- Calculated columns — filled by JS after calculate -->
-                            <td class="text-end res-fc">—</td>
-                            <td class="text-end res-taxable">—</td>
-                            <td class="text-center res-tft">—</td>
-                            <td class="text-end res-gross">—</td>
-                            <td class="text-end res-medicare">—</td>
-                            <td class="text-end res-lito">—</td>
-                            <td class="text-end res-fc-offset">—</td>
-                            <td class="text-end fw-bold res-net">—</td>
-                            <td class="text-end res-rate">—</td>
-                        </tr>
+                        {% include "core/tax_planning_row.html" with row=row fy=fy entity=entity is_finalised=is_finalised auto_save=False oob=False %}
                         {% endfor %}
                     </tbody>
                     <tfoot class="table-light fw-bold">
@@ -601,6 +561,22 @@
     function fmtPct(n) {
         return (parseFloat(n) * 100).toFixed(2) + '%';
     }
+
+    // Toggles the unsaved-changes class on the row when the typed value
+    // differs from the last server-confirmed value (data-saved-value).
+    // Exposed on window so the inline onchange in the row partial can call
+    // it through the IIFE boundary.
+    window.markRowUnsaved = function(input) {
+        const row = input.closest('tr');
+        if (!row) return;
+        const saved = parseFloat(input.dataset.savedValue);
+        const current = parseFloat(input.value);
+        if (!isNaN(saved) && !isNaN(current) && saved !== current) {
+            row.classList.add('row-unsaved');
+        } else {
+            row.classList.remove('row-unsaved');
+        }
+    };
 
     // ===== GATHER BENEFICIARY DATA =====
     function gatherBeneficiaryData() {
@@ -994,8 +970,11 @@
     }
 
     // ===== EVENT LISTENERS =====
-    document.querySelectorAll('.proposed-dist, .outside-income').forEach(el => {
-        el.addEventListener('input', updateSummary);
+    // Delegated so they keep working after HTMX swaps a row in/out.
+    document.body.addEventListener('input', function(e) {
+        if (e.target.matches && e.target.matches('.proposed-dist, .outside-income')) {
+            updateSummary();
+        }
     });
 
     const btnCalc = document.getElementById('btnCalculate');
@@ -1032,28 +1011,29 @@
         });
     });
 
-    // Type change handler
-    document.querySelectorAll('.ben-type-select').forEach(sel => {
-        sel.addEventListener('change', function() {
-            const tr = this.closest('tr');
-            tr.dataset.type = this.value;
-            const outsideInput = tr.querySelector('.outside-income');
-            const outsideTd = outsideInput?.closest('td');
-            if (this.value === 'company') {
-                if (outsideInput) {
-                    outsideInput.value = '0.00';
-                    outsideInput.style.display = 'none';
-                }
-                if (outsideTd) outsideTd.innerHTML = '<span class="text-muted">N/A</span>';
-            } else if (this.value === 'trust') {
-                if (outsideInput) outsideInput.disabled = isFinalised;
-            } else {
-                if (outsideInput) {
-                    outsideInput.disabled = isFinalised;
-                    outsideInput.style.display = '';
-                }
+    // Type change handler — delegated so it survives HTMX row swaps.
+    document.body.addEventListener('change', function(e) {
+        const sel = e.target;
+        if (!(sel.matches && sel.matches('.ben-type-select'))) return;
+        const tr = sel.closest('tr');
+        if (!tr) return;
+        tr.dataset.type = sel.value;
+        const outsideInput = tr.querySelector('.outside-income');
+        const outsideTd = outsideInput ? outsideInput.closest('td') : null;
+        if (sel.value === 'company') {
+            if (outsideInput) {
+                outsideInput.value = '0.00';
+                outsideInput.style.display = 'none';
             }
-        });
+            if (outsideTd) outsideTd.innerHTML = '<span class="text-muted">N/A</span>';
+        } else if (sel.value === 'trust') {
+            if (outsideInput) outsideInput.disabled = isFinalised;
+        } else {
+            if (outsideInput) {
+                outsideInput.disabled = isFinalised;
+                outsideInput.style.display = '';
+            }
+        }
     });
 
     // Initial summary update and calculate on page load

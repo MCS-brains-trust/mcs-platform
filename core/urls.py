@@ -368,6 +368,7 @@ urlpatterns = [
     path("years/<uuid:pk>/tax-planning/", views_tax_planning.tax_planning_tab, name="tax_planning_tab"),
     path("years/<uuid:pk>/tax-planning/calculate/", views_tax_planning.tax_planning_calculate, name="tax_planning_calculate"),
     path("years/<uuid:pk>/tax-planning/save/", views_tax_planning.tax_planning_save, name="tax_planning_save"),
+    path("years/<uuid:fy_id>/tax-planning/row/<uuid:row_id>/save/", views_tax_planning.tax_planning_save_row, name="tax_planning_save_row"),
     path("years/<uuid:pk>/tax-planning/save-notes/", views_tax_planning.tax_planning_save_notes, name="tax_planning_save_notes"),
     path("years/<uuid:pk>/tax-planning/scenario/save/", views_tax_planning.tax_planning_scenario_save, name="tax_planning_scenario_save"),
     path("years/<uuid:pk>/tax-planning/scenario/<uuid:scenario_pk>/delete/", views_tax_planning.tax_planning_scenario_delete, name="tax_planning_scenario_delete"),

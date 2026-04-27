@@ -4,6 +4,7 @@ Trust Tax Planning — Views & API Endpoints
 Tab view:       GET  /years/<pk>/tax-planning/
 Calculate API:  POST /years/<pk>/tax-planning/calculate/
 Save API:       POST /years/<pk>/tax-planning/save/
+Save row:       POST /years/<fy_id>/tax-planning/row/<row_id>/save/
 Save notes:     POST /years/<pk>/tax-planning/save-notes/
 Scenario save:  POST /years/<pk>/tax-planning/scenario/save/
 Scenario delete: POST /years/<pk>/tax-planning/scenario/<scenario_pk>/delete/
@@ -12,12 +13,13 @@ Finalise:       POST /years/<pk>/tax-planning/finalise/
 Reopen:         POST /years/<pk>/tax-planning/reopen/
 """
 import json
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.template.loader import render_to_string
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
@@ -426,14 +428,30 @@ def tax_planning_finalise(request, pk):
     warnings = []
     errors = []
 
-    # 1. Balance check
+    # 1. Balance check — branched between under- and over-allocation, with
+    # an explicit reminder that the gate reads from saved DB values, not from
+    # on-screen typed values (see commit history: silent unsaved-changes bug).
     rows = worksheet.beneficiary_rows.all()
     total_distributed = sum(r.proposed_distribution for r in rows)
     undistributed = worksheet.distributable_income - total_distributed
-    if undistributed != Decimal("0"):
+    if undistributed > Decimal("0"):
         errors.append(
-            f"All distributable income must be allocated before finalising. "
-            f"Undistributed: ${undistributed:,.2f}"
+            f"Distributable income not fully allocated. "
+            f"${undistributed:,.2f} remains undistributed. "
+            f"Note: if you have recently typed new distribution amounts, "
+            f"ensure you have clicked Save — this check reads from saved "
+            f"values, not from on-screen values."
+        )
+    elif undistributed < Decimal("0"):
+        over = abs(undistributed)
+        errors.append(
+            f"Distributions exceed distributable income by ${over:,.2f}. "
+            f"Reduce one or more beneficiary distributions to balance. "
+            f"Saved totals: distributable ${worksheet.distributable_income:,.2f}, "
+            f"distributed ${total_distributed:,.2f}. "
+            f"Note: if you have recently typed new distribution amounts, "
+            f"ensure you have clicked Save — this check reads from saved "
+            f"values, not from on-screen values."
         )
 
     # 2. Company rate check
@@ -509,6 +527,160 @@ def tax_planning_reopen(request, pk):
     _log_action(request, "reopen", "Re-opened Tax Planning Worksheet", fy)
 
     return JsonResponse({"success": True, "message": "Tax Plan re-opened for editing."})
+
+
+# Calculated fields recomputed by calculate_all_beneficiaries(). Kept in one
+# place so tax_planning_save_row can snapshot pre/post-save values to detect
+# which rows need OOB swaps after the proportional franking-credit reallocation.
+_TAX_PLANNING_CALC_FIELDS = (
+    "grossed_up_franking_credits",
+    "total_taxable_income",
+    "gross_tax_payable",
+    "medicare_levy",
+    "lito_offset",
+    "franking_credit_offset",
+    "net_tax_payable",
+    "effective_tax_rate",
+)
+
+
+@login_required
+@require_POST
+def tax_planning_save_row(request, fy_id, row_id):
+    """
+    POST /years/<fy_id>/tax-planning/row/<row_id>/save/
+
+    HTMX auto-save endpoint. Persists a single beneficiary row's
+    proposed_distribution, then re-runs calculate_all_beneficiaries across
+    every row (because franking credit allocation is proportional). Returns
+    the saved row plus hx-swap-oob blocks for any other row whose calculated
+    columns shifted.
+
+    Mirrors the R&DTI rdti_save_field auto-save pattern. Outside Income is
+    intentionally NOT auto-saved here — it stays on the existing Save button.
+    """
+    fy = get_financial_year_for_user(request, fy_id)
+
+    if request.user.role == "accountant":
+        entity = fy.entity
+        if entity.primary_accountant != request.user and entity.assigned_accountant != request.user:
+            return HttpResponse("Access denied — not your entity.", status=403)
+
+    worksheet = _get_or_create_worksheet(fy, request.user)
+    if worksheet.is_finalised:
+        return HttpResponse("Worksheet is finalised. Reopen to edit.", status=400)
+
+    target_row = get_object_or_404(
+        TaxPlanningBeneficiaryRow, pk=row_id, worksheet=worksheet
+    )
+
+    raw_val = request.POST.get("proposed_distribution", "").strip()
+    try:
+        new_val = Decimal(raw_val) if raw_val else Decimal("0")
+    except (InvalidOperation, ValueError):
+        return HttpResponse("Invalid proposed_distribution value.", status=400)
+
+    # Snapshot pre-save calculated values across all rows to detect changes.
+    rows_qs = list(
+        worksheet.beneficiary_rows.select_related("beneficiary").order_by(
+            "beneficiary__full_name"
+        )
+    )
+    pre_calc = {
+        str(r.id): {f: getattr(r, f) for f in _TAX_PLANNING_CALC_FIELDS}
+        for r in rows_qs
+    }
+
+    # Persist the typed value for the target row.
+    target_row.proposed_distribution = new_val
+    target_row.save(update_fields=["proposed_distribution", "updated_at"])
+
+    # Re-run the full calculation across every row.
+    rows_qs = list(
+        worksheet.beneficiary_rows.select_related("beneficiary").order_by(
+            "beneficiary__full_name"
+        )
+    )
+    rates = get_tax_rates(fy.year_label)
+    beneficiary_data = [
+        {
+            "beneficiary_id": str(r.beneficiary.pk),
+            "beneficiary_type": r.beneficiary_type,
+            "outside_income": r.outside_income,
+            "proposed_distribution": r.proposed_distribution,
+            "company_tax_rate_override": r.company_tax_rate_override,
+        }
+        for r in rows_qs
+    ]
+    calc_result = calculate_all_beneficiaries(worksheet, beneficiary_data, rates)
+    calc_by_ben = {c["beneficiary_id"]: c for c in calc_result["rows"]}
+
+    # Persist recomputed calculated fields and attach calc dict for template.
+    for r in rows_qs:
+        c = calc_by_ben.get(str(r.beneficiary.pk), {})
+        update_fields = []
+        for field in _TAX_PLANNING_CALC_FIELDS:
+            val = c.get(field, Decimal("0"))
+            if isinstance(val, str):
+                val = Decimal(val)
+            if getattr(r, field) != val:
+                setattr(r, field, val)
+                update_fields.append(field)
+        if update_fields:
+            update_fields.append("updated_at")
+            r.save(update_fields=update_fields)
+        # Pre-format display values the partial needs but Django's template
+        # language can't compute (no multiplication filter, etc.).
+        eff_rate = c.get("effective_tax_rate", Decimal("0"))
+        if isinstance(eff_rate, str):
+            eff_rate = Decimal(eff_rate)
+        c["effective_tax_rate_pct"] = eff_rate * Decimal("100")
+        tft = rates.get("tax_free_threshold", Decimal("18200"))
+        taxable = c.get("total_taxable_income", Decimal("0"))
+        if isinstance(taxable, str):
+            taxable = Decimal(taxable)
+        c["tax_free_threshold_applied"] = (
+            r.beneficiary_type == "individual"
+            and Decimal("0") < taxable <= tft
+        )
+        r.calc = c
+
+    worksheet.last_updated_by = request.user
+    worksheet.save(update_fields=["last_updated_at", "last_updated_by"])
+    _log_action(
+        request, "update",
+        f"Auto-saved Tax Planning row for {target_row.beneficiary.full_name}",
+        fy,
+    )
+
+    base_ctx = {
+        "fy": fy,
+        "entity": fy.entity,
+        "is_finalised": worksheet.is_finalised,
+        "auto_save": True,
+    }
+
+    # Saved row is the primary swap target. Other rows whose calculated
+    # values changed go out via hx-swap-oob so the whole table stays in sync.
+    target_row_id = str(target_row.id)
+    parts = []
+    for r in rows_qs:
+        if str(r.id) == target_row_id:
+            parts.append(render_to_string(
+                "core/tax_planning_row.html",
+                {**base_ctx, "row": r, "oob": False},
+                request=request,
+            ))
+        else:
+            post = {f: getattr(r, f) for f in _TAX_PLANNING_CALC_FIELDS}
+            if post != pre_calc.get(str(r.id)):
+                parts.append(render_to_string(
+                    "core/tax_planning_row.html",
+                    {**base_ctx, "row": r, "oob": True},
+                    request=request,
+                ))
+
+    return HttpResponse("\n".join(parts))
 
 
 @login_required
