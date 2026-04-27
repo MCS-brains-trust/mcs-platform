@@ -280,6 +280,22 @@ def _net_beneficiary_accounts(fy, sections):
     for item in to_remove:
         sections["equity"].remove(item)
 
+    # Also net beneficiary-mapped accounts out of current_liabilities
+    # (e.g. Distribution Payable accounts assigned to a beneficiary officer).
+    # current_liabilities are credit-normal (negative = credit = liability),
+    # same sign convention as equity, so amounts can be added directly.
+    cl_to_remove = []
+    for item in sections.get("current_liabilities", []):
+        code = item.get("account_code")
+        if code and code in code_to_officer:
+            officer_id, _ = code_to_officer[code]
+            officer_nets[officer_id]["cy"] += item.get("cy_amount", Decimal("0"))
+            officer_nets[officer_id]["py"] += item.get("py_amount", Decimal("0"))
+            cl_to_remove.append(item)
+
+    for item in cl_to_remove:
+        sections["current_liabilities"].remove(item)
+
     # Route each officer net to assets or liabilities.
     # Sign convention: equity lines are credit-normal, stored negative for credits.
     #   net_cy < 0 = credit balance (trust owes beneficiary) → Current Liabilities
