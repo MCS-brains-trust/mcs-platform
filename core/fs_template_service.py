@@ -3611,6 +3611,18 @@ def _build_beneficiary_distribution_summary(context):
     cy = _resolve(cy_fig)
     py = _resolve(py_fig)
 
+    # Suppress PY column when the entity has comparatives turned off, no
+    # prior FY exists, the prior FY has no TB data, or every PY figure is
+    # zero (which produces a useless column of dashes otherwise).
+    show_py = _has_prior_year(fy) and any(
+        b["opening"] != 0
+        or b["funds_loaned"] != 0
+        or b["profit_dist"] != 0
+        or b["physical_dist"] != 0
+        or b["closing"] != 0
+        for b in py.values()
+    )
+
     end_date = fy.end_date
     date_text = (
         f"For the year ended {end_date.strftime('%d %B %Y')}" if end_date else ""
@@ -3657,7 +3669,10 @@ def _build_beneficiary_distribution_summary(context):
         fontName="Helvetica-Bold", fontSize=10, spaceBefore=8, spaceAfter=4)
 
     page_width = A4[0] - 2.0 * cm - 2.4 * cm
-    col_widths = [page_width * 0.55, page_width * 0.225, page_width * 0.225]
+    if show_py:
+        col_widths = [page_width * 0.55, page_width * 0.225, page_width * 0.225]
+    else:
+        col_widths = [page_width * 0.70, page_width * 0.30]
 
     entity_display = _safe_amp((entity.entity_name or "").upper())
 
@@ -3675,10 +3690,16 @@ def _build_beneficiary_distribution_summary(context):
 
     def _year_columns_table():
         """Two-row column header: year row, then '$' row."""
-        rows = [
-            ["", cy_year, py_year],
-            ["", "$", "$"],
-        ]
+        if show_py:
+            rows = [
+                ["", cy_year, py_year],
+                ["", "$", "$"],
+            ]
+        else:
+            rows = [
+                ["", cy_year],
+                ["", "$"],
+            ]
         t = Table(rows, colWidths=col_widths)
         t.setStyle(TableStyle([
             ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
@@ -3695,7 +3716,10 @@ def _build_beneficiary_distribution_summary(context):
     story.append(_year_columns_table())
     story.append(Spacer(1, 2 * mm))
 
-    p1_rows = [["Beneficiaries Share of Profit", "", ""]]
+    if show_py:
+        p1_rows = [["Beneficiaries Share of Profit", "", ""]]
+    else:
+        p1_rows = [["Beneficiaries Share of Profit", ""]]
     cy_profit_total = Decimal("0")
     py_profit_total = Decimal("0")
     for oid, meta in officer_meta.items():
@@ -3703,12 +3727,14 @@ def _build_beneficiary_distribution_summary(context):
         py_amt = py[oid]["profit_dist"]
         cy_profit_total += cy_amt
         py_profit_total += py_amt
-        p1_rows.append([
-            f"- {meta['name']}",
-            _fmt(cy_amt),
-            _fmt(py_amt),
-        ])
-    p1_rows.append(["Total Profit", _fmt(cy_profit_total), _fmt(py_profit_total)])
+        if show_py:
+            p1_rows.append([f"- {meta['name']}", _fmt(cy_amt), _fmt(py_amt)])
+        else:
+            p1_rows.append([f"- {meta['name']}", _fmt(cy_amt)])
+    if show_py:
+        p1_rows.append(["Total Profit", _fmt(cy_profit_total), _fmt(py_profit_total)])
+    else:
+        p1_rows.append(["Total Profit", _fmt(cy_profit_total)])
 
     p1_table = Table(p1_rows, colWidths=col_widths)
     p1_table.setStyle(TableStyle([
@@ -3743,27 +3769,38 @@ def _build_beneficiary_distribution_summary(context):
 
         story.append(Paragraph(_safe_amp(meta["name"]), h_section))
 
+        def _row(label, cy_val, py_val):
+            if show_py:
+                return [label, _fmt(cy_val), _fmt(py_val)]
+            return [label, _fmt(cy_val)]
+
         rows = [
-            ["Opening balance - Beneficiary",
-             _fmt(cy_b["opening"]), _fmt(py_b["opening"])],
-            ["Funds loaned to trust",
-             _fmt(cy_b["funds_loaned"]), _fmt(py_b["funds_loaned"])],
-            ["Profit distribution for year",
-             _fmt(cy_b["profit_dist"]), _fmt(py_b["profit_dist"])],
+            _row("Opening balance - Beneficiary", cy_b["opening"], py_b["opening"]),
+            _row("Funds loaned to trust", cy_b["funds_loaned"], py_b["funds_loaned"]),
+            _row("Profit distribution for year", cy_b["profit_dist"], py_b["profit_dist"]),
         ]
         subtotal_idx = len(rows)
-        rows.append(["", _fmt(cy_subtotal), _fmt(py_subtotal)])
+        if show_py:
+            rows.append(["", _fmt(cy_subtotal), _fmt(py_subtotal)])
+        else:
+            rows.append(["", _fmt(cy_subtotal)])
 
         if show_physical:
-            rows.append(["Less:", "", ""])
-            rows.append([
-                "Physical distribution",
-                _fmt(cy_b["physical_dist"]) if cy_b["physical_dist"] else ZERO_GLYPH,
-                _fmt(py_b["physical_dist"]) if py_b["physical_dist"] else ZERO_GLYPH,
-            ])
+            if show_py:
+                rows.append(["Less:", "", ""])
+                rows.append([
+                    "Physical distribution",
+                    _fmt(cy_b["physical_dist"]) if cy_b["physical_dist"] else ZERO_GLYPH,
+                    _fmt(py_b["physical_dist"]) if py_b["physical_dist"] else ZERO_GLYPH,
+                ])
+            else:
+                rows.append(["Less:", ""])
+                rows.append([
+                    "Physical distribution",
+                    _fmt(cy_b["physical_dist"]) if cy_b["physical_dist"] else ZERO_GLYPH,
+                ])
 
-        rows.append(["Closing balance",
-                     _fmt(cy_b["closing"]), _fmt(py_b["closing"])])
+        rows.append(_row("Closing balance", cy_b["closing"], py_b["closing"]))
 
         cy_total_closing += cy_b["closing"]
         py_total_closing += py_b["closing"]
@@ -3785,12 +3822,18 @@ def _build_beneficiary_distribution_summary(context):
         story.append(bf_table)
         story.append(Spacer(1, 4 * mm))
 
-    totals_rows = [
-        ["Total of beneficiary loans",
-         _fmt(cy_total_closing), _fmt(py_total_closing)],
-        ["Total Beneficiary Funds",
-         _fmt(cy_total_closing), _fmt(py_total_closing)],
-    ]
+    if show_py:
+        totals_rows = [
+            ["Total of beneficiary loans",
+             _fmt(cy_total_closing), _fmt(py_total_closing)],
+            ["Total Beneficiary Funds",
+             _fmt(cy_total_closing), _fmt(py_total_closing)],
+        ]
+    else:
+        totals_rows = [
+            ["Total of beneficiary loans", _fmt(cy_total_closing)],
+            ["Total Beneficiary Funds", _fmt(cy_total_closing)],
+        ]
     totals_table = Table(totals_rows, colWidths=col_widths)
     totals_table.setStyle(TableStyle([
         ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
