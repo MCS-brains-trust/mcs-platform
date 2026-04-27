@@ -98,7 +98,13 @@ def provision_capital_accounts(officer_id):
             )
             created_count += 1
 
-            if eca.beneficiary_officer is not None:
+            # Never auto-create a ClientAccountMapping for 4199 Profit
+            # Distribution accounts — they are suppressed separately and
+            # must not be netted into beneficiary loans.
+            if (
+                eca.beneficiary_officer is not None
+                and not (eca.account_code or "").startswith("4199")
+            ):
                 ClientAccountMapping.objects.update_or_create(
                     entity=eca.entity,
                     client_account_code=eca.account_code,

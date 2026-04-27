@@ -256,6 +256,9 @@ def _net_beneficiary_accounts(fy, sections):
     # Build {account_code: (officer_id_str, display_name)}
     code_to_officer = {}
     for m in mappings:
+        # Skip 4199 accounts — these are suppressed separately, never netted
+        if (m.client_account_code or "").startswith("4199"):
+            continue
         officer = m.beneficiary_officer
         display_name = officer.full_name if officer else "Unknown"
         code_to_officer[m.client_account_code] = (str(officer.pk), display_name)
@@ -269,6 +272,10 @@ def _net_beneficiary_accounts(fy, sections):
     # Scan equity, net per officer, mark for removal
     to_remove = []
     for item in sections.get("equity", []):
+        # Never net 4199 Profit Distribution — Appropriation into beneficiary loans
+        # It is handled separately by the 4199 suppression logic
+        if (item.get("account_code", "") or "").startswith("4199"):
+            continue
         code = item.get("account_code")
         if code and code in code_to_officer:
             officer_id, _ = code_to_officer[code]
@@ -286,6 +293,8 @@ def _net_beneficiary_accounts(fy, sections):
     # same sign convention as equity, so amounts can be added directly.
     cl_to_remove = []
     for item in sections.get("current_liabilities", []):
+        if (item.get("account_code", "") or "").startswith("4199"):
+            continue
         code = item.get("account_code")
         if code and code in code_to_officer:
             officer_id, _ = code_to_officer[code]

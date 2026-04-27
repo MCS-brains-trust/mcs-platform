@@ -6559,6 +6559,8 @@ def auto_map_capital_accounts(request, entity_pk):
     capital_accounts = EntityChartOfAccount.objects.filter(
         entity=entity,
         beneficiary_officer__isnull=False,
+    ).exclude(
+        account_code__startswith="4199",
     ).select_related("beneficiary_officer")
 
     created_count = 0
