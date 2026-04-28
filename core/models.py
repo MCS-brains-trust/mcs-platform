@@ -4585,6 +4585,7 @@ class GoverningDocument(models.Model):
         COMPLETED_WITH_WARNINGS = "completed_with_warnings", "Completed with Warnings"
         OCR_PENDING = "ocr_pending", "OCR Pending"
         FAILED = "failed", "Failed"
+        EXPIRED = "expired", "Expired"
 
     class Status(models.TextChoices):
         ACTIVE = "active", "Active"
@@ -4639,6 +4640,11 @@ class GoverningDocument(models.Model):
         max_length=255, blank=True, default="",
         help_text="AWS Textract job ID for async OCR processing",
     )
+    extraction_error = models.TextField(
+        blank=True, default="",
+        help_text="Error message from the most recent failed extraction attempt",
+    )
+    updated_at = models.DateTimeField(auto_now=True)
 
     chunk_count = models.PositiveIntegerField(
         default=0,

@@ -177,10 +177,20 @@ def textract_webhook(request):
             process_textract_result.delay(str(doc.pk), job_id)
             logger.info("Textract result processing queued for doc %s", doc.pk)
         elif status == "FAILED":
-            doc.extraction_status = "failed"
-            doc.extraction_error = message.get("StatusMessage", "Textract job failed")
-            doc.save(update_fields=["extraction_status", "extraction_error"])
-            logger.error("Textract job %s failed: %s", job_id, message.get("StatusMessage"))
+            try:
+                doc.extraction_status = "failed"
+                doc.extraction_error = message.get("StatusMessage", "Textract job failed")
+                doc.save(update_fields=["extraction_status", "extraction_error"])
+                logger.error(
+                    "Textract job %s failed: %s",
+                    job_id, message.get("StatusMessage"),
+                )
+            except Exception:
+                logger.exception(
+                    "Textract webhook: failed to persist FAILED status for job %s "
+                    "(doc %s) — recovery command will catch this on next sweep",
+                    job_id, doc.pk,
+                )
 
         return JsonResponse({"status": "ok"})
 

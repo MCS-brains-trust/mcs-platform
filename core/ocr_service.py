@@ -132,7 +132,8 @@ def process_textract_callback(governing_document_id, textract_job_id):
     except Exception as e:
         logger.exception("Textract processing failed for %s", governing_document_id)
         doc.extraction_status = "failed"
-        doc.save(update_fields=["extraction_status"])
+        doc.extraction_error = str(e)[:2000]
+        doc.save(update_fields=["extraction_status", "extraction_error"])
         return {"status": "failed", "error": str(e)}
 
 
@@ -196,12 +197,17 @@ def _extract_txt_text(file_path):
 # ---------------------------------------------------------------------------
 # AWS Textract integration
 # ---------------------------------------------------------------------------
+def _textract_s3_key(doc, file_path):
+    return f"textract-input/{doc.pk}/{os.path.basename(file_path)}"
+
+
 def _queue_textract(doc, file_path):
     """
-    Upload document to S3 and start an async Textract job.
+    Upload document to S3 (if not already there) and start an async Textract job.
     Returns dict with job status.
     """
     import boto3
+    from botocore.exceptions import ClientError
 
     aws_region = os.environ.get("AWS_REGION", "ap-southeast-2")
     s3_bucket = os.environ.get("TEXTRACT_S3_BUCKET", "")
@@ -210,19 +216,30 @@ def _queue_textract(doc, file_path):
 
     if not s3_bucket:
         doc.extraction_status = "failed"
-        doc.save(update_fields=["extraction_status"])
+        doc.extraction_error = "TEXTRACT_S3_BUCKET not configured"
+        doc.save(update_fields=["extraction_status", "extraction_error"])
         return {
             "status": "failed",
             "error": "TEXTRACT_S3_BUCKET not configured",
         }
 
     try:
-        # Upload to S3
         s3_client = boto3.client("s3", region_name=aws_region)
-        s3_key = f"textract-input/{doc.pk}/{os.path.basename(file_path)}"
-        s3_client.upload_file(file_path, s3_bucket, s3_key)
+        s3_key = _textract_s3_key(doc, file_path)
 
-        # Start async Textract job
+        # Skip re-upload if the object already exists (recovery path)
+        already_uploaded = False
+        try:
+            s3_client.head_object(Bucket=s3_bucket, Key=s3_key)
+            already_uploaded = True
+        except ClientError as head_err:
+            code = head_err.response.get("Error", {}).get("Code", "")
+            if code not in ("404", "NoSuchKey", "NotFound"):
+                raise
+
+        if not already_uploaded:
+            s3_client.upload_file(file_path, s3_bucket, s3_key)
+
         textract_client = boto3.client("textract", region_name=aws_region)
 
         start_params = {
@@ -235,7 +252,6 @@ def _queue_textract(doc, file_path):
             "FeatureTypes": ["TABLES", "FORMS"],
         }
 
-        # Add SNS notification if configured
         if sns_topic_arn and role_arn:
             start_params["NotificationChannel"] = {
                 "SNSTopicArn": sns_topic_arn,
@@ -247,7 +263,8 @@ def _queue_textract(doc, file_path):
 
         doc.textract_job_id = job_id
         doc.extraction_status = "ocr_pending"
-        doc.save(update_fields=["textract_job_id", "extraction_status"])
+        doc.extraction_error = ""
+        doc.save(update_fields=["textract_job_id", "extraction_status", "extraction_error"])
 
         logger.info("Textract job started for %s: job_id=%s", doc.pk, job_id)
         return {"status": "ocr_pending", "job_id": job_id}
@@ -255,8 +272,24 @@ def _queue_textract(doc, file_path):
     except Exception as e:
         logger.exception("Failed to queue Textract for %s", doc.pk)
         doc.extraction_status = "failed"
-        doc.save(update_fields=["extraction_status"])
+        doc.extraction_error = str(e)[:2000]
+        doc.save(update_fields=["extraction_status", "extraction_error"])
         return {"status": "failed", "error": str(e)}
+
+
+def retrigger_textract(doc):
+    """
+    Re-submit a Textract job for an existing GoverningDocument without
+    requiring a re-upload. Used by recover_stuck_ocr when the original
+    job_id has expired (>7d AWS retention).
+    """
+    file_path = doc.file.path if doc.file else None
+    if not file_path or not os.path.exists(file_path):
+        doc.extraction_status = "failed"
+        doc.extraction_error = "Source file no longer present on disk"
+        doc.save(update_fields=["extraction_status", "extraction_error"])
+        return {"status": "failed", "error": "File not found"}
+    return _queue_textract(doc, file_path)
 
 
 def _get_textract_result(job_id):

@@ -126,6 +126,28 @@ def process_textract_result(self, governing_document_id, textract_job_id):
         raise self.retry(exc=exc, countdown=120)
 
 
+@shared_task(name="core.poll_stuck_textract_jobs")
+def poll_stuck_textract_jobs():
+    """
+    Polling fallback for the SNS webhook. Scans every doc stuck in
+    `ocr_pending` for >15 minutes, fetches Textract status, and either
+    completes, fails, or re-triggers an expired job.
+    """
+    from django.core.management import call_command
+    call_command("recover_stuck_ocr", "--all", "--min-age-minutes", "15")
+
+
+@shared_task(name="core.verify_textract_sns_daily")
+def verify_textract_sns_daily():
+    """Daily check that the Textract SNS subscription is still confirmed."""
+    from django.core.management import call_command
+    try:
+        call_command("verify_textract_sns")
+    except SystemExit as exc:
+        if getattr(exc, "code", 0):
+            logger.warning("verify_textract_sns reported broken subscription (exit %s)", exc.code)
+
+
 # ---------------------------------------------------------------------------
 # Phase 8 — Legal Document Generation
 # ---------------------------------------------------------------------------

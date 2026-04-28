@@ -94,33 +94,53 @@ def governing_doc_extract(request, doc_pk):
         return JsonResponse({"status": "error", "error": str(e)}, status=500)
 
 
+def _humanise_elapsed(delta):
+    seconds = int(delta.total_seconds())
+    if seconds < 60:
+        return f"{seconds}s ago"
+    minutes = seconds // 60
+    if minutes < 60:
+        return f"{minutes} min ago"
+    hours = minutes // 60
+    if hours < 48:
+        return f"{hours}h ago"
+    return f"{hours // 24}d ago"
+
+
 def _governing_doc_progress_payload(doc):
     extraction_status = doc.extraction_status or GoverningDocument.ExtractionStatus.PENDING
-    progress_map = {
-        GoverningDocument.ExtractionStatus.PENDING: 20,
-        GoverningDocument.ExtractionStatus.OCR_PENDING: 65,
-        GoverningDocument.ExtractionStatus.COMPLETED: 100,
-        GoverningDocument.ExtractionStatus.COMPLETED_WITH_WARNINGS: 100,
-        GoverningDocument.ExtractionStatus.FAILED: 100,
-    }
-    progress = progress_map.get(extraction_status, 10)
     status_label_map = {
         GoverningDocument.ExtractionStatus.PENDING: "Queued for extraction",
-        GoverningDocument.ExtractionStatus.OCR_PENDING: "OCR processing in AWS Textract",
+        GoverningDocument.ExtractionStatus.OCR_PENDING: "Processing in AWS Textract",
         GoverningDocument.ExtractionStatus.COMPLETED: "Text extracted successfully",
         GoverningDocument.ExtractionStatus.COMPLETED_WITH_WARNINGS: "Extraction completed with warnings",
         GoverningDocument.ExtractionStatus.FAILED: "Extraction failed",
+        GoverningDocument.ExtractionStatus.EXPIRED: "Textract result expired — re-upload required",
     }
+    is_indeterminate = extraction_status in (
+        GoverningDocument.ExtractionStatus.PENDING,
+        GoverningDocument.ExtractionStatus.OCR_PENDING,
+    )
+    is_finished = extraction_status in (
+        GoverningDocument.ExtractionStatus.COMPLETED,
+        GoverningDocument.ExtractionStatus.COMPLETED_WITH_WARNINGS,
+        GoverningDocument.ExtractionStatus.FAILED,
+        GoverningDocument.ExtractionStatus.EXPIRED,
+    )
+
+    started_at = getattr(doc, "updated_at", None) or doc.uploaded_at
+    elapsed_label = ""
+    if is_indeterminate and started_at:
+        elapsed_label = _humanise_elapsed(timezone.now() - started_at)
+
     return {
         "doc_id": str(doc.pk),
         "extraction_status": extraction_status,
         "status_label": status_label_map.get(extraction_status, "Processing"),
-        "progress_percent": progress,
-        "is_finished": extraction_status in [
-            GoverningDocument.ExtractionStatus.COMPLETED,
-            GoverningDocument.ExtractionStatus.COMPLETED_WITH_WARNINGS,
-            GoverningDocument.ExtractionStatus.FAILED,
-        ],
+        "is_indeterminate": is_indeterminate,
+        "is_finished": is_finished,
+        "elapsed_label": elapsed_label,
+        "extraction_error": getattr(doc, "extraction_error", "") or "",
         "has_text": bool((doc.extracted_text or "").strip()),
         "chunk_count": getattr(doc, "chunk_count", 0),
     }

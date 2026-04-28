@@ -36,9 +36,11 @@
                     {% elif primary_governing_doc.extraction_status == 'completed_with_warnings' %}
                     <span class="badge bg-warning text-dark mt-1 extraction-status-badge"><i class="bi bi-exclamation-triangle"></i> Extracted with Warnings</span>
                     {% elif primary_governing_doc.extraction_status == 'ocr_pending' %}
-                    <span class="badge bg-info mt-1 extraction-status-badge"><i class="bi bi-hourglass-split"></i> OCR Processing...</span>
+                    <span class="badge bg-info mt-1 extraction-status-badge"><i class="bi bi-hourglass-split"></i> Processing in AWS Textract</span>
                     {% elif primary_governing_doc.extraction_status == 'pending' %}
-                    <span class="badge bg-secondary mt-1 extraction-status-badge"><i class="bi bi-clock"></i> Extraction Pending</span>
+                    <span class="badge bg-secondary mt-1 extraction-status-badge"><i class="bi bi-clock"></i> Queued</span>
+                    {% elif primary_governing_doc.extraction_status == 'expired' %}
+                    <span class="badge bg-danger mt-1 extraction-status-badge"><i class="bi bi-exclamation-octagon"></i> Textract Result Expired</span>
                     {% elif primary_governing_doc.extraction_status == 'failed' %}
                     <span class="badge bg-danger mt-1 extraction-status-badge"><i class="bi bi-x-circle"></i> Extraction Failed</span>
                     {% endif %}
@@ -50,30 +52,24 @@
                                 {% elif primary_governing_doc.extraction_status == 'completed_with_warnings' %}
                                 Extraction completed with warnings
                                 {% elif primary_governing_doc.extraction_status == 'ocr_pending' %}
-                                OCR processing in AWS Textract
+                                Processing in AWS Textract
                                 {% elif primary_governing_doc.extraction_status == 'pending' %}
                                 Queued for extraction
+                                {% elif primary_governing_doc.extraction_status == 'expired' %}
+                                Textract result expired — re-upload required
                                 {% elif primary_governing_doc.extraction_status == 'failed' %}
-                                Extraction failed
+                                Extraction failed{% if primary_governing_doc.extraction_error %} — {{ primary_governing_doc.extraction_error|truncatechars:120 }}{% endif %}
                                 {% else %}
                                 Waiting for extraction
                                 {% endif %}
                             </span>
-                            <span class="governing-doc-progress-percent">
-                                {% if primary_governing_doc.extraction_status == 'completed' or primary_governing_doc.extraction_status == 'completed_with_warnings' or primary_governing_doc.extraction_status == 'failed' %}
-                                100%
-                                {% elif primary_governing_doc.extraction_status == 'ocr_pending' %}
-                                65%
-                                {% elif primary_governing_doc.extraction_status == 'pending' %}
-                                20%
-                                {% else %}
-                                10%
-                                {% endif %}
-                            </span>
+                            <span class="governing-doc-progress-elapsed text-muted small"></span>
                         </div>
-                        <div class="progress" style="height: 8px;">
-                            <div class="progress-bar {% if primary_governing_doc.extraction_status == 'completed' %}bg-success{% elif primary_governing_doc.extraction_status == 'completed_with_warnings' %}bg-warning{% elif primary_governing_doc.extraction_status == 'failed' %}bg-danger{% else %}bg-info{% endif %}" role="progressbar" style="width: {% if primary_governing_doc.extraction_status == 'completed' or primary_governing_doc.extraction_status == 'completed_with_warnings' or primary_governing_doc.extraction_status == 'failed' %}100{% elif primary_governing_doc.extraction_status == 'ocr_pending' %}65{% elif primary_governing_doc.extraction_status == 'pending' %}20{% else %}10{% endif %}%;" aria-valuenow="{% if primary_governing_doc.extraction_status == 'completed' or primary_governing_doc.extraction_status == 'completed_with_warnings' or primary_governing_doc.extraction_status == 'failed' %}100{% elif primary_governing_doc.extraction_status == 'ocr_pending' %}65{% elif primary_governing_doc.extraction_status == 'pending' %}20{% else %}10{% endif %}" aria-valuemin="0" aria-valuemax="100"></div>
+                        {% if primary_governing_doc.extraction_status == 'pending' or primary_governing_doc.extraction_status == 'ocr_pending' %}
+                        <div class="progress" style="height: 6px;">
+                            <div class="progress-bar progress-bar-striped progress-bar-animated bg-info" role="progressbar" style="width: 100%;"></div>
                         </div>
+                        {% endif %}
                     </div>
                 </div>
                 <div class="d-flex gap-2">
@@ -264,9 +260,11 @@
                                 {% elif doc.extraction_status == 'completed_with_warnings' %}
                                 <span class="badge bg-warning text-dark extraction-status-badge">Warnings</span>
                                 {% elif doc.extraction_status == 'ocr_pending' %}
-                                <span class="badge bg-info extraction-status-badge">OCR...</span>
+                                <span class="badge bg-info extraction-status-badge">Processing</span>
                                 {% elif doc.extraction_status == 'pending' %}
-                                <span class="badge bg-secondary extraction-status-badge">Pending</span>
+                                <span class="badge bg-secondary extraction-status-badge">Queued</span>
+                                {% elif doc.extraction_status == 'expired' %}
+                                <span class="badge bg-danger extraction-status-badge">Expired</span>
                                 {% elif doc.extraction_status == 'failed' %}
                                 <span class="badge bg-danger extraction-status-badge">Failed</span>
                                 {% endif %}
@@ -278,30 +276,24 @@
                                             {% elif doc.extraction_status == 'completed_with_warnings' %}
                                             Extraction completed with warnings
                                             {% elif doc.extraction_status == 'ocr_pending' %}
-                                            OCR processing in AWS Textract
+                                            Processing in AWS Textract
                                             {% elif doc.extraction_status == 'pending' %}
                                             Queued for extraction
+                                            {% elif doc.extraction_status == 'expired' %}
+                                            Result expired — re-upload required
                                             {% elif doc.extraction_status == 'failed' %}
                                             Extraction failed
                                             {% else %}
                                             Waiting for extraction
                                             {% endif %}
                                         </span>
-                                        <span class="governing-doc-progress-percent">
-                                            {% if doc.extraction_status == 'completed' or doc.extraction_status == 'completed_with_warnings' or doc.extraction_status == 'failed' %}
-                                            100%
-                                            {% elif doc.extraction_status == 'ocr_pending' %}
-                                            65%
-                                            {% elif doc.extraction_status == 'pending' %}
-                                            20%
-                                            {% else %}
-                                            10%
-                                            {% endif %}
-                                        </span>
+                                        <span class="governing-doc-progress-elapsed text-muted small"></span>
                                     </div>
-                                    <div class="progress" style="height: 6px;">
-                                        <div class="progress-bar {% if doc.extraction_status == 'completed' %}bg-success{% elif doc.extraction_status == 'completed_with_warnings' %}bg-warning{% elif doc.extraction_status == 'failed' %}bg-danger{% else %}bg-info{% endif %}" role="progressbar" style="width: {% if doc.extraction_status == 'completed' or doc.extraction_status == 'completed_with_warnings' or doc.extraction_status == 'failed' %}100{% elif doc.extraction_status == 'ocr_pending' %}65{% elif doc.extraction_status == 'pending' %}20{% else %}10{% endif %}%;" aria-valuenow="{% if doc.extraction_status == 'completed' or doc.extraction_status == 'completed_with_warnings' or doc.extraction_status == 'failed' %}100{% elif doc.extraction_status == 'ocr_pending' %}65{% elif doc.extraction_status == 'pending' %}20{% else %}10{% endif %}" aria-valuemin="0" aria-valuemax="100"></div>
+                                    {% if doc.extraction_status == 'pending' or doc.extraction_status == 'ocr_pending' %}
+                                    <div class="progress" style="height: 4px;">
+                                        <div class="progress-bar progress-bar-striped progress-bar-animated bg-info" role="progressbar" style="width: 100%;"></div>
                                     </div>
+                                    {% endif %}
                                 </div>
                             </td>
                             <td>
@@ -352,34 +344,57 @@ function handleGovDocDrop(event, isPrimary) {
 
 function getProgressDisplay(status) {
     const map = {
-        pending: { percent: 20, label: 'Queued for extraction', badgeClass: 'bg-secondary', badgeText: 'Extraction Pending' },
-        ocr_pending: { percent: 65, label: 'OCR processing in AWS Textract', badgeClass: 'bg-info', badgeText: 'OCR Processing...' },
-        completed: { percent: 100, label: 'Text extracted successfully', badgeClass: 'bg-success', badgeText: 'Text Extracted' },
-        completed_with_warnings: { percent: 100, label: 'Extraction completed with warnings', badgeClass: 'bg-warning text-dark', badgeText: 'Extracted with Warnings' },
-        failed: { percent: 100, label: 'Extraction failed', badgeClass: 'bg-danger', badgeText: 'Extraction Failed' },
+        pending:                 { label: 'Queued for extraction',          badgeClass: 'bg-secondary',        badgeText: 'Queued',                 indeterminate: true },
+        ocr_pending:             { label: 'Processing in AWS Textract',     badgeClass: 'bg-info',             badgeText: 'Processing in Textract', indeterminate: true },
+        completed:               { label: 'Text extracted successfully',    badgeClass: 'bg-success',          badgeText: 'Text Extracted',         indeterminate: false },
+        completed_with_warnings: { label: 'Extraction completed with warnings', badgeClass: 'bg-warning text-dark', badgeText: 'Extracted with Warnings', indeterminate: false },
+        failed:                  { label: 'Extraction failed',              badgeClass: 'bg-danger',           badgeText: 'Failed',                 indeterminate: false },
+        expired:                 { label: 'Result expired — re-upload required', badgeClass: 'bg-danger',     badgeText: 'Expired',                indeterminate: false },
     };
-    return map[status] || { percent: 10, label: 'Waiting for extraction', badgeClass: 'bg-secondary', badgeText: 'Waiting' };
+    return map[status] || { label: 'Waiting for extraction', badgeClass: 'bg-secondary', badgeText: 'Waiting', indeterminate: false };
+}
+
+function statusIcon(status) {
+    return ({
+        completed: 'bi-check-circle',
+        completed_with_warnings: 'bi-exclamation-triangle',
+        ocr_pending: 'bi-hourglass-split',
+        pending: 'bi-clock',
+        failed: 'bi-x-circle',
+        expired: 'bi-exclamation-octagon',
+    })[status] || 'bi-clock';
 }
 
 function updateProgressUi(container, payload) {
     if (!container || !payload) return;
     const display = getProgressDisplay(payload.extraction_status);
-    const bar = container.querySelector('.progress-bar');
     const label = container.querySelector('.governing-doc-progress-label');
-    const percent = container.querySelector('.governing-doc-progress-percent');
+    const elapsed = container.querySelector('.governing-doc-progress-elapsed');
     const badge = container.parentElement.querySelector('.extraction-status-badge');
 
-    if (label) label.textContent = payload.status_label || display.label;
-    if (percent) percent.textContent = `${payload.progress_percent || display.percent}%`;
-    if (bar) {
-        const progressValue = payload.progress_percent || display.percent;
-        bar.style.width = `${progressValue}%`;
-        bar.setAttribute('aria-valuenow', progressValue);
-        bar.className = `progress-bar ${display.badgeClass.includes('warning') ? 'bg-warning' : display.badgeClass.includes('danger') ? 'bg-danger' : display.badgeClass.includes('success') ? 'bg-success' : 'bg-info'}`;
+    let labelText = payload.status_label || display.label;
+    if (payload.extraction_status === 'failed' && payload.extraction_error) {
+        labelText += ` — ${payload.extraction_error.slice(0, 120)}`;
     }
+    if (label) label.textContent = labelText;
+    if (elapsed) elapsed.textContent = payload.elapsed_label || '';
+
+    let progress = container.querySelector('.progress');
+    if (display.indeterminate) {
+        if (!progress) {
+            progress = document.createElement('div');
+            progress.className = 'progress';
+            progress.style.height = '4px';
+            progress.innerHTML = '<div class="progress-bar progress-bar-striped progress-bar-animated bg-info" role="progressbar" style="width: 100%;"></div>';
+            container.appendChild(progress);
+        }
+    } else if (progress) {
+        progress.remove();
+    }
+
     if (badge) {
         badge.className = `badge mt-1 extraction-status-badge ${display.badgeClass}`;
-        badge.innerHTML = `<i class="bi ${payload.extraction_status === 'failed' ? 'bi-x-circle' : payload.extraction_status === 'completed' ? 'bi-check-circle' : payload.extraction_status === 'completed_with_warnings' ? 'bi-exclamation-triangle' : payload.extraction_status === 'ocr_pending' ? 'bi-hourglass-split' : 'bi-clock'}"></i> ${display.badgeText}`;
+        badge.innerHTML = `<i class="bi ${statusIcon(payload.extraction_status)}"></i> ${display.badgeText}`;
     }
 }
 
@@ -430,7 +445,6 @@ function extractText(docId) {
                 container.dataset.status = 'pending';
                 updateProgressUi(container, {
                     extraction_status: 'pending',
-                    progress_percent: 20,
                     status_label: 'Queued for extraction',
                 });
             }
