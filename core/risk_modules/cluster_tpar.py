@@ -21,28 +21,10 @@ import logging
 from decimal import Decimal
 from django.utils import timezone
 
+from core.industry_codes import TPAR_RELEVANT_CODES
 from core.risk_modules.base import BaseDetectionModule, ZERO
 
 logger = logging.getLogger(__name__)
-
-# ATO Business Industry Codes (BIC) for TPAR-reportable industries
-# These are the first 2-3 digits of the ATO NAT 1827 industry codes
-TPAR_INDUSTRY_CODES = {
-    # Building & Construction
-    "301", "302", "303", "304", "305", "306", "307", "308", "309",
-    "310", "311", "312", "313", "314", "315", "316", "317", "318",
-    "319", "320", "321", "322", "323",
-    # Cleaning
-    "731",
-    # Courier / Delivery
-    "510", "511", "512",
-    # IT
-    "700", "701", "702",
-    # Security
-    "771",
-    # Road Freight
-    "461",
-}
 
 # Also match by industry description keywords
 TPAR_INDUSTRY_KEYWORDS = {
@@ -90,11 +72,9 @@ class TPARCluster(BaseDetectionModule):
         if not code:
             return  # Will be handled by TPAR-01 as "unknown"
 
-        # Check code prefix against TPAR codes
-        for tpar_code in TPAR_INDUSTRY_CODES:
-            if code.startswith(tpar_code):
-                self.is_tpar_industry = True
-                return
+        if code in TPAR_RELEVANT_CODES:
+            self.is_tpar_industry = True
+            return
 
         # Also check entity industry description
         try:

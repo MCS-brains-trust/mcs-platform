@@ -148,6 +148,35 @@ def verify_textract_sns_daily():
             logger.warning("verify_textract_sns reported broken subscription (exit %s)", exc.code)
 
 
+@shared_task(name="core.check_industry_data_freshness")
+def check_industry_data_freshness():
+    """
+    Warn if the ATO BIC fixture is older than its expected refresh window.
+    Reads the version markers in core.industry_codes.
+    """
+    from datetime import date
+    from core import industry_codes
+
+    try:
+        last = date.fromisoformat(industry_codes.__last_checked__)
+    except (AttributeError, ValueError):
+        logger.warning(
+            "ATO BIC freshness check: could not parse __last_checked__ "
+            "in core.industry_codes — refresh required."
+        )
+        return
+
+    age_days = (date.today() - last).days
+    expected = getattr(industry_codes, "__expected_refresh_days__", 365)
+    version = getattr(industry_codes, "__version__", "unknown")
+    if age_days > expected:
+        logger.warning(
+            "ATO BIC fixture is stale. Last checked %s (%d days ago, "
+            "threshold %d). Current dataset: %s. Refresh required.",
+            last.isoformat(), age_days, expected, version,
+        )
+
+
 # ---------------------------------------------------------------------------
 # Phase 8 — Legal Document Generation
 # ---------------------------------------------------------------------------

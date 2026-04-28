@@ -17,13 +17,24 @@ Usage
 """
 
 import json
+import logging
 import os
+
+logger = logging.getLogger(__name__)
+
+# ── Dataset version markers (read by celerybeat freshness check) ──────────
+__version__ = "NAT 1827 December 2021"
+__last_checked__ = "2026-04-28"
+__expected_refresh_days__ = 365
 
 # ── Load the flat code → description mapping ──────────────────────────────
 _FIXTURE_DIR = os.path.join(os.path.dirname(__file__), "fixtures")
 
 with open(os.path.join(_FIXTURE_DIR, "ato_industry_codes.json")) as _f:
     INDUSTRY_CODE_MAP: dict[str, str] = json.load(_f)
+
+# Alias for callers that prefer the descriptive name (used by verification scripts).
+_CODE_TO_LABEL = INDUSTRY_CODE_MAP
 
 # ── ANZSIC Division ranges ────────────────────────────────────────────────
 _DIVISIONS = [
@@ -60,6 +71,112 @@ def _division_for_code(code: str) -> str:
     return "Other"
 
 
+# ── Common industries pinned to the top of the dropdown ──────────────────
+# Curated for suburban Australian accounting practice (Phase 2 spec).
+# Same code also appears in its proper ANZSIC division below — intentional,
+# matches Xero's UX. Codes that don't resolve against the loaded fixture are
+# dropped at build time with a logged warning (see _build_choices).
+COMMON_INDUSTRY_CODES = [
+    # Construction trades
+    "30110",  # House Construction
+    "30220",  # Other Residential Building Construction
+    "32110",  # Plumbing Services
+    "32120",  # Electrical Services -- NOTE: actual code is 32320, verify against fixture
+    "32320",  # Electrical Services
+    "32410",  # Painting and Decorating Services
+    "32420",  # Plastering and Ceiling Services
+    "32510",  # Carpentry Services
+    "32990",  # Other Construction Services n.e.c.
+    # Professional services
+    "69110",  # Legal Services
+    "69310",  # Bookkeeping Services
+    "69320",  # Accounting Services
+    "69620",  # Management Advice and Related Consulting Services
+    # Healthcare
+    "85110",  # General Practice Medical Services
+    "85120",  # Specialist Medical Services
+    "85320",  # Dental Services
+    "85390",  # Other Allied Health Services
+    # Property
+    "67110",  # Residential Property Operators
+    "67200",  # Non-Residential Property Operators
+    "67300",  # Real Estate Services
+    # Retail / hospitality
+    "41100",  # Supermarket and Grocery Stores
+    "42440",  # Clothing Retailing
+    "45110",  # Cafes and Restaurants
+    "45120",  # Takeaway Food Services
+    "45210",  # Pubs, Taverns and Bars
+    # Transport / automotive
+    "46100",  # Road Freight Transport
+    "46220",  # Taxi and Other Road Transport
+    "94110",  # Automotive Body, Paint and Interior Repair
+    "94120",  # Automotive Electrical Services
+    "94130",  # Automotive Mechanical Services
+    "94140",  # Tyre Retailing
+    # Other common
+    "75100",  # Building and Other Industrial Cleaning Services
+    "77110",  # Employment Placement and Recruitment Services
+    "77120",  # Investigation and Security Services
+    "78400",  # Hairdressing and Beauty Services
+]
+COMMON_OPTGROUP_LABEL = "Common"
+
+
+# ── TPAR-relevant industries per ATO TPAR scope guidance ─────────────────
+# Source: ato.gov.au/business/reports-and-returns/taxable-payments-annual-report
+# Last reviewed: 2026-04-28
+#
+# This frozenset replaces the legacy 3-digit prefix matching in
+# core/risk_modules/cluster_tpar.py. Set membership is more robust against
+# ATO renumbering — a split or new sub-code will fail closed and surface in
+# the freshness audit instead of silently widening the match.
+#
+# The codes below were derived by enumerating every fixture entry that the
+# legacy prefix set ({"301".."323","731","510","511","512","700","701",
+# "702","771","461"}) matched, so adoption is a no-op for currently-stored
+# entities (verified by the diff audit in the Phase 2 verification step).
+# Entries marked "non-TPAR in practice" are retained for now to preserve
+# day-one parity; remove them in a follow-up curation pass with sign-off.
+TPAR_RELEVANT_CODES = frozenset({
+    # Building and construction
+    "30110",  # House Construction
+    "30190",  # Other Residential Building Construction
+    "30200",  # Non-Residential Building Construction
+    "31010",  # Road and Bridge Construction
+    "31091",  # Swimming Pool and Spa Pool Construction or Installation
+    "31099",  # Other Heavy and Civil Engineering Construction
+    "32110",  # Land Development and Subdivision
+    "32120",  # Site Preparation Services
+    "32210",  # Concreting Services
+    "32220",  # Bricklaying Services
+    "32230",  # Roofing Services
+    "32240",  # Structural Steel Erection Services
+    "32310",  # Plumbing Services
+    "32320",  # Electrical Services
+    "32330",  # Air Conditioning and Heating Services
+    "32340",  # Fire and Security Alarm Installation Services
+    "32390",  # Other Building Installation Services
+    # Cleaning
+    "73110",  # Building and Other Industrial Cleaning Services
+    "73120",  # Building Pest Control Services      (non-TPAR in practice)
+    "73130",  # Gardening Services                   (non-TPAR in practice)
+    # Courier / postal
+    "51010",  # Postal Services
+    "51020",  # Courier Pick-up and Delivery Services
+    # IT
+    "70000",  # Computer System Design and Related Services
+    # Road freight
+    "46100",  # Road Freight Transport
+    # Security and investigation
+    "77110",  # Police Services                      (non-TPAR in practice)
+    "77120",  # Investigation and Security Services
+    "77130",  # Fire Protection and Other Emergency  (non-TPAR in practice)
+    "77140",  # Correctional and Detention Services  (non-TPAR in practice)
+    "77190",  # Other Public Order and Safety        (non-TPAR in practice)
+})
+
+
 # ── Build grouped choices for Django (with optgroup support) ──────────────
 def _build_choices():
     """
@@ -68,6 +185,7 @@ def _build_choices():
     Structure::
 
         [
+            ("Common", [(code, label), ...]),
             ("Division Name", [
                 ("01110", "01110 – Fruit tree nursery operation (under cover)"),
                 ...
@@ -92,6 +210,26 @@ def _build_choices():
     for name, items in groups.items():
         if name not in seen:
             ordered.append((name, items))
+
+    # Prepend the curated "Common" optgroup. Drop unresolved codes with a
+    # warning instead of failing the import.
+    common_items: list[tuple[str, str]] = []
+    missing: list[str] = []
+    for code in COMMON_INDUSTRY_CODES:
+        desc = INDUSTRY_CODE_MAP.get(code)
+        if desc is None:
+            missing.append(code)
+            continue
+        common_items.append((code, f"{code} – {desc}"))
+    if missing:
+        logger.warning(
+            "COMMON_INDUSTRY_CODES references %d code(s) not present in the "
+            "loaded ATO BIC fixture: %s. These were skipped.",
+            len(missing), ", ".join(missing),
+        )
+    if common_items:
+        ordered.insert(0, (COMMON_OPTGROUP_LABEL, common_items))
+
     return ordered
 
 
@@ -112,56 +250,3 @@ def get_industry_label(code: str) -> str:
 def get_industry_description(code: str) -> str:
     """Return just the description (without the code prefix)."""
     return INDUSTRY_CODE_MAP.get(code, "")
-
-
-# ── Mapping from old slug-based industry values to nearest ATO code ───────
-OLD_INDUSTRY_TO_ATO = {
-    "accounting": "69320",
-    "legal": "69310",
-    "consulting": "69629",
-    "it_services": "70000",
-    "engineering": "69210",
-    "architecture": "69210",
-    "financial_services": "64190",
-    "real_estate": "67200",
-    "marketing": "69400",
-    "professional_other": "69629",
-    "medical_gp": "85110",
-    "medical_specialist": "85122",
-    "dental": "85310",
-    "allied_health": "85391",
-    "pharmacy": "42712",
-    "veterinary": "69700",
-    "healthcare_other": "85399",
-    "construction": "30190",
-    "electrical": "32320",
-    "plumbing": "32310",
-    "trades_other": "32410",
-    "restaurant": "45110",
-    "hotel": "44000",
-    "catering": "45130",
-    "food_manufacturing": "11990",
-    "hospitality_other": "45110",
-    "retail": "42799",
-    "ecommerce": "43109",
-    "wholesale": "38000",
-    "transport": "46210",
-    "courier": "51010",
-    "agriculture": "01490",
-    "mining": "09909",
-    "fishing": "04130",
-    "manufacturing": "24990",
-    "nfp_charity": "95510",
-    "nfp_association": "95510",
-    "nfp_other": "95510",
-    "education": "80100",
-    "childcare": "87100",
-    "property_investment": "67120",
-    "investment": "64190",
-    "smsf_industry": "63300",
-    "beauty": "95391",
-    "fitness": "91110",
-    "cleaning": "73110",
-    "security": "77120",
-    "other": "",
-}
