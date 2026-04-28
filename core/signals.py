@@ -600,6 +600,18 @@ def handle_trust_entity_created(sender, instance, created, **kwargs):
     if instance.entity_type != Entity.EntityType.TRUST:
         return
 
+    # 2026-04-28: Trust COA template contains leaked client data
+    # (FWGP, On Deck, Macquarie Porsche Macan, etc.). Seeding disabled
+    # until template is rebuilt. New trusts will start with empty COA.
+    # Remove this guard in the same commit that ships the rebuilt
+    # trust template.
+    logger.warning(
+        "Trust seeding intentionally skipped for entity %s (%s) — "
+        "template rebuild in progress.",
+        instance.pk, instance.entity_name,
+    )
+    return
+
     try:
         result = EntityChartOfAccount.seed_from_template(instance)
         logger.info(
