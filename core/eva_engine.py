@@ -709,6 +709,32 @@ def _build_check_context(financial_year, check_id, risk_flags=None):
         if not found_any:
             extra.append("  No loan/director/shareholder accounts found in TB.")
 
+        # Sprint 2 — Change 3a: Inject Client Knowledge Graph for Div7A.
+        # Traverse the full entity relationship graph so Eva can reason about
+        # loans that exist in related companies or trusts within the group.
+        try:
+            from core.eva_graph import GraphQueryService
+            gqs = GraphQueryService()
+            graph_data = gqs.query_client_graph(fy.entity)
+            if graph_data and (graph_data.get('related_entities') or graph_data.get('relationships')):
+                extra.append("\n=== RELATED ENTITY STRUCTURE (Knowledge Graph) ===")
+                extra.append("  Use this to identify cross-entity Div7A exposure.")
+                related = graph_data.get('related_entities', [])
+                for rel_entity in related[:8]:  # Cap at 8 to avoid prompt bloat
+                    role = rel_entity.get('relationship_type', rel_entity.get('role', 'Related'))
+                    name = rel_entity.get('name', rel_entity.get('entity_name', 'Unknown'))
+                    etype = rel_entity.get('entity_type', '')
+                    extra.append(f"  • {name} ({etype}) — Role: {role}")
+                relationships = graph_data.get('relationships', [])
+                for rel in relationships[:6]:
+                    from_name = rel.get('from_entity', '')
+                    to_name = rel.get('to_entity', '')
+                    rel_type = rel.get('relationship_type', '')
+                    if from_name and to_name:
+                        extra.append(f"    {from_name} → [{rel_type}] → {to_name}")
+        except Exception as graph_err:
+            logger.debug(f"Graph query failed for div7a check: {graph_err}")
+
     elif check_id == "related_party":
         # Enhanced related party detection with effective balances
         extra.append("=== RELATED PARTY TRANSACTION ACCOUNTS (EFFECTIVE BALANCES) ===")
@@ -720,7 +746,7 @@ def _build_check_context(financial_year, check_id, risk_flags=None):
                 extra.append(
                     f"  {line.account_code} {line.account_name}: "
                     f"Effective DR ${line.effective_dr:,.2f} / CR ${line.effective_cr:,.2f} "
-                    f"→ Net ${net:,.2f}"
+                    f"\u2192 Net ${net:,.2f}"
                 )
                 # Include prior year for comparison
                 prior_net = (line.prior_debit or ZERO) - (line.prior_credit or ZERO)
@@ -729,6 +755,32 @@ def _build_check_context(financial_year, check_id, risk_flags=None):
                 found_any = True
         if not found_any:
             extra.append("  No related party accounts identified by keyword search.")
+
+        # Sprint 2 — Change 3b: Inject Client Knowledge Graph for Related Party.
+        # The graph reveals all directors, shareholders, and associated entities
+        # so Eva can assess arm's-length pricing across the full group structure.
+        try:
+            from core.eva_graph import GraphQueryService
+            gqs = GraphQueryService()
+            graph_data = gqs.query_client_graph(fy.entity)
+            if graph_data and (graph_data.get('related_entities') or graph_data.get('relationships')):
+                extra.append("\n=== RELATED ENTITY STRUCTURE (Knowledge Graph) ===")
+                extra.append("  Use this to identify non-arm's-length transactions.")
+                related = graph_data.get('related_entities', [])
+                for rel_entity in related[:8]:
+                    role = rel_entity.get('relationship_type', rel_entity.get('role', 'Related'))
+                    name = rel_entity.get('name', rel_entity.get('entity_name', 'Unknown'))
+                    etype = rel_entity.get('entity_type', '')
+                    extra.append(f"  • {name} ({etype}) — Role: {role}")
+                relationships = graph_data.get('relationships', [])
+                for rel in relationships[:6]:
+                    from_name = rel.get('from_entity', '')
+                    to_name = rel.get('to_entity', '')
+                    rel_type = rel.get('relationship_type', '')
+                    if from_name and to_name:
+                        extra.append(f"    {from_name} → [{rel_type}] → {to_name}")
+        except Exception as graph_err:
+            logger.debug(f"Graph query failed for related_party check: {graph_err}")
 
     elif check_id == "trust_distribution":
         # Check for distribution-related journals
@@ -893,27 +945,86 @@ def _build_check_context(financial_year, check_id, risk_flags=None):
         hard_facts_text = _format_risk_flags_as_hard_facts(risk_flags)
 
     # Retrieve Knowledge Brain context for this check
+    # Sprint 2 — Change 1: Use hybrid retrieval (pgvector + FTS + Haiku reranker)
+    # for significantly more accurate and relevant KB chunks per check.
     kb_context = ""
     try:
-        from core.eva_knowledge import retrieve_relevant_chunks, format_rag_context
-        check_def = next((c for c in COMPLIANCE_CHECKS if c["id"] == check_id), None)
-        if check_def:
-            search_query = f"{check_def['name']} {check_def['description']} Australian tax law"
-            chunks = retrieve_relevant_chunks(search_query, top_k=4)
-            if chunks:
-                kb_context = "\n\n=== KNOWLEDGE BRAIN REFERENCE ===\n"
-                kb_context += format_rag_context(chunks)
+        check_def_lookup = next((c for c in COMPLIANCE_CHECKS if c["id"] == check_id), None)
+        if check_def_lookup:
+            search_query = (
+                f"{check_def_lookup['name']} {check_def_lookup['description']} "
+                f"Australian tax law ATO compliance"
+            )
+            # Attempt hybrid retrieval first; fall back to legacy vector search
+            hybrid_ok = False
+            try:
+                from core.eva_retrieval import hybrid_search
+                hybrid_results = hybrid_search(
+                    query=search_query,
+                    user=None,
+                    entity=fy.entity,
+                    top_k=6,
+                )
+                if hybrid_results:
+                    kb_context = "\n\n=== KNOWLEDGE BRAIN REFERENCE (Hybrid Retrieval) ===\n"
+                    for r in hybrid_results:
+                        title = r.get('title', r.get('document_title', 'Unknown'))
+                        content = (r.get('content') or r.get('text') or '')[:450]
+                        source = r.get('source', r.get('category', ''))
+                        kb_context += f"\n[{title}]\n{content}\n"
+                        if source:
+                            kb_context += f"Source: {source}\n"
+                    hybrid_ok = True
+            except Exception as hybrid_err:
+                logger.debug(f"Hybrid retrieval unavailable for {check_id}, falling back: {hybrid_err}")
+            # Fallback: legacy vector search
+            if not hybrid_ok:
+                from core.eva_knowledge import retrieve_relevant_chunks, format_rag_context
+                chunks = retrieve_relevant_chunks(search_query, top_k=4)
+                if chunks:
+                    kb_context = "\n\n=== KNOWLEDGE BRAIN REFERENCE ===\n"
+                    kb_context += format_rag_context(chunks)
     except Exception as e:
         logger.warning(f"Knowledge Brain retrieval failed for {check_id}: {e}")
 
     extra_text = "\n".join(extra) if extra else ""
 
-    # Assemble: Hard Facts first, then KB context, then base context, then extras
+    # Sprint 2 — Change 2: Inject firm-learned lessons for this check.
+    # The Nightly Reflection Engine accumulates EvaLearnedLesson records from
+    # accountant corrections and suppressions. Injecting the top relevant
+    # lessons prevents Eva from repeating the same mistakes year after year.
+    learned_lessons_text = ""
+    try:
+        from core.models import EvaLearnedLesson
+        from django.db.models import Q
+        # Retrieve lessons relevant to this check_id, scoped to this entity
+        # or firm-wide (entity=None). Order by confidence descending.
+        lessons = EvaLearnedLesson.objects.filter(
+            Q(entity=fy.entity) | Q(entity__isnull=True),
+            check_id=check_id,
+            is_active=True,
+        ).order_by('-confidence_score', '-created_at')[:5]
+        if lessons.exists():
+            learned_lessons_text = "\n\n=== FIRM LEARNED RULES (from prior reviews) ==="
+            learned_lessons_text += "\nThese rules were learned from accountant corrections. Apply them strictly.\n"
+            for lesson in lessons:
+                scope = f" [Entity: {fy.entity.name}]" if lesson.entity else " [Firm-wide]"
+                learned_lessons_text += (
+                    f"\n\u2022 {lesson.lesson_text}"
+                    f" (Confidence: {lesson.confidence_score:.0%}{scope})"
+                )
+    except Exception as e:
+        logger.debug(f"Learned lessons retrieval failed for {check_id}: {e}")
+
+    # Assemble: Hard Facts first, then KB context, then learned lessons,
+    # then base context, then extras
     parts = []
     if hard_facts_text:
         parts.append(hard_facts_text)
     if kb_context:
         parts.append(kb_context)
+    if learned_lessons_text:
+        parts.append(learned_lessons_text)
     parts.append(base_context)
     if extra_text:
         parts.append(extra_text)
@@ -1199,10 +1310,21 @@ def _repair_truncated_json(fragment):
 # ---------------------------------------------------------------------------
 # Run a Single Compliance Check
 # ---------------------------------------------------------------------------
+# Checks that benefit from multi-step agentic reasoning rather than a
+# single-shot LLM call. Eva can iteratively query the trial balance and
+# knowledge brain before producing its final finding.
+_AGENTIC_CHECKS = {"div7a", "ato_benchmarks", "super_guarantee"}
+
+
 def _run_single_check(financial_year, check_def, risk_flags=None, prior_findings=None):
     """
     Run a single compliance check using the LLM, with risk engine
     findings injected as confirmed hard facts.
+
+    Sprint 2 — Change 4: For complex checks (div7a, ato_benchmarks,
+    super_guarantee), the EvaAgentLoop is used instead of a single-shot
+    _call_llm call. The agent can iteratively query the trial balance,
+    knowledge brain, and learned lessons before producing its finding.
 
     Args:
         prior_findings: list of dicts with prior finding titles/check_names
@@ -1271,6 +1393,47 @@ Analyse the above data for this specific compliance check and respond with the J
     if financial_year.eva_model_override == "opus":
         tier = "opus"
 
+    # Sprint 2 — Change 4: Route complex checks through the Agentic Orchestrator.
+    # For div7a, ato_benchmarks, and super_guarantee, the agent loop allows Eva
+    # to iteratively call tools (query_trial_balance, search_knowledge_brain,
+    # get_learned_lessons) before producing its final structured finding.
+    # All other checks continue to use the fast single-shot path.
+    if check_def["id"] in _AGENTIC_CHECKS:
+        try:
+            from core.eva_agent import EvaAgentLoop
+            agent = EvaAgentLoop(
+                financial_year=financial_year,
+                system_prompt=EVA_REVIEW_SYSTEM_PROMPT,
+                tier=tier,
+                max_iterations=8,
+            )
+            agent_result = agent.run(
+                task=user_prompt,
+                expect_json=True,
+            )
+            # agent_result is a dict with 'response' (str) and 'trace' (list)
+            response_text = agent_result.get('response', '')
+            agent_trace = agent_result.get('trace', [])
+            result = _parse_llm_json(response_text, check_def["id"])
+            result["check_id"] = check_def["id"]
+            result["check_name"] = check_def["name"]
+            result["model_used"] = f"{tier}+agent"
+            result["agent_iterations"] = len(agent_trace)
+            if "source" not in result:
+                result["source"] = "risk_engine" if risk_flags else "eva_analysis"
+            logger.info(
+                f"Agentic check {check_def['id']} completed in "
+                f"{len(agent_trace)} iterations."
+            )
+            return result
+        except Exception as agent_err:
+            # Agent failed — fall through to single-shot path as safety net
+            logger.warning(
+                f"Agentic loop failed for {check_def['id']}, "
+                f"falling back to single-shot: {agent_err}"
+            )
+
+    # Standard single-shot path (all non-agentic checks, or agentic fallback)
     try:
         response_text = _call_llm(
             system_prompt=EVA_REVIEW_SYSTEM_PROMPT,
