@@ -260,6 +260,42 @@ def _cleanup_slot_codes(entity):
     return {"deleted": deleted, "escalated": escalated, "retained_custom": retained_custom}
 
 
+def _resolve_officer_suffix(entity, officer):
+    """Return a `.NN`-format suffix unique to this officer on this entity.
+
+    Default = `.{display_order:02d}`. If that suffix is already used by a
+    different officer's auto-provisioned ECA, scan .01..99 for the first
+    unused suffix. Last resort: `.<pk-fragment>`.
+    """
+    from core.models import EntityChartOfAccount
+
+    desired = f".{officer.display_order:02d}"
+    probe_parent = BENEFICIARY_PARENT_CODES[0]["code"]
+    probe_code = f"{probe_parent}{desired}"
+
+    collision = EntityChartOfAccount.objects.filter(
+        entity=entity, account_code=probe_code, auto_provisioned=True,
+    ).exclude(beneficiary_officer=officer).exclude(
+        beneficiary_officer__isnull=True
+    ).exists()
+    if not collision:
+        return desired
+
+    used = set(
+        EntityChartOfAccount.objects.filter(
+            entity=entity,
+            account_code__startswith=f"{probe_parent}.",
+            auto_provisioned=True,
+        ).values_list("account_code", flat=True)
+    )
+    for n in range(1, 100):
+        candidate = f".{n:02d}"
+        if f"{probe_parent}{candidate}" not in used:
+            return candidate
+    # 99-officer ceiling exceeded — degrade to officer pk fragment
+    return f".{str(officer.pk)[:4]}"
+
+
 def provision_beneficiary_accounts(officer_id):
     """Materialise per-officer child accounts under the 38 parent codes.
 
@@ -284,9 +320,14 @@ def provision_beneficiary_accounts(officer_id):
     _cleanup_slot_codes(entity)
     _cleanup_ghost_rows(entity)
 
-    # Suffix from display_order. display_order is auto-assigned on save
-    # (core/models.py:557-564) so it is never zero for a saved officer.
-    suffix = f".{officer.display_order:02d}"
+    # Suffix from display_order. display_order is normally auto-assigned on
+    # save (core/models.py:557-564) but legacy officers sometimes share
+    # display_order=0 (created via paths that bypassed the auto-assign,
+    # e.g. XPM bulk import). Detect collision with another officer's
+    # existing children and fall back to the next free two-digit suffix
+    # (then to the officer.pk fragment as last resort) — mirrors the
+    # 9000-series pattern at capital_account_service.py:79-82.
+    suffix = _resolve_officer_suffix(entity, officer)
 
     today = _today()
     is_ceased = bool(officer.date_ceased and officer.date_ceased <= today)
