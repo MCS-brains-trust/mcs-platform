@@ -6,10 +6,37 @@ Account Mappings, Notes/Disclosures, Adjusting Journals, Audit Log.
 """
 import hashlib
 import json
+import re
 import uuid
 from django.conf import settings
 from django.db import models
 from django.urls import reverse
+
+
+# Names that should never appear on a master template account. Combines bank
+# brands paired with a specific account number, vehicle makes/models, suburb
+# names, and the known leaked client tokens from the 2026-04-28 trust template
+# incident. seed_from_template logs WARNING and refuses to copy any matching
+# template row to a per-entity COA. The check_template_hygiene celery task
+# scans both ChartOfAccount and is_custom=False EntityChartOfAccount rows
+# against the same regex on a monthly cadence.
+SUSPICIOUS_NAME_PATTERNS = [
+    r"\bcba\b",
+    r"\bwestpac\b\s*\d",
+    r"\bnab\b\s*\d",
+    r"\banz\b\s*\d",
+    r"\bmacquarie\b",
+    r"\bbendigo\b\s*\d",
+    r"\bfwgp\b",
+    r"\bondeck\b|\bon\s+deck\b",
+    r"\bporsche\b|\bmercedes\b|\baudi\b|\bbmw\b|\blexus\b",
+    r"\bhenneken\b|\bmultivac\b",
+    r"\b(toyota|ford|holden|mazda|hyundai|kia)\b\s+(hilux|ranger|colorado|navara|amarok)",
+    r"\bcheltenham\b|\bmoorabbin\b|\bdandenong\b",
+    r"\bfine\s*wine\b",
+    r"\bfelice\b",
+]
+SUSPICIOUS_NAME_REGEX = re.compile("|".join(SUSPICIOUS_NAME_PATTERNS), re.IGNORECASE)
 # pgvector is PostgreSQL-only. On other backends (SQLite in tests) we fall back
 # to a plain JSONField so the model can still be created and queried.
 # IMPORTANT: VectorField must deconstruct() as pgvector.django.VectorField when
@@ -1113,19 +1140,31 @@ class EntityChartOfAccount(models.Model):
 
     @classmethod
     def seed_from_template(cls, entity):
-        """
-        Copy all active ChartOfAccount entries for the entity's type
-        into EntityChartOfAccount records. Skips if entity already has accounts.
-        Returns the number of accounts created.
-        """
-        if cls.objects.filter(entity=entity).exists():
-            return 0
+        """Copy active ChartOfAccount rows for the entity's type into per-entity rows.
 
+        Idempotent — only adds template codes the entity doesn't already have, so
+        it can be re-run safely after a template rebuild to fill in new accounts.
+
+        Refuses any template row whose name matches SUSPICIOUS_NAME_REGEX
+        (bank brands, vehicle models, suburb names, known leaked patterns).
+        Skipped rows are logged WARNING. This guards against a future template
+        edit re-introducing client/firm-specific data of the kind that caused
+        the 2026-04-28 trust template incident.
+        """
+        existing_codes = set(
+            cls.objects.filter(entity=entity).values_list("account_code", flat=True)
+        )
         template_accounts = ChartOfAccount.objects.filter(
             entity_type=entity.entity_type, is_active=True
         )
         created = []
+        skipped = []
         for tpl in template_accounts:
+            if SUSPICIOUS_NAME_REGEX.search(tpl.account_name):
+                skipped.append(f"{tpl.account_code}: {tpl.account_name}")
+                continue
+            if tpl.account_code in existing_codes:
+                continue
             created.append(cls(
                 entity=entity,
                 account_code=tpl.account_code,
@@ -1140,6 +1179,13 @@ class EntityChartOfAccount(models.Model):
             ))
         if created:
             cls.objects.bulk_create(created, ignore_conflicts=True)
+        if skipped:
+            import logging
+            logging.getLogger(__name__).warning(
+                "seed_from_template entity=%s (%s): refused %d suspicious template "
+                "rows — template needs cleaning. Skipped: %s",
+                entity.pk, entity.entity_name, len(skipped), skipped,
+            )
         return len(created)
 
 

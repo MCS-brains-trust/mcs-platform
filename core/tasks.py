@@ -333,3 +333,48 @@ def eva_proactive_suggestion(self, financial_year_id, trigger_type, trigger_cont
             financial_year_id, trigger_type,
         )
         raise self.retry(exc=exc, countdown=30)
+
+
+# ---------------------------------------------------------------------------
+# Chart-of-accounts hygiene — guards against re-introduction of leaked data
+# ---------------------------------------------------------------------------
+@shared_task(name="core.check_template_hygiene")
+def check_template_hygiene():
+    """Monthly scan of master + per-entity COA rows for suspicious account names.
+
+    Logs WARNING with sample hits — does not mutate. Use the warning log to
+    decide whether the template needs another rebuild. Per-entity rows added
+    by accountants (is_custom=True) are excluded from the per-entity scan
+    because they are intentional client-specific labels and not template
+    leakage.
+    """
+    from core.models import (
+        ChartOfAccount, EntityChartOfAccount, SUSPICIOUS_NAME_REGEX,
+    )
+
+    suspect_template = []
+    for a in ChartOfAccount.objects.all():
+        if SUSPICIOUS_NAME_REGEX.search(a.account_name):
+            suspect_template.append(f"{a.entity_type} | {a.account_code} | {a.account_name}")
+
+    suspect_eca = []
+    for a in EntityChartOfAccount.objects.filter(is_custom=False):
+        if SUSPICIOUS_NAME_REGEX.search(a.account_name):
+            suspect_eca.append(f"entity={a.entity_id} | {a.account_code} | {a.account_name}")
+
+    if suspect_template or suspect_eca:
+        logger.warning(
+            "COA hygiene check found suspicious rows. "
+            "Templates: %d, seeded ECAs: %d. "
+            "Template hits (first 10): %s. "
+            "ECA hits (first 10): %s.",
+            len(suspect_template), len(suspect_eca),
+            suspect_template[:10], suspect_eca[:10],
+        )
+    else:
+        logger.info("COA hygiene check: clean.")
+
+    return {
+        "template_suspect": len(suspect_template),
+        "eca_suspect": len(suspect_eca),
+    }

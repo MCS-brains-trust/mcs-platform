@@ -584,13 +584,12 @@ def handle_officer_saved(sender, instance, created, **kwargs):
 
 @receiver(post_save, sender="core.Entity")
 def handle_trust_entity_created(sender, instance, created, **kwargs):
-    """
-    When a new trust entity is created, seed its EntityChartOfAccount from
-    the global ChartOfAccount template (entity_type='trust') by calling
-    EntityChartOfAccount.seed_from_template(instance).
+    """Seed trust entity COA from the master template.
 
-    Fires only on creation, only for trust entities. Any failure is logged
-    and swallowed — a COA seed error must never block entity creation.
+    Trust template was rebuilt on 2026-04-29 after the original was found
+    to contain leaked client data. seed_from_template now refuses any
+    template row whose name matches SUSPICIOUS_REGEX so a future template
+    edit cannot reintroduce client/firm data.
     """
     if not created:
         return
@@ -599,18 +598,6 @@ def handle_trust_entity_created(sender, instance, created, **kwargs):
 
     if instance.entity_type != Entity.EntityType.TRUST:
         return
-
-    # 2026-04-28: Trust COA template contains leaked client data
-    # (FWGP, On Deck, Macquarie Porsche Macan, etc.). Seeding disabled
-    # until template is rebuilt. New trusts will start with empty COA.
-    # Remove this guard in the same commit that ships the rebuilt
-    # trust template.
-    logger.warning(
-        "Trust seeding intentionally skipped for entity %s (%s) — "
-        "template rebuild in progress.",
-        instance.pk, instance.entity_name,
-    )
-    return
 
     try:
         result = EntityChartOfAccount.seed_from_template(instance)
