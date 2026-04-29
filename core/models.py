@@ -6226,3 +6226,264 @@ from core.models_rdti import (  # noqa: E402, F401
     RdtiDraftVersion,
     RdtiFlag,
 )
+
+
+# ---------------------------------------------------------------------------
+# Eva Intelligence Upgrade — Continuous Learning Models
+# ---------------------------------------------------------------------------
+
+class EvaLearnedLesson(models.Model):
+    """
+    A generalised lesson extracted by the Nightly Reflection Engine.
+
+    Lessons are distilled from accountant interactions (EvaClarification,
+    EvaFindingSuppression, ActivityLog, EvaMessage edits) and stored with
+    a vector embedding so they surface in future RAG queries.
+
+    The priority_weight field ensures lessons retrieved from this table
+    rank above standard KnowledgeChunk results during context building.
+    """
+
+    class Category(models.TextChoices):
+        CLASSIFICATION = "classification", "Account Classification"
+        COMPLIANCE = "compliance", "Compliance Preference"
+        STYLE = "style", "Communication Style"
+        WORKFLOW = "workflow", "Workflow Preference"
+        ENTITY_SPECIFIC = "entity_specific", "Entity-Specific Rule"
+        GENERAL = "general", "General Practice Rule"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    lesson_text = models.TextField(
+        help_text="Plain-English lesson extracted by Claude Sonnet during reflection.",
+    )
+    embedding_vector = models.JSONField(
+        null=True, blank=True,
+        help_text="1536-dim float list from text-embedding-3-small.",
+    )
+    category = models.CharField(
+        max_length=30, choices=Category.choices, default=Category.GENERAL,
+    )
+    priority_weight = models.FloatField(
+        default=1.5,
+        help_text="Multiplier applied to similarity score during retrieval. >1 boosts this lesson above standard KB chunks.",
+    )
+    source_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="contributed_lessons",
+        help_text="The accountant whose behaviour generated this lesson (null = firm-wide).",
+    )
+    source_entity = models.ForeignKey(
+        "Entity",
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="learned_lessons",
+        help_text="The entity this lesson applies to (null = all entities).",
+    )
+    source_signal_type = models.CharField(
+        max_length=50, blank=True,
+        help_text="The signal that generated this lesson (e.g. 'EvaClarification', 'EvaFindingSuppression').",
+    )
+    source_signal_id = models.CharField(
+        max_length=100, blank=True,
+        help_text="PK of the source signal record.",
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Inactive lessons are excluded from retrieval.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-priority_weight", "-created_at"]
+        indexes = [
+            models.Index(fields=["category", "is_active"]),
+            models.Index(fields=["source_user", "is_active"]),
+            models.Index(fields=["source_entity", "is_active"]),
+        ]
+        verbose_name = "Eva Learned Lesson"
+        verbose_name_plural = "Eva Learned Lessons"
+
+    def __str__(self):
+        user_str = self.source_user.get_full_name() if self.source_user else "Firm-wide"
+        return f"[{self.get_category_display()}] {self.lesson_text[:80]} ({user_str})"
+
+
+class UserStyleProfile(models.Model):
+    """
+    Per-accountant writing style profile extracted by the Style Learning Engine.
+
+    Populated weekly by the eva_weekly_style_update Celery task, which
+    analyses diffs between AI-generated commentaries and the accountant's
+    final edited versions.
+
+    The prompt_fragment field is injected directly into the system prompt
+    when generating future commentaries for this user.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="eva_style_profile",
+    )
+    style_descriptor = models.TextField(
+        blank=True,
+        help_text="Human-readable summary of this accountant's writing style (for admin review).",
+    )
+    prompt_fragment = models.TextField(
+        blank=True,
+        help_text="Concise style instructions injected into Eva's system prompt when generating documents for this user.",
+    )
+    bas_commentary_edits_analysed = models.IntegerField(
+        default=0,
+        help_text="Number of BAS commentary edits used to build this profile.",
+    )
+    yearend_commentary_edits_analysed = models.IntegerField(
+        default=0,
+        help_text="Number of year-end commentary edits used to build this profile.",
+    )
+    confidence_score = models.FloatField(
+        default=0.0,
+        help_text="0.0-1.0 confidence in this profile. Low confidence profiles are not injected.",
+    )
+    last_updated = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "User Style Profile"
+        verbose_name_plural = "User Style Profiles"
+
+    def __str__(self):
+        return f"Style Profile - {self.user.get_full_name() or self.user.email}"
+
+    @property
+    def is_usable(self):
+        """Only inject this profile if we have enough data to be confident."""
+        return self.confidence_score >= 0.4 and bool(self.prompt_fragment)
+
+
+class EvaAgentTrace(models.Model):
+    """
+    Audit log of a single Eva agent loop execution.
+
+    Records every tool call and reasoning step so that developers and
+    senior accountants can inspect how Eva arrived at a conclusion.
+    """
+
+    class TriggerType(models.TextChoices):
+        CHAT = "chat", "Chat Message"
+        FINALISATION = "finalisation", "Finalisation Gate"
+        PROACTIVE = "proactive", "Proactive Scan"
+        COMMENTARY = "commentary", "Commentary Generation"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    financial_year = models.ForeignKey(
+        "FinancialYear",
+        on_delete=models.CASCADE,
+        related_name="agent_traces",
+        null=True, blank=True,
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="eva_agent_traces",
+    )
+    trigger_type = models.CharField(
+        max_length=20, choices=TriggerType.choices, default=TriggerType.CHAT,
+    )
+    trigger_input = models.TextField(
+        blank=True,
+        help_text="The original user message or system trigger that started this agent run.",
+    )
+    steps = models.JSONField(
+        default=list,
+        help_text="Ordered list of {step, tool_name, tool_args, tool_result, reasoning} dicts.",
+    )
+    total_iterations = models.IntegerField(default=0)
+    total_tokens_used = models.IntegerField(default=0)
+    final_answer = models.TextField(blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["financial_year", "trigger_type"]),
+            models.Index(fields=["user", "created_at"]),
+        ]
+        verbose_name = "Eva Agent Trace"
+        verbose_name_plural = "Eva Agent Traces"
+
+    def __str__(self):
+        fy_str = str(self.financial_year) if self.financial_year else "No FY"
+        return f"AgentTrace [{self.get_trigger_type_display()}] - {fy_str} - {self.created_at:%Y-%m-%d %H:%M}"
+
+
+class EvaCommentaryEdit(models.Model):
+    """
+    Captures the diff when an accountant edits an AI-generated commentary.
+
+    Used by the Style Learning Engine to build UserStyleProfile records.
+    A record is created whenever an accountant saves changes to a
+    BASPeriodCommentary or YearEndCommentary that was originally AI-generated.
+    """
+
+    class DocumentType(models.TextChoices):
+        BAS_COMMENTARY = "bas_commentary", "BAS Commentary"
+        YEAREND_COMMENTARY = "yearend_commentary", "Year-End Commentary"
+        CLIENT_SUMMARY = "client_summary", "Client Summary"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="commentary_edits",
+    )
+    document_type = models.CharField(
+        max_length=30, choices=DocumentType.choices,
+    )
+    source_document_id = models.CharField(
+        max_length=100,
+        help_text="UUID of the BASPeriodCommentary or YearEndCommentary that was edited.",
+    )
+    entity = models.ForeignKey(
+        "Entity",
+        on_delete=models.CASCADE,
+        related_name="commentary_edits",
+        null=True, blank=True,
+    )
+    section_name = models.CharField(
+        max_length=100, blank=True,
+        help_text="Which section was edited (e.g. 'section_revenue', 'section_snapshot').",
+    )
+    original_text = models.TextField(help_text="AI-generated text before editing.")
+    edited_text = models.TextField(help_text="Final text after accountant edits.")
+    diff_summary = models.TextField(
+        blank=True,
+        help_text="LLM-generated plain-English summary of what changed and why.",
+    )
+    char_delta = models.IntegerField(
+        default=0,
+        help_text="Character count change (edited - original). Negative = shortened.",
+    )
+    processed_for_style = models.BooleanField(
+        default=False,
+        help_text="Whether this edit has been consumed by the style learning engine.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        indexes = [
+            models.Index(fields=["user", "document_type", "processed_for_style"]),
+            models.Index(fields=["entity", "document_type"]),
+        ]
+        verbose_name = "Eva Commentary Edit"
+        verbose_name_plural = "Eva Commentary Edits"
+
+    def __str__(self):
+        return f"CommentaryEdit [{self.get_document_type_display()}] by {self.user} - {self.created_at:%Y-%m-%d}"
