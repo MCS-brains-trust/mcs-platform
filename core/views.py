@@ -6528,10 +6528,8 @@ def entity_officer_delete(request, pk):
     _log_action(request, "user_change",
                 f"Removed officer {name} from {entity.entity_name}",
                 officer)
-    from django.db import transaction as txn
-    from core.models import OfficerDistributionHistory, EntityChartOfAccount
-    with txn.atomic():
-        OfficerDistributionHistory.objects.filter(officer=officer).delete()
+    from core.models import EntityChartOfAccount
+    with db_transaction.atomic():
         EntityChartOfAccount.objects.filter(
             beneficiary_officer=officer, auto_provisioned=True,
         ).delete()
@@ -10501,11 +10499,34 @@ def client_bulk_action(request):
         messages.success(request, f"Unarchived {count} entity/entities.")
         _log_action(request, "update", f"Unarchived {count} entity/entities")
     elif action == "delete":
-        count = entities.count()
-        for e in entities:
-            _log_action(request, "delete", f"Deleted entity: {e.entity_name}")
-        entities.delete()
-        messages.success(request, f"Deleted {count} entity/entities and all associated data.")
+        from django.db.models import ProtectedError
+        try:
+            with db_transaction.atomic():
+                count = entities.count()
+                entity_pks = list(entities.values_list("pk", flat=True))
+                for e in entities:
+                    _log_action(request, "delete", f"Deleted entity: {e.entity_name}")
+                entities.delete()
+            messages.success(request, f"Deleted {count} entity/entities and all associated data.")
+        except ProtectedError as e:
+            protected = list(e.protected_objects)
+            blockers = ", ".join(
+                f"{obj._meta.verbose_name} ({obj})" for obj in protected[:5]
+            )
+            extra = "" if len(protected) <= 5 else f" and {len(protected) - 5} more"
+            messages.error(
+                request,
+                f"Cannot delete: protected references exist. "
+                f"Remove these first: {blockers}{extra}. "
+                f"If you believe this is a bug, copy this message and send to support."
+            )
+            logger.warning(
+                "ProtectedError on entity delete: user=%s entities=%s protected_objects=%s",
+                request.user.id,
+                entity_pks,
+                [(o._meta.label, o.pk) for o in protected],
+            )
+            return redirect("core:entity_list")
     else:
         messages.error(request, "Invalid action.")
 

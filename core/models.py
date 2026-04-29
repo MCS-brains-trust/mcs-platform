@@ -383,6 +383,31 @@ class Entity(models.Model):
         from core.industry_codes import get_industry_label
         return get_industry_label(self.industry)
 
+    def get_delete_blockers(self):
+        """Return {related_model_label: count} for any reverse relation that
+        would block deletion under current on_delete rules (PROTECT/RESTRICT).
+        Intended for a future pre-delete confirmation UI."""
+        blockers = {}
+        for rel in self._meta.get_fields():
+            if not (rel.one_to_many or rel.one_to_one):
+                continue
+            on_delete = getattr(rel, "on_delete", None)
+            if on_delete is None:
+                continue
+            if on_delete.__name__ not in ("PROTECT", "RESTRICT"):
+                continue
+            accessor = rel.get_accessor_name()
+            if not accessor:
+                continue
+            try:
+                mgr = getattr(self, accessor)
+                count = mgr.count() if hasattr(mgr, "count") else (1 if mgr else 0)
+                if count:
+                    blockers[rel.related_model._meta.label] = count
+            except Exception:
+                pass
+        return blockers
+
 
 # ---------------------------------------------------------------------------
 # Entity Officer / Signatory
@@ -580,7 +605,7 @@ class OfficerDistributionHistory(models.Model):
     """Tracks historical changes to officer distribution percentages."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     officer = models.ForeignKey(
-        EntityOfficer, on_delete=models.PROTECT,
+        EntityOfficer, on_delete=models.CASCADE,
         related_name="distribution_history",
     )
     distribution_pct = models.DecimalField(max_digits=6, decimal_places=2)
