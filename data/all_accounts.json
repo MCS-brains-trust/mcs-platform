@@ -8023,7 +8023,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0105",
+      "account_code": "105",
       "account_name": "Sales",
       "classification": "Trading income",
       "section": "Revenue",
@@ -8031,7 +8031,15 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0210",
+      "account_code": "0200",
+      "account_name": "Sales - Livestock",
+      "classification": "Operating revenue",
+      "section": "Revenue",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "210",
       "account_name": "Inventory movement profit",
       "classification": "Trading income",
       "section": "Revenue",
@@ -8039,7 +8047,55 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0510",
+      "account_code": "0401",
+      "account_name": "Proceeds - Hay",
+      "classification": "Revenue",
+      "section": "Revenue",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "0404",
+      "account_name": "Proceeds - Milk & Cream",
+      "classification": "Revenue",
+      "section": "Revenue",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "0408",
+      "account_name": "Proceeds - Wheat",
+      "classification": "Revenue",
+      "section": "Revenue",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "0480",
+      "account_name": "Sales",
+      "classification": "Operating revenue",
+      "section": "Revenue",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "0485",
+      "account_name": "Subsidies",
+      "classification": "Operating revenue",
+      "section": "Revenue",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "0500",
+      "account_name": "Other Revenue",
+      "classification": "Operating revenue",
+      "section": "Revenue",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "510",
       "account_name": "Sales",
       "classification": "Other sales revenue",
       "section": "Revenue",
@@ -8047,7 +8103,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0520",
+      "account_code": "520",
       "account_name": "Bad debts recovered",
       "classification": "Other",
       "section": "Revenue",
@@ -8055,7 +8111,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0525",
+      "account_code": "525",
       "account_name": "Assessable government industry payments",
       "classification": "Assessable government industry payments - NP",
       "section": "Revenue",
@@ -8063,7 +8119,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0530",
+      "account_code": "530",
       "account_name": "Commissions received",
       "classification": "Other",
       "section": "Revenue",
@@ -8071,7 +8127,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0540",
+      "account_code": "540",
       "account_name": "Discounts received",
       "classification": "Other",
       "section": "Revenue",
@@ -8079,7 +8135,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0550",
+      "account_code": "550",
       "account_name": "Dividends - Franked",
       "classification": "Dividends - Franked",
       "section": "Revenue",
@@ -8087,7 +8143,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0551",
+      "account_code": "551",
       "account_name": "Dividends - Unfranked",
       "classification": "Dividends - Unfranked",
       "section": "Revenue",
@@ -8095,7 +8151,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0558",
+      "account_code": "558",
       "account_name": "Income where ABN not quoted",
       "classification": "Gross payments where ABN not quoted NPP",
       "section": "Revenue",
@@ -8103,7 +8159,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0559",
+      "account_code": "559",
       "account_name": "Income under voluntary agreements",
       "classification": "Gross payments - Voluntary agreement NPP",
       "section": "Revenue",
@@ -8111,7 +8167,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0560",
+      "account_code": "560",
       "account_name": "Gross receipts",
       "classification": "Other",
       "section": "Revenue",
@@ -8119,7 +8175,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0561",
+      "account_code": "561",
       "account_name": "Income from labour hire",
       "classification": "Gross payments - Labour hire or other payments NPP",
       "section": "Revenue",
@@ -8127,7 +8183,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0562",
+      "account_code": "562",
       "account_name": "Hire income",
       "classification": "Hire income",
       "section": "Revenue",
@@ -8135,7 +8191,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0565",
+      "account_code": "565",
       "account_name": "Distribution from partnerships",
       "classification": "Distributions from partnerships",
       "section": "Revenue",
@@ -8143,7 +8199,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0567",
+      "account_code": "567",
       "account_name": "Distribution from trusts",
       "classification": "Distributions from trusts",
       "section": "Revenue",
@@ -8151,7 +8207,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0570",
+      "account_code": "570",
       "account_name": "Insurance recoveries",
       "classification": "Other",
       "section": "Revenue",
@@ -8159,7 +8215,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0575",
+      "account_code": "575",
       "account_name": "Interest received",
       "classification": "Interest",
       "section": "Revenue",
@@ -8167,7 +8223,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0578",
+      "account_code": "578",
       "account_name": "Net foreign income",
       "classification": "Net foreign income",
       "section": "Revenue",
@@ -8175,7 +8231,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0579",
+      "account_code": "579",
       "account_name": "Attributed foreign income",
       "classification": "Other",
       "section": "Revenue",
@@ -8183,7 +8239,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0580",
+      "account_code": "580",
       "account_name": "Foreign exchange profit",
       "classification": "Foreign exchange profit",
       "section": "Revenue",
@@ -8191,7 +8247,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0581",
+      "account_code": "581",
       "account_name": "FBT Employee Contribution",
       "classification": "Other",
       "section": "Revenue",
@@ -8199,7 +8255,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0584",
+      "account_code": "584",
       "account_name": "Other income",
       "classification": "Other",
       "section": "Revenue",
@@ -8207,7 +8263,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0585",
+      "account_code": "585",
       "account_name": "Lease income",
       "classification": "Lease income",
       "section": "Revenue",
@@ -8215,7 +8271,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0590",
+      "account_code": "590",
       "account_name": "Professional fees",
       "classification": "Other",
       "section": "Revenue",
@@ -8223,7 +8279,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0597",
+      "account_code": "597",
       "account_name": "Profit on sale of receivables",
       "classification": "Profit on sale of receivables",
       "section": "Revenue",
@@ -8231,7 +8287,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0598",
+      "account_code": "598",
       "account_name": "Profit on sale of investments",
       "classification": "Profit on sale of investments",
       "section": "Revenue",
@@ -8239,7 +8295,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0599",
+      "account_code": "599",
       "account_name": "Profit on sale of intangible assets",
       "classification": "Profit on sale of intangibles",
       "section": "Revenue",
@@ -8247,7 +8303,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0600",
+      "account_code": "600",
       "account_name": "Profit on sale of PPE",
       "classification": "Profit on sale of property, plant & equipment",
       "section": "Revenue",
@@ -8255,7 +8311,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0601",
+      "account_code": "601",
       "account_name": "Capital gains/Loss - Sale of Assets",
       "classification": "Capital gains on sale of asset",
       "section": "Revenue",
@@ -8263,7 +8319,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0602",
+      "account_code": "602",
       "account_name": "Other non-operating revenue",
       "classification": "Non-operating revenue",
       "section": "Revenue",
@@ -8271,7 +8327,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0610",
+      "account_code": "610",
       "account_name": "Rebates & refunds",
       "classification": "Other",
       "section": "Revenue",
@@ -8279,7 +8335,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0620",
+      "account_code": "620",
       "account_name": "Rents received",
       "classification": "Rental income",
       "section": "Revenue",
@@ -8287,7 +8343,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0625",
+      "account_code": "625",
       "account_name": "Royalties received",
       "classification": "Royalty income",
       "section": "Revenue",
@@ -8295,7 +8351,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0630",
+      "account_code": "630",
       "account_name": "Sales",
       "classification": "Other",
       "section": "Revenue",
@@ -8303,7 +8359,7 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0640",
+      "account_code": "640",
       "account_name": "Subsidies received",
       "classification": "Government subsidies received",
       "section": "Revenue",
@@ -8311,10 +8367,74 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "0700",
+      "account_code": "700",
       "account_name": "Rent received",
       "classification": "Rent received",
       "section": "Revenue",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "0901",
+      "account_name": "Distribution income from sub-trust",
+      "classification": "Trust Income",
+      "section": "Revenue",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "0905",
+      "account_name": "Capital gains/loss - Sale of assets",
+      "classification": "Capital Gains",
+      "section": "Revenue",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1010",
+      "account_name": "Purchases",
+      "classification": "Cost of sales",
+      "section": "Cost of Sales",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1025",
+      "account_name": "Purchase of materials",
+      "classification": "Expense",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1040",
+      "account_name": "Direct labour",
+      "classification": "Cost of sales",
+      "section": "Cost of Sales",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1045",
+      "account_name": "Depreciation - Plant",
+      "classification": "Less: Accumulated depreciation",
+      "section": "Assets",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1060",
+      "account_name": "Insurance",
+      "classification": "Operating expense",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1065",
+      "account_name": "Plant repairs",
+      "classification": "Property, plant and equipment",
+      "section": "Assets",
       "tax_code": "",
       "entity_type": "trust"
     },
@@ -8434,6 +8554,222 @@
       "account_code": "1165",
       "account_name": "Contractor, sub-contractor & commission",
       "classification": "Contractor, subcontractor & commission",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1210",
+      "account_name": "Purchases - Livestock",
+      "classification": "Cost of sales",
+      "section": "Cost of Sales",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1308",
+      "account_name": "Cartage and freight",
+      "classification": "Operating expense",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1316",
+      "account_name": "Contract payments",
+      "classification": "Expense",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1318",
+      "account_name": "Depreciation",
+      "classification": "Operating expense",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1319",
+      "account_name": "Amortisation PP",
+      "classification": "Operating expense",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1328",
+      "account_name": "Employees amenities",
+      "classification": "Expense",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1332",
+      "account_name": "Employees food & bo",
+      "classification": "Expense",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1336",
+      "account_name": "Fertiliser",
+      "classification": "Expense",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1344",
+      "account_name": "Freight & cartage",
+      "classification": "Operating expense",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1368",
+      "account_name": "Ins",
+      "classification": "Expense",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1372",
+      "account_name": "Interest - Australia",
+      "classification": "Expense",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1374",
+      "account_name": "Lease payments",
+      "classification": "Expense",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1378",
+      "account_name": "Licences & permits",
+      "classification": "Expense",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1380",
+      "account_name": "Light & power",
+      "classification": "Expense",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1385",
+      "account_name": "M/V car - Fuel & oil",
+      "classification": "Operating expense",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1389",
+      "account_name": "M/V car - Repairs",
+      "classification": "Operating expense",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1390",
+      "account_name": "M/V car - Other",
+      "classification": "Expense",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1422",
+      "account_name": "Rent On Land & Buildings",
+      "classification": "Property, plant and equipment",
+      "section": "Assets",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1426",
+      "account_name": "Repairs & maintenance",
+      "classification": "Operating expense",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1434",
+      "account_name": "Salaries - ordinary",
+      "classification": "Expense",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1438",
+      "account_name": "Seed",
+      "classification": "Expense",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1446",
+      "account_name": "Spray & chemicals",
+      "classification": "Expense",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1450",
+      "account_name": "Storage charges",
+      "classification": "Expense",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1454",
+      "account_name": "Sundry expenses",
+      "classification": "Expense",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1458",
+      "account_name": "Superannuation",
+      "classification": "Operating expense",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1462",
+      "account_name": "Telephone",
+      "classification": "Operating expense",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1470",
+      "account_name": "Veterinary expenses",
+      "classification": "Expense",
       "section": "Expenses",
       "tax_code": "",
       "entity_type": "trust"
@@ -9512,15 +9848,7 @@
     },
     {
       "account_code": "2000",
-      "account_name": "Cash at bank - CBA",
-      "classification": "Bank account",
-      "section": "Assets",
-      "tax_code": "",
-      "entity_type": "trust"
-    },
-    {
-      "account_code": "2001",
-      "account_name": "Cash at Bank - Westpac 326",
+      "account_name": "Cash at bank",
       "classification": "Bank account",
       "section": "Assets",
       "tax_code": "",
@@ -9561,14 +9889,6 @@
     {
       "account_code": "2140",
       "account_name": "Loans to other persons",
-      "classification": "Loans to directors",
-      "section": "Assets",
-      "tax_code": "",
-      "entity_type": "trust"
-    },
-    {
-      "account_code": "2141",
-      "account_name": "Loan - The Fine Wine Gourment Pantry",
       "classification": "Loans to directors",
       "section": "Assets",
       "tax_code": "",
@@ -9647,6 +9967,14 @@
       "entity_type": "trust"
     },
     {
+      "account_code": "2300",
+      "account_name": "Raw materials - at cost",
+      "classification": "Inventory",
+      "section": "Assets",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
       "account_code": "2305",
       "account_name": "Stock on Hand - Wholesale",
       "classification": "Trading raw materials",
@@ -9666,6 +9994,14 @@
       "account_code": "2335",
       "account_name": "Stock on Hand - Retail",
       "classification": "Trading finished goods",
+      "section": "Assets",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "2340",
+      "account_name": "Stock on Hand - Barley",
+      "classification": "Inventory",
       "section": "Assets",
       "tax_code": "",
       "entity_type": "trust"
@@ -9737,14 +10073,6 @@
     {
       "account_code": "2475",
       "account_name": "Other",
-      "classification": "Other",
-      "section": "Assets",
-      "tax_code": "",
-      "entity_type": "trust"
-    },
-    {
-      "account_code": "2476",
-      "account_name": "Rental Bond - Cheltenham",
       "classification": "Other",
       "section": "Assets",
       "tax_code": "",
@@ -10023,6 +10351,22 @@
       "entity_type": "trust"
     },
     {
+      "account_code": "2850",
+      "account_name": "Plant & equipment -",
+      "classification": "Property, plant and equipment",
+      "section": "Assets",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "2859",
+      "account_name": "Less: Accumulated",
+      "classification": "Non-current asset",
+      "section": "Assets",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
       "account_code": "2860",
       "account_name": "Plant & equipment (cost)",
       "classification": "Plant & equipment (cost)",
@@ -10154,6 +10498,14 @@
       "account_code": "2900",
       "account_name": "Other assets",
       "classification": "Other assets",
+      "section": "Assets",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "2924",
+      "account_name": "Less: Accumulat",
+      "classification": "Non-current asset",
       "section": "Assets",
       "tax_code": "",
       "entity_type": "trust"
@@ -10383,14 +10735,6 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "3104",
-      "account_name": "FWGP Mastercard",
-      "classification": "Unsecured - Other creditor",
-      "section": "Liabilities",
-      "tax_code": "",
-      "entity_type": "trust"
-    },
-    {
       "account_code": "3120",
       "account_name": "Debentures",
       "classification": "Unsecured - Debentures",
@@ -10471,6 +10815,22 @@
       "entity_type": "trust"
     },
     {
+      "account_code": "3251",
+      "account_name": "Income tax withheld",
+      "classification": "Current Liability",
+      "section": "Liabilities",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "3252",
+      "account_name": "Less: Deferred interest",
+      "classification": "Current Liability",
+      "section": "Liabilities",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
       "account_code": "3264",
       "account_name": "Debentures",
       "classification": "Secured - Debentures",
@@ -10513,14 +10873,6 @@
     {
       "account_code": "3351",
       "account_name": "Wages Payable",
-      "classification": "Employee entitlements",
-      "section": "Liabilities",
-      "tax_code": "",
-      "entity_type": "trust"
-    },
-    {
-      "account_code": "3352",
-      "account_name": "Super Contributions - Felice",
       "classification": "Employee entitlements",
       "section": "Liabilities",
       "tax_code": "",
@@ -10647,38 +10999,6 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "3501",
-      "account_name": "CBA - LAL Better Business Loan",
-      "classification": "Unsecured - Bank loans",
-      "section": "Liabilities",
-      "tax_code": "",
-      "entity_type": "trust"
-    },
-    {
-      "account_code": "3502",
-      "account_name": "CBA Better Business Loan",
-      "classification": "Unsecured - Bank loans",
-      "section": "Liabilities",
-      "tax_code": "",
-      "entity_type": "trust"
-    },
-    {
-      "account_code": "3503",
-      "account_name": "Loan - On Deck",
-      "classification": "Unsecured - Bank loans",
-      "section": "Liabilities",
-      "tax_code": "",
-      "entity_type": "trust"
-    },
-    {
-      "account_code": "3504",
-      "account_name": "Deferred Interest - Ondeck Loan",
-      "classification": "Unsecured - Bank loans",
-      "section": "Liabilities",
-      "tax_code": "",
-      "entity_type": "trust"
-    },
-    {
       "account_code": "3523",
       "account_name": "Hire purchase",
       "classification": "Unsecured - Other loans",
@@ -10759,14 +11079,6 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "3628",
-      "account_name": "Henneken Brine",
-      "classification": "Secured bank loans",
-      "section": "Liabilities",
-      "tax_code": "",
-      "entity_type": "trust"
-    },
-    {
       "account_code": "3628.01",
       "account_name": "Less Deferred Interest",
       "classification": "Secured bank loans",
@@ -10775,24 +11087,8 @@
       "entity_type": "trust"
     },
     {
-      "account_code": "3629",
-      "account_name": "Macquarie Porsche Macan",
-      "classification": "Secured bank loans",
-      "section": "Liabilities",
-      "tax_code": "",
-      "entity_type": "trust"
-    },
-    {
       "account_code": "3629.01",
       "account_name": "Less Deferred Interest",
-      "classification": "Secured bank loans",
-      "section": "Liabilities",
-      "tax_code": "",
-      "entity_type": "trust"
-    },
-    {
-      "account_code": "3630",
-      "account_name": "Capital Finance - Multivac Machine",
       "classification": "Secured bank loans",
       "section": "Liabilities",
       "tax_code": "",
@@ -10879,6 +11175,22 @@
       "entity_type": "trust"
     },
     {
+      "account_code": "4001",
+      "account_name": "Settled sum",
+      "classification": "Trust Capital",
+      "section": "Equity",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "4002",
+      "account_name": "Capital profits reserve",
+      "classification": "Trust Capital",
+      "section": "Equity",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
       "account_code": "4003",
       "account_name": "Interest received on loan",
       "classification": "Capital credits",
@@ -10923,6 +11235,62 @@
       "account_name": "Distribution for year",
       "classification": "Capital credits",
       "section": "Capital Accounts",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "4006.01",
+      "account_name": "Capital contribution",
+      "classification": "Trust equity",
+      "section": "Equity",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "4006.02",
+      "account_name": "Capital contribution",
+      "classification": "Trust equity",
+      "section": "Equity",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "4010",
+      "account_name": "Capital contribution",
+      "classification": "Trust equity",
+      "section": "Equity",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "4011",
+      "account_name": "Contribution by settlor",
+      "classification": "Trust Capital",
+      "section": "Equity",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "4015",
+      "account_name": "Gifts to trust",
+      "classification": "Trust Capital",
+      "section": "Equity",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "4020",
+      "account_name": "Distribution for year",
+      "classification": "Distribution",
+      "section": "Equity",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "4021",
+      "account_name": "Distribution for year - prior",
+      "classification": "Distribution",
+      "section": "Equity",
       "tax_code": "",
       "entity_type": "trust"
     },
@@ -10991,10 +11359,154 @@
       "entity_type": "trust"
     },
     {
+      "account_code": "4054.01",
+      "account_name": "Drawings",
+      "classification": "Trust equity",
+      "section": "Equity",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "4054.02",
+      "account_name": "Drawings",
+      "classification": "Trust equity",
+      "section": "Equity",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "4080",
+      "account_name": "Drawings",
+      "classification": "Trust equity",
+      "section": "Equity",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "4100",
+      "account_name": "Beneficiary current account - 1",
+      "classification": "Beneficiary Accounts",
+      "section": "Equity",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "4101",
+      "account_name": "Beneficiary current account - 2",
+      "classification": "Beneficiary Accounts",
+      "section": "Equity",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "4102",
+      "account_name": "Beneficiary current account - 3",
+      "classification": "Beneficiary Accounts",
+      "section": "Equity",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "4103",
+      "account_name": "Beneficiary current account - 4",
+      "classification": "Beneficiary Accounts",
+      "section": "Equity",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "4110",
+      "account_name": "Funds loaned to trust - Beneficiary 1",
+      "classification": "Beneficiary Loans",
+      "section": "Liabilities",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "4111",
+      "account_name": "Funds loaned to trust - Beneficiary 2",
+      "classification": "Beneficiary Loans",
+      "section": "Liabilities",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "4112",
+      "account_name": "Funds loaned to trust - Beneficiary 3",
+      "classification": "Beneficiary Loans",
+      "section": "Liabilities",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "4113",
+      "account_name": "Funds loaned to trust - Beneficiary 4",
+      "classification": "Beneficiary Loans",
+      "section": "Liabilities",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "4120",
+      "account_name": "Interest on loan - Beneficiary 1",
+      "classification": "Beneficiary Interest",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "4121",
+      "account_name": "Interest on loan - Beneficiary 2",
+      "classification": "Beneficiary Interest",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "4122",
+      "account_name": "Interest on loan - Beneficiary 3",
+      "classification": "Beneficiary Interest",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "4123",
+      "account_name": "Interest on loan - Beneficiary 4",
+      "classification": "Beneficiary Interest",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
       "account_code": "4199",
       "account_name": "Undistributed income",
       "classification": "Retained profits",
       "section": "P and L Appropriation",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "4200",
+      "account_name": "Owner A Share Capital",
+      "classification": "Trust equity",
+      "section": "Equity",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "4201",
+      "account_name": "Subscribed units",
+      "classification": "Unit Trust Capital",
+      "section": "Equity",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "4202",
+      "account_name": "Unitholders' funds introduced",
+      "classification": "Unit Trust Capital",
+      "section": "Equity",
       "tax_code": "",
       "entity_type": "trust"
     },
@@ -11018,6 +11530,22 @@
       "account_code": "4260",
       "account_name": "Gifts to trust",
       "classification": "Gifts to trust",
+      "section": "Equity",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "4300",
+      "account_name": "Opening balance - Corporate beneficiary - Sub-trust",
+      "classification": "Corporate Beneficiary",
+      "section": "Equity",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "4301",
+      "account_name": "Opening balance - Corporate beneficiary - UPE",
+      "classification": "Corporate Beneficiary",
       "section": "Equity",
       "tax_code": "",
       "entity_type": "trust"
