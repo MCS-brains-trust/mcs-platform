@@ -11384,31 +11384,7 @@
     },
     {
       "account_code": "4100",
-      "account_name": "Beneficiary current account - 1",
-      "classification": "Beneficiary Accounts",
-      "section": "Equity",
-      "tax_code": "",
-      "entity_type": "trust"
-    },
-    {
-      "account_code": "4101",
-      "account_name": "Beneficiary current account - 2",
-      "classification": "Beneficiary Accounts",
-      "section": "Equity",
-      "tax_code": "",
-      "entity_type": "trust"
-    },
-    {
-      "account_code": "4102",
-      "account_name": "Beneficiary current account - 3",
-      "classification": "Beneficiary Accounts",
-      "section": "Equity",
-      "tax_code": "",
-      "entity_type": "trust"
-    },
-    {
-      "account_code": "4103",
-      "account_name": "Beneficiary current account - 4",
+      "account_name": "Beneficiary current account",
       "classification": "Beneficiary Accounts",
       "section": "Equity",
       "tax_code": "",
@@ -11416,31 +11392,7 @@
     },
     {
       "account_code": "4110",
-      "account_name": "Funds loaned to trust - Beneficiary 1",
-      "classification": "Beneficiary Loans",
-      "section": "Liabilities",
-      "tax_code": "",
-      "entity_type": "trust"
-    },
-    {
-      "account_code": "4111",
-      "account_name": "Funds loaned to trust - Beneficiary 2",
-      "classification": "Beneficiary Loans",
-      "section": "Liabilities",
-      "tax_code": "",
-      "entity_type": "trust"
-    },
-    {
-      "account_code": "4112",
-      "account_name": "Funds loaned to trust - Beneficiary 3",
-      "classification": "Beneficiary Loans",
-      "section": "Liabilities",
-      "tax_code": "",
-      "entity_type": "trust"
-    },
-    {
-      "account_code": "4113",
-      "account_name": "Funds loaned to trust - Beneficiary 4",
+      "account_name": "Funds loaned to trust",
       "classification": "Beneficiary Loans",
       "section": "Liabilities",
       "tax_code": "",
@@ -11448,31 +11400,7 @@
     },
     {
       "account_code": "4120",
-      "account_name": "Interest on loan - Beneficiary 1",
-      "classification": "Beneficiary Interest",
-      "section": "Expenses",
-      "tax_code": "",
-      "entity_type": "trust"
-    },
-    {
-      "account_code": "4121",
-      "account_name": "Interest on loan - Beneficiary 2",
-      "classification": "Beneficiary Interest",
-      "section": "Expenses",
-      "tax_code": "",
-      "entity_type": "trust"
-    },
-    {
-      "account_code": "4122",
-      "account_name": "Interest on loan - Beneficiary 3",
-      "classification": "Beneficiary Interest",
-      "section": "Expenses",
-      "tax_code": "",
-      "entity_type": "trust"
-    },
-    {
-      "account_code": "4123",
-      "account_name": "Interest on loan - Beneficiary 4",
+      "account_name": "Interest on loan",
       "classification": "Beneficiary Interest",
       "section": "Expenses",
       "tax_code": "",

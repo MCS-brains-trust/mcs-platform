@@ -20,7 +20,7 @@ deduplication keyed by FinancialYear ID.
 import logging
 import hashlib
 import threading
-from django.db.models.signals import post_save, post_delete
+from django.db.models.signals import post_save, post_delete, pre_delete
 from django.dispatch import receiver
 from django.core.cache import cache
 
@@ -557,10 +557,15 @@ def handle_officer_saved(sender, instance, created, **kwargs):
     When a new officer is created with a distribution role (unit_holder or
     beneficiary) on a trust entity, auto-provision capital accounts.
     When an existing officer is ceased, mark their accounts as ceased.
+
+    Phase 2: also materialises per-officer 4xxx children
+    (see core/beneficiary_account_service.py) and propagates name changes
+    to existing auto-provisioned ECAs.
     """
     from core.models import EntityOfficer
 
     if created and instance.role in EntityOfficer.DISTRIBUTION_ROLES:
+        # Existing 9000-series provisioning — DO NOT TOUCH (Phase 3 will migrate)
         try:
             from core.capital_account_service import provision_capital_accounts
             provision_capital_accounts(instance.pk)
@@ -568,14 +573,55 @@ def handle_officer_saved(sender, instance, created, **kwargs):
             logger.exception(
                 "Failed to provision capital accounts for officer %s", instance.pk
             )
-    elif not created and instance.date_ceased:
+        # NEW: 4xxx beneficiary-account provisioning
         try:
-            from core.capital_account_service import cease_officer_accounts
-            cease_officer_accounts(instance.pk)
+            from core.beneficiary_account_service import provision_beneficiary_accounts
+            provision_beneficiary_accounts(instance.pk)
         except Exception:
             logger.exception(
-                "Failed to cease capital accounts for officer %s", instance.pk
+                "Failed to provision beneficiary accounts for officer %s", instance.pk
             )
+
+    if not created:
+        # Officer-saved name-change propagation. Idempotent: zero updates
+        # when nothing changed.
+        try:
+            from core.beneficiary_account_service import sync_officer_account_names
+            sync_officer_account_names(instance.pk)
+        except Exception:
+            logger.exception(
+                "Failed to sync officer account names for officer %s", instance.pk
+            )
+
+        if instance.date_ceased:
+            try:
+                from core.capital_account_service import cease_officer_accounts
+                cease_officer_accounts(instance.pk)
+            except Exception:
+                logger.exception(
+                    "Failed to cease capital accounts for officer %s", instance.pk
+                )
+
+
+@receiver(pre_delete, sender="core.EntityOfficer")
+def handle_officer_pre_delete(sender, instance, **kwargs):
+    """Delete auto-provisioned ECAs whenever an officer is deleted, regardless
+    of code path (UI view, admin, shell, cascade). Phase 1.6 flagged that
+    cleanup previously lived only in entity_officer_delete (views.py:6531-6535)
+    and would orphan rows for any other deletion path.
+    """
+    from core.models import EntityChartOfAccount
+
+    try:
+        EntityChartOfAccount.objects.filter(
+            beneficiary_officer=instance,
+            auto_provisioned=True,
+        ).delete()
+    except Exception:
+        logger.exception(
+            "Failed to clean up auto-provisioned ECAs for deleted officer %s",
+            instance.pk,
+        )
 
 
 # ============================================================================

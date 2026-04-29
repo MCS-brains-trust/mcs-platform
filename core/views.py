@@ -5754,9 +5754,15 @@ def journal_edit(request, pk):
         form = AdjustingJournalForm(instance=journal)
         formset = EditJournalLineFormSet(instance=journal)
 
+    # Phase 2: read-only banner counting parent-code postings whose entity
+    # has per-beneficiary children. Display only — no auto-action.
+    from core.beneficiary_account_service import count_parent_postings_with_children
+    banner_count = count_parent_postings_with_children(fy)
+
     return render(request, "core/journal_edit.html", {
         "form": form, "formset": formset, "journal": journal,
         "fy": fy, "entity": entity, "accounts": accounts,
+        "beneficiary_parent_banner_count": banner_count,
     })
 
 
