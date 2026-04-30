@@ -554,22 +554,64 @@ document.addEventListener('DOMContentLoaded', function() {
     // Enter key evaluates and commits; Escape cancels
     // ===================================================================
 
+    // Safe recursive descent parser — no eval, no Function(), CSP-safe.
+    function _calcParse(str) {
+        var pos = 0;
+        var s = str.replace(/\s+/g, '');
+        function peek() { return s[pos]; }
+        function consume() { return s[pos++]; }
+        function parseNumber() {
+            var start = pos;
+            if (peek() === '-') consume();
+            while (pos < s.length && /[\d.]/.test(peek())) consume();
+            var n = parseFloat(s.slice(start, pos));
+            if (isNaN(n)) throw new Error('bad number');
+            return n;
+        }
+        function parsePrimary() {
+            if (peek() === '(') {
+                consume();
+                var v = parseAddSub();
+                if (peek() !== ')') throw new Error('missing )');
+                consume();
+                return v;
+            }
+            return parseNumber();
+        }
+        function parseMulDiv() {
+            var left = parsePrimary();
+            while (peek() === '*' || peek() === '/') {
+                var op = consume();
+                var right = parsePrimary();
+                left = op === '*' ? left * right : left / right;
+            }
+            return left;
+        }
+        function parseAddSub() {
+            var left = parseMulDiv();
+            while (peek() === '+' || (peek() === '-' && pos > 0)) {
+                var op = consume();
+                var right = parseMulDiv();
+                left = op === '+' ? left + right : left - right;
+            }
+            return left;
+        }
+        var result = parseAddSub();
+        if (pos !== s.length) throw new Error('unexpected: ' + peek());
+        return result;
+    }
+
     function evaluateExpression(val) {
         if (!val) return 0;
         var expr = val.replace(/,/g, '').trim();
         if (expr.charAt(0) === '=') expr = expr.substring(1).trim();
-        if (/^-?[\d.]+$/.test(expr)) {
-            var n = parseFloat(expr);
-            return isNaN(n) ? null : Math.round(n * 100) / 100;
-        }
-        if (/^[\d.+\-*/() ]+$/.test(expr)) {
-            try {
-                var result = Function('"use strict"; return (' + expr + ')')();
-                if (typeof result === 'number' && isFinite(result)) {
-                    return Math.round(result * 100) / 100;
-                }
-            } catch(e) {}
-        }
+        if (!expr) return 0;
+        try {
+            var result = _calcParse(expr);
+            if (typeof result === 'number' && isFinite(result)) {
+                return Math.round(result * 100) / 100;
+            }
+        } catch(e) {}
         return null;
     }
 
