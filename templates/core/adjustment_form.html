@@ -77,8 +77,8 @@
                                         <div class="d-none">{{ line_form.account_name }}</div>
                                     </td>
                                     <td>{{ line_form.description }}</td>
-                                    <td>{{ line_form.debit }}</td>
-                                    <td>{{ line_form.credit }}</td>
+                                    <td><div class="dr-cr-wrapper">{{ line_form.debit }}</div></td>
+                                    <td><div class="dr-cr-wrapper">{{ line_form.credit }}</div></td>
                                     <td class="text-center">
                                         {{ line_form.DELETE }}
                                         {% for hidden in line_form.hidden_fields %}{{ hidden }}{% endfor %}
@@ -147,6 +147,38 @@
     border-top: 1px solid #dee2e6; font-weight: 500;
 }
 .account-dropdown-create:hover { background-color: #e9f0ff; }
+
+/* ===== Inline Calculator ===== */
+.dr-cr-field.calc-mode {
+    background-color: #fffbe6 !important;
+    border-color: #f0a500 !important;
+    color: #7a4f00 !important;
+    font-family: 'Courier New', monospace;
+    font-weight: 600;
+}
+.calc-preview {
+    position: absolute;
+    z-index: 1060;
+    bottom: calc(100% + 4px);
+    left: 0;
+    min-width: 160px;
+    max-width: 220px;
+    background: #1a1a2e;
+    color: #a8ff78;
+    font-family: 'Courier New', monospace;
+    font-size: 0.78rem;
+    padding: 5px 10px;
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0,0,0,.35);
+    white-space: nowrap;
+    pointer-events: none;
+    display: none;
+}
+.calc-preview.show { display: block; }
+.calc-preview .calc-result { font-size: 1rem; font-weight: 700; color: #fff; }
+.calc-preview .calc-hint { font-size: 0.7rem; color: #aaa; margin-top: 1px; }
+.calc-preview.calc-error { background: #3d0000; color: #ff8080; }
+.dr-cr-wrapper { position: relative; display: block; }
 </style>
 
 <!-- Create Account Modal -->
@@ -542,61 +574,136 @@ document.addEventListener('DOMContentLoaded', function() {
         return parseFloat(val.replace(/,/g, '')) || 0;
     }
 
-    // Evaluate arithmetic expressions (e.g. =1000+500, 8181.82*2, =180000/3)
-    // Returns null if the value is not a valid number or expression
+    // ===================================================================
+    // INLINE CALCULATOR ENGINE
+    // Supports: plain numbers, =expr, and bare expressions like 25000+8745
+    // Operators: + - * / ( )   |   Prefix = is optional
+    // Live preview tooltip appears above the field while typing
+    // Enter key evaluates and commits; Escape cancels
+    // ===================================================================
+
+    // Evaluate arithmetic expressions. Returns a number or null (invalid).
     function evaluateExpression(val) {
         if (!val) return 0;
         var expr = val.replace(/,/g, '').trim();
-        // Strip leading = sign (e.g. =314+114)
         if (expr.charAt(0) === '=') expr = expr.substring(1).trim();
-        // If it contains arithmetic operators, evaluate as expression
-        if (/[+\-*/]/.test(expr.replace(/^-/, ''))) {
-            // Only allow digits, decimal points, parentheses, and operators
-            if (/^[\d.+\-*/() ]+$/.test(expr)) {
-                try {
-                    var result = Function('"use strict"; return (' + expr + ')')();
-                    if (typeof result === 'number' && isFinite(result)) {
-                        return Math.round(result * 100) / 100;
-                    }
-                } catch(e) {}
-            }
-            return null; // invalid expression — leave unchanged
+        // Pure number — fast path
+        if (/^-?[\d.]+$/.test(expr)) {
+            var n = parseFloat(expr);
+            return isNaN(n) ? null : Math.round(n * 100) / 100;
         }
-        var num = parseFloat(expr);
-        return isNaN(num) ? null : num;
+        // Expression path — only allow safe characters
+        if (/^[\d.+\-*/() ]+$/.test(expr)) {
+            try {
+                var result = Function('"use strict"; return (' + expr + ')')();
+                if (typeof result === 'number' && isFinite(result)) {
+                    return Math.round(result * 100) / 100;
+                }
+            } catch(e) {}
+        }
+        return null; // invalid
     }
 
-    // Format a field value with commas on blur
+    // Returns true if the raw string looks like a calculator expression
+    function isExpression(val) {
+        if (!val) return false;
+        var expr = val.replace(/,/g, '').trim();
+        if (expr.charAt(0) === '=') return true;
+        // Contains an operator that isn't just a leading minus
+        return /[+\-*/]/.test(expr.replace(/^-/, ''));
+    }
+
     function formatField(el) {
         var num = evaluateExpression(el.value);
-        if (num === null) return; // invalid — leave unchanged
-        if (num === 0) {
-            el.value = '0';
-        } else {
-            el.value = fmtNum(num);
-        }
+        if (num === null) return;
+        el.value = num === 0 ? '0' : fmtNum(num);
+        el.classList.remove('calc-mode');
     }
 
-    // Strip commas on focus so user can type freely
     function stripField(el) {
         var num = parseRaw(el.value);
-        if (num === 0) {
-            el.value = '';
-        } else {
-            el.value = num.toFixed(2);
-        }
+        el.value = num === 0 ? '' : num.toFixed(2);
         el.select();
     }
 
+    // ---- Calculator Preview Tooltip ----
+    function getOrCreatePreview(el) {
+        var wrapper = el.closest('.dr-cr-wrapper');
+        if (!wrapper) return null;
+        var existing = wrapper.querySelector('.calc-preview');
+        if (existing) return existing;
+        var tip = document.createElement('div');
+        tip.className = 'calc-preview';
+        wrapper.appendChild(tip);
+        return tip;
+    }
+
+    function updateCalcPreview(el) {
+        var tip = getOrCreatePreview(el);
+        if (!tip) return;
+        var raw = el.value.replace(/,/g, '').trim();
+        if (!raw || !isExpression(el.value)) {
+            tip.classList.remove('show', 'calc-error');
+            el.classList.remove('calc-mode');
+            return;
+        }
+        el.classList.add('calc-mode');
+        var result = evaluateExpression(el.value);
+        if (result === null) {
+            tip.classList.add('calc-error');
+            tip.innerHTML = '<div class="calc-hint">&#9888; Invalid expression</div>';
+        } else {
+            tip.classList.remove('calc-error');
+            tip.innerHTML =
+                '<div class="calc-result">= $' + fmtNum(result) + '</div>' +
+                '<div class="calc-hint">Enter to apply &middot; Esc to cancel</div>';
+        }
+        tip.classList.add('show');
+    }
+
+    function hideCalcPreview(el) {
+        var tip = getOrCreatePreview(el);
+        if (tip) tip.classList.remove('show');
+        el.classList.remove('calc-mode');
+    }
+
+    function attachCalcPreview(el) {
+        el.addEventListener('input', function() { updateCalcPreview(el); });
+        el.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                // Evaluate and commit on Enter
+                var result = evaluateExpression(el.value);
+                if (result !== null) {
+                    el.value = result === 0 ? '0' : fmtNum(result);
+                    hideCalcPreview(el);
+                    updateTotals();
+                    e.preventDefault();
+                }
+            } else if (e.key === 'Escape') {
+                // Cancel — restore last committed numeric value
+                var num = parseRaw(el.value);
+                el.value = num === 0 ? '' : num.toFixed(2);
+                hideCalcPreview(el);
+                e.preventDefault();
+            }
+        });
+    }
+
+    // Attach calculator to all existing dr-cr fields on page load
+    document.querySelectorAll('.dr-cr-field').forEach(attachCalcPreview);
+
+    // Global focus / blur handlers
     document.addEventListener('focus', function(e) {
         if (e.target.classList && e.target.classList.contains('dr-cr-field')) {
             stripField(e.target);
+            updateCalcPreview(e.target);
         }
     }, true);
 
     document.addEventListener('blur', function(e) {
         if (e.target.classList && e.target.classList.contains('dr-cr-field')) {
             formatField(e.target);
+            hideCalcPreview(e.target);
             updateTotals();
         }
     }, true);
@@ -607,17 +714,14 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    // Before form submit:
-    // 1. Strip commas from all dr/cr fields so Django gets clean numbers
-    // 2. Auto-mark empty rows for deletion so Django skips them
-    // 3. Clear debit/credit on empty rows so Django doesn't think they have data
+    // Before form submit — evaluate any pending expressions, strip commas,
+    // and auto-mark empty rows for deletion
     document.getElementById('journal-form').addEventListener('submit', function(e) {
-        // Strip commas from all dr/cr fields
         document.querySelectorAll('.dr-cr-field').forEach(function(el) {
-            el.value = parseRaw(el.value).toFixed(2);
+            var result = evaluateExpression(el.value);
+            el.value = (result !== null ? result : parseRaw(el.value)).toFixed(2);
         });
 
-        // Show spinner and disable button
         var postBtn = document.getElementById('postBtn');
         var postIcon = document.getElementById('postIcon');
         var postSpinner = document.getElementById('postSpinner');
@@ -631,19 +735,15 @@ document.addEventListener('DOMContentLoaded', function() {
             if (cancelBtn) cancelBtn.classList.add('disabled');
         }
 
-        // Auto-mark empty rows for deletion
         document.querySelectorAll('.journal-line-row').forEach(function(row) {
             var codeInput = row.querySelector('.account-code-hidden') ||
                             row.querySelector('[name$="-account_code"]');
             var code = codeInput ? codeInput.value.trim() : '';
             var dr = parseRaw(row.querySelector('[name$="-debit"]')?.value);
             var cr = parseRaw(row.querySelector('[name$="-credit"]')?.value);
-
-            // If no account code and no amounts, mark for deletion
             if (!code && dr === 0 && cr === 0) {
                 var delCheck = row.querySelector('[name$="-DELETE"]');
                 if (delCheck) delCheck.checked = true;
-                // Also clear the debit/credit to ensure Django sees this as truly empty
                 var debitEl = row.querySelector('[name$="-debit"]');
                 var creditEl = row.querySelector('[name$="-credit"]');
                 if (debitEl) debitEl.value = '';
@@ -730,12 +830,12 @@ document.addEventListener('DOMContentLoaded', function() {
             <td>
                 <input type="text" name="lines-${idx}-description" class="form-control form-control-sm" id="id_lines-${idx}-description" placeholder="Line description (optional)">
             </td>
-            <td>
+            <td><div class="dr-cr-wrapper">
                 <input type="text" inputmode="decimal" name="lines-${idx}-debit" class="form-control form-control-sm dr-cr-field" id="id_lines-${idx}-debit" value="0">
-            </td>
-            <td>
+            </div></td>
+            <td><div class="dr-cr-wrapper">
                 <input type="text" inputmode="decimal" name="lines-${idx}-credit" class="form-control form-control-sm dr-cr-field" id="id_lines-${idx}-credit" value="0">
-            </td>
+            </div></td>
             <td class="text-center">
                 <input type="checkbox" name="lines-${idx}-DELETE" id="id_lines-${idx}-DELETE">
                 <input type="hidden" name="lines-${idx}-id" id="id_lines-${idx}-id">
@@ -743,6 +843,8 @@ document.addEventListener('DOMContentLoaded', function() {
             </td>
         `;
         tbody.appendChild(tr);
+        // Attach calculator to new row's dr-cr fields
+        tr.querySelectorAll('.dr-cr-field').forEach(attachCalcPreview);
 
         // Initialize searchable account picker on the new row
         const container = tr.querySelector('.account-picker-container');
