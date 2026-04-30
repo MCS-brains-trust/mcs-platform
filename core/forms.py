@@ -252,27 +252,48 @@ class JournalLineForm(forms.ModelForm):
             return False
         return super().has_changed()
 
+    @staticmethod
+    def _eval_expr(raw):
+        """Evaluate an arithmetic expression string (e.g. =94822.13/2 or 25000+8745).
+        Returns a Decimal or raises InvalidOperation."""
+        import re as _re
+        from decimal import Decimal, InvalidOperation
+        val = (raw or '0').replace(',', '').strip()
+        # Strip optional leading =
+        if val.startswith('='):
+            val = val[1:].strip()
+        # Pure number fast-path
+        if _re.match(r'^-?[\d.]+$', val):
+            return Decimal(val or '0')
+        # Safe expression: only digits, decimal points, operators, parentheses, spaces
+        if _re.match(r'^[\d.+\-*/() ]+$', val):
+            try:
+                result = eval(compile(val, '<expr>', 'eval'),
+                              {'__builtins__': {}})
+                if isinstance(result, (int, float)) and not (
+                        result != result or abs(result) == float('inf')):
+                    return Decimal(str(round(result, 2)))
+            except Exception:
+                pass
+        raise ValueError('Cannot evaluate expression')
+
     def clean_debit(self):
-        """Strip commas from debit value before validation."""
+        """Strip commas and evaluate arithmetic expressions before validation."""
         val = self.data.get(self.add_prefix('debit'), '0')
-        if isinstance(val, str):
-            val = val.replace(',', '')
         from decimal import Decimal, InvalidOperation
         try:
-            return Decimal(val or '0')
-        except InvalidOperation:
-            raise forms.ValidationError('Enter a valid number.')
+            return self._eval_expr(val)
+        except (InvalidOperation, ValueError):
+            raise forms.ValidationError('Enter a valid number or expression (e.g. 25000+8745).')
 
     def clean_credit(self):
-        """Strip commas from credit value before validation."""
+        """Strip commas and evaluate arithmetic expressions before validation."""
         val = self.data.get(self.add_prefix('credit'), '0')
-        if isinstance(val, str):
-            val = val.replace(',', '')
         from decimal import Decimal, InvalidOperation
         try:
-            return Decimal(val or '0')
-        except InvalidOperation:
-            raise forms.ValidationError('Enter a valid number.')
+            return self._eval_expr(val)
+        except (InvalidOperation, ValueError):
+            raise forms.ValidationError('Enter a valid number or expression (e.g. 25000+8745).')
 
 
 JournalLineFormSet = forms.inlineformset_factory(
