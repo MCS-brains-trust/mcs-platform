@@ -6520,3 +6520,110 @@ class EvaCommentaryEdit(models.Model):
 
     def __str__(self):
         return f"CommentaryEdit [{self.get_document_type_display()}] by {self.user} - {self.created_at:%Y-%m-%d}"
+
+
+# ---------------------------------------------------------------------------
+# Global Account Mapping Hint (cross-entity learning system)
+# ---------------------------------------------------------------------------
+class GlobalAccountMappingHint(models.Model):
+    """
+    Cross-entity learned mapping.
+
+    When an accountant manually maps an account code to an AccountMapping
+    line item (via map_client_accounts), that mapping is saved here as a
+    hint for all future imports of the same entity type.
+
+    This means: map once for one Xero trust client → every future trust
+    client that imports the same account code gets it auto-mapped.
+
+    Fields
+    ------
+    entity_type     : Entity type this hint applies to (trust, company, etc.)
+    account_code    : The source account code (e.g. "200", "610")
+    account_name    : The most recently seen name for this code (informational)
+    mapped_line_item: The AccountMapping line this code should map to
+    confidence      : Number of times this mapping has been confirmed across
+                      different entities — higher = more trustworthy
+    last_confirmed  : When this hint was last confirmed by a manual mapping
+    """
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    entity_type = models.CharField(
+        max_length=20,
+        choices=Entity.EntityType.choices,
+        help_text="Entity type this hint applies to",
+    )
+    account_code = models.CharField(
+        max_length=20,
+        help_text="Source account code (e.g. '200', '610')",
+    )
+    account_name = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        help_text="Most recently seen account name for this code",
+    )
+    mapped_line_item = models.ForeignKey(
+        "AccountMapping",
+        on_delete=models.CASCADE,
+        related_name="global_hints",
+        help_text="The AccountMapping line this code should map to",
+    )
+    confidence = models.PositiveIntegerField(
+        default=1,
+        help_text="Number of times confirmed across different entities",
+    )
+    last_confirmed = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = ["entity_type", "account_code"]
+        ordering = ["-confidence", "entity_type", "account_code"]
+        indexes = [
+            models.Index(fields=["entity_type", "account_code"]),
+        ]
+
+    def __str__(self):
+        return (
+            f"{self.account_code} ({self.entity_type}) → "
+            f"{self.mapped_line_item.line_item_label} "
+            f"[confidence: {self.confidence}]"
+        )
+
+    @classmethod
+    def record_mapping(cls, entity_type, account_code, account_name, mapped_line_item):
+        """
+        Record or reinforce a global mapping hint.
+        If a hint already exists for this entity_type + account_code:
+          - If it maps to the same line item, increment confidence.
+          - If it maps to a different line item AND the new mapping has
+            been confirmed more times, update the hint.
+        If no hint exists, create one with confidence=1.
+        """
+        existing = cls.objects.filter(
+            entity_type=entity_type,
+            account_code=account_code,
+        ).first()
+        if existing:
+            if existing.mapped_line_item_id == mapped_line_item.pk:
+                # Same mapping — reinforce confidence
+                cls.objects.filter(pk=existing.pk).update(
+                    confidence=models.F("confidence") + 1,
+                    account_name=account_name or existing.account_name,
+                )
+            # If different mapping, only override if current confidence is 1
+            # (i.e. only seen once before — the new mapping may be more correct)
+            elif existing.confidence <= 1:
+                cls.objects.filter(pk=existing.pk).update(
+                    mapped_line_item=mapped_line_item,
+                    account_name=account_name or existing.account_name,
+                    confidence=1,
+                )
+            # else: keep existing higher-confidence mapping unchanged
+        else:
+            cls.objects.create(
+                entity_type=entity_type,
+                account_code=account_code,
+                account_name=account_name or "",
+                mapped_line_item=mapped_line_item,
+                confidence=1,
+            )

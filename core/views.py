@@ -3791,8 +3791,19 @@ def _process_trial_balance_upload(fy, file):
 
         mapped_item = mapping.mapped_line_item if mapping else None
 
-        # If no existing mapping, try to match against the standard chart of accounts
-        # for this entity type. This provides automatic mapping for known account codes.
+        # If no existing mapping, work through a 3-tier lookup:
+        #   1. EntityChartOfAccount.maps_to (entity-specific, set by prior manual mapping)
+        #   2. ChartOfAccount.maps_to (master template — standard codes only)
+        #   3. GlobalAccountMappingHint (cross-entity learned mappings)
+        if not mapped_item:
+            ecoa_match = EntityChartOfAccount.objects.filter(
+                entity=entity,
+                account_code=account_code,
+                maps_to__isnull=False,
+            ).select_related('maps_to').first()
+            if ecoa_match:
+                mapped_item = ecoa_match.maps_to
+
         coa_match = None
         if not mapped_item:
             coa_match = ChartOfAccount.objects.filter(
@@ -3802,6 +3813,15 @@ def _process_trial_balance_upload(fy, file):
             ).first()
             if coa_match and coa_match.maps_to:
                 mapped_item = coa_match.maps_to
+
+        if not mapped_item:
+            from core.models import GlobalAccountMappingHint
+            hint = GlobalAccountMappingHint.objects.filter(
+                entity_type=entity.entity_type,
+                account_code=account_code,
+            ).select_related('mapped_line_item').first()
+            if hint:
+                mapped_item = hint.mapped_line_item
 
         # Restore comparative values from snapshot — but only for the FIRST
         # row per account_code.
@@ -4918,6 +4938,21 @@ def map_client_accounts(request, pk):
                         financial_year=fy,
                         account_code=cam.client_account_code,
                     ).update(mapped_line_item=cam.mapped_line_item)
+                    # Also update EntityChartOfAccount.maps_to so future imports
+                    # for this entity auto-map without needing ClientAccountMapping
+                    EntityChartOfAccount.objects.filter(
+                        entity=entity,
+                        account_code=cam.client_account_code,
+                    ).update(maps_to=cam.mapped_line_item)
+                    # Record as a global cross-entity hint so other entities of
+                    # the same type benefit from this mapping on their next import
+                    from core.models import GlobalAccountMappingHint
+                    GlobalAccountMappingHint.record_mapping(
+                        entity_type=entity.entity_type,
+                        account_code=cam.client_account_code,
+                        account_name=cam.client_account_name,
+                        mapped_line_item=cam.mapped_line_item,
+                    )
                     mapped_count += 1
                 except AccountMapping.DoesNotExist:
                     pass
@@ -6330,7 +6365,7 @@ def htmx_map_tb_line(request, pk):
             line.mapped_line_item = mapping
             line.save()
 
-            # Also save to client account mapping for reuse
+             # Also save to client account mapping for reuse
             ClientAccountMapping.objects.update_or_create(
                 entity=line.financial_year.entity,
                 client_account_code=line.account_code,
@@ -6339,9 +6374,21 @@ def htmx_map_tb_line(request, pk):
                     "mapped_line_item": mapping,
                 },
             )
+            # Update EntityChartOfAccount.maps_to for future imports
+            EntityChartOfAccount.objects.filter(
+                entity=line.financial_year.entity,
+                account_code=line.account_code,
+            ).update(maps_to=mapping)
+            # Record as a global cross-entity hint
+            from core.models import GlobalAccountMappingHint
+            GlobalAccountMappingHint.record_mapping(
+                entity_type=line.financial_year.entity.entity_type,
+                account_code=line.account_code,
+                account_name=line.account_name,
+                mapped_line_item=mapping,
+            )
         except AccountMapping.DoesNotExist:
             pass
-
     mappings = AccountMapping.objects.all()
     return render(request, "partials/tb_line_row.html", {
         "line": line, "mappings": mappings

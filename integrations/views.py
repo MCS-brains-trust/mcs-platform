@@ -776,6 +776,15 @@ def commit_import(request, fy_pk):
                         "mapped_line_item": mapped_item,
                     },
                 )
+                # Record confirmed mappings as global cross-entity hints
+                if mapped_item:
+                    from core.models import GlobalAccountMappingHint
+                    GlobalAccountMappingHint.record_mapping(
+                        entity_type=entity.entity_type,
+                        account_code=acct_code,
+                        account_name=line["account_name"],
+                        mapped_line_item=mapped_item,
+                    )
 
                 imported += 1
                 if not mapped_item:
