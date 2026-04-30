@@ -611,11 +611,16 @@
             const outsideEl = tr.querySelector('.outside-income');
             const outside = outsideEl ? parseFloat(outsideEl.value) || 0 : 0;
             const proposed = parseFloat(tr.querySelector('.proposed-dist').value) || 0;
+            // Capture the calculated net tax from the results cell (if Calculate Tax has been run)
+            const netTaxEl = tr.querySelector('.res-net');
+            const netTaxText = netTaxEl ? netTaxEl.textContent.replace(/[$,]/g, '').trim() : '';
+            const netTax = parseFloat(netTaxText) || 0;
             rows.push({
                 beneficiary_id: benId,
                 beneficiary_type: btype,
                 outside_income: outside,
                 proposed_distribution: proposed,
+                net_tax: netTax,
             });
         });
         return rows;
@@ -920,18 +925,23 @@
             scenarios.forEach((s, i) => {
                 const dist_data = (s.distributions || []).find(d => d.beneficiary_id === benId);
                 const dist = dist_data ? parseFloat(dist_data.proposed_distribution || dist_data.proposed_amount || 0) : 0;
-                // We don't have per-beneficiary tax in scenario data, so show distribution only
-                tr.innerHTML += `<td class="text-end">${fmt(dist)}</td><td class="text-end text-muted">—</td>`;
+                const netTax = dist_data && dist_data.net_tax != null ? parseFloat(dist_data.net_tax) : null;
+                const netTaxCell = netTax !== null && netTax !== 0
+                    ? `<td class="text-end">${fmt(netTax)}</td>`
+                    : `<td class="text-end text-muted">—</td>`;
+                tr.innerHTML += `<td class="text-end">${fmt(dist)}</td>${netTaxCell}`;
                 scenarioTotals[i].dist += dist;
+                if (netTax !== null) scenarioTotals[i].tax += netTax;
             });
             body.appendChild(tr);
         });
 
-        // Totals row
-        let totalsHtml = '<td>TOTAL</td>';
+        // Totals row — use accumulated per-beneficiary tax if available, else fall back to stored total_tax
+        let totalsHtml = '<td><strong>TOTAL</strong></td>';
         scenarios.forEach((s, i) => {
+            const taxTotal = scenarioTotals[i].tax > 0 ? scenarioTotals[i].tax : parseFloat(s.total_tax || 0);
             totalsHtml += `<td class="text-end fw-bold">${fmt(scenarioTotals[i].dist)}</td>`;
-            totalsHtml += `<td class="text-end fw-bold">${fmt(s.total_tax)}</td>`;
+            totalsHtml += `<td class="text-end fw-bold">${fmt(taxTotal)}</td>`;
         });
         totalsRow.innerHTML = totalsHtml;
     }
