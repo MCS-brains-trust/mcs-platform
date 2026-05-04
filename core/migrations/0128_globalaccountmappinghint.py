@@ -8,7 +8,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('core', '0126_userstyleprofile_evaagenttrace_evacommentaryedit_and_more'),
+        ('core', '0127_expand_knowledge_category_choices'),
     ]
 
     operations = [
