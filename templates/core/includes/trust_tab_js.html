@@ -25,7 +25,8 @@
         const trustTab = document.querySelector('[data-bs-target="#tab-trust"]');
         if (trustTab) {
             trustTab.addEventListener('shown.bs.tab', function() {
-                if (!workspace) loadWorkspace();
+                // Always re-fetch so server-side recalculation is picked up
+                loadWorkspace();
             });
             // Also load if tab is already active
             if (trustTab.classList.contains('active')) {
@@ -153,6 +154,18 @@
 
     window.reopenStage = function(stageNum) {
         updateStageStatus(stageNum, 'in_progress');
+    };
+
+    window.recalculateIncomeFromTB = async function() {
+        const btn = document.getElementById('stage-1-recalc-btn');
+        if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Recalculating...'; }
+        try {
+            const resp = await fetch(`${BASE}/recalculate-income/`, { method: 'POST', headers: { 'X-CSRFToken': CSRF, 'Content-Type': 'application/json' } });
+            if (!resp.ok) { const err = await resp.json(); alert(err.error || 'Recalculation failed.'); return; }
+            workspace = await resp.json();
+            renderWorkspaceState();
+        } catch (e) { alert('Recalculation failed. Please try again.'); }
+        finally { if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> Recalculate from TB'; } }
     };
 
     async function updateStageStatus(stageNum, status) {

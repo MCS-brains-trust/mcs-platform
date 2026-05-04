@@ -234,87 +234,149 @@ def _sum_section(items, field="cy_amount"):
 
 
 def _net_beneficiary_accounts(fy, sections):
-    """Net all TB lines linked to a beneficiary officer via ClientAccountMapping.
+    """Reclassify trust beneficiary accounts from equity to current liabilities.
 
-    For trust entities only. Removes matched items from sections["equity"]
-    and routes a single "Beneficiary loan: [Name]" line per officer into
-    sections["current_liabilities"] (credit balance) or
-    sections["current_assets"] (debit balance).
+    All beneficiary-related equity accounts are netted per officer and the
+    result placed in current_liabilities (credit balance = trust owes
+    beneficiary) or current_assets (debit balance = beneficiary owes trust).
+
+    Account types handled:
+
+    4003.xx  Funds loaned to trust (new convention).
+             Matched via ClientAccountMapping.beneficiary_officer, or by
+             suffix (.01 = first officer by display_order, etc.) as fallback.
+
+    9003.xx  Funds loaned to trust (old HandiLedger convention).
+             Matched to officers by suffix — same convention as 4003.xx.
+
+    4053.xx  Physical distributions.
+             A physical distribution reduces the beneficiary loan balance
+             (DR loan / CR bank). Netted into the SAME officer bucket as
+             the corresponding 4003.xx/9003.xx account using the same suffix.
+             The combined net is the true amount owed to/from that beneficiary.
+
+    4004.xx  Rounding/misc entries. Stripped silently from equity.
+
+    4199     Profit Distribution — Appropriation clearing account.
+             Never netted here — suppressed separately by the caller.
     """
-    from collections import defaultdict
-    from core.models import ClientAccountMapping
+    from core.models import ClientAccountMapping, EntityOfficer
 
-    # Get all mappings with a beneficiary_officer assigned
+    # ── Build officer lookup from ClientAccountMapping ───────────────────────
     mappings = ClientAccountMapping.objects.filter(
         entity=fy.entity,
         beneficiary_officer__isnull=False,
     ).select_related("beneficiary_officer")
 
-    if not mappings.exists():
-        return  # No beneficiary mappings configured — do nothing
-
-    # Build {account_code: (officer_id_str, display_name)}
     code_to_officer = {}
     for m in mappings:
-        # Skip 4199 accounts — these are suppressed separately, never netted
         if (m.client_account_code or "").startswith("4199"):
             continue
         officer = m.beneficiary_officer
-        display_name = officer.full_name if officer else "Unknown"
+        display_name = (officer.full_name or "").strip() or "Unknown"
         code_to_officer[m.client_account_code] = (str(officer.pk), display_name)
 
-    # Per-officer net accumulators
-    officer_nets = {}
-    for officer_id, display_name in code_to_officer.values():
-        if officer_id not in officer_nets:
-            officer_nets[officer_id] = {"name": display_name, "cy": Decimal("0"), "py": Decimal("0")}
+    # ── Build suffix-based lookup for 9003.xx and 4053.xx accounts ───────────
+    # Suffix .01 = first officer by display_order, .02 = second, etc.
+    # This matches the convention used by trust_post_distribution when
+    # assigning 4003.xx sub-account codes.
+    officers_ordered = list(
+        EntityOfficer.objects.filter(entity=fy.entity)
+        .order_by("display_order", "full_name")
+    )
+    suffix_to_officer = {}
+    for idx, o in enumerate(officers_ordered):
+        suffix = f"{(idx + 1):02d}"
+        suffix_to_officer[suffix] = (str(o.pk), (o.full_name or "").strip() or "Unknown")
 
-    # Scan equity, net per officer, mark for removal
+    # ── Per-officer net accumulators ─────────────────────────────────────────
+    officer_nets = {}
+
+    def _ensure_officer(officer_id, display_name):
+        if officer_id not in officer_nets:
+            officer_nets[officer_id] = {
+                "name": display_name,
+                "cy": Decimal("0"),
+                "py": Decimal("0"),
+            }
+
+    for officer_id, display_name in code_to_officer.values():
+        _ensure_officer(officer_id, display_name)
+
+    # ── Account prefixes that use the suffix-to-officer lookup ───────────────
+    # These are all netted into the officer bucket using the .xx suffix.
+    SUFFIX_PREFIXES = ("4003.", "9003.", "4053.")
+
+    # ── Scan equity section ──────────────────────────────────────────────────
     to_remove = []
     for item in sections.get("equity", []):
-        # Never net 4199 Profit Distribution — Appropriation into beneficiary loans
-        # It is handled separately by the 4199 suppression logic
-        if (item.get("account_code", "") or "").startswith("4199"):
+        code = (item.get("account_code", "") or "")
+
+        # Skip 4199 — handled separately by the caller
+        if code.startswith("4199"):
             continue
-        code = item.get("account_code")
-        if code and code in code_to_officer:
-            officer_id, _ = code_to_officer[code]
+
+        # Silent strip: 4004.xx rounding/misc entries
+        if code.startswith("4004."):
+            to_remove.append(item)
+            continue
+
+        # Officer-mapped accounts (e.g. 4003.xx via ClientAccountMapping)
+        if code in code_to_officer:
+            officer_id, disp = code_to_officer[code]
+            _ensure_officer(officer_id, disp)
             officer_nets[officer_id]["cy"] += item.get("cy_amount", Decimal("0"))
             officer_nets[officer_id]["py"] += item.get("py_amount", Decimal("0"))
             to_remove.append(item)
+            continue
 
-    # Remove matched items from equity
+        # Suffix-matched accounts: 4003.xx, 9003.xx, 4053.xx
+        if any(code.startswith(p) for p in SUFFIX_PREFIXES):
+            suffix = code.split(".", 1)[1] if "." in code else ""
+            if suffix in suffix_to_officer:
+                officer_id, display_name = suffix_to_officer[suffix]
+                _ensure_officer(officer_id, display_name)
+                officer_nets[officer_id]["cy"] += item.get("cy_amount", Decimal("0"))
+                officer_nets[officer_id]["py"] += item.get("py_amount", Decimal("0"))
+                to_remove.append(item)
+            else:
+                # Unknown suffix — strip silently rather than leave in equity
+                to_remove.append(item)
+            continue
+
     for item in to_remove:
-        sections["equity"].remove(item)
+        try:
+            sections["equity"].remove(item)
+        except ValueError:
+            pass
 
-    # Also net beneficiary-mapped accounts out of current_liabilities
-    # (e.g. Distribution Payable accounts assigned to a beneficiary officer).
-    # current_liabilities are credit-normal (negative = credit = liability),
-    # same sign convention as equity, so amounts can be added directly.
+    # ── Also net beneficiary-mapped accounts out of current_liabilities ──────
+    # (e.g. Distribution Payable accounts assigned to a beneficiary officer)
     cl_to_remove = []
     for item in sections.get("current_liabilities", []):
-        if (item.get("account_code", "") or "").startswith("4199"):
+        code = (item.get("account_code", "") or "")
+        if code.startswith("4199"):
             continue
-        code = item.get("account_code")
-        if code and code in code_to_officer:
+        if code in code_to_officer:
             officer_id, _ = code_to_officer[code]
             officer_nets[officer_id]["cy"] += item.get("cy_amount", Decimal("0"))
             officer_nets[officer_id]["py"] += item.get("py_amount", Decimal("0"))
             cl_to_remove.append(item)
-
     for item in cl_to_remove:
-        sections["current_liabilities"].remove(item)
+        try:
+            sections["current_liabilities"].remove(item)
+        except ValueError:
+            pass
 
-    # Route each officer net to assets or liabilities.
-    # Sign convention: equity lines are credit-normal, stored negative for credits.
-    #   net_cy < 0 = credit balance (trust owes beneficiary) → Current Liabilities
-    #   net_cy > 0 = debit balance (beneficiary owes trust) → Current Assets
+    # ── Route each officer net to assets or liabilities ──────────────────────
+    # Sign convention: equity lines are credit-normal (negative = credit).
+    #   net_cy < 0  → credit balance (trust owes beneficiary) → Current Liabilities
+    #   net_cy > 0  → debit balance (beneficiary owes trust)  → Current Assets
     for officer_id, data in officer_nets.items():
         net_cy = data["cy"]
         net_py = data["py"]
         if net_cy == 0 and net_py == 0:
             continue
-
         label = f"Beneficiary loan: {data['name']}"
         entry = {
             "account_code": f"BEN_{officer_id[:8]}",
@@ -322,7 +384,6 @@ def _net_beneficiary_accounts(fy, sections):
             "cy_amount": net_cy,
             "py_amount": net_py,
         }
-
         if net_cy <= 0:
             sections.setdefault("current_liabilities", []).append(entry)
         else:

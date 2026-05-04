@@ -505,6 +505,17 @@ def trust_eva_context(request, pk):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+@login_required
+@require_POST
+def trust_recalculate_income(request, pk):
+    fy = get_object_or_404(FinancialYear, pk=pk)
+    workspace, _ = TrustWorkspace.objects.get_or_create(financial_year=fy)
+    if workspace.stage_1_status == TrustWorkspace.StageStatus.COMPLETED:
+        return JsonResponse({"error": "Stage 1 is already completed. Reopen it before recalculating."}, status=400)
+    _auto_populate_income(workspace)
+    return JsonResponse(_serialize_workspace(workspace))
+
+
 def _auto_populate_income(workspace):
     """Auto-populate income streams from trial balance."""
     from core.eva_trust_planning import _calculate_income_streams
