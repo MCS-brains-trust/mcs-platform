@@ -1,10 +1,8 @@
 """Eva Client Summary — auto-generates a 5-section client summary when a FY is locked."""
 import json
 import logging
-import os
 
-from django.conf import settings
-
+from core.ai_service import _call_llm
 from core.models import (
     EvaClientSummary,
     EvaFinding,
@@ -35,7 +33,7 @@ def generate_client_summary(financial_year_id, format_type="bullet"):
     context = _build_summary_context(fy, entity)
 
     # Generate via Claude
-    summary_text = _call_llm(context, format_type, entity.entity_name, fy)
+    summary_text = _call_llm_for_summary(context, format_type, entity.entity_name, fy)
 
     if not summary_text:
         logger.error("Failed to generate client summary for FY %s", fy)
@@ -143,33 +141,26 @@ def _build_summary_context(fy, entity):
         }
 
     # Eva findings
-    review = EvaReview.objects.filter(financial_year=fy).order_by("-created_at").first()
+    review = EvaReview.objects.filter(financial_year=fy).order_by("-triggered_at").first()
     if review:
-        findings = EvaFinding.objects.for_domain('financial_statements').filter(review=review)  # Sprint 1b: scope to FS domain
+        findings = EvaFinding.objects.for_domain('financial_statements').filter(eva_review=review)
         context["eva_findings"] = {
             "total": findings.count(),
             "critical": findings.filter(severity="critical").count(),
-            "warning": findings.filter(severity="warning").count(),
-            "info": findings.filter(severity="info").count(),
-            "resolved": findings.filter(is_resolved=True).count(),
-            "unresolved_items": [
-                {"check": f.check_name, "severity": f.severity, "summary": f.finding_text[:200]}
-                for f in findings.filter(is_resolved=False)[:10]
+            "advisory": findings.filter(severity="advisory").count(),
+            "addressed": findings.filter(status="addressed").count(),
+            "open_items": [
+                {"check": f.check_name, "severity": f.severity, "summary": f.plain_english_explanation[:200]}
+                for f in findings.filter(status="open")[:10]
             ],
         }
 
     return context
 
 
-def _call_llm(context, format_type, entity_name, fy):
-    """Call Claude to generate the client summary."""
+def _call_llm_for_summary(context, format_type, entity_name, fy):
+    """Call Claude to generate the client summary via the tier router."""
     try:
-        import anthropic
-
-        client = anthropic.Anthropic(
-            api_key=getattr(settings, "ANTHROPIC_API_KEY", os.environ.get("ANTHROPIC_API_KEY", "")),
-        )
-
         format_instruction = (
             "Use bullet points for each item within each section."
             if format_type == "bullet"
@@ -209,14 +200,13 @@ Here is the financial data:
 {json.dumps(context, indent=2, default=str)}
 """
 
-        response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+        return _call_llm(
+            system_prompt,
+            user_prompt,
+            tier="sonnet",
+            temperature=0.3,
             max_tokens=4000,
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}],
         )
-
-        return response.content[0].text
 
     except Exception as e:
         logger.exception("LLM call failed for client summary: %s", e)

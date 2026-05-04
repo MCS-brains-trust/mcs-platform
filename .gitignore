@@ -39,3 +39,6 @@ test.db-journal
 handiledger_reference/_pl_table.txt
 handiledger_reference/_scarft.txt
 handiledger_reference/_scarft_raw.txt
+
+# Stale nested repo snapshot — never tracked
+mcs-platform/

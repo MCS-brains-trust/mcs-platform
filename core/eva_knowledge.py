@@ -35,6 +35,51 @@ CHARS_PER_TOKEN = 4
 
 
 # ---------------------------------------------------------------------------
+# SharePoint Folder → Category Map
+# ---------------------------------------------------------------------------
+# Canonical mapping from SharePoint folder paths to KnowledgeDocument.Category
+# values. Each value here MUST exist in core.models.KnowledgeDocument.Category.
+SHAREPOINT_FOLDER_MAP = {
+    # 01_Accounting_Standards
+    "01_Accounting_Standards/AASB_Standards": "aasb_standards",
+    "01_Accounting_Standards/IFRS_References": "ifrs_references",
+    "01_Accounting_Standards/Interpretations": "interpretations",
+    # 02_Tax_Legislation
+    "02_Tax_Legislation/Income_Tax": "income_tax",
+    "02_Tax_Legislation/GST_BAS": "gst_bas",
+    "02_Tax_Legislation/FBT": "fbt",
+    "02_Tax_Legislation/Superannuation": "superannuation",
+    "02_Tax_Legislation/ATO_Rulings": "ato_rulings",
+    # 03_Firm_Policies
+    "03_Firm_Policies/Engagement_Letters": "firm_engagement",
+    "03_Firm_Policies/Review_Checklists": "firm_checklists",
+    "03_Firm_Policies/Quality_Control": "firm_quality",
+    "03_Firm_Policies/Style_Guides": "firm_style",
+    # 04_Disclosure_Templates
+    "04_Disclosure_Templates/Companies": "disclosure_companies",
+    "04_Disclosure_Templates/Trusts": "disclosure_trusts",
+    "04_Disclosure_Templates/SMSF": "disclosure_smsf",
+    "04_Disclosure_Templates/Partnerships": "disclosure_partnerships",
+    "04_Disclosure_Templates/Sole_Traders": "disclosure_sole_traders",
+    # 05_Industry_Guides
+    "05_Industry_Guides/Construction": "industry_construction",
+    "05_Industry_Guides/Medical": "industry_medical",
+    "05_Industry_Guides/Hospitality": "industry_hospitality",
+    "05_Industry_Guides/Professional_Services": "industry_professional",
+    "05_Industry_Guides/Retail": "industry_retail",
+    "05_Industry_Guides/Not_For_Profit": "industry_nfp",
+    # 06_Training_Materials
+    "06_Training_Materials/Eva_User_Guide": "training_eva",
+    "06_Training_Materials/StatementHub_Procedures": "training_statementhub",
+    "06_Training_Materials/Onboarding": "training_onboarding",
+    # 07_Benchmarks
+    "07_Benchmarks/ATO_Benchmarks": "ato_benchmarks",
+    "07_Benchmarks/Industry_Benchmarks": "industry_benchmarks",
+    "07_Benchmarks/Financial_Ratios": "financial_ratios",
+}
+
+
+# ---------------------------------------------------------------------------
 # SharePoint Sync via Microsoft Graph API
 # ---------------------------------------------------------------------------
 def _get_graph_token():
@@ -130,6 +175,23 @@ def sync_sharepoint_library(site_id=None, drive_id=None, folder_path=""):
                 sp_path = f"{folder_path}/{name}" if folder_path else name
                 file_size = item.get("size", 0)
 
+                # Resolve folder path → category via SHAREPOINT_FOLDER_MAP
+                # (case-insensitive prefix match). Falls back to firm_procedures
+                # with a warning if no folder in the map matches.
+                resolved_category = None
+                folder_lower = (folder_path or "").lower()
+                for mapped_folder, mapped_category in SHAREPOINT_FOLDER_MAP.items():
+                    if folder_lower.startswith(mapped_folder.lower()):
+                        resolved_category = mapped_category
+                        break
+                if resolved_category is None:
+                    logger.warning(
+                        "SharePoint folder '%s' did not match any entry in "
+                        "SHAREPOINT_FOLDER_MAP — defaulting to firm_procedures",
+                        folder_path,
+                    )
+                    resolved_category = "firm_procedures"
+
                 # Check if document already exists and is up to date
                 existing = KnowledgeDocument.objects.filter(
                     sharepoint_item_id=sp_item_id
@@ -162,6 +224,7 @@ def sync_sharepoint_library(site_id=None, drive_id=None, folder_path=""):
                     sharepoint_item_id=sp_item_id,
                     defaults={
                         "title": os.path.splitext(name)[0],
+                        "category": resolved_category,
                         "sharepoint_path": sp_path,
                         "sharepoint_modified_at": (
                             datetime.fromisoformat(sp_modified.replace("Z", "+00:00"))

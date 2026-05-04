@@ -4124,6 +4124,39 @@ class KnowledgeDocument(models.Model):
         CASE_LAW = "case_law", "Case Law"
         INDUSTRY_GUIDES = "industry_guides", "Industry Guides"
         CLIENT_PRECEDENTS = "client_precedents", "Client Precedents"
+        # Accounting standards (extended)
+        IFRS_REFERENCES = "ifrs_references", "IFRS References"
+        INTERPRETATIONS = "interpretations", "Accounting Interpretations"
+        # Tax legislation
+        INCOME_TAX = "income_tax", "Income Tax"
+        GST_BAS = "gst_bas", "GST & BAS"
+        FBT = "fbt", "Fringe Benefits Tax"
+        SUPERANNUATION = "superannuation", "Superannuation"
+        # Firm policies
+        FIRM_ENGAGEMENT = "firm_engagement", "Firm — Engagement Letters"
+        FIRM_CHECKLISTS = "firm_checklists", "Firm — Review Checklists"
+        FIRM_QUALITY = "firm_quality", "Firm — Quality Control"
+        FIRM_STYLE = "firm_style", "Firm — Style Guides"
+        # Disclosure templates
+        DISCLOSURE_COMPANIES = "disclosure_companies", "Disclosure — Companies"
+        DISCLOSURE_TRUSTS = "disclosure_trusts", "Disclosure — Trusts"
+        DISCLOSURE_SMSF = "disclosure_smsf", "Disclosure — SMSF"
+        DISCLOSURE_PARTNERSHIPS = "disclosure_partnerships", "Disclosure — Partnerships"
+        DISCLOSURE_SOLE_TRADERS = "disclosure_sole_traders", "Disclosure — Sole Traders"
+        # Industry guides (specific)
+        INDUSTRY_CONSTRUCTION = "industry_construction", "Industry — Construction"
+        INDUSTRY_MEDICAL = "industry_medical", "Industry — Medical"
+        INDUSTRY_HOSPITALITY = "industry_hospitality", "Industry — Hospitality"
+        INDUSTRY_PROFESSIONAL = "industry_professional", "Industry — Professional Services"
+        INDUSTRY_RETAIL = "industry_retail", "Industry — Retail"
+        INDUSTRY_NFP = "industry_nfp", "Industry — Not For Profit"
+        # Training materials
+        TRAINING_EVA = "training_eva", "Training — Eva User Guide"
+        TRAINING_STATEMENTHUB = "training_statementhub", "Training — StatementHub Procedures"
+        TRAINING_ONBOARDING = "training_onboarding", "Training — Onboarding"
+        # Benchmarks (extended)
+        INDUSTRY_BENCHMARKS = "industry_benchmarks", "Industry Benchmarks"
+        FINANCIAL_RATIOS = "financial_ratios", "Financial Ratios"
         OTHER = "other", "Other"
 
     class SyncStatus(models.TextChoices):
