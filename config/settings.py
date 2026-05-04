@@ -339,12 +339,13 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": crontab(hour=6, minute=0, day_of_week=1),
         "options": {"expires": 3600},
     },
-    "eva-daily-proactive-scan": {
-        # 7:00 AM AEST daily — scans all active FYs for time-sensitive issues
-        "task": "core.eva_daily_proactive_scan",
-        "schedule": crontab(hour=7, minute=0),
-        "options": {"expires": 3600},
-    },
+    # DISABLED for first deploy — re-enable after Week 1 reflection observation
+    # "eva-daily-proactive-scan": {
+    #     # 7:00 AM AEST daily — scans all active FYs for time-sensitive issues
+    #     "task": "core.eva_daily_proactive_scan",
+    #     "schedule": crontab(hour=7, minute=0),
+    #     "options": {"expires": 3600},
+    # },
 }
 
 # ── AWS (Textract OCR) ──────────────────────────────────────────────────────

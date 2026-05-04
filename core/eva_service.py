@@ -1088,44 +1088,7 @@ def compute_amber_indicators(financial_year, materiality_pct_revenue=15, materia
 # ---------------------------------------------------------------------------
 # SharePoint Sync — Knowledge Brain document sync
 # ---------------------------------------------------------------------------
-SHAREPOINT_FOLDER_MAP = {
-    # 01_Accounting_Standards
-    "01_Accounting_Standards/AASB_Standards": "aasb_standards",
-    "01_Accounting_Standards/IFRS_References": "ifrs_references",
-    "01_Accounting_Standards/Interpretations": "interpretations",
-    # 02_Tax_Legislation
-    "02_Tax_Legislation/Income_Tax": "income_tax",
-    "02_Tax_Legislation/GST_BAS": "gst_bas",
-    "02_Tax_Legislation/FBT": "fbt",
-    "02_Tax_Legislation/Superannuation": "superannuation",
-    "02_Tax_Legislation/ATO_Rulings": "ato_rulings",
-    # 03_Firm_Policies
-    "03_Firm_Policies/Engagement_Letters": "firm_engagement",
-    "03_Firm_Policies/Review_Checklists": "firm_checklists",
-    "03_Firm_Policies/Quality_Control": "firm_quality",
-    "03_Firm_Policies/Style_Guides": "firm_style",
-    # 04_Disclosure_Templates
-    "04_Disclosure_Templates/Companies": "disclosure_companies",
-    "04_Disclosure_Templates/Trusts": "disclosure_trusts",
-    "04_Disclosure_Templates/SMSF": "disclosure_smsf",
-    "04_Disclosure_Templates/Partnerships": "disclosure_partnerships",
-    "04_Disclosure_Templates/Sole_Traders": "disclosure_sole_traders",
-    # 05_Industry_Guides
-    "05_Industry_Guides/Construction": "industry_construction",
-    "05_Industry_Guides/Medical": "industry_medical",
-    "05_Industry_Guides/Hospitality": "industry_hospitality",
-    "05_Industry_Guides/Professional_Services": "industry_professional",
-    "05_Industry_Guides/Retail": "industry_retail",
-    "05_Industry_Guides/Not_For_Profit": "industry_nfp",
-    # 06_Training_Materials
-    "06_Training_Materials/Eva_User_Guide": "training_eva",
-    "06_Training_Materials/StatementHub_Procedures": "training_statementhub",
-    "06_Training_Materials/Onboarding": "training_onboarding",
-    # 07_Benchmarks
-    "07_Benchmarks/ATO_Benchmarks": "ato_benchmarks",
-    "07_Benchmarks/Industry_Benchmarks": "industry_benchmarks",
-    "07_Benchmarks/Financial_Ratios": "financial_ratios",
-}
+from core.eva_knowledge import SHAREPOINT_FOLDER_MAP
 
 
 def sync_knowledge_brain(limit=0):

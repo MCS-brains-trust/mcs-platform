@@ -3,8 +3,6 @@ Celery tasks for StatementHub core application.
 
 Task registry (Master Implementation Spec §7.10):
     - sync_knowledge_brain: SharePoint sync, chunk, embed
-    - eva_chat_response: Build context, RAG search, call Sonnet/Opus
-    - eva_finalisation_review: 8 compliance checks, create findings
     - eva_client_summary: Generate bullet + narrative summaries
     - extract_governing_document: Native text → Textract if scanned
     - process_textract_result: Assemble OCR text, store confidence
@@ -34,42 +32,6 @@ def sync_knowledge_brain(self):
     except Exception as exc:
         logger.exception("Knowledge Brain sync failed")
         raise self.retry(exc=exc, countdown=60)
-
-
-# ---------------------------------------------------------------------------
-# Phase 3 — Eva Chat
-# ---------------------------------------------------------------------------
-@shared_task(name="core.eva_chat_response", bind=True, max_retries=2)
-def eva_chat_response(self, conversation_id, user_message, model_tier="sonnet"):
-    """
-    Process an Eva chat message: build context, RAG search, call Claude.
-    Returns the assistant message ID.
-    """
-    from core.eva_chat import process_chat_message
-    try:
-        result = process_chat_message(conversation_id, user_message, model_tier)
-        return result
-    except Exception as exc:
-        logger.exception("Eva chat response failed for conversation %s", conversation_id)
-        raise self.retry(exc=exc, countdown=10)
-
-
-# ---------------------------------------------------------------------------
-# Phase 9 — Eva Finalisation Review
-# ---------------------------------------------------------------------------
-@shared_task(name="core.eva_finalisation_review", bind=True, max_retries=1)
-def eva_finalisation_review(self, financial_year_id, triggered_by_id=None):
-    """
-    Run 8 compliance checks on a financial year, create EvaReview + EvaFindings.
-    """
-    from core.eva_engine import run_finalisation_review
-    try:
-        result = run_finalisation_review(financial_year_id, triggered_by_id)
-        logger.info("Finalisation review complete for FY %s: %s", financial_year_id, result)
-        return result
-    except Exception as exc:
-        logger.exception("Finalisation review failed for FY %s", financial_year_id)
-        raise self.retry(exc=exc, countdown=30)
 
 
 # ---------------------------------------------------------------------------
