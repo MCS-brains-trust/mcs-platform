@@ -4,6 +4,7 @@ MCS Financial Statement Platform - Django Settings
 import os
 from pathlib import Path
 import environ
+from celery.schedules import crontab
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -323,6 +324,25 @@ CELERY_BEAT_SCHEDULE = {
     "sync-knowledge-brain": {
         "task": "core.sync_knowledge_brain",
         "schedule": 7200,  # Every 2 hours
+        "options": {"expires": 3600},
+    },
+    # ── Eva Intelligence Upgrade Tasks ─────────────────────────────────────
+    "eva-nightly-reflection": {
+        # 2:00 AM AEST daily — extracts lessons from accountant interaction signals
+        "task": "core.eva_nightly_reflection",
+        "schedule": crontab(hour=2, minute=0),
+        "options": {"expires": 3600},
+    },
+    "eva-weekly-style-update": {
+        # Every Monday 6:00 AM AEST — updates per-accountant writing style profiles
+        "task": "core.eva_weekly_style_update",
+        "schedule": crontab(hour=6, minute=0, day_of_week=1),
+        "options": {"expires": 3600},
+    },
+    "eva-daily-proactive-scan": {
+        # 7:00 AM AEST daily — scans all active FYs for time-sensitive issues
+        "task": "core.eva_daily_proactive_scan",
+        "schedule": crontab(hour=7, minute=0),
         "options": {"expires": 3600},
     },
 }

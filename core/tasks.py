@@ -378,3 +378,89 @@ def check_template_hygiene():
         "template_suspect": len(suspect_template),
         "eca_suspect": len(suspect_eca),
     }
+
+
+# ===========================================================================
+# Eva Intelligence Upgrade — Celery Tasks
+# ===========================================================================
+
+@shared_task(
+    name="core.eva_nightly_reflection",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=300,
+)
+def eva_nightly_reflection(self):
+    """
+    Nightly Reflection Engine — runs at 2:00 AM daily.
+
+    Reads the last 24 hours of accountant interaction signals and uses
+    Claude Sonnet to extract generalised lessons stored in EvaLearnedLesson.
+    """
+    try:
+        from core.eva_reflection import run_nightly_reflection
+        result = run_nightly_reflection(hours_back=24)
+        logger.info(
+            "eva_nightly_reflection complete: %d signals → %d lessons stored",
+            result.get("signals_processed", 0),
+            result.get("lessons_stored", 0),
+        )
+        return result
+    except Exception as exc:
+        logger.error("eva_nightly_reflection failed: %s", exc)
+        raise self.retry(exc=exc)
+
+
+@shared_task(
+    name="core.eva_weekly_style_update",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=300,
+)
+def eva_weekly_style_update(self):
+    """
+    Weekly Style Update Engine — runs every Monday at 6:00 AM.
+
+    Analyses unprocessed EvaCommentaryEdit records and updates
+    UserStyleProfile for each accountant.
+    """
+    try:
+        from core.eva_style import run_weekly_style_update
+        result = run_weekly_style_update()
+        logger.info(
+            "eva_weekly_style_update complete: %d users, %d profiles updated",
+            result.get("users_processed", 0),
+            result.get("profiles_updated", 0),
+        )
+        return result
+    except Exception as exc:
+        logger.error("eva_weekly_style_update failed: %s", exc)
+        raise self.retry(exc=exc)
+
+
+@shared_task(
+    name="core.eva_daily_proactive_scan",
+    bind=True,
+    max_retries=2,
+    default_retry_delay=300,
+)
+def eva_daily_proactive_scan(self):
+    """
+    Daily Proactive Scan — runs at 7:00 AM daily.
+
+    Scans all active financial years for time-sensitive issues and
+    generates proactive Eva messages using the Agent Loop.
+    """
+    try:
+        from core.eva_proactive_v2 import run_daily_proactive_scan
+        result = run_daily_proactive_scan()
+        logger.info(
+            "eva_daily_proactive_scan complete: %d years, %d issues, %d messages",
+            result.get("years_scanned", 0),
+            result.get("issues_found", 0),
+            result.get("messages_generated", 0),
+        )
+        return result
+    except Exception as exc:
+        logger.error("eva_daily_proactive_scan failed: %s", exc)
+        raise self.retry(exc=exc)

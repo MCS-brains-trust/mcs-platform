@@ -7,3 +7,9 @@ class CoreConfig(AppConfig):
 
     def ready(self):
         import core.signals  # noqa: F401 — register signal receivers
+        # Connect Eva style learning edit capture signals
+        try:
+            from core.eva_style import connect_edit_capture_signals
+            connect_edit_capture_signals()
+        except Exception:
+            pass  # Graceful degradation if models not yet migrated
