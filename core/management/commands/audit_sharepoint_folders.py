@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 import requests
 from django.core.management.base import BaseCommand, CommandError
 
-from core.eva_service import SHAREPOINT_FOLDER_MAP
+from core.eva_knowledge import SHAREPOINT_FOLDER_MAP
 
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
