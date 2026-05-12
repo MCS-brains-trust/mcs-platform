@@ -41,41 +41,70 @@ CHARS_PER_TOKEN = 4
 # values. Each value here MUST exist in core.models.KnowledgeDocument.Category.
 SHAREPOINT_FOLDER_MAP = {
     # 01_Accounting_Standards
-    "01_Accounting_Standards/AASB_Standards": "aasb_standards",
-    "01_Accounting_Standards/IFRS_References": "ifrs_references",
-    "01_Accounting_Standards/Interpretations": "interpretations",
-    # 02_Tax_Legislation
-    "02_Tax_Legislation/Income_Tax": "income_tax",
-    "02_Tax_Legislation/GST_BAS": "gst_bas",
-    "02_Tax_Legislation/FBT": "fbt",
-    "02_Tax_Legislation/Superannuation": "superannuation",
-    "02_Tax_Legislation/ATO_Rulings": "ato_rulings",
+    "01_Accounting_Standards/AASB_Standards":          "aasb_standards",
+    "01_Accounting_Standards/IFRS_References":         "ifrs_references",
+    "01_Accounting_Standards/Interpretations":         "interpretations",
+
+    # 02_Legislation (PARENT NAME CHANGED from 02_Tax_Legislation)
+    "02_Legislation":                                  "legislation_general",     # NEW (catches parent-level files; currently 0)
+    "02_Legislation/ATO_Rulings":                      "ato_rulings",             # was 02_Tax_Legislation/ATO_Rulings
+    "02_Legislation/Corporations":                     "corporations_act",        # NEW (7 files, latest 2026-03-02)
+    "02_Legislation/FBT":                              "fbt",                     # was 02_Tax_Legislation/FBT
+    "02_Legislation/GST_BAS":                          "gst_bas",                 # was 02_Tax_Legislation/GST_BAS
+    "02_Legislation/Income_Tax":                       "income_tax",              # was 02_Tax_Legislation/Income_Tax
+    "02_Legislation/Partnerships":                     "legislation_partnerships",# NEW (3 files, latest 2026-03-02)
+    "02_Legislation/Superannuation":                   "superannuation",          # was 02_Tax_Legislation/Superannuation
+    "02_Legislation/Tax_Administration":               "tax_administration",      # NEW (4 files, latest 2026-02-27)
+    "02_Legislation/Trusts":                           "legislation_trusts",      # NEW (3 files, latest 2026-03-02)
+
     # 03_Firm_Policies
-    "03_Firm_Policies/Engagement_Letters": "firm_engagement",
-    "03_Firm_Policies/Review_Checklists": "firm_checklists",
-    "03_Firm_Policies/Quality_Control": "firm_quality",
-    "03_Firm_Policies/Style_Guides": "firm_style",
+    "03_Firm_Policies":                                "firm_policies_general",   # NEW (catches 9 parent-level files)
+    "03_Firm_Policies/Engagement_Letters":             "firm_engagement",
+    "03_Firm_Policies/Quality_Control":                "firm_quality",
+    "03_Firm_Policies/Review_Checklists":              "firm_checklists",
+    "03_Firm_Policies/Style_Guides":                   "firm_style",
+
     # 04_Disclosure_Templates
-    "04_Disclosure_Templates/Companies": "disclosure_companies",
-    "04_Disclosure_Templates/Trusts": "disclosure_trusts",
-    "04_Disclosure_Templates/SMSF": "disclosure_smsf",
-    "04_Disclosure_Templates/Partnerships": "disclosure_partnerships",
-    "04_Disclosure_Templates/Sole_Traders": "disclosure_sole_traders",
-    # 05_Industry_Guides
-    "05_Industry_Guides/Construction": "industry_construction",
-    "05_Industry_Guides/Medical": "industry_medical",
-    "05_Industry_Guides/Hospitality": "industry_hospitality",
-    "05_Industry_Guides/Professional_Services": "industry_professional",
-    "05_Industry_Guides/Retail": "industry_retail",
-    "05_Industry_Guides/Not_For_Profit": "industry_nfp",
+    "04_Disclosure_Templates":                         "disclosure_general",      # NEW (catches 5 parent-level files)
+    "04_Disclosure_Templates/Companies":               "disclosure_companies",
+    "04_Disclosure_Templates/Partnerships":            "disclosure_partnerships",
+    "04_Disclosure_Templates/SMSF":                    "disclosure_smsf",
+    "04_Disclosure_Templates/Sole_Traders":            "disclosure_sole_traders",
+    "04_Disclosure_Templates/Trusts":                  "disclosure_trusts",
+
+    # 05_Industry_Guides (unchanged)
+    "05_Industry_Guides/Construction":                 "industry_construction",
+    "05_Industry_Guides/Hospitality":                  "industry_hospitality",
+    "05_Industry_Guides/Medical":                      "industry_medical",
+    "05_Industry_Guides/Not_For_Profit":               "industry_nfp",
+    "05_Industry_Guides/Professional_Services":        "industry_professional",
+    "05_Industry_Guides/Retail":                       "industry_retail",
+
     # 06_Training_Materials
-    "06_Training_Materials/Eva_User_Guide": "training_eva",
-    "06_Training_Materials/StatementHub_Procedures": "training_statementhub",
-    "06_Training_Materials/Onboarding": "training_onboarding",
+    "06_Training_Materials":                           "training_general",        # NEW (catches 2 parent-level files)
+    "06_Training_Materials/Eva_User_Guide":            "training_eva",
+    "06_Training_Materials/Onboarding":                "training_onboarding",
+    "06_Training_Materials/StatementHub_Procedures":   "training_statementhub",
+
     # 07_Benchmarks
-    "07_Benchmarks/ATO_Benchmarks": "ato_benchmarks",
-    "07_Benchmarks/Industry_Benchmarks": "industry_benchmarks",
-    "07_Benchmarks/Financial_Ratios": "financial_ratios",
+    "07_Benchmarks/ATO_Benchmarks":                    "ato_benchmarks",
+    "07_Benchmarks/Financial_Ratios":                  "financial_ratios",
+    "07_Benchmarks/Industry_Benchmarks":               "industry_benchmarks",
+
+    # 08_ATO_Rulings_and_Alerts (NEW top-level)
+    "08_ATO_Rulings_and_Alerts":                       "ato_rulings_and_alerts",  # NEW (currently 0 files)
+
+    # 09_Precedents_and_Technical_Positions (NEW top-level — 28 Knowledge Shop files)
+    "09_Precedents_and_Technical_Positions":           "firm_precedents",         # NEW
+
+    # 10_Legal_Templates (NEW top-level — 46 files)
+    "10_Legal_Templates":                              "legal_general",           # NEW (currently 0 parent-level)
+    "10_Legal_Templates/Approved_Templates":           "legal_approved",          # NEW (6 files)
+    "10_Legal_Templates/Converted_Templates":          "legal_converted",         # NEW (8 files)
+    "10_Legal_Templates/InFinity_Source":              "legal_infinity",          # NEW (32 files)
+
+    # 11_CoWorker_Tax_Return (NEW top-level)
+    "11_CoWorker_Tax_Return":                          "tax_return_workpapers",   # NEW (currently 0 files)
 }
 
 

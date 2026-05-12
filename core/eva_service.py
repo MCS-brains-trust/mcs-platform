@@ -13,7 +13,7 @@ import logging
 import math
 import os
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta
 from decimal import Decimal
 
 from django.conf import settings
@@ -1229,9 +1229,20 @@ def sync_knowledge_brain(limit=0):
                 sharepoint_item_id=item_id
             ).first()
 
-            if existing and str(existing.sharepoint_modified_at) == modified_at:
-                stats["skipped"] += 1
-                continue  # No changes
+            # Parse SharePoint's ISO-8601 timestamp into a tz-aware datetime so we
+            # can compare it directly against the DB's stored DateTimeField. The
+            # previous str(...) == modified_at check could never match because
+            # Django renders datetimes as "YYYY-MM-DD HH:MM:SS+00:00" while
+            # Graph returns "YYYY-MM-DDTHH:MM:SSZ".
+            if (existing
+                and existing.sharepoint_modified_at
+                and modified_at):
+                incoming_modified = datetime.fromisoformat(
+                    modified_at.replace("Z", "+00:00")
+                )
+                if existing.sharepoint_modified_at >= incoming_modified:
+                    stats["skipped"] += 1
+                    continue  # No changes since last sync
 
             # Check if we've hit the document limit for this run
             if limit > 0 and docs_processed >= limit:
@@ -1303,11 +1314,16 @@ def sync_knowledge_brain(limit=0):
                         logger.error(f"Embedding failed for chunk {chunk_data['chunk_index']} of {item_name}: {e}")
                         embedding = None
 
+                    # Dual-write: pgvector field for retrieval, JSON kept for legacy
+                    # callers and audit-readability. Inline rather than delegating to
+                    # embed_and_store_chunks so the per-chunk OOM-protection loop above
+                    # (gc.collect, reset_queries, close_old_connections) is preserved.
                     KnowledgeChunk.objects.create(
                         document=doc,
                         chunk_index=chunk_data["chunk_index"],
                         text=chunk_data["text"],
                         embedding=embedding,
+                        embedding_vector=embedding if embedding else None,
                         token_count=chunk_data["token_count"],
                     )
                     stats["total_chunks"] += 1

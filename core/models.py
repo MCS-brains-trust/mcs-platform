@@ -4113,6 +4113,7 @@ class KnowledgeDocument(models.Model):
         ATO_RULINGS = "ato_rulings", "ATO Rulings"
         ATO_STATEMENTS = "ato_statements", "ATO Practice Statements"
         ATO_ALERTS = "ato_alerts", "ATO Alerts"
+        ATO_RULINGS_AND_ALERTS = "ato_rulings_and_alerts", "ATO Rulings & Alerts"
         ATO_BENCHMARKS = "ato_benchmarks", "ATO Benchmarks"
         LEGISLATION = "legislation", "Legislation"
         AASB_STANDARDS = "aasb_standards", "AASB Standards"
@@ -4132,17 +4133,24 @@ class KnowledgeDocument(models.Model):
         GST_BAS = "gst_bas", "GST & BAS"
         FBT = "fbt", "Fringe Benefits Tax"
         SUPERANNUATION = "superannuation", "Superannuation"
+        CORPORATIONS_ACT = "corporations_act", "Corporations Act"
+        LEGISLATION_GENERAL = "legislation_general", "Legislation — General"
+        LEGISLATION_PARTNERSHIPS = "legislation_partnerships", "Legislation — Partnerships"
+        LEGISLATION_TRUSTS = "legislation_trusts", "Legislation — Trusts"
+        TAX_ADMINISTRATION = "tax_administration", "Tax Administration"
         # Firm policies
         FIRM_ENGAGEMENT = "firm_engagement", "Firm — Engagement Letters"
         FIRM_CHECKLISTS = "firm_checklists", "Firm — Review Checklists"
         FIRM_QUALITY = "firm_quality", "Firm — Quality Control"
         FIRM_STYLE = "firm_style", "Firm — Style Guides"
+        FIRM_POLICIES_GENERAL = "firm_policies_general", "Firm — Policies (General)"
         # Disclosure templates
         DISCLOSURE_COMPANIES = "disclosure_companies", "Disclosure — Companies"
         DISCLOSURE_TRUSTS = "disclosure_trusts", "Disclosure — Trusts"
         DISCLOSURE_SMSF = "disclosure_smsf", "Disclosure — SMSF"
         DISCLOSURE_PARTNERSHIPS = "disclosure_partnerships", "Disclosure — Partnerships"
         DISCLOSURE_SOLE_TRADERS = "disclosure_sole_traders", "Disclosure — Sole Traders"
+        DISCLOSURE_GENERAL = "disclosure_general", "Disclosure — General"
         # Industry guides (specific)
         INDUSTRY_CONSTRUCTION = "industry_construction", "Industry — Construction"
         INDUSTRY_MEDICAL = "industry_medical", "Industry — Medical"
@@ -4154,9 +4162,17 @@ class KnowledgeDocument(models.Model):
         TRAINING_EVA = "training_eva", "Training — Eva User Guide"
         TRAINING_STATEMENTHUB = "training_statementhub", "Training — StatementHub Procedures"
         TRAINING_ONBOARDING = "training_onboarding", "Training — Onboarding"
+        TRAINING_GENERAL = "training_general", "Training — General"
         # Benchmarks (extended)
         INDUSTRY_BENCHMARKS = "industry_benchmarks", "Industry Benchmarks"
         FINANCIAL_RATIOS = "financial_ratios", "Financial Ratios"
+        # Legal templates
+        LEGAL_GENERAL = "legal_general", "Legal Templates — General"
+        LEGAL_APPROVED = "legal_approved", "Legal Templates — Approved"
+        LEGAL_CONVERTED = "legal_converted", "Legal Templates — Converted"
+        LEGAL_INFINITY = "legal_infinity", "Legal Templates — InFinity Source"
+        # Tax return workpapers
+        TAX_RETURN_WORKPAPERS = "tax_return_workpapers", "Tax Return Workpapers"
         OTHER = "other", "Other"
 
     class SyncStatus(models.TextChoices):
