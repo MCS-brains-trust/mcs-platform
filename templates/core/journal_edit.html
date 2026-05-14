@@ -141,10 +141,10 @@
 .account-picker-wrapper { position: relative; }
 .account-picker-input { cursor: text; }
 .account-dropdown {
-    position: absolute; z-index: 1050; top: 100%; left: 0; right: 0;
+    position: fixed; z-index: 9999;
     max-height: 250px; overflow-y: auto;
-    background: #fff; border: 1px solid #dee2e6; border-top: none;
-    border-radius: 0 0 .375rem .375rem;
+    background: #fff; border: 1px solid #dee2e6;
+    border-radius: .375rem;
     box-shadow: 0 4px 12px rgba(0,0,0,.15);
     display: none;
 }
@@ -438,16 +438,28 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const dropdown = document.createElement('div');
         dropdown.className = 'account-dropdown';
+        // Append dropdown to body so it escapes any overflow:hidden/auto ancestor
+        document.body.appendChild(dropdown);
 
         const wrapper = document.createElement('div');
         wrapper.className = 'account-picker-wrapper';
         wrapper.appendChild(input);
-        wrapper.appendChild(dropdown);
 
         container.innerHTML = '';
         container.appendChild(wrapper);
         container.appendChild(hiddenCode);
         container.appendChild(hiddenName);
+
+        // Position dropdown under the input using fixed coords (escapes overflow containers)
+        function positionDropdown() {
+            const rect = input.getBoundingClientRect();
+            dropdown.style.left = rect.left + 'px';
+            dropdown.style.top = (rect.bottom + 2) + 'px';
+            dropdown.style.width = rect.width + 'px';
+        }
+        // Reposition on scroll/resize so dropdown tracks the input
+        window.addEventListener('scroll', function() { if (dropdown.classList.contains('show')) positionDropdown(); }, true);
+        window.addEventListener('resize', function() { if (dropdown.classList.contains('show')) positionDropdown(); });
 
         const codeInput = hiddenCode;
         const nameInput = hiddenName;
@@ -497,10 +509,11 @@ document.addEventListener('DOMContentLoaded', function() {
                 });
             });
             dropdown.appendChild(createItem);
+            positionDropdown();
             dropdown.classList.add('show');
         }
 
-        input.addEventListener('focus', function() { renderDropdown(input.value.split(' - ')[0]); });
+        input.addEventListener('focus', function() { positionDropdown(); renderDropdown(input.value.split(' - ')[0]); });
         input.addEventListener('input', function() { renderDropdown(input.value); });
         input.addEventListener('blur', function() { setTimeout(function() { dropdown.classList.remove('show'); }, 150); });
         input.addEventListener('keydown', function(e) {
