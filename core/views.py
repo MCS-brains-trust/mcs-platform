@@ -8198,8 +8198,9 @@ def depreciation_add(request, pk):
     except (InvalidOperation, ValueError):
         messages.error(request, "Invalid numeric value provided.")
         return redirect(reverse("core:financial_year_detail", args=[pk]) + "?tab=depreciation")
-    # Calculate depreciation
-    _calc_depreciation(asset)
+    # Calculate depreciation — for new assets, always apply the ATO Div 328
+    # rate for General Pool (user hasn't had a chance to override it yet).
+    _calc_depreciation(asset, force_ato_rate=True)
     asset.save()
 
     _log_action(request, "create", f"Added depreciation asset: {asset.asset_name}", asset)
@@ -8380,7 +8381,9 @@ def depreciation_edit(request, pk):
     except (InvalidOperation, ValueError):
         messages.error(request, "Invalid numeric value provided.")
         return redirect(reverse("core:financial_year_detail", args=[fy_pk]) + "?tab=depreciation")
-    _calc_depreciation(asset)
+    # Calculate depreciation — on edit, always trust the rate the user submitted
+    # (including 0%), so do NOT pass force_ato_rate.
+    _calc_depreciation(asset, force_ato_rate=False)
     asset.save()
 
     _log_action(request, "update", f"Updated depreciation asset: {asset.asset_name}", asset)
@@ -8462,17 +8465,19 @@ def _calc_depreciation(asset, force_ato_rate=False):
     """Calculate depreciation amount and closing WDV for an asset.
 
     For General Pool assets the ATO Div 328 rates (15% acquisition year,
-    30% subsequent years) are applied automatically ONLY when:
-      - force_ato_rate=True  (used by roll-forward to ensure correct rates), OR
-      - the asset has no explicit rate set (rate == 0), meaning it is a
-        brand-new asset that hasn't had a rate entered yet.
+    30% subsequent years) are applied automatically ONLY when
+    force_ato_rate=True.  This flag is set by:
+      - depreciation_add  (new assets — user hasn’t set a rate yet)
+      - all roll-forward paths (rates must reflect the new FY dates)
 
-    When a user manually edits the rate via the Edit Asset modal the submitted
-    rate is non-zero, so it is respected and NOT overwritten.
+    When editing an existing asset (depreciation_edit), force_ato_rate=False
+    so the rate the user submitted is ALWAYS respected, including 0%.
+    A rate of 0% is valid — it means the asset is held at cost with no
+    depreciation charge (e.g. land, or assets not yet in use).
     """
     depreciable = asset.opening_wdv + asset.addition_cost
     # ── General Pool: auto-apply ATO Div 328 rates ─────────────────────────────
-    if asset.category == "General Pool" and (force_ato_rate or asset.rate == 0):
+    if asset.category == "General Pool" and force_ato_rate:
         asset.method = "D"
         fy = asset.financial_year
         if asset.purchase_date and fy.start_date <= asset.purchase_date <= fy.end_date:
