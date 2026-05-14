@@ -762,7 +762,7 @@ function quickGenerateEngagementLetter(entityPk, fyPk) {
             <div class="d-flex align-items-center gap-3">
                 <div class="px-3 py-2 rounded {% if net_profit >= 0 %}bg-success bg-opacity-10 border border-success{% else %}bg-danger bg-opacity-10 border border-danger{% endif %}" id="live-net-profit-banner">
                     <span class="fw-bold" style="font-size: 0.95rem;">
-                        <i class="bi bi-graph-up-arrow me-1"></i>Net Profit:
+                        <i class="bi bi-graph-up-arrow me-1"></i><span id="live-net-profit-label">{% if net_profit >= 0 %}Net Profit{% else %}Net Loss{% endif %}</span>:
                         <span id="live-net-profit-value" class="{% if net_profit >= 0 %}text-success{% else %}text-danger{% endif %}">
                             {% if net_profit >= 0 %}${{ net_profit|floatformat:2|intcomma }}{% else %}(${{ net_profit_abs|floatformat:2|intcomma }}){% endif %}
                         </span>
@@ -3861,6 +3861,7 @@ function refreshNetProfit() {
         var np = parseFloat(data.net_profit);
         var banner = document.getElementById('live-net-profit-banner');
         var valueEl = document.getElementById('live-net-profit-value');
+        var labelEl = document.getElementById('live-net-profit-label');
         if (!banner || !valueEl) return;
 
         // Format number with commas
@@ -3869,10 +3870,12 @@ function refreshNetProfit() {
             valueEl.textContent = '$' + abs;
             valueEl.className = 'text-success';
             banner.className = 'px-3 py-2 rounded bg-success bg-opacity-10 border border-success';
+            if (labelEl) labelEl.textContent = 'Net Profit';
         } else {
             valueEl.textContent = '($' + abs + ')';
             valueEl.className = 'text-danger';
             banner.className = 'px-3 py-2 rounded bg-danger bg-opacity-10 border border-danger';
+            if (labelEl) labelEl.textContent = 'Net Loss';
         }
 
         // Also update the tfoot net profit row
