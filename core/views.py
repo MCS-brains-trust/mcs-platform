@@ -8189,14 +8189,14 @@ def depreciation_add(request, pk):
         )
     except (InvalidOperation, ValueError):
         messages.error(request, "Invalid numeric value provided.")
-        return redirect("core:financial_year_detail", pk=pk)
+        return redirect(reverse("core:financial_year_detail", args=[pk]) + "?tab=depreciation")
     # Calculate depreciation
     _calc_depreciation(asset)
     asset.save()
 
     _log_action(request, "create", f"Added depreciation asset: {asset.asset_name}", asset)
     messages.success(request, f"Asset '{asset.asset_name}' added.")
-    return redirect("core:financial_year_detail", pk=pk)
+    return redirect(reverse("core:financial_year_detail", args=[pk]) + "?tab=depreciation")
 
 
 
@@ -8358,13 +8358,13 @@ def depreciation_edit(request, pk):
             asset.dep_expense_name = request.POST.get("dep_expense_name", "").strip()
     except (InvalidOperation, ValueError):
         messages.error(request, "Invalid numeric value provided.")
-        return redirect("core:financial_year_detail", pk=fy_pk)
+        return redirect(reverse("core:financial_year_detail", args=[fy_pk]) + "?tab=depreciation")
     _calc_depreciation(asset)
     asset.save()
 
     _log_action(request, "update", f"Updated depreciation asset: {asset.asset_name}", asset)
     messages.success(request, f"Asset '{asset.asset_name}' updated.")
-    return redirect("core:financial_year_detail", pk=fy_pk)
+    return redirect(reverse("core:financial_year_detail", args=[fy_pk]) + "?tab=depreciation")
 
 
 @login_required
@@ -8376,12 +8376,12 @@ def depreciation_delete(request, pk):
     get_financial_year_for_user(request, fy_pk)  # IDOR check
     if not request.user.can_do_accounting:
         messages.error(request, "You do not have permission.")
-        return redirect("core:financial_year_detail", pk=fy_pk)
+        return redirect(reverse("core:financial_year_detail", args=[fy_pk]) + "?tab=depreciation")
     name = asset.asset_name
     asset.delete()
     _log_action(request, "delete", f"Deleted depreciation asset: {name}")
     messages.success(request, f"Asset '{name}' deleted.")
-    return redirect("core:financial_year_detail", pk=fy_pk)
+    return redirect(reverse("core:financial_year_detail", args=[fy_pk]) + "?tab=depreciation")
 
 
 @login_required
@@ -8391,15 +8391,15 @@ def depreciation_roll_forward(request, pk):
     fy = get_financial_year_for_user(request, pk)
     if not request.user.can_do_accounting:
         messages.error(request, "You do not have permission.")
-        return redirect("core:financial_year_detail", pk=pk)
+        return redirect(reverse("core:financial_year_detail", args=[pk]) + "?tab=depreciation")
     if not fy.prior_year:
         messages.error(request, "No prior year linked. Cannot roll forward depreciation.")
-        return redirect("core:financial_year_detail", pk=pk)
+        return redirect(reverse("core:financial_year_detail", args=[pk]) + "?tab=depreciation")
 
     prior_assets = DepreciationAsset.objects.filter(financial_year=fy.prior_year)
     if not prior_assets.exists():
         messages.warning(request, "No depreciation assets in the prior year to roll forward.")
-        return redirect("core:financial_year_detail", pk=pk)
+        return redirect(reverse("core:financial_year_detail", args=[pk]) + "?tab=depreciation")
 
     # Clear existing assets if any
     DepreciationAsset.objects.filter(financial_year=fy).delete()
@@ -8435,7 +8435,7 @@ def depreciation_roll_forward(request, pk):
 
     _log_action(request, "roll_forward", f"Rolled forward {count} depreciation assets to {fy}", fy)
     messages.success(request, f"Rolled forward {count} depreciation assets from prior year.")
-    return redirect("core:financial_year_detail", pk=pk)
+    return redirect(reverse("core:financial_year_detail", args=[pk]) + "?tab=depreciation")
 
 
 def _calc_depreciation(asset):
