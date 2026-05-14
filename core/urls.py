@@ -490,4 +490,16 @@ urlpatterns = [
     path("years/<uuid:pk>/rdti/flags/<uuid:flag_pk>/resolve/", views_rdti.rdti_resolve_flag, name="rdti_resolve_flag"),
     path("years/<uuid:pk>/rdti/export/docx/", views_rdti.rdti_export_docx, name="rdti_export_docx"),
     path("years/<uuid:pk>/rdti/status/update/", views_rdti.rdti_status_update, name="rdti_status_update"),
+
+    # ===== GENERAL POOL (SBE Simplified Depreciation — Div 328 ITAA97) =====
+    path("years/<uuid:pk>/general-pool/", views.general_pool_detail, name="general_pool_detail"),
+    path("years/<uuid:pk>/general-pool/settings/", views.general_pool_update_settings, name="general_pool_update_settings"),
+    path("years/<uuid:pk>/general-pool/add-asset/", views.general_pool_add_asset, name="general_pool_add_asset"),
+    path("general-pool/assets/<uuid:asset_pk>/edit/", views.general_pool_edit_asset, name="general_pool_edit_asset"),
+    path("general-pool/assets/<uuid:asset_pk>/delete/", views.general_pool_delete_asset, name="general_pool_delete_asset"),
+    path("years/<uuid:pk>/general-pool/add-disposal/", views.general_pool_add_disposal, name="general_pool_add_disposal"),
+    path("general-pool/disposals/<uuid:disposal_pk>/delete/", views.general_pool_delete_disposal, name="general_pool_delete_disposal"),
+    path("years/<uuid:pk>/general-pool/calculate/", views.general_pool_calculate, name="general_pool_calculate"),
+    path("years/<uuid:pk>/general-pool/post-to-tb/", views.general_pool_post_to_tb, name="general_pool_post_to_tb"),
+    path("years/<uuid:pk>/general-pool/roll-forward/", views.general_pool_roll_forward, name="general_pool_roll_forward"),
 ]

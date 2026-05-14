@@ -1460,6 +1460,7 @@ class TrialBalanceLine(models.Model):
         ('manual_journal', 'Manual Journal'),
         ('journal_upload', 'Journal Upload'),
         ('rollover', 'Rolled Forward'),
+        ('general_pool', 'General Pool Depreciation'),
     ]
     source = models.CharField(
         max_length=20, choices=SOURCE_CHOICES, default='tb_import', blank=True,
@@ -6643,3 +6644,227 @@ class GlobalAccountMappingHint(models.Model):
                 mapped_line_item=mapped_line_item,
                 confidence=1,
             )
+
+
+# ---------------------------------------------------------------------------
+# Small Business General Pool (SBE Simplified Depreciation — Div 328 ITAA97)
+# ---------------------------------------------------------------------------
+
+class GeneralPool(models.Model):
+    """
+    The small business general pool for a financial year (s 328-185 ITAA97).
+
+    One pool per financial year per entity.  The pool balance carries forward
+    automatically: the closing balance of year N becomes the opening balance
+    of year N+1 via the ``opening_pool_balance`` field (populated on
+    roll-forward or manual entry).
+
+    Calculation order (ATO prescribed):
+        Subtotal E = opening + additions + improvements - disposals
+        If Subtotal E < IAWO limit  ->  write off entire balance (low-pool rule)
+        Otherwise:
+            Deduction F = 30% x opening
+            Deduction G = 15% x additions
+            Deduction H = 15% x improvements
+        Closing balance = E - F - G - H
+        If closing balance < 0  ->  excess is assessable income; balance = 0
+    """
+
+    class Status(models.TextChoices):
+        DRAFT = "draft", "Draft"
+        CALCULATED = "calculated", "Calculated"
+        POSTED = "posted", "Posted to Trial Balance"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    financial_year = models.OneToOneField(
+        FinancialYear,
+        on_delete=models.CASCADE,
+        related_name="general_pool",
+    )
+
+    # Opening balance
+    opening_pool_balance = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Closing pool balance from the prior income year (Step 1).",
+    )
+
+    # Instant asset write-off threshold for this year
+    iawo_threshold = models.DecimalField(
+        max_digits=15, decimal_places=2, default=20000,
+        help_text="Instant asset write-off limit for this income year. Defaults to $20,000.",
+    )
+
+    # Calculated fields (populated by calculate())
+    total_additions = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    total_improvements = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    total_disposals = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    subtotal_e = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    low_pool_writeoff = models.BooleanField(
+        default=False,
+        help_text="True when Subtotal E < IAWO threshold - entire balance written off.",
+    )
+    deduction_opening = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    deduction_additions = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    deduction_improvements = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    total_deduction = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    closing_pool_balance = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    assessable_income_adjustment = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Amount added to assessable income when disposal proceeds cause pool to go negative (s 328-215).",
+    )
+
+    # Status and journal link
+    status = models.CharField(
+        max_length=20, choices=Status.choices, default=Status.DRAFT,
+    )
+    posted_journal = models.ForeignKey(
+        AdjustingJournal,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name="general_pool_postings",
+    )
+
+    # Account mapping for journal posting
+    dep_expense_code = models.CharField(max_length=20, blank=True, default="")
+    dep_expense_name = models.CharField(max_length=255, blank=True, default="")
+    pool_asset_code = models.CharField(max_length=20, blank=True, default="")
+    pool_asset_name = models.CharField(max_length=255, blank=True, default="")
+    assessable_income_code = models.CharField(max_length=20, blank=True, default="")
+
+    notes = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "General Pool"
+        verbose_name_plural = "General Pools"
+
+    def __str__(self):
+        return f"General Pool - {self.financial_year}"
+
+    def calculate(self):
+        """Recalculate all pool figures from the linked assets and disposals."""
+        THIRTY = Decimal("0.30")
+        FIFTEEN = Decimal("0.15")
+        TWO = Decimal("0.01")
+
+        opening = self.opening_pool_balance
+
+        additions = Decimal("0")
+        for asset in self.assets.filter(is_improvement=False):
+            additions += (asset.cost * asset.business_use_pct / Decimal("100")).quantize(TWO)
+
+        improvements = Decimal("0")
+        for asset in self.assets.filter(is_improvement=True):
+            improvements += (asset.cost * asset.business_use_pct / Decimal("100")).quantize(TWO)
+
+        disposals = Decimal("0")
+        for d in self.disposals.all():
+            disposals += (d.termination_value * d.business_use_pct / Decimal("100")).quantize(TWO)
+
+        subtotal_e = opening + additions + improvements - disposals
+
+        if Decimal("0") <= subtotal_e < self.iawo_threshold:
+            low_pool = True
+            ded_opening = ded_additions = ded_improvements = Decimal("0")
+            total_ded = subtotal_e
+            closing = Decimal("0")
+            assessable = Decimal("0")
+        elif subtotal_e < Decimal("0"):
+            low_pool = False
+            ded_opening = ded_additions = ded_improvements = Decimal("0")
+            total_ded = Decimal("0")
+            closing = Decimal("0")
+            assessable = abs(subtotal_e)
+        else:
+            low_pool = False
+            ded_opening = (opening * THIRTY).quantize(TWO)
+            ded_additions = (additions * FIFTEEN).quantize(TWO)
+            ded_improvements = (improvements * FIFTEEN).quantize(TWO)
+            total_ded = ded_opening + ded_additions + ded_improvements
+            closing = (subtotal_e - total_ded).quantize(TWO)
+            assessable = Decimal("0")
+
+        self.total_additions = additions
+        self.total_improvements = improvements
+        self.total_disposals = disposals
+        self.subtotal_e = subtotal_e
+        self.low_pool_writeoff = low_pool
+        self.deduction_opening = ded_opening
+        self.deduction_additions = ded_additions
+        self.deduction_improvements = ded_improvements
+        self.total_deduction = total_ded
+        self.closing_pool_balance = closing
+        self.assessable_income_adjustment = assessable
+        self.status = GeneralPool.Status.CALCULATED
+        self.save()
+
+
+class GeneralPoolAsset(models.Model):
+    """An individual asset (or improvement) allocated to the general pool."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    pool = models.ForeignKey(GeneralPool, on_delete=models.CASCADE, related_name="assets")
+    asset_name = models.CharField(max_length=255)
+    description = models.TextField(blank=True, default="")
+    date_first_used = models.DateField(null=True, blank=True)
+    cost = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Full cost (exclude GST if registered). For cars, cap at car cost limit.",
+    )
+    business_use_pct = models.DecimalField(
+        max_digits=5, decimal_places=2, default=100,
+        help_text="Percentage used for business / taxable purposes (0-100).",
+    )
+    is_improvement = models.BooleanField(
+        default=False,
+        help_text="True if this is a cost addition / improvement to an existing pooled asset.",
+    )
+    is_car = models.BooleanField(default=False)
+    car_limit_applied = models.DecimalField(max_digits=15, decimal_places=2, default=0)
+    notes = models.TextField(blank=True, default="")
+    display_order = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["display_order", "date_first_used", "asset_name"]
+        verbose_name = "General Pool Asset"
+        verbose_name_plural = "General Pool Assets"
+
+    def __str__(self):
+        kind = "Improvement" if self.is_improvement else "Asset"
+        return f"{kind}: {self.asset_name} (${self.cost})"
+
+    @property
+    def business_cost(self):
+        return (self.cost * self.business_use_pct / Decimal("100")).quantize(Decimal("0.01"))
+
+
+class GeneralPoolDisposal(models.Model):
+    """A disposal of an asset previously in the general pool."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    pool = models.ForeignKey(GeneralPool, on_delete=models.CASCADE, related_name="disposals")
+    asset_name = models.CharField(max_length=255)
+    disposal_date = models.DateField(null=True, blank=True)
+    termination_value = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Amount received (sale price, insurance, trade-in). Exclude GST if registered.",
+    )
+    business_use_pct = models.DecimalField(
+        max_digits=5, decimal_places=2, default=100,
+    )
+    notes = models.TextField(blank=True, default="")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["disposal_date", "asset_name"]
+        verbose_name = "General Pool Disposal"
+        verbose_name_plural = "General Pool Disposals"
+
+    def __str__(self):
+        return f"Disposal: {self.asset_name} (${self.termination_value})"
+
+    @property
+    def business_termination_value(self):
+        return (self.termination_value * self.business_use_pct / Decimal("100")).quantize(Decimal("0.01"))

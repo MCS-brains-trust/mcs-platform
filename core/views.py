@@ -1988,6 +1988,8 @@ def financial_year_detail(request, pk):
         "account_mappings": AccountMapping.objects.filter(
             applicable_entities__contains=fy.entity.entity_type
         ).order_by('financial_statement', 'line_item_label'),
+        # General Pool
+        "general_pool": getattr(fy, "general_pool", None),
         "active_tab": request.GET.get("tab", ""),
         # Finalise button state — show for draft, reopened, and in_review
         "can_finalise": fy.status in ("draft", "reopened", "in_review"),
@@ -13593,3 +13595,501 @@ def review_export_pdf(request, pk):
     response = HttpResponse(pdf_bytes, content_type="application/pdf")
     response["Content-Disposition"] = f'attachment; filename="{filename}"'
     return response
+
+
+# =============================================================================
+# General Pool (SBE Simplified Depreciation — Div 328 ITAA97)
+# =============================================================================
+
+from .models import GeneralPool, GeneralPoolAsset, GeneralPoolDisposal
+
+
+@login_required
+def general_pool_detail(request, pk):
+    """
+    Display the general pool for a financial year.
+    Creates the pool record on first visit (lazy initialisation).
+    """
+    fy = get_financial_year_for_user(request, pk)
+
+    pool, created = GeneralPool.objects.get_or_create(
+        financial_year=fy,
+        defaults={"iawo_threshold": Decimal("20000")},
+    )
+
+    # Auto-detect account codes from entity CoA if not yet set
+    if not pool.dep_expense_code:
+        dep_coa = EntityChartOfAccount.objects.filter(
+            entity=fy.entity, is_active=True,
+            account_code="1620",
+        ).first() or EntityChartOfAccount.objects.filter(
+            entity=fy.entity, is_active=True,
+            account_name__icontains="general pool",
+        ).first()
+        if dep_coa:
+            pool.dep_expense_code = dep_coa.account_code
+            pool.dep_expense_name = dep_coa.account_name
+            pool.save(update_fields=["dep_expense_code", "dep_expense_name"])
+
+    if not pool.pool_asset_code:
+        asset_coa = EntityChartOfAccount.objects.filter(
+            entity=fy.entity, is_active=True,
+            account_code="2905",
+        ).first() or EntityChartOfAccount.objects.filter(
+            entity=fy.entity, is_active=True,
+            account_name__icontains="general pool",
+            section__in=["assets", "Assets"],
+        ).first()
+        if asset_coa:
+            pool.pool_asset_code = asset_coa.account_code
+            pool.pool_asset_name = asset_coa.account_name
+            pool.save(update_fields=["pool_asset_code", "pool_asset_name"])
+
+    assets = pool.assets.all()
+    disposals = pool.disposals.all()
+
+    # Account pickers for the modals
+    expense_accounts = list(
+        EntityChartOfAccount.objects.filter(
+            entity=fy.entity, is_active=True, section__in=["expenses", "Expenses"],
+        ).order_by("account_code").values_list("account_code", "account_name")
+    )
+    asset_accounts = list(
+        EntityChartOfAccount.objects.filter(
+            entity=fy.entity, is_active=True, section__in=["assets", "Assets"],
+        ).order_by("account_code").values_list("account_code", "account_name")
+    )
+    revenue_accounts = list(
+        EntityChartOfAccount.objects.filter(
+            entity=fy.entity, is_active=True, section__in=["revenue", "Revenue"],
+        ).order_by("account_code").values_list("account_code", "account_name")
+    )
+
+    context = {
+        "fy": fy,
+        "entity": fy.entity,
+        "pool": pool,
+        "assets": assets,
+        "disposals": disposals,
+        "expense_accounts": expense_accounts,
+        "asset_accounts": asset_accounts,
+        "revenue_accounts": revenue_accounts,
+    }
+    return render(request, "core/general_pool_detail.html", context)
+
+
+@login_required
+@require_POST
+def general_pool_update_settings(request, pk):
+    """Update the pool's opening balance, IAWO threshold, and account codes."""
+    fy = get_financial_year_for_user(request, pk)
+    if not request.user.can_do_accounting:
+        messages.error(request, "Permission denied.")
+        return redirect("core:general_pool_detail", pk=pk)
+
+    pool, _ = GeneralPool.objects.get_or_create(financial_year=fy)
+
+    try:
+        pool.opening_pool_balance = Decimal(request.POST.get("opening_pool_balance", "0") or "0")
+        pool.iawo_threshold = Decimal(request.POST.get("iawo_threshold", "20000") or "20000")
+    except InvalidOperation:
+        messages.error(request, "Invalid numeric value.")
+        return redirect("core:general_pool_detail", pk=pk)
+
+    pool.dep_expense_code = request.POST.get("dep_expense_code", "").strip()
+    pool.dep_expense_name = request.POST.get("dep_expense_name", "").strip()
+    pool.pool_asset_code = request.POST.get("pool_asset_code", "").strip()
+    pool.pool_asset_name = request.POST.get("pool_asset_name", "").strip()
+    pool.assessable_income_code = request.POST.get("assessable_income_code", "").strip()
+    pool.notes = request.POST.get("notes", "").strip()
+    pool.status = GeneralPool.Status.DRAFT
+    pool.save()
+
+    _log_action(request, "update", "Updated general pool settings", pool)
+    messages.success(request, "Pool settings updated.")
+    return redirect(reverse("core:general_pool_detail", args=[pk]) + "?tab=general_pool")
+
+
+@login_required
+@require_POST
+def general_pool_add_asset(request, pk):
+    """Add an asset (or improvement) to the general pool."""
+    fy = get_financial_year_for_user(request, pk)
+    if not request.user.can_do_accounting:
+        return JsonResponse({"error": "Permission denied"}, status=403)
+
+    pool, _ = GeneralPool.objects.get_or_create(financial_year=fy)
+
+    try:
+        cost = Decimal(request.POST.get("cost", "0") or "0")
+        business_use_pct = Decimal(request.POST.get("business_use_pct", "100") or "100")
+        is_car = request.POST.get("is_car") == "1"
+        car_limit = Decimal("0")
+
+        # Apply car cost limit if applicable
+        if is_car:
+            # Current car limit — update annually
+            CAR_LIMITS = {
+                2026: Decimal("69674"),
+                2025: Decimal("69674"),
+                2024: Decimal("68108"),
+                2023: Decimal("64741"),
+                2022: Decimal("60733"),
+            }
+            fy_year = fy.end_date.year
+            limit = CAR_LIMITS.get(fy_year, Decimal("69674"))
+            if cost > limit:
+                car_limit = limit
+                cost = limit
+
+        asset = GeneralPoolAsset.objects.create(
+            pool=pool,
+            asset_name=request.POST.get("asset_name", "").strip(),
+            description=request.POST.get("description", "").strip(),
+            date_first_used=request.POST.get("date_first_used") or None,
+            cost=cost,
+            business_use_pct=business_use_pct,
+            is_improvement=request.POST.get("is_improvement") == "1",
+            is_car=is_car,
+            car_limit_applied=car_limit,
+            notes=request.POST.get("notes", "").strip(),
+        )
+    except (InvalidOperation, ValueError) as e:
+        messages.error(request, f"Invalid value: {e}")
+        return redirect(reverse("core:general_pool_detail", args=[pk]) + "?tab=general_pool")
+
+    # Reset pool to draft so user knows they need to recalculate
+    pool.status = GeneralPool.Status.DRAFT
+    pool.save(update_fields=["status"])
+
+    _log_action(request, "create", f"Added general pool asset: {asset.asset_name}", asset)
+    messages.success(request, f"Asset '{asset.asset_name}' added to the pool.")
+    return redirect(reverse("core:general_pool_detail", args=[pk]) + "?tab=general_pool")
+
+
+@login_required
+@require_POST
+def general_pool_edit_asset(request, asset_pk):
+    """Edit an existing general pool asset."""
+    asset = get_object_or_404(GeneralPoolAsset, pk=asset_pk)
+    fy = asset.pool.financial_year
+    get_financial_year_for_user(request, fy.pk)  # IDOR check
+
+    if not request.user.can_do_accounting:
+        return JsonResponse({"error": "Permission denied"}, status=403)
+
+    try:
+        cost = Decimal(request.POST.get("cost", "0") or "0")
+        business_use_pct = Decimal(request.POST.get("business_use_pct", "100") or "100")
+        is_car = request.POST.get("is_car") == "1"
+        car_limit = Decimal("0")
+
+        if is_car:
+            CAR_LIMITS = {
+                2026: Decimal("69674"),
+                2025: Decimal("69674"),
+                2024: Decimal("68108"),
+                2023: Decimal("64741"),
+                2022: Decimal("60733"),
+            }
+            fy_year = fy.end_date.year
+            limit = CAR_LIMITS.get(fy_year, Decimal("69674"))
+            if cost > limit:
+                car_limit = limit
+                cost = limit
+
+        asset.asset_name = request.POST.get("asset_name", asset.asset_name).strip()
+        asset.description = request.POST.get("description", "").strip()
+        asset.date_first_used = request.POST.get("date_first_used") or None
+        asset.cost = cost
+        asset.business_use_pct = business_use_pct
+        asset.is_improvement = request.POST.get("is_improvement") == "1"
+        asset.is_car = is_car
+        asset.car_limit_applied = car_limit
+        asset.notes = request.POST.get("notes", "").strip()
+        asset.save()
+    except (InvalidOperation, ValueError) as e:
+        messages.error(request, f"Invalid value: {e}")
+        return redirect(reverse("core:general_pool_detail", args=[fy.pk]) + "?tab=general_pool")
+
+    asset.pool.status = GeneralPool.Status.DRAFT
+    asset.pool.save(update_fields=["status"])
+
+    _log_action(request, "update", f"Edited general pool asset: {asset.asset_name}", asset)
+    messages.success(request, f"Asset '{asset.asset_name}' updated.")
+    return redirect(reverse("core:general_pool_detail", args=[fy.pk]) + "?tab=general_pool")
+
+
+@login_required
+@require_POST
+def general_pool_delete_asset(request, asset_pk):
+    """Delete a general pool asset."""
+    asset = get_object_or_404(GeneralPoolAsset, pk=asset_pk)
+    fy = asset.pool.financial_year
+    get_financial_year_for_user(request, fy.pk)
+
+    if not request.user.can_do_accounting:
+        return JsonResponse({"error": "Permission denied"}, status=403)
+
+    name = asset.asset_name
+    pool = asset.pool
+    asset.delete()
+    pool.status = GeneralPool.Status.DRAFT
+    pool.save(update_fields=["status"])
+
+    _log_action(request, "delete", f"Deleted general pool asset: {name}", pool)
+    messages.success(request, f"Asset '{name}' removed from the pool.")
+    return redirect(reverse("core:general_pool_detail", args=[fy.pk]) + "?tab=general_pool")
+
+
+@login_required
+@require_POST
+def general_pool_add_disposal(request, pk):
+    """Add a disposal to the general pool."""
+    fy = get_financial_year_for_user(request, pk)
+    if not request.user.can_do_accounting:
+        return JsonResponse({"error": "Permission denied"}, status=403)
+
+    pool, _ = GeneralPool.objects.get_or_create(financial_year=fy)
+
+    try:
+        disposal = GeneralPoolDisposal.objects.create(
+            pool=pool,
+            asset_name=request.POST.get("asset_name", "").strip(),
+            disposal_date=request.POST.get("disposal_date") or None,
+            termination_value=Decimal(request.POST.get("termination_value", "0") or "0"),
+            business_use_pct=Decimal(request.POST.get("business_use_pct", "100") or "100"),
+            notes=request.POST.get("notes", "").strip(),
+        )
+    except (InvalidOperation, ValueError) as e:
+        messages.error(request, f"Invalid value: {e}")
+        return redirect(reverse("core:general_pool_detail", args=[pk]) + "?tab=general_pool")
+
+    pool.status = GeneralPool.Status.DRAFT
+    pool.save(update_fields=["status"])
+
+    _log_action(request, "create", f"Added general pool disposal: {disposal.asset_name}", disposal)
+    messages.success(request, f"Disposal of '{disposal.asset_name}' recorded.")
+    return redirect(reverse("core:general_pool_detail", args=[pk]) + "?tab=general_pool")
+
+
+@login_required
+@require_POST
+def general_pool_delete_disposal(request, disposal_pk):
+    """Delete a general pool disposal."""
+    disposal = get_object_or_404(GeneralPoolDisposal, pk=disposal_pk)
+    fy = disposal.pool.financial_year
+    get_financial_year_for_user(request, fy.pk)
+
+    if not request.user.can_do_accounting:
+        return JsonResponse({"error": "Permission denied"}, status=403)
+
+    name = disposal.asset_name
+    pool = disposal.pool
+    disposal.delete()
+    pool.status = GeneralPool.Status.DRAFT
+    pool.save(update_fields=["status"])
+
+    _log_action(request, "delete", f"Deleted general pool disposal: {name}", pool)
+    messages.success(request, f"Disposal of '{name}' removed.")
+    return redirect(reverse("core:general_pool_detail", args=[fy.pk]) + "?tab=general_pool")
+
+
+@login_required
+@require_POST
+def general_pool_calculate(request, pk):
+    """Run the pool calculation and save the results."""
+    fy = get_financial_year_for_user(request, pk)
+    if not request.user.can_do_accounting:
+        messages.error(request, "Permission denied.")
+        return redirect("core:general_pool_detail", pk=pk)
+
+    pool, _ = GeneralPool.objects.get_or_create(financial_year=fy)
+    pool.calculate()
+
+    _log_action(request, "update", "Calculated general pool depreciation", pool)
+    messages.success(
+        request,
+        f"Pool calculated. Total deduction: ${pool.total_deduction:,.2f}. "
+        f"Closing balance: ${pool.closing_pool_balance:,.2f}."
+        + (f" Low-pool write-off applied." if pool.low_pool_writeoff else "")
+        + (f" Assessable income: ${pool.assessable_income_adjustment:,.2f}." if pool.assessable_income_adjustment > 0 else "")
+    )
+    return redirect(reverse("core:general_pool_detail", args=[pk]) + "?tab=general_pool")
+
+
+@login_required
+@require_POST
+def general_pool_post_to_tb(request, pk):
+    """Post the general pool depreciation as a journal entry to the trial balance."""
+    fy = get_financial_year_for_user(request, pk)
+    if not request.user.can_do_accounting:
+        messages.error(request, "Permission denied.")
+        return redirect("core:general_pool_detail", pk=pk)
+
+    if fy.is_locked:
+        messages.error(request, "Cannot post to a finalised year.")
+        return redirect("core:general_pool_detail", pk=pk)
+
+    pool = get_object_or_404(GeneralPool, financial_year=fy)
+
+    if pool.status != GeneralPool.Status.CALCULATED:
+        messages.warning(request, "Please calculate the pool first before posting.")
+        return redirect(reverse("core:general_pool_detail", args=[pk]) + "?tab=general_pool")
+
+    if pool.total_deduction <= 0 and pool.assessable_income_adjustment <= 0:
+        messages.warning(request, "No deduction or assessable income to post.")
+        return redirect(reverse("core:general_pool_detail", args=[pk]) + "?tab=general_pool")
+
+    # Check for existing posted journal
+    if pool.status == GeneralPool.Status.POSTED and pool.posted_journal:
+        messages.warning(
+            request,
+            f"Already posted as {pool.posted_journal.reference_number}. Delete that journal first to re-post."
+        )
+        return redirect(reverse("core:general_pool_detail", args=[pk]) + "?tab=general_pool")
+
+    # Validate account codes
+    if not pool.dep_expense_code or not pool.pool_asset_code:
+        messages.error(
+            request,
+            "Please set the Depreciation Expense and Pool Asset account codes in pool settings before posting."
+        )
+        return redirect(reverse("core:general_pool_detail", args=[pk]) + "?tab=general_pool")
+
+    with db_transaction.atomic():
+        journal = AdjustingJournal.objects.create(
+            financial_year=fy,
+            journal_type=AdjustingJournal.JournalType.DEPRECIATION,
+            status=AdjustingJournal.JournalStatus.DRAFT,
+            journal_date=fy.end_date,
+            description=f"General Pool Depreciation — {fy.year_label}",
+            narration=(
+                f"SBE simplified depreciation (Div 328 ITAA97). "
+                f"Opening: ${pool.opening_pool_balance:,.2f}. "
+                f"Additions: ${pool.total_additions:,.2f}. "
+                f"Disposals: ${pool.total_disposals:,.2f}. "
+                f"{'Low-pool write-off applied. ' if pool.low_pool_writeoff else ''}"
+                f"Closing: ${pool.closing_pool_balance:,.2f}."
+            ),
+            created_by=request.user,
+        )
+
+        line_num = 1
+
+        # Depreciation deduction: Dr Depreciation Expense / Cr Pool Asset
+        if pool.total_deduction > 0:
+            JournalLine.objects.create(
+                journal=journal,
+                line_number=line_num,
+                account_code=pool.dep_expense_code,
+                account_name=pool.dep_expense_name or "Depreciation - General Pool",
+                debit=pool.total_deduction,
+                credit=Decimal("0"),
+                description="General pool depreciation deduction",
+            )
+            line_num += 1
+            JournalLine.objects.create(
+                journal=journal,
+                line_number=line_num,
+                account_code=pool.pool_asset_code,
+                account_name=pool.pool_asset_name or "General Pool",
+                debit=Decimal("0"),
+                credit=pool.total_deduction,
+                description="Reduction in general pool carrying value",
+            )
+            line_num += 1
+
+        # Assessable income on negative pool: Dr Pool Asset / Cr Revenue
+        if pool.assessable_income_adjustment > 0:
+            income_code = pool.assessable_income_code or "500"
+            income_name = "Assessable income — pool disposal proceeds"
+            JournalLine.objects.create(
+                journal=journal,
+                line_number=line_num,
+                account_code=pool.pool_asset_code,
+                account_name=pool.pool_asset_name or "General Pool",
+                debit=pool.assessable_income_adjustment,
+                credit=Decimal("0"),
+                description="Pool balance cleared — disposal proceeds exceed pool value",
+            )
+            line_num += 1
+            JournalLine.objects.create(
+                journal=journal,
+                line_number=line_num,
+                account_code=income_code,
+                account_name=income_name,
+                debit=Decimal("0"),
+                credit=pool.assessable_income_adjustment,
+                description="Assessable income — s 328-215 ITAA97",
+            )
+
+        journal.recalculate_totals()
+        journal.status = AdjustingJournal.JournalStatus.POSTED
+        journal.posted_by = request.user
+        journal.posted_at = timezone.now()
+        journal.save()
+
+        # Create TrialBalanceLine adjustments
+        for line in journal.lines.all():
+            TrialBalanceLine.objects.create(
+                financial_year=fy,
+                account_code=line.account_code,
+                account_name=line.account_name,
+                debit=line.debit,
+                credit=line.credit,
+                is_adjustment=True,
+                source="general_pool",
+                source_journal=journal,
+                description=line.description or f"General Pool — {fy.year_label}",
+            )
+
+        pool.posted_journal = journal
+        pool.status = GeneralPool.Status.POSTED
+        pool.save(update_fields=["posted_journal", "status"])
+
+    _log_action(request, "create", f"Posted general pool to TB as {journal.reference_number}", pool)
+    messages.success(
+        request,
+        f"General pool posted to trial balance as {journal.reference_number}. "
+        f"Total deduction: ${pool.total_deduction:,.2f}."
+    )
+    return redirect(reverse("core:general_pool_detail", args=[pk]) + "?tab=general_pool")
+
+
+@login_required
+@require_POST
+def general_pool_roll_forward(request, pk):
+    """
+    Roll the closing balance from the prior year's pool into this year's opening balance.
+    """
+    fy = get_financial_year_for_user(request, pk)
+    if not request.user.can_do_accounting:
+        messages.error(request, "Permission denied.")
+        return redirect("core:general_pool_detail", pk=pk)
+
+    prior_fy = fy.prior_year
+    if not prior_fy:
+        messages.warning(request, "No prior year linked. Set the prior year first.")
+        return redirect(reverse("core:general_pool_detail", args=[pk]) + "?tab=general_pool")
+
+    prior_pool = getattr(prior_fy, "general_pool", None)
+    if not prior_pool:
+        messages.warning(request, "Prior year has no general pool record. Create it first.")
+        return redirect(reverse("core:general_pool_detail", args=[pk]) + "?tab=general_pool")
+
+    pool, _ = GeneralPool.objects.get_or_create(financial_year=fy)
+    pool.opening_pool_balance = prior_pool.closing_pool_balance
+    pool.status = GeneralPool.Status.DRAFT
+    pool.save(update_fields=["opening_pool_balance", "status"])
+
+    _log_action(
+        request, "update",
+        f"Rolled forward general pool opening balance ${pool.opening_pool_balance:,.2f} from {prior_fy.year_label}",
+        pool,
+    )
+    messages.success(
+        request,
+        f"Opening balance set to ${pool.opening_pool_balance:,.2f} (from {prior_fy.year_label} closing balance)."
+    )
+    return redirect(reverse("core:general_pool_detail", args=[pk]) + "?tab=general_pool")

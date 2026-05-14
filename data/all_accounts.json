@@ -2455,6 +2455,22 @@
       "section": "Equity",
       "tax_code": "",
       "entity_type": "company"
+    },
+    {
+      "account_code": "1620",
+      "account_name": "Depreciation - General Pool",
+      "classification": "Depreciation - General Pool (SBE Div 328)",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "company"
+    },
+    {
+      "account_code": "2905",
+      "account_name": "General Pool",
+      "classification": "General Pool - Carrying Value",
+      "section": "Assets",
+      "tax_code": "",
+      "entity_type": "company"
     }
   ],
   "partnership": [
@@ -4825,6 +4841,22 @@
       "section": "Capital Accounts",
       "tax_code": "",
       "entity_type": "partnership"
+    },
+    {
+      "account_code": "1620",
+      "account_name": "Depreciation - General Pool",
+      "classification": "Depreciation - General Pool (SBE Div 328)",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "partnership"
+    },
+    {
+      "account_code": "2905",
+      "account_name": "General Pool",
+      "classification": "General Pool - Carrying Value",
+      "section": "Assets",
+      "tax_code": "",
+      "entity_type": "partnership"
     }
   ],
   "sole_trader": [
@@ -7129,6 +7161,22 @@
       "account_name": "Undistributed income",
       "classification": "Retained profits",
       "section": "Capital Accounts",
+      "tax_code": "",
+      "entity_type": "sole_trader"
+    },
+    {
+      "account_code": "1620",
+      "account_name": "Depreciation - General Pool",
+      "classification": "Depreciation - General Pool (SBE Div 328)",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "sole_trader"
+    },
+    {
+      "account_code": "2905",
+      "account_name": "General Pool",
+      "classification": "General Pool - Carrying Value",
+      "section": "Assets",
       "tax_code": "",
       "entity_type": "sole_trader"
     }
@@ -10859,6 +10907,22 @@
       "account_name": "Physical distribution",
       "classification": "Sub-trust debits",
       "section": "Equity",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "1620",
+      "account_name": "Depreciation - General Pool",
+      "classification": "Depreciation - General Pool (SBE Div 328)",
+      "section": "Expenses",
+      "tax_code": "",
+      "entity_type": "trust"
+    },
+    {
+      "account_code": "2905",
+      "account_name": "General Pool",
+      "classification": "General Pool - Carrying Value",
+      "section": "Assets",
       "tax_code": "",
       "entity_type": "trust"
     }

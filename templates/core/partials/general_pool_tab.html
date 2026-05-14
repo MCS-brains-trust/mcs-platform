@@ -1,0 +1,604 @@
+{% load humanize %}
+{% load mcs_filters %}
+{# ============================================================
+   General Pool (SBE Simplified Depreciation — Div 328 ITAA97)
+   Partial template included in the financial_year_detail tab.
+   ============================================================ #}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h6 class="mb-0">
+        <i class="bi bi-layers"></i> Small Business General Pool
+        <span class="text-muted fw-normal fs-6 ms-2">Div 328 ITAA97</span>
+    </h6>
+    <div class="d-flex gap-2 flex-wrap">
+        {% if fy.prior_year %}
+        <form method="post" action="{% url 'core:general_pool_roll_forward' pk=fy.pk %}" class="d-inline"
+              onsubmit="return confirm('This will overwrite the current opening balance with the closing balance from {{ fy.prior_year.year_label }}. Continue?');">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-outline-info btn-sm">
+                <i class="bi bi-arrow-right-circle"></i> Roll Forward Opening Balance
+            </button>
+        </form>
+        {% endif %}
+        <button class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#poolSettingsModal">
+            <i class="bi bi-gear"></i> Pool Settings
+        </button>
+        <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addPoolAssetModal">
+            <i class="bi bi-plus-lg"></i> Add Asset
+        </button>
+        <button class="btn btn-outline-warning btn-sm" data-bs-toggle="modal" data-bs-target="#addPoolDisposalModal">
+            <i class="bi bi-box-arrow-up-right"></i> Record Disposal
+        </button>
+    </div>
+</div>
+
+{% if general_pool %}
+{# ── Status banner ─────────────────────────────────────────────────────── #}
+{% if general_pool.status == 'draft' %}
+<div class="alert alert-warning py-2 mb-3">
+    <i class="bi bi-exclamation-triangle"></i>
+    Pool is in <strong>Draft</strong> — run the calculation to update the figures below.
+</div>
+{% elif general_pool.status == 'calculated' %}
+<div class="alert alert-info py-2 mb-3">
+    <i class="bi bi-info-circle"></i>
+    Pool is <strong>Calculated</strong> — review the figures then post to the trial balance.
+</div>
+{% elif general_pool.status == 'posted' %}
+<div class="alert alert-success py-2 mb-3">
+    <i class="bi bi-check-circle"></i>
+    Pool has been <strong>posted</strong> to the trial balance
+    {% if general_pool.posted_journal %}as <strong>{{ general_pool.posted_journal.reference_number }}</strong>{% endif %}.
+</div>
+{% endif %}
+
+{# ── Summary calculation table ─────────────────────────────────────────── #}
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center py-2">
+        <span class="fw-semibold"><i class="bi bi-calculator"></i> Pool Calculation Summary</span>
+        <div class="d-flex gap-2">
+            {% if general_pool.status != 'posted' %}
+            <form method="post" action="{% url 'core:general_pool_calculate' pk=fy.pk %}" class="d-inline">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-sm btn-primary">
+                    <i class="bi bi-play-circle"></i> Calculate
+                </button>
+            </form>
+            <form method="post" action="{% url 'core:general_pool_post_to_tb' pk=fy.pk %}" class="d-inline"
+                  onsubmit="return confirm('Post the general pool depreciation to the trial balance? This will create a journal entry.');">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-sm btn-success"
+                        {% if general_pool.status != 'calculated' %}disabled title="Calculate first"{% endif %}>
+                    <i class="bi bi-send"></i> Post to TB
+                </button>
+            </form>
+            {% else %}
+            <a href="{% url 'core:journal_detail' pk=general_pool.posted_journal.pk %}" class="btn btn-sm btn-outline-secondary">
+                <i class="bi bi-journal-text"></i> View Journal
+            </a>
+            {% endif %}
+        </div>
+    </div>
+    <div class="card-body p-0">
+        <table class="table table-sm table-bordered mb-0">
+            <tbody>
+                <tr class="table-light">
+                    <td class="ps-3 fw-semibold">Opening pool balance (Step 1)</td>
+                    <td class="text-end pe-3">${{ general_pool.opening_pool_balance|floatformat:2|intcomma }}</td>
+                </tr>
+                <tr>
+                    <td class="ps-3">Add: New asset additions (business-use portion)</td>
+                    <td class="text-end pe-3">${{ general_pool.total_additions|floatformat:2|intcomma }}</td>
+                </tr>
+                <tr>
+                    <td class="ps-3">Add: Improvements to existing pooled assets</td>
+                    <td class="text-end pe-3">${{ general_pool.total_improvements|floatformat:2|intcomma }}</td>
+                </tr>
+                <tr>
+                    <td class="ps-3">Less: Disposal termination values (business-use portion)</td>
+                    <td class="text-end pe-3">({{ general_pool.total_disposals|floatformat:2|intcomma }})</td>
+                </tr>
+                <tr class="table-light fw-semibold">
+                    <td class="ps-3">Subtotal E</td>
+                    <td class="text-end pe-3">${{ general_pool.subtotal_e|floatformat:2|intcomma }}</td>
+                </tr>
+                {% if general_pool.low_pool_writeoff %}
+                <tr class="table-warning">
+                    <td class="ps-3" colspan="2">
+                        <i class="bi bi-exclamation-triangle-fill text-warning"></i>
+                        <strong>Low-pool write-off applied</strong> — Subtotal E (${{ general_pool.subtotal_e|floatformat:2|intcomma }}) is below the IAWO threshold (${{ general_pool.iawo_threshold|floatformat:2|intcomma }}). Entire balance written off.
+                    </td>
+                </tr>
+                {% else %}
+                <tr>
+                    <td class="ps-3">Less: Deduction F — 30% × opening balance</td>
+                    <td class="text-end pe-3">({{ general_pool.deduction_opening|floatformat:2|intcomma }})</td>
+                </tr>
+                <tr>
+                    <td class="ps-3">Less: Deduction G — 15% × new additions</td>
+                    <td class="text-end pe-3">({{ general_pool.deduction_additions|floatformat:2|intcomma }})</td>
+                </tr>
+                <tr>
+                    <td class="ps-3">Less: Deduction H — 15% × improvements</td>
+                    <td class="text-end pe-3">({{ general_pool.deduction_improvements|floatformat:2|intcomma }})</td>
+                </tr>
+                {% endif %}
+                <tr class="table-primary fw-bold">
+                    <td class="ps-3">Total depreciation deduction</td>
+                    <td class="text-end pe-3">${{ general_pool.total_deduction|floatformat:2|intcomma }}</td>
+                </tr>
+                <tr class="table-light fw-semibold">
+                    <td class="ps-3">Closing pool balance (carried forward)</td>
+                    <td class="text-end pe-3">${{ general_pool.closing_pool_balance|floatformat:2|intcomma }}</td>
+                </tr>
+                {% if general_pool.assessable_income_adjustment > 0 %}
+                <tr class="table-danger">
+                    <td class="ps-3 text-danger fw-semibold">
+                        <i class="bi bi-exclamation-circle-fill"></i>
+                        Assessable income — disposal proceeds exceed pool value (s 328-215)
+                    </td>
+                    <td class="text-end pe-3 text-danger fw-semibold">${{ general_pool.assessable_income_adjustment|floatformat:2|intcomma }}</td>
+                </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+    {% if general_pool.dep_expense_code or general_pool.pool_asset_code %}
+    <div class="card-footer text-muted small py-2">
+        <strong>Accounts:</strong>
+        {% if general_pool.dep_expense_code %}Expense: {{ general_pool.dep_expense_code }} — {{ general_pool.dep_expense_name }}{% endif %}
+        {% if general_pool.pool_asset_code %} &nbsp;|&nbsp; Asset: {{ general_pool.pool_asset_code }} — {{ general_pool.pool_asset_name }}{% endif %}
+        {% if general_pool.assessable_income_code %} &nbsp;|&nbsp; Income: {{ general_pool.assessable_income_code }}{% endif %}
+    </div>
+    {% endif %}
+</div>
+
+{# ── Assets table ──────────────────────────────────────────────────────── #}
+<div class="card mb-4">
+    <div class="card-header py-2">
+        <span class="fw-semibold"><i class="bi bi-list-ul"></i> Assets &amp; Improvements in Pool</span>
+    </div>
+    {% if general_pool.assets.count > 0 %}
+    <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th class="ps-3">Asset Name</th>
+                    <th>Type</th>
+                    <th class="text-end">Cost</th>
+                    <th class="text-end">Business Use %</th>
+                    <th class="text-end">Business Cost</th>
+                    <th>Date First Used</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for asset in general_pool.assets.all %}
+                <tr>
+                    <td class="ps-3">
+                        {{ asset.asset_name }}
+                        {% if asset.is_car %}<span class="badge bg-secondary ms-1">Car</span>{% endif %}
+                        {% if asset.car_limit_applied > 0 %}<span class="badge bg-warning text-dark ms-1" title="Car cost limit applied">Limit: ${{ asset.car_limit_applied|floatformat:0|intcomma }}</span>{% endif %}
+                        {% if asset.notes %}<br><small class="text-muted">{{ asset.notes }}</small>{% endif %}
+                    </td>
+                    <td>{% if asset.is_improvement %}<span class="badge bg-info text-dark">Improvement</span>{% else %}<span class="badge bg-primary">New Asset</span>{% endif %}</td>
+                    <td class="text-end">${{ asset.cost|floatformat:2|intcomma }}</td>
+                    <td class="text-end">{{ asset.business_use_pct }}%</td>
+                    <td class="text-end fw-semibold">${{ asset.business_cost|floatformat:2|intcomma }}</td>
+                    <td>{{ asset.date_first_used|default:"—" }}</td>
+                    <td class="text-end pe-2">
+                        {% if general_pool.status != 'posted' %}
+                        <button class="btn btn-outline-secondary btn-sm py-0 px-1"
+                                data-bs-toggle="modal"
+                                data-bs-target="#editPoolAssetModal"
+                                data-asset-pk="{{ asset.pk }}"
+                                data-asset-name="{{ asset.asset_name }}"
+                                data-asset-cost="{{ asset.cost }}"
+                                data-asset-bup="{{ asset.business_use_pct }}"
+                                data-asset-dfu="{{ asset.date_first_used|default:'' }}"
+                                data-asset-improvement="{{ asset.is_improvement|yesno:'1,0' }}"
+                                data-asset-car="{{ asset.is_car|yesno:'1,0' }}"
+                                data-asset-desc="{{ asset.description }}"
+                                data-asset-notes="{{ asset.notes }}"
+                                title="Edit">
+                            <i class="bi bi-pencil"></i>
+                        </button>
+                        <form method="post" action="{% url 'core:general_pool_delete_asset' asset_pk=asset.pk %}" class="d-inline"
+                              onsubmit="return confirm('Remove {{ asset.asset_name }} from the pool?');">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-outline-danger btn-sm py-0 px-1" title="Remove">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </form>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            <tfoot class="table-light fw-semibold">
+                <tr>
+                    <td class="ps-3" colspan="4">Total business-use additions</td>
+                    <td class="text-end">${{ general_pool.total_additions|add:general_pool.total_improvements|floatformat:2|intcomma }}</td>
+                    <td colspan="2"></td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+    {% else %}
+    <div class="card-body text-muted text-center py-4">
+        <i class="bi bi-inbox fs-4 d-block mb-2"></i>
+        No assets added yet. Click <strong>Add Asset</strong> to add an asset to the pool.
+    </div>
+    {% endif %}
+</div>
+
+{# ── Disposals table ───────────────────────────────────────────────────── #}
+<div class="card mb-4">
+    <div class="card-header py-2">
+        <span class="fw-semibold"><i class="bi bi-box-arrow-up-right"></i> Disposals</span>
+    </div>
+    {% if general_pool.disposals.count > 0 %}
+    <div class="table-responsive">
+        <table class="table table-sm table-hover mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th class="ps-3">Asset Name</th>
+                    <th>Disposal Date</th>
+                    <th class="text-end">Termination Value</th>
+                    <th class="text-end">Business Use %</th>
+                    <th class="text-end">Business TV</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for disposal in general_pool.disposals.all %}
+                <tr>
+                    <td class="ps-3">
+                        {{ disposal.asset_name }}
+                        {% if disposal.notes %}<br><small class="text-muted">{{ disposal.notes }}</small>{% endif %}
+                    </td>
+                    <td>{{ disposal.disposal_date|default:"—" }}</td>
+                    <td class="text-end">${{ disposal.termination_value|floatformat:2|intcomma }}</td>
+                    <td class="text-end">{{ disposal.business_use_pct }}%</td>
+                    <td class="text-end fw-semibold">${{ disposal.business_termination_value|floatformat:2|intcomma }}</td>
+                    <td class="text-end pe-2">
+                        {% if general_pool.status != 'posted' %}
+                        <form method="post" action="{% url 'core:general_pool_delete_disposal' disposal_pk=disposal.pk %}" class="d-inline"
+                              onsubmit="return confirm('Remove disposal of {{ disposal.asset_name }}?');">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-outline-danger btn-sm py-0 px-1" title="Remove">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </form>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+            <tfoot class="table-light fw-semibold">
+                <tr>
+                    <td class="ps-3" colspan="4">Total business-use termination values</td>
+                    <td class="text-end">${{ general_pool.total_disposals|floatformat:2|intcomma }}</td>
+                    <td></td>
+                </tr>
+            </tfoot>
+        </table>
+    </div>
+    {% else %}
+    <div class="card-body text-muted text-center py-4">
+        <i class="bi bi-inbox fs-4 d-block mb-2"></i>
+        No disposals recorded.
+    </div>
+    {% endif %}
+</div>
+
+{% if general_pool.notes %}
+<div class="alert alert-light border mb-3">
+    <strong>Notes:</strong> {{ general_pool.notes }}
+</div>
+{% endif %}
+
+{% else %}
+{# Pool not yet created — show a prompt #}
+<div class="text-center py-5 text-muted">
+    <i class="bi bi-layers fs-1 d-block mb-3"></i>
+    <h6>No general pool for this year</h6>
+    <p class="small">Click <strong>Pool Settings</strong> to initialise the pool with an opening balance and account codes.</p>
+    <button class="btn btn-primary" data-bs-toggle="modal" data-bs-target="#poolSettingsModal">
+        <i class="bi bi-gear"></i> Initialise Pool
+    </button>
+</div>
+{% endif %}
+
+{# ============================================================
+   MODALS
+   ============================================================ #}
+
+{# ── Pool Settings Modal ──────────────────────────────────────────────── #}
+<div class="modal fade" id="poolSettingsModal" tabindex="-1" aria-labelledby="poolSettingsModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <form method="post" action="{% url 'core:general_pool_update_settings' pk=fy.pk %}">
+                {% csrf_token %}
+                <div class="modal-header">
+                    <h5 class="modal-title" id="poolSettingsModalLabel"><i class="bi bi-gear"></i> Pool Settings</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Opening Pool Balance ($)</label>
+                            <input type="number" name="opening_pool_balance" class="form-control"
+                                   step="0.01" min="0"
+                                   value="{{ general_pool.opening_pool_balance|default:'0' }}"
+                                   placeholder="0.00">
+                            <div class="form-text">Closing balance from the prior income year. Use <em>Roll Forward</em> to auto-populate.</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">IAWO Threshold ($)</label>
+                            <input type="number" name="iawo_threshold" class="form-control"
+                                   step="0.01" min="0"
+                                   value="{{ general_pool.iawo_threshold|default:'20000' }}"
+                                   placeholder="20000.00">
+                            <div class="form-text">Instant asset write-off limit for this year. Default $20,000 (2023–24 to 2025–26).</div>
+                        </div>
+                        <div class="col-12"><hr class="my-1"></div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Depreciation Expense Account</label>
+                            <select name="dep_expense_code" class="form-select" id="depExpenseSelect">
+                                <option value="">— Select account —</option>
+                                {% for code, name in expense_accounts %}
+                                <option value="{{ code }}" data-name="{{ name }}"
+                                        {% if general_pool and general_pool.dep_expense_code == code %}selected{% endif %}>
+                                    {{ code }} — {{ name }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <input type="hidden" name="dep_expense_name" id="depExpenseName"
+                                   value="{{ general_pool.dep_expense_name|default:'' }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Pool Asset Account (Balance Sheet)</label>
+                            <select name="pool_asset_code" class="form-select" id="poolAssetSelect">
+                                <option value="">— Select account —</option>
+                                {% for code, name in asset_accounts %}
+                                <option value="{{ code }}" data-name="{{ name }}"
+                                        {% if general_pool and general_pool.pool_asset_code == code %}selected{% endif %}>
+                                    {{ code }} — {{ name }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                            <input type="hidden" name="pool_asset_name" id="poolAssetName"
+                                   value="{{ general_pool.pool_asset_name|default:'' }}">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Assessable Income Account <span class="text-muted fw-normal">(if pool goes negative)</span></label>
+                            <select name="assessable_income_code" class="form-select" id="assessableIncomeSelect">
+                                <option value="">— Select account —</option>
+                                {% for code, name in revenue_accounts %}
+                                <option value="{{ code }}"
+                                        {% if general_pool and general_pool.assessable_income_code == code %}selected{% endif %}>
+                                    {{ code }} — {{ name }}
+                                </option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label fw-semibold">Notes</label>
+                            <textarea name="notes" class="form-control" rows="2"
+                                      placeholder="Any notes about this pool…">{{ general_pool.notes|default:'' }}</textarea>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary"><i class="bi bi-save"></i> Save Settings</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{# ── Add Asset Modal ──────────────────────────────────────────────────── #}
+<div class="modal fade" id="addPoolAssetModal" tabindex="-1" aria-labelledby="addPoolAssetModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="post" action="{% url 'core:general_pool_add_asset' pk=fy.pk %}">
+                {% csrf_token %}
+                <div class="modal-header">
+                    <h5 class="modal-title" id="addPoolAssetModalLabel"><i class="bi bi-plus-lg"></i> Add Asset to Pool</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row g-3">
+                        <div class="col-12">
+                            <label class="form-label fw-semibold">Asset Name <span class="text-danger">*</span></label>
+                            <input type="text" name="asset_name" class="form-control" required placeholder="e.g. John Deere Tractor">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Cost ($) <span class="text-danger">*</span></label>
+                            <input type="number" name="cost" class="form-control" step="0.01" min="0" required placeholder="0.00">
+                            <div class="form-text">Exclude GST if entity is registered. Car cost limit auto-applied.</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Business Use %</label>
+                            <input type="number" name="business_use_pct" class="form-control" step="0.01" min="0" max="100" value="100">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Date First Used</label>
+                            <input type="date" name="date_first_used" class="form-control">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Description</label>
+                            <input type="text" name="description" class="form-control" placeholder="Optional description">
+                        </div>
+                        <div class="col-12">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="is_improvement" value="1" id="addIsImprovement">
+                                <label class="form-check-label" for="addIsImprovement">
+                                    This is a <strong>cost addition / improvement</strong> to an existing pooled asset (attracts 15% rate)
+                                </label>
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="is_car" value="1" id="addIsCar">
+                                <label class="form-check-label" for="addIsCar">
+                                    This is a <strong>passenger vehicle</strong> subject to the car cost limit
+                                </label>
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label fw-semibold">Notes</label>
+                            <input type="text" name="notes" class="form-control" placeholder="Optional notes">
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary"><i class="bi bi-plus-lg"></i> Add to Pool</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{# ── Edit Asset Modal ─────────────────────────────────────────────────── #}
+<div class="modal fade" id="editPoolAssetModal" tabindex="-1" aria-labelledby="editPoolAssetModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="post" id="editPoolAssetForm" action="">
+                {% csrf_token %}
+                <div class="modal-header">
+                    <h5 class="modal-title" id="editPoolAssetModalLabel"><i class="bi bi-pencil"></i> Edit Pool Asset</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row g-3">
+                        <div class="col-12">
+                            <label class="form-label fw-semibold">Asset Name <span class="text-danger">*</span></label>
+                            <input type="text" name="asset_name" id="editAssetName" class="form-control" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Cost ($)</label>
+                            <input type="number" name="cost" id="editAssetCost" class="form-control" step="0.01" min="0">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Business Use %</label>
+                            <input type="number" name="business_use_pct" id="editAssetBup" class="form-control" step="0.01" min="0" max="100">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Date First Used</label>
+                            <input type="date" name="date_first_used" id="editAssetDfu" class="form-control">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Description</label>
+                            <input type="text" name="description" id="editAssetDesc" class="form-control">
+                        </div>
+                        <div class="col-12">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="is_improvement" value="1" id="editIsImprovement">
+                                <label class="form-check-label" for="editIsImprovement">Cost addition / improvement</label>
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" name="is_car" value="1" id="editIsCar">
+                                <label class="form-check-label" for="editIsCar">Passenger vehicle (car cost limit applies)</label>
+                            </div>
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label fw-semibold">Notes</label>
+                            <input type="text" name="notes" id="editAssetNotes" class="form-control">
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-primary"><i class="bi bi-save"></i> Save Changes</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{# ── Add Disposal Modal ───────────────────────────────────────────────── #}
+<div class="modal fade" id="addPoolDisposalModal" tabindex="-1" aria-labelledby="addPoolDisposalModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <form method="post" action="{% url 'core:general_pool_add_disposal' pk=fy.pk %}">
+                {% csrf_token %}
+                <div class="modal-header">
+                    <h5 class="modal-title" id="addPoolDisposalModalLabel"><i class="bi bi-box-arrow-up-right"></i> Record Disposal</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row g-3">
+                        <div class="col-12">
+                            <label class="form-label fw-semibold">Asset Name <span class="text-danger">*</span></label>
+                            <input type="text" name="asset_name" class="form-control" required placeholder="e.g. Ford Ranger (sold)">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Termination Value ($) <span class="text-danger">*</span></label>
+                            <input type="number" name="termination_value" class="form-control" step="0.01" min="0" required placeholder="0.00">
+                            <div class="form-text">Sale price, insurance payout, or trade-in value. Exclude GST.</div>
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Business Use %</label>
+                            <input type="number" name="business_use_pct" class="form-control" step="0.01" min="0" max="100" value="100">
+                        </div>
+                        <div class="col-md-6">
+                            <label class="form-label fw-semibold">Disposal Date</label>
+                            <input type="date" name="disposal_date" class="form-control">
+                        </div>
+                        <div class="col-12">
+                            <label class="form-label fw-semibold">Notes</label>
+                            <input type="text" name="notes" class="form-control" placeholder="Optional notes">
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-warning"><i class="bi bi-box-arrow-up-right"></i> Record Disposal</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+{# ── JavaScript for edit modal population and account name sync ───────── #}
+<script>
+(function () {
+    // Populate edit asset modal from data attributes
+    const editModal = document.getElementById('editPoolAssetModal');
+    if (editModal) {
+        editModal.addEventListener('show.bs.modal', function (event) {
+            const btn = event.relatedTarget;
+            const pk = btn.getAttribute('data-asset-pk');
+            document.getElementById('editPoolAssetForm').action =
+                '/core/general-pool/assets/' + pk + '/edit/';
+            document.getElementById('editAssetName').value = btn.getAttribute('data-asset-name') || '';
+            document.getElementById('editAssetCost').value = btn.getAttribute('data-asset-cost') || '';
+            document.getElementById('editAssetBup').value = btn.getAttribute('data-asset-bup') || '100';
+            document.getElementById('editAssetDfu').value = btn.getAttribute('data-asset-dfu') || '';
+            document.getElementById('editAssetDesc').value = btn.getAttribute('data-asset-desc') || '';
+            document.getElementById('editAssetNotes').value = btn.getAttribute('data-asset-notes') || '';
+            document.getElementById('editIsImprovement').checked = btn.getAttribute('data-asset-improvement') === '1';
+            document.getElementById('editIsCar').checked = btn.getAttribute('data-asset-car') === '1';
+        });
+    }
+
+    // Sync account name hidden fields when dropdowns change
+    function syncName(selectId, hiddenId) {
+        const sel = document.getElementById(selectId);
+        const hid = document.getElementById(hiddenId);
+        if (!sel || !hid) return;
+        sel.addEventListener('change', function () {
+            const opt = sel.options[sel.selectedIndex];
+            hid.value = opt ? (opt.getAttribute('data-name') || opt.text.split(' — ').slice(1).join(' — ')) : '';
+        });
+    }
+    syncName('depExpenseSelect', 'depExpenseName');
+    syncName('poolAssetSelect', 'poolAssetName');
+})();
+</script>

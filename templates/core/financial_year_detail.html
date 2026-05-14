@@ -668,6 +668,12 @@ function quickGenerateEngagementLetter(entityPk, fyPk) {
         </button>
     </li>
     <li class="nav-item">
+        <button class="nav-link{% if active_tab == 'general_pool' %} active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-general-pool" data-tab-name="general_pool" type="button">
+            <i class="bi bi-layers"></i> General Pool
+            {% if general_pool and general_pool.status == 'posted' %}<span class="badge bg-success ms-1">Posted</span>{% elif general_pool and general_pool.status == 'calculated' %}<span class="badge bg-info ms-1">Calculated</span>{% endif %}
+        </button>
+    </li>
+    <li class="nav-item">
         <button class="nav-link{% if active_tab == 'stock' %} active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-stock" data-tab-name="stock" type="button">
             <i class="bi bi-box-seam"></i> Stock ({{ stock_items.count }})
         </button>
@@ -1115,6 +1121,10 @@ function quickGenerateEngagementLetter(entityPk, fyPk) {
         {% endif %}
     </div>
 
+    <!-- ===== GENERAL POOL TAB ===== -->
+    <div class="tab-pane fade{% if active_tab == 'general_pool' %} show active{% endif %} p-3" id="tab-general-pool">
+        {% include "core/partials/general_pool_tab.html" %}
+    </div>
     <!-- ===== STOCK TAB ===== -->
     <div class="tab-pane fade{% if active_tab == 'stock' %} show active{% endif %} p-3" id="tab-stock">
         <div class="d-flex justify-content-between align-items-center mb-3">
