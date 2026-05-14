@@ -1148,6 +1148,10 @@ class EntityChartOfAccount(models.Model):
         default=False,
         help_text="True if the linked beneficiary/unit holder has ceased",
     )
+    is_control_account = models.BooleanField(
+        default=False,
+        help_text="True if this is a control account with sub-accounts (e.g. 3523 with 3523.01, 3523.02)",
+    )
     display_order = models.IntegerField(default=0)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

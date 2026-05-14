@@ -12269,6 +12269,7 @@ def entity_coa_add(request, pk):
             except AccountMapping.DoesNotExist:
                 pass
 
+        is_control = request.POST.get("is_control_account") == "on"
         EntityChartOfAccount.objects.create(
             entity=entity,
             account_code=account_code,
@@ -12279,6 +12280,7 @@ def entity_coa_add(request, pk):
             maps_to=maps_to,
             is_active=True,
             is_custom=True,
+            is_control_account=is_control,
             is_non_deductible=request.POST.get("is_non_deductible") == "on",
             is_non_assessable=request.POST.get("is_non_assessable") == "on",
             is_cgt=request.POST.get("is_cgt") == "on",
@@ -12288,7 +12290,6 @@ def entity_coa_add(request, pk):
         _log_action(request, "create", f"Added entity account: {account_code} — {account_name}", fy)
 
         # Handle sub-accounts if this is a control account
-        is_control = request.POST.get("is_control_account") == "on"
         sub_count = int(request.POST.get("sub_account_count", 0) or 0)
         sub_created = 0
         if is_control and sub_count > 0:
@@ -12370,7 +12371,35 @@ def entity_coa_edit(request, pk):
         acct.is_franked_dividend = request.POST.get("is_franked_dividend") == "on"
         acct.is_franking_credit = request.POST.get("is_franking_credit") == "on"
 
+        # Control account toggle
+        acct.is_control_account = request.POST.get("is_control_account") == "on"
         acct.save()
+
+        # Handle new sub-accounts if control account is enabled
+        sub_count = int(request.POST.get("sub_account_count", 0) or 0)
+        sub_created = 0
+        if acct.is_control_account and sub_count > 0:
+            for i in range(1, sub_count + 1):
+                sub_code = request.POST.get(f"sub_code_{i}", "").strip()
+                sub_name = request.POST.get(f"sub_name_{i}", "").strip()
+                if sub_code and sub_name:
+                    if not EntityChartOfAccount.objects.filter(entity=entity, account_code=sub_code).exists():
+                        EntityChartOfAccount.objects.create(
+                            entity=entity,
+                            account_code=sub_code,
+                            account_name=sub_name,
+                            section=acct.section,
+                            classification=acct.classification,
+                            tax_code=acct.tax_code,
+                            maps_to=acct.maps_to,
+                            is_active=True,
+                            is_custom=True,
+                        )
+                        sub_created += 1
+                        if fy:
+                            _log_action(request, "create", f"Added sub-account: {sub_code} — {sub_name} (parent: {acct.account_code})", fy)
+        if sub_created > 0:
+            messages.success(request, f"Account {acct.account_code} updated with {sub_created} new sub-account(s).")
 
         # ── Sync TB lines ────────────────────────────────────────────────────
         # Propagate name/code changes to every TrialBalanceLine for this entity

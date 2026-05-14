@@ -151,12 +151,12 @@
                     </div>
                     {% endif %}
 
-                    <!-- Step 4: Control Account with Sub-Accounts -->
-                    {% if not is_edit %}
+                    <!-- Step 4: Control Account with Sub-Accounts (balance sheet sections only) -->
+                    <div id="controlAccountWrapper" style="display:none;">
                     <hr>
                     <div class="mb-3">
                         <div class="form-check form-switch">
-                            <input class="form-check-input" type="checkbox" id="isControlAccount" name="is_control_account">
+                            <input class="form-check-input" type="checkbox" id="isControlAccount" name="is_control_account"{% if is_edit and account.is_control_account %} checked{% endif %}>
                             <label class="form-check-label fw-bold" for="isControlAccount">
                                 <span class="badge bg-info me-1">4</span> Control Account with Sub-Accounts
                             </label>
@@ -166,9 +166,8 @@
                             The main code above becomes the control account, and sub-accounts are created below.
                         </div>
                     </div>
-
-                    <!-- Sub-Accounts Panel (hidden by default) -->
-                    <div id="subAccountsPanel" style="display:none;">
+                    <!-- Sub-Accounts Panel (hidden by default, shown when checkbox is ticked) -->
+                    <div id="subAccountsPanel" style="display:{% if is_edit and account.is_control_account %}block{% else %}none{% endif %};">
                         <div class="card border-info mb-3">
                             <div class="card-header bg-info bg-opacity-10 d-flex justify-content-between align-items-center">
                                 <h6 class="mb-0"><i class="bi bi-diagram-3"></i> Sub-Accounts</h6>
@@ -201,7 +200,7 @@
                             with the same section, classification, tax code, and mapping as the parent. You can edit them individually afterwards.
                         </div>
                     </div>
-                    {% endif %}
+                    </div><!-- /controlAccountWrapper -->
 
                     <hr>
                     <div class="d-flex justify-content-between">
@@ -404,6 +403,23 @@ document.addEventListener('DOMContentLoaded', function() {
         }, 500);
     }
 
+    const BS_SECTIONS = new Set(['current_assets', 'non_current_assets', 'assets',
+        'current_liabilities', 'non_current_liabilities', 'liabilities',
+        'equity', 'capital_accounts', 'pl_appropriation']);
+    const controlWrapper = document.getElementById('controlAccountWrapper');
+    function updateControlAccountVisibility(section) {
+        if (!controlWrapper) return;
+        if (BS_SECTIONS.has(section)) {
+            controlWrapper.style.display = 'block';
+        } else {
+            controlWrapper.style.display = 'none';
+            // Uncheck and collapse if hidden
+            const cb = document.getElementById('isControlAccount');
+            if (cb) cb.checked = false;
+            const panel = document.getElementById('subAccountsPanel');
+            if (panel) panel.style.display = 'none';
+        }
+    }
     sectionSelect.addEventListener('change', function() {
         userOverrodeCode = false;
         const section = sectionSelect.value;
@@ -422,8 +438,10 @@ document.addEventListener('DOMContentLoaded', function() {
             };
             sectionHint.innerHTML = '<i class="bi bi-info-circle text-primary"></i> Code range: <code>' + (ranges[section] || '—') + '</code>';
             highlightRange(section);
+            updateControlAccountVisibility(section);
         } else {
             sectionHint.textContent = '';
+            if (controlWrapper) controlWrapper.style.display = 'none';
         }
         suggestCode();
     });
@@ -665,6 +683,9 @@ document.addEventListener('DOMContentLoaded', function() {
     // Trigger initial state if editing
     if (isEdit && sectionSelect.value) {
         highlightRange(sectionSelect.value);
+        updateControlAccountVisibility(sectionSelect.value);
+    } else if (!isEdit && sectionSelect.value) {
+        updateControlAccountVisibility(sectionSelect.value);
     }
 });
 </script>
