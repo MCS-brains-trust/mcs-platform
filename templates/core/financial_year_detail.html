@@ -1940,6 +1940,42 @@ function quickGenerateEngagementLetter(entityPk, fyPk) {
   document.getElementById('addAssetModal')?.addEventListener('hidden.bs.modal', function() {
     if (addOpeningWdv) addOpeningWdv._manuallyEdited = false;
   });
+
+  // ── Fetch-based form submission (bypasses CSRF Referer check) ─────────────
+  // Some browsers strip the Referer header (privacy settings / extensions),
+  // causing Django's CSRF middleware to reject the POST with 403 Forbidden.
+  // Submitting via fetch() with the X-CSRFToken header is an accepted
+  // alternative that bypasses the Referer check entirely.
+  const addAssetForm = document.querySelector('#addAssetModal form');
+  addAssetForm?.addEventListener('submit', function(e) {
+    e.preventDefault();
+    const form = e.target;
+    const btn = form.querySelector('[type="submit"]');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Saving\u2026';
+    fetch(form.action, {
+      method: 'POST',
+      headers: {'X-CSRFToken': csrfToken},
+      body: new FormData(form),
+    })
+      .then(resp => {
+        if (resp.redirected || resp.ok) {
+          window.location.href = resp.url || (window.location.pathname + '?tab=depreciation');
+        } else {
+          return resp.text().then(html => {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-plus-lg"></i> Add Asset';
+            alert('Error saving asset. Please try again.');
+            console.error('Add asset error:', html);
+          });
+        }
+      })
+      .catch(() => {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-plus-lg"></i> Add Asset';
+        alert('Network error. Please try again.');
+      });
+  });
 })();
 </script>
 
@@ -2152,12 +2188,46 @@ function openEditAssetModal(pk, name, category, purchaseDate, totalCost, opening
     editCatSelRef?.addEventListener('change', function() {
         if (editCatSelRef.value === 'General Pool') applyEditPoolRate();
     });
-    editPurchInputEl?.addEventListener('change', function() {
+     editPurchInputEl?.addEventListener('change', function() {
         if (editCatSelRef.value === 'General Pool') applyEditPoolRate();
     });
 }
-</script>
 
+// ── Fetch-based submission for edit asset form (bypasses CSRF Referer check) ──
+(function() {
+  const editForm = document.getElementById('editAssetForm');
+  const editCsrf = '{{ csrf_token }}';
+  editForm?.addEventListener('submit', function(e) {
+    e.preventDefault();
+    const form = e.target;
+    const btn = form.querySelector('[type="submit"]');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Saving\u2026';
+    fetch(form.action, {
+      method: 'POST',
+      headers: {'X-CSRFToken': editCsrf},
+      body: new FormData(form),
+    })
+      .then(resp => {
+        if (resp.redirected || resp.ok) {
+          window.location.href = resp.url || (window.location.pathname + '?tab=depreciation');
+        } else {
+          return resp.text().then(html => {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-save"></i> Save Changes';
+            alert('Error saving asset. Please try again.');
+            console.error('Edit asset error:', html);
+          });
+        }
+      })
+      .catch(() => {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="bi bi-save"></i> Save Changes';
+        alert('Network error. Please try again.');
+      });
+  });
+})();
+</script>
 <!-- ===== ADD STOCK MODAL ===== -->
 <div class="modal fade" id="addStockModal" tabindex="-1">
     <div class="modal-dialog">
