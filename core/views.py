@@ -2970,7 +2970,7 @@ def reroll_forward(request, pk):
             _calc_depreciation(new_asset, force_ato_rate=True)
             new_asset.save()
             dep_rolled += 1
-        pl_direction = "profit" if net_pl_result < 0 else "loss""
+        pl_direction = "profit" if net_pl_result < 0 else "loss"
         tax_msg = f" Income tax of ${abs(tax_amount):,.2f} absorbed." if tax_amount else ""
         stock_msg = f" {stock_converted} closing stock entries converted to opening stock." if stock_converted else ""
         stock_items_msg = f" {stock_rolled} stock items rolled forward." if stock_rolled else ""
@@ -8453,7 +8453,7 @@ def depreciation_roll_forward(request, pk):
         _calc_depreciation(new_asset, force_ato_rate=True)
         new_asset.save()
         count += 1
-    _log_action(request, "roll_forward", f"Rolled forward {count} depreciation assets to {fy}", fy))
+    _log_action(request, "roll_forward", f"Rolled forward {count} depreciation assets to {fy}", fy)
     messages.success(request, f"Rolled forward {count} depreciation assets from prior year.")
     return redirect(reverse("core:financial_year_detail", args=[pk]) + "?tab=depreciation")
 
