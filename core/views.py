@@ -2967,11 +2967,10 @@ def reroll_forward(request, pk):
                 dep_expense_name=pa.dep_expense_name,
                 notes=f"Rolled forward from FY{current_fy.year_label}",
             )
-            _calc_depreciation(new_asset)
+            _calc_depreciation(new_asset, force_ato_rate=True)
             new_asset.save()
             dep_rolled += 1
-
-        pl_direction = "profit" if net_pl_result < 0 else "loss"
+        pl_direction = "profit" if net_pl_result < 0 else "loss""
         tax_msg = f" Income tax of ${abs(tax_amount):,.2f} absorbed." if tax_amount else ""
         stock_msg = f" {stock_converted} closing stock entries converted to opening stock." if stock_converted else ""
         stock_items_msg = f" {stock_rolled} stock items rolled forward." if stock_rolled else ""
@@ -3428,12 +3427,11 @@ def _populate_rolled_forward_fy(current_fy, new_fy):
             dep_expense_name=pa.dep_expense_name,
             notes=f"Rolled forward from FY{current_fy.year_label}",
         )
-        _calc_depreciation(new_asset)
+        _calc_depreciation(new_asset, force_ato_rate=True)
         new_asset.save()
         dep_rolled += 1
-
     # -----------------------------------------------------------------
-    # Pass 6: For trusts — allocate confirmed distribution to beneficiary
+    # Pass 6: For trustss — allocate confirmed distribution to beneficiary
     # payable accounts and reduce undistributed income accordingly.
     # -----------------------------------------------------------------
     dist_rolled = 0
@@ -8452,20 +8450,29 @@ def depreciation_roll_forward(request, pk):
             notes=f"Rolled forward from FY{fy.prior_year.year_label}",
         )
         # Pre-calculate depreciation so the schedule is immediately populated
-        _calc_depreciation(new_asset)
+        _calc_depreciation(new_asset, force_ato_rate=True)
         new_asset.save()
         count += 1
-
-    _log_action(request, "roll_forward", f"Rolled forward {count} depreciation assets to {fy}", fy)
+    _log_action(request, "roll_forward", f"Rolled forward {count} depreciation assets to {fy}", fy))
     messages.success(request, f"Rolled forward {count} depreciation assets from prior year.")
     return redirect(reverse("core:financial_year_detail", args=[pk]) + "?tab=depreciation")
 
 
-def _calc_depreciation(asset):
-    """Calculate depreciation amount and closing WDV for an asset."""
+def _calc_depreciation(asset, force_ato_rate=False):
+    """Calculate depreciation amount and closing WDV for an asset.
+
+    For General Pool assets the ATO Div 328 rates (15% acquisition year,
+    30% subsequent years) are applied automatically ONLY when:
+      - force_ato_rate=True  (used by roll-forward to ensure correct rates), OR
+      - the asset has no explicit rate set (rate == 0), meaning it is a
+        brand-new asset that hasn't had a rate entered yet.
+
+    When a user manually edits the rate via the Edit Asset modal the submitted
+    rate is non-zero, so it is respected and NOT overwritten.
+    """
     depreciable = asset.opening_wdv + asset.addition_cost
     # ── General Pool: auto-apply ATO Div 328 rates ─────────────────────────────
-    if asset.category == "General Pool":
+    if asset.category == "General Pool" and (force_ato_rate or asset.rate == 0):
         asset.method = "D"
         fy = asset.financial_year
         if asset.purchase_date and fy.start_date <= asset.purchase_date <= fy.end_date:
@@ -8474,6 +8481,9 @@ def _calc_depreciation(asset):
         else:
             # Subsequent year — 30% full rate
             asset.rate = Decimal("30")
+    elif asset.category == "General Pool":
+        # User has set an explicit rate — still lock method to Diminishing Value
+        asset.method = "D"
     # ────────────────────────────────────────────────────────────────────────────
     if asset.disposal_date:
         # On disposal, depreciation is up to disposal date
