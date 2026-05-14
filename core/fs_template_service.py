@@ -504,6 +504,105 @@ def _format_lines(items, credit_normal=False):
     return items
 
 
+# ---------------------------------------------------------------------------
+# Balance sheet sign-flip reclassification
+# ---------------------------------------------------------------------------
+# Keywords that identify bank / cash accounts (debit-normal assets).
+_BANK_KEYWORDS = (
+    "cash", "bank", "petty cash", "on hand",
+    "anz", "nab", "cba", "commonwealth bank", "westpac", "bendigo",
+    "suncorp", "macquarie", "bankwest", "st george", "stgeorge",
+)
+
+# Keywords that identify tax / ATO liability accounts (credit-normal liabilities).
+_TAX_LIABILITY_KEYWORDS = (
+    "gst", "bas", "payg", "withholding", "ato",
+    "income tax", "tax payable", "tax liability", "taxation",
+    "clearing",
+)
+
+# Keywords that identify trade payable / creditor accounts (credit-normal liabilities).
+_PAYABLE_KEYWORDS = (
+    "creditor", "payable", "accrual", "accounts payable",
+    "trade creditor", "sundry creditor",
+)
+
+
+def _reclassify_sign_flips(sections):
+    """Reclassify accounts whose balance has flipped to the wrong side.
+
+    Rules applied (all are render-time only — TB data is never mutated):
+
+    1. **Bank overdraft**: A current asset account with bank/cash keywords
+       that has a *negative* CY or PY balance is moved to Current Liabilities
+       under the sub-group "Bank Overdraft".
+
+    2. **GST / tax refund receivable**: A current liability account with
+       tax/ATO keywords that has a *positive* balance (credit-normal means
+       a positive raw value is a debit — i.e. the ATO owes the entity) is
+       moved to Current Assets under "Other Current Assets".
+
+    3. **Overpaid creditor / prepayment**: A current liability account with
+       payable/creditor keywords that has a *positive* balance (debit — the
+       supplier owes the entity) is moved to Current Assets under
+       "Receivables".
+
+    Sign convention reminder:
+        current_assets   — debit-normal  → positive cy_amount = asset
+        current_liabilities — credit-normal → negative cy_amount = liability
+            (a positive cy_amount in current_liabilities means the balance
+             is actually a debit, i.e. the entity is owed money)
+    """
+    # ── Rule 1: Bank overdraft (current asset → current liability) ──────────
+    ca_keep = []
+    for item in sections.get("current_assets", []):
+        name_lower = (item.get("account_name") or "").lower()
+        cy = item.get("cy_amount") or Decimal("0")
+        py = item.get("py_amount") or Decimal("0")
+        is_bank = any(kw in name_lower for kw in _BANK_KEYWORDS)
+        if is_bank and (cy < Decimal("0") or py < Decimal("0")):
+            # Convert to credit-normal for the liabilities section.
+            # A negative asset (e.g. cy = -5000) becomes a positive liability
+            # in credit-normal convention (cy_amount = -(-5000) = 5000 would
+            # be wrong — liabilities are stored as negative in credit-normal).
+            # We keep the raw value as-is; _format_lines(credit_normal=True)
+            # will negate it for display.  A negative raw value in
+            # current_liabilities means the account is a debit (asset side),
+            # so we must negate to make it a proper credit-normal liability.
+            reclassified = dict(item)
+            reclassified["cy_amount"] = -cy   # flip sign: negative asset → positive credit-normal liability
+            reclassified["py_amount"] = -py
+            reclassified["_reclassified_overdraft"] = True
+            sections.setdefault("current_liabilities", []).append(reclassified)
+        else:
+            ca_keep.append(item)
+    sections["current_assets"] = ca_keep
+
+    # ── Rule 2: GST / tax refund receivable (current liability → current asset) ─
+    cl_keep = []
+    for item in sections.get("current_liabilities", []):
+        if item.get("_reclassified_overdraft"):
+            cl_keep.append(item)
+            continue
+        name_lower = (item.get("account_name") or "").lower()
+        cy = item.get("cy_amount") or Decimal("0")
+        py = item.get("py_amount") or Decimal("0")
+        is_tax = any(kw in name_lower for kw in _TAX_LIABILITY_KEYWORDS)
+        is_payable = any(kw in name_lower for kw in _PAYABLE_KEYWORDS)
+        # In credit-normal convention, a *positive* cy_amount means the
+        # account has a debit balance (entity is owed money → reclassify as asset).
+        if (is_tax or is_payable) and (cy > Decimal("0") or py > Decimal("0")):
+            reclassified = dict(item)
+            # Flip to debit-normal for current_assets: negate the credit-normal value.
+            reclassified["cy_amount"] = -cy
+            reclassified["py_amount"] = -py
+            reclassified["_reclassified_refund"] = True
+            sections.setdefault("current_assets", []).append(reclassified)
+        else:
+            cl_keep.append(item)
+    sections["current_liabilities"] = cl_keep
+
+
 def _classify_current_asset(name_lower):
     """Classify a current asset into a sub-group by keyword matching.
 
@@ -531,7 +630,14 @@ def _classify_current_liability(name_lower):
     Tax Liabilities are checked FIRST because accounts like "GST payable"
     contain "payable" which would otherwise match the Payables group.
     """
-    # Tax / ATO statutory obligations — check first (higher priority)
+    # Bank overdraft — reclassified from current assets (check first)
+    if any(kw in name_lower for kw in [
+        "cash", "bank", "petty cash", "on hand",
+        "anz", "nab", "cba", "commonwealth bank", "westpac", "bendigo",
+        "suncorp", "macquarie", "bankwest", "st george", "stgeorge",
+    ]):
+        return "Bank Overdraft"
+    # Tax / ATO statutory obligations — check before payables (higher priority)
     if any(kw in name_lower for kw in [
         "gst", "payg", "tax", "taxation", "withholding", "bas", "ato", "clearing",
     ]):
@@ -737,6 +843,9 @@ def build_company_context(financial_year, include_watermark=True):
             )
         ]
 
+    # Reclassify accounts whose balance has flipped sign:
+    # bank overdrafts → current liabilities, GST/tax refunds → current assets, etc.
+    _reclassify_sign_flips(sections)
     has_prior = _has_prior_year(fy)
     has_trading = len(sections["trading_income"]) > 0 or len(sections["cogs"]) > 0
 
