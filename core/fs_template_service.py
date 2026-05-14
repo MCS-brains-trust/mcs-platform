@@ -593,9 +593,13 @@ def _reclassify_sign_flips(sections):
         # account has a debit balance (entity is owed money → reclassify as asset).
         if (is_tax or is_payable) and (cy > Decimal("0") or py > Decimal("0")):
             reclassified = dict(item)
-            # Flip to debit-normal for current_assets: negate the credit-normal value.
-            reclassified["cy_amount"] = -cy
-            reclassified["py_amount"] = -py
+            # In credit-normal convention a *positive* cy_amount means a debit
+            # balance (entity is owed money).  Current assets are debit-normal,
+            # so a positive value is already correct — keep the sign as-is.
+            # Do NOT negate: the value is already positive and should display
+            # as a positive asset (e.g. $8,190 not ($8,190)).
+            reclassified["cy_amount"] = cy
+            reclassified["py_amount"] = py
             reclassified["_reclassified_refund"] = True
             sections.setdefault("current_assets", []).append(reclassified)
         else:
