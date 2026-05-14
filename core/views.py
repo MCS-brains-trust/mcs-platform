@@ -8165,20 +8165,30 @@ def depreciation_add(request, pk):
     if not request.user.can_do_accounting:
         return JsonResponse({"error": "Permission denied"}, status=403)
 
+    def _parse_date_add(val):
+        """Parse a date string (YYYY-MM-DD) into a date object, or return None."""
+        if not val:
+            return None
+        try:
+            from datetime import datetime
+            return datetime.strptime(val, "%Y-%m-%d").date()
+        except (ValueError, TypeError):
+            return None
+
     try:
         asset = DepreciationAsset.objects.create(
             financial_year=fy,
             category=request.POST.get("category", "Other"),
             asset_name=request.POST.get("asset_name", ""),
-            purchase_date=request.POST.get("purchase_date") or None,
+            purchase_date=_parse_date_add(request.POST.get("purchase_date")),
             total_cost=Decimal(request.POST.get("total_cost", "0") or "0"),
             private_use_pct=Decimal(request.POST.get("private_use_pct", "0") or "0"),
             opening_wdv=Decimal(request.POST.get("opening_wdv", "0") or "0"),
             method=request.POST.get("method", "D"),
             rate=Decimal(request.POST.get("rate", "0") or "0"),
             addition_cost=Decimal(request.POST.get("addition_cost", "0") or "0"),
-            addition_date=request.POST.get("addition_date") or None,
-            disposal_date=request.POST.get("disposal_date") or None,
+            addition_date=_parse_date_add(request.POST.get("addition_date")),
+            disposal_date=_parse_date_add(request.POST.get("disposal_date")),
             disposal_consideration=Decimal(request.POST.get("disposal_consideration", "0") or "0"),
             asset_account_code=request.POST.get("asset_account_code", "").strip(),
             asset_account_name=request.POST.get("asset_account_name", "").strip(),
@@ -8333,18 +8343,31 @@ def depreciation_edit(request, pk):
     if not request.user.can_do_accounting:
         return JsonResponse({"error": "Permission denied"}, status=403)
 
+    def _parse_date(val, fallback=None):
+        """Parse a date string (YYYY-MM-DD) into a date object, or return fallback."""
+        if not val:
+            return fallback
+        from datetime import date as _date_type
+        if isinstance(val, _date_type):
+            return val
+        try:
+            from datetime import datetime
+            return datetime.strptime(val, "%Y-%m-%d").date()
+        except (ValueError, TypeError):
+            return fallback
+
     try:
         asset.category = request.POST.get("category", asset.category)
         asset.asset_name = request.POST.get("asset_name", asset.asset_name)
-        asset.purchase_date = request.POST.get("purchase_date") or asset.purchase_date
+        asset.purchase_date = _parse_date(request.POST.get("purchase_date"), asset.purchase_date)
         asset.total_cost = Decimal(request.POST.get("total_cost", "0") or "0")
         asset.private_use_pct = Decimal(request.POST.get("private_use_pct", "0") or "0")
         asset.opening_wdv = Decimal(request.POST.get("opening_wdv", "0") or "0")
         asset.method = request.POST.get("method", asset.method)
         asset.rate = Decimal(request.POST.get("rate", "0") or "0")
         asset.addition_cost = Decimal(request.POST.get("addition_cost", "0") or "0")
-        asset.addition_date = request.POST.get("addition_date") or None
-        asset.disposal_date = request.POST.get("disposal_date") or None
+        asset.addition_date = _parse_date(request.POST.get("addition_date"))
+        asset.disposal_date = _parse_date(request.POST.get("disposal_date"))
         asset.disposal_consideration = Decimal(request.POST.get("disposal_consideration", "0") or "0")
         # Account mapping fields
         if request.POST.get("asset_account_code"):
@@ -8528,6 +8551,15 @@ def depreciation_add_from_transaction(request, pk):
     # IDOR check
     get_financial_year_for_user(request, fy.pk)
 
+    def _parse_date_txn(val):
+        if not val:
+            return None
+        try:
+            from datetime import datetime
+            return datetime.strptime(val, "%Y-%m-%d").date()
+        except (ValueError, TypeError):
+            return None
+
     if request.method == "POST":
         if not request.user.can_do_accounting:
             return JsonResponse({"error": "Permission denied"}, status=403)
@@ -8536,15 +8568,15 @@ def depreciation_add_from_transaction(request, pk):
                 financial_year=fy,
                 category=request.POST.get("category", "Other"),
                 asset_name=request.POST.get("asset_name", ""),
-                purchase_date=request.POST.get("purchase_date") or None,
+                purchase_date=_parse_date_txn(request.POST.get("purchase_date")),
                 total_cost=Decimal(request.POST.get("total_cost", "0") or "0"),
                 private_use_pct=Decimal(request.POST.get("private_use_pct", "0") or "0"),
                 opening_wdv=Decimal(request.POST.get("opening_wdv", "0") or "0"),
                 method=request.POST.get("method", "D"),
                 rate=Decimal(request.POST.get("rate", "0") or "0"),
                 addition_cost=Decimal(request.POST.get("addition_cost", "0") or "0"),
-                addition_date=request.POST.get("addition_date") or None,
-                disposal_date=request.POST.get("disposal_date") or None,
+                addition_date=_parse_date_txn(request.POST.get("addition_date")),
+                disposal_date=_parse_date_txn(request.POST.get("disposal_date")),
                 disposal_consideration=Decimal(request.POST.get("disposal_consideration", "0") or "0"),
                 source_transaction=txn,
                 asset_account_code=request.POST.get("asset_account_code", "").strip(),
