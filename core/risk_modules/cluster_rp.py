@@ -12,6 +12,12 @@ Rules:
 
 Legislative Foundation:
     AASB 124 Related Party Disclosures
+
+Balance sign convention (inherited from risk_engine.py aggregation):
+    net = effective_dr - effective_cr
+    net > 0  →  debit balance  (company is owed money — potential Div 7A risk)
+    net < 0  →  credit balance (company owes money to director/shareholder —
+                                NOT a Div 7A issue; still requires AASB 124 disclosure)
 """
 
 import logging
@@ -25,11 +31,16 @@ logger = logging.getLogger(__name__)
 KMP_THRESHOLD = Decimal("5000")
 ARMS_LENGTH_THRESHOLD = Decimal("50000")
 
-# Keywords for related party account detection
-_RP_KEYWORDS = {
-    "director loan", "shareholder loan", "related party", "loan to director",
-    "loan - director", "loan – director", "intercompany", "inter-company",
-    "inter company", "management fee", "director fee", "consulting fee",
+# Keywords that identify director / shareholder loan accounts
+_DIRECTOR_LOAN_KEYWORDS = {
+    "director loan", "loan to director", "loan - director", "loan – director",
+    "shareholder loan", "loan to shareholder", "loan - shareholder",
+}
+
+# Keywords for related party account detection (broader set)
+_RP_KEYWORDS = _DIRECTOR_LOAN_KEYWORDS | {
+    "related party", "intercompany", "inter-company", "inter company",
+    "management fee", "director fee", "consulting fee",
     "rent - director", "rent – director", "director rent",
 }
 
@@ -84,7 +95,8 @@ class RelatedPartyCluster(BaseDetectionModule):
 
             # Check for related party accounts
             is_rp = False
-            if any(kw in name_lower for kw in _RP_KEYWORDS):
+            is_director_loan = any(kw in name_lower for kw in _DIRECTOR_LOAN_KEYWORDS)
+            if is_director_loan or any(kw in name_lower for kw in _RP_KEYWORDS):
                 is_rp = True
             elif any(rn in name_lower for rn in related_names if len(rn) > 3):
                 is_rp = True
@@ -95,6 +107,10 @@ class RelatedPartyCluster(BaseDetectionModule):
                     "name": line.account_name,
                     "net": net,
                     "abs_net": abs(net),
+                    # True  = debit balance (receivable — potential Div 7A)
+                    # False = credit balance (payable — no Div 7A concern)
+                    "is_debit": net > ZERO,
+                    "is_director_loan": is_director_loan,
                 })
 
             # Check for KMP accounts
@@ -127,6 +143,9 @@ class RelatedPartyCluster(BaseDetectionModule):
         """RP-01: Inter-entity balance detection.
 
         Flag inter-entity balances requiring AASB 124 disclosure.
+        For director/shareholder loan accounts, note whether the balance is a
+        debit (potential Div 7A risk) or a credit (company owes the director —
+        no Div 7A concern, but still requires AASB 124 disclosure).
         """
         if not self.rp_accounts:
             return
@@ -138,10 +157,19 @@ class RelatedPartyCluster(BaseDetectionModule):
         if material_balances:
             self.rules_fired.append("RP-01")
             total = sum(a["abs_net"] for a in material_balances)
-            account_list = ", ".join(
-                f"{a['name']} (${a['abs_net']:,.2f})"
-                for a in sorted(material_balances, key=lambda x: x["abs_net"], reverse=True)[:5]
-            )
+
+            account_parts = []
+            for a in sorted(material_balances, key=lambda x: x["abs_net"], reverse=True)[:5]:
+                label = f"{a['name']} (${a['abs_net']:,.2f}"
+                if a["is_director_loan"]:
+                    if a["is_debit"]:
+                        label += " — debit balance, potential Div 7A"
+                    else:
+                        label += " — credit balance, no Div 7A concern"
+                label += ")"
+                account_parts.append(label)
+
+            account_list = ", ".join(account_parts)
             self.finding_lines.append(
                 f"Inter-entity balances totalling ${total:,.2f} detected "
                 f"across {len(material_balances)} account(s). "
@@ -168,7 +196,12 @@ class RelatedPartyCluster(BaseDetectionModule):
             )
 
     def _rule_rp_03(self):
-        """RP-03: Arm's length assessment for material transactions > $50,000."""
+        """RP-03: Arm's length assessment for material transactions > $50,000.
+
+        For director/shareholder loan accounts with a CREDIT balance, the
+        company owes money to the director — this is not a Div 7A issue.
+        The finding message is adjusted accordingly.
+        """
         material = [
             a for a in self.rp_accounts if a["abs_net"] > ARMS_LENGTH_THRESHOLD
         ]
@@ -176,11 +209,30 @@ class RelatedPartyCluster(BaseDetectionModule):
         if material:
             self.rules_fired.append("RP-03")
             for a in material:
-                self.finding_lines.append(
-                    f"Material related party transaction: {a['name']} "
-                    f"(${a['abs_net']:,.2f}). Arm's length confirmation "
-                    f"and documentation required."
-                )
+                if a["is_director_loan"] and not a["is_debit"]:
+                    # Credit director/shareholder loan — company owes the director.
+                    # No Div 7A risk; still flag for AASB 124 disclosure.
+                    self.finding_lines.append(
+                        f"Material related party balance: {a['name']} "
+                        f"(${a['abs_net']:,.2f}) — credit balance (company owes "
+                        f"the director/shareholder). This is NOT a Div 7A issue. "
+                        f"AASB 124 disclosure required."
+                    )
+                elif a["is_director_loan"] and a["is_debit"]:
+                    # Debit director/shareholder loan — company is owed money.
+                    # Potential Div 7A issue; arm's length confirmation required.
+                    self.finding_lines.append(
+                        f"Material related party transaction: {a['name']} "
+                        f"(${a['abs_net']:,.2f}) — debit balance (company is owed "
+                        f"money). Potential Div 7A issue. Arm's length confirmation "
+                        f"and documentation required."
+                    )
+                else:
+                    self.finding_lines.append(
+                        f"Material related party transaction: {a['name']} "
+                        f"(${a['abs_net']:,.2f}). Arm's length confirmation "
+                        f"and documentation required."
+                    )
 
     def _build_assessment_dict(self):
         return {
@@ -201,14 +253,36 @@ class RelatedPartyCluster(BaseDetectionModule):
         for line in self.finding_lines:
             description += f"- {line}\n"
 
+        # Tailor recommended action based on whether any debit director loans exist
+        has_debit_director_loan = any(
+            a["is_director_loan"] and a["is_debit"] for a in self.rp_accounts
+        )
+        has_credit_director_loan = any(
+            a["is_director_loan"] and not a["is_debit"] for a in self.rp_accounts
+        )
+
+        actions = ["1. Verify all related party balances are disclosed in the notes."]
+        if has_debit_director_loan:
+            actions.append(
+                "2. Review debit director/shareholder loan balances for Div 7A compliance "
+                "(minimum yearly repayments, benchmark interest rate, loan agreements)."
+            )
+        if has_credit_director_loan:
+            actions.append(
+                "3. Credit director loan balance confirmed — company owes the director. "
+                "No Div 7A issue. Ensure balance is disclosed under AASB 124."
+            )
+        actions.append(
+            f"{len(actions) + 1}. Confirm arm's length terms for material transactions."
+        )
+        actions.append(
+            f"{len(actions) + 1}. Document KMP compensation disclosures per AASB 124."
+        )
+
         return {
             "title": f"Related Party Transactions — {entity_name} {year}",
             "description": description,
-            "recommended_action": (
-                "1. Verify all related party balances are disclosed in the notes.\n"
-                "2. Confirm arm's length terms for material transactions.\n"
-                "3. Document KMP compensation disclosures per AASB 124."
-            ),
+            "recommended_action": "\n".join(actions),
             "legislation_ref": "AASB 124 Related Party Disclosures",
             "category": "COMPLIANCE",
             "calculated_values": assessment,
