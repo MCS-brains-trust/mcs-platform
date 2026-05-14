@@ -1948,7 +1948,8 @@ def financial_year_detail(request, pk):
         "dep_total_closing": dep_total_closing,
         "dep_asset_accounts": list(
             EntityChartOfAccount.objects.filter(
-                entity=fy.entity, is_active=True, section="assets",
+                entity=fy.entity, is_active=True,
+                section__in=["assets", "current_assets", "non_current_assets"],
             ).order_by("account_code").values_list("account_code", "account_name")
         ),
         "dep_expense_accounts": list(
