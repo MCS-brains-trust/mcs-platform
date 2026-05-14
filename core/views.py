@@ -8441,6 +8441,17 @@ def depreciation_roll_forward(request, pk):
 def _calc_depreciation(asset):
     """Calculate depreciation amount and closing WDV for an asset."""
     depreciable = asset.opening_wdv + asset.addition_cost
+    # ── General Pool: auto-apply ATO Div 328 rates ─────────────────────────────
+    if asset.category == "General Pool":
+        asset.method = "D"
+        fy = asset.financial_year
+        if asset.purchase_date and fy.start_date <= asset.purchase_date <= fy.end_date:
+            # Acquisition year — 15% half-year rate
+            asset.rate = Decimal("15")
+        else:
+            # Subsequent year — 30% full rate
+            asset.rate = Decimal("30")
+    # ────────────────────────────────────────────────────────────────────────────
     if asset.disposal_date:
         # On disposal, depreciation is up to disposal date
         # Profit/loss = disposal consideration - WDV at disposal

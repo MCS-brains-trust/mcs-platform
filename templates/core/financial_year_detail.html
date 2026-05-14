@@ -1662,6 +1662,7 @@ function quickGenerateEngagementLetter(entityPk, fyPk) {
                                 <option value="Office Equipment">Office Equipment</option>
                                 <option value="Leasehold Improvements">Leasehold Improvements</option>
                                 <option value="Low Value Pool">Low Value Pool</option>
+                                <option value="General Pool">General Pool</option>
                                 <option value="Other">Other</option>
                                 <option value="__new__">&#43; Add new category&hellip;</option>
                             </select>
@@ -1821,6 +1822,29 @@ function quickGenerateEngagementLetter(entityPk, fyPk) {
     catSel.value = catSel.options[0].value;
     catRow.style.display = 'none';
     catInput.value = '';
+  });
+  // ── General Pool: auto-apply ATO Div 328 rates on category change ──────────
+  const fyStart = new Date('{{ fy.start_date|date:"Y-m-d" }}');
+  const fyEnd   = new Date('{{ fy.end_date|date:"Y-m-d" }}');
+  const methodSel  = document.querySelector('#addAssetModal select[name="method"]');
+  const rateInput  = document.querySelector('#addAssetModal input[name="rate"]');
+  const purchInput = document.querySelector('#addAssetModal input[name="purchase_date"]');
+  function applyGeneralPoolRate() {
+    if (catSel.value !== 'General Pool') return;
+    if (methodSel) methodSel.value = 'D';
+    const purchVal = purchInput?.value;
+    if (purchVal) {
+      const pDate = new Date(purchVal);
+      if (rateInput) rateInput.value = (pDate >= fyStart && pDate <= fyEnd) ? '15' : '30';
+    } else {
+      if (rateInput) rateInput.value = '30';
+    }
+  }
+  catSel?.addEventListener('change', function() {
+    if (catSel.value === 'General Pool') applyGeneralPoolRate();
+  });
+  purchInput?.addEventListener('change', function() {
+    if (catSel.value === 'General Pool') applyGeneralPoolRate();
   });
 
   // ── Generic helper: wire an account dropdown with Add New flow ─────────────
