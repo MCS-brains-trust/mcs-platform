@@ -1955,6 +1955,7 @@ function quickGenerateEngagementLetter(entityPk, fyPk) {
     btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Saving\u2026';
     fetch(form.action, {
       method: 'POST',
+      credentials: 'same-origin',
       headers: {'X-CSRFToken': csrfToken},
       body: new FormData(form),
     })
@@ -2205,6 +2206,7 @@ function openEditAssetModal(pk, name, category, purchaseDate, totalCost, opening
     btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Saving\u2026';
     fetch(form.action, {
       method: 'POST',
+      credentials: 'same-origin',
       headers: {'X-CSRFToken': editCsrf},
       body: new FormData(form),
     })
