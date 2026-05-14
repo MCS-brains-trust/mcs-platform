@@ -1961,7 +1961,17 @@ function quickGenerateEngagementLetter(entityPk, fyPk) {
                         </div>
                         <div class="col-6">
                             <label class="form-label fw-semibold">Category</label>
-                            <input type="text" name="category" id="editAssetCategory" class="form-control" required>
+                            <select name="category" id="editAssetCategory" class="form-select" required>
+                                <option value="Furniture and Fixtures">Furniture and Fixtures</option>
+                                <option value="Plant and Equipment">Plant and Equipment</option>
+                                <option value="Motor Vehicles">Motor Vehicles</option>
+                                <option value="Computer Equipment">Computer Equipment</option>
+                                <option value="Office Equipment">Office Equipment</option>
+                                <option value="Leasehold Improvements">Leasehold Improvements</option>
+                                <option value="Low Value Pool">Low Value Pool</option>
+                                <option value="General Pool">General Pool</option>
+                                <option value="Other">Other</option>
+                            </select>
                         </div>
                         <div class="col-6">
                             <label class="form-label fw-semibold">Purchase Date</label>
@@ -2064,7 +2074,17 @@ function openEditAssetModal(pk, name, category, purchaseDate, totalCost, opening
     document.getElementById('editAssetForm').action = '/depreciation/' + pk + '/edit/';
     // Populate fields
     document.getElementById('editAssetName').value = name;
-    document.getElementById('editAssetCategory').value = category;
+    // Set category select — add a custom option if the value isn't in the list
+    const editCatSel = document.getElementById('editAssetCategory');
+    let catFound = false;
+    for (let opt of editCatSel.options) {
+        if (opt.value === category) { editCatSel.value = category; catFound = true; break; }
+    }
+    if (!catFound && category) {
+        const opt = new Option(category, category);
+        editCatSel.add(opt);
+        editCatSel.value = category;
+    }
     document.getElementById('editAssetPurchaseDate').value = purchaseDate !== 'None' ? purchaseDate : '';
     document.getElementById('editAssetTotalCost').value = totalCost;
     document.getElementById('editAssetOpeningWdv').value = openingWdv;
@@ -2111,6 +2131,30 @@ function openEditAssetModal(pk, name, category, purchaseDate, totalCost, opening
     });
     // Show modal
     new bootstrap.Modal(document.getElementById('editAssetModal')).show();
+    // General Pool: wire up auto-rate on category/date change in edit modal
+    const editCatSelRef = document.getElementById('editAssetCategory');
+    const editRateInputEl = document.querySelector('#editAssetModal input[name="rate"]');
+    const editMethodSelEl = document.getElementById('editAssetMethod');
+    const editPurchInputEl = document.getElementById('editAssetPurchaseDate');
+    const fyStartEdit = new Date('{{ fy.start_date|date:"Y-m-d" }}');
+    const fyEndEdit   = new Date('{{ fy.end_date|date:"Y-m-d" }}');
+    function applyEditPoolRate() {
+        if (editCatSelRef.value !== 'General Pool') return;
+        if (editMethodSelEl) editMethodSelEl.value = 'D';
+        const pVal = editPurchInputEl?.value;
+        if (pVal) {
+            const pDate = new Date(pVal);
+            if (editRateInputEl) editRateInputEl.value = (pDate >= fyStartEdit && pDate <= fyEndEdit) ? '15' : '30';
+        } else {
+            if (editRateInputEl) editRateInputEl.value = '30';
+        }
+    }
+    editCatSelRef?.addEventListener('change', function() {
+        if (editCatSelRef.value === 'General Pool') applyEditPoolRate();
+    });
+    editPurchInputEl?.addEventListener('change', function() {
+        if (editCatSelRef.value === 'General Pool') applyEditPoolRate();
+    });
 }
 </script>
 
