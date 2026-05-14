@@ -655,6 +655,69 @@ def _classify_current_liability(name_lower):
     return "Other Current Liabilities"
 
 
+def _interleave_subaccounts(items):
+    """Re-order a list of TB line items so that dotted sub-accounts are grouped
+    by their suffix rather than by their base code.
+
+    Example — given the raw TB order:
+        3244.01, 3244.02, 3244.03, 3245.01, 3245.02, 3245.03
+
+    The result will be:
+        3244.01, 3245.01,   <- suffix .01 pair
+        3244.02, 3245.02,   <- suffix .02 pair
+        3244.03, 3245.03    <- suffix .03 pair
+
+    Non-dotted accounts (e.g. 3048, 3142) are left in their original relative
+    order and are NOT mixed into the suffix groups.
+
+    Algorithm:
+      1. Separate items into "plain" (no decimal suffix) and "dotted" lists.
+      2. For dotted items, build a dict keyed by suffix → sorted list of items
+         (sorted by base code so 3244.xx always precedes 3245.xx).
+      3. Reconstruct the list: plain items first (in original order), then the
+         interleaved dotted items ordered by suffix then base code.
+
+    The plain items are inserted at the position of the *first* dotted item so
+    that non-HP accounts (trade creditors, etc.) appear before the HP block.
+    """
+    import re
+    from collections import OrderedDict
+
+    dotted_pattern = re.compile(r'^(\d+)\.(\d+)$')
+
+    plain_items = []   # items without a dotted suffix
+    dotted_items = []  # items with a dotted suffix
+
+    for item in items:
+        code = (item.get("account_code") or "").strip()
+        if dotted_pattern.match(code):
+            dotted_items.append(item)
+        else:
+            plain_items.append(item)
+
+    # Nothing to interleave — return original list unchanged
+    if not dotted_items:
+        return list(items)
+
+    # Group dotted items by suffix, sorted by base code within each suffix
+    suffix_groups = OrderedDict()  # suffix_str -> [items]
+    for item in sorted(dotted_items, key=lambda i: i.get("account_code", "")):
+        code = item["account_code"].strip()
+        m = dotted_pattern.match(code)
+        suffix = m.group(2)  # e.g. "01", "02"
+        suffix_groups.setdefault(suffix, []).append(item)
+
+    # Sort suffix groups by suffix value (numeric)
+    sorted_suffix_groups = sorted(suffix_groups.items(), key=lambda kv: int(kv[0]))
+
+    # Flatten: plain items first, then interleaved dotted items
+    result = list(plain_items)
+    for _suffix, group in sorted_suffix_groups:
+        result.extend(group)
+
+    return result
+
+
 def _build_subgrouped_items(items, classify_fn, credit_normal=False):
     """Group items into sub-categories and add formatted amounts.
 
@@ -662,8 +725,14 @@ def _build_subgrouped_items(items, classify_fn, credit_normal=False):
       - A sub-heading row: {"is_heading": True, "account_name": "Cash Assets"}
       - A line item row:   {"account_name": ..., "cy_formatted": ..., "py_formatted": ...}
       - A subtotal row:    {"is_subtotal": True, "cy_formatted": ..., "py_formatted": ...}
+
+    Sub-accounts with dotted codes (e.g. 3244.01, 3245.01) are interleaved by
+    suffix so that paired accounts appear consecutively before sub-grouping.
     """
     from collections import OrderedDict
+
+    # Interleave dotted sub-accounts by suffix BEFORE classifying into groups
+    items = _interleave_subaccounts(items)
 
     groups = OrderedDict()
     for item in items:
