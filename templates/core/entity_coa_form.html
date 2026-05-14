@@ -411,7 +411,11 @@ document.addEventListener('DOMContentLoaded', function() {
             const ranges = {
                 'revenue': '0 — 999', 'cost_of_sales': '0 — 999',
                 'expenses': '1000 — 1999',
+                'current_assets': '2000 — 2499',
+                'non_current_assets': '2500 — 2999',
                 'assets': '2000 — 2999',
+                'current_liabilities': '3000 — 3499',
+                'non_current_liabilities': '3500 — 3999',
                 'liabilities': '3000 — 3999',
                 'equity': '4000+', 'capital_accounts': '4000+', 'pl_appropriation': '4000+',
                 'suspense': '9000 — 9999'
@@ -486,8 +490,10 @@ document.addEventListener('DOMContentLoaded', function() {
         const sectionToRow = {
             'revenue': 0, 'cost_of_sales': 0,
             'expenses': 1,
-            'assets': 2,
-            'liabilities': 4,
+            'current_assets': 2, 'assets': 2,
+            'non_current_assets': 3,
+            'current_liabilities': 4, 'liabilities': 4,
+            'non_current_liabilities': 5,
             'equity': 6, 'capital_accounts': 6, 'pl_appropriation': 6,
         };
         const rowIdx = sectionToRow[section];
@@ -619,7 +625,11 @@ document.addEventListener('DOMContentLoaded', function() {
         const ranges = {
             'revenue': [0, 999], 'cost_of_sales': [0, 999],
             'expenses': [1000, 1999],
+            'current_assets': [2000, 2499],
+            'non_current_assets': [2500, 2999],
             'assets': [2000, 2999],
+            'current_liabilities': [3000, 3499],
+            'non_current_liabilities': [3500, 3999],
             'liabilities': [3000, 3999],
             'equity': [4000, 4999], 'capital_accounts': [4000, 4999], 'pl_appropriation': [4000, 4999],
             'suspense': [9000, 9999]
