@@ -477,39 +477,39 @@
                     <div class="row g-3">
                         <div class="col-12">
                             <label class="form-label fw-semibold">Asset Name <span class="text-danger">*</span></label>
-                            <input type="text" name="asset_name" id="editAssetName" class="form-control" required>
+                            <input type="text" name="asset_name" id="editPoolAssetName" class="form-control" required>
                         </div>
                         <div class="col-md-6">
                             <label class="form-label fw-semibold">Cost ($)</label>
-                            <input type="number" name="cost" id="editAssetCost" class="form-control" step="0.01" min="0">
+                            <input type="number" name="cost" id="editPoolAssetCost" class="form-control" step="0.01" min="0">
                         </div>
                         <div class="col-md-6">
                             <label class="form-label fw-semibold">Business Use %</label>
-                            <input type="number" name="business_use_pct" id="editAssetBup" class="form-control" step="0.01" min="0" max="100">
+                            <input type="number" name="business_use_pct" id="editPoolAssetBup" class="form-control" step="0.01" min="0" max="100">
                         </div>
                         <div class="col-md-6">
                             <label class="form-label fw-semibold">Date First Used</label>
-                            <input type="date" name="date_first_used" id="editAssetDfu" class="form-control">
+                            <input type="date" name="date_first_used" id="editPoolAssetDfu" class="form-control">
                         </div>
                         <div class="col-md-6">
                             <label class="form-label fw-semibold">Description</label>
-                            <input type="text" name="description" id="editAssetDesc" class="form-control">
+                            <input type="text" name="description" id="editPoolAssetDesc" class="form-control">
                         </div>
                         <div class="col-12">
                             <div class="form-check">
-                                <input class="form-check-input" type="checkbox" name="is_improvement" value="1" id="editIsImprovement">
+                                <input class="form-check-input" type="checkbox" name="is_improvement" value="1" id="editPoolIsImprovement">
                                 <label class="form-check-label" for="editIsImprovement">Cost addition / improvement</label>
                             </div>
                         </div>
                         <div class="col-12">
                             <div class="form-check">
-                                <input class="form-check-input" type="checkbox" name="is_car" value="1" id="editIsCar">
+                                <input class="form-check-input" type="checkbox" name="is_car" value="1" id="editPoolIsCar">
                                 <label class="form-check-label" for="editIsCar">Passenger vehicle (car cost limit applies)</label>
                             </div>
                         </div>
                         <div class="col-12">
                             <label class="form-label fw-semibold">Notes</label>
-                            <input type="text" name="notes" id="editAssetNotes" class="form-control">
+                            <input type="text" name="notes" id="editPoolAssetNotes" class="form-control">
                         </div>
                     </div>
                 </div>
@@ -577,14 +577,14 @@
             const pk = btn.getAttribute('data-asset-pk');
             document.getElementById('editPoolAssetForm').action =
                 '/core/general-pool/assets/' + pk + '/edit/';
-            document.getElementById('editAssetName').value = btn.getAttribute('data-asset-name') || '';
-            document.getElementById('editAssetCost').value = btn.getAttribute('data-asset-cost') || '';
-            document.getElementById('editAssetBup').value = btn.getAttribute('data-asset-bup') || '100';
-            document.getElementById('editAssetDfu').value = btn.getAttribute('data-asset-dfu') || '';
-            document.getElementById('editAssetDesc').value = btn.getAttribute('data-asset-desc') || '';
-            document.getElementById('editAssetNotes').value = btn.getAttribute('data-asset-notes') || '';
-            document.getElementById('editIsImprovement').checked = btn.getAttribute('data-asset-improvement') === '1';
-            document.getElementById('editIsCar').checked = btn.getAttribute('data-asset-car') === '1';
+            document.getElementById('editPoolAssetName').value = btn.getAttribute('data-asset-name') || '';
+            document.getElementById('editPoolAssetCost').value = btn.getAttribute('data-asset-cost') || '';
+            document.getElementById('editPoolAssetBup').value = btn.getAttribute('data-asset-bup') || '100';
+            document.getElementById('editPoolAssetDfu').value = btn.getAttribute('data-asset-dfu') || '';
+            document.getElementById('editPoolAssetDesc').value = btn.getAttribute('data-asset-desc') || '';
+            document.getElementById('editPoolAssetNotes').value = btn.getAttribute('data-asset-notes') || '';
+            document.getElementById('editPoolIsImprovement').checked = btn.getAttribute('data-asset-improvement') === '1';
+            document.getElementById('editPoolIsCar').checked = btn.getAttribute('data-asset-car') === '1';
         });
     }
 
