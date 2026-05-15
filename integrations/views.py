@@ -86,11 +86,12 @@ def oauth_connect(request, entity_pk, provider_name):
     if provider_name == "quickbooks":
         request.session["qb_global_oauth_state"] = state
 
-    callback_name = (
-        "integrations:qb_global_callback"
-        if provider_name == "quickbooks"
-        else "integrations:oauth_callback"
-    )
+    if provider_name == "quickbooks":
+        callback_name = "integrations:qb_global_callback"
+    elif provider_name == "xero":
+        callback_name = "integrations:xero_global_callback"
+    else:
+        callback_name = "integrations:oauth_callback"
     redirect_uri = request.build_absolute_uri(reverse(callback_name))
 
     params = provider.get_authorize_params(redirect_uri, state)
@@ -123,13 +124,13 @@ def oauth_callback(request):
     provider = get_provider(provider_name)
     entity = get_object_or_404(Entity, pk=entity_pk)
 
-    callback_name = (
-        "integrations:qb_global_callback"
-        if provider_name == "quickbooks"
-        else "integrations:oauth_callback"
-    )
+    if provider_name == "quickbooks":
+        callback_name = "integrations:qb_global_callback"
+    elif provider_name == "xero":
+        callback_name = "integrations:xero_global_callback"
+    else:
+        callback_name = "integrations:oauth_callback"
     redirect_uri = request.build_absolute_uri(reverse(callback_name))
-
     try:
         tokens = provider.exchange_code(code, redirect_uri)
         tenants = provider.get_tenants(tokens["access_token"])
