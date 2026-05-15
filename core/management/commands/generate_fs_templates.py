@@ -229,10 +229,10 @@ def _apply_row_borders(row, row_type=ROW_TYPE_DATA):
     elif row_type == ROW_TYPE_SUBCATEGORY_SUBTOTAL:
         amount_kwargs = {"top": _SINGLE}
     elif row_type == ROW_TYPE_SECTION_TOTAL:
-        # Handiledger: section subtotal = single above + single below
-        amount_kwargs = {"top": _SINGLE, "bottom": _SINGLE}
+        # Non-terminal subtotal: single above, nothing below (rolls forward).
+        amount_kwargs = {"top": _SINGLE}
     elif row_type in (ROW_TYPE_MAJOR_TOTAL, ROW_TYPE_GRAND_TOTAL):
-        # Handiledger: major/grand total = single above + double below
+        # Terminal closing figure: single above + double below.
         amount_kwargs = {"top": _SINGLE, "bottom": _DOUBLE}
     else:
         amount_kwargs = {}  # data / heading — all nil
@@ -434,7 +434,8 @@ def _add_spacer(doc, pts=4):
     return p
 
 
-def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_tag, total_py_tag):
+def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_tag, total_py_tag,
+                         total_row_type=ROW_TYPE_SECTION_TOTAL):
     """Add a 4-column financial table with Jinja2 for-loop.
 
     The section title (e.g. 'Income', 'Expenses') is placed as the FIRST ROW
@@ -566,8 +567,9 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
                 run.font.name = FONT_NAME
                 run.font.size = FONT_SIZE
                 run.bold = True
-    # Section subtotal: single above + single below on amount cells (Handiledger)
-    _apply_row_borders(total_row, ROW_TYPE_SECTION_TOTAL)
+    # Border style controlled by caller: SECTION_TOTAL for non-terminal subtotals
+    # (single top only), MAJOR_TOTAL for terminal closing figures (single top + double bot).
+    _apply_row_borders(total_row, total_row_type)
 
     return table
 
@@ -836,9 +838,10 @@ def _build_balance_sheet(entity_type):
     _add_spacer(doc)
     _add_para(doc, "{% endif %}", size=Pt(1))
 
-    # Total Assets — major total (double underline below)
+    # Total Assets — non-terminal subtotal (rolls forward to Net Assets;
+    # single rule above only, no rule below).
     _add_total_row(doc, "Total Assets", "{{ total_assets_cy }}", "{{ total_assets_py }}",
-                   row_type=ROW_TYPE_MAJOR_TOTAL)
+                   row_type=ROW_TYPE_SECTION_TOTAL)
 
     # Page break — liabilities section starts on a new page
     _pb = doc.add_paragraph()
@@ -877,9 +880,10 @@ def _build_balance_sheet(entity_type):
     _eq_spacer.paragraph_format.space_before = Pt(18)
     _eq_spacer.paragraph_format.space_after = Pt(0)
 
-    # Equity
+    # Equity — Total Equity is a terminal closing figure (single top + double bot).
     _add_financial_table(doc, "Equity", "equity", "Total Equity",
-                         "{{ total_equity_cy }}", "{{ total_equity_py }}")
+                         "{{ total_equity_cy }}", "{{ total_equity_py }}",
+                         total_row_type=ROW_TYPE_MAJOR_TOTAL)
 
     return doc
 

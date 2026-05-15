@@ -1599,28 +1599,36 @@ def build_sole_trader_context(financial_year, include_watermark=True):
 # ---------------------------------------------------------------------------
 # Post-processing — borders, page numbers, page-break prevention, ampersand
 # ---------------------------------------------------------------------------
-# Handiledger row type classification for post-processor border application.
-# Section totals: single above + double below on amount cols
+# Row type classification for post-processor border application.
+# Section totals (NON-TERMINAL): single above, NOTHING below.
+# These subtotals roll forward into a later figure, so no rule beneath.
 _SECTION_TOTAL_LABELS = [
     "total income", "total expenses", "total revenue",
-    "total current assets", "total non-current assets",
-    "total current liabilities", "total non-current liabilities",
-    "total equity",
     "gross profit",
+    "total current assets", "total non-current assets",
+    "total assets",
+    "total current liabilities", "total non-current liabilities",
+    "operating profit before income tax",
+    "total available for appropriation",
 ]
 
-# Major totals: double below only on amount cols
+# Major totals (TERMINAL closing figures): single above + double below.
 _MAJOR_TOTAL_LABELS = [
-    "total assets", "net assets",
-    # "total liabilities" intentionally excluded — rendered with single-top
-    # only (no bottom) so it flows into Net Assets without a double underline.
+    "net assets", "total equity",
+    # "total liabilities" intentionally excluded — non-terminal subtotal that
+    # flows into Net Assets; rendered as single-top only via generator and
+    # untouched by the post-processor.
+    # "total assets" intentionally excluded — non-terminal; rolls forward to
+    # Net Assets, so it is in _SECTION_TOTAL_LABELS instead.
 ]
 
-# Grand totals: double below only on amount cols
+# Grand totals (TERMINAL closing figures): single above + double below.
 _GRAND_TOTAL_LABELS = [
     "net profit", "net loss", "net profit / (loss)", "net profit/(loss)",
     "operating profit after income tax",
-    "operating profit before income tax",
+    # "operating profit before income tax" intentionally excluded — when
+    # income tax is present, this row is a non-terminal subtotal that rolls
+    # forward to the after-tax line. Classified in _SECTION_TOTAL_LABELS.
 ]
 
 # All summary labels (union of above — used for detecting any total row)
@@ -1791,15 +1799,15 @@ def _post_process_fs_doc(buffer, doc_type, has_prior=True):
                     cantSplit.set(qn('w:val'), '1')
                     trPr.append(cantSplit)
 
-                    # Determine border style per Handiledger standard
+                    # Determine border style per Australian FS convention.
+                    # Non-terminal subtotals: rule above only (roll forward).
+                    # Terminal closing figures: rule above + double rule below.
                     if is_section_total:
-                        # Section subtotal: single above + single below
-                        amount_top = {'val': 'single', 'sz': '6'}
-                        amount_bot = {'val': 'single', 'sz': '6'}
+                        amount_top = {'val': 'single', 'sz': '6', 'color': '000000'}
+                        amount_bot = {'val': 'none',   'sz': '0', 'color': 'auto'}
                     else:
-                        # Major total / grand total: single above + double below
-                        amount_top = {'val': 'single', 'sz': '6'}
-                        amount_bot = {'val': 'double', 'sz': '8'}
+                        amount_top = {'val': 'single', 'sz': '6', 'color': '000000'}
+                        amount_bot = {'val': 'double', 'sz': '8', 'color': '000000'}
 
                     num_cells = len(row.cells)
                     for cell_idx, cell in enumerate(row.cells):
@@ -1824,13 +1832,13 @@ def _post_process_fs_doc(buffer, doc_type, has_prior=True):
                         top_el.set(qn('w:val'), amount_top['val'])
                         top_el.set(qn('w:sz'), amount_top['sz'])
                         top_el.set(qn('w:space'), '0')
-                        top_el.set(qn('w:color'), '000000')
+                        top_el.set(qn('w:color'), amount_top.get('color', '000000'))
                         tcBorders.append(top_el)
                         bot_el = OxmlElement('w:bottom')
                         bot_el.set(qn('w:val'), amount_bot['val'])
                         bot_el.set(qn('w:sz'), amount_bot['sz'])
                         bot_el.set(qn('w:space'), '0')
-                        bot_el.set(qn('w:color'), '000000')
+                        bot_el.set(qn('w:color'), amount_bot.get('color', '000000'))
                         tcBorders.append(bot_el)
                         for side in ('left', 'right', 'insideH', 'insideV'):
                             el = OxmlElement(f'w:{side}')
