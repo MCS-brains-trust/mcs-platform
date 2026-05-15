@@ -3194,7 +3194,15 @@ def _populate_rolled_forward_fy(current_fy, new_fy):
     bs_lines = []
     pl_lines = []
 
-    for line in current_fy.trial_balance_lines.select_related("mapped_line_item").filter(is_adjustment=False):
+    # Some entities (e.g. Handiledger imports) store all TB data as
+    # is_adjustment=True lines (source='manual_journal').  In that case
+    # the standard filter(is_adjustment=False) returns nothing.  Fall back
+    # to all lines so the roll-forward still works.
+    base_qs = current_fy.trial_balance_lines.select_related("mapped_line_item").filter(is_adjustment=False)
+    if not base_qs.exists():
+        base_qs = current_fy.trial_balance_lines.select_related("mapped_line_item")
+
+    for line in base_qs:
         is_bs = _is_balance_sheet_account(line.account_code, line.mapped_line_item, coa_sections)
         if is_bs:
             code_prefix = line.account_code.split(".")[0] if line.account_code else ""
