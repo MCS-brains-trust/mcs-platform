@@ -1294,7 +1294,7 @@ class ClientAccountMapping(models.Model):
     entity = models.ForeignKey(
         Entity, on_delete=models.CASCADE, related_name="account_mappings"
     )
-    client_account_code = models.CharField(max_length=20)
+    client_account_code = models.CharField(max_length=50)
     client_account_name = models.CharField(max_length=255)
     mapped_line_item = models.ForeignKey(
         AccountMapping,
@@ -1399,7 +1399,7 @@ class TrialBalanceLine(models.Model):
     financial_year = models.ForeignKey(
         FinancialYear, on_delete=models.CASCADE, related_name="trial_balance_lines"
     )
-    account_code = models.CharField(max_length=20)
+    account_code = models.CharField(max_length=50)
     account_name = models.CharField(max_length=255)
     opening_balance = models.DecimalField(
         max_digits=15, decimal_places=2, default=0
@@ -1833,7 +1833,7 @@ class JournalLine(models.Model):
         default=0,
         help_text="Display order within the journal",
     )
-    account_code = models.CharField(max_length=20)
+    account_code = models.CharField(max_length=50)
     account_name = models.CharField(max_length=255)
     description = models.CharField(
         max_length=255, blank=True,
