@@ -1631,6 +1631,28 @@ _GRAND_TOTAL_LABELS = [
     # forward to the after-tax line. Classified in _SECTION_TOTAL_LABELS.
 ]
 
+# Summary P&L carry-forward rows: single carry-forward figures that do NOT
+# sum visible line items above them (Summary P&L hides the underlying
+# income / expense detail). The single-rule-above convention used elsewhere
+# would imply a computation that isn't happening on the page, so these rows
+# must render with NO borders — even though their labels overlap with
+# section-total labels used in the Detailed P&L. Gated by doc_type and
+# entity_type in the post-processor so the Detailed P&L (which DOES show
+# the underlying lines) and trust documents are unaffected.
+_SUMMARY_PL_CARRY_FORWARD_LABELS = [
+    "total income",
+    "total expenses",
+    "retained profit at the beginning of the financial year",
+]
+
+# Subset of _SUMMARY_PL_CARRY_FORWARD_LABELS that should retain bold styling
+# after border suppression. Total Income and Total Expenses are bold today
+# because the post-processor's is_section_total path bolds them; the
+# suppression branch must reapply that bold so visual emphasis is preserved.
+# "retained profit at the beginning of the financial year" is intentionally
+# excluded — it is not bold today and must stay un-bolded.
+_CARRY_FORWARD_BOLD_LABELS = ("total income", "total expenses")
+
 # All summary labels (union of above — used for detecting any total row)
 _SUMMARY_LABELS = _SECTION_TOTAL_LABELS + _MAJOR_TOTAL_LABELS + _GRAND_TOTAL_LABELS
 
@@ -1640,7 +1662,7 @@ _SUB_HEADING_LABELS = [
 ]
 
 
-def _post_process_fs_doc(buffer, doc_type, has_prior=True):
+def _post_process_fs_doc(buffer, doc_type, has_prior=True, entity_type=None):
     """Post-process a rendered financial statement .docx.
 
     Applied to ALL document types to fix:
@@ -1783,6 +1805,48 @@ def _post_process_fs_doc(buffer, doc_type, has_prior=True):
                 if not row.cells:
                     continue
                 first_cell_text = row.cells[0].text.strip().lower()
+
+                # Summary P&L carry-forward rows (non-trust): single carry-forward
+                # figures whose section-total label overlap would otherwise apply a
+                # rule above. Suppress ALL borders on these rows so rules appear only
+                # on truly computed subtotals and terminal figures.
+                # entity_type must be truthy AND not "trust" — a missing entity_type
+                # (legacy / unknown caller) leaves borders intact (fail-safe).
+                is_summary_carry_forward = (
+                    doc_type == "SUMMARY_PL"
+                    and bool(entity_type)
+                    and entity_type != "trust"
+                    and any(lbl in first_cell_text for lbl in _SUMMARY_PL_CARRY_FORWARD_LABELS)
+                )
+
+                if is_summary_carry_forward:
+                    # Clear all borders on every cell explicitly (LibreOffice-safe).
+                    for cell in row.cells:
+                        tc = cell._tc
+                        tcPr = tc.get_or_add_tcPr()
+                        existing_borders = tcPr.find(qn('w:tcBorders'))
+                        if existing_borders is not None:
+                            tcPr.remove(existing_borders)
+                        tcBorders = OxmlElement('w:tcBorders')
+                        for side in ('top', 'left', 'bottom', 'right', 'insideH', 'insideV'):
+                            el = OxmlElement(f'w:{side}')
+                            el.set(qn('w:val'), 'none')
+                            el.set(qn('w:sz'), '0')
+                            el.set(qn('w:space'), '0')
+                            el.set(qn('w:color'), 'auto')
+                            tcBorders.append(el)
+                        tcPr.append(tcBorders)
+                    # Preserve current bold state. Total Income / Total Expenses are
+                    # bold today via the is_section_total path; reapply that here.
+                    # "retained profit at the beginning of the financial year" is
+                    # NOT bold today — leave it alone.
+                    if any(lbl in first_cell_text for lbl in _CARRY_FORWARD_BOLD_LABELS):
+                        for cell in row.cells:
+                            for para in cell.paragraphs:
+                                for run in para.runs:
+                                    run.bold = True
+                    # Skip section/major/grand classification entirely.
+                    continue
 
                 is_section_total = any(lbl in first_cell_text for lbl in _SECTION_TOTAL_LABELS)
                 is_major_total = any(lbl in first_cell_text for lbl in _MAJOR_TOTAL_LABELS)
@@ -3632,7 +3696,7 @@ def generate_financial_statements(financial_year_id, include_watermark=True):
                         fy.pk,
                     )
                 else:
-                    buffer = _post_process_fs_doc(buffer, doc_type, has_prior=has_prior)
+                    buffer = _post_process_fs_doc(buffer, doc_type, has_prior=has_prior, entity_type=entity_type)
                     results[doc_type] = buffer
                     logger.info("Generated programmatic DEPRECIATION_REPORT for FY %s", fy.pk)
             except Exception as e:
@@ -3645,7 +3709,7 @@ def generate_financial_statements(financial_year_id, include_watermark=True):
         if doc_type == "NOTES":
             try:
                 buffer = _generate_notes_document(context)
-                buffer = _post_process_fs_doc(buffer, doc_type, has_prior=has_prior)
+                buffer = _post_process_fs_doc(buffer, doc_type, has_prior=has_prior, entity_type=entity_type)
                 results[doc_type] = buffer
                 logger.info("Generated programmatic NOTES for FY %s", fy.pk)
             except Exception as e:
@@ -3682,7 +3746,7 @@ def generate_financial_statements(financial_year_id, include_watermark=True):
 
         try:
             buffer = render_template(tmpl, context)
-            buffer = _post_process_fs_doc(buffer, doc_type, has_prior=has_prior)
+            buffer = _post_process_fs_doc(buffer, doc_type, has_prior=has_prior, entity_type=entity_type)
             results[doc_type] = buffer
             logger.info("Rendered %s for FY %s", doc_type, fy.pk)
         except Exception as e:
