@@ -2200,9 +2200,11 @@ def _notes_add_para(doc, text, bold=False, italic=False, size=None,
 
 def _notes_add_table_row(table, label, cy_str, py_str, bold=False,
                          indent=None):
-    """Add a data row to a 3-column notes table."""
+    """Add a data row to a notes table (2 or 3 columns depending on has_prior)."""
     row = table.add_row()
-    for i, text in enumerate([label, cy_str, py_str]):
+    num_cols = len(row.cells)
+    values = [label, cy_str, py_str][:num_cols]
+    for i, text in enumerate(values):
         cell = row.cells[i]
         p = cell.paragraphs[0]
         p.text = ""
@@ -2220,10 +2222,13 @@ def _notes_add_table_row(table, label, cy_str, py_str, bold=False,
 
 
 def _notes_apply_subtotal_border(row):
-    """Single top border on amount columns (cols 1, 2)."""
+    """Single top border on amount columns (col 1, and col 2 if present)."""
     from docx.oxml.ns import qn
     from docx.oxml import OxmlElement
+    num_cols = len(row.cells)
     for i in [1, 2]:
+        if i >= num_cols:
+            continue
         tc = row.cells[i]._tc
         tcPr = tc.get_or_add_tcPr()
         tcBorders = tcPr.find(qn('w:tcBorders'))
@@ -2239,10 +2244,13 @@ def _notes_apply_subtotal_border(row):
 
 
 def _notes_apply_grand_total_border(row):
-    """Single top + double bottom on amount columns (cols 1, 2)."""
+    """Single top + double bottom on amount columns (col 1, and col 2 if present)."""
     from docx.oxml.ns import qn
     from docx.oxml import OxmlElement
+    num_cols = len(row.cells)
     for i in [1, 2]:
+        if i >= num_cols:
+            continue
         tc = row.cells[i]._tc
         tcPr = tc.get_or_add_tcPr()
         tcBorders = tcPr.find(qn('w:tcBorders'))
