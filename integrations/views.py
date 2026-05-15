@@ -13,6 +13,7 @@ import logging
 import uuid
 from datetime import timedelta
 from decimal import Decimal
+from urllib.parse import urlencode
 
 import requests as http_requests
 from django.conf import settings
@@ -93,7 +94,7 @@ def oauth_connect(request, entity_pk, provider_name):
     redirect_uri = request.build_absolute_uri(reverse(callback_name))
 
     params = provider.get_authorize_params(redirect_uri, state)
-    query_string = "&".join(f"{k}={v}" for k, v in params.items())
+    query_string = urlencode(params)
     auth_url = f"{provider.authorize_url}?{query_string}"
 
     return redirect(auth_url)
@@ -1128,12 +1129,9 @@ def xero_global_connect(request):
         "state": state,
         "access_type": "offline",
     }
-    query_string = "&".join(f"{k}={v}" for k, v in params.items())
+    query_string = urlencode(params)
     auth_url = f"https://login.xero.com/identity/connect/authorize?{query_string}"
-
     return redirect(auth_url)
-
-
 @login_required
 def xero_global_callback(request):
     """Handle OAuth2 callback for the global Xero connection.
@@ -1416,7 +1414,7 @@ def xpm_connect(request):
         "state": state,
         "access_type": "offline",
     }
-    query_string = "&".join(f"{k}={v}" for k, v in params.items())
+    query_string = urlencode(params)
     auth_url = f"https://login.xero.com/identity/connect/authorize?{query_string}"
 
     return redirect(auth_url)
@@ -1771,7 +1769,7 @@ def qb_global_connect(request):
         "scope": "com.intuit.quickbooks.accounting",
         "state": state,
     }
-    query_string = "&".join(f"{k}={v}" for k, v in params.items())
+    query_string = urlencode(params)
     auth_url = f"https://appcenter.intuit.com/connect/oauth2?{query_string}"
 
     return redirect(auth_url)
