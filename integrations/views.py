@@ -1127,7 +1127,6 @@ def xero_global_connect(request):
         "redirect_uri": redirect_uri,
         "scope": scopes,
         "state": state,
-        "access_type": "offline",
     }
     query_string = urlencode(params)
     auth_url = f"https://login.xero.com/identity/connect/authorize?{query_string}"
@@ -1412,7 +1411,6 @@ def xpm_connect(request):
         "redirect_uri": redirect_uri,
         "scope": scopes,
         "state": state,
-        "access_type": "offline",
     }
     query_string = urlencode(params)
     auth_url = f"https://login.xero.com/identity/connect/authorize?{query_string}"
