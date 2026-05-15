@@ -561,17 +561,16 @@ def _reclassify_sign_flips(sections):
         py = item.get("py_amount") or Decimal("0")
         is_bank = any(kw in name_lower for kw in _BANK_KEYWORDS)
         if is_bank and (cy < Decimal("0") or py < Decimal("0")):
-            # Convert to credit-normal for the liabilities section.
-            # A negative asset (e.g. cy = -5000) becomes a positive liability
-            # in credit-normal convention (cy_amount = -(-5000) = 5000 would
-            # be wrong — liabilities are stored as negative in credit-normal).
-            # We keep the raw value as-is; _format_lines(credit_normal=True)
-            # will negate it for display.  A negative raw value in
-            # current_liabilities means the account is a debit (asset side),
-            # so we must negate to make it a proper credit-normal liability.
+            # Sign convention for current_liabilities is credit-normal:
+            #   _format_lines(credit_normal=True) negates cy_amount for display.
+            # A bank overdraft has a *negative* debit-normal value (e.g. -67360).
+            # We keep that negative value as-is so that:
+            #   display = -(-67360) = +67360  → shows as 67,360 (no brackets).
+            # DO NOT negate here — negating would produce +67360 stored, then
+            # _format_lines would negate again to -67360 → (67,360) brackets.
             reclassified = dict(item)
-            reclassified["cy_amount"] = -cy   # flip sign: negative asset → positive credit-normal liability
-            reclassified["py_amount"] = -py
+            reclassified["cy_amount"] = cy   # keep negative: credit_normal display will negate → positive
+            reclassified["py_amount"] = py
             reclassified["_reclassified_overdraft"] = True
             sections.setdefault("current_liabilities", []).append(reclassified)
         else:
