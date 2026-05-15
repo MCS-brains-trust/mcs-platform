@@ -109,6 +109,13 @@ _HL_RANGE_SECTION = [
     (3000, 3499, 'Current Liabilities'),
     (3500, 3999, 'Non Current Liabilities'),
     (4000, 4999, 'Equity'),
+    # Extended ranges for non-standard Handiledger / Access Ledger chart
+    # structures where COGS and expense accounts are coded above 5000.
+    # Without these entries, codes 5000-8999 fall through to the numeric
+    # fallback (>= 2000 = BS) and are incorrectly treated as balance sheet
+    # accounts during roll-forward, producing missing P&L comparatives.
+    (5000, 5999, 'Cost of Sales'),
+    (6000, 8999, 'Expenses'),
 ]
 
 
