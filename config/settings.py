@@ -206,6 +206,7 @@ if not DEBUG:
     SECURE_CONTENT_TYPE_NOSNIFF = True
     SECURE_SSL_REDIRECT = True
     SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    USE_X_FORWARDED_HOST = True
     CSRF_COOKIE_SECURE = True
     X_FRAME_OPTIONS = "DENY"
     # HSTS — tell browsers to only use HTTPS for 1 year
