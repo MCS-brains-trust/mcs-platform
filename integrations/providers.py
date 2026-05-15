@@ -202,56 +202,19 @@ class XeroProvider(BaseProvider):
         return lines
 
     def fetch_period_movement(self, access_token, tenant_id, from_date, to_date):
-        url = "https://api.xero.com/api.xro/2.0/Reports/GeneralLedger"
-        headers = {
-            "Authorization": f"Bearer {access_token}",
-            "Xero-tenant-id": tenant_id,
-            "Accept": "application/json",
-        }
-        params = {
-            "fromDate": from_date.isoformat(),
-            "toDate": to_date.isoformat(),
-        }
-        resp = requests.get(url, headers=headers, params=params, timeout=30)
-        if resp.status_code == 401:
-            raise ValueError(
-                "Xero authorisation expired. Please reconnect your "
-                "Xero account from the Integrations page."
-            )
-        resp.raise_for_status()
-        report = (resp.json().get("Reports") or [{}])[0]
-        rows = report.get("Rows", [])
-        lines = []
-        for row in rows:
-            row_type = row.get("RowType")
-            if row_type == "Header":
-                continue
-            if row_type == "Section":
-                section_rows = row.get("Rows", [])
-                for child in section_rows:
-                    if child.get("RowType") != "Row":
-                        continue
-                    cells = child.get("Cells", [])
-                    if len(cells) < 6:
-                        continue
-                    account_name = (cells[0].get("Value") or "").strip()
-                    if not account_name:
-                        continue
-                    code = self._extract_xero_account_code(cells[0])
-                    movement = _to_decimal(cells[4].get("Value"))
-                    if movement == 0:
-                        continue
-                    debit = movement if movement > 0 else Decimal("0")
-                    credit = -movement if movement < 0 else Decimal("0")
-                    lines.append({
-                        "account_code": code,
-                        "account_name": account_name,
-                        "opening_balance": _to_decimal(cells[1].get("Value")),
-                        "debit": debit,
-                        "credit": credit,
-                        "movement_amount": movement,
-                    })
-        return lines
+        """
+        Fetch net movement for the period using the TrialBalance report with
+        fromDate set to the period start. Xero's GeneralLedger endpoint is not
+        available via the public API; TrialBalance with fromDate returns net
+        movement (debit/credit) for the selected period.
+        """
+        # Reuse fetch_trial_balance with fromDate to get period net movement
+        return self.fetch_trial_balance(
+            access_token=access_token,
+            tenant_id=tenant_id,
+            as_at_date=to_date,
+            start_date=from_date,
+        )
 
 
 @register_provider("quickbooks")
