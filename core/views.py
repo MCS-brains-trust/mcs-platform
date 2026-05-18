@@ -2721,39 +2721,64 @@ def reroll_forward(request, pk):
         # -----------------------------------------------------------------
         # Pass 1: Classify lines and calculate net P&L
         #
-        # Income statement accounts (revenue/expense) are excluded — they
-        # reset to zero at year end.  Only balance sheet accounts (assets,
-        # liabilities, equity) carry forward.
+        # IMPORTANT: We must net ALL lines (base TB + adjustment journals) per
+        # account code to get the true year-end closing balance.  Filtering
+        # only is_adjustment=False would miss journal-only accounts (e.g.
+        # Taxation posted as a manual journal entry).
         # -----------------------------------------------------------------
+        _account_map = {}
+        for _line in current_fy.trial_balance_lines.select_related("mapped_line_item"):
+            _code = _line.account_code or ""
+            if _code not in _account_map:
+                _account_map[_code] = {"debit": Decimal("0"), "credit": Decimal("0"), "rep": _line}
+            _account_map[_code]["debit"] += _line.debit or Decimal("0")
+            _account_map[_code]["credit"] += _line.credit or Decimal("0")
+            if not _line.is_adjustment:
+                _account_map[_code]["rep"] = _line
+
         net_pl_result = Decimal("0")
         retained_profits_line = None
         income_tax_line = None
         bs_lines = []
         pl_lines = []
 
-        for line in current_fy.trial_balance_lines.select_related("mapped_line_item").filter(is_adjustment=False):
-            is_bs = _is_balance_sheet_account(line.account_code, line.mapped_line_item, coa_sections)
+        for _code, _data in _account_map.items():
+            _rep = _data["rep"]
+            _net_debit = _data["debit"]
+            _net_credit = _data["credit"]
+            _net_closing = _net_debit - _net_credit
+
+            class _SL:
+                pass
+            sl = _SL()
+            sl.account_code = _code
+            sl.account_name = _rep.account_name
+            sl.mapped_line_item = _rep.mapped_line_item
+            sl.debit = _net_debit
+            sl.credit = _net_credit
+            sl.closing_balance = _net_closing
+
+            is_bs = _is_balance_sheet_account(_code, _rep.mapped_line_item, coa_sections)
 
             if is_bs:
-                # HARD RULE: only account 4199 is the retained profits target.
-                code_prefix = line.account_code.split(".")[0] if line.account_code else ""
+                code_prefix = _code.split(".")[0]
                 if code_prefix == "4199":
-                    retained_profits_line = line
+                    retained_profits_line = sl
 
                 is_income_tax = False
-                if line.account_name and "income tax" in line.account_name.lower():
+                if _rep.account_name and "income tax" in _rep.account_name.lower():
                     is_income_tax = True
                 if code_prefix == "4110":
                     is_income_tax = True
-                if line.mapped_line_item and (line.mapped_line_item.standard_code or "") == "BS-EQ-011":
+                if _rep.mapped_line_item and (_rep.mapped_line_item.standard_code or "") == "BS-EQ-011":
                     is_income_tax = True
                 if is_income_tax:
-                    income_tax_line = line
+                    income_tax_line = sl
 
-                bs_lines.append(line)
+                bs_lines.append(sl)
             else:
-                pl_lines.append(line)
-                net_pl_result += line.debit - line.credit
+                pl_lines.append(sl)
+                net_pl_result += _net_closing
 
         # Pass 2: Create BS lines
         carried_bs = 0
@@ -3030,29 +3055,56 @@ def reroll_forward(request, pk):
 
     # Build what the new opening balance WOULD be for each BS account in current_fy
     # (mirrors the Pass 1 / Pass 2 logic in the POST handler)
+    # Net ALL lines (base + adjustments) per account code for true closing balances.
+    _preview_map = {}
+    for _line in current_fy.trial_balance_lines.select_related("mapped_line_item"):
+        _code = _line.account_code or ""
+        if _code not in _preview_map:
+            _preview_map[_code] = {"debit": Decimal("0"), "credit": Decimal("0"), "rep": _line}
+        _preview_map[_code]["debit"] += _line.debit or Decimal("0")
+        _preview_map[_code]["credit"] += _line.credit or Decimal("0")
+        if not _line.is_adjustment:
+            _preview_map[_code]["rep"] = _line
+
     net_pl = Decimal("0")
     retained_line = None
     income_tax_line = None
     bs_lines_cur = []
     pl_lines_cur = []
-    for line in current_fy.trial_balance_lines.filter(is_adjustment=False):
-        if _is_bs(line):
-            code_prefix = line.account_code.split(".")[0] if line.account_code else ""
+
+    for _code, _data in _preview_map.items():
+        _rep = _data["rep"]
+        _net_debit = _data["debit"]
+        _net_credit = _data["credit"]
+        _net_closing = _net_debit - _net_credit
+
+        class _PSL:
+            pass
+        psl = _PSL()
+        psl.account_code = _code
+        psl.account_name = _rep.account_name
+        psl.mapped_line_item = _rep.mapped_line_item
+        psl.debit = _net_debit
+        psl.credit = _net_credit
+        psl.closing_balance = _net_closing
+
+        if _is_bs(psl):
+            code_prefix = _code.split(".")[0]
             if code_prefix == "4199":
-                retained_line = line
+                retained_line = psl
             is_it = False
-            if line.account_name and "income tax" in line.account_name.lower():
+            if _rep.account_name and "income tax" in _rep.account_name.lower():
                 is_it = True
             if code_prefix == "4110":
                 is_it = True
-            if line.mapped_line_item and (line.mapped_line_item.standard_code or "") == "BS-EQ-011":
+            if _rep.mapped_line_item and (_rep.mapped_line_item.standard_code or "") == "BS-EQ-011":
                 is_it = True
             if is_it:
-                income_tax_line = line
-            bs_lines_cur.append(line)
+                income_tax_line = psl
+            bs_lines_cur.append(psl)
         else:
-            pl_lines_cur.append(line)
-            net_pl += line.debit - line.credit
+            pl_lines_cur.append(psl)
+            net_pl += _net_closing
 
     tax_amount = income_tax_line.closing_balance if income_tax_line else Decimal("0")
 
