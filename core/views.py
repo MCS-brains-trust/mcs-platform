@@ -13135,6 +13135,15 @@ def review_journal_upload(request, pk):
     auto_mapped = sum(1 for l in lines if l.get("mapped_id") or l.get("entity_acct_code"))
     unmapped = total - auto_mapped
 
+    # Balance check — mirrors the TB import wizard so the shared JS can
+    # enable/disable the commit button and show the rounding alert.
+    total_dr = sum(Decimal(str(l.get("debit", "0"))) for l in lines)
+    total_cr = sum(Decimal(str(l.get("credit", "0"))) for l in lines)
+    balance_diff = abs(total_dr - total_cr)
+    BALANCE_TOLERANCE = Decimal("0.02")
+    balance_blocked = balance_diff > BALANCE_TOLERANCE
+    balance_warning = Decimal("0") < balance_diff <= BALANCE_TOLERANCE
+
     context = {
         "fy": fy,
         "lines": lines,
@@ -13144,6 +13153,11 @@ def review_journal_upload(request, pk):
         "auto_mapped": auto_mapped,
         "unmapped": unmapped,
         "source_name": staged.get("filename", "Journal Upload"),
+        "balance_total_dr": total_dr,
+        "balance_total_cr": total_cr,
+        "balance_diff": balance_diff,
+        "balance_blocked": balance_blocked,
+        "balance_warning": balance_warning,
     }
     return render(request, "core/review_journal_upload.html", context)
 
