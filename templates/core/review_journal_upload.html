@@ -236,6 +236,7 @@
                         <div>
                             <span class="fw-bold" id="balanceMessage">Checking balance...</span>
                             <span class="ms-3 text-muted small" id="balanceDetail"></span>
+                            <span class="ms-3 text-warning fw-semibold small" id="unmappedWarning" style="display:none;"></span>
                         </div>
                         <div class="d-flex gap-2">
                             <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary">

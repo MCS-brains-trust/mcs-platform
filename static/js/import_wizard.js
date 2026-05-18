@@ -30,7 +30,6 @@ var ImportWizard = (function() {
 
         populateStatementLineDropdowns();
         populateQuickAddMapsTo();
-        checkBalance();
         bindRoundingCheckbox();
         bindEntitySearch();
         bindQuickAddModal();
@@ -39,6 +38,9 @@ var ImportWizard = (function() {
         bindAutoMatchAll();
         bindCountUpdates();
         bindFormSubmit();
+        // Run unmapped check first — it calls checkBalance() internally
+        // when all lines are mapped, so we avoid a redundant double-run.
+        checkUnmapped();
     }
 
     // ================================================================
@@ -584,9 +586,47 @@ var ImportWizard = (function() {
         if (unmappedEl) unmappedEl.textContent = unmapped;
     }
 
+    // ================================================================
+    // UNMAPPED STATEMENT LINE GUARD
+    // Disables the commit button and shows a warning when any rows have
+    // no "Maps To" statement line selected.
+    // ================================================================
+    function checkUnmapped() {
+        var unmappedStatementLines = 0;
+        document.querySelectorAll('.mapping-row').forEach(function(row) {
+            var mappingVal = row.querySelector('.mapping-select').value;
+            if (!mappingVal) unmappedStatementLines++;
+        });
+
+        var commitBtn = document.getElementById('commitBtn');
+        var unmappedWarning = document.getElementById('unmappedWarning');
+
+        if (unmappedStatementLines > 0) {
+            if (commitBtn) {
+                commitBtn.disabled = true;
+                commitBtn.classList.remove('btn-success');
+                commitBtn.classList.add('btn-secondary');
+                commitBtn.title = unmappedStatementLines + ' account(s) still need a statement line mapped before you can post.';
+            }
+            if (unmappedWarning) {
+                unmappedWarning.textContent = unmappedStatementLines + ' account(s) not yet mapped to a statement line — map all accounts before posting.';
+                unmappedWarning.style.display = 'inline';
+            }
+        } else {
+            // All mapped — let balance check control the button state
+            if (unmappedWarning) unmappedWarning.style.display = 'none';
+            if (commitBtn) commitBtn.title = '';
+            // Re-run balance check so it can re-enable the button if balanced
+            checkBalance();
+        }
+    }
+
     function bindCountUpdates() {
         document.querySelectorAll('.mapping-select').forEach(function(select) {
-            select.addEventListener('change', updateCounts);
+            select.addEventListener('change', function() {
+                updateCounts();
+                checkUnmapped();
+            });
         });
     }
 

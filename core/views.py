@@ -4095,10 +4095,13 @@ def _apply_tb_learned_mappings(entity, raw_lines):
             "entity_acct_code": "",
             "entity_acct_name": "",
         }
-        # Learned mappings and COA auto-suggestions are intentionally not applied here.
-        # The accountant must map every account manually in the wizard.
+        # 1. Try ClientAccountMapping (previously learned/confirmed mapping)
+        if cam and cam.mapped_line_item:
+            staged_line["mapped_id"] = str(cam.mapped_line_item.pk)
+            staged_line["mapped_label"] = cam.mapped_line_item.line_item_label
+            staged_line["confidence"] = "learned"
 
-        # Still populate entity_acct_code/name for display purposes (account identification only)
+        # 2. Populate entity COA details and fall back to COA maps_to if no learned mapping
         ea = entity_coa.get(code.lower())
         if ea:
             staged_line["entity_acct_code"] = ea.account_code
@@ -4108,6 +4111,13 @@ def _apply_tb_learned_mappings(entity, raw_lines):
                 staged_line["account_name"] = ea.account_name
             if staged_line["confidence"] == "new":
                 staged_line["confidence"] = "matched"
+            # Use COA maps_to as the statement line if no learned mapping exists
+            if not staged_line["mapped_id"] and ea.maps_to:
+                staged_line["mapped_id"] = str(ea.maps_to.pk)
+                staged_line["mapped_label"] = ea.maps_to.line_item_label
+                if staged_line["confidence"] == "matched":
+                    staged_line["confidence"] = "learned"
+
         staged.append(staged_line)
     return staged
 
