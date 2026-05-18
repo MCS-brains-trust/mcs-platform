@@ -4405,12 +4405,18 @@ def commit_tb_import(request, pk):
                 entity=entity, account_code=account_code
             ).first()
             if existing_coa:
-                # Only update the name (don't overwrite section/maps_to/tax_code)
-                if existing_coa.account_name != resolved_name:
-                    existing_coa.account_name = resolved_name
-                    existing_coa.save(update_fields=['account_name', 'updated_at'])
+                # The entity COA is the source of truth for account names.
+                # A TB import must NEVER overwrite a name that was set by an
+                # accountant — the file name is untrusted input.
+                # We only update maps_to if it was previously unset, so that
+                # the import wizard's mapping selection is persisted.
+                if not existing_coa.maps_to and mapped_item:
+                    existing_coa.maps_to = mapped_item
+                    existing_coa.save(update_fields=['maps_to'])
             else:
-                # Create a new CoA entry seeded from the TB data
+                # Account doesn't exist in the COA yet — create a minimal entry
+                # seeded from the TB data so it appears in the COA tab and the
+                # journal account picker.
                 EntityChartOfAccount.objects.create(
                     entity=entity,
                     account_code=account_code,
