@@ -4319,7 +4319,6 @@ def commit_tb_import(request, pk):
             opening = Decimal(str(line.get("opening_balance", "0")))
             debit = Decimal(str(line.get("debit", "0")))
             credit = Decimal(str(line.get("credit", "0")))
-            closing = opening + debit - credit
             account_code = line["account_code"]
 
             # Restore comparatives (first occurrence per code only)
@@ -4328,6 +4327,24 @@ def commit_tb_import(request, pk):
                 comp_applied.add(account_code)
             else:
                 comp = {}
+
+            # For balance sheet accounts, the closing balance is the cumulative
+            # balance (opening + period movement), not just the period movement.
+            # When the uploaded file has no Opening Balance column (opening == 0)
+            # we restore the opening balance from the prior year closing balance
+            # that was captured in the snapshot before lines were deleted.
+            # P&L accounts always have opening_balance = 0 (period movements only).
+            _bs_sections = {'Current Assets', 'Non Current Assets', 'Non-Current Assets',
+                            'Current Liabilities', 'Non-Current Liabilities', 'Equity'}
+            _hl_sec = _hl_section_for_code(account_code)
+            _is_bs = _hl_sec in _bs_sections
+            if _is_bs and opening == Decimal('0') and comp:
+                # Use prior year closing balance as the opening balance
+                _prior_cb = comp.get('prior_closing_balance', Decimal('0'))
+                if _prior_cb != Decimal('0'):
+                    opening = _prior_cb
+
+            closing = opening + debit - credit
 
             # Prior year data: prefer file-level data (from comparative TB),
             # then fall back to DB snapshot, then zero.
