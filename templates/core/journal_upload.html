@@ -62,34 +62,171 @@
                         </a>
                     </div>
                 </div>
-                <form method="post" enctype="multipart/form-data">
+
+                <form method="post" enctype="multipart/form-data" id="uploadForm">
                     {% csrf_token %}
-                    <div class="mb-3">
-                        <label for="id_file" class="form-label">Select Excel File</label>
-                        <input type="file" name="file" id="id_file" class="form-control" accept=".xlsx,.xls" required>
+
+                    <!-- Drag & Drop Zone -->
+                    <div id="dropZone" class="border rounded-3 text-center p-5 mb-3" style="border-style: dashed !important; border-color: #0d6efd !important; background: #f8f9ff; cursor: pointer; transition: background 0.2s, border-color 0.2s;">
+                        <i class="bi bi-file-earmark-spreadsheet" style="font-size: 2.5rem; color: #0d6efd;"></i>
+                        <p class="mt-2 mb-1 fw-semibold">Drag &amp; drop your Excel file here</p>
+                        <p class="text-muted small mb-3">or click to browse</p>
+                        <input type="file" name="file" id="id_file" class="d-none" accept=".xlsx,.xls" required>
+                        <button type="button" class="btn btn-outline-primary btn-sm" id="browseBtn">
+                            <i class="bi bi-folder2-open"></i> Browse Files
+                        </button>
                     </div>
+
+                    <!-- Selected File Display -->
+                    <div id="fileSelected" class="alert alert-success d-none mb-3">
+                        <i class="bi bi-file-earmark-check-fill me-2"></i>
+                        <strong id="fileName"></strong>
+                        <span class="text-muted ms-2 small" id="fileSize"></span>
+                        <button type="button" class="btn-close float-end" id="clearFile" aria-label="Remove"></button>
+                    </div>
+
                     <div class="d-flex gap-2">
-                        <button type="submit" class="btn btn-primary" id="uploadBtn">
+                        <button type="submit" class="btn btn-primary" id="uploadBtn" disabled>
                             <i class="bi bi-journal-arrow-up" id="uploadIcon"></i>
                             <span class="spinner-border spinner-border-sm d-none" id="uploadSpinner" role="status" aria-hidden="true"></span>
-                            <span id="uploadBtnText">Upload & Review</span>
+                            <span id="uploadBtnText">Upload &amp; Review</span>
                         </button>
                         <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary" id="cancelBtn">Cancel</a>
                     </div>
                 </form>
+
                 <script>
-                    document.querySelector('form').addEventListener('submit', function() {
-                        const btn = document.getElementById('uploadBtn');
-                        const icon = document.getElementById('uploadIcon');
-                        const spinner = document.getElementById('uploadSpinner');
-                        const btnText = document.getElementById('uploadBtnText');
-                        const cancelBtn = document.getElementById('cancelBtn');
-                        btn.disabled = true;
-                        cancelBtn.classList.add('disabled');
-                        icon.classList.add('d-none');
-                        spinner.classList.remove('d-none');
-                        btnText.textContent = 'Processing... Please wait';
+                (function() {
+                    var dropZone   = document.getElementById('dropZone');
+                    var fileInput  = document.getElementById('id_file');
+                    var browseBtn  = document.getElementById('browseBtn');
+                    var fileSelected = document.getElementById('fileSelected');
+                    var fileName   = document.getElementById('fileName');
+                    var fileSize   = document.getElementById('fileSize');
+                    var clearFile  = document.getElementById('clearFile');
+                    var uploadBtn  = document.getElementById('uploadBtn');
+                    var uploadForm = document.getElementById('uploadForm');
+                    var uploadIcon = document.getElementById('uploadIcon');
+                    var uploadSpinner = document.getElementById('uploadSpinner');
+                    var uploadBtnText = document.getElementById('uploadBtnText');
+                    var cancelBtn  = document.getElementById('cancelBtn');
+
+                    var VALID_EXTS = ['.xlsx', '.xls'];
+
+                    function formatBytes(bytes) {
+                        if (bytes < 1024) return bytes + ' B';
+                        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+                        return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+                    }
+
+                    function isValidFile(file) {
+                        var name = file.name.toLowerCase();
+                        return VALID_EXTS.some(function(ext) { return name.endsWith(ext); });
+                    }
+
+                    function showFile(file) {
+                        if (!isValidFile(file)) {
+                            alert('Only Excel files (.xlsx or .xls) are supported.');
+                            return false;
+                        }
+                        fileName.textContent = file.name;
+                        fileSize.textContent = formatBytes(file.size);
+                        fileSelected.classList.remove('d-none');
+                        dropZone.style.background = '#e8f5e9';
+                        dropZone.style.borderColor = '#198754';
+                        uploadBtn.disabled = false;
+                        return true;
+                    }
+
+                    function clearSelection() {
+                        fileInput.value = '';
+                        fileSelected.classList.add('d-none');
+                        dropZone.style.background = '#f8f9ff';
+                        dropZone.style.borderColor = '#0d6efd';
+                        uploadBtn.disabled = true;
+                    }
+
+                    // Click anywhere on drop zone (except the browse button itself) to open file picker
+                    dropZone.addEventListener('click', function(e) {
+                        if (e.target !== browseBtn && !browseBtn.contains(e.target)) {
+                            fileInput.click();
+                        }
                     });
+
+                    browseBtn.addEventListener('click', function(e) {
+                        e.stopPropagation();
+                        fileInput.click();
+                    });
+
+                    fileInput.addEventListener('change', function() {
+                        if (this.files && this.files[0]) {
+                            showFile(this.files[0]);
+                        }
+                    });
+
+                    clearFile.addEventListener('click', function(e) {
+                        e.stopPropagation();
+                        clearSelection();
+                    });
+
+                    // Drag & Drop events
+                    ['dragenter', 'dragover'].forEach(function(evt) {
+                        dropZone.addEventListener(evt, function(e) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            dropZone.style.background = '#dce8ff';
+                            dropZone.style.borderColor = '#0a58ca';
+                        });
+                    });
+
+                    ['dragleave', 'dragend'].forEach(function(evt) {
+                        dropZone.addEventListener(evt, function(e) {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            // Only reset if leaving the drop zone entirely
+                            if (!dropZone.contains(e.relatedTarget)) {
+                                dropZone.style.background = '#f8f9ff';
+                                dropZone.style.borderColor = '#0d6efd';
+                            }
+                        });
+                    });
+
+                    dropZone.addEventListener('drop', function(e) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        dropZone.style.background = '#f8f9ff';
+                        dropZone.style.borderColor = '#0d6efd';
+
+                        var files = e.dataTransfer.files;
+                        if (!files || files.length === 0) return;
+
+                        var file = files[0];
+                        if (!showFile(file)) return;
+
+                        // Assign the dropped file to the real file input via DataTransfer
+                        try {
+                            var dt = new DataTransfer();
+                            dt.items.add(file);
+                            fileInput.files = dt.files;
+                        } catch (err) {
+                            // DataTransfer not supported in very old browsers — fallback: show name but rely on manual submit
+                            console.warn('DataTransfer assignment not supported:', err);
+                        }
+                    });
+
+                    // Prevent browser default drop behaviour on the whole page
+                    document.addEventListener('dragover', function(e) { e.preventDefault(); });
+                    document.addEventListener('drop', function(e) { e.preventDefault(); });
+
+                    // Submit handler — show spinner
+                    uploadForm.addEventListener('submit', function() {
+                        uploadBtn.disabled = true;
+                        cancelBtn.classList.add('disabled');
+                        uploadIcon.classList.add('d-none');
+                        uploadSpinner.classList.remove('d-none');
+                        uploadBtnText.textContent = 'Processing... Please wait';
+                    });
+                })();
                 </script>
             </div>
         </div>
