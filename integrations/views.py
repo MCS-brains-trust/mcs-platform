@@ -40,7 +40,7 @@ from .models import (
     QBGlobalConnection, QBTenant,
 
 )
-from .providers import get_provider, get_configured_providers, PROVIDERS
+from .providers import get_provider, get_configured_providers, PROVIDERS, ProviderUserError
 
 logger = logging.getLogger(__name__)
 
@@ -367,6 +367,19 @@ def import_from_cloud(request, fy_pk):
     return redirect(f"{reverse('core:entity_detail', kwargs={'pk': entity.pk})}#software")
 
 
+def _provider_dashboard_url(provider):
+    """Return the URL name of the dashboard a user should land on to
+    reconnect / reauthorise a given provider.  Falls back to the global
+    connections hub so a future provider never dead-ends without an action.
+    """
+    name = getattr(provider, "name", "") or ""
+    if name == "xero":
+        return "integrations:xero_global_dashboard"
+    if name == "quickbooks":
+        return "integrations:qb_global_dashboard"
+    return "integrations:connections_hub"
+
+
 def _do_cloud_import(
     request,
     fy,
@@ -433,7 +446,25 @@ def _do_cloud_import(
                 last_sync_at=timezone.now()
             )
         return redirect("integrations:review_import", fy_pk=fy.pk)
+    except ProviderUserError as e:
+        # Intentionally user-actionable provider error (auth expired or scope
+        # revoked). Surface the message verbatim and land the user on the
+        # provider's reconnect dashboard, which renders the Connect/Reconnect
+        # button. Logged at info level — this is expected periodic behaviour,
+        # not a bug.
+        logger.info(
+            "Cloud import requires user action: provider=%s tenant=%s fy=%s entity=%s msg=%s",
+            getattr(provider, "name", "unknown"), tenant_id,
+            fy.pk, entity.pk, str(e),
+        )
+        if connection_obj:
+            connection_obj.last_error = str(e)
+            connection_obj.save(update_fields=["last_error"])
+        messages.error(request, str(e))
+        return redirect(_provider_dashboard_url(provider))
     except Exception as e:
+        # Unexpected: keep the full stack trace in logs (no silent swallow)
+        # but do NOT leak the raw exception text / type to the user.
         logger.exception("Cloud import failed", extra={
             "provider": getattr(provider, "name", "unknown"),
             "tenant_id": tenant_id,
@@ -446,7 +477,12 @@ def _do_cloud_import(
         if connection_obj:
             connection_obj.last_error = str(e)
             connection_obj.save(update_fields=["last_error"])
-        messages.error(request, f"Import failed: {str(e)}")
+        messages.error(
+            request,
+            f"{getattr(provider, 'display_name', 'Cloud')} import failed "
+            "unexpectedly. The error has been logged; please try again or "
+            "contact support."
+        )
         return redirect("core:financial_year_detail", pk=fy.pk)
 
 

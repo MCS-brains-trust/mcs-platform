@@ -15,6 +15,23 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# User-facing provider exception
+# ---------------------------------------------------------------------------
+
+class ProviderUserError(Exception):
+    """Raised for user-actionable provider errors (auth token expired, scope
+    revoked, etc.) that must be shown verbatim to the user along with a
+    reconnect path.
+
+    Catch sites are expected to surface ``str(exc)`` directly to the user and
+    redirect them to the provider's reconnect dashboard. Do NOT use this
+    class for incidental bugs or unexpected API failures — those should
+    propagate as their natural exception type so the generic catch can log
+    the trace and show a non-leaky failure message.
+    """
+
+
+# ---------------------------------------------------------------------------
 # Provider registry
 # ---------------------------------------------------------------------------
 
@@ -183,9 +200,15 @@ class XeroProvider(BaseProvider):
             params["paymentsOnly"] = "false"
         resp = requests.get(url, headers=headers, params=params, timeout=30)
         if resp.status_code == 401:
-            raise ValueError(
+            raise ProviderUserError(
                 "Xero authorisation expired. Please reconnect your "
                 "Xero account from the Integrations page."
+            )
+        if resp.status_code == 403:
+            raise ProviderUserError(
+                "Xero connection is missing a required permission "
+                "(accounting.reports.read). Please reconnect your Xero "
+                "account from the Integrations page to grant it."
             )
         resp.raise_for_status()
         report = (resp.json().get("Reports") or [{}])[0]
@@ -287,8 +310,14 @@ class QuickBooksProvider(BaseProvider):
             timeout=30,
         )
         if resp.status_code == 401:
-            raise ValueError(
+            raise ProviderUserError(
                 "QuickBooks token has expired. Please reconnect via Connections → QuickBooks."
+            )
+        if resp.status_code == 403:
+            raise ProviderUserError(
+                "QuickBooks connection is missing a required permission "
+                "(com.intuit.quickbooks.accounting). Please reconnect via "
+                "Connections → QuickBooks to grant it."
             )
         resp.raise_for_status()
         accounts = resp.json().get("QueryResponse", {}).get("Account", [])
@@ -317,8 +346,14 @@ class QuickBooksProvider(BaseProvider):
             timeout=30,
         )
         if resp.status_code == 401:
-            raise ValueError(
+            raise ProviderUserError(
                 "QuickBooks token has expired. Please reconnect via Connections → QuickBooks."
+            )
+        if resp.status_code == 403:
+            raise ProviderUserError(
+                "QuickBooks connection is missing a required permission "
+                "(com.intuit.quickbooks.accounting). Please reconnect via "
+                "Connections → QuickBooks to grant it."
             )
         resp.raise_for_status()
         data = resp.json()
@@ -373,8 +408,14 @@ class QuickBooksProvider(BaseProvider):
             timeout=60,
         )
         if resp.status_code == 401:
-            raise ValueError(
+            raise ProviderUserError(
                 "QuickBooks token has expired. Please reconnect via Connections → QuickBooks."
+            )
+        if resp.status_code == 403:
+            raise ProviderUserError(
+                "QuickBooks connection is missing a required permission "
+                "(com.intuit.quickbooks.accounting). Please reconnect via "
+                "Connections → QuickBooks to grant it."
             )
         if not resp.ok:
             logger.error("QBO GL error %s: %s", resp.status_code, resp.text[:500])
