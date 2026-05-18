@@ -332,36 +332,33 @@ def import_from_cloud(request, fy_pk):
         messages.error(request, "Cannot import into a finalised financial year.")
         return redirect("core:financial_year_detail", pk=fy_pk)
 
+    xero_conn = XeroGlobalConnection.objects.filter(status="active").first()
+    qb_conn = QBGlobalConnection.objects.filter(status="active").first()
+
     linked_xero = XeroTenant.objects.filter(entity=entity).select_related("connection").first()
     linked_qb = QBTenant.objects.filter(entity=entity).select_related("connection").first()
 
-    linked_options = []
-    if linked_xero:
-        linked_options.append({
+    # Build the list of available import routes.
+    # A route is available if the entity has a saved link OR if a global
+    # connection exists (the tenant picker will handle the unlinked case).
+    available_options = []
+    if linked_xero or xero_conn:
+        available_options.append({
             "name": "xero",
             "display": "Xero",
             "url": reverse("integrations:xero_select_tenant_import", kwargs={"fy_pk": fy.pk}),
         })
-    if linked_qb:
-        linked_options.append({
+    if linked_qb or qb_conn:
+        available_options.append({
             "name": "quickbooks",
             "display": "QuickBooks Online",
             "url": reverse("integrations:qb_select_tenant_import", kwargs={"fy_pk": fy.pk}),
         })
 
-    if len(linked_options) == 1:
-        return redirect(linked_options[0]["url"])
-    if len(linked_options) > 1:
+    if len(available_options) == 1:
+        return redirect(available_options[0]["url"])
+    if len(available_options) > 1:
         return redirect("integrations:select_provider_import", fy_pk=fy_pk)
-
-    xero_conn = XeroGlobalConnection.objects.filter(status="active").first()
-    qb_conn = QBGlobalConnection.objects.filter(status="active").first()
-    if xero_conn or qb_conn:
-        messages.error(
-            request,
-            "This entity is not linked to accounting software yet. Open the Software tab on the entity and link Xero or QuickBooks first."
-        )
-        return redirect(f"{reverse('core:entity_detail', kwargs={'pk': entity.pk})}#software")
 
     messages.warning(
         request,
@@ -458,28 +455,49 @@ def _do_cloud_import(
 def xero_select_tenant_import(request, fy_pk):
     """
     Show tenant selection for Xero import.
-    User picks which Xero organisation and period to pull from.
+    If the entity already has a linked Xero tenant, pre-fill it and go straight
+    to the date picker.  If not, show the full tenant list so the user can pick
+    and optionally save the link - mirroring the QuickBooks flow.
     """
     fy = get_object_or_404(FinancialYear, pk=fy_pk)
     entity = fy.entity
 
-    linked_tenant = XeroTenant.objects.filter(entity=entity).select_related("connection").first()
-    if not linked_tenant or not linked_tenant.connection_id:
-        messages.error(request, "This entity is not linked to a Xero organisation yet. Open the Software tab and link Xero first.")
-        return redirect(f"{reverse('core:entity_detail', kwargs={'pk': entity.pk})}#software")
+    # Use the global connection (new architecture)
+    global_conn = XeroGlobalConnection.objects.filter(status="active").first()
 
-    global_conn = linked_tenant.connection
-    tenants = [linked_tenant]
+    if not global_conn:
+        messages.error(request, "No active Xero connection. Please connect Xero first.")
+        return redirect("integrations:xero_global_dashboard")
+
+    all_tenants = global_conn.tenants.select_related("entity").all()
+    linked_tenant = all_tenants.filter(entity=entity).first()
 
     if request.method == "POST":
-        tenant_id = linked_tenant.tenant_id
+        tenant_id = request.POST.get("tenant_id", "").strip()
+        link_tenant = request.POST.get("link_tenant") == "1"
         import_mode = request.POST.get("import_mode", "period_movement")
         from_date_raw = request.POST.get("from_date", "").strip()
         to_date_raw = request.POST.get("to_date", "").strip()
 
+        # If no tenant_id posted, fall back to the already-linked tenant
+        if not tenant_id and linked_tenant:
+            tenant_id = linked_tenant.tenant_id
+
         if not tenant_id:
-            messages.error(request, "This entity's saved Xero link is missing the organisation identifier.")
-            return redirect(f"{reverse('core:entity_detail', kwargs={'pk': entity.pk})}#software")
+            messages.error(request, "Please select a Xero organisation.")
+            return redirect("integrations:xero_select_tenant_import", fy_pk=fy_pk)
+
+        tenant_obj = all_tenants.filter(tenant_id=tenant_id).first()
+        if not tenant_obj:
+            messages.error(request, "Selected Xero organisation not found.")
+            return redirect("integrations:xero_select_tenant_import", fy_pk=fy_pk)
+
+        # Optionally save the link for future imports
+        if link_tenant:
+            all_tenants.filter(entity=entity).update(entity=None)
+            tenant_obj.entity = entity
+            tenant_obj.save(update_fields=["entity"])
+            linked_tenant = tenant_obj
 
         from_date = None
         to_date = None
@@ -509,7 +527,7 @@ def xero_select_tenant_import(request, fy_pk):
             entity,
             provider,
             global_conn.access_token,
-            tenant_id,
+            tenant_obj.tenant_id,
             None,
             import_mode=import_mode,
             from_date=from_date,
@@ -518,9 +536,9 @@ def xero_select_tenant_import(request, fy_pk):
 
     context = {
         "fy": fy,
-        "tenants": tenants,
+        "tenants": all_tenants,
         "linked_tenant": linked_tenant,
-        "lock_selected_tenant": True,
+        "lock_selected_tenant": linked_tenant is not None,
         "default_from_date": fy.start_date.isoformat() if fy.start_date else "",
         "default_to_date": fy.end_date.isoformat() if fy.end_date else "",
     }
@@ -990,12 +1008,14 @@ def _sync_source_accounts_to_entity_coa(entity, raw_lines):
         ).first()
 
         if ea:
-            # Name match found — update name casing and ensure active
-            ea.account_name = name
+            # Name match found — only ensure the record is active.
+            # NEVER overwrite account_name — the accountant's name is the source of truth.
+            fields_to_save = ["is_active"]
+            ea.is_active = True
             if not ea.section:
                 ea.section = section
-            ea.is_active = True
-            ea.save(update_fields=["account_name", "section", "is_active"])
+                fields_to_save.append("section")
+            ea.save(update_fields=fields_to_save)
             continue
 
         # Step 2: Match by account code
@@ -1006,16 +1026,21 @@ def _sync_source_accounts_to_entity_coa(entity, raw_lines):
             ).first()
 
             if ea:
-                # Code match but different name — update name
-                ea.account_name = name
+                # Code match — NEVER overwrite the existing name set by an accountant.
+                fields_to_save = ["is_active"]
                 ea.is_active = True
-                ea.save(update_fields=["account_name", "is_active"])
+                if not ea.section:
+                    ea.section = section
+                    fields_to_save.append("section")
+                ea.save(update_fields=fields_to_save)
                 continue
 
         # Step 3: No match — create new entry
+        # Truncate code to 50 chars (field max_length) to handle long Xero codes
+        safe_code = (code or name)[:50]
         EntityChartOfAccount.objects.create(
             entity=entity,
-            account_code=code or name[:20],
+            account_code=safe_code,
             account_name=name,
             section=section,
             is_active=True,
