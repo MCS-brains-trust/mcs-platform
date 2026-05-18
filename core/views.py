@@ -3634,9 +3634,19 @@ def trial_balance_import(request, pk):
                     messages.error(request, "No data rows found in the uploaded file.")
                     return redirect("core:trial_balance_import", pk=pk)
 
-                # Merge duplicate account codes before mapping
-                from core.tb_dedup import merge_duplicate_accounts
-                raw_lines, merge_warnings = merge_duplicate_accounts(raw_lines)
+                # Detect duplicate account codes and warn — but keep each row
+                # as a separate line so they appear individually in the breakdown
+                # and can each be reallocated independently for audit purposes.
+                from collections import Counter
+                code_counts = Counter(
+                    (r.get("account_code") or "").strip() for r in raw_lines
+                    if (r.get("account_code") or "").strip()
+                )
+                merge_warnings = [
+                    f"Account {code} appears {count} times in the file — "
+                    f"each row will be imported as a separate line."
+                    for code, count in code_counts.items() if count > 1
+                ]
                 for w in merge_warnings:
                     messages.warning(request, w)
 
