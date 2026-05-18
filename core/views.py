@@ -248,11 +248,21 @@ def _apply_journal_line_to_tb(fy, account_code, account_name, jnl_debit, jnl_cre
     adjustment row.  The display aggregation logic nets these rows
     against the original import row when rendering.
 
-    The mapped_line_item is resolved using a three-tier lookup:
-      1. Existing TrialBalanceLine for the same account_code in this FY
-         (ensures the adjustment lands in the same section as the original)
-      2. ClientAccountMapping (entity-level learned mapping)
+    The mapped_line_item is resolved using a two-tier lookup:
+      1. ClientAccountMapping (entity-level learned mapping) — the master
+         source of truth when one exists for this account_code.
+      2. Existing TrialBalanceLine for the same account_code in this FY —
+         used ONLY when no CAM mapping exists, so the adjustment still
+         lands in the same section as the original import row.
       3. None (unmapped fallback)
+
+    Precedence rule: when a ClientAccountMapping exists for the account, it
+    wins over any inherited line-level mapping. A stale tag on a sibling
+    TB line would otherwise re-propagate to every subsequent journal posted
+    to the same account, overriding the correct master mapping (the bug
+    fixed in Hazaway 3325 — see fix_hazaway_3325_mapping mgmt command).
+    When NO CAM exists for the account, prior line-inheritance behaviour
+    is preserved verbatim.
 
     Pass journal=<AdjustingJournal instance> to link the TB line back to its
     source journal via the source_journal FK — this enables reliable reversal
@@ -260,21 +270,24 @@ def _apply_journal_line_to_tb(fy, account_code, account_name, jnl_debit, jnl_cre
     """
     mapped_item = None
 
-    # Priority 1: inherit from existing TB line for this account_code
-    existing_tb = TrialBalanceLine.objects.filter(
-        financial_year=fy,
-        account_code=account_code,
-        mapped_line_item__isnull=False,
+    # Priority 1: ClientAccountMapping (entity-level master). CAM wins
+    # over line inheritance — see precedence rule in docstring above.
+    cam = ClientAccountMapping.objects.filter(
+        entity=fy.entity, client_account_code=account_code
     ).select_related('mapped_line_item').first()
-    if existing_tb:
-        mapped_item = existing_tb.mapped_line_item
+    if cam and cam.mapped_line_item:
+        mapped_item = cam.mapped_line_item
 
-    # Priority 2: fall back to ClientAccountMapping
+    # Priority 2: inherit from an existing TB line in this FY only when
+    # no CAM mapping exists (preserves prior behaviour for no-CAM accounts).
     if not mapped_item:
-        mapping = ClientAccountMapping.objects.filter(
-            entity=fy.entity, client_account_code=account_code
-        ).first()
-        mapped_item = mapping.mapped_line_item if mapping else None
+        existing_tb = TrialBalanceLine.objects.filter(
+            financial_year=fy,
+            account_code=account_code,
+            mapped_line_item__isnull=False,
+        ).select_related('mapped_line_item').first()
+        if existing_tb:
+            mapped_item = existing_tb.mapped_line_item
 
     # Resolve the account name at the source - if the caller passed a raw
     # code or blank name, look it up from EntityChartOfAccount / ChartOfAccount
