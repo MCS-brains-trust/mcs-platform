@@ -1497,7 +1497,11 @@ def financial_year_detail(request, pk):
     tb_lines = list(tb_lines)
     for line in tb_lines:
         if line.source == 'rollover':
-            line._cy = Decimal('0')
+            # BS lines carried forward have a real closing_balance (the opening
+            # balance for the new year). P&L comparative-only lines have
+            # closing_balance == 0 and carry data only in prior_debit/prior_credit.
+            cb = line.closing_balance or Decimal('0')
+            line._cy = cb  # non-zero for BS rollover lines, zero for P&L comparative-only
             line._py = (line.prior_debit or Decimal('0')) - (line.prior_credit or Decimal('0'))
         else:
             line._cy = line.closing_balance or Decimal('0')
@@ -11373,7 +11377,11 @@ def trial_balance_download(request, pk):
 
     for line in tb_lines:
         if line.source == 'rollover':
-            line._cy = Decimal('0')
+            # BS lines carried forward have a real closing_balance (the opening
+            # balance for the new year). P&L comparative-only lines have
+            # closing_balance == 0 and carry data only in prior_debit/prior_credit.
+            cb = line.closing_balance or Decimal('0')
+            line._cy = cb  # non-zero for BS rollover lines, zero for P&L comparative-only
             line._py = (line.prior_debit or Decimal('0')) - (line.prior_credit or Decimal('0'))
         else:
             line._cy = line.closing_balance or Decimal('0')
