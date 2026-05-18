@@ -3192,39 +3192,73 @@ def _populate_rolled_forward_fy(current_fy, new_fy):
     # -----------------------------------------------------------------
     # Pass 1: Classify all lines and calculate net P&L result
     # -----------------------------------------------------------------
+    # IMPORTANT: We must net ALL lines (base TB + adjustment journals) per
+    # account code to get the true year-end closing balance.  Entities can
+    # be built from any combination of TB imports, Xero, Excel, manual
+    # journals, bank statement coding, etc.  Filtering only is_adjustment=False
+    # would miss journal-only accounts (e.g. Taxation posted as a journal).
+    # We group by account_code and sum debit/credit across every line, then
+    # synthesise a single representative object per account for Pass 2/3.
+
+    all_lines_qs = current_fy.trial_balance_lines.select_related("mapped_line_item")
+
+    # Build a dict: account_code -> {debit_total, credit_total, representative_line}
+    account_map = {}  # code -> dict
+    for line in all_lines_qs:
+        code = line.account_code or ""
+        if code not in account_map:
+            account_map[code] = {
+                "debit": _D("0"),
+                "credit": _D("0"),
+                "rep": line,  # representative line for metadata
+            }
+        account_map[code]["debit"] += line.debit or _D("0")
+        account_map[code]["credit"] += line.credit or _D("0")
+        # Prefer a non-adjustment line as the representative (better metadata)
+        if not line.is_adjustment:
+            account_map[code]["rep"] = line
+
     net_pl_result = _D("0")
     retained_profits_line = None
     income_tax_line = None
-    bs_lines = []
-    pl_lines = []
+    bs_lines = []   # list of synthetic line objects
+    pl_lines = []   # list of synthetic line objects
 
-    # Some entities (e.g. Handiledger imports) store all TB data as
-    # is_adjustment=True lines (source='manual_journal').  In that case
-    # the standard filter(is_adjustment=False) returns nothing.  Fall back
-    # to all lines so the roll-forward still works.
-    base_qs = current_fy.trial_balance_lines.select_related("mapped_line_item").filter(is_adjustment=False)
-    if not base_qs.exists():
-        base_qs = current_fy.trial_balance_lines.select_related("mapped_line_item")
+    for code, data in account_map.items():
+        rep = data["rep"]
+        net_debit = data["debit"]
+        net_credit = data["credit"]
+        net_closing = net_debit - net_credit
 
-    for line in base_qs:
-        is_bs = _is_balance_sheet_account(line.account_code, line.mapped_line_item, coa_sections)
+        # Synthesise a lightweight object for Pass 2/3
+        class _SyntheticLine:
+            pass
+        sl = _SyntheticLine()
+        sl.account_code = code
+        sl.account_name = rep.account_name
+        sl.mapped_line_item = rep.mapped_line_item
+        sl.debit = net_debit
+        sl.credit = net_credit
+        sl.closing_balance = net_closing
+
+        is_bs = _is_balance_sheet_account(code, rep.mapped_line_item, coa_sections)
         if is_bs:
-            code_prefix = line.account_code.split(".")[0] if line.account_code else ""
+            code_prefix = code.split(".")[0]
             if code_prefix == "4199":
-                retained_profits_line = line
+                retained_profits_line = sl
             is_income_tax = False
-            if line.account_name and "income tax" in line.account_name.lower():
+            if rep.account_name and "income tax" in rep.account_name.lower():
                 is_income_tax = True
             if code_prefix == "4110":
                 is_income_tax = True
-            if line.mapped_line_item and (line.mapped_line_item.standard_code or "") == "BS-EQ-011":
+            if rep.mapped_line_item and (rep.mapped_line_item.standard_code or "") == "BS-EQ-011":
                 is_income_tax = True
             if is_income_tax:
-                income_tax_line = line
-            bs_lines.append(line)
+                income_tax_line = sl
+            bs_lines.append(sl)
         else:
-            pl_lines.append(line)
-            net_pl_result += line.debit - line.credit
+            pl_lines.append(sl)
+            net_pl_result += net_closing
 
     # -----------------------------------------------------------------
     # Pass 2: Create balance sheet lines, adjusting retained profits
