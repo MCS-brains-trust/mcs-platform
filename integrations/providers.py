@@ -226,18 +226,73 @@ class XeroProvider(BaseProvider):
 
     def fetch_period_movement(self, access_token, tenant_id, from_date, to_date):
         """
-        Fetch net movement for the period using the TrialBalance report with
-        fromDate set to the period start. Xero's GeneralLedger endpoint is not
-        available via the public API; TrialBalance with fromDate returns net
-        movement (debit/credit) for the selected period.
+        Fetch net movement for the period using the Xero Finance API
+        FinancialStatements/TrialBalance endpoint, which returns debit,
+        credit, and movement per account for a date range.
+
+        Requires the 'finance.statements.read' OAuth scope on the connection.
         """
-        # Reuse fetch_trial_balance with fromDate to get period net movement
-        return self.fetch_trial_balance(
-            access_token=access_token,
-            tenant_id=tenant_id,
-            as_at_date=to_date,
-            start_date=from_date,
-        )
+        url = "https://api.xero.com/finance.xro/1.0/FinancialStatements/TrialBalance"
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Xero-tenant-id": tenant_id,
+            "Accept": "application/json",
+        }
+        params = {
+            "startDate": from_date.isoformat(),
+            "endDate": to_date.isoformat(),
+        }
+        resp = requests.get(url, headers=headers, params=params, timeout=30)
+        if resp.status_code == 403:
+            raise ProviderUserError(
+                "The Xero connection does not have the 'finance.statements.read' "
+                "scope. Please reconnect Xero from the Integrations page to "
+                "grant the required permission."
+            )
+        if resp.status_code == 401:
+            raise ProviderUserError(
+                "Xero authorisation expired. Please reconnect your "
+                "Xero account from the Integrations page."
+            )
+        resp.raise_for_status()
+        data = resp.json()
+
+        # The Finance API returns a list of account objects directly.
+        # Each account has: accountId, accountCode, accountName, accountType,
+        # accountClass, reportingCode, reportingCodeName,
+        # accountMovement: { debits, credits, movement }
+        accounts = data if isinstance(data, list) else data.get("accounts", [])
+
+        lines = []
+        for acct in accounts:
+            movement_data = acct.get("accountMovement") or {}
+            debit = Decimal(str(movement_data.get("debits") or "0"))
+            credit = Decimal(str(movement_data.get("credits") or "0"))
+            movement = Decimal(str(movement_data.get("movement") or "0"))
+
+            # Skip accounts with zero movement
+            if debit == 0 and credit == 0:
+                continue
+
+            account_code = (acct.get("accountCode") or "")[:50]
+            account_name = acct.get("accountName") or ""
+
+            lines.append({
+                "account_code": account_code,
+                "account_name": account_name,
+                "opening_balance": Decimal("0"),
+                "debit": debit,
+                "credit": credit,
+                "movement_amount": movement,
+            })
+
+        if not lines:
+            raise ValueError(
+                f"Xero returned no net movement for {from_date} to {to_date}. "
+                "Check that the date range has transactions and that the Xero "
+                "organisation is correct."
+            )
+        return lines
 
 
 @register_provider("quickbooks")

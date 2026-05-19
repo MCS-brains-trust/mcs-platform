@@ -985,7 +985,7 @@ class ChartOfAccount(models.Model):
         help_text="Which entity type this account belongs to",
     )
     account_code = models.CharField(
-        max_length=20,
+        max_length=50,
         help_text='Account code, e.g. "500", "1510", "2000.01"',
     )
     account_name = models.CharField(
@@ -1077,7 +1077,7 @@ class EntityChartOfAccount(models.Model):
         Entity, on_delete=models.CASCADE, related_name="entity_accounts",
     )
     account_code = models.CharField(
-        max_length=20,
+        max_length=50,
         help_text='Account code, e.g. "500", "1510", "2000.01"',
     )
     account_name = models.CharField(

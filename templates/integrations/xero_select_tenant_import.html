@@ -23,6 +23,7 @@
                     net movement for <strong>{{ fy.entity.entity_name }}</strong> (FY{{ fy.end_date|date:"Y" }}).
                 </p>
 
+                {% if linked_tenant %}
                 <div class="alert alert-success">
                     <i class="bi bi-link-45deg"></i>
                     This entity is linked to <strong>{{ linked_tenant.tenant_name }}</strong>.
@@ -34,6 +35,8 @@
                 <form method="post">
                     {% csrf_token %}
                     <input type="hidden" name="import_mode" value="period_movement">
+                    <input type="hidden" name="tenant_id" value="{{ linked_tenant.tenant_id }}">
+                    <input type="hidden" name="link_tenant" value="0">
 
                     <div class="row g-3 mb-3">
                         <div class="col-md-6">
@@ -72,6 +75,86 @@
                         </button>
                     </div>
                 </form>
+
+                {% elif tenants %}
+                <div class="alert alert-warning">
+                    <i class="bi bi-exclamation-triangle"></i>
+                    <strong>No Xero organisation is linked to this entity yet.</strong>
+                    <div class="mt-1 small">Select the correct Xero file below. Tick "Save this link" to remember it for future imports.</div>
+                </div>
+
+                <form method="post" id="xeroPickerForm">
+                    {% csrf_token %}
+                    <input type="hidden" name="import_mode" value="period_movement">
+
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Xero Organisation</label>
+                        <div class="list-group" id="tenantList">
+                            {% for tenant in tenants %}
+                            <label class="list-group-item list-group-item-action d-flex align-items-center gap-3">
+                                <input class="form-check-input flex-shrink-0" type="radio" name="tenant_id"
+                                       value="{{ tenant.tenant_id }}" required
+                                       {% if forloop.first %}checked{% endif %}>
+                                <div>
+                                    <div class="fw-semibold">{{ tenant.tenant_name }}</div>
+                                    {% if tenant.entity %}
+                                    <div class="small text-muted">Already linked to: {{ tenant.entity.entity_name }}</div>
+                                    {% endif %}
+                                </div>
+                            </label>
+                            {% endfor %}
+                        </div>
+                    </div>
+
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6">
+                            <label for="fromDate" class="form-label">From date</label>
+                            <input type="date" id="fromDate" name="from_date" class="form-control" value="{{ default_from_date }}" required>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="toDate" class="form-label">To date</label>
+                            <input type="date" id="toDate" name="to_date" class="form-control" value="{{ default_to_date }}" required>
+                        </div>
+                    </div>
+
+                    <div class="alert alert-info py-2">
+                        <i class="bi bi-info-circle"></i>
+                        StatementHub will import the <strong>Net Movement</strong> column for the selected period and then open the mapping wizard.
+                    </div>
+
+                    <div class="form-check mb-3">
+                        <input class="form-check-input" type="checkbox" name="link_tenant" value="1" id="saveLinkCheck" checked>
+                        <label class="form-check-label" for="saveLinkCheck">
+                            Save this Xero link for {{ fy.entity.entity_name }} (skip this picker next time)
+                        </label>
+                    </div>
+
+                    <div class="d-flex justify-content-between">
+                        <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary">
+                            <i class="bi bi-arrow-left"></i> Cancel
+                        </a>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-cloud-arrow-down"></i> Import Net Movement
+                        </button>
+                    </div>
+                </form>
+
+                {% else %}
+                <div class="alert alert-danger">
+                    <i class="bi bi-x-circle"></i>
+                    <strong>No Xero organisations found.</strong>
+                    <div class="mt-1">Please connect your Xero advisor account first.</div>
+                </div>
+                <div class="d-flex justify-content-between">
+                    <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary">
+                        <i class="bi bi-arrow-left"></i> Cancel
+                    </a>
+                    <a href="{% url 'integrations:xero_global_dashboard' %}" class="btn btn-primary">
+                        <i class="bi bi-cloud"></i> Connect Xero
+                    </a>
+                </div>
+                {% endif %}
+
             </div>
         </div>
     </div>
