@@ -167,17 +167,53 @@ class XeroProvider(BaseProvider):
         attrs = cells_0.get("Attributes") or []
         return attrs[0].get("Value", "") if attrs else ""
 
-    def _process_xero_tb_row(self, row, lines):
+    def _resolve_xero_tb_columns(self, rows):
+        """Pick the debit/credit column indices from the report's Header row.
+
+        Xero's Reports/TrialBalance returns 3 columns when called WITHOUT
+        fromDate (Account, Debit, Credit) and 5 columns WITH fromDate
+        (Account, Debit, Credit, YTD Debit, YTD Credit) — the YTD columns
+        carry the full requested-period figures; the Debit/Credit columns
+        carry only the final month. The parser must therefore read the
+        Header to pick the right pair, not assume a fixed index.
+        """
+        header_row = next((r for r in rows if r.get("RowType") == "Header"), None)
+        if not header_row:
+            logger.warning(
+                "Xero TrialBalance response missing Header row; "
+                "falling back to fixed Debit=cells[1], Credit=cells[2]"
+            )
+            return 1, 2
+
+        name_to_idx = {}
+        for idx, cell in enumerate(header_row.get("Cells", [])):
+            label = (cell.get("Value") or "").strip().lower()
+            if label:
+                name_to_idx[label] = idx
+
+        if "ytd debit" in name_to_idx and "ytd credit" in name_to_idx:
+            return name_to_idx["ytd debit"], name_to_idx["ytd credit"]
+        if "debit" in name_to_idx and "credit" in name_to_idx:
+            return name_to_idx["debit"], name_to_idx["credit"]
+
+        logger.warning(
+            "Xero TrialBalance header unrecognised (%s); "
+            "falling back to fixed Debit=cells[1], Credit=cells[2]",
+            list(name_to_idx.keys()),
+        )
+        return 1, 2
+
+    def _process_xero_tb_row(self, row, lines, debit_idx=1, credit_idx=2):
         """Process a single Xero TrialBalance Row into the lines list."""
         cells = row.get("Cells", [])
-        if len(cells) < 3:
+        if len(cells) <= max(debit_idx, credit_idx):
             return
         account_name = (cells[0].get("Value") or "").strip()
         if not account_name:
             return
         code = self._extract_xero_account_code(cells[0])
-        debit = _to_decimal(cells[1].get("Value"))
-        credit = _to_decimal(cells[2].get("Value"))
+        debit = _to_decimal(cells[debit_idx].get("Value"))
+        credit = _to_decimal(cells[credit_idx].get("Value"))
         if debit == 0 and credit == 0:
             return
         lines.append({
@@ -215,15 +251,16 @@ class XeroProvider(BaseProvider):
         resp.raise_for_status()
         report = (resp.json().get("Reports") or [{}])[0]
         rows = report.get("Rows", [])
+        debit_idx, credit_idx = self._resolve_xero_tb_columns(rows)
         lines = []
         for row in rows:
             row_type = row.get("RowType")
             if row_type == "Section":
                 for child in row.get("Rows", []):
                     if child.get("RowType") == "Row":
-                        self._process_xero_tb_row(child, lines)
+                        self._process_xero_tb_row(child, lines, debit_idx, credit_idx)
             elif row_type == "Row":
-                self._process_xero_tb_row(row, lines)
+                self._process_xero_tb_row(row, lines, debit_idx, credit_idx)
         return lines
 
     def fetch_period_movement(self, access_token, tenant_id, from_date, to_date):
