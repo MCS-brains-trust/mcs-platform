@@ -1181,7 +1181,7 @@ def xero_global_connect(request):
         reverse("integrations:xero_global_callback")
     )
 
-    scopes = "openid profile email accounting.reports.read accounting.settings.read accounting.transactions.read offline_access"
+    scopes = "openid profile email accounting.reports.read accounting.settings.read accounting.transactions.read finance.statements.read offline_access"
 
     params = {
         "response_type": "code",

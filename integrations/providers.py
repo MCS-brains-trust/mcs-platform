@@ -100,7 +100,9 @@ class XeroProvider(BaseProvider):
     icon_class = "bi bi-cloud"
     authorize_url = "https://login.xero.com/identity/connect/authorize"
     token_url = "https://identity.xero.com/connect/token"
-    scopes = "offline_access accounting.reports.read"
+    # Kept in sync with the consent scope string in views.py:xero_global_connect
+    # — that string is the source of truth.
+    scopes = "openid profile email accounting.reports.read accounting.settings.read accounting.transactions.read finance.statements.read offline_access"
     supports_period_movement_import = True
 
     def get_client_id(self):
@@ -251,8 +253,9 @@ class XeroProvider(BaseProvider):
             )
         if resp.status_code == 401:
             raise ProviderUserError(
-                "Xero authorisation expired. Please reconnect your "
-                "Xero account from the Integrations page."
+                "Xero authorisation expired, or the connection is missing the "
+                "'finance.statements.read' scope. Please reconnect Xero from "
+                "the Integrations page."
             )
         resp.raise_for_status()
         data = resp.json()
