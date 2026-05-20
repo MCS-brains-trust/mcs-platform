@@ -1146,25 +1146,47 @@ def commit_import(request, fy_pk):
                 errors.append(f"Line {i + 1} ({line.get('account_code', '?')}): {str(e)}")
 
         # ------------------------------------------------------------------
-        # Re-create comparative-only lines for accounts that existed in the
-        # prior snapshot but were NOT in the cloud import.  These are
-        # typically P&L accounts from the prior year that have no current-year
-        # activity yet but must appear in the comparative column.
+        # Re-create rolled-forward and comparative-only lines for accounts
+        # that existed in the prior snapshot but were NOT in the staged
+        # data. This covers two cases:
+        #   1. P&L accounts from the prior year with no current-year
+        #      activity — they must appear in the comparative column.
+        #      opening_balance is 0 (correct for P&L).
+        #   2. Balance-sheet accounts with a rolled-forward opening but no
+        #      current-period activity (stable fixed assets, accumulated
+        #      depreciation, equity balances etc.) — their rolled-forward
+        #      opening must be preserved so the TB continues to balance.
+        #      opening_balance = the snapshot's captured value
+        #      (= prior FY closing).
+        # In both cases debit = credit = 0 (no current movement), and
+        # closing_balance = opening_balance to satisfy
+        # closing = opening + debit - credit.
         # ------------------------------------------------------------------
         for code, comp in prior_data.items():
             if code in uploaded_codes:
                 continue
-            if comp["prior_debit"] == 0 and comp["prior_credit"] == 0:
+            # Skip accounts with no prior activity AND no rolled-forward
+            # opening to preserve. Accounts with a non-zero opening_balance
+            # from rollforward must be re-created even if they had no
+            # prior-period activity (stable fixed assets, accumulated
+            # depreciation, equity balances etc.) so the rolled-forward
+            # opening is not silently lost on cloud import.
+            if (comp["prior_debit"] == 0
+                    and comp["prior_credit"] == 0
+                    and comp.get("opening_balance", Decimal("0")) == 0):
                 continue
 
             TrialBalanceLine.objects.create(
                 financial_year=fy,
                 account_code=code,
                 account_name=comp.get("account_name", ""),
-                opening_balance=Decimal("0"),
+                opening_balance=comp.get("opening_balance", Decimal("0")),
                 debit=Decimal("0"),
                 credit=Decimal("0"),
-                closing_balance=Decimal("0"),
+                # debit and credit are 0 in this branch (no current-period
+                # activity), so closing must equal opening to satisfy
+                # closing = opening + debit - credit.
+                closing_balance=comp.get("opening_balance", Decimal("0")),
                 mapped_line_item=comp.get("mapped_line_item") or comp.get("prior_mapped_line_item"),
                 is_adjustment=False,
                 source='rollover',
