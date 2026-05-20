@@ -265,18 +265,78 @@ class XeroProvider(BaseProvider):
 
     def fetch_period_movement(self, access_token, tenant_id, from_date, to_date):
         """
-        Fetch net movement for the period using the TrialBalance report with
-        fromDate set to the period start. Xero's GeneralLedger endpoint is not
-        available via the public API; TrialBalance with fromDate returns net
-        movement (debit/credit) for the selected period.
+        Fetch BOTH period figures and opening-as-at figures per account.
+
+        Two Reports/TrialBalance calls so the caller can compute true period
+        movement for balance-sheet accounts as (closing-as-at-to_date) minus
+        (closing-as-at-day-before-from_date):
+
+          A — period:  date=to_date, fromDate=from_date
+                       (parser reads YTD Debit / YTD Credit columns;
+                        for P&L = period movement; for BS = cumulative
+                        position as at to_date — Xero quirk)
+          B — opening: date=(from_date - 1 day), NO fromDate
+                       (parser reads the plain Debit / Credit columns;
+                        for any account = cumulative position the instant
+                        before the period starts)
+
+        Classification (BS vs P&L) and the A-minus-B differencing for BS
+        live in the view, not here, so the provider stays a dumb HTTP
+        client with no Django / chart-of-accounts knowledge.
+
+        Returns a list of dicts, one per account_code that appears in
+        EITHER call, with:
+            account_code, account_name,
+            period_debit,  period_credit,   (0 if not in A)
+            opening_debit, opening_credit,  (0 if not in B)
         """
-        # Reuse fetch_trial_balance with fromDate to get period net movement
-        return self.fetch_trial_balance(
+        from datetime import timedelta
+
+        period_lines = self.fetch_trial_balance(
             access_token=access_token,
             tenant_id=tenant_id,
             as_at_date=to_date,
             start_date=from_date,
         )
+        opening_lines = self.fetch_trial_balance(
+            access_token=access_token,
+            tenant_id=tenant_id,
+            as_at_date=from_date - timedelta(days=1),
+            start_date=None,
+        )
+
+        by_code = {}
+        for line in period_lines:
+            code = line.get("account_code") or ""
+            entry = by_code.setdefault(code, {
+                "account_code": code,
+                "account_name": line.get("account_name", ""),
+                "period_debit": Decimal("0"),
+                "period_credit": Decimal("0"),
+                "opening_debit": Decimal("0"),
+                "opening_credit": Decimal("0"),
+            })
+            entry["period_debit"] = line.get("debit") or Decimal("0")
+            entry["period_credit"] = line.get("credit") or Decimal("0")
+            if not entry["account_name"]:
+                entry["account_name"] = line.get("account_name", "")
+
+        for line in opening_lines:
+            code = line.get("account_code") or ""
+            entry = by_code.setdefault(code, {
+                "account_code": code,
+                "account_name": line.get("account_name", ""),
+                "period_debit": Decimal("0"),
+                "period_credit": Decimal("0"),
+                "opening_debit": Decimal("0"),
+                "opening_credit": Decimal("0"),
+            })
+            entry["opening_debit"] = line.get("debit") or Decimal("0")
+            entry["opening_credit"] = line.get("credit") or Decimal("0")
+            if not entry["account_name"]:
+                entry["account_name"] = line.get("account_name", "")
+
+        return list(by_code.values())
 
 
 @register_provider("quickbooks")

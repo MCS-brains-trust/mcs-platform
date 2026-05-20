@@ -380,6 +380,83 @@ def _provider_dashboard_url(provider):
     return "integrations:connections_hub"
 
 
+def _apply_bs_movement_differencing(entity, raw_lines):
+    """Convert a provider's two-call (period + opening) figure set into the
+    standard staged-line shape (account_code, account_name, opening_balance,
+    debit, credit, movement_amount) by:
+
+      - Classifying each account BS vs P&L via _is_balance_sheet_account
+        (HL numeric range first, then ChartOfAccount section, then numeric
+        fallback — same three-tier classifier rollforward uses).
+      - For BS accounts: computing true period movement =
+        (closing position at to_date) − (closing position at from_date-1)
+        from the provider's period + opening figures, normalising the net
+        into a single debit or credit side, and carrying the opening
+        position into opening_balance so commit_import composes correctly
+        with the rolled-forward opening.
+      - For P&L accounts: passing the period figures through unchanged
+        with opening_balance = 0 (current correct behaviour).
+
+    Rows with zero everywhere (no movement, no opening) are skipped, which
+    is consistent with the parser's existing zero-row filtering.
+    """
+    from core.views import _is_balance_sheet_account
+    from core.models import ChartOfAccount
+
+    # Match rollforward's lookup pattern: raw section values keyed by
+    # account_code, which is what _is_balance_sheet_account's tier-3 check
+    # compares against (_BS_SECTIONS). Tier 1 (HL numeric range) handles
+    # standard HandiLedger-coded accounts; this lookup only matters for
+    # accounts that fall outside the HL ranges.
+    coa_sections = dict(
+        ChartOfAccount.objects.filter(
+            entity_type=entity.entity_type, is_active=True,
+        ).values_list("account_code", "section")
+    )
+
+    normalized = []
+    for entry in raw_lines:
+        code = entry.get("account_code") or ""
+        name = entry.get("account_name") or ""
+        period_debit = Decimal(str(entry.get("period_debit") or "0"))
+        period_credit = Decimal(str(entry.get("period_credit") or "0"))
+        opening_debit = Decimal(str(entry.get("opening_debit") or "0"))
+        opening_credit = Decimal(str(entry.get("opening_credit") or "0"))
+
+        is_bs = _is_balance_sheet_account(code, None, coa_sections)
+
+        if is_bs:
+            opening_pos = opening_debit - opening_credit
+            closing_pos = period_debit - period_credit
+            movement = closing_pos - opening_pos
+            if movement >= 0:
+                debit = movement
+                credit = Decimal("0")
+            else:
+                debit = Decimal("0")
+                credit = -movement
+            opening_balance = opening_pos
+            movement_amount = movement
+        else:
+            debit = period_debit
+            credit = period_credit
+            opening_balance = Decimal("0")
+            movement_amount = period_debit - period_credit
+
+        if debit == 0 and credit == 0 and opening_balance == 0:
+            continue
+
+        normalized.append({
+            "account_code": code,
+            "account_name": name,
+            "opening_balance": opening_balance,
+            "debit": debit,
+            "credit": credit,
+            "movement_amount": movement_amount,
+        })
+    return normalized
+
+
 def _do_cloud_import(
     request,
     fy,
@@ -398,6 +475,15 @@ def _do_cloud_import(
         as_at_date = fy.end_date
         if import_mode == "period_movement":
             raw_lines = provider.fetch_period_movement(access_token, tenant_id, from_date, to_date)
+            # Some providers (currently Xero) return a two-call shape with
+            # separate period and opening figures so the view can compute
+            # true period movement for balance-sheet accounts as
+            # closing_at_to_date − closing_at_(from_date-1_day). Detect that
+            # shape by the presence of the period_debit key and apply the
+            # BS/P&L split here; other providers (e.g. QuickBooks) already
+            # return correct opening_balance + movement and pass through.
+            if raw_lines and "period_debit" in raw_lines[0]:
+                raw_lines = _apply_bs_movement_differencing(entity, raw_lines)
         else:
             raw_lines = provider.fetch_trial_balance(access_token, tenant_id, as_at_date, start_date=fy.start_date)
         if not raw_lines:
@@ -549,6 +635,23 @@ def xero_select_tenant_import(request, fy_pk):
                 return redirect("integrations:xero_select_tenant_import", fy_pk=fy_pk)
             if from_date > to_date:
                 messages.error(request, "The from date must be on or before the to date.")
+                return redirect("integrations:xero_select_tenant_import", fy_pk=fy_pk)
+            # Hard-require the import to start on the financial year's
+            # start date. The rolled-forward opening balance is only
+            # defined at that instant — a different from_date would
+            # compose imported movement on top of an opening that
+            # doesn't represent the position immediately before the
+            # period, silently producing wrong balance-sheet figures.
+            if fy.start_date and from_date != fy.start_date:
+                messages.error(
+                    request,
+                    f"Period-movement imports must start on the financial "
+                    f"year start date ({fy.start_date.isoformat()}). The "
+                    f"opening balance carried forward from the prior year "
+                    f"is only defined at that instant, so importing from "
+                    f"{from_date.isoformat()} would produce incorrect "
+                    f"balance-sheet figures.",
+                )
                 return redirect("integrations:xero_select_tenant_import", fy_pk=fy_pk)
 
         # Ensure token is valid
@@ -746,6 +849,12 @@ def commit_import(request, fy_pk):
                 "comparatives_locked": line_obj.comparatives_locked,
                 "mapped_line_item": line_obj.mapped_line_item,
                 "account_name": line_obj.account_name,
+                # Carry the rolled-forward opening so a staged line that
+                # omits opening_balance (legacy / non-BS-aware path) falls
+                # back to the prior closing instead of being silently
+                # zeroed when the line is recreated below.
+                "opening_balance": line_obj.opening_balance,
+                "source": line_obj.source,
             }
 
     # Wrap delete + create in a transaction so a failure midway
@@ -779,7 +888,24 @@ def commit_import(request, fy_pk):
                     pass
 
             try:
-                opening = Decimal(str(line.get("opening_balance", "0")))
+                # Resolve account code + snapshot entry first so the
+                # opening-balance fallback can see the rolled-forward value
+                # if the staged line doesn't carry one.
+                acct_code = entity_acct_code if entity_acct_code else line["account_code"]
+                comp = prior_data.get(acct_code, {})
+                py_debit = comp.get("prior_debit", Decimal("0"))
+                py_credit = comp.get("prior_credit", Decimal("0"))
+
+                # Opening: prefer the staged value — for period_movement
+                # imports the view stages the rolled-forward opening for BS
+                # accounts (and 0 for P&L) explicitly. Fall back to the
+                # snapshot's opening_balance for that account_code as a
+                # defensive guard against legacy / non-BS-aware staging
+                # paths that omit the key, then 0.
+                if "opening_balance" in line:
+                    opening = Decimal(str(line.get("opening_balance", "0")))
+                else:
+                    opening = Decimal(str(comp.get("opening_balance", "0")))
                 debit = Decimal(str(line.get("debit", "0")))
                 credit = Decimal(str(line.get("credit", "0")))
                 closing = opening + debit - credit
@@ -794,12 +920,6 @@ def commit_import(request, fy_pk):
                         f"{provider_name} import {period_from} to {period_to}; "
                         f"net movement {movement_amount}"
                     )
-
-                # Restore prior year comparatives from snapshot (matched by code)
-                acct_code = entity_acct_code if entity_acct_code else line["account_code"]
-                comp = prior_data.get(acct_code, {})
-                py_debit = comp.get("prior_debit", Decimal("0"))
-                py_credit = comp.get("prior_credit", Decimal("0"))
 
                 TrialBalanceLine.objects.create(
                     financial_year=fy,
