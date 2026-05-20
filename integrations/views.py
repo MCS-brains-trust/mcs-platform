@@ -381,33 +381,30 @@ def _provider_dashboard_url(provider):
 
 
 def _apply_bs_movement_differencing(entity, raw_lines):
-    """Convert a provider's two-call (period + opening) figure set into the
-    standard staged-line shape (account_code, account_name, opening_balance,
-    debit, credit, movement_amount) by:
+    """Convert a provider's two-call (period + opening) figure set into
+    Model A staged lines: ``account_code``, ``account_name``, ``debit``,
+    ``credit``, ``movement_amount``. ``opening_balance`` is INTENTIONALLY
+    OMITTED — under Model A the rolled-forward opening is supplied by
+    commit_import's rollover-emission pass (B7 Pass B) on a dedicated
+    source='rollover' row, never folded into the tb_import row.
 
-      - Classifying each account BS vs P&L via _is_balance_sheet_account
-        (HL numeric range first, then ChartOfAccount section, then numeric
-        fallback — same three-tier classifier rollforward uses).
-      - For BS accounts: computing true period movement =
-        (closing position at to_date) − (closing position at from_date-1)
-        from the provider's period + opening figures, normalising the net
-        into a single debit or credit side, and carrying the opening
-        position into opening_balance so commit_import composes correctly
-        with the rolled-forward opening.
-      - For P&L accounts: passing the period figures through unchanged
-        with opening_balance = 0 (current correct behaviour).
+    Behaviour:
+      - For BS accounts (classified via _is_balance_sheet_account):
+        compute true period movement = (closing position at to_date) -
+        (closing position at from_date-1) from the provider's period +
+        opening figures. Normalise to a single debit or credit side.
+      - For P&L accounts: pass the period figures through unchanged
+        (Xero's YTD column for P&L = period movement).
 
-    Rows with zero everywhere (no movement, no opening) are skipped, which
-    is consistent with the parser's existing zero-row filtering.
+    Rows with zero everywhere (no movement) are skipped — consistent with
+    the parser's existing zero-row filtering. Note that an account with a
+    non-zero opening but zero in-period movement WILL be filtered here
+    (no tb_import row); commit_import's rollover-emission pass and
+    untouched-rollover block separately preserve those openings.
     """
     from core.views import _is_balance_sheet_account
     from core.models import ChartOfAccount
 
-    # Match rollforward's lookup pattern: raw section values keyed by
-    # account_code, which is what _is_balance_sheet_account's tier-3 check
-    # compares against (_BS_SECTIONS). Tier 1 (HL numeric range) handles
-    # standard HandiLedger-coded accounts; this lookup only matters for
-    # accounts that fall outside the HL ranges.
     coa_sections = dict(
         ChartOfAccount.objects.filter(
             entity_type=entity.entity_type, is_active=True,
@@ -435,24 +432,26 @@ def _apply_bs_movement_differencing(entity, raw_lines):
             else:
                 debit = Decimal("0")
                 credit = -movement
-            opening_balance = opening_pos
             movement_amount = movement
         else:
             debit = period_debit
             credit = period_credit
-            opening_balance = Decimal("0")
             movement_amount = period_debit - period_credit
 
-        if debit == 0 and credit == 0 and opening_balance == 0:
+        if debit == 0 and credit == 0:
+            # Zero-movement rows produce no tb_import line; pure rollovers
+            # (non-zero opening, zero movement) are preserved by
+            # commit_import's rollover-emission / untouched-rollover passes
+            # from the snapshot, not from this fetch.
             continue
 
         normalized.append({
             "account_code": code,
             "account_name": name,
-            "opening_balance": opening_balance,
             "debit": debit,
             "credit": credit,
             "movement_amount": movement_amount,
+            # NB: opening_balance intentionally absent under Model A.
         })
     return normalized
 
@@ -999,35 +998,79 @@ def commit_import(request, fy_pk):
             )
             return redirect("integrations:review_import", fy_pk=fy_pk)
 
+    # Model A wizard gate: every staged row must have an Entity Account
+    # (COA) assigned before commit. The wizard pre-fills via
+    # _apply_learned_mappings (CAM target_entity_account, then a courtesy
+    # match against existing EntityChartOfAccount codes); anything still
+    # blank requires the accountant to either pick an existing COA entry
+    # or quick-add one via the AJAX endpoint. Without this gate, the
+    # commit would fall back to writing source-system codes into
+    # TrialBalanceLine.account_code (the pre-Phase 4 bug).
+    unassigned = []
+    for i, line in enumerate(staged_lines):
+        entity_acct_code = (request.POST.get(f"entity_acct_{i}") or "").strip()
+        if not entity_acct_code:
+            unassigned.append({
+                "index": i + 1,
+                "source_code": line.get("account_code", "") or "(no code)",
+                "source_name": line.get("account_name", ""),
+            })
+    if unassigned:
+        first_few = ", ".join(
+            f"#{u['index']} {u['source_code']} / {u['source_name']}"
+            for u in unassigned[:3]
+        )
+        suffix = f" (and {len(unassigned) - 3} more)" if len(unassigned) > 3 else ""
+        messages.error(
+            request,
+            f"Cannot commit — {len(unassigned)} row(s) have no Entity Account "
+            f"(COA) assigned: {first_few}{suffix}. Click the Entity Account "
+            f"column to pick an existing account, or use Quick-Add to create "
+            f"a new one for the entity COA.",
+        )
+        return redirect("integrations:review_import", fy_pk=fy_pk)
+
     imported = 0
     unmapped = 0
     errors = []
 
     # ------------------------------------------------------------------
     # Snapshot existing comparative data BEFORE deleting lines.
-    # Key = account_code.  Cloud providers (Xero, QB) don't return PY
-    # data, so we must preserve it from rollover / prior imports.
+    # Key = account_code. Under Model A there can be multiple rows per
+    # code (one rollover + N tb_import rows from a prior import). The
+    # snapshot AGGREGATES the numeric fields across all rows for a code
+    # so the rolled-forward opening reflects the total per code, not
+    # whichever row the database returned first. Non-numeric metadata
+    # (mapped_line_item, comparatives_locked, etc.) keeps first-row-wins
+    # semantics — the field shape supports only one value per code.
     # ------------------------------------------------------------------
     prior_data = {}
     for line_obj in fy.trial_balance_lines.filter(is_adjustment=False).order_by("account_code"):
-        if line_obj.account_code not in prior_data:
-            prior_data[line_obj.account_code] = {
-                "prior_debit": line_obj.prior_debit,
-                "prior_credit": line_obj.prior_credit,
-                "prior_closing_balance": line_obj.prior_closing_balance,
+        code = line_obj.account_code
+        if code not in prior_data:
+            prior_data[code] = {
+                # Numeric fields (will be aggregated below)
+                "opening_balance": Decimal("0"),
+                "closing_sum": Decimal("0"),
+                "prior_debit": Decimal("0"),
+                "prior_credit": Decimal("0"),
+                "prior_closing_balance": Decimal("0"),
+                # First-row-wins metadata
                 "prior_balance_override": line_obj.prior_balance_override,
                 "prior_mapped_line_item": line_obj.prior_mapped_line_item,
                 "reclassified": line_obj.reclassified,
                 "comparatives_locked": line_obj.comparatives_locked,
                 "mapped_line_item": line_obj.mapped_line_item,
                 "account_name": line_obj.account_name,
-                # Carry the rolled-forward opening so a staged line that
-                # omits opening_balance (legacy / non-BS-aware path) falls
-                # back to the prior closing instead of being silently
-                # zeroed when the line is recreated below.
-                "opening_balance": line_obj.opening_balance,
                 "source": line_obj.source,
             }
+        # Aggregate numeric fields across all rows for this code so multi-
+        # row Model A state is correctly summarised.
+        prior_data[code]["opening_balance"] += line_obj.opening_balance or Decimal("0")
+        prior_data[code]["closing_sum"] += line_obj.closing_balance or Decimal("0")
+        prior_data[code]["prior_debit"] += line_obj.prior_debit or Decimal("0")
+        prior_data[code]["prior_credit"] += line_obj.prior_credit or Decimal("0")
+        prior_data[code]["prior_closing_balance"] += line_obj.prior_closing_balance or Decimal("0")
 
     # Wrap delete + create in a transaction so a failure midway
     # does not leave the entity's TB in a corrupt state.
@@ -1035,6 +1078,14 @@ def commit_import(request, fy_pk):
     with transaction.atomic():
         fy.trial_balance_lines.filter(is_adjustment=False).delete()
 
+        # =========================================================
+        # MODEL A — Pass A: tb_import rows
+        # One TrialBalanceLine per staged source line, preserving the
+        # per-source-line breakdown for drilldown.  opening_balance is
+        # ALWAYS 0 on these rows; closing = debit - credit. The
+        # rolled-forward opening (if any) lives on a separate
+        # source='rollover' row emitted in Pass B below.
+        # =========================================================
         uploaded_codes = set()
 
         for i, line in enumerate(staged_lines):
@@ -1049,42 +1100,36 @@ def commit_import(request, fy_pk):
                     pass
 
             # If an entity account was assigned, look it up for its maps_to
-            if entity_acct_code and not mapped_item:
+            target_eca = None
+            if entity_acct_code:
                 try:
-                    ea = EntityChartOfAccount.objects.select_related("maps_to").get(
+                    target_eca = EntityChartOfAccount.objects.select_related("maps_to").get(
                         entity=entity, account_code=entity_acct_code
                     )
-                    if ea.maps_to:
-                        mapped_item = ea.maps_to
+                    if target_eca.maps_to and not mapped_item:
+                        mapped_item = target_eca.maps_to
                 except EntityChartOfAccount.DoesNotExist:
-                    pass
+                    target_eca = None
 
             try:
-                # Resolve account code + snapshot entry first so the
-                # opening-balance fallback can see the rolled-forward value
-                # if the staged line doesn't carry one.
-                acct_code = entity_acct_code if entity_acct_code else line["account_code"]
+                # Model A: TrialBalanceLine.account_code is the
+                # StatementHub COA code — the entity_acct_code resolved by
+                # the wizard. The wizard gate (B5) guarantees this is
+                # non-empty by now; defensive fallback to source code only
+                # for the legacy code path that bypasses the gate.
+                acct_code = entity_acct_code or line["account_code"]
                 comp = prior_data.get(acct_code, {})
                 py_debit = comp.get("prior_debit", Decimal("0"))
                 py_credit = comp.get("prior_credit", Decimal("0"))
 
-                # Opening-balance contract: presence of the key matters.
-                #   key present (incl. "0") -> use the staged value verbatim
-                #   key ABSENT              -> fall back to the snapshot's
-                #                              rolled-forward opening_balance
-                # The Xero GL Summary uploader (integrations/xero_gl_summary
-                # .py) deliberately omits the key so this fallback supplies
-                # the prior-year closing for BS accounts. Do NOT "safely"
-                # default the staged value to "0" — that would silently zero
-                # the rolled-forward opening on every cloud / GL Summary
-                # import, reintroducing the pre-222f57b bug.
-                if "opening_balance" in line:
-                    opening = Decimal(str(line.get("opening_balance", "0")))
-                else:
-                    opening = Decimal(str(comp.get("opening_balance", "0")))
+                # Model A: tb_import rows always have opening_balance=0.
+                # The rolled-forward opening is emitted as a dedicated
+                # source='rollover' row in Pass B below. Setting
+                # opening_balance non-zero here would double-count it.
+                opening = Decimal("0")
                 debit = Decimal(str(line.get("debit", "0")))
                 credit = Decimal(str(line.get("credit", "0")))
-                closing = opening + debit - credit
+                closing = debit - credit
 
                 description = ""
                 if import_mode == "period_movement":
@@ -1107,6 +1152,7 @@ def commit_import(request, fy_pk):
                     closing_balance=closing,
                     mapped_line_item=mapped_item,
                     is_adjustment=False,
+                    source='tb_import',
                     description=description,
                     prior_debit=py_debit,
                     prior_credit=py_credit,
@@ -1119,15 +1165,23 @@ def commit_import(request, fy_pk):
 
                 uploaded_codes.add(acct_code)
 
-                # Update the learning system
-                ClientAccountMapping.objects.update_or_create(
-                    entity=entity,
-                    client_account_code=acct_code,
-                    defaults={
-                        "client_account_name": line["account_name"],
-                        "mapped_line_item": mapped_item,
-                    },
-                )
+                # Model A: write ClientAccountMapping keyed on the SOURCE
+                # code/name (which may be blank for Xero bank accounts
+                # named after the entity), retaining the translation so
+                # subsequent imports auto-fill entity_acct_code from
+                # target_entity_account in _apply_learned_mappings.
+                source_code = (line.get("account_code") or "").strip()
+                source_name = (line.get("account_name") or "").strip()
+                if source_code or source_name:
+                    ClientAccountMapping.objects.update_or_create(
+                        entity=entity,
+                        client_account_code=source_code,
+                        client_account_name=source_name,
+                        defaults={
+                            "target_entity_account": target_eca,
+                            "mapped_line_item": mapped_item,
+                        },
+                    )
                 # Record confirmed mappings as global cross-entity hints
                 if mapped_item:
                     from core.models import GlobalAccountMappingHint
@@ -1145,32 +1199,62 @@ def commit_import(request, fy_pk):
             except Exception as e:
                 errors.append(f"Line {i + 1} ({line.get('account_code', '?')}): {str(e)}")
 
-        # ------------------------------------------------------------------
-        # Re-create rolled-forward and comparative-only lines for accounts
+        # =========================================================
+        # MODEL A — Pass B: rollover emission for uploaded codes
+        # For each unique StatementHub code in uploaded_codes that has a
+        # non-zero rolled-forward opening in the snapshot, emit exactly
+        # ONE source='rollover' row carrying that opening. P&L codes
+        # have opening_balance=0 in snapshot and skip this naturally;
+        # multiple tb_import rows for the same BS code share this one
+        # opening row (no duplication).
+        # =========================================================
+        emitted_rollover_codes = set()
+        for code in uploaded_codes:
+            if code in emitted_rollover_codes:
+                continue
+            comp = prior_data.get(code, {})
+            opening = comp.get("opening_balance", Decimal("0"))
+            if opening == 0:
+                continue
+            TrialBalanceLine.objects.create(
+                financial_year=fy,
+                account_code=code,
+                account_name=comp.get("account_name", ""),
+                opening_balance=opening,
+                debit=Decimal("0"),
+                credit=Decimal("0"),
+                closing_balance=opening,  # rollover row: closing = opening
+                mapped_line_item=comp.get("mapped_line_item") or comp.get("prior_mapped_line_item"),
+                is_adjustment=False,
+                source='rollover',
+                prior_debit=comp.get("prior_debit", Decimal("0")),
+                prior_credit=comp.get("prior_credit", Decimal("0")),
+                prior_closing_balance=comp.get("prior_closing_balance", Decimal("0")),
+                prior_balance_override=comp.get("prior_balance_override", False),
+                prior_mapped_line_item=comp.get("prior_mapped_line_item"),
+                reclassified=comp.get("reclassified", False),
+                comparatives_locked=comp.get("comparatives_locked", False),
+            )
+            emitted_rollover_codes.add(code)
+
+        # =========================================================
+        # Phase 3 — untouched-rollover preservation
+        # Re-create rolled-forward and comparative-only lines for codes
         # that existed in the prior snapshot but were NOT in the staged
-        # data. This covers two cases:
+        # data:
         #   1. P&L accounts from the prior year with no current-year
-        #      activity — they must appear in the comparative column.
-        #      opening_balance is 0 (correct for P&L).
-        #   2. Balance-sheet accounts with a rolled-forward opening but no
+        #      activity — appear as comparative-only with opening=0.
+        #   2. BS accounts with a rolled-forward opening but no
         #      current-period activity (stable fixed assets, accumulated
-        #      depreciation, equity balances etc.) — their rolled-forward
-        #      opening must be preserved so the TB continues to balance.
-        #      opening_balance = the snapshot's captured value
-        #      (= prior FY closing).
-        # In both cases debit = credit = 0 (no current movement), and
-        # closing_balance = opening_balance to satisfy
-        # closing = opening + debit - credit.
-        # ------------------------------------------------------------------
+        #      depreciation, equity balances) — their opening must be
+        #      preserved so the TB continues to balance.
+        # In both cases debit = credit = 0 and closing = opening.
+        # =========================================================
         for code, comp in prior_data.items():
             if code in uploaded_codes:
                 continue
             # Skip accounts with no prior activity AND no rolled-forward
-            # opening to preserve. Accounts with a non-zero opening_balance
-            # from rollforward must be re-created even if they had no
-            # prior-period activity (stable fixed assets, accumulated
-            # depreciation, equity balances etc.) so the rolled-forward
-            # opening is not silently lost on cloud import.
+            # opening to preserve.
             if (comp["prior_debit"] == 0
                     and comp["prior_credit"] == 0
                     and comp.get("opening_balance", Decimal("0")) == 0):
@@ -1183,9 +1267,6 @@ def commit_import(request, fy_pk):
                 opening_balance=comp.get("opening_balance", Decimal("0")),
                 debit=Decimal("0"),
                 credit=Decimal("0"),
-                # debit and credit are 0 in this branch (no current-period
-                # activity), so closing must equal opening to satisfy
-                # closing = opening + debit - credit.
                 closing_balance=comp.get("opening_balance", Decimal("0")),
                 mapped_line_item=comp.get("mapped_line_item") or comp.get("prior_mapped_line_item"),
                 is_adjustment=False,
@@ -1339,11 +1420,22 @@ def _guess_section_from_code(code):
 
 
 def _sync_source_accounts_to_entity_coa(entity, raw_lines):
-    """Sync each imported source account into EntityChartOfAccount.
+    """Reuse-only sync of source accounts against the entity COA.
 
-    Matches by account name first (case-insensitive), then by code.
-    Creates new entries only for genuinely new accounts.
-    Never overwrites maps_to — preserves existing mappings.
+    Under Model A, source-system codes (Xero account codes, blank for bank
+    accounts named after the entity) are NOT StatementHub COA codes. The
+    EntityChartOfAccount must hold only the entity's StatementHub COA. So
+    this helper:
+
+      - Matches by account name (case-insensitive) -> ensures active /
+        seeds section if missing.
+      - Falls back to matching by code (only when source code is non-blank).
+      - Does NOT create new EntityChartOfAccount entries. If a source line
+        has no name match and no code match, the wizard will require the
+        accountant to assign an Entity Account (or quick-add one through
+        the existing AJAX endpoint).
+
+    Never overwrites account_name or maps_to.
     """
     from core.models import EntityChartOfAccount
 
@@ -1353,7 +1445,7 @@ def _sync_source_accounts_to_entity_coa(entity, raw_lines):
         if not name:
             continue
 
-        section = _guess_section_from_code(code)
+        section = _guess_section_from_code(code) if code else None
 
         # Step 1: Match by account name (case-insensitive)
         ea = EntityChartOfAccount.objects.filter(
@@ -1366,13 +1458,13 @@ def _sync_source_accounts_to_entity_coa(entity, raw_lines):
             # NEVER overwrite account_name — the accountant's name is the source of truth.
             fields_to_save = ["is_active"]
             ea.is_active = True
-            if not ea.section:
+            if not ea.section and section:
                 ea.section = section
                 fields_to_save.append("section")
             ea.save(update_fields=fields_to_save)
             continue
 
-        # Step 2: Match by account code
+        # Step 2: Match by account code (only when source code is non-blank)
         if code:
             ea = EntityChartOfAccount.objects.filter(
                 entity=entity,
@@ -1383,23 +1475,19 @@ def _sync_source_accounts_to_entity_coa(entity, raw_lines):
                 # Code match — NEVER overwrite the existing name set by an accountant.
                 fields_to_save = ["is_active"]
                 ea.is_active = True
-                if not ea.section:
+                if not ea.section and section:
                     ea.section = section
                     fields_to_save.append("section")
                 ea.save(update_fields=fields_to_save)
                 continue
 
-        # Step 3: No match — create new entry
-        # Truncate code to 50 chars (field max_length) to handle long Xero codes
-        safe_code = (code or name)[:50]
-        EntityChartOfAccount.objects.create(
-            entity=entity,
-            account_code=safe_code,
-            account_name=name,
-            section=section,
-            is_active=True,
-            is_custom=True,
-        )
+        # Step 3: No match — DO NOT create. Under Model A the source code
+        # is not a StatementHub COA code, so auto-creating an
+        # EntityChartOfAccount with the source code would pollute the COA.
+        # The wizard's "Entity Account (COA)" step requires the accountant
+        # to either pick an existing COA entry or quick-add one (via the
+        # AJAX endpoint integrations:quick_add_entity_account) for any
+        # source line not auto-matched here.
 
 
 # ---------------------------------------------------------------------------
@@ -1409,23 +1497,59 @@ def _sync_source_accounts_to_entity_coa(entity, raw_lines):
 def _apply_learned_mappings(entity, raw_lines):
     """
     Look up existing ClientAccountMapping records for this entity and
-    pre-populate the mapped_line_item for each raw line.
-    Only applies learned mappings from prior imports — no name guessing.
+    pre-populate the staged line's mapped_line_item AND target Entity
+    Account (StatementHub COA) for each raw line.
+
+    Lookup rules:
+      1. Source code non-blank -> match ClientAccountMapping.client_account_code.
+      2. Source code blank -> match ClientAccountMapping.client_account_name
+         (case-insensitive). Bank accounts named after the entity often
+         carry no code in Xero, so name is the only stable identifier.
+      3. As a courtesy fallback, if no CAM exists but the source code is
+         already a valid EntityChartOfAccount.account_code for this entity,
+         pre-fill entity_acct_code with that. This handles the common case
+         where Xero codes are HandiLedger-numeric and match the entity COA
+         out of the gate.
+
+    No name guessing beyond exact (case-insensitive) match.
     """
-    existing_mappings = {
-        cam.client_account_code: cam
-        for cam in ClientAccountMapping.objects.filter(entity=entity)
-        .select_related("mapped_line_item")
+    # Index existing CAMs by code (non-blank) and by lowercase name (for
+    # blank-code lookups).
+    cam_by_code = {}
+    cam_by_name = {}
+    cam_qs = ClientAccountMapping.objects.filter(entity=entity).select_related(
+        "mapped_line_item", "target_entity_account"
+    )
+    for cam in cam_qs:
+        if cam.client_account_code:
+            cam_by_code[cam.client_account_code] = cam
+        if cam.client_account_name:
+            cam_by_name.setdefault(cam.client_account_name.strip().lower(), cam)
+
+    entity_coa_codes = set(
+        EntityChartOfAccount.objects.filter(entity=entity, is_active=True)
+        .values_list("account_code", flat=True)
+    )
+    entity_coa_names = {
+        ea.account_code: ea.account_name
+        for ea in EntityChartOfAccount.objects.filter(entity=entity, is_active=True)
     }
 
     staged = []
     for line in raw_lines:
-        code = line["account_code"]
-        cam = existing_mappings.get(code)
+        code = str(line.get("account_code", "")).strip()
+        name = str(line.get("account_name", "")).strip()
+
+        # Resolve CAM by code, falling back to name when code is blank.
+        cam = None
+        if code:
+            cam = cam_by_code.get(code)
+        if cam is None and name:
+            cam = cam_by_name.get(name.lower())
 
         staged_line = {
-            "account_code": code,
-            "account_name": line["account_name"],
+            "account_code": code,        # source code, may be ""
+            "account_name": name,
             "debit": str(line["debit"]),
             "credit": str(line["credit"]),
             "movement_amount": str(line.get("movement_amount", Decimal(str(line["debit"])) - Decimal(str(line["credit"])))),
@@ -1435,18 +1559,33 @@ def _apply_learned_mappings(entity, raw_lines):
             "entity_acct_code": "",
             "entity_acct_name": "",
         }
+        # Carry account_type through for downstream type-based suggestion
+        if "account_type" in line:
+            staged_line["account_type"] = line["account_type"]
         # Only carry opening_balance into the staged dict when the raw line
-        # supplies it. The Xero GL Summary uploader (xero_gl_summary.py)
-        # deliberately omits the key so commit_import's snapshot fallback
-        # supplies the rolled-forward prior closing — see the contract note
-        # near commit_import's recreate loop.
+        # supplies it. Model A: parsers and BS-differencing helper omit the
+        # key so commit_import's rollover-emission pass supplies openings on
+        # dedicated rollover rows instead of folding them into tb_import rows.
         if "opening_balance" in line:
             staged_line["opening_balance"] = str(line["opening_balance"])
 
-        if cam and cam.mapped_line_item:
-            staged_line["mapped_id"] = str(cam.mapped_line_item.pk)
-            staged_line["mapped_label"] = cam.mapped_line_item.line_item_label
-            staged_line["confidence"] = "learned"
+        if cam:
+            if cam.mapped_line_item:
+                staged_line["mapped_id"] = str(cam.mapped_line_item.pk)
+                staged_line["mapped_label"] = cam.mapped_line_item.line_item_label
+                staged_line["confidence"] = "learned"
+            if cam.target_entity_account:
+                staged_line["entity_acct_code"] = cam.target_entity_account.account_code
+                staged_line["entity_acct_name"] = cam.target_entity_account.account_name
+
+        # Courtesy fallback: if no CAM target but the source code directly
+        # matches an existing EntityChartOfAccount, pre-fill that. Skipped
+        # when source code is blank (no auto-match possible).
+        if not staged_line["entity_acct_code"] and code and code in entity_coa_codes:
+            staged_line["entity_acct_code"] = code
+            staged_line["entity_acct_name"] = entity_coa_names.get(code, "")
+            if staged_line["confidence"] == "new":
+                staged_line["confidence"] = "matched"
 
         staged.append(staged_line)
 

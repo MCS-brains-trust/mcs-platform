@@ -112,22 +112,6 @@ def _parse_long_date(day, month_name, year):
     ).date()
 
 
-def _slugify_account_name(name):
-    """Build a deterministic slug for synthetic account codes.
-
-    Xero's GL Summary can leave the Account Code column blank — commonly for
-    bank accounts named after the entity ("HAZAWAY OPERATIONS PTY LTD") or
-    credit cards.  We replace those with ``xero:<slug>`` so re-imports of
-    the same account always produce the same code; that keeps the rolled-
-    forward opening lookup and ClientAccountMapping learning stable across
-    imports.
-    """
-    s = (name or "").lower().strip()
-    s = re.sub(r"[^a-z0-9]+", "-", s)
-    s = re.sub(r"-+", "-", s).strip("-")
-    return s or "blank"
-
-
 def parse_xero_gl_summary(file):
     """Parse a Xero General Ledger Summary XLSX export.
 
@@ -240,9 +224,11 @@ def parse_xero_gl_summary(file):
         acct_type = str(type_val).strip() if type_val is not None else ""
         net = _to_decimal(_cell(row, net_col))
 
-        if not code:
-            code = f"xero:{_slugify_account_name(name)}"[:50]
-
+        # Model A: account_code on the raw line is the SOURCE-system code
+        # (Xero's account_code column). It may be blank — Xero bank accounts
+        # named after the entity often carry no code. The wizard's "Entity
+        # Account (COA)" step is where each source line is translated to a
+        # StatementHub COA code; never generate a synthetic code here.
         if net >= 0:
             debit = net
             credit = Decimal("0")
@@ -251,14 +237,16 @@ def parse_xero_gl_summary(file):
             credit = -net
 
         raw_lines.append({
-            "account_code": code,
-            "account_name": name,
+            "account_code": code,        # source code, may be ""
+            "account_name": name,        # source name
             "debit": debit,
             "credit": credit,
             "movement_amount": net,
             "account_type": acct_type.lower(),
-            # NB: opening_balance intentionally absent — commit_import's
-            # snapshot fallback supplies the rolled-forward prior closing.
+            # NB: opening_balance intentionally absent — under Model A the
+            # rolled-forward opening lives on a dedicated source='rollover'
+            # row emitted by commit_import's recreate loop, not on the
+            # tb_import rows produced from this file.
         })
 
     if seen_total and (total_dr or total_cr or total_net):

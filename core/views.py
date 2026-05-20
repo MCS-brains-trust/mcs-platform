@@ -3257,26 +3257,37 @@ def _populate_rolled_forward_fy(current_fy, new_fy):
     # -----------------------------------------------------------------
     # Pass 1: Classify all lines and calculate net P&L result
     # -----------------------------------------------------------------
-    # IMPORTANT: We must net ALL lines (base TB + adjustment journals) per
-    # account code to get the true year-end closing balance.  Entities can
-    # be built from any combination of TB imports, Xero, Excel, manual
-    # journals, bank statement coding, etc.  Filtering only is_adjustment=False
-    # would miss journal-only accounts (e.g. Taxation posted as a journal).
-    # We group by account_code and sum debit/credit across every line, then
-    # synthesise a single representative object per account for Pass 2/3.
+    # We must net ALL lines (base TB + adjustment journals) per account
+    # code to get the true year-end closing balance. Entities can be
+    # built from any combination of TB imports, Xero, Excel, manual
+    # journals, bank statement coding, etc. Filtering only
+    # is_adjustment=False would miss journal-only accounts (e.g. Taxation
+    # posted as a journal).
+    #
+    # Aggregation: sum line.closing_balance per account_code. Under Model
+    # A there are multiple rows per code — one source='rollover' carrying
+    # the opening (closing=opening, debit=credit=0) plus N
+    # source='tb_import' rows carrying period movements (closing=
+    # debit-credit, opening=0). Summing closing_balance gives the true
+    # year-end position (= opening + total movement) in one expression
+    # regardless of how the rows were split. Backward compatible with
+    # legacy single-row state, where closing_balance per row was already
+    # opening+debit-credit.
 
     all_lines_qs = current_fy.trial_balance_lines.select_related("mapped_line_item")
 
-    # Build a dict: account_code -> {debit_total, credit_total, representative_line}
-    account_map = {}  # code -> dict
+    # Build a dict: account_code -> {closing_total, representative_line}
+    account_map = {}
     for line in all_lines_qs:
         code = line.account_code or ""
         if code not in account_map:
             account_map[code] = {
+                "closing": _D("0"),
                 "debit": _D("0"),
                 "credit": _D("0"),
-                "rep": line,  # representative line for metadata
+                "rep": line,
             }
+        account_map[code]["closing"] += line.closing_balance or _D("0")
         account_map[code]["debit"] += line.debit or _D("0")
         account_map[code]["credit"] += line.credit or _D("0")
         # Prefer a non-adjustment line as the representative (better metadata)
@@ -3293,7 +3304,7 @@ def _populate_rolled_forward_fy(current_fy, new_fy):
         rep = data["rep"]
         net_debit = data["debit"]
         net_credit = data["credit"]
-        net_closing = net_debit - net_credit
+        net_closing = data["closing"]
 
         # Synthesise a lightweight object for Pass 2/3
         class _SyntheticLine:

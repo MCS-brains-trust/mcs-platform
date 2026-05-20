@@ -1288,14 +1288,33 @@ class AccountRangeAlias(models.Model):
 # Client Account Mapping (per-entity mapping of client codes to standard codes)
 # ---------------------------------------------------------------------------
 class ClientAccountMapping(models.Model):
-    """Maps a specific client account code to a standard AccountMapping line item."""
+    """Maps a specific source-system account (Xero code / blank-code bank account)
+    to the entity's StatementHub COA account and to a standard AccountMapping
+    line item. Durable learning store — written at commit_import, read at
+    _apply_learned_mappings to pre-fill the wizard on subsequent imports.
+
+    The ``client_account_code`` may be empty (Xero bank accounts named after
+    the entity carry no numeric code in the GL Summary). In that case
+    ``client_account_name`` is the disambiguator — the unique key is the
+    triple (entity, client_account_code, client_account_name).
+    """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     entity = models.ForeignKey(
         Entity, on_delete=models.CASCADE, related_name="account_mappings"
     )
-    client_account_code = models.CharField(max_length=50)
+    client_account_code = models.CharField(max_length=50, blank=True, default="")
     client_account_name = models.CharField(max_length=255)
+    target_entity_account = models.ForeignKey(
+        "EntityChartOfAccount",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="client_account_mappings",
+        help_text="StatementHub COA account this source code maps to. "
+                  "Set by the import wizard; pre-fills entity_acct_code on "
+                  "subsequent imports.",
+    )
     mapped_line_item = models.ForeignKey(
         AccountMapping,
         on_delete=models.SET_NULL,
@@ -1314,12 +1333,13 @@ class ClientAccountMapping(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        unique_together = ["entity", "client_account_code"]
-        ordering = ["client_account_code"]
+        unique_together = [("entity", "client_account_code", "client_account_name")]
+        ordering = ["client_account_code", "client_account_name"]
 
     def __str__(self):
         target = self.mapped_line_item.line_item_label if self.mapped_line_item else "UNMAPPED"
-        return f"{self.client_account_code} -> {target}"
+        code = self.client_account_code or f"({self.client_account_name})"
+        return f"{code} -> {target}"
 
 
 # ---------------------------------------------------------------------------
