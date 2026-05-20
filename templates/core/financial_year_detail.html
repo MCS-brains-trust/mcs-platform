@@ -68,6 +68,9 @@
         <a href="{% url 'integrations:import_from_cloud' fy_pk=fy.pk %}" class="btn btn-outline-info btn-sm">
             <i class="bi bi-cloud-arrow-down"></i> Import from software
         </a>
+        <a href="{% url 'integrations:xero_gl_summary_upload' fy_pk=fy.pk %}" class="btn btn-outline-info btn-sm">
+            <i class="bi bi-file-earmark-spreadsheet"></i> Upload Xero GL Summary
+        </a>
         <a href="{% url 'core:adjustment_create' pk=fy.pk %}" class="btn btn-outline-primary btn-sm">
             <i class="bi bi-journal-plus"></i> New Journal Entry
         </a>
@@ -872,12 +875,15 @@ function quickGenerateEngagementLetter(entityPk, fyPk) {
             <i class="bi bi-upload" style="font-size: 3rem;"></i>
             <p class="mt-2">No trial balance data yet. Import an Excel file or pull from your accounting platform.</p>
             {% if fy.status != 'finalised' and user.can_do_accounting %}
-            <div class="d-flex gap-2 justify-content-center">
+            <div class="d-flex gap-2 justify-content-center flex-wrap">
                 <a href="{% url 'core:trial_balance_import' pk=fy.pk %}" class="btn btn-primary">
                     <i class="bi bi-upload"></i> Import Excel
                 </a>
                 <a href="{% url 'integrations:import_from_cloud' fy_pk=fy.pk %}" class="btn btn-info">
                     <i class="bi bi-cloud-arrow-down"></i> Import from software
+                </a>
+                <a href="{% url 'integrations:xero_gl_summary_upload' fy_pk=fy.pk %}" class="btn btn-info">
+                    <i class="bi bi-file-earmark-spreadsheet"></i> Upload Xero GL Summary
                 </a>
             </div>
             {% endif %}

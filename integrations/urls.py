@@ -48,6 +48,11 @@ urlpatterns = [
         name="xero_select_tenant_import",
     ),
     path(
+        "xero/<uuid:fy_pk>/upload-gl-summary/",
+        views.xero_gl_summary_upload,
+        name="xero_gl_summary_upload",
+    ),
+    path(
         "years/<uuid:fy_pk>/select-qb-company/",
         views.qb_select_tenant_import,
         name="qb_select_tenant_import",

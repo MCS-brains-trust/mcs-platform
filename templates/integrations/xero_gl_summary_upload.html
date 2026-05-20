@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Upload Xero GL Summary - {{ fy.entity.entity_name }} - StatementHub{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8 mx-auto">
+        <nav aria-label="breadcrumb">
+            <ol class="breadcrumb">
+                <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=fy.entity.pk %}">{{ fy.entity.entity_name }}</a></li>
+                <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy.year_label }}</a></li>
+                <li class="breadcrumb-item active">Upload Xero GL Summary</li>
+            </ol>
+        </nav>
+
+        <div class="card">
+            <div class="card-header">
+                <h5 class="mb-0"><i class="bi bi-file-earmark-spreadsheet"></i> Upload Xero General Ledger Summary</h5>
+            </div>
+            <div class="card-body">
+                <div class="alert alert-info">
+                    <h6 class="alert-heading">Expected file</h6>
+                    <p class="mb-1">
+                        Upload the Xero General Ledger Summary export (<strong>.xlsx</strong>) for
+                        <strong>{{ fy.entity.entity_name }}</strong>.
+                    </p>
+                    <p class="mb-1">
+                        The period in the file must be
+                        <strong>{{ fy.start_date|date:"j F Y" }} to {{ fy.end_date|date:"j F Y" }}</strong>
+                        — re-export from Xero with this date range if needed.
+                    </p>
+                    <p class="mb-0 small text-muted">
+                        StatementHub imports the <strong>Net Movement</strong> column for each account and
+                        composes it on top of the prior-year closing balance carried forward into
+                        FY{{ fy.year_label }}. The next screen lets you confirm each account's
+                        mapping before saving.
+                    </p>
+                </div>
+
+                <form method="post" enctype="multipart/form-data">
+                    {% csrf_token %}
+                    <div class="mb-3">
+                        <label for="id_file" class="form-label">Select Excel File (.xlsx)</label>
+                        <input type="file" id="id_file" name="file" class="form-control" accept=".xlsx" required>
+                    </div>
+                    <div class="d-flex gap-2">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-upload"></i> Upload
+                        </button>
+                        <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary">
+                            Cancel
+                        </a>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

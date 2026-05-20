@@ -685,6 +685,178 @@ def xero_select_tenant_import(request, fy_pk):
 
 
 @login_required
+def xero_gl_summary_upload(request, fy_pk):
+    """Upload a Xero General Ledger Summary XLSX export and stage it for the
+    cloud-import review wizard.
+
+    Plugs into the cloud-import pipeline (StagedImport -> review_import ->
+    commit_import) so balance-sheet accounts get commit 222f57b's additive
+    posting that composes the rolled-forward opening with the imported net
+    movement.  The parser deliberately omits the ``opening_balance`` key from
+    each staged line so the snapshot fallback in commit_import:888-907
+    supplies the rolled-forward prior closing — that is the load-bearing
+    contract; see the docstring of ``integrations/xero_gl_summary.py``.
+    """
+    from core.models import StagedImport, AccountMapping
+    from core.tb_dedup import merge_duplicate_accounts
+    from .xero_gl_summary import (
+        parse_xero_gl_summary,
+        XERO_TYPE_TO_STANDARD_CODE,
+        resolve_equity_code,
+    )
+
+    fy = get_object_or_404(FinancialYear, pk=fy_pk)
+    entity = fy.entity
+
+    if getattr(fy, "is_locked", False):
+        messages.error(request, "Cannot import into a finalised financial year.")
+        return redirect("core:financial_year_detail", pk=fy_pk)
+
+    if not getattr(request.user, "can_do_accounting", False):
+        messages.error(request, "You do not have permission.")
+        return redirect("core:financial_year_detail", pk=fy_pk)
+
+    if request.method != "POST":
+        return render(
+            request,
+            "integrations/xero_gl_summary_upload.html",
+            {"fy": fy},
+        )
+
+    upload = request.FILES.get("file")
+    if not upload:
+        messages.error(request, "Please choose a Xero GL Summary .xlsx file.")
+        return redirect("integrations:xero_gl_summary_upload", fy_pk=fy_pk)
+
+    if upload.size > 20 * 1024 * 1024:
+        messages.error(request, "File too large. Maximum size is 20MB.")
+        return redirect("integrations:xero_gl_summary_upload", fy_pk=fy_pk)
+
+    import os as _os
+    file_ext = _os.path.splitext(upload.name)[1].lower()
+    if file_ext != ".xlsx":
+        messages.error(
+            request,
+            f"Unsupported file type: {file_ext}. Only .xlsx is supported.",
+        )
+        return redirect("integrations:xero_gl_summary_upload", fy_pk=fy_pk)
+
+    try:
+        raw_lines, period_from, period_to = parse_xero_gl_summary(upload)
+    except ValueError as e:
+        messages.error(request, f"Could not parse the file: {e}")
+        return redirect("integrations:xero_gl_summary_upload", fy_pk=fy_pk)
+    except Exception:
+        logger.exception("Xero GL Summary parse failed for fy=%s", fy.pk)
+        messages.error(
+            request,
+            "Could not parse the file. Make sure it is the Xero "
+            "General Ledger Summary export in .xlsx format.",
+        )
+        return redirect("integrations:xero_gl_summary_upload", fy_pk=fy_pk)
+
+    if not raw_lines:
+        messages.error(request, "No account rows were found in the file.")
+        return redirect("integrations:xero_gl_summary_upload", fy_pk=fy_pk)
+
+    # Hard-require the file's period to start on the financial year's start
+    # date. The rolled-forward opening is only defined at that instant, so a
+    # mismatched period would compose imported movement on top of an opening
+    # that doesn't represent the position immediately before the period —
+    # producing silently-wrong balance-sheet figures. Same rule as the
+    # cloud-import view enforces at views.py:639-660.
+    if fy.start_date and period_from != fy.start_date:
+        messages.error(
+            request,
+            f"GL Summary period start does not match the financial year. "
+            f"The file is for '{period_from.isoformat()} to "
+            f"{period_to.isoformat()}', but FY{fy.year_label} starts on "
+            f"{fy.start_date.isoformat()}. The opening balance carried "
+            f"forward from the prior year is only defined at that instant. "
+            f"Please re-export the GL Summary in Xero with a 'From' date of "
+            f"{fy.start_date.isoformat()}.",
+        )
+        return redirect("integrations:xero_gl_summary_upload", fy_pk=fy_pk)
+
+    # Merge duplicate account codes (Xero exports can legitimately repeat
+    # codes when an account has been renamed mid-period) and sync the source
+    # accounts into the entity COA — same helpers the cloud API path uses.
+    raw_lines, merge_warnings = merge_duplicate_accounts(raw_lines)
+    for w in merge_warnings:
+        messages.warning(request, w)
+    _sync_source_accounts_to_entity_coa(entity, raw_lines)
+
+    # Build the staged dicts via _apply_learned_mappings so any prior
+    # ClientAccountMapping overlays the type-based suggestion that follows.
+    staged_lines = _apply_learned_mappings(entity, raw_lines)
+
+    # Pre-resolve the AccountMapping objects we'll need so we make at most
+    # one DB query for the whole import.
+    suggestion_for_idx = {}
+    needed_codes = set()
+    for idx, raw_line in enumerate(raw_lines):
+        acct_type = (raw_line.get("account_type") or "").lower()
+        if acct_type == "equity":
+            std_code = resolve_equity_code(entity.entity_type)
+        else:
+            std_code = XERO_TYPE_TO_STANDARD_CODE.get(acct_type)
+        if not std_code:
+            logger.warning(
+                "Unknown Xero account type %r for account %r — staging "
+                "without a suggested mapping.",
+                acct_type, raw_line.get("account_name"),
+            )
+            continue
+        suggestion_for_idx[idx] = std_code
+        needed_codes.add(std_code)
+
+    mapping_lookup = {
+        am.standard_code: am
+        for am in AccountMapping.objects.filter(standard_code__in=needed_codes)
+    } if needed_codes else {}
+
+    # Overlay the type-based suggestion onto any staged line still marked
+    # "new" (i.e. no learned ClientAccountMapping fired). Learned mappings
+    # are not overwritten.
+    for idx, staged_line in enumerate(staged_lines):
+        if staged_line.get("confidence") != "new":
+            continue
+        std_code = suggestion_for_idx.get(idx)
+        if not std_code:
+            continue
+        am = mapping_lookup.get(std_code)
+        if not am:
+            logger.warning(
+                "AccountMapping standard_code %r not found — has "
+                "seed_account_mappings been run?",
+                std_code,
+            )
+            continue
+        staged_line["mapped_id"] = str(am.pk)
+        staged_line["mapped_label"] = am.line_item_label
+        staged_line["confidence"] = "matched"
+
+    # Write to StagedImport (the same model the cloud API path uses) so
+    # review_import + commit_import handle this exactly like a cloud-pulled
+    # period_movement import.
+    StagedImport.objects.update_or_create(
+        financial_year=fy,
+        defaults={
+            "user": request.user,
+            "provider_name": "Xero GL Summary",
+            "import_mode": "period_movement",
+            "as_at_date": period_to,
+            "from_date": period_from,
+            "to_date": period_to,
+            "lines": staged_lines,
+            "merge_warnings": merge_warnings,
+        },
+    )
+
+    return redirect("integrations:review_import", fy_pk=fy.pk)
+
+
+@login_required
 def review_import(request, fy_pk):
     """
     Review page showing fetched trial balance lines with pre-populated
@@ -896,12 +1068,16 @@ def commit_import(request, fy_pk):
                 py_debit = comp.get("prior_debit", Decimal("0"))
                 py_credit = comp.get("prior_credit", Decimal("0"))
 
-                # Opening: prefer the staged value — for period_movement
-                # imports the view stages the rolled-forward opening for BS
-                # accounts (and 0 for P&L) explicitly. Fall back to the
-                # snapshot's opening_balance for that account_code as a
-                # defensive guard against legacy / non-BS-aware staging
-                # paths that omit the key, then 0.
+                # Opening-balance contract: presence of the key matters.
+                #   key present (incl. "0") -> use the staged value verbatim
+                #   key ABSENT              -> fall back to the snapshot's
+                #                              rolled-forward opening_balance
+                # The Xero GL Summary uploader (integrations/xero_gl_summary
+                # .py) deliberately omits the key so this fallback supplies
+                # the prior-year closing for BS accounts. Do NOT "safely"
+                # default the staged value to "0" — that would silently zero
+                # the rolled-forward opening on every cloud / GL Summary
+                # import, reintroducing the pre-222f57b bug.
                 if "opening_balance" in line:
                     opening = Decimal(str(line.get("opening_balance", "0")))
                 else:
@@ -1228,7 +1404,6 @@ def _apply_learned_mappings(entity, raw_lines):
         staged_line = {
             "account_code": code,
             "account_name": line["account_name"],
-            "opening_balance": str(line["opening_balance"]),
             "debit": str(line["debit"]),
             "credit": str(line["credit"]),
             "movement_amount": str(line.get("movement_amount", Decimal(str(line["debit"])) - Decimal(str(line["credit"])))),
@@ -1238,6 +1413,13 @@ def _apply_learned_mappings(entity, raw_lines):
             "entity_acct_code": "",
             "entity_acct_name": "",
         }
+        # Only carry opening_balance into the staged dict when the raw line
+        # supplies it. The Xero GL Summary uploader (xero_gl_summary.py)
+        # deliberately omits the key so commit_import's snapshot fallback
+        # supplies the rolled-forward prior closing — see the contract note
+        # near commit_import's recreate loop.
+        if "opening_balance" in line:
+            staged_line["opening_balance"] = str(line["opening_balance"])
 
         if cam and cam.mapped_line_item:
             staged_line["mapped_id"] = str(cam.mapped_line_item.pk)
