@@ -2998,8 +2998,8 @@ def reroll_forward(request, pk):
         # Pass 5: Roll forward depreciation assets
         dep_rolled = 0
         for pa in current_fy.depreciation_assets.all():
-            if pa.closing_wdv <= 0 and not pa.disposal_date:
-                continue
+            if pa.disposal_date and pa.closing_wdv <= 0:
+                continue  # Fully disposed — do not carry forward
             new_asset = DepreciationAsset(
                 financial_year=next_fy,
                 category=pa.category,
@@ -3538,8 +3538,8 @@ def _populate_rolled_forward_fy(current_fy, new_fy):
     # -----------------------------------------------------------------
     dep_rolled = 0
     for pa in current_fy.depreciation_assets.all():
-        if pa.closing_wdv <= 0 and not pa.disposal_date:
-            continue
+        if pa.disposal_date and pa.closing_wdv <= 0:
+            continue  # Fully disposed — do not carry forward
         new_asset = DepreciationAsset(
             financial_year=new_fy,
             category=pa.category,
@@ -8605,8 +8605,8 @@ def depreciation_roll_forward(request, pk):
 
     count = 0
     for pa in prior_assets:
-        if pa.closing_wdv <= 0 and not pa.disposal_date:
-            continue  # Skip fully depreciated with no disposal
+        if pa.disposal_date and pa.closing_wdv <= 0:
+            continue  # Fully disposed — do not carry forward
         new_asset = DepreciationAsset(
             financial_year=fy,
             category=pa.category,
