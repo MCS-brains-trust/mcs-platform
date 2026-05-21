@@ -9239,7 +9239,8 @@ def depreciation_pdf(request, pk):
         if asset.category not in dep_categories:
             dep_categories[asset.category] = []
         dep_categories[asset.category].append(asset)
-        dep_total_cost += asset.total_cost
+        if not asset.disposal_date:
+            dep_total_cost += asset.total_cost
         dep_total_opening += asset.opening_wdv
         dep_total_additions += asset.addition_cost
         if asset.disposal_date:
@@ -9258,7 +9259,7 @@ def depreciation_pdf(request, pk):
             if asset.addition_cost > 0:
                 badges += ' <span class="badge addition">Addition</span>'
             addition_cell = f"${asset.addition_cost:,.2f}" if asset.addition_cost > 0 else ""
-            total_cost_cell = f"${asset.total_cost:,.2f}" if asset.total_cost else ""
+            total_cost_cell = f"${asset.total_cost:,.2f}" if (asset.total_cost and not asset.disposal_date) else ""
             # Disposal amount = the WDV removed from the register (opening + additions - depreciation for disposed assets)
             if asset.disposal_date:
                 disposal_amt = asset.opening_wdv + asset.addition_cost - asset.depreciation_amount
