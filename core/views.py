@@ -1810,6 +1810,7 @@ def financial_year_detail(request, pk):
     depreciation_assets = DepreciationAsset.objects.filter(financial_year=fy).select_related('source_transaction')
     dep_categories = OrderedDict()
     dep_total_opening = Decimal('0')
+    dep_total_cost = Decimal('0')
     dep_total_depreciation = Decimal('0')
     dep_total_closing = Decimal('0')
     for asset in depreciation_assets:
@@ -1817,6 +1818,7 @@ def financial_year_detail(request, pk):
             dep_categories[asset.category] = []
         dep_categories[asset.category].append(asset)
         dep_total_opening += asset.opening_wdv
+        dep_total_cost += asset.total_cost or Decimal('0')
         dep_total_depreciation += asset.depreciation_amount
         dep_total_closing += asset.closing_wdv
 
@@ -1968,6 +1970,7 @@ def financial_year_detail(request, pk):
         "depreciation_assets": depreciation_assets,
         "dep_categories": dep_categories,
         "dep_total_opening": dep_total_opening,
+        "dep_total_cost": dep_total_cost,
         "dep_total_depreciation": dep_total_depreciation,
         "dep_total_closing": dep_total_closing,
         "dep_asset_accounts": list(
