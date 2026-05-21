@@ -9229,21 +9229,28 @@ def depreciation_pdf(request, pk):
     ).order_by('category', 'display_order', 'asset_name')
 
     dep_categories = OrderedDict()
+    dep_total_cost = Decimal('0')
     dep_total_opening = Decimal('0')
+    dep_total_additions = Decimal('0')
+    dep_total_disposals = Decimal('0')
     dep_total_depreciation = Decimal('0')
     dep_total_closing = Decimal('0')
     for asset in dep_assets:
         if asset.category not in dep_categories:
             dep_categories[asset.category] = []
         dep_categories[asset.category].append(asset)
+        dep_total_cost += asset.total_cost
         dep_total_opening += asset.opening_wdv
+        dep_total_additions += asset.addition_cost
+        if asset.disposal_date:
+            dep_total_disposals += asset.opening_wdv + asset.addition_cost - asset.depreciation_amount
         dep_total_depreciation += asset.depreciation_amount
         dep_total_closing += asset.closing_wdv
 
     # Build table rows HTML
     rows_html = ""
     for category, assets in dep_categories.items():
-        rows_html += f'<tr class="category-row"><td colspan="7"><strong>{html_escape(category)}</strong></td></tr>\n'
+        rows_html += f'<tr class="category-row"><td colspan="9"><strong>{html_escape(category)}</strong></td></tr>\n'
         for asset in assets:
             badges = ""
             if asset.disposal_date:
@@ -9251,12 +9258,21 @@ def depreciation_pdf(request, pk):
             if asset.addition_cost > 0:
                 badges += ' <span class="badge addition">Addition</span>'
             addition_cell = f"${asset.addition_cost:,.2f}" if asset.addition_cost > 0 else ""
+            total_cost_cell = f"${asset.total_cost:,.2f}" if asset.total_cost else ""
+            # Disposal amount = the WDV removed from the register (opening + additions - depreciation for disposed assets)
+            if asset.disposal_date:
+                disposal_amt = asset.opening_wdv + asset.addition_cost - asset.depreciation_amount
+                disposal_cell = f"${disposal_amt:,.2f}"
+            else:
+                disposal_cell = ""
             rows_html += f"""<tr>
                 <td>{html_escape(asset.asset_name)}{badges}</td>
                 <td>{html_escape(asset.get_method_display())}</td>
                 <td class="r">{asset.rate:.2f}%</td>
+                <td class="r">{total_cost_cell}</td>
                 <td class="r">${asset.opening_wdv:,.2f}</td>
                 <td class="r">{addition_cell}</td>
+                <td class="r">{disposal_cell}</td>
                 <td class="r">${asset.depreciation_amount:,.2f}</td>
                 <td class="r">${asset.closing_wdv:,.2f}</td>
             </tr>\n"""
@@ -9315,8 +9331,10 @@ def depreciation_pdf(request, pk):
             <th>Asset</th>
             <th>Method</th>
             <th class="r">Rate %</th>
+            <th class="r">Total Cost</th>
             <th class="r">Opening WDV</th>
             <th class="r">Additions</th>
+            <th class="r">Disposals</th>
             <th class="r">Depreciation</th>
             <th class="r">Closing WDV</th>
         </tr>
@@ -9325,8 +9343,10 @@ def depreciation_pdf(request, pk):
         {rows_html}
         <tr class="total-row">
             <td colspan="3" class="r">Totals</td>
+            <td class="r">${dep_total_cost:,.2f}</td>
             <td class="r">${dep_total_opening:,.2f}</td>
-            <td></td>
+            <td class="r">{f'${dep_total_additions:,.2f}' if dep_total_additions else ''}</td>
+            <td class="r">{f'${dep_total_disposals:,.2f}' if dep_total_disposals else ''}</td>
             <td class="r">${dep_total_depreciation:,.2f}</td>
             <td class="r">${dep_total_closing:,.2f}</td>
         </tr>
