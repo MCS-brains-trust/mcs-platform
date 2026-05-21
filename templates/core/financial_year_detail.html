@@ -1021,6 +1021,7 @@ function quickGenerateEngagementLetter(entityPk, fyPk) {
                         <th class="text-end" style="width: 110px;">Total Cost</th>
                         <th class="text-end" style="width: 110px;">Opening WDV</th>
                         <th class="text-end" style="width: 100px;">Additions</th>
+                        <th class="text-end" style="width: 100px;">Disposals</th>
                         <th class="text-end" style="width: 110px;">Depreciation</th>
                         <th class="text-end" style="width: 110px;">Closing WDV</th>
                         <th class="text-center" style="width: 60px;">Source</th>
@@ -1030,7 +1031,7 @@ function quickGenerateEngagementLetter(entityPk, fyPk) {
                 <tbody>
                     {% for cat_name, assets in dep_categories.items %}
                     <tr>
-                        <td colspan="9" class="pt-3 pb-1 border-0">
+                        <td colspan="10" class="pt-3 pb-1 border-0">
                             <strong class="text-dark">{{ cat_name }}</strong>
                         </td>
                     </tr>
@@ -1043,9 +1044,10 @@ function quickGenerateEngagementLetter(entityPk, fyPk) {
                         </td>
                         <td>{{ asset.get_method_display }}</td>
                         <td class="text-end">{{ asset.rate|floatformat:2 }}%</td>
-                        <td class="text-end">${{ asset.total_cost|floatformat:2|intcomma }}</td>
+                        <td class="text-end">{% if not asset.disposal_date and asset.total_cost %}${{ asset.total_cost|floatformat:2|intcomma }}{% endif %}</td>
                         <td class="text-end">${{ asset.opening_wdv|floatformat:2|intcomma }}</td>
                         <td class="text-end">{% if asset.addition_cost > 0 %}${{ asset.addition_cost|floatformat:2|intcomma }}{% endif %}</td>
+                        <td class="text-end">{% if asset.disposal_date %}${{ asset.opening_wdv|floatformat:2|intcomma }}{% endif %}</td>
                         <td class="text-end">${{ asset.depreciation_amount|floatformat:2|intcomma }}</td>
                         <td class="text-end">${{ asset.closing_wdv|floatformat:2|intcomma }}</td>
                         <td class="text-center">
@@ -1100,7 +1102,8 @@ function quickGenerateEngagementLetter(entityPk, fyPk) {
                         <td colspan="3" class="text-end">Totals</td>
                         <td class="text-end">${{ dep_total_cost|floatformat:2|intcomma }}</td>
                         <td class="text-end">${{ dep_total_opening|floatformat:2|intcomma }}</td>
-                        <td></td>
+                        <td class="text-end">{% if dep_total_additions %}${{ dep_total_additions|floatformat:2|intcomma }}{% endif %}</td>
+                        <td class="text-end">{% if dep_total_disposals %}${{ dep_total_disposals|floatformat:2|intcomma }}{% endif %}</td>
                         <td class="text-end">${{ dep_total_depreciation|floatformat:2|intcomma }}</td>
                         <td class="text-end">${{ dep_total_closing|floatformat:2|intcomma }}</td>
                         <td></td>

@@ -1811,6 +1811,8 @@ def financial_year_detail(request, pk):
     dep_categories = OrderedDict()
     dep_total_opening = Decimal('0')
     dep_total_cost = Decimal('0')
+    dep_total_additions = Decimal('0')
+    dep_total_disposals = Decimal('0')
     dep_total_depreciation = Decimal('0')
     dep_total_closing = Decimal('0')
     for asset in depreciation_assets:
@@ -1818,7 +1820,11 @@ def financial_year_detail(request, pk):
             dep_categories[asset.category] = []
         dep_categories[asset.category].append(asset)
         dep_total_opening += asset.opening_wdv
-        dep_total_cost += asset.total_cost or Decimal('0')
+        if not asset.disposal_date:
+            dep_total_cost += asset.total_cost or Decimal('0')
+        dep_total_additions += asset.addition_cost or Decimal('0')
+        if asset.disposal_date:
+            dep_total_disposals += asset.opening_wdv + (asset.addition_cost or Decimal('0')) - asset.depreciation_amount
         dep_total_depreciation += asset.depreciation_amount
         dep_total_closing += asset.closing_wdv
 
@@ -1971,6 +1977,8 @@ def financial_year_detail(request, pk):
         "dep_categories": dep_categories,
         "dep_total_opening": dep_total_opening,
         "dep_total_cost": dep_total_cost,
+        "dep_total_additions": dep_total_additions,
+        "dep_total_disposals": dep_total_disposals,
         "dep_total_depreciation": dep_total_depreciation,
         "dep_total_closing": dep_total_closing,
         "dep_asset_accounts": list(
