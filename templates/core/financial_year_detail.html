@@ -72,7 +72,7 @@
             <i class="bi bi-journal-plus"></i> New Journal Entry
         </a>
         <a href="{% url 'core:journal_upload' pk=fy.pk %}" class="btn btn-outline-secondary btn-sm">
-            <i class="bi bi-journal-arrow-up"></i> Upload JNLs
+            <i class="bi bi-journal-arrow-up"></i> Bulk Upload JNLs
         </a>
         {% elif fy.status == 'finalised' %}
         <button class="btn btn-outline-info btn-sm" disabled title="Software integration coming soon">
@@ -83,7 +83,7 @@
             <i class="bi bi-lock"></i> New Journal Entry
         </button>
         <button class="btn btn-outline-secondary btn-sm" disabled title="Change status to Draft to upload journals">
-            <i class="bi bi-lock"></i> Upload JNLs
+            <i class="bi bi-lock"></i> Bulk Upload JNLs
         </button>
         {% endif %}
         {% if unmapped_count > 0 %}
@@ -889,7 +889,7 @@ function quickGenerateEngagementLetter(entityPk, fyPk) {
                     <i class="bi bi-journal-plus"></i> New Journal Entry
                 </a>
                 <a href="{% url 'core:journal_upload' pk=fy.pk %}" class="btn btn-outline-secondary btn-sm">
-                    <i class="bi bi-journal-arrow-up"></i> Upload JNLs
+                    <i class="bi bi-journal-arrow-up"></i> Bulk Upload JNLs
                 </a>
                 {% if entity.entity_type == 'company' %}
                 <button type="button" class="btn btn-sm btn-outline-info" id="btnTaxProvision"
@@ -905,7 +905,7 @@ function quickGenerateEngagementLetter(entityPk, fyPk) {
                     <i class="bi bi-lock"></i> New Journal Entry
                 </button>
                 <button class="btn btn-outline-secondary btn-sm" disabled title="Change status to Draft to upload journals">
-                    <i class="bi bi-lock"></i> Upload JNLs
+                    <i class="bi bi-lock"></i> Bulk Upload JNLs
                 </button>
                 {% endif %}
             </div>
