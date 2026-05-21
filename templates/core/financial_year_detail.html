@@ -62,12 +62,9 @@
     </div>
     <div class="d-flex gap-2 flex-wrap">
         {% if fy.status != 'finalised' and user.can_do_accounting %}
-        <a href="{% url 'core:trial_balance_import' pk=fy.pk %}" class="btn btn-outline-success btn-sm">
-            <i class="bi bi-upload"></i> Import TB
-        </a>
-        <a href="{% url 'integrations:import_from_cloud' fy_pk=fy.pk %}" class="btn btn-outline-info btn-sm">
+        <button class="btn btn-outline-info btn-sm" disabled title="Software integration coming soon">
             <i class="bi bi-cloud-arrow-down"></i> Import from software
-        </a>
+        </button>
         <a href="{% url 'integrations:xero_gl_summary_upload' fy_pk=fy.pk %}" class="btn btn-outline-info btn-sm">
             <i class="bi bi-file-earmark-spreadsheet"></i> Upload Xero GL Summary
         </a>
@@ -78,8 +75,8 @@
             <i class="bi bi-journal-arrow-up"></i> Upload JNLs
         </a>
         {% elif fy.status == 'finalised' %}
-        <button class="btn btn-outline-success btn-sm" disabled title="Change status to Draft to import trial balance">
-            <i class="bi bi-upload"></i> Import TB
+        <button class="btn btn-outline-info btn-sm" disabled title="Software integration coming soon">
+            <i class="bi bi-cloud-arrow-down"></i> Import from software
         </button>
         <button class="btn btn-outline-primary btn-sm" disabled title="Change status to Draft to create journal entries"
                 onclick="alert('This financial year is finalised. Change the status back to Draft to create journal entries.');">
@@ -870,12 +867,9 @@ function quickGenerateEngagementLetter(entityPk, fyPk) {
             <p class="mt-2">No trial balance data yet. Import an Excel file or pull from your accounting platform.</p>
             {% if fy.status != 'finalised' and user.can_do_accounting %}
             <div class="d-flex gap-2 justify-content-center flex-wrap">
-                <a href="{% url 'core:trial_balance_import' pk=fy.pk %}" class="btn btn-primary">
-                    <i class="bi bi-upload"></i> Import Excel
-                </a>
-                <a href="{% url 'integrations:import_from_cloud' fy_pk=fy.pk %}" class="btn btn-info">
+                <button class="btn btn-secondary" disabled title="Software integration coming soon">
                     <i class="bi bi-cloud-arrow-down"></i> Import from software
-                </a>
+                </button>
                 <a href="{% url 'integrations:xero_gl_summary_upload' fy_pk=fy.pk %}" class="btn btn-info">
                     <i class="bi bi-file-earmark-spreadsheet"></i> Upload Xero GL Summary
                 </a>
