@@ -258,6 +258,7 @@ def _load_trial_balance(financial_year):
         total_closing = sum(l.closing_balance or ZERO for l in group)
         total_prior_dr = sum(l.prior_debit or ZERO for l in group)
         total_prior_cr = sum(l.prior_credit or ZERO for l in group)
+        total_prior_closing = sum(l.prior_closing_balance or ZERO for l in group)
 
         # Use the first line with a mapped_line_item as the representative
         representative = group[0]
@@ -292,6 +293,12 @@ def _load_trial_balance(financial_year):
         # Set aggregated prior values on the line object
         agg.prior_debit = total_prior_dr
         agg.prior_credit = total_prior_cr
+
+        # Write the aggregated closing balances back so downstream consumers
+        # (e.g. eva_div7a) read the correct net position rather than the raw
+        # value from a single representative DB row.
+        agg.closing_balance = total_closing
+        agg.prior_closing_balance = total_prior_closing
 
         aggregated_lines.append(agg)
 
@@ -1104,7 +1111,7 @@ def _eval_superannuation(rule, fy, tb, ref, ctx, config):
     if sg_rate_override:
         try:
             sg_rate = Decimal(str(sg_rate_override))
-        except Exception:
+        except Exception:  # nosec B110 — safe: only suppresses invalid override values
             pass
     expected_super = (wages_total * sg_rate / Decimal("100")).quantize(Decimal("0.01"))
     shortfall = expected_super - super_total
@@ -1346,7 +1353,7 @@ def _compute_flag_hash(financial_year_id, rule_id, description):
     """Compute deduplication hash for a risk flag."""
     import hashlib
     key = f"{financial_year_id}:{rule_id}:{description}"
-    return hashlib.md5(key.encode()).hexdigest()
+    return hashlib.md5(key.encode()).hexdigest()  # nosec B324 — non-security use: deduplication key only
 
 
 def _create_flag(financial_year, run_id, flag_data):

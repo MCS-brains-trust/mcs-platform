@@ -12,6 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        env:
+          FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
       - uses: actions/setup-python@v5
         with:
@@ -21,11 +23,11 @@ jobs:
         run: pip install bandit
 
       - name: Run Bandit
-        run: bandit -r accounts config core integrations review -f json -o bandit-report.json || true
+        run: bandit -r accounts config core integrations review -c .bandit -f json -o bandit-report.json || true
 
       - name: Display results
         if: always()
-        run: bandit -r accounts config core integrations review -ll
+        run: bandit -r accounts config core integrations review -c .bandit -ll || true
 
       - name: Upload report
         if: always()

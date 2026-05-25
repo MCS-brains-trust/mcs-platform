@@ -372,10 +372,32 @@ def _get_benchmark_rate(year_label):
     return fallback
 
 
+def _code_contains_hp_segment(code):
+    """
+    Return True if the account code contains "HP" as a standalone segment.
+
+    Matches codes like:
+      - "HP001", "HP-001", "HP 001"  (HP prefix)
+      - "2-HP", "3-HP-001"           (HP as a dash-delimited segment)
+      - "LOAN-HP", "LIA-HP-01"       (HP anywhere as a segment)
+
+    Does NOT match codes where HP appears inside a longer word,
+    e.g. "SHOP" or "CHEAP" would not match.
+    """
+    import re
+    return bool(re.search(r'(?<![A-Z])HP(?![A-Z])', code.upper()))
+
+
 def _is_loan_account(line):
     """Determine if a TB line is a director/shareholder loan account."""
     name_lower = (line.account_name or "").lower()
     code = line.account_code or ""
+
+    # Hire Purchase accounts are NEVER Div 7A — they are asset-financing
+    # arrangements with a financier, not loans to/from shareholders.
+    # Any account code containing "HP" (case-insensitive) is excluded.
+    if "HP" in code.upper().split("-") or _code_contains_hp_segment(code):
+        return False
 
     # Check against expanded keyword set
     if any(kw in name_lower for kw in _LOAN_ACCOUNT_KEYWORDS):
