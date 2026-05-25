@@ -104,7 +104,12 @@ def aggregate_tb_lines(queryset):
 # ---------------------------------------------------------------------------
 def _get_tb_sections(fy):
     """Extract trial balance lines grouped into financial statement sections."""
-    lines = fy.trial_balance_lines.order_by("account_code").all()
+    lines = (
+        fy.trial_balance_lines
+        .select_related("mapped_line_item")
+        .order_by("account_code")
+        .all()
+    )
     sections = {
         "trading_income": [],
         "cogs": [],
@@ -141,6 +146,11 @@ def _get_tb_sections(fy):
             "account_name": line.account_name,
             "cy_amount": cy,
             "py_amount": py,
+            "mapped_line_item_id": line.mapped_line_item_id,
+            "standard_code": (
+                line.mapped_line_item.standard_code
+                if line.mapped_line_item_id else None
+            ),
         }
 
         name_lower = line.account_name.lower()
@@ -208,6 +218,13 @@ def _get_tb_sections(fy):
             if merge_key in agg:
                 agg[merge_key]["cy_amount"] += entry["cy_amount"]
                 agg[merge_key]["py_amount"] += entry["py_amount"]
+                # First-non-null wins for mapping fields — handles the case
+                # where one source row (e.g. a manual_journal) hasn't been
+                # mapped yet but the rollover / tb_import row carries the
+                # standard_code for the same account_code.
+                if agg[merge_key].get("standard_code") is None and entry.get("standard_code"):
+                    agg[merge_key]["standard_code"] = entry["standard_code"]
+                    agg[merge_key]["mapped_line_item_id"] = entry["mapped_line_item_id"]
                 name_counts[merge_key][entry["account_name"]] = (
                     name_counts[merge_key].get(entry["account_name"], 0) + weight
                 )
@@ -217,6 +234,8 @@ def _get_tb_sections(fy):
                     "account_name": entry["account_name"],
                     "cy_amount": entry["cy_amount"],
                     "py_amount": entry["py_amount"],
+                    "mapped_line_item_id": entry.get("mapped_line_item_id"),
+                    "standard_code": entry.get("standard_code"),
                 }
                 name_counts[merge_key] = {entry["account_name"]: weight}
         for mk in agg:
@@ -517,6 +536,12 @@ _BANK_KEYWORDS = (
     "suncorp", "macquarie", "bankwest", "st george", "stgeorge",
 )
 
+# AccountMapping.standard_code values that classify as Cash and Cash Equivalents.
+# Source of truth for the Cash & Cash Equivalents predicate — the FS renderer
+# checks this first, with the keyword fallback (_BANK_KEYWORDS,
+# _classify_current_asset) preserved for unmapped accounts.
+_CASH_STANDARD_CODES = {"BS-CA-001"}
+
 # Keywords that identify tax / ATO liability accounts (credit-normal liabilities).
 _TAX_LIABILITY_KEYWORDS = (
     "gst", "bas", "payg", "withholding", "ato",
@@ -562,7 +587,10 @@ def _reclassify_sign_flips(sections):
         name_lower = (item.get("account_name") or "").lower()
         cy = item.get("cy_amount") or Decimal("0")
         py = item.get("py_amount") or Decimal("0")
-        is_bank = any(kw in name_lower for kw in _BANK_KEYWORDS)
+        is_bank = (
+            item.get("standard_code") in _CASH_STANDARD_CODES
+            or any(kw in name_lower for kw in _BANK_KEYWORDS)
+        )
         if is_bank and (cy < Decimal("0") or py < Decimal("0")):
             # Sign convention for current_liabilities is credit-normal:
             #   _format_lines(credit_normal=True) negates cy_amount for display.
@@ -609,20 +637,25 @@ def _reclassify_sign_flips(sections):
     sections["current_liabilities"] = cl_keep
 
 
-def _classify_current_asset(name_lower):
-    """Classify a current asset into a sub-group by keyword matching.
+def _classify_current_asset(item):
+    """Classify an aggregated current-asset entry into a sub-heading.
 
-    Bank names are treated as Cash Assets so accounts like "ANZ #11733" or
-    "NAB Business Account" group correctly even without the word "bank".
-    Any loan recorded as a current asset (e.g. beneficiary/shareholder/director
-    loans) is a loan receivable, so "loan" routes to Receivables.
+    Predicate order: structured ``standard_code`` first (the source of truth
+    once an account has been mapped to an AccountMapping line item), then the
+    name-keyword fallback for unmapped accounts. Bank names are still
+    recognised by keyword so accounts like "ANZ #11733" or "NAB Business
+    Account" group correctly even when no mapping has been set. Any loan
+    recorded as a current asset routes to Receivables.
     """
+    if item.get("standard_code") in _CASH_STANDARD_CODES:
+        return "Cash and Cash Equivalents"
+    name_lower = (item.get("account_name") or "").lower()
     if any(kw in name_lower for kw in [
         "cash", "bank", "petty cash", "on hand",
         "anz", "nab", "cba", "commonwealth bank", "westpac", "bendigo",
         "suncorp", "macquarie", "bankwest", "st george", "stgeorge",
     ]):
-        return "Cash Assets"
+        return "Cash and Cash Equivalents"
     if any(kw in name_lower for kw in [
         "debtor", "receivable", "trade debtor", "loan",
     ]):
@@ -630,19 +663,31 @@ def _classify_current_asset(name_lower):
     return "Other Current Assets"
 
 
-def _classify_current_liability(name_lower):
-    """Classify a current liability into a sub-group by keyword matching.
+def _classify_current_liability(item):
+    """Classify an aggregated current-liability entry into a sub-heading.
 
-    Tax Liabilities are checked FIRST because accounts like "GST payable"
-    contain "payable" which would otherwise match the Payables group.
+    Predicate order: structured ``standard_code`` first (catches bank
+    accounts mapped to BS-CA-001 that were sign-flipped into liabilities by
+    ``_reclassify_sign_flips``), then "overdraft" in the name, then the
+    keyword fallbacks. Tax Liabilities are checked before Payables because
+    accounts like "GST payable" contain "payable" which would otherwise
+    match the Payables group.
     """
-    # Bank overdraft — reclassified from current assets (check first)
+    # Bank overdraft via mapping — covers names that don't include a bank
+    # keyword (e.g. "Shift Overdraft *9989" mapped to BS-CA-001).
+    if item.get("standard_code") in _CASH_STANDARD_CODES:
+        return "Bank Overdrafts"
+    name_lower = (item.get("account_name") or "").lower()
+    # Bank overdraft via name keywords — reclassified from current assets
     if any(kw in name_lower for kw in [
         "cash", "bank", "petty cash", "on hand",
         "anz", "nab", "cba", "commonwealth bank", "westpac", "bendigo",
         "suncorp", "macquarie", "bankwest", "st george", "stgeorge",
     ]):
-        return "Bank Overdraft"
+        return "Bank Overdrafts"
+    # Bank overdraft via the literal word "overdraft" in the account name
+    if "overdraft" in name_lower:
+        return "Bank Overdrafts"
     # Tax / ATO statutory obligations — check before payables (higher priority)
     if any(kw in name_lower for kw in [
         "gst", "payg", "tax", "taxation", "withholding", "bas", "ato", "clearing",
@@ -738,7 +783,7 @@ def _build_subgrouped_items(items, classify_fn, credit_normal=False):
 
     groups = OrderedDict()
     for item in items:
-        group = classify_fn(item["account_name"].lower())
+        group = classify_fn(item)
         groups.setdefault(group, []).append(item)
 
     # If there's only one group, return a flat list (no sub-headings needed)
@@ -1660,8 +1705,8 @@ _CARRY_FORWARD_BOLD_LABELS = ("total income", "total expenses")
 _SUMMARY_LABELS = _SECTION_TOTAL_LABELS + _MAJOR_TOTAL_LABELS + _GRAND_TOTAL_LABELS
 
 _SUB_HEADING_LABELS = [
-    "cash assets", "receivables", "other current assets",
-    "payables", "tax liabilities", "other current liabilities",
+    "cash and cash equivalents", "receivables", "other current assets",
+    "bank overdrafts", "payables", "tax liabilities", "other current liabilities",
 ]
 
 
