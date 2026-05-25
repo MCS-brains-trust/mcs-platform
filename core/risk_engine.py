@@ -1111,7 +1111,7 @@ def _eval_superannuation(rule, fy, tb, ref, ctx, config):
     if sg_rate_override:
         try:
             sg_rate = Decimal(str(sg_rate_override))
-        except Exception:
+        except Exception:  # nosec B110 — safe: only suppresses invalid override values
             pass
     expected_super = (wages_total * sg_rate / Decimal("100")).quantize(Decimal("0.01"))
     shortfall = expected_super - super_total
@@ -1353,7 +1353,7 @@ def _compute_flag_hash(financial_year_id, rule_id, description):
     """Compute deduplication hash for a risk flag."""
     import hashlib
     key = f"{financial_year_id}:{rule_id}:{description}"
-    return hashlib.md5(key.encode()).hexdigest()
+    return hashlib.md5(key.encode()).hexdigest()  # nosec B324 — non-security use: deduplication key only
 
 
 def _create_flag(financial_year, run_id, flag_data):
