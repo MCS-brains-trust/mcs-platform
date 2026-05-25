@@ -123,14 +123,17 @@ def _get_tb_sections(fy):
         except (ValueError, TypeError):
             continue
 
-        # Rollover lines carry prior year comparatives only (in prior_debit/prior_credit).
-        # Non-rollover lines (tb_import, manual_journal) carry CY in closing_balance.
-        # PY for non-rollover is zero — the rollover line provides PY via aggregation.
+        # Model A storage (per cb00bf1, 2026-05-20):
+        #   - rollover row:  closing_balance = opening (= PY closing); prior_debit/credit carry PY values
+        #   - tb_import row: closing_balance = period movement; opening_balance = 0
+        #   - manual_journal: closing_balance = adjustment movement
+        # Aggregation by account_code sums all sources, yielding
+        # CY = opening + movement = full year-end closing for every account type.
+        # This mirrors the roll-forward reader at core/views.py:3301.
+        cy = line.closing_balance
         if getattr(line, "source", "") == "rollover":
-            cy = Decimal("0")
             py = line.prior_debit - line.prior_credit
         else:
-            cy = line.closing_balance
             py = Decimal("0")
 
         entry = {
