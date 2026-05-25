@@ -532,12 +532,17 @@ def _get_tb_sections(fy):
         except (ValueError, TypeError):
             continue
 
-        # Calculate current year amount: debit - credit gives net movement
-        # For income (credit balances): debit=0, credit=X -> net = -X (negative = income)
-        # For expenses (debit balances): debit=X, credit=0 -> net = X (positive = expense)
-        # For assets (debit balances): debit=X, credit=0 -> net = X (positive = asset)
-        # For liabilities (credit balances): debit=0, credit=X -> net = -X (negative = liability)
-        current_amount = line.debit - line.credit
+        # Model A storage (per cb00bf1, 2026-05-20):
+        #   - rollover row:  closing_balance = opening (= PY closing); prior_debit/credit carry PY values
+        #   - tb_import row: closing_balance = period movement; opening_balance = 0
+        #   - manual_journal: closing_balance = adjustment movement
+        # Aggregation by account_code sums all sources, yielding
+        # CY = opening + movement = full year-end closing for every account type.
+        # Mirrors the parallel reader at core/fs_template_service.py:_get_tb_sections
+        # and the roll-forward reader at core/views.py:3301.
+        # NOTE: This function is duplicated with fs_template_service._get_tb_sections.
+        # Deduplication is tracked as a separate cleanup item; do not refactor here.
+        current_amount = line.closing_balance
         prior_amount = line.prior_debit - line.prior_credit
         entry = (line.account_code, line.account_name, current_amount, prior_amount)
 
