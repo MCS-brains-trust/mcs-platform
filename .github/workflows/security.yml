@@ -21,11 +21,11 @@ jobs:
         run: pip install bandit
 
       - name: Run Bandit
-        run: bandit -r accounts config core integrations review -f json -o bandit-report.json || true
+        run: bandit -r accounts config core integrations review -c .bandit -f json -o bandit-report.json || true
 
       - name: Display results
         if: always()
-        run: bandit -r accounts config core integrations review -ll
+        run: bandit -r accounts config core integrations review -c .bandit -ll
 
       - name: Upload report
         if: always()
