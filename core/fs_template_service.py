@@ -3491,7 +3491,7 @@ def _generate_depreciation_report(context):
                 row.cells[i].width = Cm(w)
             vals = [
                 asset.asset_name,
-                _fmt(asset.total_cost),
+                _fmt(asset.total_cost) if not asset.disposal_date else "",
                 f"{asset.private_use_pct:.2f}" if asset.private_use_pct else "",
                 _fmt(asset.opening_wdv),
                 _fmt_date(asset.disposal_date),
@@ -3513,7 +3513,8 @@ def _generate_depreciation_report(context):
                 run = p.add_run(str(val))
                 run.font.size = FONT_SZ; run.font.name = FONT
 
-            cat_cost += asset.total_cost or Decimal("0")
+            if not asset.disposal_date:
+                cat_cost += asset.total_cost or Decimal("0")
             cat_owdv += asset.opening_wdv or Decimal("0")
             cat_deprec += asset.depreciation_amount or Decimal("0")
             cat_priv += asset.private_depreciation or Decimal("0")
