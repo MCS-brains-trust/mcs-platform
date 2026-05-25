@@ -48,6 +48,14 @@ FONT_SIZE_SUBHEADING = Pt(12)
 FONT_SIZE_SMALL = Pt(9)
 FONT_SIZE_FOOTER = Pt(8)
 
+# AccountMapping.standard_code values that classify as Cash and Cash Equivalents.
+# Duplicated from core/fs_template_service.py:_CASH_STANDARD_CODES (commit e41a300)
+# rather than imported to avoid coupling between the deprecated python-docx FS
+# path and the live docxtpl FS path. Source of truth lives in fs_template_service;
+# keep these two definitions in sync. The eventual renderer-dedup refactor will
+# collapse the duplication.
+_CASH_STANDARD_CODES = {"BS-CA-001"}
+
 # ---------------------------------------------------------------------------
 # Firm constants — loaded from FirmSettings at call time (white-label support)
 # These module-level names are kept for backward compatibility but now resolve
@@ -1399,6 +1407,18 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
     total_ca = Decimal("0")
     total_ca_prior = Decimal("0")
 
+    # Sidecar map: account_code -> AccountMapping.standard_code.
+    # docgen's sections dict is 4-tuple-shaped and does not carry mapping data,
+    # so the sub-classifier resolves the structured cash predicate via this
+    # lookup built once per render. First non-null wins under Model A (multiple
+    # rows per code share the same mapping, so the disambiguation is trivial).
+    # See core/fs_template_service.py: _CASH_STANDARD_CODES /
+    # _classify_current_asset for the source-of-truth implementation.
+    code_to_std = {}
+    for tbl in fy.trial_balance_lines.select_related("mapped_line_item"):
+        if tbl.mapped_line_item_id and tbl.mapped_line_item.standard_code:
+            code_to_std.setdefault(tbl.account_code, tbl.mapped_line_item.standard_code)
+
     if sections["current_assets"]:
         ft.add_section_heading("Current Assets")
 
@@ -1411,7 +1431,12 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
         for code, name, balance, prior in sections["current_assets"]:
             code_num = int(code)
             name_lower = name.lower()
-            if "cash" in name_lower or "bank" in name_lower or "petty" in name_lower or code_num < 2100:
+            std_code = code_to_std.get(code)
+            # Structured standard_code first (BS-CA-001 = Cash and cash equivalents);
+            # keyword/code-range fallback preserved for unmapped accounts.
+            if std_code in _CASH_STANDARD_CODES:
+                cash_items.append((code, name, balance, prior))
+            elif "cash" in name_lower or "bank" in name_lower or "petty" in name_lower or code_num < 2100:
                 cash_items.append((code, name, balance, prior))
             elif "debtor" in name_lower or "receivable" in name_lower or "trade" in name_lower:
                 receivable_items.append((code, name, balance, prior))
@@ -1420,9 +1445,9 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
             else:
                 other_ca_items.append((code, name, balance, prior))
 
-        # Cash Assets
+        # Cash and Cash Equivalents
         if cash_items:
-            ft.add_sub_heading("Cash Assets")
+            ft.add_sub_heading("Cash and Cash Equivalents")
             sub_total = Decimal("0")
             sub_total_prior = Decimal("0")
             for code, name, balance, prior in cash_items:
