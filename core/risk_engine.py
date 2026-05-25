@@ -258,6 +258,7 @@ def _load_trial_balance(financial_year):
         total_closing = sum(l.closing_balance or ZERO for l in group)
         total_prior_dr = sum(l.prior_debit or ZERO for l in group)
         total_prior_cr = sum(l.prior_credit or ZERO for l in group)
+        total_prior_closing = sum(l.prior_closing_balance or ZERO for l in group)
 
         # Use the first line with a mapped_line_item as the representative
         representative = group[0]
@@ -292,6 +293,12 @@ def _load_trial_balance(financial_year):
         # Set aggregated prior values on the line object
         agg.prior_debit = total_prior_dr
         agg.prior_credit = total_prior_cr
+
+        # Write the aggregated closing balances back so downstream consumers
+        # (e.g. eva_div7a) read the correct net position rather than the raw
+        # value from a single representative DB row.
+        agg.closing_balance = total_closing
+        agg.prior_closing_balance = total_prior_closing
 
         aggregated_lines.append(agg)
 
