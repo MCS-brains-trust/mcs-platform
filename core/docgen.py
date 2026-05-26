@@ -56,6 +56,13 @@ FONT_SIZE_FOOTER = Pt(8)
 # collapse the duplication.
 _CASH_STANDARD_CODES = {"BS-CA-001"}
 
+# AccountMapping.standard_code values that classify as Trading Income on the P&L.
+# Duplicated from core/fs_template_service.py:_TRADING_REVENUE_STANDARD_CODES
+# (commit aac5e1a) — same dedup-refactor consideration as _CASH_STANDARD_CODES.
+# Currently narrow (IS-REV-001 'Revenue'); the remaining IS-REV-* codes route
+# to "Other Income" via the IS-REV-* fall-through in the section resolver.
+_TRADING_REVENUE_STANDARD_CODES = {"IS-REV-001"}
+
 # ---------------------------------------------------------------------------
 # Firm constants — loaded from FirmSettings at call time (white-label support)
 # These module-level names are kept for backward compatibility but now resolve
@@ -514,6 +521,91 @@ def _entity_ref(entity_type):
 # Trial Balance Data Extraction
 # =============================================================================
 
+def _docgen_pick_representative_row(rows):
+    """Pick one row per account_code for name-based keyword classification.
+
+    Mirrors ``core/fs_template_service.py:_pick_representative_row`` (commit
+    aac5e1a). Distinct implementation kept inline for the same dedup-refactor
+    reason as ``_TRADING_REVENUE_STANDARD_CODES``; the renderer-dedup item
+    will collapse both.
+
+    Hierarchy (locked by Defect B Phase 2 spec):
+      1. Prefer non-rollover source rows.
+      2. Among non-rollover rows, largest ``abs(closing_balance)``.
+      3. Tiebreaker: most recent ``created_at``.
+      4. Final fallback if ALL rows are rollover: largest
+         ``abs(prior_debit - prior_credit)``, then ``created_at``.
+    """
+    non_rollover = [r for r in rows if r.source != "rollover"]
+    if non_rollover:
+        return max(
+            non_rollover,
+            key=lambda r: (abs(r.closing_balance or Decimal("0")), r.created_at),
+        )
+    return max(
+        rows,
+        key=lambda r: (
+            abs((r.prior_debit or Decimal("0")) - (r.prior_credit or Decimal("0"))),
+            r.created_at,
+        ),
+    )
+
+
+def _docgen_resolve_income_section_for_code(rows):
+    """Determine which P&L section a code (0-999) routes to.
+
+    Mirrors ``core/fs_template_service.py:_resolve_income_section_for_code``
+    (commit aac5e1a) so docgen's Mgmt Accounts P&L stays consistent with the
+    FS-pack P&L for the central Defect B mechanism.
+
+    Predicate order:
+      1. Any row mapped to ``standard_code`` in
+         ``_TRADING_REVENUE_STANDARD_CODES`` (IS-REV-001) → ``trading_income``
+      2. Any row mapped to ``standard_code`` starting ``"IS-REV-"`` →
+         ``income`` (other revenue line items)
+      3. Any row mapped to ``standard_code`` starting ``"IS-COS-"`` → ``cogs``
+      4. Any row mapped to ``standard_code`` starting ``"IS-EXP-"`` →
+         ``expenses``
+      5. No IS-* mapping: keyword fallback on the representative row's name
+         (existing is_other_income / is_trading lists applied to one chosen
+         name per code — eliminates the rollover-vs-tb_import section split
+         documented in Defect B).
+    """
+    std_codes = set()
+    for row in rows:
+        if row.mapped_line_item_id and row.mapped_line_item.standard_code:
+            std_codes.add(row.mapped_line_item.standard_code)
+
+    if _TRADING_REVENUE_STANDARD_CODES & std_codes:
+        return "trading_income"
+    if any(sc.startswith("IS-REV-") for sc in std_codes):
+        return "income"
+    if any(sc.startswith("IS-COS-") for sc in std_codes):
+        return "cogs"
+    if any(sc.startswith("IS-EXP-") for sc in std_codes):
+        return "expenses"
+
+    rep = _docgen_pick_representative_row(rows)
+    name_lower = (rep.account_name or "").lower()
+    is_other_income = (
+        "interest" in name_lower or "other" in name_lower or
+        "fbt" in name_lower or "contribution" in name_lower or
+        "dividend" in name_lower or "sundry" in name_lower
+    )
+    is_trading = (
+        "sales" in name_lower or "income" in name_lower or
+        "takings" in name_lower or "revenue" in name_lower or
+        "accommodation" in name_lower or "conference" in name_lower or
+        "meals" in name_lower or "bar" in name_lower or
+        "trading" in name_lower
+    )
+    if is_other_income:
+        return "income"
+    if is_trading:
+        return "trading_income"
+    return "income"
+
+
 def _get_tb_sections(fy):
     """
     Extract trial balance lines grouped into financial statement sections.
@@ -521,7 +613,15 @@ def _get_tb_sections(fy):
     current_assets, noncurrent_assets, current_liabilities,
     noncurrent_liabilities, equity.
     """
-    lines = fy.trial_balance_lines.order_by("account_code").all()
+    # Materialise once — Pass 1 (Defect B.2) scans all rows per account_code
+    # before the per-row entry-construction loop runs. select_related avoids
+    # N+1 when the income-section resolver reads mapped_line_item.standard_code.
+    lines = list(
+        fy.trial_balance_lines
+        .select_related("mapped_line_item")
+        .order_by("account_code")
+        .all()
+    )
     sections = {
         "trading_income": [],
         "cogs": [],
@@ -532,6 +632,26 @@ def _get_tb_sections(fy):
         "current_liabilities": [],
         "noncurrent_liabilities": [],
         "equity": [],
+    }
+
+    # Pass 1 (Defect B.2 / sibling of aac5e1a): build code_to_section map for
+    # income codes (0-999). All rows for a single account_code must route to
+    # the SAME section so the per-section aggregation downstream (lines ~720+)
+    # merges them; per-row name-keyword classification would otherwise split
+    # rollover and tb_import for the same code into different sections —
+    # the Defect B mechanism, present here in identical shape to the
+    # pre-Defect-B fs_template_service classifier.
+    income_rows_by_code = {}
+    for line in lines:
+        try:
+            code_num = int(line.account_code.split('.')[0])
+        except (ValueError, TypeError):
+            continue
+        if code_num < 1000:
+            income_rows_by_code.setdefault(line.account_code, []).append(line)
+    code_to_section = {
+        code: _docgen_resolve_income_section_for_code(rows)
+        for code, rows in income_rows_by_code.items()
     }
 
     for line in lines:
@@ -563,26 +683,12 @@ def _get_tb_sections(fy):
         )
 
         if code_num < 1000:
-            # 0000-0999: Income accounts
-            # Determine if this is trading income or other income
-            is_trading = (
-                "sales" in name_lower or "income" in name_lower or
-                "takings" in name_lower or "revenue" in name_lower or
-                "accommodation" in name_lower or "conference" in name_lower or
-                "meals" in name_lower or "bar" in name_lower or
-                "trading" in name_lower
-            )
-            is_other_income = (
-                "interest" in name_lower or "other" in name_lower or
-                "fbt" in name_lower or "contribution" in name_lower or
-                "dividend" in name_lower or "sundry" in name_lower
-            )
-            if is_other_income:
-                sections["income"].append(entry)
-            elif is_trading:
-                sections["trading_income"].append(entry)
-            else:
-                sections["income"].append(entry)
+            # Defect B.2: per-code section pre-resolved in Pass 1 above (via
+            # AccountMapping.standard_code, falling back to keyword on a single
+            # representative row per code). Replaces the per-row keyword
+            # classifier that produced Defect B's rollover-vs-tb_import section
+            # split for renamed Xero accounts.
+            sections[code_to_section[line.account_code]].append(entry)
         elif code_num < 1200:
             # 1000-1199: COGS / Cost of Sales accounts
             sections["cogs"].append(entry)
