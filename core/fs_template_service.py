@@ -104,7 +104,10 @@ def aggregate_tb_lines(queryset):
 # ---------------------------------------------------------------------------
 def _get_tb_sections(fy):
     """Extract trial balance lines grouped into financial statement sections."""
-    lines = (
+    # Materialise once — Pass 1 (Defect B Phase 2) needs to scan all rows for
+    # each account_code before per-row entry construction. Avoids a second
+    # database hit; select_related already prefetched mapped_line_item.
+    lines = list(
         fy.trial_balance_lines
         .select_related("mapped_line_item")
         .order_by("account_code")
@@ -120,6 +123,24 @@ def _get_tb_sections(fy):
         "current_liabilities": [],
         "noncurrent_liabilities": [],
         "equity": [],
+    }
+
+    # Pass 1 (Defect B Phase 2): build code_to_section map for income codes
+    # (0-999). All rows for a single account_code must route to the SAME
+    # section so the per-section aggregation downstream merges them — per-row
+    # name-keyword classification would otherwise split rollover and tb_import
+    # for the same code into different sections (the Defect B mechanism).
+    income_rows_by_code = {}
+    for line in lines:
+        try:
+            code_num = int(line.account_code.split(".")[0])
+        except (ValueError, TypeError):
+            continue
+        if code_num < 1000:
+            income_rows_by_code.setdefault(line.account_code, []).append(line)
+    code_to_section = {
+        code: _resolve_income_section_for_code(rows)
+        for code, rows in income_rows_by_code.items()
     }
 
     for line in lines:
@@ -151,6 +172,11 @@ def _get_tb_sections(fy):
                 line.mapped_line_item.standard_code
                 if line.mapped_line_item_id else None
             ),
+            # Defect B Phase 2: created_at carried so the per-section
+            # aggregation's display-name selection (line ~250+) can use the
+            # most-recent-row tiebreaker when two non-rollover names tie on
+            # weight.
+            "created_at": line.created_at,
         }
 
         name_lower = line.account_name.lower()
@@ -159,19 +185,12 @@ def _get_tb_sections(fy):
         ])
 
         if code_num < 1000:
-            is_other_income = any(kw in name_lower for kw in [
-                "interest", "other", "fbt", "contribution", "dividend", "sundry",
-            ])
-            is_trading = any(kw in name_lower for kw in [
-                "sales", "income", "takings", "revenue", "accommodation",
-                "conference", "meals", "bar", "trading",
-            ])
-            if is_other_income:
-                sections["income"].append(entry)
-            elif is_trading:
-                sections["trading_income"].append(entry)
-            else:
-                sections["income"].append(entry)
+            # Defect B Phase 2: per-code section pre-resolved in Pass 1 above
+            # (via AccountMapping.standard_code, falling back to keyword on a
+            # single representative row per code). Replaces the per-row
+            # is_other_income / is_trading branch that produced Defect B's
+            # rollover-vs-tb_import section split for renamed Xero accounts.
+            sections[code_to_section[line.account_code]].append(entry)
         elif code_num < 1200:
             sections["cogs"].append(entry)
         elif code_num < 2000:
@@ -204,17 +223,24 @@ def _get_tb_sections(fy):
     # Primary merge key: account_code (stable across renames in Xero/QBO).
     # Fallback for blank codes: case-insensitive, whitespace-normalised name.
     # Display name preference: names from lines with non-zero CY data are
-    # weighted higher so that renamed accounts show the current-year name.
+    # weighted higher so that renamed accounts show the current-year name;
+    # ties on weight (e.g. two non-rollover rows with non-zero CY but
+    # different names) broken by most recent created_at (Defect B Phase 2
+    # locked tiebreaker).
     for key in sections:
         raw = sections[key]
         if not raw:
             continue
         agg = OrderedDict()
-        name_counts = {}
+        # name_score[mk][name] = (cumulative_weight, latest_created_at).
+        # Tuple comparison: weight first, created_at tiebreaks.
+        name_score = {}
         for entry in raw:
             code = entry.get("account_code", "").strip()
             merge_key = code if code else entry["account_name"].strip().lower()
             weight = 10 if entry["cy_amount"] != 0 else 1
+            entry_name = entry["account_name"]
+            entry_ts = entry.get("created_at")
             if merge_key in agg:
                 agg[merge_key]["cy_amount"] += entry["cy_amount"]
                 agg[merge_key]["py_amount"] += entry["py_amount"]
@@ -225,21 +251,33 @@ def _get_tb_sections(fy):
                 if agg[merge_key].get("standard_code") is None and entry.get("standard_code"):
                     agg[merge_key]["standard_code"] = entry["standard_code"]
                     agg[merge_key]["mapped_line_item_id"] = entry["mapped_line_item_id"]
-                name_counts[merge_key][entry["account_name"]] = (
-                    name_counts[merge_key].get(entry["account_name"], 0) + weight
-                )
+                prev_w, prev_ts = name_score[merge_key].get(entry_name, (0, None))
+                if prev_ts is None:
+                    new_ts = entry_ts
+                elif entry_ts is None:
+                    new_ts = prev_ts
+                else:
+                    new_ts = max(prev_ts, entry_ts)
+                name_score[merge_key][entry_name] = (prev_w + weight, new_ts)
             else:
                 agg[merge_key] = {
                     "account_code": entry.get("account_code", ""),
-                    "account_name": entry["account_name"],
+                    "account_name": entry_name,
                     "cy_amount": entry["cy_amount"],
                     "py_amount": entry["py_amount"],
                     "mapped_line_item_id": entry.get("mapped_line_item_id"),
                     "standard_code": entry.get("standard_code"),
                 }
-                name_counts[merge_key] = {entry["account_name"]: weight}
+                name_score[merge_key] = {entry_name: (weight, entry_ts)}
         for mk in agg:
-            best = max(name_counts[mk], key=name_counts[mk].get)
+            # Tuple compare: larger weight wins; on tie, most recent
+            # created_at wins. Names with None timestamps lose ties to
+            # named timestamps; if both are None the order is stable.
+            def _sortkey(n, scores=name_score[mk]):
+                w, ts = scores[n]
+                # Compare ts as ISO string so None sorts below any datetime.
+                return (w, ts.isoformat() if ts else "")
+            best = max(name_score[mk], key=_sortkey)
             agg[mk]["account_name"] = best
         sections[key] = list(agg.values())
         logger.debug(
@@ -541,6 +579,99 @@ _BANK_KEYWORDS = (
 # checks this first, with the keyword fallback (_BANK_KEYWORDS,
 # _classify_current_asset) preserved for unmapped accounts.
 _CASH_STANDARD_CODES = {"BS-CA-001"}
+
+# AccountMapping.standard_code values that classify as Trading Income on the P&L.
+# Source of truth for the trading-vs-other-income predicate (Defect B Phase 2).
+# Currently narrow (IS-REV-001 'Revenue' only) — the seeded AccountMapping table
+# has nine IS-REV-* codes; only the main operating revenue is trading income for
+# typical suburban accounting clients. The remaining IS-REV-* codes (other
+# income, interest, dividends, rental, government subsidies, etc.) route to
+# "Other Income" via the IS-REV-* fall-through. Widen this set if a specific
+# client base treats other revenue codes as trading.
+_TRADING_REVENUE_STANDARD_CODES = {"IS-REV-001"}
+
+
+def _pick_representative_row(rows):
+    """Pick one row per account_code for name-based keyword classification.
+
+    Hierarchy (locked by Defect B Phase 2 spec):
+      1. Prefer non-rollover source rows (their account_name is the current
+         live name; rollover names are historical artefacts from prior FY).
+      2. Among non-rollover rows, largest ``abs(closing_balance)``.
+      3. Tiebreaker: most recent ``created_at``.
+      4. Final fallback if ALL rows are rollover: largest
+         ``abs(prior_debit - prior_credit)``, then ``created_at``.
+
+    Returns the representative TrialBalanceLine instance.
+    """
+    non_rollover = [r for r in rows if r.source != "rollover"]
+    if non_rollover:
+        return max(
+            non_rollover,
+            key=lambda r: (abs(r.closing_balance or Decimal("0")), r.created_at),
+        )
+    return max(
+        rows,
+        key=lambda r: (
+            abs((r.prior_debit or Decimal("0")) - (r.prior_credit or Decimal("0"))),
+            r.created_at,
+        ),
+    )
+
+
+def _resolve_income_section_for_code(rows):
+    """Determine which P&L section a code (0-999) routes to.
+
+    Pass 1 of the Defect B Phase 2 classifier — runs once per unique
+    ``account_code`` in the 0-999 income range, examines all TBL rows for
+    that code together, returns the section key. All rows for the same code
+    then route to the SAME section, so the per-section aggregation
+    downstream correctly merges them.
+
+    Predicate order (predicate-first, keyword fallback last):
+      1. Any row mapped to ``standard_code`` in
+         ``_TRADING_REVENUE_STANDARD_CODES`` (IS-REV-001) → ``trading_income``
+      2. Any row mapped to ``standard_code`` starting ``"IS-REV-"`` →
+         ``income`` (other revenue line items)
+      3. Any row mapped to ``standard_code`` starting ``"IS-COS-"`` →
+         ``cogs`` (rare for code <1000 but defensible)
+      4. Any row mapped to ``standard_code`` starting ``"IS-EXP-"`` →
+         ``expenses`` (likewise rare)
+      5. No IS-* mapping: keyword fallback on the representative row's name
+         (the existing is_other_income / is_trading lists applied to a
+         single chosen name per code, not per row — eliminates the
+         rollover-vs-tb_import section split that Defect B documented).
+    """
+    std_codes = set()
+    for row in rows:
+        if row.mapped_line_item_id and row.mapped_line_item.standard_code:
+            std_codes.add(row.mapped_line_item.standard_code)
+
+    if _TRADING_REVENUE_STANDARD_CODES & std_codes:
+        return "trading_income"
+    if any(sc.startswith("IS-REV-") for sc in std_codes):
+        return "income"
+    if any(sc.startswith("IS-COS-") for sc in std_codes):
+        return "cogs"
+    if any(sc.startswith("IS-EXP-") for sc in std_codes):
+        return "expenses"
+
+    # Keyword fallback — pick one representative row per code so rollover
+    # and tb_import for the same code can't disagree on section.
+    rep = _pick_representative_row(rows)
+    name_lower = (rep.account_name or "").lower()
+    is_other_income = any(kw in name_lower for kw in [
+        "interest", "other", "fbt", "contribution", "dividend", "sundry",
+    ])
+    is_trading = any(kw in name_lower for kw in [
+        "sales", "income", "takings", "revenue", "accommodation",
+        "conference", "meals", "bar", "trading",
+    ])
+    if is_other_income:
+        return "income"
+    if is_trading:
+        return "trading_income"
+    return "income"
 
 # Keywords that identify tax / ATO liability accounts (credit-normal liabilities).
 _TAX_LIABILITY_KEYWORDS = (
