@@ -1343,6 +1343,48 @@ def _add_detailed_pnl(doc, entity, fy, sections, show_cents=False,
 
 
 # =============================================================================
+# Detailed Balance Sheet — helpers
+# =============================================================================
+
+def _split_cash_overdrafts(cash_items):
+    """Year-by-year sign-aware split of BS-CA-001-mapped cash accounts.
+
+    Per row, positive balances stay in cash (that year's column only);
+    negative balances move to overdrafts sign-flipped to positive
+    (that year's column only). Empty cells get ``Decimal('0')`` which
+    ``core/table_helpers.py:_fmt`` renders as ``'-'`` (ASCII hyphen).
+
+    The same row may appear in BOTH outputs when CY and PY signs differ;
+    each output row carries the value only in its applicable column and
+    zero in the other. Rows with no value in either year are omitted
+    (no ghost rows).
+
+    Returns ``(cash_remaining, overdraft_items)`` as 4-tuple lists
+    matching the existing ``sections[...]`` 4-tuple shape.
+
+    IMPORTANT: only items confirmed mapped to ``BS-CA-001`` should be
+    passed in. Keyword-fallback cash rows must NOT be split — Phase D.3
+    spec is explicit that unmapped accounts retain today's behaviour.
+    The caller (``_add_detailed_balance_sheet``) partitions the cash
+    classifier output into mapped vs keyword buckets and passes only
+    the mapped bucket here.
+    """
+    cash_remaining = []
+    overdraft_items = []
+    zero = Decimal("0")
+    for code, name, balance, prior in cash_items:
+        cash_cy = balance if balance > 0 else zero
+        cash_py = prior if prior > 0 else zero
+        overdraft_cy = -balance if balance < 0 else zero
+        overdraft_py = -prior if prior < 0 else zero
+        if cash_cy != 0 or cash_py != 0:
+            cash_remaining.append((code, name, cash_cy, cash_py))
+        if overdraft_cy != 0 or overdraft_py != 0:
+            overdraft_items.append((code, name, overdraft_cy, overdraft_py))
+    return cash_remaining, overdraft_items
+
+
+# =============================================================================
 # Detailed Balance Sheet
 # =============================================================================
 
@@ -1407,6 +1449,13 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
     total_ca = Decimal("0")
     total_ca_prior = Decimal("0")
 
+    # Bank overdrafts surfaced by the BS-CA-001 sign-aware split (Defect D.3).
+    # Populated below during the cash sub-classification pass and rendered
+    # later inside the Current Liabilities section. Initialised here so the
+    # widened current_liabilities gating check sees it regardless of whether
+    # sections["current_assets"] is non-empty.
+    overdraft_items = []
+
     # Sidecar map: account_code -> AccountMapping.standard_code.
     # docgen's sections dict is 4-tuple-shaped and does not carry mapping data,
     # so the sub-classifier resolves the structured cash predicate via this
@@ -1422,8 +1471,12 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
     if sections["current_assets"]:
         ft.add_section_heading("Current Assets")
 
-        # Sub-categorise current assets
-        cash_items = []
+        # Sub-categorise current assets. cash_items is split into two buckets
+        # so the Defect D.3 sign-aware overdraft split only applies to rows
+        # mapped to BS-CA-001; keyword-fallback rows retain today's behaviour
+        # (negative current asset) per the D.3 spec scope constraint.
+        cash_items_mapped = []
+        cash_items_keyword = []
         receivable_items = []
         inventory_items = []
         other_ca_items = []
@@ -1435,15 +1488,23 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
             # Structured standard_code first (BS-CA-001 = Cash and cash equivalents);
             # keyword/code-range fallback preserved for unmapped accounts.
             if std_code in _CASH_STANDARD_CODES:
-                cash_items.append((code, name, balance, prior))
+                cash_items_mapped.append((code, name, balance, prior))
             elif "cash" in name_lower or "bank" in name_lower or "petty" in name_lower or code_num < 2100:
-                cash_items.append((code, name, balance, prior))
+                cash_items_keyword.append((code, name, balance, prior))
             elif "debtor" in name_lower or "receivable" in name_lower or "trade" in name_lower:
                 receivable_items.append((code, name, balance, prior))
             elif "stock" in name_lower or "inventor" in name_lower:
                 inventory_items.append((code, name, balance, prior))
             else:
                 other_ca_items.append((code, name, balance, prior))
+
+        # Year-by-year sign-flip on BS-CA-001-mapped rows only. Negative
+        # balances become positive Bank Overdrafts entries in current_liabilities;
+        # positive balances stay in Cash and Cash Equivalents. Mixed-sign rows
+        # (CY positive, PY negative or vice versa) appear in both sections,
+        # each row showing the value only in its applicable column.
+        cash_items_mapped, overdraft_items = _split_cash_overdrafts(cash_items_mapped)
+        cash_items = cash_items_keyword + cash_items_mapped
 
         # Cash and Cash Equivalents
         if cash_items:
@@ -1607,8 +1668,24 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
     total_cl = Decimal("0")
     total_cl_prior = Decimal("0")
 
-    if sections["current_liabilities"]:
+    # Defect D.3: widen the gate so an entity whose only current liability
+    # is a sign-flipped bank overdraft (no payables, no tax, no provisions)
+    # still gets the Current Liabilities section rendered.
+    if sections["current_liabilities"] or overdraft_items:
         ft.add_section_heading("Current Liabilities")
+
+        # Bank Overdrafts — populated by _split_cash_overdrafts during the
+        # current_assets pass. Each row carries positive amounts already
+        # (the helper sign-flips negatives). Contributes to total_cl so the
+        # final "Total Current Liabilities" subtotal includes them.
+        if overdraft_items:
+            ft.add_sub_heading("Bank Overdrafts")
+            for code, name, balance, prior in overdraft_items:
+                val = abs(balance)
+                prior_val = abs(prior) if prior else Decimal("0")
+                total_cl += val
+                total_cl_prior += prior_val
+                ft.add_line(name, val, prior_val, indent=1)
 
         payable_items = []
         tax_items = []
