@@ -778,8 +778,11 @@ def _build_detailed_pl(entity_type):
                    "{{ net_profit_pretax_cy }}", "{{ net_profit_pretax_py }}",
                    grand_total=True)
 
-    # Income tax line (only when tax exists) — use conditional Jinja2 block
-    _add_para(doc, "{% if has_income_tax %}", size=Pt(1))
+    # Income tax line (only when tax exists) — paragraph-level conditional so
+    # the host paragraphs are consumed entirely on render (no residual empty
+    # paragraph). Bare {% if %} left a trailing empty paragraph after the
+    # after-tax row that tipped content onto a header/footer-only phantom page.
+    _add_para(doc, "{%p if has_income_tax %}", size=Pt(1))
 
     # Income tax row
     tax_table = doc.add_table(rows=1, cols=4, style='Normal Table')
@@ -807,7 +810,7 @@ def _build_detailed_pl(entity_type):
                    "{{ net_profit_cy }}", "{{ net_profit_py }}",
                    grand_total=True)
 
-    _add_para(doc, "{% endif %}", size=Pt(1))
+    _add_para(doc, "{%p endif %}", size=Pt(1))
 
     return doc
 
