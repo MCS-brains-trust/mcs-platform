@@ -2003,6 +2003,25 @@ def _apply_equity_atomic(doc):
     logger.info("[fs_pagination] Applied Equity atomic block (%d rows)", n)
 
 
+def _apply_ncl_atomic(doc):
+    """Rule 3 — treat the Non-Current Liabilities table as a single atomic
+    block: every row gets cantSplit and keepNext so the section never splits
+    internally.  The NCL table is identified by its header row label
+    'Non-Current Liabilities'.
+
+    Degrades silently: entity types / data without a non-current liabilities
+    section have no such table, so we log nothing and return."""
+    table, _row = _find_landmark_row(doc, ["Non-Current Liabilities"])
+    if table is None:
+        return
+    n = 0
+    for row in table.rows:
+        _row_set_cant_split(row)
+        _row_keep_with_next(row)
+        n += 1
+    logger.info("[fs_pagination] Applied Non-Current Liabilities atomic block (%d rows)", n)
+
+
 def _post_process_fs_doc(buffer, doc_type, has_prior=True, entity_type=None):
     """Post-process a rendered financial statement .docx.
 
@@ -2314,26 +2333,42 @@ def _post_process_fs_doc(buffer, doc_type, has_prior=True, entity_type=None):
         # degrades gracefully: landmarks absent for a doc_type are skipped.
         # --------------------------------------------------------------
 
-        # Balance Sheet: Total Liabilities → Net Assets → Equity → Total Equity.
+        # Balance Sheet: [Non-Current Liabilities → Total Non-Current
+        # Liabilities →] Total Liabilities → Net Assets → Equity → Total Equity.
         # Gated on the Total Liabilities landmark so it only fires on the BS
         # (and never warns on P&L docs that legitimately lack these rows).
-        # NB: we intentionally start the chain at Total Liabilities and do NOT
-        # bind Total Non-Current Liabilities forward into it — let that break
-        # happen naturally so a large liability section can still page-break
-        # (Rule 2.5 — avoid cascade overflow).
+        #
+        # The chain is extended backward to include the Non-Current Liabilities
+        # section header and its subtotal WHEN that section is present, so the
+        # whole liabilities→equity story stays on one page instead of binding
+        # as a block that strands NCL on the preceding page.  Anchor-gated on
+        # the NCL header landmark: entity types / data without a non-current
+        # liabilities section (e.g. no-tax trusts) fall back to the original
+        # 4-link chain with no warnings.  The full chain is bounded to ~12–20
+        # rows worst-case — well under a blank page — so it cannot cause
+        # cascade overflow (cf. Rule 2.5); worst case it moves to a fresh page
+        # together rather than getting stuck unable to break.
         _tl_table, _tl_row = _find_landmark_row(doc, ["Total Liabilities"])
         if _tl_row is not None:
+            _bs_chain = []
+            if _find_landmark_row(doc, ["Non-Current Liabilities"])[0] is not None:
+                _bs_chain.extend([
+                    ["Non-Current Liabilities"],
+                    ["Total Non-Current Liabilities"],
+                ])
+            _bs_chain.extend([
+                ["Total Liabilities"],
+                ["Net Assets"],
+                ["Equity"],          # the Equity section header row
+                ["Total Equity"],
+            ])
             _bind_chain(
                 doc,
-                [
-                    ["Total Liabilities"],
-                    ["Net Assets"],
-                    ["Equity"],          # the Equity section header row
-                    ["Total Equity"],
-                ],
+                _bs_chain,
                 chain_name="BS liabilities → equity",
                 warn_on_missing=True,
             )
+            _apply_ncl_atomic(doc)
             _apply_equity_atomic(doc)
 
         # Detailed P&L profit chain. Confirmed rendered labels (python-docx):
