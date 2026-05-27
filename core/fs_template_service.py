@@ -1841,6 +1841,168 @@ _SUB_HEADING_LABELS = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Cross-table pagination binding (Rule 2 + Rule 3)
+#
+# Each FS section is rendered as its own table with spacer paragraphs between
+# them, and the intra-table chaining ("Fix 8") deliberately never bridges one
+# table to the next.  These helpers bind a sequence of landmark rows together
+# ACROSS tables and the spacer paragraphs between them, so derived totals
+# (Total Liabilities -> Net Assets -> Equity -> Total Equity) and the Detailed
+# P&L profit chain stay on one page rather than stranding after a break.
+#
+# Post-processor-only: operates on the rendered docx after {%tr for%} expansion.
+# Additive to Fix 8 — never modifies the intra-table chains it already builds.
+# ---------------------------------------------------------------------------
+
+def _norm_label(text):
+    """Trim, collapse internal whitespace, and casefold a label for matching."""
+    import re
+    return re.sub(r"\s+", " ", (text or "").strip()).casefold()
+
+
+def _first_label_cell_text(row):
+    """Return the text of the first NON-EMPTY cell in a row (the label column)."""
+    for cell in row.cells:
+        txt = cell.text.strip()
+        if txt:
+            return txt
+    return ""
+
+
+def _find_landmark_row(doc, label_candidates):
+    """Locate the first table row (document order) whose label-column text
+    matches any label in label_candidates (case-insensitive, whitespace
+    collapsed).  Returns (table, row) or (None, None)."""
+    targets = {_norm_label(c) for c in label_candidates}
+    for table in doc.tables:
+        for row in table.rows:
+            label = _first_label_cell_text(row)
+            if label and _norm_label(label) in targets:
+                return table, row
+    return None, None
+
+
+def _row_set_cant_split(row):
+    """Set cantSplit=true on a table row (idempotent)."""
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    trPr = row._tr.get_or_add_trPr()
+    for existing in trPr.findall(qn("w:cantSplit")):
+        trPr.remove(existing)
+    cs = OxmlElement("w:cantSplit")
+    cs.set(qn("w:val"), "1")
+    trPr.append(cs)
+
+
+def _para_el_keep_next(p_el):
+    """Set keepNext=1 on a <w:p> element (idempotent)."""
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+    pPr = p_el.find(qn("w:pPr"))
+    if pPr is None:
+        pPr = OxmlElement("w:pPr")
+        p_el.insert(0, pPr)
+    if pPr.find(qn("w:keepNext")) is None:
+        kn = OxmlElement("w:keepNext")
+        kn.set(qn("w:val"), "1")
+        pPr.append(kn)
+
+
+def _row_keep_with_next(row):
+    """Set keepNext on every paragraph inside every cell of a row."""
+    for cell in row.cells:
+        for para in cell.paragraphs:
+            _para_el_keep_next(para._p)
+
+
+def _spacer_paras_between(doc, tbl_a, tbl_b):
+    """Return the <w:p> elements between two <w:tbl> elements in body order."""
+    from docx.oxml.ns import qn
+    children = list(doc.element.body)
+    ia = ib = None
+    for i, el in enumerate(children):
+        if el is tbl_a:
+            ia = i
+        elif el is tbl_b:
+            ib = i
+    if ia is None or ib is None or ia >= ib:
+        return []
+    return [el for el in children[ia + 1:ib] if el.tag == qn("w:p")]
+
+
+def _bind_chain(doc, chain_labels, chain_name="chain", warn_on_missing=True):
+    """Bind a sequence of landmark rows together across tables and the spacer
+    paragraphs between them, so the whole chain stays on one page.
+
+    For each consecutive pair of resolved landmarks:
+      - cantSplit on each landmark row
+      - keepNext on every paragraph in the source row's cells
+      - keepNext on every spacer paragraph between the source and destination
+        tables (when they are different tables)
+    The final landmark receives cantSplit but no forward keepNext — the chain
+    terminates cleanly (do NOT bind upward / past the chain — see Rule 2.5).
+
+    Degrades gracefully: a landmark that is not found is skipped.  Returns the
+    number of landmarks resolved."""
+    resolved = []   # (display_label, table, row)
+    missing = []
+    for candidates in chain_labels:
+        table, row = _find_landmark_row(doc, candidates)
+        if row is not None:
+            resolved.append((candidates[0], table, row))
+        else:
+            missing.append(candidates[0])
+
+    if not resolved:
+        logger.info("[fs_pagination] %s: no landmarks present, skipped", chain_name)
+        return 0
+
+    for _, _, row in resolved:
+        _row_set_cant_split(row)
+
+    if len(resolved) >= 2:
+        for i in range(len(resolved) - 1):
+            _, tbl_src, row_src = resolved[i]
+            _, tbl_dst, row_dst = resolved[i + 1]
+            _row_keep_with_next(row_src)
+            if tbl_src._tbl is not tbl_dst._tbl:
+                for p_el in _spacer_paras_between(doc, tbl_src._tbl, tbl_dst._tbl):
+                    _para_el_keep_next(p_el)
+        logger.info(
+            "[fs_pagination] Bound chain (%s): %s",
+            chain_name, " → ".join(lbl for lbl, _, _ in resolved),
+        )
+    else:
+        logger.info(
+            "[fs_pagination] %s: single landmark '%s', cantSplit only "
+            "(no cross-table binding needed)",
+            chain_name, resolved[0][0],
+        )
+
+    if missing:
+        log = logger.warning if warn_on_missing else logger.info
+        log("[fs_pagination] %s: landmark(s) not found: %s",
+            chain_name, ", ".join(missing))
+    return len(resolved)
+
+
+def _apply_equity_atomic(doc):
+    """Rule 3 — treat the Equity table as a single atomic block: every row
+    gets cantSplit and keepNext so the section never splits internally.
+    The Equity table is identified by its header row label 'Equity'."""
+    table, _row = _find_landmark_row(doc, ["Equity"])
+    if table is None:
+        logger.info("[fs_pagination] Equity atomic block: no Equity table found, skipped")
+        return
+    n = 0
+    for row in table.rows:
+        _row_set_cant_split(row)
+        _row_keep_with_next(row)
+        n += 1
+    logger.info("[fs_pagination] Applied Equity atomic block (%d rows)", n)
+
+
 def _post_process_fs_doc(buffer, doc_type, has_prior=True, entity_type=None):
     """Post-process a rendered financial statement .docx.
 
@@ -2145,6 +2307,61 @@ def _post_process_fs_doc(buffer, doc_type, has_prior=True, entity_type=None):
                 # Fix inline PY values in Balance Sheet totals
                 if doc_type == "BALANCE_SHEET":
                     _fix_inline_py_in_row(row, qn, OxmlElement, copy, re)
+
+        # --------------------------------------------------------------
+        # Cross-table binding (Rule 2 + Rule 3) — additive to Fix 8.
+        # Runs after the intra-table chains above are in place.  Each chain
+        # degrades gracefully: landmarks absent for a doc_type are skipped.
+        # --------------------------------------------------------------
+
+        # Balance Sheet: Total Liabilities → Net Assets → Equity → Total Equity.
+        # Gated on the Total Liabilities landmark so it only fires on the BS
+        # (and never warns on P&L docs that legitimately lack these rows).
+        # NB: we intentionally start the chain at Total Liabilities and do NOT
+        # bind Total Non-Current Liabilities forward into it — let that break
+        # happen naturally so a large liability section can still page-break
+        # (Rule 2.5 — avoid cascade overflow).
+        _tl_table, _tl_row = _find_landmark_row(doc, ["Total Liabilities"])
+        if _tl_row is not None:
+            _bind_chain(
+                doc,
+                [
+                    ["Total Liabilities"],
+                    ["Net Assets"],
+                    ["Equity"],          # the Equity section header row
+                    ["Total Equity"],
+                ],
+                chain_name="BS liabilities → equity",
+                warn_on_missing=True,
+            )
+            _apply_equity_atomic(doc)
+
+        # Detailed P&L profit chain. Confirmed rendered labels (python-docx):
+        #   has_income_tax → "Operating profit before income tax",
+        #                    "Income tax attributable to operating profit (loss)",
+        #                    "Operating profit after income tax"
+        #   no income tax  → single "Net Profit / (Loss)" row (no chain).
+        # Gated on the pre-tax landmark so no-tax entities (e.g. trusts) do not
+        # emit spurious "landmark not found" warnings.
+        _pretax_table, _pretax_row = _find_landmark_row(
+            doc, ["Operating profit before income tax"]
+        )
+        if _pretax_row is not None:
+            _bind_chain(
+                doc,
+                [
+                    ["Operating profit before income tax"],
+                    ["Income tax attributable to operating profit (loss)"],
+                    ["Operating profit after income tax"],
+                ],
+                chain_name="P&L profit chain",
+                warn_on_missing=True,
+            )
+        elif doc_type == "DETAILED_PL":
+            logger.info(
+                "[fs_pagination] P&L profit chain: not applicable "
+                "(single Net Profit / (Loss) line, no income tax)"
+            )
 
     # ------------------------------------------------------------------
     # Fix 8: Section integrity for short documents — keep all paragraphs
