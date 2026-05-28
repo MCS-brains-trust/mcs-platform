@@ -833,13 +833,15 @@ def _build_balance_sheet(entity_type):
                          "{{ total_current_assets_cy }}", "{{ total_current_assets_py }}")
     _add_spacer(doc)
 
-    # Non-Current Assets — suppressed when zero
-    _add_para(doc, "{% if has_noncurrent_assets %}", size=Pt(1))
+    # Non-Current Assets — suppressed when zero. Paragraph-level conditional
+    # ({%p if %}) so the host tag paragraphs are consumed entirely on render;
+    # bare {% if %} left residual empty paragraphs around the section (see 1c22d9a).
+    _add_para(doc, "{%p if has_noncurrent_assets %}", size=Pt(1))
     _add_financial_table(doc, "Non-Current Assets", "noncurrent_assets",
                          "Total Non-Current Assets",
                          "{{ total_noncurrent_assets_cy }}", "{{ total_noncurrent_assets_py }}")
     _add_spacer(doc)
-    _add_para(doc, "{% endif %}", size=Pt(1))
+    _add_para(doc, "{%p endif %}", size=Pt(1))
 
     # Total Assets — non-terminal subtotal (rolls forward to Net Assets;
     # single rule above only, no rule below).
@@ -861,13 +863,15 @@ def _build_balance_sheet(entity_type):
                          "{{ total_current_liab_cy }}", "{{ total_current_liab_py }}")
     _add_spacer(doc)
 
-    # Non-Current Liabilities — suppressed when zero
-    _add_para(doc, "{% if has_noncurrent_liabilities %}", size=Pt(1))
+    # Non-Current Liabilities — suppressed when zero. Paragraph-level conditional
+    # ({%p if %}) so the host tag paragraphs are consumed entirely on render;
+    # bare {% if %} left residual empty paragraphs around the section (see 1c22d9a).
+    _add_para(doc, "{%p if has_noncurrent_liabilities %}", size=Pt(1))
     _add_financial_table(doc, "Non-Current Liabilities", "noncurrent_liabilities",
                          "Total Non-Current Liabilities",
                          "{{ total_noncurrent_liab_cy }}", "{{ total_noncurrent_liab_py }}")
     _add_spacer(doc)
-    _add_para(doc, "{% endif %}", size=Pt(1))
+    _add_para(doc, "{%p endif %}", size=Pt(1))
 
     # Total Liabilities — single top only, no bottom line (flows into Net Assets)
     _add_total_row(doc, "Total Liabilities", "{{ total_liabilities_cy }}", "{{ total_liabilities_py }}",
