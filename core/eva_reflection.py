@@ -57,9 +57,9 @@ def _extract_signals(since: datetime) -> list:
 
     # 1. EvaClarification — highest value signal
     for c in EvaClarification.objects.filter(
-        created_at__gte=since,
-        answer__isnull=False,
-    ).select_related("finding__eva_review__financial_year__entity", "answered_by").order_by("-created_at")[:50]:
+        answered_at__gte=since,
+        answer_value__gt="",
+    ).select_related("finding__eva_review__financial_year__entity", "answered_by").order_by("-answered_at")[:50]:
         entity = None
         try:
             entity = c.finding.eva_review.financial_year.entity
@@ -68,27 +68,33 @@ def _extract_signals(since: datetime) -> list:
         signals.append({
             "type": "EvaClarification",
             "id": str(c.id),
-            "question": c.question,
-            "answer": c.answer,
+            "question": c.question_text,
+            "answer": c.answer_label or c.answer_value,
+            "answer_detail": c.answer_detail or "",
             "user": c.answered_by.get_full_name() if c.answered_by else None,
             "entity": entity.entity_name if entity else None,
             "entity_id": str(entity.id) if entity else None,
-            "timestamp": str(c.created_at),
+            "timestamp": str(c.answered_at),
         })
 
     # 2. EvaFindingSuppression — explicit accountant overrides
     for s in EvaFindingSuppression.objects.filter(
-        created_at__gte=since,
-    ).select_related("suppressed_by", "entity").order_by("-created_at")[:50]:
+        suppressed_at__gte=since,
+    ).select_related("suppressed_by", "financial_year__entity").order_by("-suppressed_at")[:50]:
+        entity = None
+        try:
+            entity = s.financial_year.entity
+        except Exception:
+            pass
         signals.append({
             "type": "EvaFindingSuppression",
             "id": str(s.id),
-            "check_name": s.check_name,
-            "reason": s.reason or "",
+            "check_name": s.rule_category,
+            "reason": s.accountant_note or "",
             "user": s.suppressed_by.get_full_name() if s.suppressed_by else None,
-            "entity": s.entity.entity_name if s.entity else None,
-            "entity_id": str(s.entity.id) if s.entity else None,
-            "timestamp": str(s.created_at),
+            "entity": entity.entity_name if entity else None,
+            "entity_id": str(entity.id) if entity else None,
+            "timestamp": str(s.suppressed_at),
         })
 
     # 3. EvaMessage — user messages that correct Eva
@@ -126,19 +132,22 @@ def _extract_signals(since: datetime) -> list:
             "timestamp": str(m.created_at),
         })
 
-    # 4. ActivityLog — account reclassifications
+    # 4. ActivityLog — accountant resolutions of Eva findings
+    # Only eva_finding_addressed carries per-issue accountant reasoning;
+    # other event types are system-generated or duplicate the signal sources above.
     for a in ActivityLog.objects.filter(
         created_at__gte=since,
-        action__in=["reclassify", "account_mapping_update", "journal_posted"],
+        event_type__in=["eva_finding_addressed"],
     ).select_related("user", "entity").order_by("-created_at")[:50]:
         signals.append({
             "type": "ActivityLog",
             "id": str(a.id),
-            "action": a.action,
+            "event_type": a.event_type,
+            "title": a.title or "",
             "description": a.description or "",
             "user": a.user.get_full_name() if a.user else None,
-            "entity": a.entity.entity_name if hasattr(a, "entity") and a.entity else None,
-            "entity_id": str(a.entity.id) if hasattr(a, "entity") and a.entity else None,
+            "entity": a.entity.entity_name if a.entity else None,
+            "entity_id": str(a.entity.id) if a.entity else None,
             "timestamp": str(a.created_at),
         })
 
