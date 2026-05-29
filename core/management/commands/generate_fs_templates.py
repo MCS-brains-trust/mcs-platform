@@ -575,6 +575,125 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
 
 
 # ---------------------------------------------------------------------------
+# Combined-chain-table row helpers
+#
+# Used by _build_balance_sheet and _build_detailed_pl to assemble the
+# liabilities -> equity chain and the taxed profit chain as single multi-row
+# tables. Cross-table keepNext is unreliable in LibreOffice (see commit
+# 21dbe86 diagnostic); intra-table keepNext (applied by Fix 8 in the
+# post-processor) is reliable, so each chain lives in one atomic table.
+# Builder sets cantSplit on every row; Fix 8 sets keepNext-except-last.
+# ---------------------------------------------------------------------------
+def _chain_setup_row(row, texts, *, fonts=None, sizes=None, bolds=None,
+                     aligns=None, space_before=None, space_after=None,
+                     row_type=None, trheight_twips=None):
+    """Populate and style a 4-cell row inside a chain table.
+
+    texts          : list of 4 strings (cell 0..3).
+    fonts / sizes  : per-cell lists (length 4) or None for FONT_NAME / FONT_SIZE.
+    bolds          : per-cell list of booleans or None for [False]*4.
+    aligns         : per-cell list of WD_ALIGN_PARAGRAPH values; default
+                     [LEFT, LEFT, RIGHT, RIGHT] (label/note left, amounts right).
+    space_before / space_after : applied to every cell paragraph
+                     (defaults to Pt(0) / Pt(3)).
+    row_type       : if set, apply _apply_row_borders(row, row_type); otherwise
+                     nil all cell borders via _apply_cell_border.
+    trheight_twips : if set, force exact row height in twips (e.g. 1 for
+                     {%tr%} control rows that are consumed at render).
+
+    Always sets cantSplit on the row (builder's responsibility per spec).
+    """
+    _fonts = fonts or [FONT_NAME] * 4
+    _sizes = sizes or [FONT_SIZE] * 4
+    _bolds = bolds or [False] * 4
+    _aligns = aligns or [WD_ALIGN_PARAGRAPH.LEFT, WD_ALIGN_PARAGRAPH.LEFT,
+                         WD_ALIGN_PARAGRAPH.RIGHT, WD_ALIGN_PARAGRAPH.RIGHT]
+    sb = Pt(0) if space_before is None else space_before
+    sa = Pt(3) if space_after is None else space_after
+    for i in range(4):
+        row.cells[i].text = texts[i]
+        for p in row.cells[i].paragraphs:
+            p.alignment = _aligns[i]
+            p.paragraph_format.space_before = sb
+            p.paragraph_format.space_after = sa
+            for run in p.runs:
+                run.font.name = _fonts[i]
+                run.font.size = _sizes[i]
+                run.bold = _bolds[i]
+    trPr = row._tr.get_or_add_trPr()
+    for e in trPr.findall(qn('w:cantSplit')):
+        trPr.remove(e)
+    cs = OxmlElement('w:cantSplit')
+    cs.set(qn('w:val'), '1')
+    trPr.append(cs)
+    if trheight_twips is not None:
+        for e in trPr.findall(qn('w:trHeight')):
+            trPr.remove(e)
+        h = OxmlElement('w:trHeight')
+        h.set(qn('w:val'), str(trheight_twips))
+        h.set(qn('w:hRule'), 'exact')
+        trPr.append(h)
+    if row_type is not None:
+        _apply_row_borders(row, row_type)
+    else:
+        for c in row.cells:
+            _apply_cell_border(c)
+    return row
+
+
+def _chain_setup_small_spacer(row, pts=4):
+    """Style a row as a small inter-section spacer matching _add_spacer(pts=pts).
+
+    All four cells empty (so the post-processor sub-group-subtotal detector at
+    fs_template_service.py:2289-2318 does NOT false-match). The paragraph mark
+    in every cell carries sz=pts*2 half-points so the row auto-sizes to the
+    same visual height as the body-level _add_spacer paragraph it replaces.
+    """
+    for cell in row.cells:
+        p = cell.paragraphs[0]
+        p.paragraph_format.space_before = Pt(0)
+        p.paragraph_format.space_after = Pt(0)
+        pPr = p._p.get_or_add_pPr()
+        for existing in pPr.findall(qn('w:rPr')):
+            pPr.remove(existing)
+        rPr = OxmlElement('w:rPr')
+        sz = OxmlElement('w:sz')
+        sz.set(qn('w:val'), str(int(pts * 2)))
+        rPr.append(sz)
+        pPr.append(rPr)
+        _apply_cell_border(cell)
+    trPr = row._tr.get_or_add_trPr()
+    for e in trPr.findall(qn('w:cantSplit')):
+        trPr.remove(e)
+    cs = OxmlElement('w:cantSplit')
+    cs.set(qn('w:val'), '1')
+    trPr.append(cs)
+    return row
+
+
+def _chain_setup_big_spacer(row, space_before_pts=18):
+    """Style a row as a large inter-section spacer matching the current
+    _eq_spacer paragraph (space_before=Pt(N), space_after=Pt(0), default font).
+
+    All four cells empty (avoids the sub-group-subtotal detector). The cell
+    paragraph carries space_before so the row height equals the original
+    body-level _eq_spacer's visual gap.
+    """
+    for cell in row.cells:
+        p = cell.paragraphs[0]
+        p.paragraph_format.space_before = Pt(space_before_pts)
+        p.paragraph_format.space_after = Pt(0)
+        _apply_cell_border(cell)
+    trPr = row._tr.get_or_add_trPr()
+    for e in trPr.findall(qn('w:cantSplit')):
+        trPr.remove(e)
+    cs = OxmlElement('w:cantSplit')
+    cs.set(qn('w:val'), '1')
+    trPr.append(cs)
+    return row
+
+
+# ---------------------------------------------------------------------------
 # Template builders
 # ---------------------------------------------------------------------------
 def _build_cover(entity_type):
@@ -770,47 +889,69 @@ def _build_detailed_pl(entity_type):
                          "{{ total_expenses_cy }}", "{{ total_expenses_py }}")
     _add_spacer(doc)
 
-    # Net Profit section — shows tax breakdown when income tax exists
-    # Pre-tax profit — grand_total=True because when has_income_tax is false
-    # this IS the final "Net Profit / (Loss)" line with double bottom.
-    # When has_income_tax is true, the post-processor reclassifies by label.
-    _add_total_row(doc, "{% if has_income_tax %}Operating profit before income tax{% else %}Net Profit / (Loss){% endif %}",
-                   "{{ net_profit_pretax_cy }}", "{{ net_profit_pretax_py }}",
-                   grand_total=True)
+    # === Detailed P&L combined profit-chain table ===
+    # Single multi-row table covering the pre-tax / Net Profit row (always
+    # rendered) plus the income-tax and after-tax rows (rendered when
+    # has_income_tax=True via {%tr if %} / {%tr endif %}). One atomic table so
+    # the chain stays together via intra-table keepNext (applied by Fix 8 in
+    # fs_template_service.py); cross-table keepNext is unreliable in
+    # LibreOffice (see 21dbe86 diagnostic).
+    #
+    # The pre-tax row's label is an inline {% if/else/endif %} that picks
+    # between "Operating profit before income tax" (taxed) and "Net Profit /
+    # (Loss)" (no-tax) — intra-cell, no residual paragraph.
+    # Border treatment is resolved by the post-processor's label-driven
+    # classifier (fs_template_service.py:2211-2277):
+    #   has_income_tax=True  -> "Operating profit before income tax" in
+    #                           _SECTION_TOTAL_LABELS -> top single only.
+    #   has_income_tax=False -> "Net Profit / (Loss)" in _GRAND_TOTAL_LABELS
+    #                           -> top single + bottom double. The builder
+    # sets GRAND_TOTAL borders defensively; the post-processor rewrites
+    # them to SECTION_TOTAL when the taxed branch wins.
+    profit = doc.add_table(rows=1, cols=4, style='Normal Table')
+    _set_table_full_width(profit)
+    _clear_table_borders(profit)
+    profit.autofit = False
+    for _i, _w in enumerate(COL_WIDTHS):
+        profit.columns[_i].width = _w
 
-    # Income tax line (only when tax exists) — paragraph-level conditional so
-    # the host paragraphs are consumed entirely on render (no residual empty
-    # paragraph). Bare {% if %} left a trailing empty paragraph after the
-    # after-tax row that tipped content onto a header/footer-only phantom page.
-    _add_para(doc, "{%p if has_income_tax %}", size=Pt(1))
+    # Row 1: Pre-tax row (always rendered). Inline label conditional.
+    _chain_setup_row(profit.rows[0],
+        ["{% if has_income_tax %}Operating profit before income tax"
+         "{% else %}Net Profit / (Loss){% endif %}",
+         "",
+         "{{ net_profit_pretax_cy }}",
+         "{{ net_profit_pretax_py }}"],
+        bolds=[True] * 4,
+        row_type=ROW_TYPE_GRAND_TOTAL)
 
-    # Income tax row
-    tax_table = doc.add_table(rows=1, cols=4, style='Normal Table')
-    _set_table_full_width(tax_table)
-    _clear_table_borders(tax_table)
-    tax_table.autofit = False
-    for i, width in enumerate(COL_WIDTHS):
-        tax_table.columns[i].width = width
-    tax_row = tax_table.rows[0]
-    tax_row.cells[0].text = "Income tax attributable to operating profit (loss)"
-    tax_row.cells[2].text = "{{ income_tax_cy }}"
-    tax_row.cells[3].text = "{{ income_tax_py }}"
-    for i in range(4):
-        for p in tax_row.cells[i].paragraphs:
-            p.alignment = WD_ALIGN_PARAGRAPH.RIGHT if i >= 2 else WD_ALIGN_PARAGRAPH.LEFT
-            p.paragraph_format.space_before = Pt(0)
-            p.paragraph_format.space_after = Pt(3)
-            for run in p.runs:
-                run.font.name = FONT_NAME
-                run.font.size = FONT_SIZE
-        _apply_cell_border(tax_row.cells[i])
+    # Row 2: {%tr if has_income_tax %} -- row-level conditional opener, consumed.
+    _chain_setup_row(profit.add_row(),
+        ["{%tr if has_income_tax %}", "", "", ""],
+        trheight_twips=1)
 
-    # After-tax profit (grand total — double bottom on amount columns)
-    _add_total_row(doc, "Operating profit after income tax",
-                   "{{ net_profit_cy }}", "{{ net_profit_py }}",
-                   grand_total=True)
+    # Row 3: Income tax row -- label not in any total list, so no borders and
+    # not bold (data-style).
+    _chain_setup_row(profit.add_row(),
+        ["Income tax attributable to operating profit (loss)",
+         "",
+         "{{ income_tax_cy }}",
+         "{{ income_tax_py }}"])
 
-    _add_para(doc, "{%p endif %}", size=Pt(1))
+    # Row 4: After-tax row -- GRAND_TOTAL (top single + bottom double). When
+    # rendered (taxed branch), this is the last visible row in the chain table.
+    _chain_setup_row(profit.add_row(),
+        ["Operating profit after income tax",
+         "",
+         "{{ net_profit_cy }}",
+         "{{ net_profit_py }}"],
+        bolds=[True] * 4,
+        row_type=ROW_TYPE_GRAND_TOTAL)
+
+    # Row 5: {%tr endif %} -- conditional closer, consumed.
+    _chain_setup_row(profit.add_row(),
+        ["{%tr endif %}", "", "", ""],
+        trheight_twips=1)
 
     return doc
 
@@ -863,34 +1004,142 @@ def _build_balance_sheet(entity_type):
                          "{{ total_current_liab_cy }}", "{{ total_current_liab_py }}")
     _add_spacer(doc)
 
-    # Non-Current Liabilities — suppressed when zero. Paragraph-level conditional
-    # ({%p if %}) so the host tag paragraphs are consumed entirely on render;
-    # bare {% if %} left residual empty paragraphs around the section (see 1c22d9a).
-    _add_para(doc, "{%p if has_noncurrent_liabilities %}", size=Pt(1))
-    _add_financial_table(doc, "Non-Current Liabilities", "noncurrent_liabilities",
-                         "Total Non-Current Liabilities",
-                         "{{ total_noncurrent_liab_cy }}", "{{ total_noncurrent_liab_py }}")
-    _add_spacer(doc)
-    _add_para(doc, "{%p endif %}", size=Pt(1))
+    # === BS combined chain table ===
+    # One multi-row table covering Non-Current Liabilities (conditional) ->
+    # Total Non-Current Liabilities -> Total Liabilities -> Net Assets ->
+    # Equity section -> Total Equity. Single table so the chain stays together
+    # via intra-table keepNext (applied by Fix 8 in fs_template_service.py);
+    # cross-table keepNext is unreliable in LibreOffice (see 21dbe86 diagnostic).
+    # The NCL section is row-level conditional via {%tr if has_noncurrent_liabilities %}
+    # / {%tr endif %} so when an entity has no NCL the rows are simply removed.
+    # Current Liabilities deliberately stays as a separate table above this one
+    # (natural break point).
+    chain = doc.add_table(rows=1, cols=4, style='Normal Table')
+    _set_table_full_width(chain)
+    _clear_table_borders(chain)
+    chain.autofit = False
+    for _i, _w in enumerate(COL_WIDTHS):
+        chain.columns[_i].width = _w
 
-    # Total Liabilities — single top only, no bottom line (flows into Net Assets)
-    _add_total_row(doc, "Total Liabilities", "{{ total_liabilities_cy }}", "{{ total_liabilities_py }}",
-                   row_type=ROW_TYPE_SUBCATEGORY_SUBTOTAL)
-    _add_spacer(doc)
+    # Row 1: {%tr if has_noncurrent_liabilities %} -- row-level conditional opener,
+    # consumed by docxtpl at render time.
+    _chain_setup_row(chain.rows[0],
+        ["{%tr if has_noncurrent_liabilities %}", "", "", ""],
+        trheight_twips=1)
 
-    # Net Assets — major total (double underline below)
-    _add_total_row(doc, "Net Assets", "{{ net_assets_cy }}", "{{ net_assets_py }}",
-                   row_type=ROW_TYPE_MAJOR_TOTAL)
+    # Row 2: NCL section heading -- "Non-Current Liabilities" / "Note" / year / prior_year.
+    # Cell 0 Arial Bold 11pt; cells 1-3 Arial Bold 9pt. No borders.
+    _chain_setup_row(chain.add_row(),
+        ["Non-Current Liabilities", "Note", "{{ year }}", "{{ prior_year }}"],
+        fonts=[FONT_HEADING] * 4,
+        sizes=[FONT_SIZE_HEADING, Pt(9), Pt(9), Pt(9)],
+        bolds=[True] * 4,
+        space_after=Pt(0))
 
-    # Pt(18) gap before Equity heading (matches Expenses gap in P&L)
-    _eq_spacer = doc.add_paragraph()
-    _eq_spacer.paragraph_format.space_before = Pt(18)
-    _eq_spacer.paragraph_format.space_after = Pt(0)
+    # Row 3: NCL dollar row -- "" / "" / "$" / "$".
+    _chain_setup_row(chain.add_row(),
+        ["", "", "$", "$"],
+        fonts=[FONT_HEADING] * 4,
+        sizes=[Pt(9)] * 4,
+        bolds=[True] * 4,
+        space_after=Pt(0))
 
-    # Equity — Total Equity is a terminal closing figure (single top + double bot).
-    _add_financial_table(doc, "Equity", "equity", "Total Equity",
-                         "{{ total_equity_cy }}", "{{ total_equity_py }}",
-                         total_row_type=ROW_TYPE_MAJOR_TOTAL)
+    # Row 4: {%tr for item in noncurrent_liabilities %} -- loop opener, consumed.
+    _chain_setup_row(chain.add_row(),
+        ["{%tr for item in noncurrent_liabilities %}", "", "", ""],
+        trheight_twips=1)
+
+    # Row 5: NCL data row template (expands to N rows during docxtpl render).
+    _chain_setup_row(chain.add_row(),
+        ["{{ item.account_name }}", "{{ item.note_ref }}",
+         "{{ item.cy_formatted }}", "{{ item.py_formatted }}"])
+
+    # Row 6: {%tr endfor %} -- loop closer, consumed.
+    _chain_setup_row(chain.add_row(),
+        ["{%tr endfor %}", "", "", ""],
+        trheight_twips=1)
+
+    # Row 7: Total Non-Current Liabilities -- SECTION_TOTAL (single top on cols 2-3).
+    _chain_setup_row(chain.add_row(),
+        ["Total Non-Current Liabilities", "",
+         "{{ total_noncurrent_liab_cy }}", "{{ total_noncurrent_liab_py }}"],
+        bolds=[True] * 4,
+        row_type=ROW_TYPE_SECTION_TOTAL)
+
+    # Row 8: small spacer matching _add_spacer(pts=4) between NCL section and
+    # {%tr endif %} -- gives the same visual gap as the body-level spacer it replaces.
+    _chain_setup_small_spacer(chain.add_row())
+
+    # Row 9: {%tr endif %} -- conditional closer, consumed.
+    _chain_setup_row(chain.add_row(),
+        ["{%tr endif %}", "", "", ""],
+        trheight_twips=1)
+
+    # Row 10: Total Liabilities -- SUBCATEGORY_SUBTOTAL (single top on cols 2-3 only).
+    # Label deliberately excluded from all label lists in fs_template_service.py
+    # (see comment at 1797-1799 there); border set by builder and untouched by
+    # post-processor.
+    _chain_setup_row(chain.add_row(),
+        ["Total Liabilities", "",
+         "{{ total_liabilities_cy }}", "{{ total_liabilities_py }}"],
+        bolds=[True] * 4,
+        row_type=ROW_TYPE_SUBCATEGORY_SUBTOTAL)
+
+    # Row 11: small spacer matching _add_spacer(pts=4) between Total Liabilities
+    # and Net Assets.
+    _chain_setup_small_spacer(chain.add_row())
+
+    # Row 12: Net Assets -- MAJOR_TOTAL (single top + double bottom on cols 2-3).
+    _chain_setup_row(chain.add_row(),
+        ["Net Assets", "",
+         "{{ net_assets_cy }}", "{{ net_assets_py }}"],
+        bolds=[True] * 4,
+        row_type=ROW_TYPE_MAJOR_TOTAL)
+
+    # Row 13: big spacer matching the former _eq_spacer paragraph (space_before
+    # Pt(18), default font, space_after Pt(0)).
+    _chain_setup_big_spacer(chain.add_row())
+
+    # Row 14: Equity section heading -- "Equity" / "Note" / year / prior_year.
+    _chain_setup_row(chain.add_row(),
+        ["Equity", "Note", "{{ year }}", "{{ prior_year }}"],
+        fonts=[FONT_HEADING] * 4,
+        sizes=[FONT_SIZE_HEADING, Pt(9), Pt(9), Pt(9)],
+        bolds=[True] * 4,
+        space_after=Pt(0))
+
+    # Row 15: Equity dollar row.
+    _chain_setup_row(chain.add_row(),
+        ["", "", "$", "$"],
+        fonts=[FONT_HEADING] * 4,
+        sizes=[Pt(9)] * 4,
+        bolds=[True] * 4,
+        space_after=Pt(0))
+
+    # Row 16: {%tr for item in equity %} -- loop opener, consumed.
+    _chain_setup_row(chain.add_row(),
+        ["{%tr for item in equity %}", "", "", ""],
+        trheight_twips=1)
+
+    # Row 17: Equity data row template (expands to M rows during render).
+    _chain_setup_row(chain.add_row(),
+        ["{{ item.account_name }}", "{{ item.note_ref }}",
+         "{{ item.cy_formatted }}", "{{ item.py_formatted }}"])
+
+    # Row 18: {%tr endfor %} -- loop closer, consumed.
+    _chain_setup_row(chain.add_row(),
+        ["{%tr endfor %}", "", "", ""],
+        trheight_twips=1)
+
+    # Row 19: Total Equity -- MAJOR_TOTAL (single top + double bottom).
+    # LAST visible row in the chain table; Fix 8 leaves keepNext OFF here so
+    # the table can move forward as a block on overflow without binding past
+    # itself (the chain terminates here cleanly).
+    _chain_setup_row(chain.add_row(),
+        ["Total Equity", "",
+         "{{ total_equity_cy }}", "{{ total_equity_py }}"],
+        bolds=[True] * 4,
+        row_type=ROW_TYPE_MAJOR_TOTAL)
 
     return doc
 

@@ -2328,69 +2328,42 @@ def _post_process_fs_doc(buffer, doc_type, has_prior=True, entity_type=None):
                     _fix_inline_py_in_row(row, qn, OxmlElement, copy, re)
 
         # --------------------------------------------------------------
-        # Cross-table binding (Rule 2 + Rule 3) — additive to Fix 8.
-        # Runs after the intra-table chains above are in place.  Each chain
-        # degrades gracefully: landmarks absent for a doc_type are skipped.
+        # Chain pagination — atomic-table approach (handled by the builder).
+        # The BS liabilities→equity chain and the Detailed P&L taxed profit
+        # chain are each rendered as a single combined table by the builder
+        # (see generate_fs_templates.py::_build_balance_sheet and
+        # _build_detailed_pl). Intra-table keepNext-except-last is applied
+        # above by Fix 8, which is the reliable mechanism in LibreOffice;
+        # cross-table keepNext is unreliable (see 21dbe86 diagnostic), so
+        # the previous _bind_chain / _apply_*_atomic cross-table approach
+        # was retired here. We still log chain presence (gated on the same
+        # landmarks as before) so pagination behaviour is visible in logs.
+        # Helper definitions (_bind_chain, _apply_ncl_atomic,
+        # _apply_equity_atomic, _find_landmark_row, _spacer_paras_between,
+        # _row_keep_with_next, _para_el_keep_next) are retained for any
+        # future chain that cannot be expressed intra-table.
         # --------------------------------------------------------------
 
-        # Balance Sheet: [Non-Current Liabilities → Total Non-Current
-        # Liabilities →] Total Liabilities → Net Assets → Equity → Total Equity.
-        # Gated on the Total Liabilities landmark so it only fires on the BS
-        # (and never warns on P&L docs that legitimately lack these rows).
-        #
-        # The chain is extended backward to include the Non-Current Liabilities
-        # section header and its subtotal WHEN that section is present, so the
-        # whole liabilities→equity story stays on one page instead of binding
-        # as a block that strands NCL on the preceding page.  Anchor-gated on
-        # the NCL header landmark: entity types / data without a non-current
-        # liabilities section (e.g. no-tax trusts) fall back to the original
-        # 4-link chain with no warnings.  The full chain is bounded to ~12–20
-        # rows worst-case — well under a blank page — so it cannot cause
-        # cascade overflow (cf. Rule 2.5); worst case it moves to a fresh page
-        # together rather than getting stuck unable to break.
+        # Balance Sheet liabilities→equity chain. Gated on the Total
+        # Liabilities landmark so we only log on BS docs.
         _tl_table, _tl_row = _find_landmark_row(doc, ["Total Liabilities"])
         if _tl_row is not None:
-            _bs_chain = []
-            if _find_landmark_row(doc, ["Non-Current Liabilities"])[0] is not None:
-                _bs_chain.extend([
-                    ["Non-Current Liabilities"],
-                    ["Total Non-Current Liabilities"],
-                ])
-            _bs_chain.extend([
-                ["Total Liabilities"],
-                ["Net Assets"],
-                ["Equity"],          # the Equity section header row
-                ["Total Equity"],
-            ])
-            _bind_chain(
-                doc,
-                _bs_chain,
-                chain_name="BS liabilities → equity",
-                warn_on_missing=True,
+            logger.info(
+                "[fs_pagination] BS chain: atomic table "
+                "(builder-handled; Fix 8 intra-table keepNext)"
             )
-            _apply_ncl_atomic(doc)
-            _apply_equity_atomic(doc)
 
-        # Detailed P&L profit chain. Confirmed rendered labels (python-docx):
-        #   has_income_tax → "Operating profit before income tax",
-        #                    "Income tax attributable to operating profit (loss)",
-        #                    "Operating profit after income tax"
-        #   no income tax  → single "Net Profit / (Loss)" row (no chain).
-        # Gated on the pre-tax landmark so no-tax entities (e.g. trusts) do not
-        # emit spurious "landmark not found" warnings.
+        # Detailed P&L profit chain — taxed branch only. Gated on the pre-tax
+        # landmark so no-tax entities do not emit spurious logging. The no-tax
+        # single "Net Profit / (Loss)" line is left as a 1-row table by the
+        # builder (the {%tr if has_income_tax %} block collapses it).
         _pretax_table, _pretax_row = _find_landmark_row(
             doc, ["Operating profit before income tax"]
         )
         if _pretax_row is not None:
-            _bind_chain(
-                doc,
-                [
-                    ["Operating profit before income tax"],
-                    ["Income tax attributable to operating profit (loss)"],
-                    ["Operating profit after income tax"],
-                ],
-                chain_name="P&L profit chain",
-                warn_on_missing=True,
+            logger.info(
+                "[fs_pagination] P&L profit chain: atomic table "
+                "(builder-handled; Fix 8 intra-table keepNext)"
             )
         elif doc_type == "DETAILED_PL":
             logger.info(
