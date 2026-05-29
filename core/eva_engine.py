@@ -997,24 +997,20 @@ def _build_check_context(financial_year, check_id, risk_flags=None):
     try:
         from core.models import EvaLearnedLesson
         from django.db.models import Q
-        # Retrieve lessons relevant to this check_id, scoped to this entity
-        # or firm-wide (entity=None). Order by confidence descending.
+        # Retrieve lessons scoped to this entity or firm-wide (source_entity=None),
+        # ordered by priority_weight (the retrieval boost set at synthesis time).
         lessons = EvaLearnedLesson.objects.filter(
-            Q(entity=fy.entity) | Q(entity__isnull=True),
-            check_id=check_id,
+            Q(source_entity=fy.entity) | Q(source_entity__isnull=True),
             is_active=True,
-        ).order_by('-confidence_score', '-created_at')[:5]
+        ).order_by('-priority_weight', '-created_at')[:5]
         if lessons.exists():
             learned_lessons_text = "\n\n=== FIRM LEARNED RULES (from prior reviews) ==="
             learned_lessons_text += "\nThese rules were learned from accountant corrections. Apply them strictly.\n"
             for lesson in lessons:
-                scope = f" [Entity: {fy.entity.name}]" if lesson.entity else " [Firm-wide]"
-                learned_lessons_text += (
-                    f"\n\u2022 {lesson.lesson_text}"
-                    f" (Confidence: {lesson.confidence_score:.0%}{scope})"
-                )
+                scope = f" [Entity: {fy.entity.entity_name}]" if lesson.source_entity else " [Firm-wide]"
+                learned_lessons_text += f"\n\u2022 {lesson.lesson_text}{scope}"
     except Exception as e:
-        logger.debug(f"Learned lessons retrieval failed for {check_id}: {e}")
+        logger.warning(f"Learned lessons retrieval failed for {check_id}: {e}")
 
     # Assemble: Hard Facts first, then KB context, then learned lessons,
     # then base context, then extras
