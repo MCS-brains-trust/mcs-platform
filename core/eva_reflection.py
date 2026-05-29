@@ -342,14 +342,15 @@ def run_nightly_reflection(hours_back: int = 24) -> dict:
 
     since = datetime.now(timezone.utc) - timedelta(hours=hours_back)
 
-    # Step 1: Extract signals
-    try:
-        signals = _extract_signals(since)
-        logger.info(f"Extracted {len(signals)} signals since {since}")
-    except Exception as e:
-        logger.error(f"Signal extraction failed: {e}")
-        errors.append(f"Signal extraction: {e}")
-        signals = []
+    # Step 1: Extract signals.
+    # Exceptions here are programmer errors (schema drift, broken query),
+    # NOT empty input. Let them propagate so Celery retries (max_retries=2)
+    # engage and the failure surfaces — a silent SUCCESS return on field-name
+    # drift is exactly how this engine ran broken for 25+ nights pre-fix.
+    # An empty signal window is a legitimate success: each source loop
+    # iterates zero rows without raising and signals stays [].
+    signals = _extract_signals(since)
+    logger.info(f"Extracted {len(signals)} signals since {since}")
 
     if not signals:
         logger.info("No signals to process. Reflection complete.")
