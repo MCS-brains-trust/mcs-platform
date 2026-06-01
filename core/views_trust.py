@@ -1069,9 +1069,12 @@ def trust_post_distribution(request, pk):
     POST /api/years/<pk>/trust-workspace/post-distribution/
     Creates and posts journal entries from the selected TaxPlanningScenario.
 
-    DR  Retained Profits / P&L Appropriation (4199)
-    CR  Beneficiary loan account per beneficiary (from ClientAccountMapping,
-        falls back to 3100 Distribution Payable if no mapping configured)
+    DR  Profit Distribution — Appropriation (4199)
+    CR  Beneficiary 4004.NN loan account per beneficiary (officer-linked
+        EntityChartOfAccount, "Funds loaned to trust").
+
+    Refuses to post if any beneficiary with a positive distribution has no
+    4004.NN loan account — there is no silent fallback to 3100.
 
     Journal is created as POSTED and written to TB via _post_journal_to_tb.
     """
@@ -1102,42 +1105,40 @@ def trust_post_distribution(request, pk):
         )
 
     # Build distribution rows from TaxPlanningScenario.distributions
-    from core.models import ClientAccountMapping
+    from core.models import EntityChartOfAccount
 
     officer_map = {
         str(o.pk): o.full_name
         for o in EntityOfficer.objects.filter(entity=fy.entity)
     }
 
-    # Build a lookup: {officer_pk_str: (account_code, account_name)} for
-    # the beneficiary's loan account from ClientAccountMapping.
-    # Priority: 4004.x (Funds loaned to trust) → 9003.x (9000-series capital
-    # account COA equivalent) → any mapping for this officer (lowest code).
+    # Build a lookup: {officer_pk_str: (account_code, account_name)} for the
+    # beneficiary's 4004.NN loan account ("Funds loaned to trust"), resolved
+    # from the officer-linked EntityChartOfAccount materialised by the
+    # 4000-family provisioning (core/beneficiary_account_service.py). The
+    # distribution credits this account.
+    #
+    # There is NO 3100 / 9003 / lowest-code fallback: a missing 4004.NN
+    # account is a hard error (the gate below refuses to post) rather than a
+    # silent mis-post. The lowest 4004.NN per officer wins if duplicates exist.
     ben_loan_accounts = {}
-    base_qs = ClientAccountMapping.objects.filter(
-        entity=fy.entity,
-        beneficiary_officer__isnull=False,
-    ).select_related("beneficiary_officer")
-
-    officer_ids = {str(o.pk) for o in EntityOfficer.objects.filter(entity=fy.entity)}
-    for officer_pk in officer_ids:
-        cam = (
-            base_qs.filter(beneficiary_officer_id=officer_pk,
-                           client_account_code__startswith="4004")
-                   .order_by("client_account_code").first()
-            or base_qs.filter(beneficiary_officer_id=officer_pk,
-                              client_account_code__startswith="9003")
-                      .order_by("client_account_code").first()
-            or base_qs.filter(beneficiary_officer_id=officer_pk)
-                      .order_by("client_account_code").first()
+    for eca in (
+        EntityChartOfAccount.objects.filter(
+            entity=fy.entity,
+            beneficiary_officer__isnull=False,
+            account_code__startswith="4004",
+            is_active=True,
         )
-        if cam is not None:
-            ben_loan_accounts[officer_pk] = (
-                cam.client_account_code,
-                cam.client_account_name,
-            )
+        .select_related("beneficiary_officer")
+        .order_by("account_code")
+    ):
+        officer_pk = str(eca.beneficiary_officer_id)
+        ben_loan_accounts.setdefault(
+            officer_pk, (eca.account_code, eca.account_name)
+        )
 
     rows = []
+    missing = []  # beneficiaries with a positive distribution but no 4004.NN
     total_distributed = Decimal("0")
     for entry in (scenario.distributions or []):
         amount = Decimal(str(entry.get("proposed_distribution", 0)))
@@ -1145,15 +1146,30 @@ def trust_post_distribution(request, pk):
             continue
         ben_id = str(entry.get("beneficiary_id", ""))
         ben_name = officer_map.get(ben_id, f"Beneficiary {ben_id[:8]}")
-        # Look up beneficiary's mapped loan account
+        # Resolve the beneficiary's 4004.NN loan account. No fallback — a
+        # missing account is collected and reported as a hard error below.
         loan_acct = ben_loan_accounts.get(ben_id)
+        if loan_acct is None:
+            missing.append(ben_name)
+            continue
         rows.append({
             "name": ben_name,
             "amount": amount,
-            "cr_code": loan_acct[0] if loan_acct else "3100",
-            "cr_name": loan_acct[1] if loan_acct else f"Distribution Payable — {ben_name}",
+            "cr_code": loan_acct[0],
+            "cr_name": loan_acct[1],
         })
         total_distributed += amount
+
+    if missing:
+        names = ", ".join(missing)
+        return JsonResponse(
+            {"error": (
+                f"Cannot post distribution: no 4004 (Funds loaned to trust) "
+                f"loan account exists for: {names}. Create each beneficiary's "
+                f"4004.NN account before posting."
+            )},
+            status=400,
+        )
 
     if not rows:
         return JsonResponse(
@@ -1195,8 +1211,9 @@ def trust_post_distribution(request, pk):
             )
             line_num += 1
 
-            # CR side: one line per beneficiary — posts to their mapped
-            # loan account if configured, otherwise falls back to 3100.
+            # CR side: one line per beneficiary — posts to their 4004.NN
+            # loan account (guaranteed present; the gate above refused to
+            # post if any beneficiary lacked one).
             for row in rows:
                 JournalLine.objects.create(
                     journal=journal,

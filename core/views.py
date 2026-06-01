@@ -3571,67 +3571,134 @@ def _populate_rolled_forward_fy(current_fy, new_fy):
         new_asset.save()
         dep_rolled += 1
     # -----------------------------------------------------------------
-    # Pass 6: For trustss — allocate confirmed distribution to beneficiary
-    # payable accounts and reduce undistributed income accordingly.
+    # Pass 6: Trust beneficiary equity consolidation (4000-family model).
+    #
+    # The normal BS passes (1-2) already carried each beneficiary's
+    # 4000.NN / 4004.NN / 4053.NN closing balances into new_fy as opening
+    # lines. Here we fold them into a single brought-forward equity line per
+    # beneficiary and clear the working accounts for the new year:
+    #
+    #     next 4000.NN = prior 4000.NN + 4004.NN + 4053.NN   (signed sum)
+    #     then 4004.NN, 4053.NN and 4199 reset to nil.
+    #
+    # SIGNS — derived in stored-sign terms, not magnitudes. Balances are
+    # stored signed (equity/loan credits negative, physical-distribution
+    # debits positive). The spec's magnitude formula
+    #     |4000| + |4004| - |4053|
+    # equals the algebraic SUM of the signed balances, because 4053 (a Dr)
+    # carries the opposite sign to the credit-negative 4000/4004. Worked
+    # example (Vincent, FY2024->FY2025):
+    #     prior 4000.01 = -70.46 (Cr), 4004.01 = -17,834.03 (Cr),
+    #     4053.01 = +13,255.42 (Dr)
+    #     (-70.46) + (-17,834.03) + (+13,255.42) = -4,649.07 (Cr)   ✔
+    # We implement the signed sum so it stays correct regardless of each
+    # component's individual sign. The sum is balance-preserving (deltas
+    # across the three accounts net to zero), so the new-year BS still
+    # balances after consolidation.
+    #
+    # Distribution is NOT re-derived from any scenario here — it is already a
+    # posted journal reflected in the rolled-forward TB closing balances.
+    # Suffixes are matched on the .NN parsed from account_code, never from a
+    # positional counter, and a beneficiary present on 4004.NN but absent on
+    # 4053.NN (distribution but no physical payment) is handled (missing
+    # component contributes 0 to the signed sum).
     # -----------------------------------------------------------------
     dist_rolled = 0
     TRUST_TYPES = {"trust", "trust_unit", "trust_discretionary", "trust_hybrid"}
+    CONSOLIDATING_PARENTS = ("4000", "4004", "4053")
     if entity.entity_type in TRUST_TYPES:
-        try:
-            from core.models import TrustWorkspace, DistributionScenario, BeneficiaryProfile
-            workspace = TrustWorkspace.objects.filter(financial_year=current_fy).first()
-            if workspace:
-                confirmed = workspace.scenarios.filter(is_confirmed=True).first()
-                if confirmed and confirmed.allocations:
-                    # Build beneficiary name lookup: str(uuid) -> full_name
-                    bene_ids = list(confirmed.allocations.keys())
-                    officer_map = {}
-                    for bp in BeneficiaryProfile.objects.filter(
-                        trust_workspace=workspace
-                    ).select_related("beneficiary"):
-                        officer_map[str(bp.beneficiary_id)] = bp.beneficiary.full_name
+        # Aggregate prior-year (current_fy) signed closing balances per
+        # beneficiary suffix. account_map (Pass 1) already holds the true
+        # year-end closing per account_code.
+        bene_bal = {}   # suffix -> {"4000": D, "4004": D, "4053": D}
+        bene_meta = {}  # suffix -> representative line (for name / mapping)
+        for code, data in account_map.items():
+            parts = (code or "").split(".")
+            if len(parts) != 2:
+                continue
+            parent, suffix = parts[0], parts[1]
+            if parent not in CONSOLIDATING_PARENTS:
+                continue
+            slot = bene_bal.setdefault(
+                suffix, {"4000": _D("0"), "4004": _D("0"), "4053": _D("0")}
+            )
+            slot[parent] += data["closing"] or _D("0")
+            # Prefer the 4000.NN line's metadata for the consolidated line.
+            if suffix not in bene_meta or parent == "4000":
+                bene_meta[suffix] = data["rep"]
 
-                    total_distributed = _D("0")
-                    suffix = 1
-                    for bene_id, streams in confirmed.allocations.items():
-                        bene_total = sum(
-                            _D(str(v)) for v in streams.values() if v
-                        )
-                        if bene_total <= _D("0"):
-                            continue
-                        bene_name = officer_map.get(bene_id, f"Beneficiary {suffix}")
-                        account_code = f"3100.{suffix:02d}"
-                        account_name = f"Distribution Payable — {bene_name}"
-                        TrialBalanceLine.objects.create(
-                            financial_year=new_fy,
-                            account_code=account_code,
-                            account_name=account_name,
-                            opening_balance=-bene_total,  # credit = liability
-                            debit=_D("0"),
-                            credit=_D("0"),
-                            closing_balance=-bene_total,
-                            prior_debit=_D("0"),
-                            prior_credit=_D("0"),
-                            mapped_line_item=None,
-                            is_adjustment=False,
-                            source="rollover",
-                        )
-                        total_distributed += bene_total
-                        dist_rolled += 1
-                        suffix += 1
+        for suffix, slot in bene_bal.items():
+            consolidated = slot["4000"] + slot["4004"] + slot["4053"]
+            rep = bene_meta[suffix]
+            code_4000 = f"4000.{suffix}"
 
-                    # Reduce the undistributed income / retained profits line
-                    # in new_fy by the total distributed amount so the BS balances.
-                    if total_distributed > _D("0"):
-                        rp_line = new_fy.trial_balance_lines.filter(
-                            account_code="4199", source="rollover"
-                        ).first()
-                        if rp_line:
-                            rp_line.opening_balance -= total_distributed
-                            rp_line.closing_balance -= total_distributed
-                            rp_line.save(update_fields=["opening_balance", "closing_balance"])
-        except Exception:
-            pass  # Distribution allocation is best-effort; never block roll-forward
+            existing = new_fy.trial_balance_lines.filter(
+                account_code=code_4000, source="rollover"
+            ).first()
+            if existing:
+                existing.opening_balance = consolidated
+                existing.closing_balance = consolidated
+                existing.save(
+                    update_fields=["opening_balance", "closing_balance"]
+                )
+            else:
+                # No carried 4000.NN line (e.g. first-year beneficiary with
+                # only a 4004/4053 balance) — create the consolidated line.
+                name_4000 = (
+                    rep.account_name
+                    if (rep.account_code or "").startswith("4000")
+                    else "Opening balance - Beneficiary"
+                )
+                TrialBalanceLine.objects.create(
+                    financial_year=new_fy,
+                    account_code=code_4000,
+                    account_name=name_4000,
+                    opening_balance=consolidated,
+                    debit=_D("0"),
+                    credit=_D("0"),
+                    closing_balance=consolidated,
+                    prior_debit=_D("0"),
+                    prior_credit=_D("0"),
+                    mapped_line_item=rep.mapped_line_item,
+                    is_adjustment=False,
+                    source="rollover",
+                )
+
+            # Clear the working accounts (4004.NN, 4053.NN) for the new year,
+            # preserving the prior-year comparatives already set by Pass 2.
+            for parent in ("4004", "4053"):
+                new_fy.trial_balance_lines.filter(
+                    account_code=f"{parent}.{suffix}", source="rollover"
+                ).update(opening_balance=_D("0"), closing_balance=_D("0"))
+
+            dist_rolled += 1
+
+        # Reset the 4199 appropriation clearing account to nil for the new
+        # year. Only act for trusts we actually consolidated (4000-family);
+        # 9000-series trusts are left untouched. In the fully-distributed
+        # model 4199 already nets to ~nil after Pass 2. A material residual
+        # is genuine undistributed income that must carry forward — never
+        # silently dropped (that would unbalance the BS), so it is left in
+        # place and logged for review.
+        if dist_rolled:
+            for rp_line in new_fy.trial_balance_lines.filter(
+                account_code="4199", source="rollover"
+            ):
+                residual = rp_line.opening_balance or _D("0")
+                if abs(residual) > _D("0.05"):
+                    logger.warning(
+                        "Roll-forward %s -> %s: 4199 carries non-nil "
+                        "undistributed income %s; leaving it to carry forward "
+                        "rather than resetting to nil.",
+                        current_fy.year_label, new_fy.year_label, residual,
+                    )
+                    continue
+                if residual != _D("0"):
+                    rp_line.opening_balance = _D("0")
+                    rp_line.closing_balance = _D("0")
+                    rp_line.save(
+                        update_fields=["opening_balance", "closing_balance"]
+                    )
 
     return {
         "carried_bs": carried_bs,
