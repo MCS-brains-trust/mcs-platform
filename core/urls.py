@@ -454,6 +454,7 @@ urlpatterns = [
     path("api/years/<uuid:pk>/trust-workspace/generate/distribution-summary/", views_trust.trust_generate_distribution_summary, name="trust_generate_distribution_summary"),
     path("api/years/<uuid:pk>/trust-workspace/generate/100a-summary/", views_trust.trust_generate_100a_summary, name="trust_generate_100a_summary"),
     path("api/years/<uuid:pk>/trust-workspace/post-distribution/", views_trust.trust_post_distribution, name="trust_post_distribution"),
+    path("api/years/<uuid:pk>/trust-workspace/unpost-distribution/", views_trust.trust_unpost_distribution, name="trust_unpost_distribution"),
     path("api/years/<uuid:pk>/trust-workspace/recalculate-income/", views_trust.trust_recalculate_income, name="trust_recalculate_income"),
 
     # ===== WORK PAPERS TAB =====

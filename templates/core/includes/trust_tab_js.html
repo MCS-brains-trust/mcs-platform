@@ -306,6 +306,12 @@
             postContainer.classList.add('d-none');
             postedAlert.classList.remove('d-none');
             document.getElementById('posted-journal-ref').textContent = journalRef || '';
+            const unpostBtn = document.getElementById('unpost-distribution-btn');
+            if (unpostBtn) {
+                unpostBtn.disabled = false;
+                unpostBtn.innerHTML = '<i class="bi bi-arrow-counterclockwise"></i> Un-post';
+            }
+            document.getElementById('unpost-distribution-status').textContent = '';
         } else {
             postContainer.classList.add('d-none');
             postedAlert.classList.add('d-none');
@@ -361,6 +367,40 @@
             status.className = 'text-danger small';
             btn.disabled = false;
             btn.innerHTML = '<i class="bi bi-journal-arrow-up"></i> Post Distribution to Trial Balance';
+        }
+    };
+
+    window.unpostDistribution = async function() {
+        if (!confirm('Un-post this distribution? Its journal entries will be removed from the Trial Balance (or reversed if the year is locked).')) return;
+
+        const btn = document.getElementById('unpost-distribution-btn');
+        const status = document.getElementById('unpost-distribution-status');
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Un-posting...';
+        status.textContent = '';
+
+        try {
+            const resp = await fetch(`${BASE}/unpost-distribution/`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': CSRF },
+            });
+            const data = await resp.json();
+            if (data.success) {
+                // Gate re-reads: a voided journal is no longer live, so the
+                // post button returns automatically.
+                loadTaxPlanningScenarios();
+            } else {
+                status.textContent = data.error || 'Failed to un-post distribution';
+                status.className = 'text-danger small d-block mt-1';
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-arrow-counterclockwise"></i> Un-post';
+            }
+        } catch (e) {
+            console.error('Failed to un-post distribution:', e);
+            status.textContent = 'Network error';
+            status.className = 'text-danger small d-block mt-1';
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-arrow-counterclockwise"></i> Un-post';
         }
     };
 

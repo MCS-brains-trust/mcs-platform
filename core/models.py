@@ -1742,6 +1742,7 @@ class AdjustingJournal(models.Model):
     class JournalStatus(models.TextChoices):
         DRAFT = "draft", "Draft"
         POSTED = "posted", "Posted"
+        VOIDED = "voided", "Voided"
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     financial_year = models.ForeignKey(
@@ -1760,6 +1761,15 @@ class AdjustingJournal(models.Model):
         max_length=20,
         choices=JournalStatus.choices,
         default=JournalStatus.DRAFT,
+    )
+    is_trust_distribution = models.BooleanField(
+        default=False,
+        help_text=(
+            "True for the system-generated trust distribution journal posted "
+            "from the trust workspace. Structural signal used by the post "
+            "gate, the idempotency guard and the un-post action instead of "
+            "matching on the description text."
+        ),
     )
     journal_date = models.DateField()
     description = models.TextField()
@@ -1832,6 +1842,21 @@ class AdjustingJournal(models.Model):
     def can_delete(self):
         """Any journal can be deleted if the year is not locked."""
         return not self.financial_year.is_locked
+
+    @classmethod
+    def live_trust_distribution(cls, financial_year):
+        """Return the single live (posted, non-voided) trust distribution
+        journal for a financial year, or None.
+
+        Single source of truth for the post gate, the idempotency guard and
+        the un-post action. Keys off the ``is_trust_distribution`` structural
+        flag and ``status='posted'`` so a voided journal no longer counts.
+        """
+        return cls.objects.filter(
+            financial_year=financial_year,
+            is_trust_distribution=True,
+            status=cls.JournalStatus.POSTED,
+        ).first()
 
     def recalculate_totals(self):
         """Recalculate cached totals from lines."""

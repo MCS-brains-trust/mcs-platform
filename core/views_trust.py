@@ -212,12 +212,9 @@ def tax_planning_scenarios_api(request, pk):
             "distributions": distributions,
         })
 
-    # Check if a distribution journal already exists
-    fy_year = "".join(c for c in fy.year_label if c.isdigit()) or str(fy.end_date.year)
-    ref_prefix = f"DIST-{fy_year}"
-    existing_journal = AdjustingJournal.objects.filter(
-        financial_year=fy, description__startswith="Trust distribution"
-    ).first()
+    # Gate: a live (posted, non-voided) distribution journal hides the post
+    # button. Keyed off the structural flag — a voided journal restores it.
+    existing_journal = AdjustingJournal.live_trust_distribution(fy)
 
     return JsonResponse({
         "scenarios": result,
@@ -1093,14 +1090,13 @@ def trust_post_distribution(request, pk):
             status=400,
         )
 
-    # Guard against double-posting
-    existing = AdjustingJournal.objects.filter(
-        financial_year=fy, description__startswith="Trust distribution"
-    ).first()
+    # Idempotency guard: never stack a second distribution. Blocks while a
+    # live (posted, non-voided) distribution journal exists — un-post it first.
+    existing = AdjustingJournal.live_trust_distribution(fy)
     if existing:
         return JsonResponse(
-            {"error": f"Distribution journal {existing.reference_number} already exists. "
-                      "Delete it from the Journals tab first to repost."},
+            {"error": "A distribution is already posted for this year — "
+                      "un-post it first."},
             status=400,
         )
 
@@ -1185,6 +1181,7 @@ def trust_post_distribution(request, pk):
                 financial_year=fy,
                 journal_type=AdjustingJournal.JournalType.YEAR_END,
                 status=AdjustingJournal.JournalStatus.POSTED,
+                is_trust_distribution=True,
                 journal_date=fy.end_date,
                 description=f"Trust distribution — {scenario.scenario_name}",
                 narration=(
@@ -1243,4 +1240,124 @@ def trust_post_distribution(request, pk):
 
     except Exception as e:
         logger.exception("trust_post_distribution failed: %s", e)
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+@login_required
+@require_POST
+def trust_unpost_distribution(request, pk):
+    """
+    POST /api/years/<pk>/trust-workspace/unpost-distribution/
+
+    Un-post the live trust distribution for the year. Branches on FY
+    editability (mirrors the journal_delete teardown but soft-voids):
+
+      * Editable year (status draft/reopened AND locked_at/finalised_at None)
+        -> VOID: strip the journal's TB effect via the source_journal FK and
+        mark status='voided', keeping the journal record. The post gate
+        reopens (live distribution no longer exists).
+      * Finalised / locked year -> REVERSE: post a system-generated reversing
+        entry (debit/credit swapped) and leave both journals on the audit
+        trail. The original stays posted, so the gate remains closed (you
+        cannot re-post into a locked year).
+
+    Idempotent: 400 if there is no live distribution to un-post.
+    """
+    from core.views import (
+        _post_journal_to_tb, _reverse_journal_tb_lines,
+        _delete_orphaned_tb_lines_for_journal, _verify_tb_balance,
+        _log_action,
+    )
+
+    fy = get_object_or_404(FinancialYear, pk=pk)
+
+    if not getattr(request.user, "can_do_accounting", False):
+        return JsonResponse(
+            {"error": "You do not have permission to un-post journals."},
+            status=403,
+        )
+
+    journal = AdjustingJournal.live_trust_distribution(fy)
+    if journal is None:
+        return JsonResponse(
+            {"error": "No live distribution to un-post."}, status=400
+        )
+
+    # Decision 2: void only while the year is editable; otherwise reverse.
+    editable = (
+        fy.status in (FinancialYear.Status.DRAFT, FinancialYear.Status.REOPENED)
+        and fy.locked_at is None
+        and fy.finalised_at is None
+    )
+    orig_ref = journal.reference_number
+
+    try:
+        with transaction.atomic():
+            if editable:
+                # VOID — remove the journal's TB lines, keep the record.
+                _reverse_journal_tb_lines(journal)
+                _delete_orphaned_tb_lines_for_journal(journal)
+                journal.status = AdjustingJournal.JournalStatus.VOIDED
+                journal.save(update_fields=["status"])
+                _verify_tb_balance(fy)
+                action, ref = "voided", orig_ref
+                message = (
+                    f"Distribution journal {orig_ref} voided. "
+                    f"The post button is available again."
+                )
+            else:
+                # REVERSE — system-generated reversing entry; both kept.
+                reversal = AdjustingJournal.objects.create(
+                    financial_year=fy,
+                    journal_type=AdjustingJournal.JournalType.YEAR_END,
+                    status=AdjustingJournal.JournalStatus.POSTED,
+                    is_trust_distribution=False,  # the reversal is not the distribution
+                    journal_date=fy.end_date,
+                    description=f"Reversal of {orig_ref} — Trust distribution",
+                    narration=(
+                        f"System-generated reversal of distribution journal "
+                        f"{orig_ref} in a finalised/locked year."
+                    ),
+                    created_by=request.user,
+                    posted_by=request.user,
+                    posted_at=timezone.now(),
+                    total_debit=journal.total_credit,
+                    total_credit=journal.total_debit,
+                )
+                line_num = 1
+                for src in journal.lines.order_by("line_number", "id"):
+                    JournalLine.objects.create(
+                        journal=reversal,
+                        line_number=line_num,
+                        account_code=src.account_code,
+                        account_name=src.account_name,
+                        description=f"Reversal: {src.description}",
+                        debit=src.credit,
+                        credit=src.debit,
+                    )
+                    line_num += 1
+                _post_journal_to_tb(reversal, fy)
+                _verify_tb_balance(fy)
+                action, ref = "reversed", reversal.reference_number
+                message = (
+                    f"Distribution journal {orig_ref} reversed by system entry "
+                    f"{ref} (year is finalised/locked)."
+                )
+
+        _log_action(request, "adjustment", f"Un-posted ({action}) distribution {orig_ref}")
+        try:
+            from core.signals import trigger_risk_recalc
+            trigger_risk_recalc(fy, "distribution_unposted")
+        except Exception:
+            logger.exception("risk recalc after un-post failed for FY %s", fy.pk)
+
+        return JsonResponse({
+            "success": True,
+            "action": action,
+            "reference": ref,
+            "message": message,
+        })
+
+    except Exception as e:
+        logger.exception("trust_unpost_distribution failed: %s", e)
         return JsonResponse({"error": str(e)}, status=500)

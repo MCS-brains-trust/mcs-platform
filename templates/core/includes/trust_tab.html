@@ -193,9 +193,17 @@
             </div>
 
             <div id="distribution-posted-alert" class="alert alert-success mt-3 d-none">
-                <i class="bi bi-check-circle-fill"></i>
-                <strong>Distribution posted.</strong>
-                Journal <span id="posted-journal-ref"></span> has been written to the Trial Balance.
+                <div class="d-flex justify-content-between align-items-center gap-3">
+                    <div>
+                        <i class="bi bi-check-circle-fill"></i>
+                        <strong>Distribution posted.</strong>
+                        Journal <span id="posted-journal-ref"></span> has been written to the Trial Balance.
+                    </div>
+                    <button class="btn btn-sm btn-outline-danger flex-shrink-0" onclick="unpostDistribution()" id="unpost-distribution-btn">
+                        <i class="bi bi-arrow-counterclockwise"></i> Un-post
+                    </button>
+                </div>
+                <span class="text-muted small d-block mt-1" id="unpost-distribution-status"></span>
             </div>
         </div>
 
