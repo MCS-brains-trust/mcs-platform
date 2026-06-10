@@ -1485,9 +1485,11 @@ class TrialBalanceLine(models.Model):
         ('journal_upload', 'Journal Upload'),
         ('rollover', 'Rolled Forward'),
         ('general_pool', 'General Pool Depreciation'),
+        ('depreciation_schedule', 'Depreciation Schedule Posting'),
+        ('depreciation_reversal', 'Depreciation Schedule Reversal'),
     ]
     source = models.CharField(
-        max_length=20, choices=SOURCE_CHOICES, default='tb_import', blank=True,
+        max_length=30, choices=SOURCE_CHOICES, default='tb_import', blank=True,
         help_text="Where this line originated from",
     )
     description = models.CharField(
@@ -1736,6 +1738,7 @@ class AdjustingJournal(models.Model):
         ADJUSTING = "adjusting", "Adjusting Entry"
         YEAR_END = "year_end", "Year-End Entry"
         DEPRECIATION = "depreciation", "Depreciation Entry"
+        DEPRECIATION_REVERSAL = "dep_reversal", "Depreciation Reversal"
         TAX = "tax", "Tax Adjustment"
         TAX_PROVISION = "tax_provision", "Tax Provision"
 

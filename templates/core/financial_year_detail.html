@@ -999,13 +999,18 @@ function quickGenerateEngagementLetter(entityPk, fyPk) {
                 <a href="{% url 'core:depreciation_pdf' pk=fy.pk %}" class="btn btn-outline-secondary btn-sm" title="Download depreciation schedule as PDF">
                     <i class="bi bi-file-earmark-pdf"></i> Download PDF
                 </a>
-                <form method="post" action="{% url 'core:depreciation_post_to_tb' pk=fy.pk %}" class="d-inline"
-                      onsubmit="return confirm('This will create a depreciation journal entry and post it to the trial balance.\n\nTotal business depreciation: ${{ dep_total_depreciation|floatformat:2 }}\n\nContinue?');">
-                    {% csrf_token %}
-                    <button type="submit" class="btn btn-success btn-sm"{% if fy.is_locked %} disabled{% endif %}>
-                        <i class="bi bi-journal-arrow-up"></i> Post to Trial Balance
-                    </button>
-                </form>
+                {% if dep_post_status == 'in_sync' %}
+                <span class="badge bg-success ms-1" title="Schedule and trial balance agree">In sync</span>
+                {% elif dep_post_status == 'out_of_sync' %}
+                <span class="badge bg-warning text-dark ms-1" title="Schedule has changed since last post">Out of sync</span>
+                {% else %}
+                <span class="badge bg-secondary ms-1">Not posted</span>
+                {% endif %}
+                <button type="button" class="btn btn-success btn-sm"
+                        data-bs-toggle="modal" data-bs-target="#depPostPreviewModal"
+                        {% if fy.is_locked %}disabled{% endif %}>
+                    <i class="bi bi-journal-arrow-up"></i> Post to Trial Balance
+                </button>
                 {% endif %}
             </div>
         </div>
@@ -1119,6 +1124,92 @@ function quickGenerateEngagementLetter(entityPk, fyPk) {
             <p class="small">Add assets manually or roll forward from the prior year.</p>
         </div>
         {% endif %}
+    </div>
+
+    <!-- ===== DEPRECIATION POST PREVIEW MODAL ===== -->
+    <div class="modal fade" id="depPostPreviewModal" tabindex="-1" aria-labelledby="depPostPreviewModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="depPostPreviewModalLabel">
+                        <i class="bi bi-journal-arrow-up"></i> Confirm: Post Depreciation to Trial Balance
+                    </h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    {% if dep_resolution_error %}
+                    <div class="alert alert-warning py-2 small mb-3">
+                        <strong>Account resolution warning:</strong> {{ dep_resolution_error }}
+                        Preview may be incomplete. Posting will fail unless resolved.
+                    </div>
+                    {% endif %}
+                    <p class="text-muted small mb-3">
+                        All non-rollover current-year movement in the target accounts will be
+                        reversed, then the schedule total re-posted. Opening (rollover) balances
+                        are untouched. Both journals appear on the audit trail.
+                    </p>
+                    <table class="table table-sm table-bordered mb-3" style="font-size:0.85rem;">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Expense account</th>
+                                <th>Accum dep account</th>
+                                <th class="text-end">Current movement</th>
+                                <th class="text-end">Schedule amount</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for row in dep_preview_breakdown %}
+                            <tr>
+                                <td>{{ row.dep_code }} {{ row.dep_name }}</td>
+                                <td>{{ row.accum_code }} {{ row.accum_name }}</td>
+                                <td class="text-end">${{ row.dep_movement|floatformat:2 }}</td>
+                                <td class="text-end">${{ row.sched_amount|floatformat:2 }}</td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="4" class="text-muted text-center">
+                                    No account codes resolved — accounts will be determined at post time.
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                        <tfoot class="fw-bold">
+                            <tr>
+                                <td colspan="2">Total current-year movement in accounts</td>
+                                <td class="text-end">${{ dep_preview_current_movement|floatformat:2 }}</td>
+                                <td></td>
+                            </tr>
+                            <tr>
+                                <td colspan="2">Schedule total (business depreciation)</td>
+                                <td></td>
+                                <td class="text-end">${{ dep_business_total|floatformat:2 }}</td>
+                            </tr>
+                            <tr class="{% if dep_preview_net < 0 %}table-danger{% elif dep_preview_net > 0 %}table-success{% else %}table-secondary{% endif %}">
+                                <td colspan="3">Net adjustment to accounts after this post</td>
+                                <td class="text-end">${{ dep_preview_net|floatformat:2 }}</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                    {% if dep_preview_current_movement %}
+                    <div class="alert alert-info py-2 small mb-0">
+                        A reversal journal will back out ${{ dep_preview_current_movement|floatformat:2 }} of
+                        current-year movement, then ${{ dep_business_total|floatformat:2 }} will be re-posted
+                        from the schedule. Net result in the accounts: ${{ dep_business_total|floatformat:2 }}.
+                    </div>
+                    {% endif %}
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <form method="post" action="{% url 'core:depreciation_post_to_tb' pk=fy.pk %}" class="d-inline">
+                        {% csrf_token %}
+                        <input type="hidden" name="confirmed" value="1">
+                        <button type="submit" class="btn btn-success">
+                            <i class="bi bi-journal-arrow-up"></i> Confirm Post
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- ===== STOCK TAB ===== -->

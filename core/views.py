@@ -315,7 +315,7 @@ def _apply_journal_line_to_tb(fy, account_code, account_name, jnl_debit, jnl_cre
     )
 
 
-def _post_journal_to_tb(journal, fy):
+def _post_journal_to_tb(journal, fy, source="manual_journal"):
     """Post a journal's lines to the trial balance, aggregating by account code.
 
     Multiple journal lines targeting the same account code are summed into a
@@ -362,7 +362,7 @@ def _post_journal_to_tb(journal, fy):
                 vals["name"],
                 vals["dr"],
                 vals["cr"],
-                source="manual_journal",
+                source=source,
                 description=journal.description,
                 journal=journal,
             )
@@ -1828,6 +1828,54 @@ def financial_year_detail(request, pk):
         dep_total_depreciation += asset.depreciation_amount
         dep_total_closing += asset.closing_wdv
 
+    # Depreciation post status and preview data for the confirmation modal.
+    # Uses the same 3-tier account resolution as the post handler (write_back=False).
+    dep_posted_journal = AdjustingJournal.objects.filter(
+        financial_year=fy,
+        journal_type=AdjustingJournal.JournalType.DEPRECIATION,
+        status=AdjustingJournal.JournalStatus.POSTED,
+    ).first()
+
+    _dep_account_groups, dep_resolution_error = _resolve_depreciation_account_groups(
+        fy, list(depreciation_assets), write_back=False
+    )
+    dep_business_total = sum(_dep_account_groups.values())
+
+    dep_preview_breakdown = []
+    dep_preview_current_movement = Decimal('0')
+    for (dc, dn, ac, an), sched_amount in _dep_account_groups.items():
+        dep_mv = TrialBalanceLine.objects.filter(
+            financial_year=fy, account_code=dc,
+        ).exclude(source='rollover').aggregate(
+            dr=Sum('debit'), cr=Sum('credit')
+        )
+        dep_net = (dep_mv['dr'] or Decimal('0')) - (dep_mv['cr'] or Decimal('0'))
+        accum_mv = TrialBalanceLine.objects.filter(
+            financial_year=fy, account_code=ac,
+        ).exclude(source='rollover').aggregate(
+            dr=Sum('debit'), cr=Sum('credit')
+        )
+        accum_net_cr = (accum_mv['cr'] or Decimal('0')) - (accum_mv['dr'] or Decimal('0'))
+        dep_preview_breakdown.append({
+            'dep_code': dc, 'dep_name': dn,
+            'accum_code': ac, 'accum_name': an,
+            'dep_movement': dep_net,
+            'accum_movement': accum_net_cr,
+            'sched_amount': sched_amount,
+        })
+        dep_preview_current_movement += dep_net
+
+    dep_preview_net = dep_business_total - dep_preview_current_movement
+
+    if dep_posted_journal:
+        _tol = Decimal('0.01')
+        if abs((dep_posted_journal.total_debit or Decimal('0')) - dep_business_total) <= _tol:
+            dep_post_status = 'in_sync'
+        else:
+            dep_post_status = 'out_of_sync'
+    else:
+        dep_post_status = 'not_posted'
+
     # Stock items
     stock_items = StockItem.objects.filter(financial_year=fy)
     stock_total_opening = stock_items.aggregate(total=Sum('opening_value'))['total'] or Decimal('0')
@@ -1981,6 +2029,13 @@ def financial_year_detail(request, pk):
         "dep_total_disposals": dep_total_disposals,
         "dep_total_depreciation": dep_total_depreciation,
         "dep_total_closing": dep_total_closing,
+        "dep_posted_journal": dep_posted_journal,
+        "dep_business_total": dep_business_total,
+        "dep_preview_breakdown": dep_preview_breakdown,
+        "dep_preview_current_movement": dep_preview_current_movement,
+        "dep_preview_net": dep_preview_net,
+        "dep_post_status": dep_post_status,
+        "dep_resolution_error": dep_resolution_error,
         "dep_asset_accounts": list(
             EntityChartOfAccount.objects.filter(
                 entity=fy.entity, is_active=True,
@@ -8971,60 +9026,28 @@ def depreciation_add_from_transaction(request, pk):
 
 
 # ---------------------------------------------------------------------------
-# Post Depreciation to Trial Balance
+# Depreciation account-group resolution helper (shared by preview + post)
 # ---------------------------------------------------------------------------
-@login_required
-@require_POST
-def depreciation_post_to_tb(request, pk):
+
+def _resolve_depreciation_account_groups(fy, assets, write_back=False):
+    """Resolve the (dep_expense, accum_dep) account pair for each asset.
+
+    Uses the same 3-tier logic as the post handler so the preview modal
+    shows exactly what will be posted.
+
+    Returns (account_groups, error):
+      account_groups -- defaultdict(Decimal) keyed by
+          (dep_expense_code, dep_expense_name, accum_dep_code, accum_dep_name),
+          values = summed business depreciation for that pair.
+          Per-asset math: business_dep = depreciation_amount - private_depreciation;
+          assets where business_dep <= 0 are skipped (no floor, excluded entirely).
+      error -- str describing a fallback-detection failure, or None.
+
+    write_back=False (default): safe for read-only callers (GET / preview).
+    write_back=True: POST handler only — fires the tier-2 asset back-fill saves.
     """
-    Post the depreciation schedule totals to the trial balance as a journal entry.
-    Groups assets by their account mapping and creates per-account journal lines:
-      - Dr  Depreciation Expense account(s)
-      - Cr  Accumulated Depreciation account(s) (paired with each asset account)
-    Assets with explicit account mappings use those; assets without mappings
-    fall back to auto-detected global accounts.
-    The journal is auto-posted immediately.
-    """
-    fy = get_financial_year_for_user(request, pk)
-    if not request.user.can_do_accounting:
-        messages.error(request, "You do not have permission.")
-        return redirect("core:financial_year_detail", pk=pk)
+    from collections import defaultdict
 
-    if fy.is_locked:
-        messages.error(request, "Cannot post to a finalised year.")
-        return redirect("core:financial_year_detail", pk=pk)
-
-    assets = list(DepreciationAsset.objects.filter(financial_year=fy))
-    if not assets:
-        messages.warning(request, "No depreciation assets to post.")
-        return redirect("core:financial_year_detail", pk=pk)
-
-    # Calculate total business depreciation
-    total_depreciation = Decimal("0")
-    for asset in assets:
-        business_dep = asset.depreciation_amount - asset.private_depreciation
-        total_depreciation += business_dep
-
-    if total_depreciation <= 0:
-        messages.warning(request, "Total business depreciation is zero. Nothing to post.")
-        return redirect("core:financial_year_detail", pk=pk)
-
-    # Check for existing depreciation journal to avoid double-posting
-    existing = AdjustingJournal.objects.filter(
-        financial_year=fy,
-        journal_type=AdjustingJournal.JournalType.DEPRECIATION,
-        status=AdjustingJournal.JournalStatus.POSTED,
-    ).first()
-    if existing:
-        messages.warning(
-            request,
-            f"A depreciation journal ({existing.reference_number}) has already been posted. "
-            f"Delete it first if you want to re-post."
-        )
-        return redirect("core:financial_year_detail", pk=pk)
-
-    # ── Auto-detect fallback accounts from entity COA ──
-    # These are used for assets that don't have explicit account mappings.
     fallback_dep_expense_code = ""
     fallback_dep_expense_name = ""
     fallback_accum_dep_code = ""
@@ -9087,21 +9110,20 @@ def depreciation_post_to_tb(request, pk):
                 fallback_accum_dep_code = accum_tb.account_code
                 fallback_accum_dep_name = accum_tb.account_name
 
+    error = None
     if not fallback_dep_expense_code or not fallback_accum_dep_code:
         missing = []
         if not fallback_dep_expense_code:
             missing.append("Depreciation Expense")
         if not fallback_accum_dep_code:
             missing.append("Accumulated Depreciation")
-        messages.error(
-            request,
-            f"Could not auto-detect fallback account codes for: {', '.join(missing)}. "
-            f"Please ensure these accounts exist in the Chart of Accounts, or set "
-            f"account mappings on each asset in the depreciation schedule."
+        error = (
+            f"Could not auto-detect fallback account codes for: "
+            f"{', '.join(missing)}. Please ensure these accounts exist "
+            f"in the Chart of Accounts, or set account mappings on each "
+            f"asset in the depreciation schedule."
         )
-        return redirect("core:financial_year_detail", pk=pk)
 
-    # ── Build a lookup of entity asset accounts for auto-pairing ──
     entity_asset_accounts = list(
         EntityChartOfAccount.objects.filter(
             entity=fy.entity, is_active=True, section="assets",
@@ -9109,11 +9131,6 @@ def depreciation_post_to_tb(request, pk):
     )
 
     def _find_paired_accum_dep(asset_code):
-        """
-        Given an asset account code (e.g. '2870'), find the nearest
-        accumulated depreciation account that sits after it in the COA.
-        Returns (code, name) or (None, None).
-        """
         if not asset_code:
             return None, None
         found_asset = False
@@ -9125,15 +9142,10 @@ def depreciation_post_to_tb(request, pk):
                 acct_lower = acct.account_name.lower()
                 if "accum" in acct_lower or "amortis" in acct_lower:
                     return acct.account_code, acct.account_name
-                # If we hit a non-accumulated account, stop looking
                 if "less:" not in acct_lower:
                     break
         return None, None
 
-    # ── Group assets by their (dep_expense, accum_dep) account pair ──
-    # Each group will become a pair of journal lines (Dr expense, Cr accum dep).
-    from collections import defaultdict
-    # Key: (dep_expense_code, dep_expense_name, accum_dep_code, accum_dep_name)
     account_groups = defaultdict(Decimal)
 
     for asset in assets:
@@ -9141,62 +9153,135 @@ def depreciation_post_to_tb(request, pk):
         if business_dep <= 0:
             continue
 
-        # Determine the accounts for this asset, with intelligent fallback:
-        # 1. Use explicit mapping on the asset (set via form)
-        # 2. Try to detect from the source_transaction's confirmed_code
-        # 3. Fall back to global auto-detected account
-
         a_dep_code = asset.dep_expense_code
         a_dep_name = asset.dep_expense_name
         a_accum_code = asset.accum_dep_code
         a_accum_name = asset.accum_dep_name
 
-        # If no explicit accum_dep mapping, try to detect from source transaction
         if not a_accum_code and asset.source_transaction_id:
-            txn_code = getattr(asset.source_transaction, 'confirmed_code', '') if hasattr(asset, '_source_txn_cache') else ''
-            if not txn_code:
-                # Fetch the transaction's confirmed_code
-                from review.models import PendingTransaction
-                try:
-                    txn = PendingTransaction.objects.only('confirmed_code', 'confirmed_name').get(pk=asset.source_transaction_id)
-                    txn_code = txn.confirmed_code or ''
-                except PendingTransaction.DoesNotExist:
-                    txn_code = ''
+            txn_code = ""
+            from review.models import PendingTransaction
+            try:
+                txn = PendingTransaction.objects.only(
+                    "confirmed_code", "confirmed_name"
+                ).get(pk=asset.source_transaction_id)
+                txn_code = txn.confirmed_code or ""
+            except PendingTransaction.DoesNotExist:
+                pass
             if txn_code:
                 paired_code, paired_name = _find_paired_accum_dep(txn_code)
                 if paired_code:
                     a_accum_code = paired_code
                     a_accum_name = paired_name
-                    # Also back-fill the asset record so next time it's explicit
-                    asset.accum_dep_code = paired_code
-                    asset.accum_dep_name = paired_name
-                    if not asset.asset_account_code:
-                        asset.asset_account_code = txn_code
-                        asset.asset_account_name = getattr(txn, 'confirmed_name', '') if txn_code else ''
-                    asset.save(update_fields=[
-                        'accum_dep_code', 'accum_dep_name',
-                        'asset_account_code', 'asset_account_name',
-                    ])
+                    if write_back:
+                        asset.accum_dep_code = paired_code
+                        asset.accum_dep_name = paired_name
+                        if not asset.asset_account_code:
+                            asset.asset_account_code = txn_code
+                            asset.asset_account_name = getattr(
+                                txn, "confirmed_name", ""
+                            )
+                        asset.save(update_fields=[
+                            "accum_dep_code", "accum_dep_name",
+                            "asset_account_code", "asset_account_name",
+                        ])
 
-        # If still no explicit mapping, try to detect from asset_account_code
         if not a_accum_code and asset.asset_account_code:
-            paired_code, paired_name = _find_paired_accum_dep(asset.asset_account_code)
+            paired_code, paired_name = _find_paired_accum_dep(
+                asset.asset_account_code
+            )
             if paired_code:
                 a_accum_code = paired_code
                 a_accum_name = paired_name
 
-        # Final fallback to global accounts
         if not a_dep_code:
             a_dep_code = fallback_dep_expense_code
             a_dep_name = fallback_dep_expense_name or "Depreciation"
         if not a_accum_code:
             a_accum_code = fallback_accum_dep_code
-            a_accum_name = fallback_accum_dep_name or "Less: Accumulated depreciation"
+            a_accum_name = (
+                fallback_accum_dep_name or "Less: Accumulated depreciation"
+            )
 
         key = (a_dep_code, a_dep_name, a_accum_code, a_accum_name)
         account_groups[key] += business_dep
 
-    # ── Create the journal ──
+    return account_groups, error
+
+
+# ---------------------------------------------------------------------------
+# Post Depreciation to Trial Balance
+# ---------------------------------------------------------------------------
+@login_required
+@require_POST
+def depreciation_post_to_tb(request, pk):
+    """
+    Idempotent reconciliation: reverse all current-year depreciation movement
+    in the target accounts, then re-post the current schedule total.
+
+    On first press with imported depreciation present, the import is reversed
+    before the schedule amount is posted — no stacking.  On repeat presses with
+    an unchanged schedule the net change is zero.  Opening/rollover balances are
+    never touched.
+
+    Requires confirmed=1 in POST (set by the preview modal) so the accountant
+    always sees the net adjustment before it fires.
+    """
+    fy = get_financial_year_for_user(request, pk)
+    if not request.user.can_do_accounting:
+        messages.error(request, "You do not have permission.")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    if fy.is_locked:
+        messages.error(request, "Cannot post to a finalised year.")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    if request.POST.get("confirmed") != "1":
+        messages.error(request, "Post not confirmed.")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    assets = list(DepreciationAsset.objects.filter(financial_year=fy).select_related("source_transaction"))
+    if not assets:
+        messages.warning(request, "No depreciation assets to post.")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    # ── Resolve account groups (shared helper, write_back=True) ──
+    account_groups, resolution_error = _resolve_depreciation_account_groups(
+        fy, assets, write_back=True
+    )
+    if resolution_error:
+        messages.error(request, resolution_error)
+        return redirect("core:financial_year_detail", pk=pk)
+
+    total_depreciation = sum(account_groups.values())
+    if total_depreciation <= 0:
+        messages.warning(request, "Total business depreciation is zero. Nothing to post.")
+        return redirect("core:financial_year_detail", pk=pk)
+
+    # ── Compute current-year movement for each target account pair ──
+    # Excludes rollover lines (prior-year accumulated-depreciation opening balance).
+    current_movements = {}
+    for (dep_code, dep_name, accum_code, accum_name) in account_groups:
+        dep_mv = TrialBalanceLine.objects.filter(
+            financial_year=fy, account_code=dep_code,
+        ).exclude(source="rollover").aggregate(
+            dr=Sum("debit"), cr=Sum("credit")
+        )
+        dep_net = (dep_mv["dr"] or Decimal("0")) - (dep_mv["cr"] or Decimal("0"))
+
+        accum_mv = TrialBalanceLine.objects.filter(
+            financial_year=fy, account_code=accum_code,
+        ).exclude(source="rollover").aggregate(
+            dr=Sum("debit"), cr=Sum("credit")
+        )
+        accum_net_cr = (accum_mv["cr"] or Decimal("0")) - (accum_mv["dr"] or Decimal("0"))
+
+        if dep_net or accum_net_cr:
+            current_movements[(dep_code, dep_name, accum_code, accum_name)] = (
+                dep_net, accum_net_cr
+            )
+
+    # ── Build the fresh depreciation journal (not yet saved) ──
     journal = AdjustingJournal(
         financial_year=fy,
         journal_type=AdjustingJournal.JournalType.DEPRECIATION,
@@ -9213,9 +9298,8 @@ def depreciation_post_to_tb(request, pk):
         total_credit=total_depreciation,
         created_by=request.user,
     )
-    journal.save()  # Auto-generates reference_number
+    journal.save()
 
-    # ── Create journal lines per account group ──
     line_number = 0
     line_descriptions = []
     for (dep_code, dep_name, accum_code, accum_name), amount in account_groups.items():
@@ -9243,40 +9327,89 @@ def depreciation_post_to_tb(request, pk):
             f"Dr {dep_code} {dep_name} ${amount:,.2f} / Cr {accum_code} {accum_name} ${amount:,.2f}"
         )
 
-    # Auto-post and mark POSTED atomically — no orphan TB lines on failure
+    # ── Atomic: reversal (if needed) then fresh posting ──
+    reversal = None
     with db_transaction.atomic():
-        _post_journal_to_tb(journal, fy)
+        if current_movements:
+            total_rev_dr = sum(accum for _, accum in current_movements.values())
+            total_rev_cr = sum(dep for dep, _ in current_movements.values())
+            reversal = AdjustingJournal.objects.create(
+                financial_year=fy,
+                journal_type=AdjustingJournal.JournalType.DEPRECIATION_REVERSAL,
+                status=AdjustingJournal.JournalStatus.POSTED,
+                journal_date=fy.end_date,
+                description=(
+                    f"Reversal of current-year depreciation to reconcile "
+                    f"from schedule — {fy.end_date.strftime('%d/%m/%Y')}"
+                ),
+                narration=(
+                    "System-generated reversal. Backs out all non-rollover "
+                    "depreciation account movement before re-posting from "
+                    "the depreciation schedule."
+                ),
+                total_debit=total_rev_dr,
+                total_credit=total_rev_cr,
+                created_by=request.user,
+                posted_by=request.user,
+                posted_at=timezone.now(),
+            )
+            rev_ln = 0
+            for (dep_code, dep_name, accum_code, accum_name), (dep_net, accum_net_cr) in current_movements.items():
+                if dep_net:
+                    rev_ln += 1
+                    JournalLine.objects.create(
+                        journal=reversal, line_number=rev_ln,
+                        account_code=dep_code, account_name=dep_name,
+                        description=f"Reversal: {dep_name}",
+                        debit=Decimal("0"), credit=dep_net,
+                    )
+                if accum_net_cr:
+                    rev_ln += 1
+                    JournalLine.objects.create(
+                        journal=reversal, line_number=rev_ln,
+                        account_code=accum_code, account_name=accum_name,
+                        description=f"Reversal: {accum_name}",
+                        debit=accum_net_cr, credit=Decimal("0"),
+                    )
+            _post_journal_to_tb(reversal, fy, source="depreciation_reversal")
+
+        _post_journal_to_tb(journal, fy, source="depreciation_schedule")
 
         journal.status = AdjustingJournal.JournalStatus.POSTED
         journal.posted_by = request.user
         journal.posted_at = timezone.now()
         journal.save(update_fields=["status", "posted_by", "posted_at"])
 
+    reversal_note = ""
+    if reversal:
+        prior_total = sum(dep for dep, _ in current_movements.values())
+        reversal_note = (
+            f"Reversed prior movement of ${prior_total:,.2f} "
+            f"({reversal.reference_number}). "
+        )
+
     _log_action(
         request, "adjustment",
-        f"Posted depreciation journal {journal.reference_number} with "
-        f"{len(account_groups)} account group(s): " + "; ".join(line_descriptions),
+        f"{reversal_note}Posted depreciation journal {journal.reference_number} "
+        f"with {len(account_groups)} account group(s): " + "; ".join(line_descriptions),
         journal,
     )
-    # Auto-trigger risk engine after depreciation post
     from core.signals import trigger_risk_recalc
     trigger_risk_recalc(fy, "depreciation_post")
 
     if len(account_groups) == 1:
-        # Simple message for single-group posting
         (dep_code, dep_name, accum_code, accum_name) = list(account_groups.keys())[0]
         messages.success(
             request,
-            f"Depreciation journal {journal.reference_number} posted: "
+            f"{reversal_note}Depreciation journal {journal.reference_number} posted: "
             f"Dr {dep_name} ${total_depreciation:,.2f} / "
             f"Cr {accum_name} ${total_depreciation:,.2f}"
         )
     else:
-        # Detailed message for multi-group posting
         messages.success(
             request,
-            f"Depreciation journal {journal.reference_number} posted with "
-            f"{len(account_groups)} account groups, "
+            f"{reversal_note}Depreciation journal {journal.reference_number} posted "
+            f"with {len(account_groups)} account groups, "
             f"total ${total_depreciation:,.2f}. "
             f"See journal details for per-account breakdown."
         )
