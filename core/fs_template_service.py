@@ -1369,7 +1369,10 @@ def build_company_context(financial_year, include_watermark=True):
     total_liab_py = total_current_liab_py + total_noncurrent_liab_py
 
     # Zero section suppression flags for Balance Sheet
-    has_noncurrent_assets = total_noncurrent_assets_cy != 0 or total_noncurrent_assets_py != 0
+    has_noncurrent_assets = any(
+        (item.get("cy_amount") or 0) != 0 or (item.get("py_amount") or 0) != 0
+        for item in sections["noncurrent_assets"]
+    )
     has_noncurrent_liabilities = total_noncurrent_liab_cy != 0 or total_noncurrent_liab_py != 0
 
     net_assets_cy = total_assets_cy - total_liab_cy
