@@ -28,6 +28,11 @@ MOVE_RE = re.compile(r'^\d{1,3}(,\d{3})*\.\d{2}$')
 BAL_RE = re.compile(r'(\d{1,3}(?:,\d{3})*\.\d{2})\s*(CR|DR)')
 # Glued CBA date token: "31Oct" or "31Oct2025"
 DATE_RE = re.compile(r'^(\d{1,2})(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)', re.IGNORECASE)
+# Per-page furniture patterns — matched against space-stripped flat row text
+_FURNITURE_PAGE_RE = re.compile(r'Page\d+of\d+')
+_FURNITURE_BATCH_RE = re.compile(r'^\d{5}\.\d{5}')
+_FURNITURE_COL_HEADER = 'DateTransactionDebitCreditBalance'
+_FURNITURE_ACCOUNT_KW = 'AccountNumber'
 # 4-digit year in the 2000s
 YEAR_RE = re.compile(r'(20\d{2})')
 
@@ -124,6 +129,21 @@ def _text_only(row):
     return ' '.join(keep)
 
 
+def _is_furniture(flat):
+    """Return True if the space-stripped row text is page furniture, not transaction data."""
+    if _FURNITURE_PAGE_RE.search(flat):
+        return True
+    if _FURNITURE_COL_HEADER in flat:
+        return True
+    # 'AccountNumber' never appears in a real transaction description
+    if _FURNITURE_ACCOUNT_KW in flat:
+        return True
+    # Batch/codeline header: starts with 5digit.5digit (e.g. "15448.35330")
+    if _FURNITURE_BATCH_RE.match(flat):
+        return True
+    return False
+
+
 def _reconcile(txns, opening, closing, tolerance=0.01):
     """
     opening + sum(signed amounts) must equal closing.
@@ -197,6 +217,11 @@ def parse_cba_geometry(pdf_content):
             continue
         if 'CLOSINGBALANCE' in flat:
             closing = _signed_balance(joined)
+            continue
+
+        # Skip per-page furniture: page numbers, column headers, account labels, batch codes.
+        # Must come before date/amount/desc logic so furniture never starts a transaction.
+        if _is_furniture(flat):
             continue
 
         # New transaction row starts when the first word is a date token
