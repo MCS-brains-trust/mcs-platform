@@ -43,3 +43,4 @@ handiledger_reference/_scarft_raw.txt
 # Stale nested repo snapshot — never tracked
 mcs-platform/
 archives/
+test_fixtures/*.pdf
