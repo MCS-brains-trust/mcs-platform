@@ -1750,11 +1750,19 @@ def extract_transactions_from_pdf_direct(pdf_content, filename=""):
 
     Raises:
         ValueError if bank is not supported
+        statement_geometry.StatementParseError if the geometry engine rejects the statement
     """
     bank = detect_bank(pdf_content)
     logger.info(f"Detected bank: {bank} for file: {filename}")
 
+    # Route standard CBA statements through the geometry engine.
+    # Exact == check: "cba_txn_listing" keeps its own parser below.
+    if bank == "cba":
+        from .statement_geometry import parse_cba_geometry
+        return parse_cba_geometry(pdf_content)
+
     parsers = {
+        # "cba" is handled above by parse_cba_geometry; parse_cba_statement is the legacy fallback.
         "cba": parse_cba_statement,
         "cba_txn_listing": parse_cba_transaction_listing,
         "anz": parse_anz_statement,
