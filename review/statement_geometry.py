@@ -54,6 +54,13 @@ def _f(s):
     return float(s.replace(',', ''))
 
 
+def _truncate(text, max_len):
+    if len(text) <= max_len:
+        return text
+    cut = text[:max_len].rsplit(' ', 1)[0]
+    return cut or text[:max_len]
+
+
 def _signed_balance(text):
     """Extract signed balance from text containing 'amount CR/DR'. CR=positive, DR=negative."""
     m = BAL_RE.search(text)
@@ -220,7 +227,7 @@ def parse_cba_geometry(pdf_content):
             amount = movement[1] if movement[0] == 'credit' else -movement[1]
             txns.append({
                 'date': date,
-                'description': ' '.join(d for d in desc if d).strip(),
+                'description': _truncate(' '.join(d for d in desc if d).strip(), 200),
                 'amount': amount,
             })
             desc = []
