@@ -187,6 +187,19 @@ def _is_balance_sheet_account(account_code, mapped_line_item, coa_sections):
     return code_prefix.isdigit() and int(code_prefix) >= 2000
 
 
+def _comparative_for_line(line):
+    """Return (prior_debit, prior_credit) for a BS rollover line's comparative column.
+
+    closing_balance is debit-positive (negative = credit balance).  The period
+    debit/credit movements must not be used for balance-sheet comparatives — they
+    record the movement for the year, not the year-end position.
+    """
+    cb = line.closing_balance or Decimal("0")
+    if cb >= 0:
+        return (cb, Decimal("0"))
+    return (Decimal("0"), -cb)
+
+
 def _build_coa_section_lookup(entity):
     """Build a dict mapping account_code -> display_section for an entity.
 
@@ -2809,7 +2822,8 @@ def reroll_forward(request, pk):
         for _line in current_fy.trial_balance_lines.select_related("mapped_line_item"):
             _code = _line.account_code or ""
             if _code not in _account_map:
-                _account_map[_code] = {"debit": Decimal("0"), "credit": Decimal("0"), "rep": _line}
+                _account_map[_code] = {"closing": Decimal("0"), "debit": Decimal("0"), "credit": Decimal("0"), "rep": _line}
+            _account_map[_code]["closing"] += _line.closing_balance or Decimal("0")
             _account_map[_code]["debit"] += _line.debit or Decimal("0")
             _account_map[_code]["credit"] += _line.credit or Decimal("0")
             if not _line.is_adjustment:
@@ -2825,7 +2839,7 @@ def reroll_forward(request, pk):
             _rep = _data["rep"]
             _net_debit = _data["debit"]
             _net_credit = _data["credit"]
-            _net_closing = _net_debit - _net_credit
+            _net_closing = _data["closing"]
 
             class _SL:
                 pass
@@ -2891,6 +2905,7 @@ def reroll_forward(request, pk):
                 carried_bs += 1
                 continue
 
+            _pd, _pc = _comparative_for_line(line)
             TrialBalanceLine.objects.create(
                 financial_year=next_fy,
                 account_code=line.account_code,
@@ -2899,8 +2914,8 @@ def reroll_forward(request, pk):
                 debit=Decimal("0"),
                 credit=Decimal("0"),
                 closing_balance=opening,
-                prior_debit=line.debit,
-                prior_credit=line.credit,
+                prior_debit=_pd,
+                prior_credit=_pc,
                 mapped_line_item=line.mapped_line_item,
                 is_adjustment=False,
                 source='rollover',
@@ -3416,6 +3431,7 @@ def _populate_rolled_forward_fy(current_fy, new_fy):
             if opening == _D("0"):
                 continue
         if line == income_tax_line:
+            _pd, _pc = _comparative_for_line(line)
             TrialBalanceLine.objects.create(
                 financial_year=new_fy,
                 account_code=line.account_code,
@@ -3424,14 +3440,15 @@ def _populate_rolled_forward_fy(current_fy, new_fy):
                 debit=_D("0"),
                 credit=_D("0"),
                 closing_balance=_D("0"),
-                prior_debit=line.debit,
-                prior_credit=line.credit,
+                prior_debit=_pd,
+                prior_credit=_pc,
                 mapped_line_item=line.mapped_line_item,
                 is_adjustment=False,
                 source='rollover',
             )
             carried_bs += 1
             continue
+        _pd, _pc = _comparative_for_line(line)
         TrialBalanceLine.objects.create(
             financial_year=new_fy,
             account_code=line.account_code,
@@ -3440,8 +3457,8 @@ def _populate_rolled_forward_fy(current_fy, new_fy):
             debit=_D("0"),
             credit=_D("0"),
             closing_balance=opening,
-            prior_debit=line.debit,
-            prior_credit=line.credit,
+            prior_debit=_pd,
+            prior_credit=_pc,
             mapped_line_item=line.mapped_line_item,
             is_adjustment=False,
             source='rollover',
