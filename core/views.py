@@ -3494,6 +3494,7 @@ def _populate_rolled_forward_fy(current_fy, new_fy):
         )
         carried_bs += 1
         if income_tax_line:
+            _pd, _pc = _comparative_for_line(income_tax_line)
             TrialBalanceLine.objects.create(
                 financial_year=new_fy,
                 account_code=income_tax_line.account_code,
@@ -3502,8 +3503,8 @@ def _populate_rolled_forward_fy(current_fy, new_fy):
                 debit=_D("0"),
                 credit=_D("0"),
                 closing_balance=_D("0"),
-                prior_debit=income_tax_line.debit,
-                prior_credit=income_tax_line.credit,
+                prior_debit=_pd,
+                prior_credit=_pc,
                 mapped_line_item=income_tax_line.mapped_line_item,
                 is_adjustment=False,
                 source='rollover',
