@@ -122,11 +122,24 @@ def _build_financial_context(fy):
     Build a JSON-serialisable dict of financial data from the trial balance.
     Includes current year and prior-year comparatives.
     """
-    from core.models import TrialBalanceLine
+    from core.models import TrialBalanceLine, FinancialYear
 
     lines = TrialBalanceLine.objects.filter(
         financial_year=fy,
     ).select_related("mapped_line_item").order_by("account_code")
+
+    # Resolve the ACTUAL prior financial year and index its closing balances by
+    # account code.  line.prior_debit/prior_credit is corruption-prone (the
+    # roll-forward path frequently leaves them zero); the prior FY's own
+    # closing_balance is the authoritative comparative.
+    prior_fy = FinancialYear.objects.filter(
+        entity=fy.entity,
+        end_date__lt=fy.start_date,
+    ).order_by("-end_date").first()
+    prior_map = {}
+    if prior_fy:
+        for pl in TrialBalanceLine.objects.filter(financial_year=prior_fy):
+            prior_map[pl.account_code] = float(pl.closing_balance or 0)
 
     # Categorise lines
     income_lines = []
@@ -137,7 +150,7 @@ def _build_financial_context(fy):
 
     for line in lines:
         cy = float(line.closing_balance or 0)
-        py = float((line.prior_debit or 0) - (line.prior_credit or 0))
+        py = prior_map.get(line.account_code, 0.0)
         entry = {
             "account": line.account_name,
             "code": line.account_code,
@@ -174,10 +187,11 @@ def _build_financial_context(fy):
     top_income = sorted(income_lines, key=lambda x: abs(x["cy"]), reverse=True)[:8]
     top_expenses = sorted(expense_lines, key=lambda x: abs(x["cy"]), reverse=True)[:10]
 
-    # Gross margin (if trading income vs COGS discernible)
-    gross_margin_pct = None
+    # Net profit margin.  Expenses here lump COGS + operating costs together, so
+    # net_profit / income is the NET profit margin — not a true gross margin.
+    net_profit_margin_pct = None
     if total_income_cy != 0:
-        gross_margin_pct = round((net_profit_cy / total_income_cy) * 100, 1)
+        net_profit_margin_pct = round((net_profit_cy / total_income_cy) * 100, 1)
 
     # Year-on-year variances
     income_var = round(total_income_cy - total_income_py, 2)
@@ -204,7 +218,7 @@ def _build_financial_context(fy):
             "total_assets_cy": round(total_assets_cy, 2),
             "total_liabilities_cy": round(total_liabilities_cy, 2),
             "net_assets_cy": round(total_assets_cy - total_liabilities_cy, 2),
-            "gross_margin_pct": gross_margin_pct,
+            "net_profit_margin_pct": net_profit_margin_pct,
             "income_variance": income_var,
             "income_variance_pct": income_var_pct,
             "profit_variance": profit_var,
@@ -221,10 +235,14 @@ def _build_financial_context(fy):
 # ---------------------------------------------------------------------------
 
 def _call_llm(context, tone, entity_name, fy):
-    """Call the LLM to generate the year-end commentary."""
+    """Call the LLM to generate the year-end commentary.
+
+    Routes through core.ai_service._call_llm so the shared retry/timeout wrapper
+    (and tier routing) applies, instead of a bare OpenAI() call that fails on a
+    single transient blip.
+    """
     try:
-        from openai import OpenAI
-        client = OpenAI()  # uses OPENAI_API_KEY + base_url from environment
+        from core.ai_service import _call_llm as _ai_call_llm
 
         tone_instruction = {
             "professional": (
@@ -263,7 +281,7 @@ The commentary MUST contain exactly these 5 sections with these exact headings (
 Analyse the income streams. Highlight significant movements vs prior year (if available). Reference the top income lines by name and amount.
 
 ## Expense & Margin Analysis
-Analyse the cost structure. Comment on the largest expense categories, gross margin (if applicable), and any notable cost movements vs prior year.
+Analyse the cost structure. Comment on the largest expense categories, net profit margin (if applicable), and any notable cost movements vs prior year.
 
 ## Key Observations
 Up to 4 bullet points. Flag items the client should be aware of — unusual balances, concentration risks, balance sheet items of note, or compliance considerations.
@@ -275,16 +293,13 @@ Here is the financial data:
 {json.dumps(context, indent=2, default=str)}
 """
 
-        response = client.chat.completions.create(
-            model="gpt-4.1-mini",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            max_tokens=3000,
+        return _ai_call_llm(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            tier="sonnet",
             temperature=0.4,
+            max_tokens=3000,
         )
-        return response.choices[0].message.content
 
     except Exception as exc:
         logger.exception("LLM call failed for year-end commentary: %s", exc)
@@ -312,14 +327,19 @@ def _parse_sections(text):
     }
 
     for line in text.split("\n"):
-        stripped = line.strip().lstrip("#").strip()
+        raw = line.strip()
+        # Only an actual markdown heading (starts with '#') can start a section —
+        # otherwise a heading phrase appearing in body prose corrupts the split.
+        is_heading = raw.startswith("#")
+        stripped = raw.lstrip("#").strip()
         lower = stripped.lower()
 
         matched_key = None
-        for heading, key in heading_map.items():
-            if heading in lower:
-                matched_key = key
-                break
+        if is_heading:
+            for heading, key in heading_map.items():
+                if heading in lower:
+                    matched_key = key
+                    break
 
         if matched_key:
             if current_key and current_lines:

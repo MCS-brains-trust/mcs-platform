@@ -36,6 +36,9 @@ logger = logging.getLogger(__name__)
 
 # Minimum confidence to store a lesson
 MIN_CONFIDENCE = 0.5
+# Lessons below this confidence are stored INACTIVE until reinforced by further
+# signals (see module docstring).
+ACTIVE_CONFIDENCE = 0.6
 # Maximum signals to process per run (prevents runaway API costs)
 MAX_SIGNALS_PER_RUN = 200
 
@@ -217,14 +220,29 @@ def _synthesise_lessons(signals: list) -> list:
         logger.error(f"Lesson synthesis LLM call failed: {e}")
         return []
 
-    # Parse the response
+    # Parse the response — strip code fences and extract the first well-formed
+    # JSON array.  A greedy \[.*\] swallows stray brackets in surrounding prose.
     try:
         import re
-        json_match = re.search(r'\[.*\]', response, re.DOTALL)
-        if json_match:
-            lessons = json.loads(json_match.group())
-            if isinstance(lessons, list):
-                return lessons
+        text = (response or "").strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```[a-zA-Z0-9_]*\s*", "", text)
+            text = re.sub(r"\s*```$", "", text).strip()
+
+        decoder = json.JSONDecoder()
+        idx = 0
+        while True:
+            start = text.find("[", idx)
+            if start == -1:
+                break
+            try:
+                arr, _end = decoder.raw_decode(text, start)
+            except json.JSONDecodeError:
+                idx = start + 1
+                continue
+            if isinstance(arr, list):
+                return arr
+            idx = start + 1
     except Exception as e:
         logger.warning(f"Failed to parse lesson synthesis response: {e}")
 
@@ -276,11 +294,13 @@ def _store_lessons(lessons: list, signals: list) -> int:
             logger.debug(f"Boosted existing lesson weight: {lesson_text[:60]}")
             continue
 
-        # Resolve entity
+        # Resolve entity — require an EXACT (case-insensitive) name match.  A
+        # fuzzy __icontains + .first() can mis-attribute a firm-wide lesson to
+        # an unrelated entity; fall back to None (firm-wide) if no exact match.
         entity = None
         entity_name = lesson_data.get("entity_name")
         if entity_name:
-            entity = Entity.objects.filter(entity_name__icontains=entity_name).first()
+            entity = Entity.objects.filter(entity_name__iexact=entity_name.strip()).first()
 
         # Resolve user
         source_user = None
@@ -309,7 +329,9 @@ def _store_lessons(lessons: list, signals: list) -> int:
                 source_entity=entity,
                 source_signal_type="nightly_reflection",
                 source_signal_id=f"batch_{datetime.now(timezone.utc).strftime('%Y%m%d')}",
-                is_active=True,
+                # Store low-confidence lessons INACTIVE until reinforced (per the
+                # module docstring); only >= ACTIVE_CONFIDENCE go live for RAG.
+                is_active=(confidence >= ACTIVE_CONFIDENCE),
             )
             stored += 1
             logger.info(f"Stored lesson: {lesson_text[:80]}")

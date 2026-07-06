@@ -75,8 +75,19 @@ def _signed_balance(text):
 
 
 def _rows(pdf):
-    """Return word-rows (sorted lists) top-to-bottom across all pages, stopping after CLOSING BALANCE."""
+    """
+    Return word-rows (sorted lists) top-to-bottom across all pages, up to and
+    including the LAST CLOSING BALANCE marker.
+
+    Multi-period (e.g. multi-month) CBA statements contain several
+    OPENINGBALANCE/CLOSINGBALANCE sub-periods. Stopping at the *first*
+    CLOSINGBALANCE would silently drop every later month's transactions (and
+    month 1 reconciles internally, so the truncation goes unnoticed). We
+    accumulate rows across all sub-periods and trim only the trailing furniture
+    after the final CLOSINGBALANCE.
+    """
     out = []
+    last_closing_idx = None
     for page in pdf.pages:
         lines = defaultdict(list)
         for w in page.extract_words():
@@ -85,18 +96,27 @@ def _rows(pdf):
             row = sorted(lines[top], key=lambda w: w['x0'])
             out.append(row)
             if 'CLOSINGBALANCE' in ''.join(w['text'] for w in row):
-                return out
+                last_closing_idx = len(out) - 1
+    if last_closing_idx is not None:
+        return out[:last_closing_idx + 1]
     return out
 
 
-def _money_columns(rows, min_count=5, gap=12.0):
+def _money_columns(rows, min_count=None, gap=12.0):
     """
     Auto-detect debit/credit column x1 centres by clustering bare-amount right-edges.
     Returns (debit_x, credit_x) or None if two distinct clusters cannot be found.
+
+    ``min_count`` is the minimum cluster population to count as a money column.
+    When not supplied it scales with the number of amount tokens (floor 2) so
+    low-activity statements (only a handful of transactions) are not rejected,
+    while a fixed high threshold no longer over-filters them.
     """
     xs = sorted(w['x1'] for row in rows for w in row if MOVE_RE.match(w['text']))
     if len(xs) < 2:
         return None
+    if min_count is None:
+        min_count = max(2, len(xs) // 20)
     groups = [[xs[0]]]
     for x in xs[1:]:
         if x - groups[-1][-1] <= gap:

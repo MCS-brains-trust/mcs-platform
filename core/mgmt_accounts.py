@@ -243,12 +243,34 @@ def build_bank_derived_tb(entity, fy, period_end):
             continue
 
         amount = txn.amount or Decimal("0")
+
+        # Post the GST-exclusive (net) amount to P&L accounts, mirroring
+        # core/views.py _post_txn_to_tb (which nets GST to the 3380 control
+        # account). Using txn.amount here would overstate revenue/expenses by
+        # the GST component (~9.09%) for GST-registered entities.
+        try:
+            code_num = int(code.split('.')[0])
+        except (ValueError, TypeError):
+            code_num = None
+
+        has_gst = bool(txn.confirmed_gst_amount and txn.confirmed_gst_amount > 0)
+        if has_gst and code_num is not None and code_num < 2000:
+            posting_amount = txn.net_amount
+            if not posting_amount:
+                # net_amount not populated — derive it ex-GST via the shared helper
+                _, posting_amount = txn.calculate_gst(
+                    tax_type=txn.confirmed_tax_type or txn.ai_suggested_tax_type,
+                    is_gst_registered=getattr(entity, "is_gst_registered", True),
+                )
+        else:
+            posting_amount = abs(amount)
+
         if amount >= 0:
             # Positive = deposit/income → credit
-            account_totals[code]["credit"] += abs(amount)
+            account_totals[code]["credit"] += abs(posting_amount)
         else:
             # Negative = expense → debit
-            account_totals[code]["debit"] += abs(amount)
+            account_totals[code]["debit"] += abs(posting_amount)
 
         if not account_totals[code]["name"]:
             account_totals[code]["name"] = name
@@ -265,8 +287,19 @@ def build_bank_derived_tb(entity, fy, period_end):
                 continue
             # Only balance sheet accounts (2000+)
             if code_num >= 2000:
-                account_totals[line.account_code]["debit"] += line.debit
-                account_totals[line.account_code]["credit"] += line.credit
+                # For rolled-forward BS lines debit/credit can both be zero
+                # while the real balance lives in closing_balance. Fall back to
+                # closing_balance in that case (mirrors risk_engine
+                # _load_trial_balance effective_dr / effective_cr).
+                eff_dr = line.debit or Decimal("0")
+                eff_cr = line.credit or Decimal("0")
+                if eff_dr == 0 and eff_cr == 0 and line.closing_balance:
+                    if line.closing_balance > 0:
+                        eff_dr = line.closing_balance
+                    else:
+                        eff_cr = abs(line.closing_balance)
+                account_totals[line.account_code]["debit"] += eff_dr
+                account_totals[line.account_code]["credit"] += eff_cr
                 if not account_totals[line.account_code]["name"]:
                     account_totals[line.account_code]["name"] = line.account_name
 

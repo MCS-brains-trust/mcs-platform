@@ -3,6 +3,7 @@ import json
 import logging
 
 from django.contrib.auth.decorators import login_required
+from django.core.exceptions import ValidationError
 from django.http import JsonResponse
 from django.shortcuts import render
 from django.views.decorators.http import require_POST
@@ -40,7 +41,7 @@ def bulk_generate_packages(request):
     for eid in entity_ids:
         try:
             entity = Entity.objects.get(pk=eid)
-        except Entity.DoesNotExist:
+        except (Entity.DoesNotExist, ValueError, ValidationError):
             results["errors"].append({"id": str(eid), "error": "Entity not found"})
             continue
 
@@ -107,7 +108,7 @@ def bulk_readiness_check(request):
     """
     from core.views_package_assembly import PACKAGE_CONTENTS
 
-    entities = Entity.objects.filter(is_active=True).order_by("name")
+    entities = Entity.objects.filter(is_archived=False).order_by("entity_name")
     readiness = []
 
     for entity in entities:

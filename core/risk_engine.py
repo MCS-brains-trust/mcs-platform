@@ -777,7 +777,7 @@ def _eval_account_threshold(rule, fy, tb, ref, ctx, config):
                 "total": str(total),
                 "threshold": str(threshold),
                 "accounts": [
-                    {"code": l.account_code, "name": l.account_name, "net": str(l.debit - l.credit)}
+                    {"code": l.account_code, "name": l.account_name, "net": str(l.effective_dr - l.effective_cr)}
                     for l in matched_lines
                 ],
             },
@@ -878,7 +878,7 @@ def _eval_balance_sign(rule, fy, tb, ref, ctx, config):
             "affected_accounts": [l.account_code for l in flagged],
             "calculated_values": {
                 "accounts": [
-                    {"code": l.account_code, "name": l.account_name, "net": str(l.debit - l.credit)}
+                    {"code": l.account_code, "name": l.account_name, "net": str(l.effective_dr - l.effective_cr)}
                     for l in flagged
                 ],
             },
@@ -983,7 +983,7 @@ def _eval_loan_check(rule, fy, tb, ref, ctx, config):
     if not flagged:
         return None
 
-    total_loans = sum(l.debit - l.credit for l in flagged)
+    total_loans = sum(l.effective_dr - l.effective_cr for l in flagged)
 
     return {
         "rule_id": rule.rule_id,
@@ -999,7 +999,7 @@ def _eval_loan_check(rule, fy, tb, ref, ctx, config):
         "calculated_values": {
             "total_loans": str(total_loans),
             "accounts": [
-                {"code": l.account_code, "name": l.account_name, "balance": str(l.debit - l.credit)}
+                {"code": l.account_code, "name": l.account_name, "balance": str(l.effective_dr - l.effective_cr)}
                 for l in flagged
             ],
         },

@@ -24,6 +24,7 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
+from config.authorization import get_entity_for_user, get_financial_year_for_user
 from core.models import (
     Entity,
     EntityOfficer,
@@ -234,7 +235,7 @@ def legal_doc_wizard(request, pk, doc_type):
     Generic document generation wizard.
     Routes to document-type-specific wizards when available.
     """
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
     # Route to specific wizards
@@ -286,12 +287,12 @@ def legal_doc_wizard(request, pk, doc_type):
 @require_POST
 def engagement_letter_generate(request, pk):
     """Generate engagement letter via DocumentContextBuilder for correct selected_services."""
-    entity = get_object_or_404(Entity, pk=pk)
+    entity = get_entity_for_user(request, pk)
 
     params = json.loads(request.body) if request.content_type == "application/json" else request.POST.dict()
 
     financial_year_id = params.get("financial_year_id")
-    fy = get_object_or_404(FinancialYear, pk=financial_year_id) if financial_year_id else None
+    fy = get_object_or_404(FinancialYear, pk=financial_year_id, entity=entity) if financial_year_id else None
 
     template = LegalDocumentTemplate.objects.filter(
         document_type="engagement_letter", is_active=True
@@ -344,7 +345,7 @@ def legal_doc_generate(request, pk, doc_type):
     Generate a legal document from template + wizard inputs.
     Routes to document-type-specific generators when available.
     """
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
     # Route to specific generators
@@ -426,7 +427,7 @@ def div7a_wizard(request, pk):
       - Loan amount (from debit balance)
       - Account code and name
     """
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
     template = LegalDocumentTemplate.objects.filter(
@@ -505,7 +506,7 @@ def div7a_wizard(request, pk):
 @require_POST
 def div7a_generate(request, pk):
     """Generate Division 7A Loan Agreement."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
     template = LegalDocumentTemplate.objects.filter(
@@ -588,7 +589,7 @@ def change_of_trustee_wizard(request, pk):
       4. Reason for change (optional)
       5. Appointment/retirement clause refs (Eva pre-populated)
     """
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
     if entity.entity_type != "trust":
@@ -646,7 +647,7 @@ def change_of_trustee_wizard(request, pk):
 @require_POST
 def change_of_trustee_generate(request, pk):
     """Generate Change of Trustee document set (3 documents)."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
     if request.content_type == "application/json":
@@ -735,7 +736,7 @@ def fixed_unit_trust_wizard(request, pk):
       5. Unit class (default: "Ordinary")
       6. Unitholders (dynamic rows: entity picker + units)
     """
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
     if entity.entity_type != "trust":
@@ -802,7 +803,7 @@ def fixed_unit_trust_wizard(request, pk):
 @require_POST
 def fixed_unit_trust_generate(request, pk):
     """Generate Fixed Unit Trust Deed + Ancillaries (5 documents)."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
     if request.content_type == "application/json":
@@ -900,7 +901,7 @@ def unit_transfer_wizard(request, pk):
          - Consideration amount
          - Transfer date
     """
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
     if entity.entity_type != "trust":
@@ -957,7 +958,7 @@ def unit_transfer_wizard(request, pk):
 @require_POST
 def unit_transfer_generate(request, pk):
     """Generate Unit Transfer Package (7 documents)."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
     if request.content_type == "application/json":
@@ -1047,6 +1048,7 @@ def unit_transfer_generate(request, pk):
 def legal_doc_download(request, doc_pk, fmt="docx"):
     """Download a generated legal document."""
     doc = get_object_or_404(LegalDocument, pk=doc_pk)
+    get_entity_for_user(request, doc.entity_id)
 
     if fmt == "pdf" and doc.pdf_file:
         return FileResponse(doc.pdf_file.open(), content_type="application/pdf",
@@ -1068,7 +1070,7 @@ def legal_doc_download(request, doc_pk, fmt="docx"):
 @login_required
 def legal_doc_list(request, pk):
     """List all generated legal documents for a financial year."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     documents = LegalDocument.objects.filter(financial_year=fy).order_by("-generated_at")
     return JsonResponse({
         "documents": [
@@ -1097,6 +1099,7 @@ def legal_doc_list(request, pk):
 def legal_doc_send_fusesign(request, doc_pk):
     """Send a generated document to FuseSign for electronic signing."""
     doc = get_object_or_404(LegalDocument, pk=doc_pk)
+    get_entity_for_user(request, doc.entity_id)
 
     if not doc.pdf_file:
         return JsonResponse({"error": "PDF file required for FuseSign."}, status=400)

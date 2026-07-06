@@ -842,12 +842,13 @@ def check_cross_field_consistency(core_activity) -> list:
         core_activity.experiment,
         core_activity.evaluation_method,
         core_activity.conclusions,
+        core_activity.new_knowledge,
     ]):
         return []  # Not enough fields drafted to check consistency
 
     prompt = f"""You are reviewing an R&D Tax Incentive application for cross-field consistency.
 
-Check these four fields for logical consistency:
+Check these five fields for logical consistency:
 
 HYPOTHESIS:
 {core_activity.hypothesis[:1000]}
@@ -860,6 +861,9 @@ EVALUATION METHOD:
 
 CONCLUSIONS:
 {core_activity.conclusions[:800]}
+
+NEW KNOWLEDGE:
+{core_activity.new_knowledge[:800]}
 
 Identify any AMBER inconsistencies (return as "AMBER: <specific inconsistency>"):
 1. Experiment doesn't test the stated hypothesis

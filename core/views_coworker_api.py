@@ -345,10 +345,11 @@ def outreach_queue(request):
         if "general_checkin" in reason_set:
             all_items.extend(_general_checkins(accountant_email))
 
-    except Exception as e:
+    except Exception:
+        # Log full detail server-side, but never leak internals to the caller.
         logger.exception("Error building outreach queue")
         return JsonResponse(
-            {"status": "error", "message": str(e)},
+            {"status": "error", "message": "Internal error"},
             status=500,
         )
 

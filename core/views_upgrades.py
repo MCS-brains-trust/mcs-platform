@@ -366,6 +366,7 @@ def bulk_regenerate(request, pk):
 def mark_document_final(request, doc_pk):
     """Mark a document as Final."""
     doc = get_object_or_404(GeneratedDocument, pk=doc_pk)
+    get_financial_year_for_user(request, doc.financial_year_id)
     doc.status = GeneratedDocument.DocumentStatus.FINAL
     doc.save(update_fields=["status"])
     messages.success(request, f"{doc.get_document_type_display()} v{doc.version} marked as Final.")

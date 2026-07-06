@@ -8,8 +8,9 @@ import hashlib
 import json
 import re
 import uuid
+from decimal import Decimal
 from django.conf import settings
-from django.db import models
+from django.db import models, transaction
 from django.urls import reverse
 
 
@@ -1814,24 +1815,38 @@ class AdjustingJournal(models.Model):
         return f"{ref} - {self.journal_date}: {self.description[:50]}"
 
     def save(self, *args, **kwargs):
-        """Auto-generate reference number on first save."""
+        """Auto-generate reference number on first save.
+
+        The read-max/increment/write is serialised per financial year by
+        locking the FinancialYear row with ``select_for_update`` inside an
+        atomic block, so two concurrent saves can't mint the same reference
+        number (there is no DB unique constraint to fall back on).
+        """
         if not self.reference_number and self.financial_year_id:
-            last = (
-                AdjustingJournal.objects
-                .filter(financial_year=self.financial_year)
-                .exclude(reference_number="")
-                .order_by("-reference_number")
-                .first()
-            )
-            if last and last.reference_number:
-                try:
-                    num = int(last.reference_number.split("-")[1]) + 1
-                except (IndexError, ValueError):
+            with transaction.atomic():
+                # Lock the parent FY row so concurrent journal creates for the
+                # same year serialise here (works even when no journals exist yet).
+                FinancialYear.objects.select_for_update().filter(
+                    pk=self.financial_year_id
+                ).first()
+                last = (
+                    AdjustingJournal.objects
+                    .filter(financial_year_id=self.financial_year_id)
+                    .exclude(reference_number="")
+                    .order_by("-reference_number")
+                    .first()
+                )
+                if last and last.reference_number:
+                    try:
+                        num = int(last.reference_number.split("-")[1]) + 1
+                    except (IndexError, ValueError):
+                        num = 1
+                else:
                     num = 1
-            else:
-                num = 1
-            self.reference_number = f"JE-{num:03d}"
-        super().save(*args, **kwargs)
+                self.reference_number = f"JE-{num:03d}"
+                super().save(*args, **kwargs)
+        else:
+            super().save(*args, **kwargs)
 
     @property
     def is_balanced(self):
@@ -3674,24 +3689,35 @@ class BulkJournalUpload(models.Model):
         return f"{ref} — {self.filename} ({self.lines_count} lines)"
 
     def save(self, *args, **kwargs):
-        """Auto-generate reference number on first save."""
+        """Auto-generate reference number on first save.
+
+        Serialised per financial year via ``select_for_update`` on the
+        FinancialYear row inside an atomic block, so concurrent uploads can't
+        mint duplicate reference numbers (no DB unique constraint exists).
+        """
         if not self.reference_number and self.financial_year_id:
-            last = (
-                BulkJournalUpload.objects
-                .filter(financial_year=self.financial_year)
-                .exclude(reference_number="")
-                .order_by("-reference_number")
-                .first()
-            )
-            if last and last.reference_number:
-                try:
-                    num = int(last.reference_number.split("-")[-1]) + 1
-                except (IndexError, ValueError):
+            with transaction.atomic():
+                FinancialYear.objects.select_for_update().filter(
+                    pk=self.financial_year_id
+                ).first()
+                last = (
+                    BulkJournalUpload.objects
+                    .filter(financial_year_id=self.financial_year_id)
+                    .exclude(reference_number="")
+                    .order_by("-reference_number")
+                    .first()
+                )
+                if last and last.reference_number:
+                    try:
+                        num = int(last.reference_number.split("-")[-1]) + 1
+                    except (IndexError, ValueError):
+                        num = 1
+                else:
                     num = 1
-            else:
-                num = 1
-            self.reference_number = f"Bulk JNLS-{num:03d}"
-        super().save(*args, **kwargs)
+                self.reference_number = f"Bulk JNLS-{num:03d}"
+                super().save(*args, **kwargs)
+        else:
+            super().save(*args, **kwargs)
 
     @property
     def is_balanced(self):
@@ -6668,34 +6694,34 @@ class GlobalAccountMappingHint(models.Model):
             been confirmed more times, update the hint.
         If no hint exists, create one with confidence=1.
         """
-        existing = cls.objects.filter(
+        # get_or_create relies on the (entity_type, account_code) unique_together
+        # to close the check-then-create race between concurrent callers.
+        existing, created = cls.objects.get_or_create(
             entity_type=entity_type,
             account_code=account_code,
-        ).first()
-        if existing:
-            if existing.mapped_line_item_id == mapped_line_item.pk:
-                # Same mapping — reinforce confidence
-                cls.objects.filter(pk=existing.pk).update(
-                    confidence=models.F("confidence") + 1,
-                    account_name=account_name or existing.account_name,
-                )
-            # If different mapping, only override if current confidence is 1
-            # (i.e. only seen once before — the new mapping may be more correct)
-            elif existing.confidence <= 1:
-                cls.objects.filter(pk=existing.pk).update(
-                    mapped_line_item=mapped_line_item,
-                    account_name=account_name or existing.account_name,
-                    confidence=1,
-                )
-            # else: keep existing higher-confidence mapping unchanged
-        else:
-            cls.objects.create(
-                entity_type=entity_type,
-                account_code=account_code,
-                account_name=account_name or "",
+            defaults={
+                "account_name": account_name or "",
+                "mapped_line_item": mapped_line_item,
+                "confidence": 1,
+            },
+        )
+        if created:
+            return
+        if existing.mapped_line_item_id == mapped_line_item.pk:
+            # Same mapping — reinforce confidence
+            cls.objects.filter(pk=existing.pk).update(
+                confidence=models.F("confidence") + 1,
+                account_name=account_name or existing.account_name,
+            )
+        # If different mapping, only override if current confidence is 1
+        # (i.e. only seen once before — the new mapping may be more correct)
+        elif existing.confidence <= 1:
+            cls.objects.filter(pk=existing.pk).update(
                 mapped_line_item=mapped_line_item,
+                account_name=account_name or existing.account_name,
                 confidence=1,
             )
+        # else: keep existing higher-confidence mapping unchanged
 
 
 # ---------------------------------------------------------------------------

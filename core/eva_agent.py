@@ -266,20 +266,37 @@ class EvaAgentLoop:
             return {"error": "No entity in context"}
 
         from core.models import EvaFindingSuppression
-        qs = EvaFindingSuppression.objects.filter(entity=self.entity)
 
-        if check_name:
-            qs = qs.filter(check_name__icontains=check_name)
-        if finding_key:
-            qs = qs.filter(finding_key__icontains=finding_key)
+        # EvaFindingSuppression has no direct entity FK and no check_name/finding_key/
+        # reason/created_at fields.  It is keyed to a financial_year and stores a
+        # v2 fingerprint (entity_id + fy_id + finding_key), rule_category,
+        # suppressed_by, suppressed_at and accountant_note.  Scope to this entity's
+        # financial years and honour only applicable (non-review) suppressions.
+        qs = EvaFindingSuppression.objects.filter(
+            financial_year__entity=self.entity,
+            requires_review=False,
+        )
+
+        if finding_key and self.financial_year:
+            # Compute the exact v2 fingerprint and match precisely.
+            fingerprint = EvaFindingSuppression.generate_fingerprint(
+                str(self.entity.id),
+                str(self.financial_year.pk),
+                finding_key,
+            )
+            qs = qs.filter(fingerprint=fingerprint)
+        elif check_name:
+            # Fall back to the coarse rule_category discriminator.
+            qs = qs.filter(rule_category__icontains=check_name)
 
         suppressions = []
-        for s in qs.select_related("suppressed_by").order_by("-created_at")[:20]:
+        for s in qs.select_related("suppressed_by", "financial_year").order_by("-suppressed_at")[:20]:
             suppressions.append({
-                "check_name": s.check_name,
-                "reason": s.reason or "",
+                "rule_category": s.rule_category,
+                "financial_year": str(s.financial_year),
+                "note": s.accountant_note or "",
                 "suppressed_by": s.suppressed_by.get_full_name() if s.suppressed_by else "Unknown",
-                "suppressed_at": str(s.created_at),
+                "suppressed_at": str(s.suppressed_at),
             })
 
         return {
@@ -300,25 +317,28 @@ class EvaAgentLoop:
     def _tool_get_learned_lessons(self, query: str = "", category: str = None, **kwargs) -> dict:
         """Search EvaLearnedLesson records for relevant firm knowledge."""
         from core.models import EvaLearnedLesson
+        from django.db.models import Q
         qs = EvaLearnedLesson.objects.filter(is_active=True)
 
         if category:
             qs = qs.filter(category=category)
 
-        # Filter to lessons relevant to this user/entity
+        # Apply the text filter to the queryset BEFORE slicing — filtering the
+        # already-sliced first 20 rows silently drops relevant lessons past 20.
+        if query:
+            qs = qs.filter(lesson_text__icontains=query)
+
+        # Scope to this user/entity OR firm-wide (null) lessons.  Compose with Q
+        # on the already-filtered qs so the category/text filters above are
+        # preserved on BOTH operands (the previous `| Model.objects.filter(...)`
+        # dropped them for the firm-wide side).
         if self.user:
-            qs = qs.filter(source_user=self.user) | EvaLearnedLesson.objects.filter(
-                is_active=True, source_user__isnull=True
-            )
+            qs = qs.filter(Q(source_user=self.user) | Q(source_user__isnull=True))
         if self.entity:
-            qs = qs.filter(source_entity=self.entity) | EvaLearnedLesson.objects.filter(
-                is_active=True, source_entity__isnull=True
-            )
+            qs = qs.filter(Q(source_entity=self.entity) | Q(source_entity__isnull=True))
 
         lessons = []
         for lesson in qs.distinct().order_by("-priority_weight")[:20]:
-            if query and query.lower() not in lesson.lesson_text.lower():
-                continue
             lessons.append({
                 "lesson": lesson.lesson_text,
                 "category": lesson.get_category_display(),
@@ -405,22 +425,37 @@ class EvaAgentLoop:
         # Try to extract JSON from the response
         text = response_text.strip()
 
-        # Look for JSON object
-        import re
-        json_match = re.search(r'\{[^{}]*"tool"[^{}]*\}', text, re.DOTALL)
-        if json_match:
-            try:
-                return json.loads(json_match.group())
-            except json.JSONDecodeError:
-                pass
+        # Strip a markdown code fence if present (```json … ``` or ``` … ```).
+        if text.startswith("```"):
+            import re
+            text = re.sub(r"^```[a-zA-Z0-9_]*\s*", "", text)
+            text = re.sub(r"\s*```$", "", text).strip()
 
-        # Try parsing the whole response as JSON
+        # Try parsing the whole (fence-stripped) response as JSON first.
         try:
             parsed = json.loads(text)
-            if "tool" in parsed:
+            if isinstance(parsed, dict) and "tool" in parsed:
                 return parsed
         except json.JSONDecodeError:
             pass
+
+        # Scan for the first balanced JSON object.  A regex like
+        # \{[^{}]*"tool"[^{}]*\} cannot cross the nested args:{}, so use
+        # raw_decode from each candidate '{' to find a well-formed object.
+        decoder = json.JSONDecoder()
+        idx = 0
+        while True:
+            start = text.find("{", idx)
+            if start == -1:
+                break
+            try:
+                obj, _end = decoder.raw_decode(text, start)
+            except json.JSONDecodeError:
+                idx = start + 1
+                continue
+            if isinstance(obj, dict) and "tool" in obj:
+                return obj
+            idx = start + 1
 
         # If the response contains a final answer in plain text, wrap it
         if len(text) > 50 and not text.startswith("{"):

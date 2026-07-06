@@ -18,6 +18,7 @@ from urllib.parse import urlencode
 import requests as http_requests
 from django.conf import settings
 from django.contrib import messages
+from django.db import transaction
 from django.db.utils import DatabaseError
 from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
@@ -43,6 +44,10 @@ from .models import (
 from .providers import get_provider, get_configured_providers, PROVIDERS, ProviderUserError
 
 logger = logging.getLogger(__name__)
+
+# Shared trial-balance imbalance tolerance. Used both when fetching from the
+# provider and when committing a staged import so the two checks agree.
+BALANCE_TOLERANCE = Decimal("0.02")
 
 
 # ---------------------------------------------------------------------------
@@ -277,41 +282,68 @@ def _ensure_valid_token(connection):
 
 
 def _ensure_global_xero_token(connection):
-    """Refresh the global Xero connection token if needed. Returns True if valid."""
+    """Refresh the global Xero connection token if needed. Returns True if valid.
+
+    The Xero refresh token is single-use and rotates on every refresh. Because
+    this is a practice-wide connection shared by every import, two concurrent
+    imports could race the rotation: the loser sends an already-consumed refresh
+    token, gets invalid_grant, and the except branch marks the whole connection
+    expired, locking out the practice. We lock the connection row and re-check
+    needs_refresh after acquiring the lock so only one refresh actually runs.
+    """
     if not connection.needs_refresh:
         return True
 
     client_id = getattr(settings, "XERO_CLIENT_ID", "")
     client_secret = getattr(settings, "XERO_CLIENT_SECRET", "")
 
-    try:
-        resp = http_requests.post(
-            "https://login.xero.com/identity/connect/token",
-            data={
-                "grant_type": "refresh_token",
-                "refresh_token": connection.refresh_token,
-                "client_id": client_id,
-                "client_secret": client_secret,
-            },
-            timeout=15,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        connection.access_token = data["access_token"]
-        connection.refresh_token = data.get("refresh_token", connection.refresh_token)
-        connection.token_expires_at = timezone.now() + timedelta(
-            seconds=data.get("expires_in", 1800)
-        )
-        connection.status = "active"
-        connection.last_error = ""
-        connection.save()
-        return True
-    except Exception as e:
-        logger.error(f"Global Xero token refresh failed: {e}")
-        connection.status = "expired"
-        connection.last_error = str(e)
-        connection.save()
-        return False
+    with transaction.atomic():
+        locked = XeroGlobalConnection.objects.select_for_update().get(pk=connection.pk)
+
+        # Another import may have refreshed while we waited for the lock.
+        if not locked.needs_refresh:
+            connection.access_token = locked.access_token
+            connection.refresh_token = locked.refresh_token
+            connection.token_expires_at = locked.token_expires_at
+            connection.status = locked.status
+            return True
+
+        try:
+            resp = http_requests.post(
+                "https://login.xero.com/identity/connect/token",
+                data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": locked.refresh_token,
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                },
+                timeout=15,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            locked.access_token = data["access_token"]
+            locked.refresh_token = data.get("refresh_token", locked.refresh_token)
+            locked.token_expires_at = timezone.now() + timedelta(
+                seconds=data.get("expires_in", 1800)
+            )
+            locked.status = "active"
+            locked.last_error = ""
+            locked.save()
+
+            connection.access_token = locked.access_token
+            connection.refresh_token = locked.refresh_token
+            connection.token_expires_at = locked.token_expires_at
+            connection.status = locked.status
+            connection.last_error = ""
+            return True
+        except Exception as e:
+            logger.error(f"Global Xero token refresh failed: {e}")
+            locked.status = "expired"
+            locked.last_error = str(e)
+            locked.save()
+            connection.status = locked.status
+            connection.last_error = locked.last_error
+            return False
 
 
 # ---------------------------------------------------------------------------
@@ -498,7 +530,7 @@ def _do_cloud_import(
         total_debit = sum((line.get("debit") or 0) for line in raw_lines)
         total_credit = sum((line.get("credit") or 0) for line in raw_lines)
         imbalance = total_debit - total_credit
-        if import_mode == "trial_balance" and provider.name != "quickbooks" and abs(imbalance) > Decimal("0.01"):
+        if import_mode == "trial_balance" and provider.name != "quickbooks" and abs(imbalance) > BALANCE_TOLERANCE:
             raise ValueError(
                 f"{provider.display_name} trial balance does not balance for {as_at_date.isoformat()} "
                 f"(difference: {imbalance})."
@@ -912,7 +944,7 @@ def review_import(request, fy_pk):
     total_dr = sum(Decimal(str(l.get("debit", "0"))) for l in lines)
     total_cr = sum(Decimal(str(l.get("credit", "0"))) for l in lines)
     balance_diff = abs(total_dr - total_cr)
-    TOLERANCE = Decimal("0.02")
+    TOLERANCE = BALANCE_TOLERANCE
     balance_blocked = balance_diff > TOLERANCE
     balance_warning = Decimal("0") < balance_diff <= TOLERANCE
 
@@ -977,7 +1009,7 @@ def commit_import(request, fy_pk):
     total_dr = sum(Decimal(str(l.get("debit", "0"))) for l in staged_lines)
     total_cr = sum(Decimal(str(l.get("credit", "0"))) for l in staged_lines)
     balance_diff = abs(total_dr - total_cr)
-    TOLERANCE = Decimal("0.02")
+    TOLERANCE = BALANCE_TOLERANCE
 
     if import_mode == "trial_balance":
         if balance_diff > TOLERANCE:
@@ -1087,6 +1119,13 @@ def commit_import(request, fy_pk):
         # source='rollover' row emitted in Pass B below.
         # =========================================================
         uploaded_codes = set()
+        # Track which target codes have already had their prior-year
+        # comparative snapshot written. When several staged source lines map to
+        # the same StatementHub code we must emit the aggregated comparative
+        # only ONCE — otherwise risk_engine re-sums prior_debit/prior_credit/
+        # prior_closing_balance per code and multiplies the comparative by the
+        # number of contributing rows.
+        comparative_written_codes = set()
 
         for i, line in enumerate(staged_lines):
             mapping_id = request.POST.get(f"mapping_{i}", "").strip()
@@ -1119,8 +1158,18 @@ def commit_import(request, fy_pk):
                 # for the legacy code path that bypasses the gate.
                 acct_code = entity_acct_code or line["account_code"]
                 comp = prior_data.get(acct_code, {})
-                py_debit = comp.get("prior_debit", Decimal("0"))
-                py_credit = comp.get("prior_credit", Decimal("0"))
+                # Only the first tb_import row for a given code carries the
+                # aggregated comparative; subsequent rows for the same code get
+                # zeroes so the per-code total isn't multiplied downstream.
+                write_comparative = acct_code not in comparative_written_codes
+                if write_comparative:
+                    py_debit = comp.get("prior_debit", Decimal("0"))
+                    py_credit = comp.get("prior_credit", Decimal("0"))
+                    py_closing = comp.get("prior_closing_balance", Decimal("0"))
+                else:
+                    py_debit = Decimal("0")
+                    py_credit = Decimal("0")
+                    py_closing = Decimal("0")
 
                 # Model A: tb_import rows always have opening_balance=0.
                 # The rolled-forward opening is emitted as a dedicated
@@ -1156,13 +1205,14 @@ def commit_import(request, fy_pk):
                     description=description,
                     prior_debit=py_debit,
                     prior_credit=py_credit,
-                    prior_closing_balance=comp.get("prior_closing_balance", Decimal("0")),
-                    prior_balance_override=comp.get("prior_balance_override", False),
-                    prior_mapped_line_item=comp.get("prior_mapped_line_item"),
-                    reclassified=comp.get("reclassified", False),
-                    comparatives_locked=comp.get("comparatives_locked", False),
+                    prior_closing_balance=py_closing,
+                    prior_balance_override=comp.get("prior_balance_override", False) if write_comparative else False,
+                    prior_mapped_line_item=comp.get("prior_mapped_line_item") if write_comparative else None,
+                    reclassified=comp.get("reclassified", False) if write_comparative else False,
+                    comparatives_locked=comp.get("comparatives_locked", False) if write_comparative else False,
                 )
 
+                comparative_written_codes.add(acct_code)
                 uploaded_codes.add(acct_code)
 
                 # Model A: write ClientAccountMapping keyed on the SOURCE
@@ -1216,6 +1266,10 @@ def commit_import(request, fy_pk):
             opening = comp.get("opening_balance", Decimal("0"))
             if opening == 0:
                 continue
+            # A tb_import row (Pass A) usually already carries this code's
+            # comparative; only write it here if no earlier row did, so the
+            # per-code comparative total is emitted exactly once.
+            write_comparative = code not in comparative_written_codes
             TrialBalanceLine.objects.create(
                 financial_year=fy,
                 account_code=code,
@@ -1227,14 +1281,15 @@ def commit_import(request, fy_pk):
                 mapped_line_item=comp.get("mapped_line_item") or comp.get("prior_mapped_line_item"),
                 is_adjustment=False,
                 source='rollover',
-                prior_debit=comp.get("prior_debit", Decimal("0")),
-                prior_credit=comp.get("prior_credit", Decimal("0")),
-                prior_closing_balance=comp.get("prior_closing_balance", Decimal("0")),
-                prior_balance_override=comp.get("prior_balance_override", False),
-                prior_mapped_line_item=comp.get("prior_mapped_line_item"),
-                reclassified=comp.get("reclassified", False),
-                comparatives_locked=comp.get("comparatives_locked", False),
+                prior_debit=comp.get("prior_debit", Decimal("0")) if write_comparative else Decimal("0"),
+                prior_credit=comp.get("prior_credit", Decimal("0")) if write_comparative else Decimal("0"),
+                prior_closing_balance=comp.get("prior_closing_balance", Decimal("0")) if write_comparative else Decimal("0"),
+                prior_balance_override=comp.get("prior_balance_override", False) if write_comparative else False,
+                prior_mapped_line_item=comp.get("prior_mapped_line_item") if write_comparative else None,
+                reclassified=comp.get("reclassified", False) if write_comparative else False,
+                comparatives_locked=comp.get("comparatives_locked", False) if write_comparative else False,
             )
+            comparative_written_codes.add(code)
             emitted_rollover_codes.add(code)
 
         # =========================================================
@@ -1675,11 +1730,13 @@ def xero_global_callback(request):
     if error:
         messages.error(request, f"Xero connection failed: {error}")
         request.session.pop("xero_rapid_connect", None)
+        request.session.pop("xero_global_oauth_state", None)
         return redirect("integrations:xero_global_dashboard")
 
     if not code or state != expected_state:
         messages.error(request, "Xero connection failed: invalid state.")
         request.session.pop("xero_rapid_connect", None)
+        request.session.pop("xero_global_oauth_state", None)
         return redirect("integrations:xero_global_dashboard")
 
     client_id = getattr(settings, "XERO_CLIENT_ID", "")
@@ -1836,24 +1893,27 @@ def xero_global_refresh_tenants(request):
             if t.entity
         }
 
-        # Delete old tenants and recreate
-        conn.tenants.all().delete()
+        # Delete old tenants and recreate — wrap in a transaction so a failure
+        # midway can't leave the connection with its tenant list wiped and only
+        # partially rebuilt (which would drop entity links).
+        with transaction.atomic():
+            conn.tenants.all().delete()
 
-        for t in tenants:
-            tid = t.get("tenantId", "")
-            xt = XeroTenant.objects.create(
-                connection=conn,
-                tenant_id=tid,
-                tenant_name=t.get("tenantName", "Unknown"),
-                tenant_type=t.get("tenantType", ""),
-            )
-            # Restore entity link if it existed
-            if tid in existing_links:
-                xt.entity = existing_links[tid]
-                xt.save(update_fields=["entity"])
+            for t in tenants:
+                tid = t.get("tenantId", "")
+                xt = XeroTenant.objects.create(
+                    connection=conn,
+                    tenant_id=tid,
+                    tenant_name=t.get("tenantName", "Unknown"),
+                    tenant_type=t.get("tenantType", ""),
+                )
+                # Restore entity link if it existed
+                if tid in existing_links:
+                    xt.entity = existing_links[tid]
+                    xt.save(update_fields=["entity"])
 
-        conn.last_tenant_refresh = timezone.now()
-        conn.save(update_fields=["last_tenant_refresh"])
+            conn.last_tenant_refresh = timezone.now()
+            conn.save(update_fields=["last_tenant_refresh"])
 
         messages.success(request, f"Refreshed tenant list: {len(tenants)} organisation(s) found.")
 
@@ -2136,7 +2196,13 @@ def xpm_sync_now(request):
 # ---------------------------------------------------------------------------
 
 def _ensure_qb_tenant_token(qb_tenant):
-    """Refresh a QBTenant's access token if needed. Returns True if valid."""
+    """Refresh a QBTenant's access token if needed. Returns True if valid.
+
+    Intuit refresh tokens rotate on use, so two concurrent imports for the same
+    tenant would race the rotation and one would fail with invalid_grant. Lock
+    the tenant row and re-check needs_refresh after acquiring the lock so only
+    one refresh actually runs.
+    """
     if not qb_tenant.needs_refresh:
         return True
 
@@ -2145,31 +2211,45 @@ def _ensure_qb_tenant_token(qb_tenant):
     client_secret = getattr(settings, "QBO_CLIENT_SECRET", "")
     auth_header = base64.b64encode(f"{client_id}:{client_secret}".encode()).decode()
 
-    try:
-        resp = http_requests.post(
-            "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
-            headers={
-                "Authorization": f"Basic {auth_header}",
-                "Content-Type": "application/x-www-form-urlencoded",
-            },
-            data={
-                "grant_type": "refresh_token",
-                "refresh_token": qb_tenant.refresh_token,
-            },
-            timeout=15,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        qb_tenant.access_token = data["access_token"]
-        qb_tenant.refresh_token = data.get("refresh_token", qb_tenant.refresh_token)
-        qb_tenant.token_expires_at = timezone.now() + timedelta(
-            seconds=data.get("expires_in", 3600)
-        )
-        qb_tenant.save()
-        return True
-    except Exception as e:
-        logger.error(f"QB tenant token refresh failed for {qb_tenant}: {e}")
-        return False
+    with transaction.atomic():
+        locked = QBTenant.objects.select_for_update().get(pk=qb_tenant.pk)
+
+        # Another import may have refreshed while we waited for the lock.
+        if not locked.needs_refresh:
+            qb_tenant.access_token = locked.access_token
+            qb_tenant.refresh_token = locked.refresh_token
+            qb_tenant.token_expires_at = locked.token_expires_at
+            return True
+
+        try:
+            resp = http_requests.post(
+                "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
+                headers={
+                    "Authorization": f"Basic {auth_header}",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+                data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": locked.refresh_token,
+                },
+                timeout=15,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            locked.access_token = data["access_token"]
+            locked.refresh_token = data.get("refresh_token", locked.refresh_token)
+            locked.token_expires_at = timezone.now() + timedelta(
+                seconds=data.get("expires_in", 3600)
+            )
+            locked.save()
+
+            qb_tenant.access_token = locked.access_token
+            qb_tenant.refresh_token = locked.refresh_token
+            qb_tenant.token_expires_at = locked.token_expires_at
+            return True
+        except Exception as e:
+            logger.error(f"QB tenant token refresh failed for {qb_tenant}: {e}")
+            return False
 
 
 
@@ -2313,19 +2393,38 @@ def qb_global_callback(request):
 
     expected_state = request.session.get("qb_global_oauth_state")
 
+    # Only the per-entity flow (oauth_connect) sets oauth_state/oauth_provider
+    # to *this* request's freshly-minted state. The global flow (qb_global_connect)
+    # leaves oauth_state stale from any earlier abandoned per-entity attempt, so
+    # matching the returned state is what tells us the flow genuinely came from
+    # the per-entity path and should auto-link to that entity.
+    from_per_entity_flow = (
+        request.session.get("oauth_provider") == "quickbooks"
+        and request.session.get("oauth_state")
+        and request.session.get("oauth_state") == state
+    )
+
+    def _clear_oauth_session():
+        for key in [
+            "qb_global_oauth_state", "qb_rapid_connect",
+            "oauth_state", "oauth_entity_pk", "oauth_provider",
+            "oauth_tokens", "oauth_tenants",
+        ]:
+            request.session.pop(key, None)
+
     if error:
         messages.error(request, f"QuickBooks connection failed: {error}")
-        request.session.pop("qb_rapid_connect", None)
+        _clear_oauth_session()
         return redirect("integrations:qb_global_dashboard")
 
     if not code or state != expected_state:
         messages.error(request, "QuickBooks connection failed: invalid state.")
-        request.session.pop("qb_rapid_connect", None)
+        _clear_oauth_session()
         return redirect("integrations:qb_global_dashboard")
 
     if not realm_id:
         messages.error(request, "QuickBooks connection failed: no company ID returned.")
-        request.session.pop("qb_rapid_connect", None)
+        _clear_oauth_session()
         return redirect("integrations:qb_global_dashboard")
 
     import base64
@@ -2383,7 +2482,10 @@ def qb_global_callback(request):
                 connected_by=request.user,
             )
 
-        entity_pk = request.session.get("oauth_entity_pk")
+        # Only auto-link to an entity when this callback genuinely came from the
+        # per-entity connect flow; otherwise a stale oauth_entity_pk from an
+        # abandoned attempt would wrongly bind this company to that entity.
+        entity_pk = request.session.get("oauth_entity_pk") if from_per_entity_flow else None
         entity = None
         if entity_pk:
             entity = Entity.objects.filter(pk=entity_pk).first()
@@ -2418,18 +2520,21 @@ def qb_global_callback(request):
     except Exception as e:
         logger.error(f"QB global OAuth callback error: {e}")
         messages.error(request, f"QuickBooks connection failed: {str(e)}")
-        request.session.pop("qb_rapid_connect", None)
-        request.session.pop("qb_global_oauth_state", None)
+        _clear_oauth_session()
         return redirect("integrations:qb_global_dashboard")
-    entity_pk = request.session.get("oauth_entity_pk")
-    provider_name = request.session.get("oauth_provider")
+
+    # Decide the redirect target before clearing session state.
+    redirect_to_entity = entity_pk if (entity and from_per_entity_flow) else None
     request.session.pop("qb_global_oauth_state", None)
     if rapid_mode:
-        return redirect(reverse("integrations:qb_global_connect") + "?rapid=1")
-    if entity_pk and provider_name == "quickbooks":
+        # Preserve rapid-connect state for the next organisation; other one-shot
+        # oauth keys are cleared so a later flow can't read them stale.
         for key in ["oauth_state", "oauth_entity_pk", "oauth_provider", "oauth_tokens", "oauth_tenants"]:
             request.session.pop(key, None)
-        return redirect("integrations:connection_manage", entity_pk=entity_pk)
+        return redirect(reverse("integrations:qb_global_connect") + "?rapid=1")
+    _clear_oauth_session()
+    if redirect_to_entity:
+        return redirect("integrations:connection_manage", entity_pk=redirect_to_entity)
     return redirect("integrations:qb_global_dashboard")
 
 

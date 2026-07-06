@@ -25,10 +25,31 @@ class SensitiveDataFilter(logging.Filter):
             record.msg = self._scrub(record.msg)
         if record.args:
             if isinstance(record.args, dict):
-                record.args = {k: self._scrub(v) for k, v in record.args.items()}
+                record.args = {k: self._scrub_arg(v) for k, v in record.args.items()}
             elif isinstance(record.args, tuple):
-                record.args = tuple(self._scrub(a) for a in record.args)
+                record.args = tuple(self._scrub_arg(a) for a in record.args)
+        # Scrub exception tracebacks. The message/args are stringified with a
+        # traceback appended by the handler's formatter *after* this filter runs,
+        # so exception text (which can carry PII in str(exc) or repr'd locals) is
+        # otherwise never scrubbed. Format it now, scrub it, and stash it in
+        # exc_text so the formatter uses our scrubbed copy verbatim.
+        if record.exc_info and not record.exc_text:
+            record.exc_text = logging.Formatter().formatException(record.exc_info)
+            record.exc_info = None
+        if record.exc_text:
+            record.exc_text = self._scrub(record.exc_text)
         return True
+
+    def _scrub_arg(self, value):
+        """Scrub a single log arg. Non-strings are scrubbed via their str(),
+        but the original value is kept when no PII is found so numeric format
+        specifiers (%d/%f) still work; when PII is redacted the (string)
+        redacted form is substituted."""
+        if isinstance(value, str):
+            return self._scrub(value)
+        text = str(value)
+        scrubbed = self._scrub(text)
+        return scrubbed if scrubbed != text else value
 
     def _scrub(self, value):
         if not isinstance(value, str):

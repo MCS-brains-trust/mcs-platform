@@ -154,11 +154,21 @@ def run_div7a_assessment(financial_year_id, triggered_by=None):
     _rule_t2_d7a_02(ctx)   # Loan Balance Increase (Escalation Modifier)
     _rule_t2_d7a_03(ctx)   # Payments to/for Shareholders (s 109E)
 
-    # Category B — Compliance Verification (only if T2-D7A-01 fired)
+    # Category B — Compliance Verification.
+    # Rule 04 (missing / insufficient agreement) only makes sense off new lending
+    # detected this year (rule 01).  Rules 05 & 06 verify benchmark interest and
+    # minimum yearly repayments for ANY outstanding debit loan — including loans
+    # that never triggered rule 01 because a complying agreement already exists —
+    # so they MUST run independently of the 01 gate.
     if "T2-D7A-01" in ctx.rules_fired:
         _rule_t2_d7a_04(ctx)   # Missing Complying Loan Agreement
-        _rule_t2_d7a_05(ctx)   # Missing Benchmark Interest Income
-        _rule_t2_d7a_06(ctx)   # Minimum Yearly Repayment Shortfall
+    else:
+        # Detect any existing complying agreement without firing a finding so
+        # rules 05/06 can verify interest/MYR on "compliant" loans.
+        _resolve_complying_agreement(ctx)
+
+    _rule_t2_d7a_05(ctx)   # Missing Benchmark Interest Income
+    _rule_t2_d7a_06(ctx)   # Minimum Yearly Repayment Shortfall
 
     # Category C — Cross-Entity Detection
     _rule_t2_d7a_07(ctx)   # Unpaid Present Entitlements (Trust → Company)
@@ -520,38 +530,36 @@ def _rule_t2_d7a_01(ctx):
     """
     T2-D7A-01: Shareholder/Director Loan Debit Balance
 
-    Fires when ALL of the following are true:
-      1. The CLOSING BALANCE (net_balance) is a positive DEBIT — i.e. the
-         company has a net receivable from the shareholder/director at year end.
-      2. The CURRENT YEAR debit MOVEMENT is > 0 — i.e. new lending occurred
-         this year (balance increased or moved from credit into debit).
+    Fires when the CLOSING BALANCE (net_balance) of a shareholder / director /
+    associate loan is a positive DEBIT — i.e. the company has a net receivable
+    from that person at year end. Any outstanding debit loan balance owed to the
+    company is a Division 7A issue in its own right, REGARDLESS of whether the
+    balance moved this year: a loan that simply carries forward unrepaid is just
+    as much a deemed-dividend risk as new lending.
 
-    The dual guard prevents false positives caused by TB imports that store
-    only the gross debit-column movement for accounts that are nil or in credit
-    at year end.  A nil or credit closing balance means there is no outstanding
-    Div 7A loan regardless of intra-year movement.
+    Zero and credit closing balances are excluded (there is no outstanding loan).
+    A complying Div7ACompliance record that covers the balance also excludes it.
+    The current-year movement is retained for reporting only, not as the trigger
+    or the exposure amount.
     """
     debit_accounts = []
-    total_debit = ZERO
+    total_exposure = ZERO
 
     for acct in ctx.loan_accounts:
-        # Guard 1: closing balance must be a net DEBIT (positive).
-        # Zero and credit closing balances are NOT Div 7A exposures.
+        # The closing balance must be a net DEBIT (positive) — the person owes
+        # the company at year end. Zero and credit closing balances are NOT
+        # Div 7A exposures. This guard alone prevents the false positives from
+        # TB imports that store only gross debit-column movement for accounts
+        # that are nil or in credit at year end.
         if not acct["is_debit"] or acct["net_balance"] <= ZERO:
             continue
 
-        # Guard 2: current year debit MOVEMENT must be positive.
-        # A static loan that hasn't increased does not trigger a new finding.
         cy_balance = acct["net_balance"]
         py_balance = acct["prior_balance"] if acct["prior_balance"] > ZERO else ZERO
         cy_movement = cy_balance - py_balance
 
-        if cy_movement <= ZERO:
-            # No new lending this year — skip
-            continue
-
-        # Check false positive guard: exclude if Div7ACompliance exists
-        # with status=COMPLIANT and loan_balance >= net_debit_balance
+        # False-positive guard: exclude if a Div7ACompliance record with
+        # status=COMPLIANT already covers this balance.
         if _has_compliant_coverage(ctx, acct["net_balance"]):
             continue
 
@@ -562,21 +570,23 @@ def _rule_t2_d7a_01(ctx):
             "py_balance": str(acct["prior_balance"]),
             "cy_movement": str(cy_movement),
         })
-        total_debit += cy_movement
+        # Exposure is the outstanding CLOSING debit balance — the whole amount
+        # owed to the company at year end is the Div 7A loan, not just the
+        # current-year movement.
+        total_exposure += cy_balance
 
-    if total_debit > ZERO:
+    if total_exposure > ZERO:
         ctx.rules_fired.append("T2-D7A-01")
-        ctx.direct_loan_balance = total_debit
+        ctx.direct_loan_balance = total_exposure
         ctx.direct_loan_accounts = debit_accounts
 
         for acct in debit_accounts:
             ctx.finding_lines.append(
                 f"Director/Shareholder Loan — {acct['account_name']} "
-                f"({acct['account_code']}): current year debit movement of "
-                f"${Decimal(acct['cy_movement']):,.2f} (closing balance "
-                f"${Decimal(acct['balance']):,.2f}). Without a complying "
-                f"Div 7A loan agreement, this increase is assessable as an "
-                f"unfranked deemed dividend under ss 109C–109D ITAA 1936."
+                f"({acct['account_code']}): outstanding debit closing balance of "
+                f"${Decimal(acct['balance']):,.2f} owed to the company at year end. "
+                f"Without a complying Div 7A loan agreement, this loan is assessable "
+                f"as an unfranked deemed dividend under ss 109C–109D ITAA 1936."
             )
 
 
@@ -696,13 +706,13 @@ def models_Q_director_or_shareholder():
 # CATEGORY B — COMPLIANCE VERIFICATION
 # ============================================================================
 
-def _rule_t2_d7a_04(ctx):
-    """
-    T2-D7A-04: Missing Complying Loan Agreement
+def _resolve_complying_agreement(ctx):
+    """Detect an executed complying Div 7A loan agreement for this entity/FY.
 
-    Only runs if T2-D7A-01 fired.
-    Checks for LegalDocument with document_type='div7a_loan_agreement',
-    status=EXECUTED, loan_amount >= net_debit_balance.
+    Sets ``ctx.has_complying_agreement`` and ``ctx.agreement_covers_balance``
+    WITHOUT firing any finding, so rules 05/06 can verify interest/MYR on loans
+    that never triggered rule 01 (e.g. "compliant" loans).  Returns a tuple of
+    ``(total_covered, has_agreement)``.
     """
     from core.models import LegalDocument
 
@@ -711,8 +721,6 @@ def _rule_t2_d7a_04(ctx):
         entity=ctx.entity,
         document_type="div7a_loan_agreement",
         status="executed",
-    ).filter(
-        # Agreement must cover the current FY
         financial_year=ctx.fy,
     )
 
@@ -724,20 +732,32 @@ def _rule_t2_d7a_04(ctx):
             status="executed",
         )
 
-    if agreements.exists():
-        ctx.has_complying_agreement = True
-        # Check if agreement covers the full balance
-        total_covered = ZERO
-        for agreement in agreements:
-            params = agreement.parameters or {}
-            loan_amt = params.get("loan_amount", 0)
-            try:
-                total_covered += Decimal(str(loan_amt))
-            except (InvalidOperation, ValueError):
-                pass
+    total_covered = ZERO
+    for agreement in agreements:
+        params = agreement.parameters or {}
+        loan_amt = params.get("loan_amount", 0)
+        try:
+            total_covered += Decimal(str(loan_amt))
+        except (InvalidOperation, ValueError):
+            pass
 
-        ctx.agreement_covers_balance = total_covered >= ctx.direct_loan_balance
+    has_agreement = agreements.exists()
+    ctx.has_complying_agreement = has_agreement
+    ctx.agreement_covers_balance = has_agreement and total_covered >= ctx.direct_loan_balance
+    return total_covered, has_agreement
 
+
+def _rule_t2_d7a_04(ctx):
+    """
+    T2-D7A-04: Missing Complying Loan Agreement
+
+    Only runs if T2-D7A-01 fired.
+    Checks for LegalDocument with document_type='div7a_loan_agreement',
+    status=EXECUTED, loan_amount >= net_debit_balance.
+    """
+    total_covered, has_agreement = _resolve_complying_agreement(ctx)
+
+    if has_agreement:
         if not ctx.agreement_covers_balance:
             ctx.rules_fired.append("T2-D7A-04")
             ctx.finding_lines.append(
@@ -748,8 +768,6 @@ def _rule_t2_d7a_04(ctx):
             )
     else:
         ctx.rules_fired.append("T2-D7A-04")
-        ctx.has_complying_agreement = False
-        ctx.agreement_covers_balance = False
         ctx.finding_lines.append(
             f"No complying Division 7A loan agreement on file for "
             f"${ctx.direct_loan_balance:,.2f} debit balance. Without an executed "
@@ -767,17 +785,15 @@ def _rule_t2_d7a_05(ctx):
     if not ctx.has_complying_agreement:
         return
 
-    # Calculate expected interest: opening_loan_balance × benchmark_rate
-    # Use prior year balance as opening balance (or current if no prior)
+    # Calculate expected interest: opening_loan_balance × benchmark_rate.
+    # Only loans that existed at the START of the year attract benchmark interest.
+    # A loan first drawn this FY (prior_balance <= 0) has a $0 opening balance —
+    # no benchmark interest is due in the drawdown year, so do NOT substitute the
+    # closing balance (which manufactures a false first-year interest shortfall).
     opening_balance = ZERO
     for acct in ctx.loan_accounts:
-        if acct["is_debit"]:
-            py = acct["prior_balance"]
-            if py > ZERO:
-                opening_balance += py
-            else:
-                # If no prior year, use current year as proxy
-                opening_balance += acct["net_balance"]
+        if acct["is_debit"] and acct["prior_balance"] > ZERO:
+            opening_balance += acct["prior_balance"]
 
     ctx.expected_interest = (opening_balance * ctx.benchmark_rate).quantize(
         Decimal("0.01"), rounding=ROUND_HALF_UP
@@ -825,28 +841,38 @@ def _rule_t2_d7a_06(ctx):
         status__in=["COMPLIANT", "PENDING"],
     )
 
-    if not compliance_records.exists():
-        # No compliance record — can't calculate MYR precisely
-        # Use default 7-year unsecured term
-        opening_balance = ZERO
-        for acct in ctx.loan_accounts:
-            if acct["is_debit"] and acct["prior_balance"] > ZERO:
-                opening_balance += acct["prior_balance"]
-            elif acct["is_debit"]:
-                opening_balance += acct["net_balance"]
+    # Opening balance = the year's ACTUAL opening balance (TB prior balance).
+    # Loans first drawn this FY (prior_balance <= 0) have a $0 opening balance and
+    # attract no MYR in the drawdown year — do NOT substitute the closing balance.
+    opening_balance = ZERO
+    for acct in ctx.loan_accounts:
+        if acct["is_debit"] and acct["prior_balance"] > ZERO:
+            opening_balance += acct["prior_balance"]
 
+    if not compliance_records.exists():
+        # No compliance record — can't calculate MYR precisely.
+        # Use default 7-year unsecured term on the actual opening balance.
         if opening_balance > ZERO:
             ctx.expected_myr = _calculate_myr(opening_balance, ctx.benchmark_rate, 7)
     else:
-        # Use compliance records for precise calculation
-        total_myr = ZERO
-        for record in compliance_records:
-            fy_num = _extract_fy_number(ctx.fy.year_label)
-            remaining = record.loan_term - (fy_num - record.loan_start_year)
-            if remaining > 0:
-                myr = _calculate_myr(record.loan_amount, ctx.benchmark_rate, remaining)
-                total_myr += myr
-        ctx.expected_myr = total_myr
+        # Use compliance records only for the remaining loan TERM.  Base the MYR
+        # on the year's actual opening balance (TB prior balance) — NOT the
+        # original loan_amount, which never declines and inflates the demanded
+        # repayment, manufacturing false shortfalls.
+        fy_num = _extract_fy_number(ctx.fy.year_label)
+        remaining_terms = []
+        if fy_num is not None:
+            for record in compliance_records:
+                remaining = record.loan_term - (fy_num - record.loan_start_year)
+                if remaining > 0:
+                    remaining_terms.append(remaining)
+
+        # With a single aggregate opening balance we cannot map balances to
+        # individual records; use the longest remaining term (lowest MYR) so we
+        # do not over-demand and raise false shortfalls.
+        remaining = max(remaining_terms) if remaining_terms else 0
+        if opening_balance > ZERO and remaining > 0:
+            ctx.expected_myr = _calculate_myr(opening_balance, ctx.benchmark_rate, remaining)
         ctx.compliance_records = list(compliance_records)
 
     # Calculate actual repayments (credits on loan accounts during FY)
@@ -885,10 +911,12 @@ def _rule_t2_d7a_06(ctx):
 
 
 def _extract_fy_number(year_label):
-    """Extract numeric year from label like 'FY2026' -> 2026."""
+    """Extract numeric year from label like 'FY2026' -> 2026, else None."""
     import re
-    match = re.search(r'(\d{4})', year_label)
-    return int(match.group(1)) if match else 2026
+    if not year_label:
+        return None
+    match = re.search(r'(\d{4})', str(year_label))
+    return int(match.group(1)) if match else None
 
 
 # ============================================================================
@@ -979,12 +1007,17 @@ def _rule_t2_d7a_07(ctx):
                     d["trust_entity_id"] == str(trust.pk) for d in upe_details
                 ):
                     total_upe += net
+                    # Derive the regime from the FY end date (as the trust-side
+                    # loop above does) rather than hardcoding post-2022.
+                    regime = "post_2022"
+                    if ctx.fy.end_date and ctx.fy.end_date.year <= 2022:
+                        regime = "pre_2022"
                     upe_details.append({
                         "trust_entity_id": str(trust.pk),
                         "trust_name": trust.entity_name,
                         "upe_amount": str(net),
                         "distribution_date": str(ctx.fy.end_date),
-                        "regime": "post_2022",
+                        "regime": regime,
                     })
 
     if total_upe > ZERO:

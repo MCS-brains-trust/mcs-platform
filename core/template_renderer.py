@@ -38,6 +38,8 @@ from docx.enum.section import WD_ORIENT
 from docx.oxml.ns import qn, nsdecls
 from docx.oxml import parse_xml
 
+from core.template_resolvers import _fmt_money
+
 logger = logging.getLogger(__name__)
 
 # =============================================================================
@@ -294,7 +296,7 @@ class TemplateRenderer:
 
                 # Format the value
                 fmt = col_def.get("format")
-                if fmt == "money" and value:
+                if fmt == "money" and value is not None and value != "":
                     try:
                         val = Decimal(str(value))
                         if val < 0:
@@ -305,7 +307,7 @@ class TemplateRenderer:
                             cell_text = f"{val:,.2f}"
                     except Exception:
                         cell_text = str(value)
-                elif fmt == "percentage" and value:
+                elif fmt == "percentage" and value is not None and value != "":
                     try:
                         val = Decimal(str(value)) * 100
                         cell_text = f"{val:.2f}%"
@@ -522,7 +524,15 @@ class TemplateRenderer:
         for i, item in enumerate(items):
             label = self._resolve_text(item.get("label", ""))
             value_field = item.get("value", "")
-            value = self._resolve_text(value_field) if "{{" in str(value_field) else str(value_field)
+            if "{{" in str(value_field):
+                value = self._resolve_text(value_field)
+            elif value_field in self.context:
+                # Bare field name — leave empty so the context-lookup/format
+                # block below resolves it (previously str(value_field) shadowed
+                # the field name and made the fallback unreachable).
+                value = ""
+            else:
+                value = str(value_field)
 
             # If value is a merge field name (no braces), resolve it
             if not value and value_field in self.context:
@@ -569,7 +579,9 @@ class TemplateRenderer:
             field_name = match.group(1)
             value = self.context.get(field_name, f"{{{{{field_name}}}}}")
             if isinstance(value, Decimal):
-                return f"${value:,.2f}"
+                # Route through the shared money formatter so negatives render as
+                # ($100.00) rather than $-100.00.
+                return _fmt_money(value)
             if isinstance(value, (list, dict)):
                 return str(value)
             return str(value)

@@ -18,26 +18,38 @@ from django.db import models
 
 _encryption_logger = logging.getLogger(__name__)
 
+# Ensures the SECRET_KEY-fallback warning is emitted at most once per process
+# instead of on every encrypt/decrypt call.
+_fallback_warned = False
+
 
 def _get_fernet():
     """
     Get a Fernet cipher using a dedicated encryption key.
-    Uses FIELD_ENCRYPTION_KEY if set (preferred), otherwise falls back to
+    Prefers settings.FIELD_ENCRYPTION_KEY (which is populated from the
+    FIELD_ENCRYPTION_KEY env var), then the raw env var, otherwise falls back to
     deriving from SECRET_KEY for backward compatibility.
+
+    The SECRET_KEY fallback is intentionally NOT a hard failure so it never
+    breaks a running deployment — but it is logged once as a warning because it
+    makes SECRET_KEY a single point of failure for all encrypted PII/secrets.
     """
-    explicit_key = os.environ.get("FIELD_ENCRYPTION_KEY", "") or getattr(
-        settings, "FIELD_ENCRYPTION_KEY", ""
+    explicit_key = getattr(settings, "FIELD_ENCRYPTION_KEY", "") or os.environ.get(
+        "FIELD_ENCRYPTION_KEY", ""
     )
     if explicit_key:
         return Fernet(
             explicit_key.encode() if isinstance(explicit_key, str) else explicit_key
         )
 
-    # Fallback: derive from SECRET_KEY (backward-compatible, not recommended)
-    _encryption_logger.warning(
-        "FIELD_ENCRYPTION_KEY not set — deriving encryption key from SECRET_KEY. "
-        "Set FIELD_ENCRYPTION_KEY in your environment for production use."
-    )
+    # Fallback: derive from SECRET_KEY (backward-compatible, not recommended).
+    global _fallback_warned
+    if not _fallback_warned:
+        _fallback_warned = True
+        _encryption_logger.warning(
+            "FIELD_ENCRYPTION_KEY not set — deriving encryption key from SECRET_KEY. "
+            "Set FIELD_ENCRYPTION_KEY in your environment for production use."
+        )
     key = hashlib.sha256(settings.SECRET_KEY.encode()).digest()
     return Fernet(base64.urlsafe_b64encode(key))
 

@@ -38,15 +38,21 @@ def get_tax_rates(fy_label):
             if row.key not in rates:
                 rates[row.key] = D(row.value)
 
-    # Hardcoded fallback only if DB has nothing at all (safety net)
+    # Hardcoded fallback only if DB has nothing at all (safety net).
+    # Stage 3 tax cuts, in force from 1 July 2024:
+    #   $0–$18,200        nil
+    #   $18,201–$45,000   16%
+    #   $45,001–$135,000  30%
+    #   $135,001–$190,000 37%
+    #   $190,001+         45%
     defaults = {
         "tax_free_threshold": D("18200"),
-        "bracket_1_rate": D("0.19"),
+        "bracket_1_rate": D("0.16"),
         "bracket_1_upper": D("45000"),
-        "bracket_2_rate": D("0.325"),
-        "bracket_2_upper": D("120000"),
+        "bracket_2_rate": D("0.30"),
+        "bracket_2_upper": D("135000"),
         "bracket_3_rate": D("0.37"),
-        "bracket_3_upper": D("180000"),
+        "bracket_3_upper": D("190000"),
         "bracket_4_rate": D("0.45"),
         "medicare_levy_rate": D("0.02"),
         "medicare_low_income_threshold": D("26000"),
@@ -96,32 +102,43 @@ def calc_individual_gross_tax(taxable_income, rates):
 
 def calc_medicare_levy(taxable_income, rates):
     """
-    Calculate Medicare Levy for individuals.
-    2% of taxable income, with shade-in below low-income threshold.
+    Calculate Medicare Levy for individuals (ATO shade-in scheme):
+      * nil below the lower income threshold;
+      * between lower and upper thresholds, 10c per $1 of income above the
+        lower threshold (the "shade-in" band);
+      * full levy rate (2%) at or above the upper threshold.
+
+    The lower threshold is `medicare_low_income_threshold`. When only a single
+    threshold is configured, the upper threshold is derived as lower / 0.8,
+    which is the point at which the shade-in (10% of excess) equals the full
+    2% levy.
     """
     if taxable_income <= ZERO:
         return ZERO
 
-    low_threshold = rates["medicare_low_income_threshold"]
+    lower = rates["medicare_low_income_threshold"]
     levy_rate = rates["medicare_levy_rate"]
+    upper = rates.get("medicare_upper_threshold") or (lower / D("0.8"))
 
-    if taxable_income <= low_threshold:
-        # Shade-in: 10% of excess over shade-in floor
-        # Medicare shade-in floor = low_threshold * 0.885 (approx)
-        shade_in_floor = (low_threshold * D("0.885")).quantize(TWO_PLACES)
-        if taxable_income <= shade_in_floor:
-            return ZERO
-        levy = ((taxable_income - shade_in_floor) * D("0.10")).quantize(TWO_PLACES)
-        normal_levy = (taxable_income * levy_rate).quantize(TWO_PLACES)
-        return min(levy, normal_levy)
+    if taxable_income <= lower:
+        return ZERO
 
-    return (taxable_income * levy_rate).quantize(TWO_PLACES)
+    if taxable_income >= upper:
+        return (taxable_income * levy_rate).quantize(TWO_PLACES, rounding=ROUND_HALF_UP)
+
+    # Shade-in band: 10c per $1 of income above the lower threshold.
+    return ((taxable_income - lower) * D("0.10")).quantize(
+        TWO_PLACES, rounding=ROUND_HALF_UP
+    )
 
 
 def calc_lito(taxable_income, rates):
     """
-    Low Income Tax Offset.
-    Full offset below shade_out_start, phases out linearly to shade_out_end.
+    Low Income Tax Offset (ATO two-step taper):
+      * full offset (max_offset, default $700) up to shade_out_start ($37,500);
+      * reduce by 5c per $1 of income over $37,500 (down to $325 at $45,000);
+      * then reduce by 1.5c per $1 over $45,000, floored at $0 (nil by
+        shade_out_end, $66,667).
     """
     if taxable_income <= ZERO:
         return ZERO
@@ -129,6 +146,11 @@ def calc_lito(taxable_income, rates):
     max_offset = rates["lito_max_offset"]
     start = rates["lito_shade_out_start"]
     end = rates["lito_shade_out_end"]
+    # Second taper threshold ($45,000) and the two taper rates. Robust to the
+    # reference-data keys being present or absent.
+    second = rates.get("lito_second_threshold") or D("45000")
+    taper_1 = rates.get("lito_taper_rate_1") or D("0.05")    # 5c per $1
+    taper_2 = rates.get("lito_taper_rate_2") or D("0.015")   # 1.5c per $1
 
     if taxable_income <= start:
         return max_offset
@@ -136,9 +158,12 @@ def calc_lito(taxable_income, rates):
     if taxable_income >= end:
         return ZERO
 
-    # Linear phase-out
-    reduction_rate = max_offset / (end - start)
-    offset = max_offset - ((taxable_income - start) * reduction_rate)
+    if taxable_income <= second:
+        offset = max_offset - (taxable_income - start) * taper_1
+    else:
+        offset_at_second = max_offset - (second - start) * taper_1
+        offset = offset_at_second - (taxable_income - second) * taper_2
+
     return max(ZERO, offset.quantize(TWO_PLACES, rounding=ROUND_HALF_UP))
 
 

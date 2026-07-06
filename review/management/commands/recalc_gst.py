@@ -50,8 +50,11 @@ class Command(BaseCommand):
             sign = Decimal("-1") if txn.amount < 0 else Decimal("1")
             cred_pct = txn.creditable_percentage or Decimal("100")
             full_gst = (abs_amount / Decimal("11")).quantize(Decimal("0.01"))
-            gst_amt = (full_gst * cred_pct / Decimal("100")).quantize(Decimal("0.01")) * sign
-            net_amt = (abs_amount - full_gst).quantize(Decimal("0.01")) * sign
+            gst_credit = (full_gst * cred_pct / Decimal("100")).quantize(Decimal("0.01"))
+            gst_amt = gst_credit * sign
+            # Net must use the creditable GST actually posted, not the full
+            # 1/11th, so net + gst == gross for creditable % < 100 (A3).
+            net_amt = (abs_amount - gst_credit).quantize(Decimal("0.01")) * sign
 
             if apply:
                 txn.gst_amount = gst_amt

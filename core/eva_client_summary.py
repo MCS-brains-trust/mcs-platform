@@ -229,18 +229,23 @@ def _parse_sections(text):
     }
 
     for line in text.split("\n"):
-        stripped = line.strip().lstrip("#").strip()
+        raw = line.strip()
+        # Only an actual markdown heading (starts with '#') can start a section —
+        # otherwise a heading phrase appearing in body prose corrupts the split.
+        is_heading = raw.startswith("#")
+        stripped = raw.lstrip("#").strip()
         lower = stripped.lower()
 
         matched = False
-        for heading, key in section_map.items():
-            if heading in lower:
-                if current_section and current_content:
-                    sections[current_section] = "\n".join(current_content).strip()
-                current_section = key
-                current_content = []
-                matched = True
-                break
+        if is_heading:
+            for heading, key in section_map.items():
+                if heading in lower:
+                    if current_section and current_content:
+                        sections[current_section] = "\n".join(current_content).strip()
+                    current_section = key
+                    current_content = []
+                    matched = True
+                    break
 
         if not matched and current_section is not None:
             current_content.append(line)

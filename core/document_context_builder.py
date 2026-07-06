@@ -74,6 +74,10 @@ VALID_DOCUMENT_TYPES = {
     "partner_statement",
     "partnership_tax_summary",
     "div7a_loan_agreement",
+    # Finding 22: canonical LegalDocument.DocumentType value used by the live
+    # caller (views_compliance_docs.generate_management_rep_letter). The longer
+    # "management_representation_letter" alias is retained for existing callers.
+    "management_rep_letter",
     "management_representation_letter",
     "engagement_letter",
     "client_cover_letter",
@@ -589,6 +593,7 @@ class DocumentContextBuilder:
             "partner_statement": self._context_partner_statement,
             "partnership_tax_summary": self._context_partnership_tax_summary,
             "div7a_loan_agreement": self._context_div7a_loan_agreement,
+            "management_rep_letter": self._context_management_representation_letter,
             "management_representation_letter": self._context_management_representation_letter,
             "engagement_letter": self._context_engagement_letter,
             "client_cover_letter": self._context_client_cover_letter,
@@ -1005,17 +1010,32 @@ class DocumentContextBuilder:
         share_capital = -self._sum_keyword(sections["equity"], ["share capital", "paid up capital"])
 
         # ── Key compliance balances ───────────────────────────────────────
-        director_loan_balance = self._sum_keyword(
-            sections["current_assets"] + sections["current_liabilities"] +
-            sections["noncurrent_assets"] + sections["noncurrent_liabilities"],
-            ["director loan", "shareholder loan", "loan to director", "loan from director"],
+        # Div 7A exposure is the loan TO the director/shareholder (asset side).
+        # Summing asset-side and liability-side loans in one keyword sum lets a
+        # loan-from-director (credit-normal liability) cancel a real loan-to-
+        # director (debit-normal asset), hiding the exposure. Keep them apart and
+        # report the asset-side balance as the Div 7A figure.
+        _dl_keywords = ["director loan", "shareholder loan",
+                        "loan to director", "loan to shareholder",
+                        "loan from director", "loan from shareholder"]
+        director_loan_asset = self._sum_keyword(
+            sections["current_assets"] + sections["noncurrent_assets"],
+            _dl_keywords,
         )
-        director_loan_balance_py = self._sum_keyword(
-            sections["current_assets"] + sections["current_liabilities"] +
-            sections["noncurrent_assets"] + sections["noncurrent_liabilities"],
-            ["director loan", "shareholder loan", "loan to director", "loan from director"],
-            field="py",
+        director_loan_asset_py = self._sum_keyword(
+            sections["current_assets"] + sections["noncurrent_assets"],
+            _dl_keywords, field="py",
         )
+        director_loan_liability = self._sum_keyword(
+            sections["current_liabilities"] + sections["noncurrent_liabilities"],
+            _dl_keywords,
+        )
+        director_loan_liability_py = self._sum_keyword(
+            sections["current_liabilities"] + sections["noncurrent_liabilities"],
+            _dl_keywords, field="py",
+        )
+        director_loan_balance = director_loan_asset
+        director_loan_balance_py = director_loan_asset_py
         related_party_receivables = self._sum_keyword(
             sections["current_assets"] + sections["noncurrent_assets"],
             ["related party", "intercompany"],
@@ -1052,7 +1072,17 @@ class DocumentContextBuilder:
         )
 
         # SG shortfall
-        sg_rate = Decimal("11.5")  # Default — will be overridden by ReferenceData if available
+        # A16: source the SG rate from the shared ATO rate table by income year
+        # (12% from 1 Jul 2025 / FY2026), not a hardcoded stale value. The helper
+        # returns a fraction; convert to a percentage for the calc below.
+        try:
+            from core.risk_modules.cluster_sgc import _get_sg_rate_for_fy
+            if self.financial_year:
+                sg_rate = _get_sg_rate_for_fy(self.financial_year) * Decimal("100")
+            else:
+                sg_rate = Decimal("12")
+        except Exception:
+            sg_rate = Decimal("12")
         sg_required_amount = wages_expense * sg_rate / 100 if wages_expense else Decimal(0)
         superannuation_shortfall = max(Decimal(0), sg_required_amount - superannuation_expense)
 
@@ -1165,7 +1195,7 @@ class DocumentContextBuilder:
         director_loan_balance_py = ctx.get("director_loan_balance_py", Decimal(0))
         superannuation_shortfall = ctx.get("superannuation_shortfall", Decimal(0))
         wages_expense = ctx.get("wages_expense", Decimal(0))
-        sg_rate = ctx.get("sg_rate", Decimal("11.5"))
+        sg_rate = ctx.get("sg_rate", Decimal("12"))
         superannuation_expense = ctx.get("superannuation_expense", Decimal(0))
         income_tax_expense = ctx.get("income_tax_expense", Decimal(0))
         trade_debtors_balance = ctx.get("trade_debtors_balance", Decimal(0))
@@ -1224,7 +1254,21 @@ class DocumentContextBuilder:
         # Check for existing loan agreement
         div7a_loan_agreement_exists = False
         div7a_complying_rate_applied = False
-        div7a_benchmark_rate = Decimal("8.27")  # Default — overridden by ReferenceData
+        # A16: resolve the ATO Div 7A benchmark rate by income year from
+        # RiskReferenceData / the shared historical table rather than hardcoding.
+        # The helper returns a fraction (e.g. 0.0837); express as a percentage.
+        try:
+            from core.eva_div7a import _get_benchmark_rate
+            _yr_label = self.financial_year.year_label if self.financial_year else None
+            _rate_frac = _get_benchmark_rate(_yr_label) if _yr_label else None
+            if _rate_frac:
+                div7a_benchmark_rate = (_rate_frac * Decimal("100")).quantize(
+                    Decimal("0.01"), rounding=ROUND_HALF_UP
+                )
+            else:
+                div7a_benchmark_rate = Decimal("8.37")
+        except Exception:
+            div7a_benchmark_rate = Decimal("8.37")
         div7a_minimum_repayment = Decimal(0)
 
         try:
@@ -1349,6 +1393,7 @@ class DocumentContextBuilder:
                 "first_name": o.full_name.split()[0] if o.full_name else "",
                 "address": "",  # EntityOfficer has no address field — left blank
                 "appointment_date": format_date_long(o.date_appointed) if o.date_appointed else "",
+                "appointment_date_raw": o.date_appointed,
                 "is_secretary": o.has_role("secretary") if hasattr(o, "has_role") else False,
                 "credentials": o.title or "",
                 "role": o.role,
@@ -1606,10 +1651,12 @@ class DocumentContextBuilder:
         fy_end_date_raw = self.financial_year.end_date if self.financial_year else None
 
         directors_at_year_end = directors  # Simplified — all active directors
+        # Compare the underlying date objects, not the formatted display strings
+        # (lexicographic string comparison of "1 July 2025" style dates is wrong).
         directors_appointed = [
             d for d in directors
-            if d.get("appointment_date") and self.financial_year
-            and d["appointment_date"] >= format_date_long(self.financial_year.start_date)
+            if d.get("appointment_date_raw") and self.financial_year
+            and d["appointment_date_raw"] >= self.financial_year.start_date
         ]
 
         return {
@@ -1737,11 +1784,12 @@ class DocumentContextBuilder:
             "dividend_payment_date": format_date_long(dividend_event.payment_date) if dividend_event.payment_date else "",
             "dividend_total_amount": format_currency(total_amount),
             "dividend_per_share": f"{dividend_per_share:.4f}",
-            "franking_percentage": int(franking_pct),
+            "franking_percentage": int(Decimal(str(franking_pct)).quantize(
+                Decimal("1"), rounding=ROUND_HALF_UP)),
             "is_fully_franked": franking_pct == 100,
             "is_partially_franked": 0 < franking_pct < 100,
             "is_unfranked": franking_pct == 0,
-            "company_tax_rate_pct": f"{int(dividend_event.company_tax_rate)}%",
+            "company_tax_rate_pct": f"{int(Decimal(str(dividend_event.company_tax_rate)).quantize(Decimal('1'), rounding=ROUND_HALF_UP))}%",
             "franking_credit_per_share": format_currency(franking_credit_per_share),
             "franking_account_opening": format_currency(dividend_event.franking_account_opening_balance or 0),
             "franking_account_closing": format_currency(dividend_event.franking_account_closing_balance or 0),
@@ -1825,7 +1873,7 @@ class DocumentContextBuilder:
         loan_principal = self.wizard_data.get("loan_principal", ctx.get("director_loan_balance", Decimal(0)))
         loan_term_years = int(self.wizard_data.get("loan_term_years", 7))
         loan_term_type = "secured" if loan_term_years == 25 else "unsecured"
-        benchmark_rate = ctx.get("div7a_benchmark_rate", Decimal("8.27"))
+        benchmark_rate = ctx.get("div7a_benchmark_rate", Decimal("8.37"))
         borrower_name = self.wizard_data.get("borrower_name", "")
         borrower_address = self.wizard_data.get("borrower_address", "")
         borrower_capacity = self.wizard_data.get("borrower_capacity", "director")
@@ -1850,8 +1898,22 @@ class DocumentContextBuilder:
             except Exception:
                 loan_date = date.today()
 
-        first_repayment = date(loan_date.year + 1, 6, 30) if loan_date.month <= 6 else date(loan_date.year + 1, 6, 30)
-        final_repayment = date(loan_date.year + loan_term_years, loan_date.month, loan_date.day)
+        # First minimum repayment is due 30 June of the income year AFTER the
+        # year the loan was made. A loan made Jan–Jun falls in the FY ending that
+        # 30 June (year+1); a loan made Jul–Dec falls in the next FY (year+2).
+        if loan_date.month <= 6:
+            first_repayment = date(loan_date.year + 1, 6, 30)
+        else:
+            first_repayment = date(loan_date.year + 2, 6, 30)
+
+        # Clamp a 29-Feb loan date to 28 Feb when the final year is not a leap
+        # year, otherwise date() raises ValueError.
+        import calendar
+        _final_year = loan_date.year + loan_term_years
+        _final_day = loan_date.day
+        if loan_date.month == 2 and loan_date.day == 29 and not calendar.isleap(_final_year):
+            _final_day = 28
+        final_repayment = date(_final_year, loan_date.month, _final_day)
 
         fy_year = self.financial_year.end_date.year if self.financial_year else date.today().year
         ato_reference_year = f"{fy_year - 1}-{str(fy_year)[2:]} income year"
@@ -2405,9 +2467,15 @@ class DocumentContextBuilder:
             except (ValueError, TypeError):
                 continue
             cy = line.closing_balance
-            py = line.prior_closing_balance if hasattr(line, "prior_closing_balance") else (
-                line.prior_debit - line.prior_credit
-            )
+            # prior_closing_balance is a real field defaulting to 0, so the old
+            # hasattr fallback was dead and comparatives came out $0. Prefer the
+            # roll-forward prior movement (prior_debit - prior_credit), which is
+            # how docgen.py:674 / fs_template_service read the prior year; only
+            # fall back to prior_closing_balance if that is zero but the field is
+            # populated.
+            py = (line.prior_debit - line.prior_credit)
+            if not py and getattr(line, "prior_closing_balance", 0):
+                py = line.prior_closing_balance
             entry = {
                 "account_code": line.account_code,
                 "account_name": line.account_name,

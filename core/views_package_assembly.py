@@ -10,6 +10,7 @@ from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_POST
 
+from config.authorization import get_financial_year_for_user
 from core.models import (
     DividendEvent,
     Entity,
@@ -65,7 +66,7 @@ PACKAGE_CONTENTS = {
 @login_required
 def package_assembly(request, pk):
     """Package assembly wizard — 5-step workflow."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
     if not fy.can_assemble_package:
@@ -140,7 +141,7 @@ def package_assembly(request, pk):
 @require_POST
 def package_assemble(request, pk):
     """Mark the package as assembled."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
 
     if not fy.can_assemble_package:
         return JsonResponse({
@@ -171,7 +172,7 @@ def package_download_bundle(request, pk):
     When provided, only the listed document types are included in the bundle.
     When omitted, all available documents are included (default behaviour).
     """
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
 
     if not fy.can_assemble_package:
         return HttpResponse(
@@ -218,7 +219,7 @@ def package_send_for_signing(request, pk):
     and uploads it to FuseSign manually until the API integration is built.
     """
     from django.http import JsonResponse as JR
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     if not fy.can_assemble_package:
         return JR({
             "status": "error",
@@ -337,7 +338,7 @@ def yearend_commentary_generate(request, pk):
     Returns JSON immediately after saving the GENERATING record,
     then the client polls yearend_commentary_poll until done.
     """
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
 
     try:
         body = json.loads(request.body or "{}")
@@ -365,7 +366,7 @@ def yearend_commentary_poll(request, pk):
     Poll the current status of the year-end commentary generation.
     Returns status, current step, and error if any.
     """
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     commentary = YearEndCommentary.objects.filter(financial_year=fy).first()
 
     if not commentary:
@@ -385,7 +386,7 @@ def yearend_commentary_save(request, pk):
     Save manual edits to the commentary sections.
     Accepts JSON: {"sections": {"snapshot": "...", "revenue": "...", ...}}
     """
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     commentary = get_object_or_404(YearEndCommentary, financial_year=fy)
 
     try:
@@ -429,7 +430,7 @@ def yearend_commentary_save(request, pk):
 def yearend_commentary_mark_reviewed(request, pk):
     """Mark the year-end commentary as reviewed by the current user."""
     from datetime import timezone as dt_timezone
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     commentary = get_object_or_404(YearEndCommentary, financial_year=fy)
 
     commentary.status = YearEndCommentary.Status.REVIEWED

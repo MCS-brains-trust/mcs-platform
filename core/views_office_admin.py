@@ -600,12 +600,13 @@ def legal_doc_redirect_wizard(request, doc_type, entity_pk):
     Redirect from the office admin entity selection to the core legal doc wizard.
     Finds the entity's current FY and redirects to the wizard URL.
     """
-    from .models import Entity, FinancialYear
+    from config.authorization import get_entity_for_user
+    from .models import FinancialYear
 
-    entity = get_object_or_404(Entity, pk=entity_pk)
+    entity = get_entity_for_user(request, entity_pk)
 
     # Find the most recent financial year for this entity
-    fy = FinancialYear.objects.filter(entity=entity).order_by("-year_end").first()
+    fy = FinancialYear.objects.filter(entity=entity).order_by("-end_date").first()
 
     if not fy:
         messages.error(

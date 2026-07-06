@@ -19,7 +19,9 @@ from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.urls import reverse
 from django.utils import timezone
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 
 from .models import (
@@ -279,9 +281,13 @@ def bas_lodge_period(request, pk, period_number):
     )
 
     messages.success(request, f"{bp.label} marked as lodged.")
-    return redirect(f"{request.META.get('HTTP_REFERER', '')}") or redirect(
-        "core:gst_activity_statement", pk=pk
-    )
+    referer = request.META.get("HTTP_REFERER")
+    fallback = reverse("core:gst_activity_statement", kwargs={"pk": pk})
+    if referer and url_has_allowed_host_and_scheme(
+        referer, allowed_hosts={request.get_host()}, require_https=request.is_secure()
+    ):
+        return redirect(referer)
+    return redirect(fallback)
 
 
 @login_required

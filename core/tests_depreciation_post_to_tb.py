@@ -91,6 +91,12 @@ class DepreciationPostToTBTests(TestCase):
     def setUp(self):
         self.http = Client()
         self.http.force_login(self.user)
+        # Require2FAMiddleware now requires TOTP to have been completed this
+        # session (security fix B4). force_login skips that flow, so mark the
+        # session as 2FA-verified to mimic a real authenticated session.
+        _session = self.http.session
+        _session["2fa_verified"] = True
+        _session.save()
         # Each test starts with a clean slate of assets and TB lines
         DepreciationAsset.objects.filter(financial_year=self.fy).delete()
         TrialBalanceLine.objects.filter(financial_year=self.fy).delete()

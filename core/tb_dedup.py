@@ -61,7 +61,7 @@ def merge_duplicate_accounts(rows):
             # Duplicate — sum the numeric columns
             existing = merged[code]
             for field in ("debit", "credit", "opening_balance",
-                          "prior_debit", "prior_credit"):
+                          "prior_debit", "prior_credit", "movement_amount"):
                 if field in row or field in existing:
                     existing[field] = str(
                         _to_decimal(existing.get(field))

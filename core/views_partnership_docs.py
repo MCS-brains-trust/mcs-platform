@@ -9,6 +9,7 @@ from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_POST
 
 from django.core.files.base import ContentFile
+from config.authorization import get_entity_for_user, get_financial_year_for_user
 from core.legal_doc_service import render_and_create_document, render_legal_document
 from core.models import (
     EngagementLetter,
@@ -111,7 +112,7 @@ def _get_or_create_selected_financial_year(entity, fy_id):
 @login_required
 def partner_statements(request, pk):
     """View and generate partner statements for a partnership FY."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
     if entity.entity_type != "partnership":
@@ -164,7 +165,7 @@ def partner_statements(request, pk):
 @require_POST
 def generate_partner_statements(request, pk):
     """Generate partner statements for all active partners."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
     try:
@@ -189,7 +190,7 @@ def generate_partner_statements(request, pk):
         partner_share = float(alloc.get("partner_share", 0))
 
         try:
-            partner = EntityOfficer.objects.get(pk=partner_id)
+            partner = EntityOfficer.objects.get(pk=partner_id, entity=entity)
         except EntityOfficer.DoesNotExist:
             continue
 
@@ -240,7 +241,7 @@ def generate_partner_statements(request, pk):
 @require_POST
 def generate_partnership_tax_summary(request, pk):
     """Generate an internal partnership tax summary."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
     partners = EntityOfficer.objects.filter(entity=entity, role="partner")
@@ -277,7 +278,7 @@ def generate_partnership_tax_summary(request, pk):
 @login_required
 def engagement_letter_wizard(request, pk):
     """Engagement letter wizard — entity-level, APES 305 compliant."""
-    entity = get_object_or_404(Entity, pk=pk)
+    entity = get_entity_for_user(request, pk)
 
     config, _ = EngagementLetterConfig.objects.get_or_create(entity=entity)
     service_options = _get_service_options(entity.entity_type)
@@ -336,7 +337,7 @@ def engagement_letter_wizard(request, pk):
 @require_POST
 def engagement_letter_generate(request, pk):
     """Generate or update an engagement letter draft for an entity."""
-    entity = get_object_or_404(Entity, pk=pk)
+    entity = get_entity_for_user(request, pk)
 
     try:
         data = json.loads(request.body)
@@ -548,7 +549,7 @@ def engagement_letter_quick_generate(request, pk):
     No wizard required — uses stored services, fee, and fee_basis with today's date.
     Satisfies the roll-forward gate automatically.
     """
-    entity = get_object_or_404(Entity, pk=pk)
+    entity = get_entity_for_user(request, pk)
     if not request.user.can_do_accounting:
         return JsonResponse({"status": "error", "error": "Permission denied."}, status=403)
 

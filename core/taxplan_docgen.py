@@ -269,7 +269,16 @@ def generate_trust_election(financial_year_id):
     for p in total_row.cells[2].paragraphs:
         for run in p.runs:
             _set_run_font(run, bold=True)
-    total_row.cells[3].text = "100.00%"
+    # NOTE: this module appears to be dead code (no importers found as of
+    # 2026-07). Cheap fix only: the TOTAL % was hardcoded to "100.00%", which is
+    # wrong whenever some income is retained (total_distributed < distributable).
+    # Compute it from the actual distributed vs distributable amounts instead.
+    total_pct = (
+        (ctx["total_distributed"] / distributable * 100).quantize(Decimal("0.01"))
+        if distributable > 0
+        else Decimal("0")
+    )
+    total_row.cells[3].text = f"{total_pct}%"
     total_row.cells[3].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
 
     doc.add_paragraph()

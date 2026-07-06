@@ -4,6 +4,7 @@ import openpyxl
 from decimal import Decimal, InvalidOperation
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
+from django.core.exceptions import ValidationError
 from django.db import transaction as db_transaction
 from django.db.models import Q, Count, Sum
 from django.http import HttpResponse, HttpResponseNotAllowed, JsonResponse
@@ -1186,7 +1187,7 @@ def dashboard(request):
     )
 
     # Unread notification count for the bell
-    unread_count = ActivityLog.objects.filter(is_read=False).count()
+    unread_count = ActivityLog.objects.filter(is_read=False, user=request.user).count()
 
     context = {
         "greeting": greeting,
@@ -1706,14 +1707,16 @@ def financial_year_detail(request, pk):
 
     # Year labels
     current_year = str(fy.year_label)
-    # Extract year number from label like "FY2026" or "2026"
-    year_digits = ''.join(c for c in fy.year_label if c.isdigit())
-    if year_digits:
-        prior_year = f"FY{int(year_digits) - 1}" if fy.year_label.startswith('FY') else str(int(year_digits) - 1)
-    elif fy.prior_year:
+    # Prefer the linked prior year's own label; only fall back to digit-parsing
+    # the current label when no prior year is linked (guards "Q1 2025" → "12024").
+    if fy.prior_year:
         prior_year = str(fy.prior_year.year_label)
     else:
-        prior_year = 'Prior'
+        year_digits = ''.join(c for c in fy.year_label if c.isdigit())
+        if year_digits:
+            prior_year = f"FY{int(year_digits) - 1}" if fy.year_label.startswith('FY') else str(int(year_digits) - 1)
+        else:
+            prior_year = 'Prior'
 
     # Determine whether prior-year comparative data exists in the trial balance
     # and whether the entity wants comparatives shown.
@@ -2665,22 +2668,23 @@ def reroll_forward_apply(request, pk):
     )
 
     updated = []
-    for line in next_rollover:
-        # Skip P&L rollover lines — they should keep opening_balance=0
-        if not _is_balance_sheet_account(line.account_code, line.mapped_line_item, coa_sections):
-            continue
-        new_closing = current_map.get(line.account_code)
-        if new_closing is not None and new_closing != (line.opening_balance or Decimal("0")):
-            old_opening = line.opening_balance
-            line.opening_balance = new_closing
-            line.closing_balance = new_closing + line.debit - line.credit
-            line.save(update_fields=["opening_balance", "closing_balance"])
-            updated.append({
-                "account_code": line.account_code,
-                "account_name": line.account_name,
-                "old_opening": str(old_opening),
-                "new_opening": str(new_closing),
-            })
+    with db_transaction.atomic():
+        for line in next_rollover:
+            # Skip P&L rollover lines — they should keep opening_balance=0
+            if not _is_balance_sheet_account(line.account_code, line.mapped_line_item, coa_sections):
+                continue
+            new_closing = current_map.get(line.account_code)
+            if new_closing is not None and new_closing != (line.opening_balance or Decimal("0")):
+                old_opening = line.opening_balance
+                line.opening_balance = new_closing
+                line.closing_balance = new_closing + line.debit - line.credit
+                line.save(update_fields=["opening_balance", "closing_balance"])
+                updated.append({
+                    "account_code": line.account_code,
+                    "account_name": line.account_name,
+                    "old_opening": str(old_opening),
+                    "new_opening": str(new_closing),
+                })
 
     # Log activity for both years
     if updated:
@@ -4829,13 +4833,16 @@ def trial_balance_view(request, pk):
 
     # Year labels
     current_year_label = str(fy.year_label)
-    year_digits = ''.join(c for c in fy.year_label if c.isdigit())
-    if year_digits:
-        prior_year_label = f"FY{int(year_digits) - 1}" if fy.year_label.startswith('FY') else str(int(year_digits) - 1)
-    elif fy.prior_year:
+    # Prefer the linked prior year's own label; only fall back to digit-parsing
+    # the current label when no prior year is linked (guards "Q1 2025" → "12024").
+    if fy.prior_year:
         prior_year_label = str(fy.prior_year.year_label)
     else:
-        prior_year_label = 'Prior'
+        year_digits = ''.join(c for c in fy.year_label if c.isdigit())
+        if year_digits:
+            prior_year_label = f"FY{int(year_digits) - 1}" if fy.year_label.startswith('FY') else str(int(year_digits) - 1)
+        else:
+            prior_year_label = 'Prior'
 
     # ---- Aggregate multiple sub-entries per account_code ----
     aggregated_sections = OrderedDict()
@@ -5120,6 +5127,11 @@ def tb_line_reallocate(request, pk):
 
     # Security: ensure user has access
     get_financial_year_for_user(request, fy.pk)
+    if not request.user.can_do_accounting:
+        if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+            return JsonResponse({'success': False, 'message': 'You do not have permission.'}, status=403)
+        messages.error(request, "You do not have permission.")
+        return redirect('core:account_code_breakdown', pk=fy.pk, account_code=line.account_code)
 
     new_account_code = request.POST.get('new_account_code', '').strip()
     if not new_account_code:
@@ -5218,6 +5230,9 @@ def account_mapping_create(request):
 def map_client_accounts(request, pk):
     """Map unmapped client accounts to standard line items for a financial year."""
     fy = get_financial_year_for_user(request, pk)
+    if not request.user.can_do_accounting:
+        messages.error(request, "You do not have permission.")
+        return redirect("core:financial_year_detail", pk=pk)
     entity = fy.entity
 
     # Ensure every unmapped TB line has a ClientAccountMapping entry
@@ -5477,11 +5492,15 @@ def journal_post(request, pk):
 
 
 @login_required
+@require_POST
 def calculate_tax_journal(request, pk):
     """Calculate and post an income tax journal for company entities."""
     import math as _math
 
     fy = get_financial_year_for_user(request, pk)
+    if not request.user.can_do_accounting:
+        messages.error(request, "You do not have permission.")
+        return redirect("core:financial_year_detail", pk=pk)
     entity = fy.entity
 
     if entity.entity_type != "company":
@@ -5765,6 +5784,8 @@ def auto_tax_provision(request, pk):
     import math as _math
 
     fy = get_financial_year_for_user(request, pk)
+    if not request.user.can_do_accounting:
+        return JsonResponse({"error": "You do not have permission."}, status=403)
     entity = fy.entity
 
     if entity.entity_type != "company":
@@ -6711,7 +6732,7 @@ def htmx_map_tb_line(request, pk):
                 account_name=line.account_name,
                 mapped_line_item=mapping,
             )
-        except AccountMapping.DoesNotExist:
+        except (AccountMapping.DoesNotExist, ValueError, ValidationError):
             pass
     mappings = AccountMapping.objects.all()
     return render(request, "partials/tb_line_row.html", {
@@ -6974,6 +6995,10 @@ def access_ledger_import(request):
     """Import an Access Ledger ZIP export."""
     from .access_ledger_import import import_access_ledger_zip
 
+    if not request.user.is_admin:
+        messages.error(request, "Only administrators can import Access Ledger data.")
+        return redirect("core:entity_list")
+
     result = None
 
     if request.method == "POST":
@@ -7103,14 +7128,16 @@ def trial_balance_pdf(request, pk):
 
     # Year labels
     current_year = str(fy.year_label)
-    # Extract year number from label like "FY2026" or "2026"
-    year_digits = ''.join(c for c in fy.year_label if c.isdigit())
-    if year_digits:
-        prior_year = f"FY{int(year_digits) - 1}" if fy.year_label.startswith('FY') else str(int(year_digits) - 1)
-    elif fy.prior_year:
+    # Prefer the linked prior year's own label; only fall back to digit-parsing
+    # the current label when no prior year is linked (guards "Q1 2025" → "12024").
+    if fy.prior_year:
         prior_year = str(fy.prior_year.year_label)
     else:
-        prior_year = 'Prior'
+        year_digits = ''.join(c for c in fy.year_label if c.isdigit())
+        if year_digits:
+            prior_year = f"FY{int(year_digits) - 1}" if fy.year_label.startswith('FY') else str(int(year_digits) - 1)
+        else:
+            prior_year = 'Prior'
 
     # ABN
     abn = entity.abn if hasattr(entity, 'abn') and entity.abn else ''
@@ -7983,7 +8010,7 @@ def gst_activity_statement(request, pk):
         # BAS requires GROSS amounts (including GST).
         # Bank statement TB lines store NET amounts (ex-GST) with GST in 3380 (GST payable control account).
         # For GST-coded lines, gross up: net * 11/10
-        if tax_code in ('INP', 'GST') and line.source == 'bank_statement':
+        if tax_code in ('INP', 'GST', 'CAP', 'FCA') and line.source == 'bank_statement':
             amount = (amount * Decimal('11') / Decimal('10')).quantize(Decimal('0.01'))
 
         # Section values are lowercase DB values from StatementSection TextChoices
@@ -8119,6 +8146,9 @@ def gst_activity_statement_download(request, pk):
 
     fmt = request.GET.get("format", "excel").lower()
 
+    # Authorization: verify the user has access to this financial year's entity.
+    fy = get_financial_year_for_user(request, pk)
+    # Re-fetch with select_related for efficiency
     fy = get_object_or_404(
         FinancialYear.objects.select_related("entity", "entity__client"),
         pk=pk,
@@ -8193,7 +8223,7 @@ def gst_activity_statement_download(request, pk):
 
         # BAS requires GROSS amounts (including GST).
         # Bank statement TB lines store NET amounts (ex-GST) with GST in 3380 (GST payable control account).
-        if tax_code in ('INP', 'GST') and line.source == 'bank_statement':
+        if tax_code in ('INP', 'GST', 'CAP', 'FCA') and line.source == 'bank_statement':
             amount = (amount * Decimal('11') / Decimal('10')).quantize(Decimal('0.01'))
 
         bas_label = ""
@@ -9276,29 +9306,6 @@ def depreciation_post_to_tb(request, pk):
         messages.warning(request, "Total business depreciation is zero. Nothing to post.")
         return redirect("core:financial_year_detail", pk=pk)
 
-    # ── Compute current-year movement for each target account pair ──
-    # Excludes rollover lines (prior-year accumulated-depreciation opening balance).
-    current_movements = {}
-    for (dep_code, dep_name, accum_code, accum_name) in account_groups:
-        dep_mv = TrialBalanceLine.objects.filter(
-            financial_year=fy, account_code=dep_code,
-        ).exclude(source="rollover").aggregate(
-            dr=Sum("debit"), cr=Sum("credit")
-        )
-        dep_net = (dep_mv["dr"] or Decimal("0")) - (dep_mv["cr"] or Decimal("0"))
-
-        accum_mv = TrialBalanceLine.objects.filter(
-            financial_year=fy, account_code=accum_code,
-        ).exclude(source="rollover").aggregate(
-            dr=Sum("debit"), cr=Sum("credit")
-        )
-        accum_net_cr = (accum_mv["cr"] or Decimal("0")) - (accum_mv["dr"] or Decimal("0"))
-
-        if dep_net or accum_net_cr:
-            current_movements[(dep_code, dep_name, accum_code, accum_name)] = (
-                dep_net, accum_net_cr
-            )
-
     # ── Build the fresh depreciation journal (not yet saved) ──
     journal = AdjustingJournal(
         financial_year=fy,
@@ -9348,6 +9355,43 @@ def depreciation_post_to_tb(request, pk):
     # ── Atomic: reversal (if needed) then fresh posting ──
     reversal = None
     with db_transaction.atomic():
+        # Lock the target account TB rows so a concurrent double-click blocks
+        # here until the first post commits, then reads the updated state below —
+        # prevents double-posting the same depreciation.
+        target_codes = set()
+        for (dep_code, dep_name, accum_code, accum_name) in account_groups:
+            target_codes.add(dep_code)
+            target_codes.add(accum_code)
+        list(
+            TrialBalanceLine.objects.select_for_update().filter(
+                financial_year=fy, account_code__in=target_codes,
+            )
+        )
+
+        # Compute current-year movement for each target account pair inside the
+        # lock, so it reflects any concurrent post that already committed.
+        # Excludes rollover lines (prior-year accumulated-depreciation opening).
+        current_movements = {}
+        for (dep_code, dep_name, accum_code, accum_name) in account_groups:
+            dep_mv = TrialBalanceLine.objects.filter(
+                financial_year=fy, account_code=dep_code,
+            ).exclude(source="rollover").aggregate(
+                dr=Sum("debit"), cr=Sum("credit")
+            )
+            dep_net = (dep_mv["dr"] or Decimal("0")) - (dep_mv["cr"] or Decimal("0"))
+
+            accum_mv = TrialBalanceLine.objects.filter(
+                financial_year=fy, account_code=accum_code,
+            ).exclude(source="rollover").aggregate(
+                dr=Sum("debit"), cr=Sum("credit")
+            )
+            accum_net_cr = (accum_mv["cr"] or Decimal("0")) - (accum_mv["dr"] or Decimal("0"))
+
+            if dep_net or accum_net_cr:
+                current_movements[(dep_code, dep_name, accum_code, accum_name)] = (
+                    dep_net, accum_net_cr
+                )
+
         if current_movements:
             total_rev_dr = sum(accum for _, accum in current_movements.values())
             total_rev_cr = sum(dep for dep, _ in current_movements.values())
@@ -9668,6 +9712,9 @@ def stock_push_to_tb(request, pk):
     if not request.user.can_do_accounting:
         messages.error(request, "You do not have permission.")
         return redirect("core:financial_year_detail", pk=pk)
+    if fy.is_locked:
+        messages.error(request, "Cannot post to a finalised year.")
+        return redirect("core:financial_year_detail", pk=pk)
     stock_items = StockItem.objects.filter(financial_year=fy)
 
     if not stock_items.exists():
@@ -9691,6 +9738,7 @@ def stock_push_to_tb(request, pk):
             account_name="Opening Stock",
             debit=total_opening,
             credit=Decimal("0"),
+            closing_balance=total_opening,
             source='manual_journal',
         )
 
@@ -9702,6 +9750,7 @@ def stock_push_to_tb(request, pk):
             account_name="Closing Stock",
             debit=Decimal("0"),
             credit=total_closing,
+            closing_balance=Decimal("0") - total_closing,
             source='manual_journal',
         )
         # Balance sheet current asset
@@ -9711,6 +9760,7 @@ def stock_push_to_tb(request, pk):
             account_name="Stock on Hand",
             debit=total_closing,
             credit=Decimal("0"),
+            closing_balance=total_closing,
             source='manual_journal',
         )
 
@@ -9734,10 +9784,14 @@ def review_push_to_tb(request, pk):
     if not request.user.can_do_accounting:
         messages.error(request, "You do not have permission.")
         return redirect("core:financial_year_detail", pk=pk)
+    if fy.is_locked:
+        messages.error(request, "Cannot post to a finalised year.")
+        return redirect("core:financial_year_detail", pk=pk)
     from review.models import PendingTransaction
 
     confirmed = PendingTransaction.objects.filter(
         job__entity=fy.entity,
+        job__financial_year=fy,
         is_confirmed=True,
     )
 
@@ -9771,9 +9825,12 @@ def review_approve_transaction(request, pk):
     from review.models import PendingTransaction
     txn = get_object_or_404(PendingTransaction, pk=pk)
 
-    # IDOR check: verify user has access to the linked entity
-    if txn.job and txn.job.entity:
-        get_entity_for_user(request, txn.job.entity.pk)
+    # IDOR check: verify user has access to the linked entity.
+    # Reject outright when the transaction has no linked entity — otherwise
+    # authorization would be silently skipped.
+    if not (txn.job and txn.job.entity):
+        return JsonResponse({"error": "Transaction is not linked to an entity."}, status=404)
+    get_entity_for_user(request, txn.job.entity.pk)
 
     if request.method != "POST":
         return JsonResponse({"error": "POST required"}, status=405)
@@ -9879,9 +9936,11 @@ def review_unconfirm_transaction(request, pk):
     try:
         txn = get_object_or_404(PendingTransaction, pk=pk)
 
-        # IDOR check
-        if txn.job and txn.job.entity:
-            get_entity_for_user(request, txn.job.entity.pk)
+        # IDOR check: reject outright when the transaction has no linked entity
+        # so authorization is never silently skipped.
+        if not (txn.job and txn.job.entity):
+            return JsonResponse({"error": "Transaction is not linked to an entity."}, status=404)
+        get_entity_for_user(request, txn.job.entity.pk)
 
         if not request.user.can_do_accounting:
             return JsonResponse({"error": "Permission denied"}, status=403)
@@ -9976,10 +10035,14 @@ def review_approve_all(request, pk):
     if not request.user.can_do_accounting:
         messages.error(request, "You do not have permission.")
         return redirect("core:financial_year_detail", pk=pk)
+    if fy.is_locked:
+        messages.error(request, "Cannot post to a finalised year.")
+        return redirect("core:financial_year_detail", pk=pk)
     from review.models import PendingTransaction
 
     pending = PendingTransaction.objects.filter(
         job__entity=fy.entity,
+        job__financial_year=fy,
         is_confirmed=False,
     )
     count = 0
@@ -10041,6 +10104,8 @@ def review_approve_selected(request, pk):
     fy = get_financial_year_for_user(request, pk)
     if not request.user.can_do_accounting:
         return JsonResponse({"status": "error", "message": "Permission denied."}, status=403)
+    if fy.is_locked:
+        return JsonResponse({"status": "error", "message": "Cannot post to a finalised year."}, status=400)
 
     from review.models import PendingTransaction
 
@@ -10228,72 +10293,88 @@ def _recalc_bank_contra(fy):
     if not confirmed_txns.exists():
         return {"status": "ok", "posted": 0}
 
-    sample_txn = confirmed_txns.select_related('job').first()
-    bank_mapping = _get_bank_mapping_for_txn(sample_txn)
-    if not bank_mapping:
+    # Group confirmed transactions by their OWN resolved bank account mapping so
+    # that entities with multiple bank accounts get one contra TB line per
+    # account code, rather than everything collapsed onto a single sample's code.
+    # Receipts (amount > 0) → debit the bank account
+    # Payments (amount < 0) → credit the bank account
+    groups = {}  # bank_code -> {"name": str, "debit": Decimal, "credit": Decimal}
+    for txn in confirmed_txns.select_related('job'):
+        bank_mapping = _get_bank_mapping_for_txn(txn)
+        if not bank_mapping:
+            continue
+        bank_code = bank_mapping.tb_account_code
+        grp = groups.setdefault(
+            bank_code,
+            {"name": bank_mapping.tb_account_name, "debit": Decimal('0'), "credit": Decimal('0')},
+        )
+        gross = abs(txn.amount)
+        if txn.amount > 0:
+            grp["debit"] += gross
+        elif txn.amount < 0:
+            grp["credit"] += gross
+
+    if not groups:
         logger.warning(
             f"_recalc_bank_contra: No bank mapping for entity {fy.entity.pk} FY {fy.pk}"
         )
         return {"status": "no_mapping", "posted": 0}
 
-    bank_code = bank_mapping.tb_account_code
-    bank_name = bank_mapping.tb_account_name
+    grand_debit = Decimal('0')
+    grand_credit = Decimal('0')
+    posted_codes = []
+    posted_names = []
+    for bank_code, grp in groups.items():
+        bank_name = grp["name"]
+        total_debit = grp["debit"]
+        total_credit = grp["credit"]
 
-    # Calculate correct totals from scratch
-    # Receipts (amount > 0) → debit the bank account
-    # Payments (amount < 0) → credit the bank account
-    total_debit = Decimal('0')
-    total_credit = Decimal('0')
-    for txn in confirmed_txns:
-        gross = abs(txn.amount)
-        if txn.amount > 0:
-            total_debit += gross
-        elif txn.amount < 0:
-            total_credit += gross
-
-    # Find the bank_statement TB line (or create it) and SET values from scratch.
-    # Multiple bank_statement lines may exist for the same account code, so we
-    # cannot rely on update_or_create alone.  Filter explicitly and consolidate.
-    bs_lines = TrialBalanceLine.objects.filter(
-        financial_year=fy,
-        account_code=bank_code,
-        source='bank_statement',
-    )
-    if bs_lines.count() > 1:
-        # Consolidate: keep the first, delete the rest
-        keep = bs_lines.first()
-        bs_lines.exclude(pk=keep.pk).delete()
-        tb_line = keep
-        created = False
-    elif bs_lines.count() == 1:
-        tb_line = bs_lines.first()
-        created = False
-    else:
-        tb_line = TrialBalanceLine(
+        # Find the bank_statement TB line (or create it) and SET values from
+        # scratch.  Multiple bank_statement lines may exist for the same account
+        # code, so filter explicitly and consolidate rather than relying on
+        # update_or_create alone.
+        bs_lines = TrialBalanceLine.objects.filter(
             financial_year=fy,
             account_code=bank_code,
             source='bank_statement',
         )
-        created = True
+        if bs_lines.count() > 1:
+            # Consolidate: keep the first, delete the rest
+            keep = bs_lines.first()
+            bs_lines.exclude(pk=keep.pk).delete()
+            tb_line = keep
+        elif bs_lines.count() == 1:
+            tb_line = bs_lines.first()
+        else:
+            tb_line = TrialBalanceLine(
+                financial_year=fy,
+                account_code=bank_code,
+                source='bank_statement',
+            )
 
-    tb_line.account_name = bank_name
-    tb_line.debit = total_debit
-    tb_line.credit = total_credit
-    tb_line.closing_balance = total_debit - total_credit
-    tb_line.tax_type = ""
-    tb_line.save()
+        tb_line.account_name = bank_name
+        tb_line.debit = total_debit
+        tb_line.credit = total_credit
+        tb_line.closing_balance = total_debit - total_credit
+        tb_line.tax_type = ""
+        tb_line.save()
 
-    logger.info(
-        f"Recalculated bank contra for entity {fy.entity.pk} FY {fy.pk}: "
-        f"SET Dr={total_debit}, Cr={total_credit} on {bank_code} ({bank_name})"
-    )
+        grand_debit += total_debit
+        grand_credit += total_credit
+        posted_codes.append(bank_code)
+        posted_names.append(bank_name)
+
+        logger.info(
+            f"Recalculated bank contra for entity {fy.entity.pk} FY {fy.pk}: "
+            f"SET Dr={total_debit}, Cr={total_credit} on {bank_code} ({bank_name})"
+        )
 
     return {
         "status": "ok",
-        "posted_debit": str(total_debit),
-        "posted_credit": str(total_credit),
-        "bank_code": bank_code,
-        "bank_name": bank_name,
+        "posted_debit": str(grand_debit),
+        "posted_credit": str(grand_credit),
+        "bank_code": ", ".join(posted_codes),
+        "bank_name": ", ".join(posted_names),
     }
 
 
@@ -10304,6 +10385,8 @@ def recalculate_bank_contra_entries(request, pk):
     fy = get_financial_year_for_user(request, pk)
     if not request.user.can_do_accounting:
         return JsonResponse({"status": "error", "message": "Permission denied."}, status=403)
+    if fy.is_locked:
+        return JsonResponse({"status": "error", "message": "Cannot post to a finalised year."}, status=400)
 
     result = _recalc_bank_contra(fy)
 
@@ -10584,19 +10667,21 @@ def review_delete_transaction(request, pk, txn_pk):
     fy = get_financial_year_for_user(request, pk)
     if not request.user.can_do_accounting:
         return JsonResponse({"error": "Permission denied"}, status=403)
+    if fy.is_locked:
+        return JsonResponse({"error": "Cannot modify a finalised year."}, status=400)
 
     from review.models import PendingTransaction
     txn = get_object_or_404(PendingTransaction, pk=txn_pk, job__entity=fy.entity)
 
-    # If confirmed, reverse TB impact before deleting
-    if txn.is_confirmed and txn.confirmed_code:
+    # If actually posted to the TB, reverse its impact before deleting
+    if txn.posted_to_tb:
         _reverse_tb_for_transaction(txn, fy)
 
     desc_preview = txn.description[:50]
     # Also delete any split children
     split_children = PendingTransaction.objects.filter(split_parent=txn)
     for child in split_children:
-        if child.is_confirmed and child.confirmed_code:
+        if child.posted_to_tb:
             _reverse_tb_for_transaction(child, fy)
         child.delete()
 
@@ -10628,6 +10713,8 @@ def review_delete_all_transactions(request, pk):
     fy = get_financial_year_for_user(request, pk)
     if not request.user.can_do_accounting:
         return JsonResponse({"error": "Permission denied"}, status=403)
+    if fy.is_locked:
+        return JsonResponse({"error": "Cannot modify a finalised year."}, status=400)
 
     import json
     try:
@@ -10645,8 +10732,8 @@ def review_delete_all_transactions(request, pk):
         qs = qs.filter(is_confirmed=True)
     # else 'all' — no filter
 
-    # Reverse TB for confirmed transactions
-    confirmed_txns = qs.filter(is_confirmed=True, confirmed_code__gt='')
+    # Reverse TB for transactions that were actually posted
+    confirmed_txns = qs.filter(posted_to_tb=True)
     for txn in confirmed_txns:
         _reverse_tb_for_transaction(txn, fy)
 
@@ -10679,6 +10766,8 @@ def review_delete_selected_transactions(request, pk):
     fy = get_financial_year_for_user(request, pk)
     if not request.user.can_do_accounting:
         return JsonResponse({"error": "Permission denied"}, status=403)
+    if fy.is_locked:
+        return JsonResponse({"error": "Cannot modify a finalised year."}, status=400)
 
     import json
     try:
@@ -10692,8 +10781,8 @@ def review_delete_selected_transactions(request, pk):
     from review.models import PendingTransaction
     qs = PendingTransaction.objects.filter(pk__in=txn_ids, job__entity=fy.entity)
 
-    # Reverse TB for confirmed transactions
-    confirmed_txns = qs.filter(is_confirmed=True, confirmed_code__gt='')
+    # Reverse TB for transactions that were actually posted
+    confirmed_txns = qs.filter(posted_to_tb=True)
     for txn in confirmed_txns:
         _reverse_tb_for_transaction(txn, fy)
 
@@ -10728,7 +10817,10 @@ def _reverse_tb_for_transaction(txn, fy):
     """
     from django.db import transaction as db_transaction
 
-    if not txn.confirmed_code:
+    # Only reverse transactions that were actually posted to the TB.  Gating on
+    # the real posted_to_tb flag (rather than is_confirmed + confirmed_code)
+    # avoids reversing lines that were never posted.
+    if not getattr(txn, 'posted_to_tb', False) or not txn.confirmed_code:
         return
 
     with db_transaction.atomic():
@@ -10803,6 +10895,8 @@ def review_bulk_edit_transactions(request, pk):
     fy = get_financial_year_for_user(request, pk)
     if not request.user.can_do_accounting:
         return JsonResponse({"error": "Permission denied"}, status=403)
+    if fy.is_locked:
+        return JsonResponse({"error": "Cannot modify a finalised year."}, status=400)
 
     try:
         body = json.loads(request.body)
@@ -10821,7 +10915,9 @@ def review_bulk_edit_transactions(request, pk):
         return JsonResponse({"error": "No account code specified"}, status=400)
 
     from review.models import PendingTransaction
-    txns = PendingTransaction.objects.filter(pk__in=txn_ids, job__entity=fy.entity, is_confirmed=False)
+    txns = PendingTransaction.objects.filter(
+        pk__in=txn_ids, job__entity=fy.entity, job__financial_year=fy, is_confirmed=False,
+    )
 
     # Map tax_code to tax_type for TB posting
     TAX_CODE_MAP = {
@@ -11713,6 +11809,37 @@ def xrm_pull(request, pk):
         })
 
 
+def _excel_safe(value):
+    """Neutralise Excel/CSV formula injection.
+
+    Cells whose text starts with =, +, -, @ (or a leading tab/CR) are treated
+    as formulas by spreadsheet apps.  Prefix such values with a single quote so
+    they are rendered as literal text.
+    """
+    if value is None:
+        return value
+    text = str(value)
+    if text and text[0] in ('=', '+', '-', '@', '\t', '\r'):
+        return "'" + text
+    return text
+
+
+def _parse_optional_date(raw):
+    """Parse an optional date string.
+
+    Returns (date_or_None, error_message).  An empty value yields (None, None);
+    an unparseable value yields (None, message) so the caller can surface a
+    friendly error instead of raising a 500 at the DB layer.
+    """
+    if not raw or not str(raw).strip():
+        return None, None
+    from django.utils.dateparse import parse_date
+    parsed = parse_date(str(raw).strip())
+    if parsed is None:
+        return None, f"Invalid date: {raw!r}. Please use the YYYY-MM-DD format."
+    return parsed, None
+
+
 @login_required
 def trial_balance_download(request, pk):
     """
@@ -11817,13 +11944,16 @@ def trial_balance_download(request, pk):
 
     # Year labels
     current_year = str(fy.year_label)
-    year_digits = ''.join(c for c in fy.year_label if c.isdigit())
-    if year_digits:
-        prior_year = f"FY{int(year_digits) - 1}" if fy.year_label.startswith('FY') else str(int(year_digits) - 1)
-    elif fy.prior_year:
+    # Prefer the linked prior year's own label; only fall back to digit-parsing
+    # the current label when no prior year is linked (guards "Q1 2025" → "12024").
+    if fy.prior_year:
         prior_year = str(fy.prior_year.year_label)
     else:
-        prior_year = 'Prior'
+        year_digits = ''.join(c for c in fy.year_label if c.isdigit())
+        if year_digits:
+            prior_year = f"FY{int(year_digits) - 1}" if fy.year_label.startswith('FY') else str(int(year_digits) - 1)
+        else:
+            prior_year = 'Prior'
 
     # ABN formatting
     abn = entity.abn or ''
@@ -12165,12 +12295,12 @@ def _tb_download_excel(fy, entity, sections, current_year, prior_year,
             prior_dr = float(prior_dr_val) if prior_dr_val != 0 else None
             prior_cr = float(prior_cr_val) if prior_cr_val != 0 else None
 
-            # Write row
-            code_cell = ws.cell(row=row, column=1, value=line.account_code)
+            # Write row (sanitise text to prevent Excel formula injection)
+            code_cell = ws.cell(row=row, column=1, value=_excel_safe(line.account_code))
             code_cell.font = code_font
             code_cell.border = thin_border
 
-            name_cell = ws.cell(row=row, column=2, value=line.account_name)
+            name_cell = ws.cell(row=row, column=2, value=_excel_safe(line.account_name))
             name_cell.font = data_font
             name_cell.border = thin_border
 
@@ -12309,6 +12439,12 @@ def delete_document(request, pk):
     from .models import GeneratedDocument
     doc = get_object_or_404(GeneratedDocument, pk=pk)
     fy_pk = doc.financial_year.pk
+    # Authorization: verify access to the owning financial year's entity, then
+    # gate on the accounting permission that sibling delete views require.
+    fy = get_financial_year_for_user(request, fy_pk)
+    if not request.user.can_do_accounting:
+        messages.error(request, "You do not have permission.")
+        return redirect("core:financial_year_detail", pk=fy_pk)
     # Delete the file from storage
     if doc.file:
         doc.file.delete(save=False)
@@ -12653,10 +12789,11 @@ def review_bulk_approve_group(request, pk):
     from review.models import PendingTransaction
 
     body = json.loads(request.body) if request.content_type == "application/json" else request.POST
-    account_code = body.get("account_code", "")
+    account_code = body.get("account_code") or ""
     # Optional override: accountant can change the AI suggestion before approving
-    override_code = body.get("override_code", "").strip()
-    override_name = body.get("override_name", "").strip()
+    # (guard against explicit null values in the JSON body).
+    override_code = (body.get("override_code") or "").strip()
+    override_name = (body.get("override_name") or "").strip()
 
     if not account_code:
         return JsonResponse({"status": "error", "message": "No account code specified."}, status=400)
@@ -12723,6 +12860,9 @@ def review_bulk_approve_group(request, pk):
 def entity_coa_add(request, pk):
     """Add a new account to the entity's chart of accounts (full-page form)."""
     fy = get_financial_year_for_user(request, pk)
+    if not request.user.can_do_accounting:
+        messages.error(request, "You do not have permission.")
+        return redirect("core:financial_year_detail", pk=pk)
     entity = fy.entity
 
     section_choices = EntityChartOfAccount.StatementSection.choices
@@ -12821,10 +12961,18 @@ def entity_coa_edit(request, pk):
     acct = get_object_or_404(EntityChartOfAccount, pk=pk)
     entity = acct.entity
 
-    # Security: ensure user has access to this entity
+    # Security: ensure user has access to this entity.  Fall back to entity-level
+    # access when the entity has no financial years, so the check is never skipped.
     fy = entity.financial_years.order_by("-end_date").first()
     if fy:
         get_financial_year_for_user(request, fy.pk)
+    else:
+        get_entity_for_user(request, entity.pk)
+    if not request.user.can_do_accounting:
+        messages.error(request, "You do not have permission.")
+        if fy:
+            return redirect("core:financial_year_detail", pk=fy.pk)
+        return redirect("core:entity_detail", pk=entity.pk)
 
     section_choices = EntityChartOfAccount.StatementSection.choices
     tax_code_choices = ['GST', 'ADS', 'ITS', 'FRE', 'CAP', 'INP', 'GNR', 'N-T']
@@ -12950,10 +13098,18 @@ def entity_coa_delete(request, pk):
     acct = get_object_or_404(EntityChartOfAccount, pk=pk)
     entity = acct.entity
 
-    # Security: ensure user has access
+    # Security: ensure user has access.  Fall back to entity-level access when the
+    # entity has no financial years, so the check is never skipped.
     fy = entity.financial_years.order_by("-end_date").first()
     if fy:
         get_financial_year_for_user(request, fy.pk)
+    else:
+        get_entity_for_user(request, entity.pk)
+    if not request.user.can_do_accounting:
+        messages.error(request, "You do not have permission.")
+        if fy:
+            return redirect("core:financial_year_detail", pk=fy.pk)
+        return redirect("core:entity_detail", pk=entity.pk)
 
     code = acct.account_code
     name = acct.account_name
@@ -13921,6 +14077,9 @@ def bulk_journal_reallocate(request, pk):
     )
     fy = bulk.financial_year
     get_financial_year_for_user(request, fy.pk)  # IDOR check
+    if not request.user.can_do_accounting:
+        messages.error(request, "You do not have permission.")
+        return redirect("core:bulk_journal_detail", pk=pk)
 
     if fy.is_locked:
         messages.error(request, "Cannot modify journals in a finalised year.")
@@ -14253,38 +14412,47 @@ def general_pool_add_asset(request, pk):
         business_use_pct = Decimal(request.POST.get("business_use_pct", "100") or "100")
         is_car = request.POST.get("is_car") == "1"
         car_limit = Decimal("0")
-
-        # Apply car cost limit if applicable
-        if is_car:
-            # Current car limit — update annually
-            CAR_LIMITS = {
-                2026: Decimal("69674"),
-                2025: Decimal("69674"),
-                2024: Decimal("68108"),
-                2023: Decimal("64741"),
-                2022: Decimal("60733"),
-            }
-            fy_year = fy.end_date.year
-            limit = CAR_LIMITS.get(fy_year, Decimal("69674"))
-            if cost > limit:
-                car_limit = limit
-                cost = limit
-
-        asset = GeneralPoolAsset.objects.create(
-            pool=pool,
-            asset_name=request.POST.get("asset_name", "").strip(),
-            description=request.POST.get("description", "").strip(),
-            date_first_used=request.POST.get("date_first_used") or None,
-            cost=cost,
-            business_use_pct=business_use_pct,
-            is_improvement=request.POST.get("is_improvement") == "1",
-            is_car=is_car,
-            car_limit_applied=car_limit,
-            notes=request.POST.get("notes", "").strip(),
-        )
     except (InvalidOperation, ValueError) as e:
         messages.error(request, f"Invalid value: {e}")
         return redirect(reverse("core:general_pool_detail", args=[pk]) + "?tab=general_pool")
+
+    if not (Decimal("0") <= business_use_pct <= Decimal("100")):
+        messages.error(request, "Business use % must be between 0 and 100.")
+        return redirect(reverse("core:general_pool_detail", args=[pk]) + "?tab=general_pool")
+
+    date_first_used, date_err = _parse_optional_date(request.POST.get("date_first_used"))
+    if date_err:
+        messages.error(request, date_err)
+        return redirect(reverse("core:general_pool_detail", args=[pk]) + "?tab=general_pool")
+
+    # Apply car cost limit if applicable
+    if is_car:
+        # Current car limit — update annually
+        CAR_LIMITS = {
+            2026: Decimal("69674"),
+            2025: Decimal("69674"),
+            2024: Decimal("68108"),
+            2023: Decimal("64741"),
+            2022: Decimal("60733"),
+        }
+        fy_year = fy.end_date.year
+        limit = CAR_LIMITS.get(fy_year, Decimal("69674"))
+        if cost > limit:
+            car_limit = limit
+            cost = limit
+
+    asset = GeneralPoolAsset.objects.create(
+        pool=pool,
+        asset_name=request.POST.get("asset_name", "").strip(),
+        description=request.POST.get("description", "").strip(),
+        date_first_used=date_first_used,
+        cost=cost,
+        business_use_pct=business_use_pct,
+        is_improvement=request.POST.get("is_improvement") == "1",
+        is_car=is_car,
+        car_limit_applied=car_limit,
+        notes=request.POST.get("notes", "").strip(),
+    )
 
     # Reset pool to draft so user knows they need to recalculate
     pool.status = GeneralPool.Status.DRAFT
@@ -14311,34 +14479,43 @@ def general_pool_edit_asset(request, asset_pk):
         business_use_pct = Decimal(request.POST.get("business_use_pct", "100") or "100")
         is_car = request.POST.get("is_car") == "1"
         car_limit = Decimal("0")
-
-        if is_car:
-            CAR_LIMITS = {
-                2026: Decimal("69674"),
-                2025: Decimal("69674"),
-                2024: Decimal("68108"),
-                2023: Decimal("64741"),
-                2022: Decimal("60733"),
-            }
-            fy_year = fy.end_date.year
-            limit = CAR_LIMITS.get(fy_year, Decimal("69674"))
-            if cost > limit:
-                car_limit = limit
-                cost = limit
-
-        asset.asset_name = request.POST.get("asset_name", asset.asset_name).strip()
-        asset.description = request.POST.get("description", "").strip()
-        asset.date_first_used = request.POST.get("date_first_used") or None
-        asset.cost = cost
-        asset.business_use_pct = business_use_pct
-        asset.is_improvement = request.POST.get("is_improvement") == "1"
-        asset.is_car = is_car
-        asset.car_limit_applied = car_limit
-        asset.notes = request.POST.get("notes", "").strip()
-        asset.save()
     except (InvalidOperation, ValueError) as e:
         messages.error(request, f"Invalid value: {e}")
         return redirect(reverse("core:general_pool_detail", args=[fy.pk]) + "?tab=general_pool")
+
+    if not (Decimal("0") <= business_use_pct <= Decimal("100")):
+        messages.error(request, "Business use % must be between 0 and 100.")
+        return redirect(reverse("core:general_pool_detail", args=[fy.pk]) + "?tab=general_pool")
+
+    date_first_used, date_err = _parse_optional_date(request.POST.get("date_first_used"))
+    if date_err:
+        messages.error(request, date_err)
+        return redirect(reverse("core:general_pool_detail", args=[fy.pk]) + "?tab=general_pool")
+
+    if is_car:
+        CAR_LIMITS = {
+            2026: Decimal("69674"),
+            2025: Decimal("69674"),
+            2024: Decimal("68108"),
+            2023: Decimal("64741"),
+            2022: Decimal("60733"),
+        }
+        fy_year = fy.end_date.year
+        limit = CAR_LIMITS.get(fy_year, Decimal("69674"))
+        if cost > limit:
+            car_limit = limit
+            cost = limit
+
+    asset.asset_name = request.POST.get("asset_name", asset.asset_name).strip()
+    asset.description = request.POST.get("description", "").strip()
+    asset.date_first_used = date_first_used
+    asset.cost = cost
+    asset.business_use_pct = business_use_pct
+    asset.is_improvement = request.POST.get("is_improvement") == "1"
+    asset.is_car = is_car
+    asset.car_limit_applied = car_limit
+    asset.notes = request.POST.get("notes", "").strip()
+    asset.save()
 
     asset.pool.status = GeneralPool.Status.DRAFT
     asset.pool.save(update_fields=["status"])
@@ -14381,17 +14558,29 @@ def general_pool_add_disposal(request, pk):
     pool, _ = GeneralPool.objects.get_or_create(financial_year=fy)
 
     try:
-        disposal = GeneralPoolDisposal.objects.create(
-            pool=pool,
-            asset_name=request.POST.get("asset_name", "").strip(),
-            disposal_date=request.POST.get("disposal_date") or None,
-            termination_value=Decimal(request.POST.get("termination_value", "0") or "0"),
-            business_use_pct=Decimal(request.POST.get("business_use_pct", "100") or "100"),
-            notes=request.POST.get("notes", "").strip(),
-        )
+        termination_value = Decimal(request.POST.get("termination_value", "0") or "0")
+        business_use_pct = Decimal(request.POST.get("business_use_pct", "100") or "100")
     except (InvalidOperation, ValueError) as e:
         messages.error(request, f"Invalid value: {e}")
         return redirect(reverse("core:general_pool_detail", args=[pk]) + "?tab=general_pool")
+
+    if not (Decimal("0") <= business_use_pct <= Decimal("100")):
+        messages.error(request, "Business use % must be between 0 and 100.")
+        return redirect(reverse("core:general_pool_detail", args=[pk]) + "?tab=general_pool")
+
+    disposal_date, date_err = _parse_optional_date(request.POST.get("disposal_date"))
+    if date_err:
+        messages.error(request, date_err)
+        return redirect(reverse("core:general_pool_detail", args=[pk]) + "?tab=general_pool")
+
+    disposal = GeneralPoolDisposal.objects.create(
+        pool=pool,
+        asset_name=request.POST.get("asset_name", "").strip(),
+        disposal_date=disposal_date,
+        termination_value=termination_value,
+        business_use_pct=business_use_pct,
+        notes=request.POST.get("notes", "").strip(),
+    )
 
     pool.status = GeneralPool.Status.DRAFT
     pool.save(update_fields=["status"])
@@ -14566,6 +14755,7 @@ def general_pool_post_to_tb(request, pk):
                 account_name=line.account_name,
                 debit=line.debit,
                 credit=line.credit,
+                closing_balance=line.debit - line.credit,
                 is_adjustment=True,
                 source="general_pool",
                 source_journal=journal,
