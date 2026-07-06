@@ -18,6 +18,12 @@ SECRET_KEY = env("SECRET_KEY")
 DEBUG = env("DEBUG")
 ALLOWED_HOSTS = env("ALLOWED_HOSTS")
 
+# Dedicated key for field-level encryption of PII / secrets (config/encryption.py).
+# Generate with:  python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+# If left blank, encryption falls back to a key derived from SECRET_KEY (a single
+# point of failure) and encryption.py logs a warning once. Set this in production.
+FIELD_ENCRYPTION_KEY = env("FIELD_ENCRYPTION_KEY", default="")
+
 # Application definition
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -225,6 +231,14 @@ CONTENT_SECURITY_POLICY = {
     "DIRECTIVES": {
         "default-src": ("'self'",),
         "style-src": ("'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net", "https://fonts.googleapis.com"),
+        # SECURITY (finding B8): 'unsafe-inline' in script-src weakens XSS
+        # defence — it permits inline <script>. It is retained deliberately
+        # because inline scripts/templates are used across the app and blindly
+        # removing it would break pages. This MUST be tightened in future by
+        # migrating inline scripts to external files or per-request nonces/
+        # hashes (django-csp supports nonces), then dropping 'unsafe-inline'.
+        # The stored-XSS-via-upload path is separately closed by forcing
+        # Content-Disposition: attachment on all served media (media_serving.py).
         "script-src": ("'self'", "'unsafe-inline'", "https://cdn.jsdelivr.net", "https://unpkg.com"),
         "font-src": ("'self'", "https://cdn.jsdelivr.net", "https://fonts.gstatic.com"),
         "img-src": ("'self'", "data:"),

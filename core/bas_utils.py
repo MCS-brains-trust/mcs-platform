@@ -7,7 +7,7 @@ redesign.
 """
 import calendar
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from collections import OrderedDict
 
 from django.db.models import Q
@@ -624,7 +624,7 @@ def _calculate_gst_from_tb_lines(fy, entity, entity_type, coa_lookup, entity_coa
                 "has_gst": has_gst,
                 "gst_rate": Decimal("10.00") if has_gst else Decimal("0"),
                 "taxable_amount": amount,
-                "gst_amount": (amount / Decimal("11")).quantize(Decimal("0.01")) if has_gst else Decimal("0"),
+                "gst_amount": (amount / Decimal("11")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) if has_gst else Decimal("0"),
                 "gross_amount": amount,
             }
             if section in ("revenue", "Revenue"):
@@ -944,7 +944,7 @@ def _calculate_gst_from_transactions(fy, entity, entity_type, coa_lookup, entity
                 "has_gst": has_gst,
                 "gst_rate": Decimal("10.00") if has_gst else Decimal("0"),
                 "taxable_amount": amount,
-                "gst_amount": (amount / Decimal("11")).quantize(Decimal("0.01")) if has_gst else Decimal("0"),
+                "gst_amount": (amount / Decimal("11")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) if has_gst else Decimal("0"),
                 "gross_amount": amount,
             }
             if section in ("revenue", "Revenue"):
@@ -972,13 +972,13 @@ def _build_bas_result(g_totals, sales_lines, purchase_lines, capital_lines, excl
     g["G5"] = g["G2"] + g["G3"] + g["G4"]
     g["G6"] = g["G1"] - g["G5"]
     g["G8"] = g["G6"] + g["G7"]
-    g["G9"] = (g["G8"] / Decimal("11")).quantize(Decimal("0.01")) if g["G8"] else Decimal("0")
+    g["G9"] = (g["G8"] / Decimal("11")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) if g["G8"] else Decimal("0")
 
     g["G12"] = g["G10"] + g["G11"]
     g["G16"] = g["G13"] + g["G14"] + g["G15"]
     g["G17"] = g["G12"] - g["G16"]
     g["G19"] = g["G17"] + g["G18"]
-    g["G20"] = (g["G19"] / Decimal("11")).quantize(Decimal("0.01")) if g["G19"] else Decimal("0")
+    g["G20"] = (g["G19"] / Decimal("11")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) if g["G19"] else Decimal("0")
 
     label_1a = g["G9"]
     label_1b = g["G20"]

@@ -759,7 +759,7 @@ def risk_flags_view(request, pk):
         flags = flags.filter(severity=severity_filter)
     if status_filter:
         flags = flags.filter(status=status_filter)
-    if tier_filter:
+    if tier_filter and tier_filter.isdigit():
         flags = flags.filter(tier=int(tier_filter))
     if category_filter:
         # Match by rule category via rule_id prefix or lookup
@@ -872,6 +872,7 @@ def risk_flags_view(request, pk):
 def resolve_risk_flag(request, pk):
     """Resolve a single risk flag. Requires minimum 5-word resolution notes."""
     flag = get_object_or_404(RiskFlag, pk=pk)
+    get_financial_year_for_user(request, flag.financial_year_id)
     resolution_notes = request.POST.get("resolution_notes", "").strip()
     new_status = request.POST.get("new_status", "resolved")
     is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
@@ -947,6 +948,7 @@ def ai_analyse_flag(request, pk):
     Calls Claude API to generate a plain-English explanation and suggested action.
     """
     flag = get_object_or_404(RiskFlag, pk=pk)
+    get_financial_year_for_user(request, flag.financial_year_id)
 
     try:
         from core.ai_service import analyse_risk_flag
@@ -1013,6 +1015,7 @@ def ai_feedback_view(request, pk):
     Stores the feedback for future prompt improvement.
     """
     flag = get_object_or_404(RiskFlag, pk=pk)
+    get_financial_year_for_user(request, flag.financial_year_id)
     feedback_type = request.POST.get("feedback_type", "")
     user_notes = request.POST.get("feedback_notes", "").strip()
 

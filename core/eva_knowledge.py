@@ -198,6 +198,10 @@ def sync_sharepoint_library(site_id=None, drive_id=None, folder_path=""):
                 counts["skipped"] += 1
                 continue
 
+            # Initialise before the try so the except handler can reference them
+            # even if we fail before they are assigned (avoids UnboundLocalError).
+            existing = None
+            doc = None
             try:
                 sp_item_id = item["id"]
                 sp_modified = item.get("lastModifiedDateTime", "")
@@ -283,9 +287,12 @@ def sync_sharepoint_library(site_id=None, drive_id=None, folder_path=""):
             except Exception as e:
                 counts["errors"] += 1
                 logger.error(f"Error syncing {name}: {e}")
-                if existing:
-                    existing.sync_status = "error"
-                    existing.save(update_fields=["sync_status"])
+                # Mark the freshly-updated record (or the pre-existing one) as
+                # errored so a failed embedding is never reported as synced.
+                error_doc = doc or existing
+                if error_doc:
+                    error_doc.sync_status = "error"
+                    error_doc.save(update_fields=["sync_status"])
 
         # Pagination — with infinite loop protection
         next_url = data.get("@odata.nextLink")
@@ -489,6 +496,10 @@ def chunk_text(text, chunk_size=CHUNK_SIZE_TOKENS, overlap=CHUNK_OVERLAP_TOKENS)
 # ---------------------------------------------------------------------------
 # Embedding Generation & Storage
 # ---------------------------------------------------------------------------
+class EmbeddingError(Exception):
+    """Raised when one or more chunk embeddings could not be generated."""
+
+
 def _get_embeddings(texts):
     """
     Generate embeddings for a list of texts using OpenAI API.
@@ -535,6 +546,16 @@ def embed_and_store_chunks(document, chunks):
         batch_texts = [text for _, text in chunks[i:i + batch_size]]
         embeddings = _get_embeddings(batch_texts)
         all_embeddings.extend(embeddings)
+
+    # Propagate embedding failure.  _get_embeddings returns empty lists on error;
+    # storing those as embedding_vector=None makes the document invisible to RAG
+    # while it is reported as "synced".  Raise so the caller marks it "error".
+    failed = sum(1 for e in all_embeddings if not e)
+    if failed:
+        raise EmbeddingError(
+            f"{failed}/{len(all_embeddings)} chunk embeddings failed for "
+            f"'{document.title}' — refusing to mark document as synced."
+        )
 
     # Create chunk records — write to both JSON and pgvector fields
     chunk_objects = []

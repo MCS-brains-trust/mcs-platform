@@ -8,6 +8,7 @@ from django.shortcuts import get_object_or_404, redirect
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
+from config.authorization import get_entity_for_user
 from core.models import EngagementLetter, Entity, FinancialYear
 
 logger = logging.getLogger(__name__)
@@ -24,7 +25,7 @@ def engagement_letter_upload(request, pk):
     The accountant MUST select the financial year via the form field
     ``financial_year_id``.  The upload is rejected if no year is selected.
     """
-    entity = get_object_or_404(Entity, pk=pk)
+    entity = get_entity_for_user(request, pk)
 
     uploaded_file = request.FILES.get("file")
     if not uploaded_file:
@@ -75,7 +76,7 @@ def engagement_letter_upload(request, pk):
 def engagement_letter_archive(request, letter_pk):
     """Mark an engagement letter as superseded / archived."""
     letter = get_object_or_404(EngagementLetter, pk=letter_pk)
-    entity = letter.entity
+    entity = get_entity_for_user(request, letter.entity_id)
 
     letter.is_current = False
     letter.status = EngagementLetter.Status.SUPERSEDED
@@ -92,6 +93,7 @@ def engagement_letter_archive(request, letter_pk):
 def engagement_letter_delete(request, letter_pk):
     """Permanently delete an engagement letter (accidental upload recovery)."""
     letter = get_object_or_404(EngagementLetter, pk=letter_pk)
+    get_entity_for_user(request, letter.entity_id)
     entity_pk = letter.entity.pk
 
     try:
@@ -113,6 +115,7 @@ def engagement_letter_update_status(request, letter_pk):
     import json
 
     letter = get_object_or_404(EngagementLetter, pk=letter_pk)
+    get_entity_for_user(request, letter.entity_id)
 
     try:
         data = json.loads(request.body)

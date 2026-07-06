@@ -1044,12 +1044,34 @@ class Div7AFalsePositiveTestCase(TestCase):
             result = run_div7a_assessment(str(fy.pk))
         # Only Account 1 should fire
         self.assertIn("T2-D7A-01", result.get("rules_fired", []))
-        # The total exposure should only include Account 1's movement
-        # CY balance 100000 - PY balance 50000 = 50000 movement
+        # The total exposure is Account 1's outstanding closing debit balance
+        # (100000) — the whole amount owed to the company at year end is the
+        # Div 7A loan, not just the year's movement. Zero/credit accounts do
+        # not contribute.
         total = Decimal(result["total_exposure"])
-        # It should be exactly 50000 from the loan (plus any s109e/upe which
-        # are zero here), NOT inflated by zero/credit accounts.
-        self.assertEqual(total, Decimal("50000.00"))
+        self.assertEqual(total, Decimal("100000.00"))
+
+    def test_div7a_fires_for_static_debit_balance_no_movement(self):
+        """A carried-forward debit loan with NO current-year movement is still a
+        Div 7A issue. Any outstanding debit balance owed to the company by a
+        director/shareholder/associate triggers the rule, and the exposure is
+        the closing balance."""
+        from unittest.mock import patch
+        from core.eva_div7a import run_div7a_assessment
+
+        entity, fy = self._make_entity_and_fy("Static Loan Co")
+        # Debit loan unchanged from prior year — no new lending, not repaid.
+        self._create_tb_line(
+            fy, "3100", "Loan - Director Smith",
+            debit=250000, credit=0,
+            prior_debit=250000, prior_credit=0,
+        )
+
+        with patch("core.eva_div7a.models_Q_director_or_shareholder", self._sqlite_safe_q):
+            result = run_div7a_assessment(str(fy.pk))
+        self.assertIn("T2-D7A-01", result.get("rules_fired", []))
+        self.assertEqual(result["overall_severity"], "CRITICAL")
+        self.assertEqual(Decimal(result["total_exposure"]), Decimal("250000.00"))
 
     def test_div7a_consolidated_not_generated_when_total_is_zero(self):
         """No Eva findings should be created when all loan accounts are zero/credit."""

@@ -26,7 +26,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 def _get_entity_for_user(request, entity_pk):
     """Return the entity, checking the user has access."""
-    return get_object_or_404(Entity, pk=entity_pk)
+    from config.authorization import get_entity_for_user
+    return get_entity_for_user(request, entity_pk)
 
 
 # ---------------------------------------------------------------------------
@@ -247,7 +248,7 @@ def fte_toggle_checklist(request, doc_pk):
     Toggles a single boolean checklist field and returns the new state.
     """
     doc = get_object_or_404(FamilyTrustElectionDocument, pk=doc_pk)
-    entity = doc.entity
+    entity = _get_entity_for_user(request, doc.entity_id)
 
     ALLOWED_FIELDS = {
         "adv_trust_deed_reviewed",
@@ -285,7 +286,7 @@ def fte_toggle_checklist(request, doc_pk):
 def fte_delete(request, doc_pk):
     """POST /api/fte/<doc_pk>/delete/"""
     doc = get_object_or_404(FamilyTrustElectionDocument, pk=doc_pk)
-    entity = doc.entity
+    entity = _get_entity_for_user(request, doc.entity_id)
     doc.delete()
     messages.success(request, "Family Trust Election document deleted.")
     return redirect("core:family_trust_election_new", entity_pk=entity.pk)

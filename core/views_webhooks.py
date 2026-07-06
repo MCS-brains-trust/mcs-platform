@@ -117,6 +117,93 @@ def fusesign_webhook(request):
     return JsonResponse({"status": "ok"})
 
 
+def _is_valid_sns_host(url):
+    """
+    Return True only if *url* is an https URL whose host is a legitimate
+    AWS SNS endpoint (sns.<region>.amazonaws.com). Used to prevent SSRF via
+    forged SigningCertURL / SubscribeURL values.
+    """
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(url)
+    except (ValueError, TypeError):
+        return False
+
+    if parsed.scheme != "https":
+        return False
+
+    host = (parsed.hostname or "").lower()
+    # sns.<region>.amazonaws.com  or  sns.<region>.amazonaws.com.cn
+    if not host.startswith("sns."):
+        return False
+    if not (host.endswith(".amazonaws.com") or host.endswith(".amazonaws.com.cn")):
+        return False
+    return True
+
+
+def _sns_string_to_sign(payload):
+    """Build the canonical string that AWS SNS signs for this message type."""
+    msg_type = payload.get("Type", "")
+    if msg_type == "Notification":
+        keys = ["Message", "MessageId", "Subject", "Timestamp", "TopicArn", "Type"]
+    else:
+        # SubscriptionConfirmation / UnsubscribeConfirmation
+        keys = ["Message", "MessageId", "SubscribeURL", "Timestamp", "Token", "TopicArn", "Type"]
+
+    parts = []
+    for key in keys:
+        if key in payload and payload.get(key) is not None:
+            parts.append(key)
+            parts.append(str(payload[key]))
+    return ("\n".join(parts) + "\n").encode("utf-8")
+
+
+def _verify_sns_message(payload):
+    """
+    Verify that *payload* is a genuine AWS SNS message by validating its
+    cryptographic signature against the AWS-hosted signing certificate.
+
+    Returns True only for authentic messages. Rejects anything whose
+    SigningCertURL is not a legitimate AWS SNS host (SSRF guard) or whose
+    signature does not verify.
+    """
+    import base64
+
+    import requests
+    from cryptography.hazmat.primitives import hashes
+    from cryptography.hazmat.primitives.asymmetric import padding
+    from cryptography.x509 import load_pem_x509_certificate
+
+    cert_url = payload.get("SigningCertURL") or payload.get("SigningCertUrl") or ""
+    if not _is_valid_sns_host(cert_url):
+        logger.warning("SNS message rejected: invalid SigningCertURL host %r", cert_url)
+        return False
+
+    signature_b64 = payload.get("Signature", "")
+    if not signature_b64:
+        logger.warning("SNS message rejected: missing Signature")
+        return False
+
+    try:
+        resp = requests.get(cert_url, timeout=10)
+        resp.raise_for_status()
+        cert = load_pem_x509_certificate(resp.content)
+        public_key = cert.public_key()
+        signature = base64.b64decode(signature_b64)
+        string_to_sign = _sns_string_to_sign(payload)
+
+        # SignatureVersion 1 → SHA1, version 2 → SHA256
+        version = str(payload.get("SignatureVersion", "1"))
+        algorithm = hashes.SHA256() if version == "2" else hashes.SHA1()
+
+        public_key.verify(signature, string_to_sign, padding.PKCS1v15(), algorithm)
+        return True
+    except Exception as e:
+        logger.warning("SNS signature verification failed: %s", e)
+        return False
+
+
 @csrf_exempt
 @require_POST
 def textract_webhook(request):
@@ -126,6 +213,10 @@ def textract_webhook(request):
     AWS SNS sends a JSON payload with:
     - SubscriptionConfirmation: initial endpoint verification
     - Notification: actual Textract result notification
+
+    Every message is authenticated via its SNS signature before any action
+    is taken, and outbound SubscribeURL fetches are restricted to AWS SNS
+    hosts to prevent SSRF.
     """
     from core.models import GoverningDocument
 
@@ -135,18 +226,30 @@ def textract_webhook(request):
     except (json.JSONDecodeError, ValueError):
         return JsonResponse({"error": "Invalid JSON"}, status=400)
 
-    message_type = request.headers.get("x-amz-sns-message-type", "")
+    # Authenticate the message before doing anything with it
+    if not _verify_sns_message(payload):
+        logger.warning("Textract webhook: SNS signature verification failed")
+        return JsonResponse({"error": "Authentication failed"}, status=403)
+
+    message_type = request.headers.get("x-amz-sns-message-type", "") or payload.get("Type", "")
 
     # Handle SNS subscription confirmation
     if message_type == "SubscriptionConfirmation":
         subscribe_url = payload.get("SubscribeURL", "")
-        if subscribe_url:
+        # SSRF guard: only ever GET a legitimate AWS SNS host over https
+        if subscribe_url and _is_valid_sns_host(subscribe_url):
             import requests
             try:
                 requests.get(subscribe_url, timeout=10)
                 logger.info("SNS subscription confirmed: %s", payload.get("TopicArn", ""))
             except Exception as e:
                 logger.error("SNS subscription confirmation failed: %s", e)
+        else:
+            logger.warning(
+                "SNS subscription confirmation rejected: invalid SubscribeURL host %r",
+                subscribe_url,
+            )
+            return JsonResponse({"error": "Invalid SubscribeURL"}, status=400)
         return JsonResponse({"status": "ok"})
 
     # Handle Textract completion notification

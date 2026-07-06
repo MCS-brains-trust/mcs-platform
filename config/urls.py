@@ -2,10 +2,23 @@
 from django.contrib import admin
 from django.urls import path, include
 from django.conf import settings
+from django.views.generic.base import RedirectView
 
 from config.media_serving import serve_protected_media
 
 urlpatterns = [
+    # Route the Django admin login through the custom, rate-limited and
+    # TOTP-gated login flow (security finding B4). Django's built-in
+    # /admin/login/ is neither rate-limited nor 2FA-gated, so a staff/superuser
+    # password alone could yield an admin session with no TOTP. This redirect
+    # (which MUST precede the admin include) sends admin logins to the custom
+    # flow; query_string=True preserves ?next=/admin/. Require2FAMiddleware
+    # additionally enforces the per-session "2fa_verified" flag on /admin/ URLs.
+    path(
+        "admin/login/",
+        RedirectView.as_view(url="/accounts/login/", query_string=True),
+        name="admin_login_redirect",
+    ),
     path("admin/", admin.site.urls),
     path("accounts/", include("accounts.urls")),
 

@@ -1511,6 +1511,9 @@ Analyse the above data for this specific compliance check and respond with the J
 # ---------------------------------------------------------------------------
 # In-memory task status tracking (same pattern as AI classification)
 _eva_review_tasks = {}
+# Guards the check-and-reserve of a review slot so two near-simultaneous
+# requests for the same FY cannot both spawn a background review thread.
+_eva_review_lock = threading.Lock()
 
 
 def _run_eva_review_background(fy_pk, user_pk):
@@ -2010,13 +2013,37 @@ def ask_eva_review(request, pk):
         url=f"/entities/years/{fy.pk}/",
     )
 
+    # Reserve the running slot atomically BEFORE spawning the thread.  The marker
+    # used to be set only inside the spawned thread, so two near-simultaneous
+    # requests could both pass the guard above and both spawn a review.
+    with _eva_review_lock:
+        existing = _eva_review_tasks.get(task_key)
+        if existing and existing.get("status") == "running":
+            return JsonResponse({
+                "status": "running",
+                "message": "Eva review is already in progress.",
+                **existing,
+            })
+        _eva_review_tasks[task_key] = {
+            "status": "running",
+            "current_check": "Starting Eva review…",
+            "total_checks": 0,
+            "completed_checks": 0,
+            "findings_count": 0,
+        }
+
     # Launch background thread
     thread = threading.Thread(
         target=_run_eva_review_background,
         args=(fy.pk, request.user.pk),
         daemon=True,
     )
-    thread.start()
+    try:
+        thread.start()
+    except Exception:
+        # Failed to spawn — release the reserved slot so a retry can proceed.
+        _eva_review_tasks.pop(task_key, None)
+        raise
 
     return JsonResponse({
         "status": "running",
@@ -2345,8 +2372,9 @@ def eva_finding_resolve(request, pk):
         )
 
     # Check if all findings are now addressed (outside the atomic block
-    # so we read committed state)
-    open_findings = review.findings.filter(domain='financial_statements', status="open").count()  # Sprint 1b: scope to FS domain
+    # so we read committed state).  Recurring findings are created with
+    # status="reopened" and are still pending, so they must count too.
+    open_findings = review.findings.filter(domain='financial_statements', status__in=["open", "reopened"]).count()  # Sprint 1b: scope to FS domain
 
     if open_findings == 0:
         # All findings addressed — mark review as cleared
@@ -2487,9 +2515,10 @@ def eva_auto_disclose_rp(request, pk):
         },
     )
 
-    # Check if all findings are now addressed
+    # Check if all findings are now addressed.  Recurring findings are created
+    # with status="reopened" and are still pending, so they must count too.
     review = finding.eva_review
-    open_findings = review.findings.filter(domain='financial_statements', status="open").count()  # Sprint 1b: scope to FS domain
+    open_findings = review.findings.filter(domain='financial_statements', status__in=["open", "reopened"]).count()  # Sprint 1b: scope to FS domain
 
     if open_findings == 0:
         review.status = "cleared"

@@ -21,7 +21,10 @@ from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST, require_GET
 
-from config.authorization import get_review_job_for_user
+from config.authorization import (
+    get_review_job_for_user,
+    get_entity_for_user,
+)
 from .models import (
     ClassificationRule,
     EntityGSTSetting,
@@ -186,6 +189,7 @@ def split_transaction(request, pk):
     }
     """
     parent = get_object_or_404(PendingTransaction, pk=pk)
+    get_review_job_for_user(request, parent.job_id)  # enforce access (B2 IDOR)
 
     # Cannot split an already-split child line
     if parent.split_parent is not None:
@@ -304,6 +308,7 @@ def unsplit_transaction(request, pk):
     POST /api/review/transaction/<pk>/unsplit/
     """
     parent = get_object_or_404(PendingTransaction, pk=pk)
+    get_review_job_for_user(request, parent.job_id)  # enforce access (B2 IDOR)
 
     if not parent.is_split:
         return JsonResponse(
@@ -373,7 +378,7 @@ def create_classification_rule(request):
     if not entity_id:
         return JsonResponse({"status": "error", "message": "entity_id is required"}, status=400)
 
-    entity = get_object_or_404(Entity, pk=entity_id)
+    entity = get_entity_for_user(request, entity_id)  # enforce access (B2 IDOR)
 
     pattern = data.get("description_pattern", "").strip()
     if not pattern:
@@ -413,6 +418,7 @@ def update_classification_rule(request, pk):
     POST /api/review/rules/<pk>/update/
     """
     rule = get_object_or_404(ClassificationRule, pk=pk)
+    get_entity_for_user(request, rule.entity_id)  # enforce access (B2 IDOR)
     try:
         data = json.loads(request.body)
     except json.JSONDecodeError:
@@ -447,6 +453,7 @@ def update_classification_rule(request, pk):
 def delete_classification_rule(request, pk):
     """Delete a classification rule."""
     rule = get_object_or_404(ClassificationRule, pk=pk)
+    get_entity_for_user(request, rule.entity_id)  # enforce access (B2 IDOR)
     rule.delete()
     return JsonResponse({"status": "ok", "message": "Rule deleted."})
 
@@ -456,6 +463,7 @@ def delete_classification_rule(request, pk):
 def toggle_classification_rule(request, pk):
     """Toggle a classification rule active/inactive."""
     rule = get_object_or_404(ClassificationRule, pk=pk)
+    get_entity_for_user(request, rule.entity_id)  # enforce access (B2 IDOR)
     rule.is_active = not rule.is_active
     rule.save(update_fields=["is_active", "updated_at"])
     return JsonResponse({
@@ -473,8 +481,7 @@ def list_classification_rules(request, entity_id):
 
     GET /api/review/rules/<entity_id>/
     """
-    from core.models import Entity
-    entity = get_object_or_404(Entity, pk=entity_id)
+    entity = get_entity_for_user(request, entity_id)  # enforce access (B2 IDOR)
     rules = ClassificationRule.objects.filter(entity=entity)
 
     rules_data = []
@@ -553,6 +560,7 @@ def set_gst_treatment(request, pk):
     Body: {"gst_treatment": "taxable", "is_manual": true}
     """
     txn = get_object_or_404(PendingTransaction, pk=pk)
+    get_review_job_for_user(request, txn.job_id)  # enforce access (B2 IDOR)
     try:
         data = json.loads(request.body)
     except json.JSONDecodeError:
@@ -709,6 +717,7 @@ def set_creditable_percentage(request, pk):
     Body: {"creditable_percentage": "75", "reason": "RITC - merchant fees"}
     """
     txn = get_object_or_404(PendingTransaction, pk=pk)
+    get_review_job_for_user(request, txn.job_id)  # enforce access (B2 IDOR)
     try:
         data = json.loads(request.body)
     except json.JSONDecodeError:
@@ -759,6 +768,7 @@ def set_gst_override(request, pk):
     Body: {"gst_amount": "45.50", "reason": "Adjusted per client invoice"}
     """
     txn = get_object_or_404(PendingTransaction, pk=pk)
+    get_review_job_for_user(request, txn.job_id)  # enforce access (B2 IDOR)
     try:
         data = json.loads(request.body)
     except json.JSONDecodeError:
@@ -928,6 +938,7 @@ def detect_apportionment_api(request, pk):
     POST /api/review/transaction/<pk>/detect-apportionment/
     """
     txn = get_object_or_404(PendingTransaction, pk=pk)
+    get_review_job_for_user(request, txn.job_id)  # enforce access (B2 IDOR)
     entity = txn.job.entity
     result = detect_apportionment(txn, entity)
 
@@ -959,8 +970,8 @@ def save_entity_gst_setting(request):
     except json.JSONDecodeError:
         return JsonResponse({"status": "error", "message": "Invalid JSON"}, status=400)
 
-    from core.models import Entity, FinancialYear
-    entity = get_object_or_404(Entity, pk=data.get("entity_id"))
+    from core.models import FinancialYear
+    entity = get_entity_for_user(request, data.get("entity_id"))  # enforce access (B2 IDOR)
 
     fy = None
     fy_id = data.get("financial_year_id")
@@ -1013,7 +1024,10 @@ def _recalculate_gst(txn, is_gst_registered):
         full_gst = (abs_amount / Decimal("11")).quantize(Decimal("0.01"))
         cred_pct = txn.creditable_percentage or Decimal("100")
         txn.gst_amount = (full_gst * cred_pct / Decimal("100")).quantize(Decimal("0.01"))
-        txn.net_amount = (abs_amount - full_gst).quantize(Decimal("0.01"))
+        # Net must reconcile with the creditable GST actually posted, not the
+        # full 1/11th, otherwise net + gst < gross for creditable % < 100 and
+        # the trial balance is left permanently out of balance (A3).
+        txn.net_amount = (abs_amount - txn.gst_amount).quantize(Decimal("0.01"))
 
 
 def _calculate_itc(txn):

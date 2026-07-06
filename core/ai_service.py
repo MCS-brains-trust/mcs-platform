@@ -667,11 +667,20 @@ Return ONLY the JSON array, no other text."""
 
             for flag in batch:
                 result = result_map.get(str(flag.pk))
-                if result:
+                if not result:
+                    continue
+                # Guard each flag independently so one malformed score (e.g. a
+                # non-numeric value) doesn't abort scoring for the rest of the batch.
+                try:
                     flag.ato_interest_score = max(1, min(10, int(result["score"])))
                     flag.ato_interest_reasoning = result.get("reasoning", "")
                     flag.save(update_fields=["ato_interest_score", "ato_interest_reasoning"])
                     scored += 1
+                except (KeyError, ValueError, TypeError) as flag_err:
+                    logger.warning(
+                        "Skipping flag %s with malformed prioritisation score: %s",
+                        flag.pk, flag_err,
+                    )
 
         except Exception as e:
             logger.exception(f"AI prioritisation batch error: {e}")
@@ -683,6 +692,24 @@ Return ONLY the JSON array, no other text."""
 # ---------------------------------------------------------------------------
 # Batch Risk Engine — run AI analysis on all open flags for a financial year
 # ---------------------------------------------------------------------------
+def _risk_severity_rank():
+    """Case/When rank so CRITICAL sorts FIRST.
+
+    RiskFlag.severity is a free-text CharField holding CRITICAL/HIGH/MEDIUM/LOW,
+    so order_by("-severity") sorts alphabetically (CRITICAL ends up LAST).  Rank
+    numerically instead.
+    """
+    from django.db.models import Case, When, Value, IntegerField
+    return Case(
+        When(severity="CRITICAL", then=Value(0)),
+        When(severity="HIGH", then=Value(1)),
+        When(severity="MEDIUM", then=Value(2)),
+        When(severity="LOW", then=Value(3)),
+        default=Value(4),
+        output_field=IntegerField(),
+    )
+
+
 def batch_analyse_flags(financial_year, force=False):
     """
     Run AI analysis on all open flags for a financial year.
@@ -690,7 +717,11 @@ def batch_analyse_flags(financial_year, force=False):
     If force=True, re-analyses even cached results.
     Returns summary dict.
     """
-    flags = list(financial_year.risk_flags.filter(status="open").order_by("-severity"))
+    flags = list(
+        financial_year.risk_flags.filter(status="open")
+        .annotate(_sev_rank=_risk_severity_rank())
+        .order_by("_sev_rank")
+    )
 
     if not flags:
         return {"success": True, "analysed": 0, "skipped": 0, "errors": 0}
@@ -824,7 +855,11 @@ def generate_risk_summary_report(financial_year):
     from docx.enum.text import WD_ALIGN_PARAGRAPH
 
     entity = financial_year.entity
-    flags = financial_year.risk_flags.all().order_by("-severity", "-ato_interest_score")
+    flags = (
+        financial_year.risk_flags.all()
+        .annotate(_sev_rank=_risk_severity_rank())
+        .order_by("_sev_rank", "-ato_interest_score")
+    )
 
     # Build the AI prompt with materiality
     entity_context = _build_entity_context(financial_year, include_materiality=True)

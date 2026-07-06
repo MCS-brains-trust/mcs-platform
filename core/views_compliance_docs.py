@@ -4,10 +4,12 @@ import logging
 from decimal import Decimal
 
 from django.contrib.auth.decorators import login_required
+from django.db import transaction
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 
+from config.authorization import get_financial_year_for_user
 from core.models import (
     DividendEvent,
     DividendShareholderAllocation,
@@ -64,7 +66,7 @@ def _format_acn_abn(acn, abn):
 @login_required
 def dividend_wizard(request, pk):
     """Dividend wizard — create a dividend event with shareholder allocations."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
     # Pre-populate shareholders from EntityOfficer
@@ -92,7 +94,7 @@ def dividend_wizard(request, pk):
 @require_POST
 def dividend_create(request, pk):
     """Create a dividend event and auto-allocate to shareholders."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
     try:
@@ -100,52 +102,73 @@ def dividend_create(request, pk):
     except json.JSONDecodeError:
         return JsonResponse({"status": "error", "error": "Invalid JSON"}, status=400)
 
+    # Validate every shareholder belongs to this entity up-front so a bad id
+    # never leaves a half-created dividend event behind (prevents cross-entity
+    # officer references / IDOR).
+    allocations_data = data.get("allocations", [])
+    shareholders_by_id = {}
+    for alloc in allocations_data:
+        shareholder_id = alloc.get("shareholder_id")
+        try:
+            shareholders_by_id[shareholder_id] = EntityOfficer.objects.get(
+                pk=shareholder_id, entity=entity
+            )
+        except (EntityOfficer.DoesNotExist, ValueError, TypeError):
+            return JsonResponse(
+                {
+                    "status": "error",
+                    "error": f"Invalid shareholder for this entity: {shareholder_id}",
+                },
+                status=400,
+            )
+
     try:
-        event = DividendEvent.objects.create(
-            entity=entity,
-            financial_year=fy,
-            dividend_type=data.get("dividend_type", "final"),
-            total_amount=Decimal(str(data.get("total_amount", 0))),
-            franking_percentage=Decimal(str(data.get("franking_percentage", 100))),
-            company_tax_rate=Decimal(str(data.get("company_tax_rate", 25))),
-            record_date=data.get("record_date"),
-            payment_date=data.get("payment_date"),
-            declaration_date=data.get("declaration_date"),
-            solvency_confirmed=data.get("solvency_confirmed", False),
-            resolution_type=data.get("resolution_type", "board_resolution"),
-            meeting_location=data.get("meeting_location", ""),
-            franking_account_opening_balance=Decimal(str(data.get("franking_opening", 0))) if data.get("franking_opening") else None,
-            created_by=request.user,
-        )
-
-        # Auto-allocate to shareholders
-        allocations_data = data.get("allocations", [])
-        total_shares = sum(a.get("shares_held", 0) for a in allocations_data) or 1
-
-        for alloc in allocations_data:
-            shares = alloc.get("shares_held", 0)
-            proportion = Decimal(str(shares)) / Decimal(str(total_shares))
-            dividend_amount = event.total_amount * proportion
-            franking_credit = dividend_amount * Decimal(str(event.franking_credit_per_dollar))
-
-            DividendShareholderAllocation.objects.create(
-                dividend_event=event,
-                shareholder_id=alloc["shareholder_id"],
-                shares_held=shares,
-                dividend_amount=dividend_amount.quantize(Decimal("0.01")),
-                franking_credit=franking_credit.quantize(Decimal("0.01")),
-                withholding_tax=Decimal(str(alloc.get("withholding_tax", 0))),
+        with transaction.atomic():
+            event = DividendEvent.objects.create(
+                entity=entity,
+                financial_year=fy,
+                dividend_type=data.get("dividend_type", "final"),
+                total_amount=Decimal(str(data.get("total_amount", 0))),
+                franking_percentage=Decimal(str(data.get("franking_percentage", 100))),
+                company_tax_rate=Decimal(str(data.get("company_tax_rate", 25))),
+                record_date=data.get("record_date"),
+                payment_date=data.get("payment_date"),
+                declaration_date=data.get("declaration_date"),
+                solvency_confirmed=data.get("solvency_confirmed", False),
+                resolution_type=data.get("resolution_type", "board_resolution"),
+                meeting_location=data.get("meeting_location", ""),
+                franking_account_opening_balance=Decimal(str(data.get("franking_opening", 0))) if data.get("franking_opening") else None,
+                created_by=request.user,
             )
 
-        # Calculate franking account closing balance
-        total_franking_debits = sum(
-            a.franking_credit for a in event.allocations.all()
-        )
-        if event.franking_account_opening_balance is not None:
-            event.franking_account_closing_balance = (
-                event.franking_account_opening_balance - total_franking_debits
+            # Auto-allocate to shareholders
+            total_shares = sum(a.get("shares_held", 0) for a in allocations_data) or 1
+
+            for alloc in allocations_data:
+                shareholder = shareholders_by_id[alloc.get("shareholder_id")]
+                shares = alloc.get("shares_held", 0)
+                proportion = Decimal(str(shares)) / Decimal(str(total_shares))
+                dividend_amount = event.total_amount * proportion
+                franking_credit = dividend_amount * Decimal(str(event.franking_credit_per_dollar))
+
+                DividendShareholderAllocation.objects.create(
+                    dividend_event=event,
+                    shareholder=shareholder,
+                    shares_held=shares,
+                    dividend_amount=dividend_amount.quantize(Decimal("0.01")),
+                    franking_credit=franking_credit.quantize(Decimal("0.01")),
+                    withholding_tax=Decimal(str(alloc.get("withholding_tax", 0))),
+                )
+
+            # Calculate franking account closing balance
+            total_franking_debits = sum(
+                a.franking_credit for a in event.allocations.all()
             )
-            event.save(update_fields=["franking_account_closing_balance"])
+            if event.franking_account_opening_balance is not None:
+                event.franking_account_closing_balance = (
+                    event.franking_account_opening_balance - total_franking_debits
+                )
+                event.save(update_fields=["franking_account_closing_balance"])
 
         return JsonResponse({
             "status": "ok",
@@ -165,7 +188,7 @@ def dividend_create(request, pk):
 @login_required
 def dividend_detail(request, pk, event_pk):
     """View a dividend event with all allocations."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     event = get_object_or_404(DividendEvent, pk=event_pk, financial_year=fy)
     allocations = event.allocations.select_related("shareholder").all()
 
@@ -184,7 +207,7 @@ def dividend_detail(request, pk, event_pk):
 @require_POST
 def generate_solvency_resolution(request, pk):
     """Auto-generate a solvency resolution for a company FY."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
     if entity.entity_type != "company":
@@ -234,7 +257,7 @@ def generate_solvency_resolution(request, pk):
 @require_POST
 def generate_directors_declaration(request, pk):
     """Auto-generate a director's declaration for a company FY."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
     if entity.entity_type != "company":
@@ -295,7 +318,7 @@ def generate_directors_declaration(request, pk):
 @login_required
 def directors_report_wizard(request, pk):
     """Wizard for Director's Report — structured sections + Eva drafting."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
     directors = EntityOfficer.objects.filter(
@@ -317,7 +340,7 @@ def directors_report_draft_with_eva(request, pk):
     import anthropic
     import os
 
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
     try:
@@ -387,7 +410,7 @@ def directors_report_draft_with_eva(request, pk):
 @require_POST
 def generate_loan_acknowledgment(request, pk):
     """Generate a shareholder loan acknowledgment."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
     try:
@@ -431,7 +454,7 @@ def generate_loan_acknowledgment(request, pk):
 @require_POST
 def generate_management_rep_letter(request, pk):
     """Auto-generate a management representation letter."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
     from django.db import models as _m
@@ -510,7 +533,7 @@ def generate_management_rep_letter(request, pk):
 @require_POST
 def generate_cover_letter(request, pk):
     """Auto-generate a client cover letter listing all enclosed documents."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
     # Build a clean, deduplicated list of enclosed document display names.

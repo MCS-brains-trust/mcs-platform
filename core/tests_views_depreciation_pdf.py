@@ -151,6 +151,12 @@ class DepreciationPdfDisposalTests(TestCase):
         _CapturingWeasyHtml._captured = {}
         self.test_client = Client()
         self.test_client.force_login(self.user)
+        # Require2FAMiddleware now requires TOTP to have been completed this
+        # session (security fix B4). force_login skips that flow, so mark the
+        # session as 2FA-verified to mimic a real authenticated session.
+        _session = self.test_client.session
+        _session["2fa_verified"] = True
+        _session.save()
 
     def _render_and_capture(self):
         """Drive the view via the test client with weasyprint stubbed.

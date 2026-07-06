@@ -114,6 +114,20 @@ for fx in FIXTURES:
 
     fixture_pass = all([ok_open, ok_debits, ok_credits, ok_close, ok_recon])
 
+    # Assert no transaction description contains leaked page furniture.
+    _COL_HEADER_FLAT = 'DateTransactionDebitCreditBalance'
+    desc_clean = True
+    for t in txns:
+        d = t['description']
+        d_flat = d.replace(' ', '')
+        if re.search(r'Page\d*of', d_flat) or _COL_HEADER_FLAT in d_flat:
+            print(f"  FAIL — furniture in description: {d[:100]!r}")
+            desc_clean = False
+    if desc_clean:
+        print('  desc_furniture_check: OK')
+    else:
+        all_pass = False
+
     if not fixture_pass:
         all_pass = False
         print(f"\n  FAIL — {fx['name']}")

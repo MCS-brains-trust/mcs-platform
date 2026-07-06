@@ -12,6 +12,7 @@ from django.db.models import ProtectedError
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
+from config.authorization import get_entity_for_user
 from core.models import Entity, GoverningDocument
 
 logger = logging.getLogger(__name__)
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 @require_POST
 def governing_doc_upload(request, pk):
     """Upload a governing document (primary or amendment)."""
-    entity = get_object_or_404(Entity, pk=pk)
+    entity = get_entity_for_user(request, pk)
     uploaded_file = request.FILES.get("file")
     if not uploaded_file:
         return redirect("core:entity_detail", pk=pk)
@@ -81,6 +82,7 @@ def governing_doc_upload(request, pk):
 def governing_doc_extract(request, doc_pk):
     """Trigger text extraction for a governing document."""
     doc = get_object_or_404(GoverningDocument, pk=doc_pk)
+    get_entity_for_user(request, doc.entity_id)
     try:
         from core.tasks import extract_governing_document
         doc.extraction_status = GoverningDocument.ExtractionStatus.PENDING
@@ -150,6 +152,7 @@ def _governing_doc_progress_payload(doc):
 def governing_doc_status(request, doc_pk):
     """Return extraction progress/status for a governing document."""
     doc = get_object_or_404(GoverningDocument, pk=doc_pk)
+    get_entity_for_user(request, doc.entity_id)
     return JsonResponse({"status": "ok", "document": _governing_doc_progress_payload(doc)})
 
 
@@ -161,6 +164,7 @@ def governing_doc_status(request, doc_pk):
 def governing_doc_archive(request, doc_pk):
     """Archive a governing document."""
     doc = get_object_or_404(GoverningDocument, pk=doc_pk)
+    get_entity_for_user(request, doc.entity_id)
     doc.status = GoverningDocument.Status.ARCHIVED
     doc.archived_by = request.user
     doc.archived_at = timezone.now()
@@ -174,6 +178,7 @@ def governing_doc_archive(request, doc_pk):
 def governing_doc_delete(request, doc_pk):
     """Permanently delete a governing document."""
     doc = get_object_or_404(GoverningDocument, pk=doc_pk)
+    get_entity_for_user(request, doc.entity_id)
     try:
         doc.delete()
         return JsonResponse({"status": "ok"})

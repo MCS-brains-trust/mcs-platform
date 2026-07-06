@@ -2,6 +2,8 @@
 Custom middleware for security enforcement.
 """
 import ipaddress
+from django.conf import settings
+from django.contrib.auth import logout
 from django.http import JsonResponse
 from django.shortcuts import redirect
 from django.urls import reverse
@@ -35,8 +37,26 @@ def csrf_failure_view(request, reason=""):
 
 class Require2FAMiddleware:
     """
-    Middleware that enforces 2FA setup for all authenticated users.
-    Users without 2FA configured are redirected to the 2FA setup page.
+    Middleware that enforces mandatory 2FA for all authenticated users.
+
+    Two distinct requirements are enforced (see security finding B4):
+
+    1. 2FA must be *configured*. Users without a confirmed TOTP secret are
+       redirected to the 2FA setup page.
+    2. 2FA must be *performed this session*. The TOTP verification step
+       (``accounts.views.totp_verify_view``) sets ``session["2fa_verified"]``
+       on success. Any authenticated session that has 2FA configured but has
+       NOT completed TOTP this session (for example a Django admin
+       ``/admin/login/`` password-only login, or a pre-existing session from
+       before this check was introduced) is torn down: we ``logout()`` and
+       bounce to the login page so the user must re-authenticate through the
+       rate-limited, TOTP-gated custom login flow.
+
+    This applies to *all* non-exempt paths, including the Django admin, so an
+    admin password alone can no longer yield a usable session without TOTP.
+    Exempt paths (login/logout/totp/setup/static/signup) are always allowed so
+    the verification pages themselves remain reachable and no redirect loop is
+    created (login/totp/setup are where an unverified user needs to go).
     """
 
     EXEMPT_URLS = [
@@ -50,24 +70,40 @@ class Require2FAMiddleware:
     def __init__(self, get_response):
         self.get_response = get_response
 
+    def _is_exempt(self, path):
+        if any(path.startswith(url) for url in self.EXEMPT_URLS):
+            return True
+        # Signup URLs include a token, so match by substring.
+        if "/accounts/signup/" in path:
+            return True
+        return False
+
+    def _deny(self, request, redirect_url):
+        # Return JSON for AJAX/fetch requests instead of a redirect.
+        is_ajax = (
+            request.headers.get("X-Requested-With") == "XMLHttpRequest"
+            or request.content_type == "application/json"
+        )
+        if is_ajax:
+            return JsonResponse(
+                {"status": "error", "error": "Two-factor authentication required. Please refresh the page."},
+                status=403,
+            )
+        return redirect(redirect_url)
+
     def __call__(self, request):
-        if request.user.is_authenticated and not request.user.has_2fa:
-            # Allow exempt URLs
-            path = request.path
-            if not any(path.startswith(url) for url in self.EXEMPT_URLS):
-                # Allow signup URLs (they include token)
-                if "/accounts/signup/" not in path:
-                    # Return JSON for AJAX requests instead of redirect
-                    is_ajax = (
-                        request.headers.get("X-Requested-With") == "XMLHttpRequest"
-                        or request.content_type == "application/json"
-                    )
-                    if is_ajax:
-                        return JsonResponse(
-                            {"status": "error", "error": "2FA setup required. Please refresh the page."},
-                            status=403,
-                        )
-                    return redirect(reverse("accounts:setup_2fa"))
+        if request.user.is_authenticated and not self._is_exempt(request.path):
+            if not request.user.has_2fa:
+                # 2FA not configured yet — force setup.
+                return self._deny(request, reverse("accounts:setup_2fa"))
+            if not request.session.get("2fa_verified"):
+                # 2FA is configured but TOTP was not performed this session.
+                # Tear the session down and force a clean re-authentication via
+                # the TOTP-gated login flow. Logging out first prevents a
+                # redirect loop (the user becomes anonymous, so the login page
+                # renders normally instead of bouncing back here).
+                logout(request)
+                return self._deny(request, settings.LOGIN_URL)
 
         return self.get_response(request)
 

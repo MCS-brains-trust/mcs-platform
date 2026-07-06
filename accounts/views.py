@@ -17,6 +17,7 @@ from django.template.loader import render_to_string
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.utils.html import strip_tags
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.views.decorators.http import require_POST
 from django_ratelimit.decorators import ratelimit
 
@@ -72,9 +73,19 @@ class MCSLoginView(auth_views.LoginView):
         if user.has_2fa:
             # Store user pk in session for 2FA step, don't log in yet
             self.request.session["2fa_user_pk"] = str(user.pk)
-            self.request.session["2fa_next"] = self.request.POST.get("next", "")
+            # Validate `next` against the current host before storing it to
+            # prevent an open redirect after the 2FA step (finding: open redirect).
+            next_url = self.request.POST.get("next", "")
+            if not url_has_allowed_host_and_scheme(
+                next_url,
+                allowed_hosts={self.request.get_host()},
+                require_https=self.request.is_secure(),
+            ):
+                next_url = ""
+            self.request.session["2fa_next"] = next_url
             return redirect("accounts:totp_verify")
-        # No 2FA — log in directly
+        # No 2FA — log in directly. The user still has no TOTP configured, so
+        # Require2FAMiddleware will route them to the mandatory setup page.
         return super().form_valid(form)
 
 
@@ -99,9 +110,20 @@ def totp_verify_view(request):
                 # Code valid — complete login
                 del request.session["2fa_user_pk"]
                 next_url = request.session.pop("2fa_next", "")
+                # Re-validate `next` against the current host before using it
+                # (defence in depth against open redirect).
+                if not url_has_allowed_host_and_scheme(
+                    next_url,
+                    allowed_hosts={request.get_host()},
+                    require_https=request.is_secure(),
+                ):
+                    next_url = settings.LOGIN_REDIRECT_URL
                 # Cycle session key to prevent session fixation
                 request.session.cycle_key()
                 auth_login(request, user)
+                # Mark that TOTP was performed for this session. Require2FAMiddleware
+                # requires this flag for authenticated users on protected paths.
+                request.session["2fa_verified"] = True
                 logger.info("2FA verification successful for user %s (user_id=%s)", user.username, user.pk)
                 _log_2fa_event(user, "2fa_verify_success", request)
                 return redirect(next_url or settings.LOGIN_REDIRECT_URL)
@@ -325,8 +347,10 @@ def invitation_signup_view(request, token):
                 # Clean up session
                 del request.session["signup_totp_secret"]
 
-                # Log the user in
+                # Log the user in. TOTP was just verified during signup, so
+                # mark the session verified for Require2FAMiddleware.
                 auth_login(request, user)
+                request.session["2fa_verified"] = True
                 messages.success(
                     request,
                     f"Welcome to StatementHub, {user.first_name}! Your account is set up with two-factor authentication."
@@ -497,6 +521,10 @@ def setup_2fa_view(request):
                 user.totp_confirmed = True
                 user.save(update_fields=["totp_secret", "totp_confirmed"])
                 del request.session["setup_totp_secret"]
+                # The user just proved possession of the TOTP secret — mark the
+                # session verified so Require2FAMiddleware doesn't immediately
+                # log them out for having 2FA configured but not performed.
+                request.session["2fa_verified"] = True
                 logger.info("2FA setup completed for user %s (user_id=%s)", user.username, user.pk)
                 _log_2fa_event(user, "2fa_setup_completed", request)
                 messages.success(request, "Two-factor authentication has been enabled for your account.")

@@ -279,7 +279,7 @@ CBA_TXN_LIST_DATE_RE = re.compile(
     r"^(\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec))\s+(\d{4})\s+(.+)"
 )
 CBA_TXN_LIST_AMT_RE = re.compile(
-    r"^(.*?)\s+(-?\$[\d,]+\.\d{2})\s+\$[\d,]+\.\d{2}$"
+    r"^(.*?)\s+(-?\$[\d,]+\.\d{2})\s+-?\$[\d,]+\.\d{2}$"
 )
 
 
@@ -601,13 +601,18 @@ def parse_anz_statement(pdf_content):
                         result["closing_balance"] = val
                 continue
             if in_transactions:
-                all_lines.append(line.strip())
+                # Bind the year that is in effect *at collection time* to each
+                # line. The `year` variable is mutated by "YYYY blank blank"
+                # markers as we walk the document; converting dates in a later
+                # pass would apply the final year to every row (so Dec-2024
+                # rows would wrongly become 2025 once a 2025 marker appears).
+                all_lines.append((year, line.strip()))
 
     # Parse transactions
     transactions = []
     current_txn = None
 
-    for line in all_lines:
+    for line_year, line in all_lines:
         if not line:
             continue
 
@@ -627,7 +632,7 @@ def parse_anz_statement(pdf_content):
                     transactions.append(current_txn)
                 # Set as current_txn so continuation lines can attach
                 current_txn = {
-                    "date": _anz_date_to_iso(date_str, year),
+                    "date": _anz_date_to_iso(date_str, line_year),
                     "description": dm.group(1).strip(),
                     "amount": -_amt(dm.group(2)),
                 }
@@ -640,7 +645,7 @@ def parse_anz_statement(pdf_content):
                     transactions.append(current_txn)
                 # Set as current_txn so continuation lines can attach
                 current_txn = {
-                    "date": _anz_date_to_iso(date_str, year),
+                    "date": _anz_date_to_iso(date_str, line_year),
                     "description": cm.group(1).strip(),
                     "amount": _amt(cm.group(2)),
                 }
@@ -650,7 +655,7 @@ def parse_anz_statement(pdf_content):
             if current_txn:
                 transactions.append(current_txn)
             current_txn = {
-                "date": _anz_date_to_iso(date_str, year),
+                "date": _anz_date_to_iso(date_str, line_year),
                 "description": rest.strip(),
                 "amount": 0,
             }
@@ -822,18 +827,14 @@ def parse_westpac_statement(pdf_content):
                 prev_balance = new_balance
                 continue
 
-            # Single amount (balance only, or amount only)
+            # Single trailing number — ambiguous: most likely a running
+            # balance (e.g. a brought-forward / balance-only row) rather than
+            # a transaction amount. Emitting it as an amount AND overwriting
+            # prev_balance corrupts sign inference for every following row.
+            # Buffer it as the running balance and do NOT emit a transaction.
             single_m = re.search(r"(.*?)\s+([\d,]+\.\d{2})\s*$", rest)
             if single_m:
-                desc = single_m.group(1).strip()
-                val = _amt(single_m.group(2))
-                # This might be just a balance or an amount — need context
-                transactions.append({
-                    "date": _westpac_date_to_iso(date_str),
-                    "description": desc,
-                    "amount": val,
-                })
-                prev_balance = val
+                prev_balance = _amt(single_m.group(2))
                 continue
 
     result["transactions"] = transactions
@@ -1128,6 +1129,7 @@ def parse_nab_statement(pdf_content):
         # Try all 2^n sign combinations (n is small, typically 1-5)
         # For each combo, check if sum matches net_change
         best = None
+        match_count = 0
         for mask in range(1 << n):
             total = 0.0
             for i in range(n):
@@ -1136,8 +1138,20 @@ def parse_nab_statement(pdf_content):
                 else:  # debit (negative)
                     total -= amounts[i]
             if abs(round(total, 2) - net_change) < 0.01:
-                best = mask
-                break
+                if best is None:
+                    best = mask
+                match_count += 1
+                if match_count > 1:
+                    # More than one sign assignment reconciles to the same
+                    # net_change — the resolution is ambiguous. We keep the
+                    # first match (previous behaviour) but surface the tie so
+                    # a mis-signed transaction can be investigated.
+                    logger.warning(
+                        f"NAB sign resolution: ambiguous subset-sum — {match_count}+ "
+                        f"masks match net_change={net_change}, amounts={amounts}. "
+                        f"Using first match."
+                    )
+                    break
 
         if best is not None:
             for i in range(n):
@@ -1374,6 +1388,7 @@ def parse_ing_statement(pdf_content):
     # Format: "DD/MM/YYYY Description amount balance" or "DD/MM/YYYY Description (no amount)"
     ING_DATE_RE = re.compile(r"^(\d{2}/\d{2}/\d{4})\s+(.+)")
     transactions = []
+    prev_balance = result["opening_balance"]
 
     for line in all_lines:
         if not line:
@@ -1397,17 +1412,24 @@ def parse_ing_statement(pdf_content):
             if two_m:
                 desc = two_m.group(1).strip()
                 amount_val = _amt(two_m.group(2))
-                # ING: "Money out" vs "Money in" — check column position
-                # If description mentions "Credit" or "Interest", it's money in
-                # Otherwise we check balance
+                new_balance = _amt(two_m.group(3))
+                # ING doesn't reveal Money out vs Money in from text position,
+                # so infer sign from the running balance (mirrors
+                # Macquarie/Westpac two-number path).
+                if new_balance < prev_balance:
+                    amount = -amount_val
+                else:
+                    amount = amount_val
                 transactions.append({
                     "date": iso_date,
                     "description": desc,
-                    "amount": amount_val,  # Will be positive for credits
+                    "amount": amount,
                 })
+                prev_balance = new_balance
                 continue
 
-            # Single amount
+            # Single amount — ambiguous (bare amount or running balance).
+            # Do not overwrite prev_balance from a lone number.
             one_m = re.search(r"(.*?)\s+([\d,]+\.\d{2})\s*$", rest)
             if one_m:
                 desc = one_m.group(1).strip()
@@ -1632,6 +1654,7 @@ def parse_bendigo_statement(pdf_content):
         re.IGNORECASE,
     )
     transactions = []
+    prev_balance = result["opening_balance"]
 
     for line in all_lines:
         if not line:
@@ -1639,6 +1662,9 @@ def parse_bendigo_statement(pdf_content):
 
         # Skip opening balance line in table
         if line.startswith("Openingbalance") or line.startswith("Opening balance"):
+            m = re.search(r"([\d,]+\.\d{2})\s*$", line)
+            if m:
+                prev_balance = _amt(m.group(1))
             continue
 
         dm = BENDIGO_DATE_RE.match(line)
@@ -1656,16 +1682,25 @@ def parse_bendigo_statement(pdf_content):
             if two_m:
                 desc = two_m.group(1).strip()
                 amount_val = _amt(two_m.group(2))
-                # Bendigo: Withdrawals column vs Deposits column
-                # We can't tell from position in text, so use balance comparison
+                new_balance = _amt(two_m.group(3))
+                # Bendigo: Withdrawals column vs Deposits column can't be told
+                # from text position, so infer sign from the running balance
+                # (mirrors Macquarie/Westpac two-number path).
+                if new_balance < prev_balance:
+                    amount = -amount_val
+                else:
+                    amount = amount_val
                 transactions.append({
                     "date": iso_date,
                     "description": desc,
-                    "amount": amount_val,  # Positive = credit for now
+                    "amount": amount,
                 })
+                prev_balance = new_balance
                 continue
 
-            # Single number
+            # Single number — ambiguous (bare amount or running balance).
+            # Do not overwrite prev_balance from a lone number; leave sign
+            # inference intact for subsequent rows.
             one_m = re.search(r"(.*?)\s+([\d,]+\.\d{2})\s*$", rest)
             if one_m:
                 desc = one_m.group(1).strip()
@@ -1758,8 +1793,23 @@ def extract_transactions_from_pdf_direct(pdf_content, filename=""):
     # Route standard CBA statements through the geometry engine.
     # Exact == check: "cba_txn_listing" keeps its own parser below.
     if bank == "cba":
-        from .statement_geometry import parse_cba_geometry
-        return parse_cba_geometry(pdf_content)
+        from .statement_geometry import parse_cba_geometry, StatementParseError
+        try:
+            return parse_cba_geometry(pdf_content)
+        except StatementParseError as geom_err:
+            # Geometry engine rejected the statement (column detection, year
+            # extraction, or reconciliation failed). Fall back to the legacy
+            # text-based CBA parser so a geometry edge case doesn't block an
+            # otherwise-parseable statement. If the legacy parser also fails,
+            # re-raise the original geometry error (it carries the diagnostic).
+            logger.warning(
+                f"CBA geometry parse failed for '{filename}': {geom_err}. "
+                f"Falling back to legacy parse_cba_statement."
+            )
+            try:
+                return parse_cba_statement(pdf_content)
+            except Exception:
+                raise geom_err
 
     parsers = {
         # "cba" is handled above by parse_cba_geometry; parse_cba_statement is the legacy fallback.

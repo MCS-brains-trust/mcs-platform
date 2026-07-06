@@ -18,6 +18,7 @@ from typing import Optional
 
 import requests
 from django.conf import settings
+from django.db import transaction
 from django.utils import timezone
 
 from core.models import Client, Entity, ClientAssociate, MeetingNote
@@ -60,38 +61,66 @@ RELATIONSHIP_MAP = {
 
 
 def _ensure_valid_token(connection: XPMConnection) -> bool:
-    """Refresh the XPM access token if needed."""
+    """Refresh the XPM access token if needed.
+
+    The XPM refresh token is single-use and rotates on every refresh. To avoid
+    two concurrent syncs racing the rotation (the loser would get invalid_grant
+    and mark the connection expired), we lock the connection row and re-check
+    needs_refresh after acquiring the lock.
+    """
     if not connection.needs_refresh:
         return True
 
-    try:
-        resp = requests.post(
-            "https://login.xero.com/identity/connect/token",
-            data={
-                "grant_type": "refresh_token",
-                "refresh_token": connection.refresh_token,
-                "client_id": getattr(settings, "XERO_CLIENT_ID", ""),
-                "client_secret": getattr(settings, "XERO_CLIENT_SECRET", ""),
-            },
-            timeout=15,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        connection.access_token = data["access_token"]
-        connection.refresh_token = data.get("refresh_token", connection.refresh_token)
-        connection.token_expires_at = timezone.now() + timedelta(
-            seconds=data.get("expires_in", 1800)
-        )
-        connection.status = "active"
-        connection.last_error = ""
-        connection.save()
-        return True
-    except Exception as e:
-        logger.error(f"XPM token refresh failed: {e}")
-        connection.status = "expired"
-        connection.last_error = str(e)
-        connection.save()
-        return False
+    with transaction.atomic():
+        # Lock the connection row so concurrent refreshes serialise.
+        locked = XPMConnection.objects.select_for_update().get(pk=connection.pk)
+
+        # Another process may have refreshed while we waited for the lock.
+        if not locked.needs_refresh:
+            # Copy the freshly-rotated tokens back into the caller's instance.
+            connection.access_token = locked.access_token
+            connection.refresh_token = locked.refresh_token
+            connection.token_expires_at = locked.token_expires_at
+            connection.status = locked.status
+            return True
+
+        try:
+            resp = requests.post(
+                "https://login.xero.com/identity/connect/token",
+                data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": locked.refresh_token,
+                    "client_id": getattr(settings, "XERO_CLIENT_ID", ""),
+                    "client_secret": getattr(settings, "XERO_CLIENT_SECRET", ""),
+                },
+                timeout=15,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            locked.access_token = data["access_token"]
+            locked.refresh_token = data.get("refresh_token", locked.refresh_token)
+            locked.token_expires_at = timezone.now() + timedelta(
+                seconds=data.get("expires_in", 1800)
+            )
+            locked.status = "active"
+            locked.last_error = ""
+            locked.save()
+
+            # Reflect the new tokens on the caller's instance.
+            connection.access_token = locked.access_token
+            connection.refresh_token = locked.refresh_token
+            connection.token_expires_at = locked.token_expires_at
+            connection.status = locked.status
+            connection.last_error = ""
+            return True
+        except Exception as e:
+            logger.error(f"XPM token refresh failed: {e}")
+            locked.status = "expired"
+            locked.last_error = str(e)
+            locked.save()
+            connection.status = locked.status
+            connection.last_error = locked.last_error
+            return False
 
 
 def _xpm_get(connection: XPMConnection, endpoint: str, params: dict = None) -> Optional[ET.Element]:
@@ -227,7 +256,13 @@ def _sync_client_detail(connection: XPMConnection, client: Client, xpm_uuid: str
     """Fetch detailed client info and create/update entity + contacts."""
     try:
         root = _xpm_get(connection, f"client.api/get/{xpm_uuid}")
-    except Exception:
+    except Exception as e:
+        # Don't swallow silently: a failed detail fetch means the entity,
+        # contacts, relationships and notes for this client are missing.
+        logger.error(f"XPM client detail fetch failed (uuid={xpm_uuid}): {e}")
+        stats.setdefault("errors", []).append(
+            f"Client detail fetch failed (uuid={xpm_uuid}): {e}"
+        )
         return
 
     client_el = root.find(".//Client")

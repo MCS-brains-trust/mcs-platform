@@ -36,10 +36,12 @@ def serve_protected_media(request, path):
         content_type=content_type or "application/octet-stream",
     )
 
-    # Set Content-Disposition for downloads
+    # Force download for ALL served media files (security finding B8). Serving
+    # any uploaded file inline lets an attacker upload .html/.svg that would
+    # execute script in the app origin (stored XSS). Forcing attachment makes
+    # the browser download rather than render it, closing that path.
     filename = os.path.basename(real_path)
-    if content_type and content_type.startswith(("application/pdf", "application/vnd")):
-        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
 
     # Security headers for served files
     response["X-Content-Type-Options"] = "nosniff"

@@ -10,14 +10,11 @@ import requests
 from bs4 import BeautifulSoup
 from django.core.cache import cache
 
-ATO_DUE_DATES_INDEX_URL = (
+ATO_BASE_URL = (
     "https://www.ato.gov.au/tax-and-super-professionals/for-tax-professionals/"
-    "prepare-and-lodge/registered-agent-lodgment-program-2025-26/due-dates-by-month"
+    "prepare-and-lodge/registered-agent-lodgment-program-{program}/due-dates-by-month"
 )
-ATO_MONTH_URL_TEMPLATE = (
-    "https://www.ato.gov.au/tax-and-super-professionals/for-tax-professionals/"
-    "prepare-and-lodge/registered-agent-lodgment-program-2025-26/due-dates-by-month/{slug}"
-)
+ATO_MONTH_URL_TEMPLATE = ATO_BASE_URL + "/{slug}"
 MELBOURNE_TZ = ZoneInfo("Australia/Melbourne")
 CACHE_KEY = "review_dashboard_ato_due_dates_v4"
 CACHE_TTL_SECONDS = 60 * 60 * 6
@@ -96,7 +93,9 @@ class DueDateSection:
 
 def get_next_ato_due_dates(limit: int = 3) -> List[dict]:
     cached = cache.get(CACHE_KEY)
-    if cached:
+    if cached is not None:
+        # An empty list is a valid (cached) result — do not treat it as a
+        # cache miss, or every request would re-fetch the ATO site.
         return cached[:limit]
 
     today = datetime.now(MELBOURNE_TZ).date()
@@ -150,24 +149,33 @@ def get_next_ato_due_dates(limit: int = 3) -> List[dict]:
     return result
 
 
+def _program_slug_for_date(d: date) -> str:
+    """Return the ATO lodgment-program slug (e.g. "2025-26") for the
+    financial year (July–June) that contains *d*."""
+    start = d.year if d.month >= 7 else d.year - 1
+    return f"{start}-{str(start + 1)[-2:]}"
+
+
 def _build_fallback_month_pages(today: date) -> List[dict]:
+    """Build month-page URLs for the next 12 months starting from *today*.
+
+    Each month's URL is derived from the lodgment-program year (July–June)
+    that contains that month, so the widget keeps working past 30 June each
+    year without a hardcoded FY.
+    """
     months = []
     current = date(today.year, today.month, 1)
 
     for _ in range(12):
-        if current.year == 2025 and current.month < 7:
-            pass
-        elif current.year > 2026 or (current.year == 2026 and current.month > 6):
-            break
-        else:
-            month_year = current.strftime("%B %Y")
-            slug = _slug_from_month_year(month_year)
-            months.append(
-                {
-                    "url": ATO_MONTH_URL_TEMPLATE.format(slug=slug),
-                    "month_year": month_year,
-                }
-            )
+        month_year = current.strftime("%B %Y")
+        slug = _slug_from_month_year(month_year)
+        program = _program_slug_for_date(current)
+        months.append(
+            {
+                "url": ATO_MONTH_URL_TEMPLATE.format(program=program, slug=slug),
+                "month_year": month_year,
+            }
+        )
 
         if current.month == 12:
             current = date(current.year + 1, 1, 1)

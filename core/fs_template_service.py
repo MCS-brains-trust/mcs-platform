@@ -22,6 +22,7 @@ from collections import OrderedDict
 from decimal import Decimal, ROUND_HALF_UP
 
 from django.conf import settings
+from django.utils import timezone
 from docx.shared import Pt, Cm, Emu, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
@@ -302,20 +303,25 @@ def _net_beneficiary_accounts(fy, sections):
 
     Account types handled:
 
-    4003.xx  Funds loaned to trust (new convention).
+    4004.xx  Funds loaned to trust (new convention). This is the beneficiary
+             loan account — views_trust posts each year's distribution as a
+             credit to 4004.NN ("Funds loaned to trust"), matching the
+             canonical COA (beneficiary_account_service.py).
              Matched via ClientAccountMapping.beneficiary_officer, or by
              suffix (.01 = first officer by display_order, etc.) as fallback.
 
     9003.xx  Funds loaned to trust (old HandiLedger convention).
-             Matched to officers by suffix — same convention as 4003.xx.
+             Matched to officers by suffix — same convention as 4004.xx.
 
     4053.xx  Physical distributions.
              A physical distribution reduces the beneficiary loan balance
              (DR loan / CR bank). Netted into the SAME officer bucket as
-             the corresponding 4003.xx/9003.xx account using the same suffix.
+             the corresponding 4004.xx/9003.xx account using the same suffix.
              The combined net is the true amount owed to/from that beneficiary.
 
-    4004.xx  Rounding/misc entries. Stripped silently from equity.
+    4003.xx  Interest received on loan. NOT a loan account — left in place to
+             flow to its normal P&L / section classification. Never netted
+             into the beneficiary loan bucket.
 
     4199     Profit Distribution — Appropriation clearing account.
              Never netted here — suppressed separately by the caller.
@@ -330,7 +336,13 @@ def _net_beneficiary_accounts(fy, sections):
 
     code_to_officer = {}
     for m in mappings:
-        if (m.client_account_code or "").startswith("4199"):
+        code = m.client_account_code or ""
+        if code.startswith("4199"):
+            continue
+        # 4003.xx is "Interest received on loan", not a loan account — never
+        # net it into the beneficiary loan bucket; let it flow to its normal
+        # section classification.
+        if code == "4003" or code.startswith("4003."):
             continue
         officer = m.beneficiary_officer
         display_name = (officer.full_name or "").strip() or "Unknown"
@@ -339,7 +351,7 @@ def _net_beneficiary_accounts(fy, sections):
     # ── Build suffix-based lookup for 9003.xx and 4053.xx accounts ───────────
     # Suffix .01 = first officer by display_order, .02 = second, etc.
     # This matches the convention used by trust_post_distribution when
-    # assigning 4003.xx sub-account codes.
+    # assigning 4004.xx sub-account codes.
     officers_ordered = list(
         EntityOfficer.objects.filter(entity=fy.entity)
         .order_by("display_order", "full_name")
@@ -365,7 +377,9 @@ def _net_beneficiary_accounts(fy, sections):
 
     # ── Account prefixes that use the suffix-to-officer lookup ───────────────
     # These are all netted into the officer bucket using the .xx suffix.
-    SUFFIX_PREFIXES = ("4003.", "9003.", "4053.")
+    # 4004.xx = "Funds loaned to trust" (the beneficiary loan account),
+    # 9003.xx = old-convention loan account, 4053.xx = physical distributions.
+    SUFFIX_PREFIXES = ("4004.", "9003.", "4053.")
 
     # ── Scan equity section ──────────────────────────────────────────────────
     to_remove = []
@@ -376,12 +390,12 @@ def _net_beneficiary_accounts(fy, sections):
         if code.startswith("4199"):
             continue
 
-        # Silent strip: 4004.xx rounding/misc entries
-        if code.startswith("4004."):
-            to_remove.append(item)
+        # 4003.xx = "Interest received on loan" — NOT a loan account. Leave it
+        # in place so it flows to its normal section classification; never net.
+        if code == "4003" or code.startswith("4003."):
             continue
 
-        # Officer-mapped accounts (e.g. 4003.xx via ClientAccountMapping)
+        # Officer-mapped accounts (e.g. 4004.xx via ClientAccountMapping)
         if code in code_to_officer:
             officer_id, disp = code_to_officer[code]
             _ensure_officer(officer_id, disp)
@@ -390,7 +404,7 @@ def _net_beneficiary_accounts(fy, sections):
             to_remove.append(item)
             continue
 
-        # Suffix-matched accounts: 4003.xx, 9003.xx, 4053.xx
+        # Suffix-matched accounts: 4004.xx, 9003.xx, 4053.xx
         if any(code.startswith(p) for p in SUFFIX_PREFIXES):
             suffix = code.split(".", 1)[1] if "." in code else ""
             if suffix in suffix_to_officer:
@@ -1008,6 +1022,11 @@ def _compute_note_map(sections, entity_type, has_income_tax):
         if is_cost and (item["cy_amount"] != 0 or item["py_amount"] != 0):
             has_ppe = True
             break
+        # A non-zero security deposit is disclosed under the PPE / non-current
+        # asset note too — trigger the note even when there is no cost account.
+        if is_deposit and (item["cy_amount"] != 0 or item["py_amount"] != 0):
+            has_ppe = True
+            break
 
     # Related party triggers
     has_mgmt_fees = any(
@@ -1402,7 +1421,7 @@ def build_company_context(financial_year, include_watermark=True):
     # Signing / declaration date — use finalised_at if available, else today
     from datetime import date as _date
     if fy.finalised_at:
-        signing_date = fy.finalised_at.date().strftime("%-d %B %Y")
+        signing_date = timezone.localtime(fy.finalised_at).date().strftime("%-d %B %Y")
     else:
         signing_date = _date.today().strftime("%-d %B %Y")
 
@@ -2397,8 +2416,14 @@ def _post_process_fs_doc(buffer, doc_type, has_prior=True, entity_type=None):
     # table in the document.  This handles templates that were designed
     # with a comparative column but are being rendered for a first-year
     # entity that has no prior-year trial balance data.
+    #
+    # Only applies to doc types that use a current-year / prior-year (CY/PY)
+    # two-column layout. The DEPRECIATION_REPORT is a wide 14-column schedule
+    # with no comparative column, so stripping its last column would delete the
+    # Closing WDV — exempt it (A19).
     # ------------------------------------------------------------------
-    if not has_prior:
+    _NON_COMPARATIVE_DOC_TYPES = {"DEPRECIATION_REPORT"}
+    if not has_prior and doc_type not in _NON_COMPARATIVE_DOC_TYPES:
         _strip_comparative_column(doc, qn)
 
     output = io.BytesIO()
@@ -2917,19 +2942,28 @@ def _generate_notes_document(context):
         ppe_classes.append({"cost": item, "depr": depr_item})
         i_nca += 1
 
+    # A non-zero deposit-only NCA still warrants the PPE / non-current asset
+    # note so the deposit is disclosed and its note_ref is not left dangling.
+    has_ppe_deposit = any(
+        i["cy_amount"] != 0 or i["py_amount"] != 0 for i in ppe_deposit
+    )
     has_ppe = any(
         pair["cost"] is not None and
         (pair["cost"]["cy_amount"] != 0 or pair["cost"]["py_amount"] != 0)
         for pair in ppe_classes
-    )
+    ) or has_ppe_deposit
 
-    # Related Party — management fees
+    # Related Party — management fees.
+    # Predicate must match _compute_note_map (has_mgmt_fees) and _classify_note
+    # ("management" + "fee" → related_party). Previously this render step
+    # additionally required "majoti"/"related" in the name, so a plain
+    # management-fee expense got a "(Note N)" ref and a note number but no
+    # matching line in the note body — a dangling reference. Use the same
+    # trigger predicate everywhere.
     mgmt_fee_items = []
     for item in sections["expenses"]:
         nl = item["account_name"].lower()
-        if "management" in nl and "fee" in nl and (
-            "majoti" in nl or "related" in nl
-        ):
+        if "management" in nl and "fee" in nl:
             mgmt_fee_items.append(item)
     has_mgmt_fees = any(
         i["cy_amount"] != 0 or i["py_amount"] != 0 for i in mgmt_fee_items
@@ -3450,10 +3484,16 @@ def _generate_notes_document(context):
             f"tax rate of {rate_cy}% on the estimated taxable profit for the year.",
             space_before=4, space_after=6)
 
+        # A 25% rate is the base rate entity rate; 30% is the standard company
+        # tax rate (the entity is not a base rate entity). Branch the wording.
+        rate_descriptor = (
+            "the corporate tax rate for base rate entities" if rate_cy == 25
+            else "the standard corporate tax rate"
+        )
         _notes_add_para(
             doc,
             f"The applicable tax rate is {rate_cy}% ({prior_year_str}: {rate_py}%) "
-            f"being the corporate tax rate for base rate entities.",
+            f"being {rate_descriptor}.",
             space_after=6)
 
     # ==================================================================
@@ -4188,9 +4228,10 @@ def _build_beneficiary_distribution_summary(context):
              closing) tying directly to the Balance Sheet's beneficiary loan
              rows.
 
-    Returns BytesIO containing PDF bytes, or None if the entity has no
-    ClientAccountMapping with a beneficiary_officer assigned (no distribution
-    document is rendered in that case).
+    Returns BytesIO containing PDF bytes, or None if no beneficiary/officer
+    mapping can be resolved — via ClientAccountMapping.beneficiary_officer, or
+    (fallback) EntityChartOfAccount.beneficiary_officer / suffix matching. When
+    none of these yield a mapping no distribution document is rendered.
     """
     from collections import OrderedDict
     from reportlab.lib.pagesizes import A4
@@ -4212,9 +4253,6 @@ def _build_beneficiary_distribution_summary(context):
         beneficiary_officer__isnull=False,
     ).select_related("beneficiary_officer")
 
-    if not mappings.exists():
-        return None
-
     # officer_id -> {name, account_codes:[...]}
     officer_meta = OrderedDict()
     code_to_officer = {}
@@ -4227,6 +4265,62 @@ def _build_beneficiary_distribution_summary(context):
             }
         officer_meta[oid]["account_codes"].append(m.client_account_code)
         code_to_officer[m.client_account_code] = oid
+
+    # Fallback (A9): no ClientAccountMapping beneficiary_officer rows exist.
+    # Derive the officer/account mapping from EntityChartOfAccount, mirroring
+    # the approach used by _net_beneficiary_accounts (officer-linked accounts,
+    # then suffix matching) so the summary still renders for entities that
+    # never had ClientAccountMapping rows created.
+    if not code_to_officer:
+        from core.models import EntityChartOfAccount, EntityOfficer
+
+        for eca in (
+            EntityChartOfAccount.objects.filter(
+                entity=entity,
+                beneficiary_officer__isnull=False,
+            ).select_related("beneficiary_officer")
+        ):
+            oid = str(eca.beneficiary_officer_id)
+            if oid not in officer_meta:
+                officer_meta[oid] = {
+                    "name": (eca.beneficiary_officer.full_name or "").strip() or "—",
+                    "account_codes": [],
+                }
+            officer_meta[oid]["account_codes"].append(eca.account_code)
+            code_to_officer[eca.account_code] = oid
+
+        # Still nothing — match beneficiary loan / distribution sub-accounts to
+        # officers by ordinal suffix (.01 = first officer by display_order).
+        if not code_to_officer:
+            officers_ordered = list(
+                EntityOfficer.objects.filter(entity=entity)
+                .order_by("display_order", "full_name")
+            )
+            suffix_to_officer = {
+                f"{(idx + 1):02d}": o for idx, o in enumerate(officers_ordered)
+            }
+            SUFFIX_PREFIXES = ("4004.", "9003.", "4053.")
+            for eca in EntityChartOfAccount.objects.filter(
+                entity=entity, is_active=True
+            ):
+                code = eca.account_code or ""
+                if not any(code.startswith(p) for p in SUFFIX_PREFIXES):
+                    continue
+                suffix = code.split(".", 1)[1] if "." in code else ""
+                o = suffix_to_officer.get(suffix)
+                if o is None:
+                    continue
+                oid = str(o.pk)
+                if oid not in officer_meta:
+                    officer_meta[oid] = {
+                        "name": (o.full_name or "").strip() or "—",
+                        "account_codes": [],
+                    }
+                officer_meta[oid]["account_codes"].append(code)
+                code_to_officer[code] = oid
+
+    if not code_to_officer:
+        return None
 
     def _figures_for_year(target_fy, is_prior=False):
         """Return {officer_id: {opening, closing, physical_dist, profit_dist}}.

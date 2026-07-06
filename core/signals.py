@@ -20,7 +20,7 @@ deduplication keyed by FinancialYear ID.
 import logging
 import hashlib
 import threading
-from django.db.models.signals import post_save, post_delete, pre_delete
+from django.db.models.signals import post_save, post_delete, pre_delete, pre_save
 from django.dispatch import receiver
 from django.core.cache import cache
 
@@ -284,6 +284,29 @@ def on_journal_saved(sender, instance, **kwargs):
             trigger_risk_recalc(fy, "journal_posted")
 
 
+@receiver(pre_delete, sender="core.AdjustingJournal")
+def reset_general_pool_on_journal_delete(sender, instance, **kwargs):
+    """Reset a GeneralPool back to CALCULATED when its posted journal is deleted.
+
+    ``GeneralPool.posted_journal`` is SET_NULL, so once the journal row is gone
+    the pool would keep ``status='posted'`` while pointing at nothing. We run in
+    ``pre_delete`` (before SET_NULL nulls the FK) so we can still find the pool,
+    then roll its status back so it can be re-posted.
+    """
+    from core.models import GeneralPool
+
+    try:
+        GeneralPool.objects.filter(
+            posted_journal_id=instance.pk,
+            status=GeneralPool.Status.POSTED,
+        ).update(status=GeneralPool.Status.CALCULATED)
+    except Exception:
+        logger.exception(
+            "Failed to reset GeneralPool status for deleted journal %s",
+            instance.pk,
+        )
+
+
 @receiver(post_delete, sender="core.AdjustingJournal")
 def on_journal_deleted(sender, instance, **kwargs):
     """Trigger risk recalc when a journal is deleted."""
@@ -295,6 +318,29 @@ def on_journal_deleted(sender, instance, **kwargs):
 # ============================================================================
 # FINANCIAL YEAR STATUS TRANSITION SIGNALS (Phase 14)
 # ============================================================================
+
+@receiver(pre_save, sender="core.FinancialYear")
+def stash_fy_old_status(sender, instance, **kwargs):
+    """Load the prior DB status and stash it on the instance so the
+    post_save receiver (``track_fy_status_change``) can detect transitions.
+
+    Without this the ``_old_status`` attribute is never set, so the post_save
+    comparison always short-circuits and the Eva client-summary trigger never
+    fires.
+    """
+    if not instance.pk:
+        instance._old_status = None
+        return
+    try:
+        old_status = (
+            sender.objects.filter(pk=instance.pk)
+            .values_list("status", flat=True)
+            .first()
+        )
+        instance._old_status = old_status
+    except Exception:
+        instance._old_status = None
+
 
 @receiver(post_save, sender="core.FinancialYear")
 def track_fy_status_change(sender, instance, created, **kwargs):

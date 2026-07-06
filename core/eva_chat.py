@@ -419,11 +419,26 @@ def eva_chat_send(request, pk):
     elif model_override == "sonnet":
         tier = "sonnet"
 
-    # Get or create conversation for this FY + user
-    conversation, created = EvaConversation.objects.get_or_create(
-        financial_year=fy,
-        user=request.user,
-    )
+    # Get or create conversation for this FY + user.
+    # EvaConversation has no unique constraint on (financial_year, user), so a
+    # naive get_or_create races under concurrent messages and creates duplicate
+    # rows.  Serialise the check-and-create by locking the parent FinancialYear
+    # row; if duplicates already exist, pick the oldest deterministically.
+    from django.db import transaction
+    with transaction.atomic():
+        FinancialYear.objects.select_for_update().get(pk=fy.pk)
+        conversation = (
+            EvaConversation.objects
+            .filter(financial_year=fy, user=request.user)
+            .order_by("created_at")
+            .first()
+        )
+        created = conversation is None
+        if created:
+            conversation = EvaConversation.objects.create(
+                financial_year=fy,
+                user=request.user,
+            )
 
     # Save user message
     user_msg = EvaMessage.objects.create(

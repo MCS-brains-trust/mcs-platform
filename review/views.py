@@ -13,6 +13,7 @@ from decimal import Decimal
 
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
+from django.db import transaction
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -116,6 +117,26 @@ def _post_confirmed_txn_to_tb(txn):
 # Airtable sync — pull Pending Review records, group into jobs
 # ---------------------------------------------------------------------------
 
+def _match_entity_by_name(client_name):
+    """Match an Entity by name for auto-linking review jobs.
+
+    Prefer an exact case-insensitive match; fall back to a substring
+    (icontains) match ONLY when it is unambiguous (exactly one hit), so a
+    partial client name can never silently bind the wrong entity (item 21).
+    """
+    from core.models import Entity
+
+    if not client_name:
+        return None
+    entity = Entity.objects.filter(entity_name__iexact=client_name).first()
+    if entity:
+        return entity
+    fuzzy = list(Entity.objects.filter(entity_name__icontains=client_name)[:2])
+    if len(fuzzy) == 1:
+        return fuzzy[0]
+    return None
+
+
 def _sync_from_airtable():
     """
     Pull all records from the Pending Review table in Airtable.
@@ -180,13 +201,10 @@ def _sync_from_airtable():
             confirmed_count = sum(1 for s in statuses if s == "Confirmed")
 
             # Try to match entity for GST status
-            from core.models import Entity
             entity = None
             is_gst = True
             try:
-                entity = Entity.objects.filter(
-                    entity_name__icontains=client_name
-                ).first()
+                entity = _match_entity_by_name(client_name)
                 if entity:
                     is_gst = entity.is_gst_registered
             except Exception:
@@ -571,7 +589,6 @@ def confirm_transaction(request, pk):
     Recalculates GST based on confirmed tax type.
     Updates the local record and pushes to Airtable.
     """
-    txn = get_object_or_404(PendingTransaction, pk=pk)
     try:
         data = json.loads(request.body)
     except (json.JSONDecodeError, ValueError):
@@ -582,6 +599,15 @@ def confirm_transaction(request, pk):
     confirmed_name = data.get("confirmed_name", "")[:255]
     confirmed_tax_type = data.get("confirmed_tax_type", "")[:50]
 
+    # An empty confirmed_code can never be posted to the TB, yet would still
+    # flip is_confirmed=True and count toward review completion, letting a job
+    # be submitted with un-posted transactions (item 19). Reject it.
+    if not confirmed_code.strip():
+        return JsonResponse(
+            {"status": "error", "message": "An account code is required to confirm a transaction."},
+            status=400,
+        )
+
     VALID_TAX_TYPES = {
         "", "GST on Income", "GST on Expenses", "Input Taxed", "N-T",
         "GST Free Income", "GST Free Expenses", "BAS Excluded",
@@ -589,50 +615,61 @@ def confirm_transaction(request, pk):
     if confirmed_tax_type and confirmed_tax_type not in VALID_TAX_TYPES:
         return JsonResponse({"status": "error", "message": "Invalid tax type"}, status=400)
 
-    txn.confirmed_code = confirmed_code
-    txn.confirmed_name = confirmed_name
-    txn.confirmed_tax_type = confirmed_tax_type
-    txn.is_confirmed = True
+    # Lock the transaction row for the duration of the fetch-set-post cycle so
+    # concurrent confirms / double-clicks cannot both pass the posted_to_tb
+    # guard and double-post to the trial balance (A18).
+    with transaction.atomic():
+        txn = get_object_or_404(
+            PendingTransaction.objects.select_for_update(), pk=pk
+        )
+        get_review_job_for_user(request, txn.job_id)  # enforce access (B2 IDOR)
 
-    # Ensure gst_treatment is set from confirmed_tax_type if not already set
-    if not txn.gst_treatment or not txn.is_gst_manual:
-        TAX_TYPE_TO_TREATMENT = {
-            "GST on Income": "taxable",
-            "GST on Expenses": "taxable",
-            "GST Free Income": "gst_free",
-            "GST Free Expenses": "gst_free",
-            "Input Taxed": "input_taxed",
-            "BAS Excluded": "out_of_scope",
-            "N-T": "out_of_scope",
-        }
-        derived = TAX_TYPE_TO_TREATMENT.get(confirmed_tax_type, "")
-        if derived:
-            txn.gst_treatment = derived
+        txn.confirmed_code = confirmed_code
+        txn.confirmed_name = confirmed_name
+        txn.confirmed_tax_type = confirmed_tax_type
+        txn.is_confirmed = True
 
-    # Recalculate GST based on confirmed tax type
-    is_gst = txn.job.is_gst_registered
-    txn.calculate_gst(tax_type=txn.confirmed_tax_type, is_gst_registered=is_gst)
-    # Set confirmed_gst_amount for TB posting
-    if txn.confirmed_tax_type in ('GST on Income', 'GST on Expenses'):
-        txn.confirmed_gst_amount = txn.gst_amount
-    else:
-        txn.confirmed_gst_amount = Decimal('0.00')
-    txn.save()
+        # Ensure gst_treatment is set from confirmed_tax_type if not already set
+        if not txn.gst_treatment or not txn.is_gst_manual:
+            TAX_TYPE_TO_TREATMENT = {
+                "GST on Income": "taxable",
+                "GST on Expenses": "taxable",
+                "GST Free Income": "gst_free",
+                "GST Free Expenses": "gst_free",
+                "Input Taxed": "input_taxed",
+                "BAS Excluded": "out_of_scope",
+                "N-T": "out_of_scope",
+            }
+            derived = TAX_TYPE_TO_TREATMENT.get(confirmed_tax_type, "")
+            if derived:
+                txn.gst_treatment = derived
 
-    # Post to trial balance (expense/income + GST + bank contra)
-    _post_confirmed_txn_to_tb(txn)
+        # Recalculate GST based on confirmed tax type
+        is_gst = txn.job.is_gst_registered
+        txn.calculate_gst(tax_type=txn.confirmed_tax_type, is_gst_registered=is_gst)
+        # Set confirmed_gst_amount for TB posting
+        if txn.confirmed_tax_type in ('GST on Income', 'GST on Expenses'):
+            txn.confirmed_gst_amount = txn.gst_amount
+        else:
+            txn.confirmed_gst_amount = Decimal('0.00')
+        txn.save()
 
-    # Recalc bank contra to ensure TB stays balanced
-    if txn.job and txn.job.financial_year:
-        from core.views import _recalc_bank_contra
-        _recalc_bank_contra(txn.job.financial_year)
+        # Post to trial balance (expense/income + GST + bank contra).
+        # Re-check the freshly-locked row's posted flag before posting (A18).
+        if not txn.posted_to_tb:
+            _post_confirmed_txn_to_tb(txn)
 
-    # Update job confirmed count
-    job = txn.job
-    job.confirmed_count = job.transactions.filter(is_confirmed=True).count()
-    if job.confirmed_count > 0 and job.status == "awaiting_review":
-        job.status = "in_progress"
-    job.save()
+        # Recalc bank contra to ensure TB stays balanced
+        if txn.job and txn.job.financial_year:
+            from core.views import _recalc_bank_contra
+            _recalc_bank_contra(txn.job.financial_year)
+
+        # Update job confirmed count
+        job = txn.job
+        job.confirmed_count = job.transactions.filter(is_confirmed=True).count()
+        if job.confirmed_count > 0 and job.status == "awaiting_review":
+            job.status = "in_progress"
+        job.save()
 
     # Push to Airtable
     headers = _get_airtable_headers()
@@ -729,10 +766,21 @@ def submit_review(request, pk):
     Saves patterns to the learning database.
     Marks the job as completed and batch-updates Airtable.
     """
-    job = get_object_or_404(ReviewJob, pk=pk)
+    job = get_review_job_for_user(request, pk)  # enforce access (B2 IDOR)
 
-    # Check all transactions are confirmed
-    unconfirmed = job.transactions.filter(is_confirmed=False).count()
+    # Check all transactions are confirmed AND complete. A transaction that is
+    # is_confirmed=True but carries no account code can never post to the TB, so
+    # it must not count as done (item 19). Split parents (is_split=True) are left
+    # to the original is_confirmed check — their children carry the codes.
+    from django.db.models import Q
+    unconfirmed = job.transactions.filter(
+        Q(is_confirmed=False)
+        | (
+            Q(is_confirmed=True)
+            & Q(is_split=False)
+            & (Q(confirmed_code="") | Q(confirmed_code__isnull=True))
+        )
+    ).count()
     if unconfirmed > 0:
         return JsonResponse(
             {"status": "error", "message": f"{unconfirmed} transactions still need confirmation."},
@@ -801,7 +849,7 @@ def accept_all_suggestions(request, pk):
     Accept all AI suggestions for unconfirmed transactions in a job.
     Calculates GST based on the suggested tax type.
     """
-    job = get_object_or_404(ReviewJob, pk=pk)
+    job = get_review_job_for_user(request, pk)  # enforce access (B2 IDOR)
     unconfirmed = job.transactions.filter(is_confirmed=False)
     is_gst = job.is_gst_registered
 
@@ -817,6 +865,11 @@ def accept_all_suggestions(request, pk):
     }
 
     for txn in unconfirmed:
+        # Skip transactions with no AI-suggested code: confirming them with a
+        # blank code cannot post to the TB and would falsely count as done
+        # (item 19). Leave them unconfirmed for manual coding.
+        if not (txn.ai_suggested_code or "").strip():
+            continue
         txn.confirmed_code = txn.ai_suggested_code
         txn.confirmed_name = txn.ai_suggested_name
         # Use AI suggested tax type if available
@@ -1192,13 +1245,38 @@ def upload_bank_statement(request):
         balance_warning = None
         if user_opening_balance and user_opening_balance != Decimal('0') and entity and financial_year_id:
             try:
-                from core.models import FinancialYear, TrialBalanceLine
-                fy = FinancialYear.objects.get(pk=financial_year_id)
-                # Look for bank account lines in the trial balance (common codes: 1-xxxx for bank accounts)
-                bank_tb_lines = TrialBalanceLine.objects.filter(
-                    financial_year=fy,
-                    account_code__regex=r'^1-[0-9]+',  # Bank accounts typically start with 1-
+                from core.models import (
+                    FinancialYear, TrialBalanceLine,
+                    BankAccountMapping, BankAccount,
                 )
+                fy = FinancialYear.objects.get(pk=financial_year_id)
+                # Resolve this entity's actual bank TB account codes from its
+                # configured mappings rather than guessing with a `^1-[0-9]+`
+                # prefix regex that never matched the plain-numeric codes this
+                # app uses (e.g. '1100'), so the mismatch warning never fired
+                # (item 20).
+                bank_codes = set(
+                    BankAccountMapping.objects.filter(entity=entity)
+                    .exclude(tb_account_code="")
+                    .values_list("tb_account_code", flat=True)
+                )
+                bank_codes |= set(
+                    BankAccount.objects.filter(entity=entity)
+                    .exclude(tb_account_code="")
+                    .values_list("tb_account_code", flat=True)
+                )
+                if bank_codes:
+                    bank_tb_lines = TrialBalanceLine.objects.filter(
+                        financial_year=fy,
+                        account_code__in=bank_codes,
+                    )
+                else:
+                    # Fallback: match both common bank-account code
+                    # conventions — plain "1xxx" and dashed "1-xxx".
+                    bank_tb_lines = TrialBalanceLine.objects.filter(
+                        financial_year=fy,
+                        account_code__regex=r'^1-?[0-9]+',
+                    )
                 if bank_tb_lines.exists():
                     tb_bank_total = sum(line.net_movement for line in bank_tb_lines)
                     difference = abs(user_opening_balance - tb_bank_total)
@@ -1651,14 +1729,11 @@ def notify_new_review_job(request):
         data = json.loads(request.body)
 
         # Try to match entity
-        from core.models import Entity
         entity = None
         is_gst = True
         client_name = data.get("client_name", "Unknown")
         try:
-            entity = Entity.objects.filter(
-                entity_name__icontains=client_name
-            ).first()
+            entity = _match_entity_by_name(client_name)
             if entity:
                 is_gst = entity.is_gst_registered
         except Exception:

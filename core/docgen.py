@@ -1527,11 +1527,11 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
         for code, name, balance, prior in sections["equity"]:
             name_lower = name.lower()
             if "drawing" in name_lower:
-                drawings = abs(balance) if balance else Decimal("0")
-                drawings_prior = abs(prior) if prior else Decimal("0")
+                drawings += abs(balance) if balance else Decimal("0")
+                drawings_prior += abs(prior) if prior else Decimal("0")
             elif "opening" in name_lower or "capital" in name_lower or "retained" in name_lower:
-                opening_balance = abs(balance) if balance < 0 else balance
-                opening_balance_prior = abs(prior) if prior and prior < 0 else (prior or Decimal("0"))
+                opening_balance += abs(balance) if balance < 0 else balance
+                opening_balance_prior += abs(prior) if prior and prior < 0 else (prior or Decimal("0"))
 
         if opening_balance == 0 and not any("opening" in n.lower() or "capital" in n.lower()
                                              for _, n, _, _ in sections["equity"]):
@@ -1588,7 +1588,10 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
         other_ca_items = []
 
         for code, name, balance, prior in sections["current_assets"]:
-            code_num = int(code)
+            try:
+                code_num = int(str(code).split('.')[0])
+            except (ValueError, TypeError):
+                code_num = 999999
             name_lower = name.lower()
             std_code = code_to_std.get(code)
             # Structured standard_code first (BS-CA-001 = Cash and cash equivalents);
@@ -1968,6 +1971,20 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
             total_equity = net_assets
             total_equity_prior = net_assets_prior
 
+        # Unclosed-TB convention: the equity section carries only opening
+        # retained earnings; current-year P&L accounts are not yet transferred
+        # to equity. Inject a "Current year profit / (loss)" line so Total
+        # Equity reconciles to Net Assets. Mirrors
+        # core/fs_template_service.py (~1211-1225).
+        if (abs(net_assets - total_equity) > 1
+                or abs(net_assets_prior - total_equity_prior) > 1):
+            if net_profit or net_profit_prior:
+                ft.add_line("Current year profit / (loss)",
+                            net_profit, net_profit_prior,
+                            keep_with_next=True)
+                total_equity += net_profit
+                total_equity_prior += net_profit_prior
+
         ft.add_total("Total Equity", total_equity, total_equity_prior, is_grand_total=True)
 
 
@@ -2039,11 +2056,11 @@ def _add_summary_pnl(doc, entity, fy, sections, show_cents=False,
             dividends_prior = abs(prior) if prior else Decimal("0")
 
     ft.add_line("Retained profits at beginning of year",
-                opening_retained - profit_after_tax,
-                opening_retained_prior - profit_after_tax_prior)
+                opening_retained,
+                opening_retained_prior)
 
-    total_available = opening_retained
-    total_available_prior = opening_retained_prior
+    total_available = opening_retained + profit_after_tax
+    total_available_prior = opening_retained_prior + profit_after_tax_prior
 
     ft.add_subtotal("Total available for appropriation",
                     total_available, total_available_prior, bold=True)

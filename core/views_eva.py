@@ -17,6 +17,7 @@ from django.shortcuts import get_object_or_404, render, redirect
 from django.utils import timezone
 from django.views.decorators.http import require_POST, require_GET, require_http_methods
 
+from config.authorization import get_financial_year_for_user
 from core.models import FinancialYear, AuditLog, TrialBalanceLine, ActivityLog
 
 logger = logging.getLogger(__name__)
@@ -43,7 +44,7 @@ def eva_chat_api(request, pk):
     GET  /api/financial-years/<pk>/eva-chat/ — retrieve conversation history
     POST /api/financial-years/<pk>/eva-chat/ — send a message
     """
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
 
     if request.method == "GET":
         return _eva_chat_history(request, fy)
@@ -143,7 +144,7 @@ def ask_eva_review(request, pk):
     POST /api/financial-years/<pk>/ask-eva-review/
     Trigger Eva's Finalisation Gate compliance review.
     """
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
 
     # Status check: Eva review is only available once the year is finalised
     if not fy.can_ask_eva:
@@ -167,7 +168,7 @@ def eva_review_status(request, pk):
     """
     from core.models import EvaReview
 
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     review = EvaReview.objects.filter(financial_year=fy).order_by("-triggered_at").first()
 
     if not review:
@@ -248,6 +249,7 @@ def eva_resolve_finding(request, pk):
     from core.models import EvaFinding
 
     finding = get_object_or_404(EvaFinding, pk=pk)
+    get_financial_year_for_user(request, finding.eva_review.financial_year_id)
 
     try:
         data = json.loads(request.body)
@@ -324,7 +326,7 @@ def eva_rerun_review(request, pk):
     POST /api/financial-years/<pk>/eva-rerun/
     Manually trigger a re-run of Eva's compliance review.
     """
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
 
     if not fy.can_ask_eva:
         return JsonResponse({
@@ -349,7 +351,7 @@ def eva_finalise(request, pk):
     POST /api/financial-years/<pk>/eva-finalise/
     Finalise the financial year. Requires Eva review run with zero open findings.
     """
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
 
     # Permission check: only senior users can finalise
     if not request.user.can_finalise:
@@ -479,7 +481,7 @@ def override_suppression(request, fy_pk, suppression_pk):
     """
     from core.models import EvaFindingSuppression, ActivityLog
 
-    fy = get_object_or_404(FinancialYear, pk=fy_pk)
+    fy = get_financial_year_for_user(request, fy_pk)
 
     # Permission: only senior users can override suppressions
     if not request.user.is_senior:

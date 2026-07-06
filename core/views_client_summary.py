@@ -6,6 +6,7 @@ from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, render
 from django.views.decorators.http import require_POST
 
+from config.authorization import get_financial_year_for_user
 from core.eva_client_summary import generate_client_summary
 from core.models import EvaClientSummary, FinancialYear
 
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 @login_required
 def client_summary_view(request, pk):
     """View the client summary for a financial year."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     summaries = EvaClientSummary.objects.filter(financial_year=fy).order_by("-generated_at")
     latest = summaries.first()
 
@@ -30,7 +31,7 @@ def client_summary_view(request, pk):
 @login_required
 def client_summary_api(request, pk):
     """API: Get the latest client summary for a financial year."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     summary = EvaClientSummary.objects.filter(financial_year=fy).order_by("-generated_at").first()
 
     if not summary:
@@ -57,7 +58,7 @@ def client_summary_api(request, pk):
 @require_POST
 def client_summary_generate(request, pk):
     """Generate or regenerate a client summary."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     format_type = request.POST.get("format_type", "bullet")
 
     try:

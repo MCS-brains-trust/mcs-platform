@@ -67,12 +67,13 @@ def firm_settings(request):
         if "logo" in request.FILES:
             logo_file = request.FILES["logo"]
 
-            # Basic validation
-            allowed_types = {"image/png", "image/jpeg", "image/jpg", "image/svg+xml"}
+            # Basic validation — raster formats only (no SVG, which can carry
+            # embedded scripts and enable stored XSS).
+            allowed_types = {"image/png", "image/jpeg", "image/jpg"}
             if logo_file.content_type not in allowed_types:
                 messages.error(
                     request,
-                    "Invalid file type. Please upload a PNG, JPEG, or SVG image.",
+                    "Invalid file type. Please upload a PNG or JPEG image.",
                 )
                 return render(request, "core/firm_settings.html", {"settings": settings_obj})
 
@@ -83,6 +84,25 @@ def firm_settings(request):
                     f"Logo file is too large. Maximum size is {max_size_mb} MB.",
                 )
                 return render(request, "core/firm_settings.html", {"settings": settings_obj})
+
+            # Verify the actual file content is a real raster image rather than
+            # trusting the client-supplied Content-Type header.
+            try:
+                from PIL import Image
+
+                logo_file.seek(0)
+                image = Image.open(logo_file)
+                image.verify()
+                if (image.format or "").upper() not in {"PNG", "JPEG"}:
+                    raise ValueError("Unsupported image format")
+            except Exception:
+                messages.error(
+                    request,
+                    "The uploaded file is not a valid PNG or JPEG image.",
+                )
+                return render(request, "core/firm_settings.html", {"settings": settings_obj})
+            finally:
+                logo_file.seek(0)
 
             # Delete old logo file from disk to avoid orphaned files
             if settings_obj.logo:

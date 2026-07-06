@@ -21,6 +21,7 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
+from config.authorization import get_financial_year_for_user
 from core.models import (
     FinancialYear, TrustWorkspace, BeneficiaryProfile,
     DistributionScenario, Section100AAssessment, TrustElectionRecord,
@@ -41,7 +42,7 @@ def trust_workspace_api(request, pk):
     GET  /api/years/<pk>/trust-workspace/ — Get or create workspace
     POST /api/years/<pk>/trust-workspace/ — Update workspace fields
     """
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
 
     if request.method == "GET":
         workspace, created = TrustWorkspace.objects.get_or_create(
@@ -84,7 +85,7 @@ def trust_stage_update(request, pk, stage_num):
     POST /api/years/<pk>/trust-workspace/stage/<stage_num>/
     Update a specific stage's status.
     """
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     workspace = get_object_or_404(TrustWorkspace, financial_year=fy)
     data = json.loads(request.body)
     new_status = data.get("status", "")
@@ -132,7 +133,7 @@ def beneficiary_profiles_api(request, pk):
     GET  — List all beneficiary profiles for this workspace
     POST — Update a beneficiary profile
     """
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     workspace = get_object_or_404(TrustWorkspace, financial_year=fy)
 
     if request.method == "GET":
@@ -174,7 +175,7 @@ def tax_planning_scenarios_api(request, pk):
     GET  — List TaxPlanningScenarios for this FY for Stage 2 display.
     POST — Select a scenario for distribution posting.
     """
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     workspace, _ = TrustWorkspace.objects.get_or_create(financial_year=fy)
 
     if request.method == "POST":
@@ -233,7 +234,7 @@ def distribution_scenarios_api(request, pk):
     GET  — List all scenarios
     POST — Create or update a scenario
     """
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     workspace = get_object_or_404(TrustWorkspace, financial_year=fy)
 
     if request.method == "GET":
@@ -279,7 +280,7 @@ def distribution_scenarios_api(request, pk):
 @require_POST
 def confirm_scenario(request, pk, scenario_pk):
     """POST — Confirm a scenario as the final distribution."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
 
     with transaction.atomic():
         workspace = TrustWorkspace.objects.select_for_update().get(financial_year=fy)
@@ -310,7 +311,7 @@ def confirm_scenario(request, pk, scenario_pk):
 @require_POST
 def delete_scenario(request, pk, scenario_pk):
     """POST — Delete a distribution scenario."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     workspace = get_object_or_404(TrustWorkspace, financial_year=fy)
     scenario = get_object_or_404(DistributionScenario, pk=scenario_pk, trust_workspace=workspace)
 
@@ -331,7 +332,7 @@ def section_100a_api(request, pk):
     GET  — List all Section 100A assessments
     POST — Update an assessment
     """
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     workspace = get_object_or_404(TrustWorkspace, financial_year=fy)
 
     if request.method == "GET":
@@ -391,7 +392,7 @@ def trust_elections_api(request, pk):
     GET  — List all election records
     POST — Update an election record
     """
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     workspace = get_object_or_404(TrustWorkspace, financial_year=fy)
 
     if request.method == "GET":
@@ -432,7 +433,7 @@ def trust_elections_api(request, pk):
 @require_POST
 def confirm_election(request, pk, election_pk):
     """POST — Confirm an election record."""
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     workspace = get_object_or_404(TrustWorkspace, financial_year=fy)
     election = get_object_or_404(
         TrustElectionRecord, pk=election_pk, trust_workspace=workspace
@@ -454,7 +455,7 @@ def trust_eva_context(request, pk):
     GET /api/years/<pk>/trust-workspace/eva-context/
     Provides trust-specific context for Eva's Finalisation Gate.
     """
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
 
     try:
         workspace = TrustWorkspace.objects.get(financial_year=fy)
@@ -505,7 +506,7 @@ def trust_eva_context(request, pk):
 @login_required
 @require_POST
 def trust_recalculate_income(request, pk):
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     workspace, _ = TrustWorkspace.objects.get_or_create(financial_year=fy)
     if workspace.stage_1_status == TrustWorkspace.StageStatus.COMPLETED:
         return JsonResponse({"error": "Stage 1 is already completed. Reopen it before recalculating."}, status=400)
@@ -729,7 +730,7 @@ def trust_generate_beneficiary_statements(request, pk):
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from django.http import HttpResponse
 
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     try:
         workspace = TrustWorkspace.objects.get(financial_year=fy)
     except TrustWorkspace.DoesNotExist:
@@ -842,7 +843,7 @@ def trust_generate_distribution_summary(request, pk):
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from django.http import HttpResponse
 
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     try:
         workspace = TrustWorkspace.objects.get(financial_year=fy)
     except TrustWorkspace.DoesNotExist:
@@ -969,7 +970,7 @@ def trust_generate_100a_summary(request, pk):
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     from django.http import HttpResponse
 
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     try:
         workspace = TrustWorkspace.objects.get(financial_year=fy)
     except TrustWorkspace.DoesNotExist:
@@ -1077,7 +1078,7 @@ def trust_post_distribution(request, pk):
     """
     from core.views import _post_journal_to_tb
 
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
     try:
         workspace = TrustWorkspace.objects.get(financial_year=fy)
     except TrustWorkspace.DoesNotExist:
@@ -1269,7 +1270,7 @@ def trust_unpost_distribution(request, pk):
         _log_action,
     )
 
-    fy = get_object_or_404(FinancialYear, pk=pk)
+    fy = get_financial_year_for_user(request, pk)
 
     if not getattr(request.user, "can_do_accounting", False):
         return JsonResponse(

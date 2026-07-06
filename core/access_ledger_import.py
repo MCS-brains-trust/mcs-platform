@@ -90,15 +90,44 @@ def _parse_csv_file(file_content):
 
 
 def _safe_decimal(val):
-    """Convert a value to Decimal, returning 0 if invalid."""
+    """Convert a value to Decimal, returning 0 if invalid.
+
+    Handles parenthesised negatives (e.g. "(123.45)" -> -123.45) and a
+    trailing CR/DR suffix (CR is negative, DR is positive). Any value that
+    still cannot be parsed is logged (silently zeroing amounts previously
+    hid corrupt imports) before defaulting to 0.
+    """
     if val is None:
         return Decimal("0")
-    val = str(val).strip().replace(",", "")
-    if not val or val == "":
+    raw = str(val).strip()
+    cleaned = raw.replace(",", "").replace("$", "").strip()
+    if not cleaned:
         return Decimal("0")
+
+    negative = False
+    # Parenthesised negatives: (123.45) -> -123.45
+    if cleaned.startswith("(") and cleaned.endswith(")"):
+        negative = True
+        cleaned = cleaned[1:-1].strip()
+
+    # CR/DR suffix (case-insensitive): CR -> negative, DR -> positive
+    upper = cleaned.upper()
+    if upper.endswith("CR"):
+        negative = True
+        cleaned = cleaned[:-2].strip()
+    elif upper.endswith("DR"):
+        cleaned = cleaned[:-2].strip()
+
+    if not cleaned:
+        return Decimal("0")
+
     try:
-        return Decimal(val)
+        result = Decimal(cleaned)
+        return -result if negative else result
     except (InvalidOperation, ValueError):
+        logger.warning(
+            "Could not parse amount %r as Decimal — treating as 0", raw
+        )
         return Decimal("0")
 
 
@@ -165,7 +194,9 @@ class AccessLedgerZipReader:
         path = f"{folder}/{filename}"
         try:
             with self.zf.open(path) as f:
-                return f.read().decode("utf-8", errors="replace")
+                # utf-8-sig strips a leading BOM if present (HandiLedger
+                # exports are frequently BOM-prefixed on the first file).
+                return f.read().decode("utf-8-sig", errors="replace")
         except KeyError:
             return None
 
@@ -1198,6 +1229,11 @@ def import_access_ledger_zip(zip_file, client=None, entity=None, replace_existin
             f"Use replace_existing=True to overwrite."
         )
         result["entity"] = entity
+        # Do NOT continue importing — the TB/depreciation bulk_create calls
+        # below are not gated on replace_existing, so falling through here
+        # would duplicate every overlapping year's balances and assets.
+        reader.close()
+        return result
     elif entity and replace_existing:
         # Delete existing financial years (cascades to TB lines, dep assets)
         deleted_fy = entity.financial_years.all().delete()
@@ -1283,12 +1319,15 @@ def import_access_ledger_zip(zip_file, client=None, entity=None, replace_existin
             continue
 
         # Check if this year's data is finalised in HandiLedger
-        # (columns 4,5,6 = "Y" indicate finalised).
+        # (columns 4,5,6 must ALL be "Y" to indicate finalised).
         # Unfinalised years are imported as "draft" so that partially-
         # completed clients being transferred from HandiLedger can be
         # continued in StatementHub.
         is_finalised_in_hl = (
-            len(year_row) > 4 and _safe_str(year_row[4]) == "Y"
+            len(year_row) > 6
+            and _safe_str(year_row[4]) == "Y"
+            and _safe_str(year_row[5]) == "Y"
+            and _safe_str(year_row[6]) == "Y"
         )
 
         # If import_as_finalised is set, treat ALL years as finalised
