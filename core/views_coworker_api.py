@@ -308,7 +308,12 @@ def outreach_queue(request):
     # Parse query params
     accountant_email = request.GET.get("accountant_email", "").strip() or None
     requested_reasons = request.GET.get("reasons", "").strip()
-    limit = min(int(request.GET.get("limit", "100")), 200)
+    try:
+        limit = min(int(request.GET.get("limit", "100")), 200)
+    except (TypeError, ValueError):
+        limit = 100
+    if limit < 0:
+        limit = 100
 
     if requested_reasons:
         reason_set = set(requested_reasons.split(","))

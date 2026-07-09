@@ -4933,8 +4933,11 @@ class LegalDocumentTemplate(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(max_length=255)
+    # NOT unique: superseded versions stay as is_active=False rows (generated
+    # documents FK them for provenance). Uniqueness is enforced only among
+    # active rows — see the partial UniqueConstraint in Meta.
     document_type = models.CharField(
-        max_length=50, choices=DocumentType.choices, unique=True,
+        max_length=50, choices=DocumentType.choices,
     )
     entity_types = models.JSONField(
         default=list, blank=True,
@@ -4958,6 +4961,13 @@ class LegalDocumentTemplate(models.Model):
 
     class Meta:
         ordering = ["name"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["document_type"],
+                condition=models.Q(is_active=True),
+                name="unique_active_legal_template_per_type",
+            ),
+        ]
 
     def __str__(self):
         return f"{self.name} v{self.version}"

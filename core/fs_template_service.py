@@ -294,6 +294,20 @@ def _sum_section(items, field="cy_amount"):
     return sum(item[field] for item in items)
 
 
+def _section_has_nonzero_line(items):
+    """True when any individual line has a non-zero CY or PY balance.
+
+    Used for balance-sheet section suppression flags. Must check per-line
+    balances, NOT the section net — classes that offset to a zero net (e.g. a
+    fully-depreciated asset class, or a loan with an offsetting contra) must
+    still render with their nil subtotal.
+    """
+    return any(
+        (item.get("cy_amount") or 0) != 0 or (item.get("py_amount") or 0) != 0
+        for item in items
+    )
+
+
 def _net_beneficiary_accounts(fy, sections):
     """Reclassify trust beneficiary accounts from equity to current liabilities.
 
@@ -1388,11 +1402,8 @@ def build_company_context(financial_year, include_watermark=True):
     total_liab_py = total_current_liab_py + total_noncurrent_liab_py
 
     # Zero section suppression flags for Balance Sheet
-    has_noncurrent_assets = any(
-        (item.get("cy_amount") or 0) != 0 or (item.get("py_amount") or 0) != 0
-        for item in sections["noncurrent_assets"]
-    )
-    has_noncurrent_liabilities = total_noncurrent_liab_cy != 0 or total_noncurrent_liab_py != 0
+    has_noncurrent_assets = _section_has_nonzero_line(sections["noncurrent_assets"])
+    has_noncurrent_liabilities = _section_has_nonzero_line(sections["noncurrent_liabilities"])
 
     net_assets_cy = total_assets_cy - total_liab_cy
     net_assets_py = total_assets_py - total_liab_py

@@ -70,6 +70,7 @@ urlpatterns = [
     path("years/<uuid:pk>/compliance/directors-declaration/", views_compliance_docs.generate_directors_declaration, name="generate_directors_declaration"),
     path("years/<uuid:pk>/compliance/directors-report/", views_compliance_docs.directors_report_wizard, name="directors_report_wizard"),
     path("years/<uuid:pk>/compliance/directors-report/draft-eva/", views_compliance_docs.directors_report_draft_with_eva, name="directors_report_draft_eva"),
+    path("years/<uuid:pk>/compliance/directors-report/save/", views_compliance_docs.directors_report_save, name="directors_report_save"),
     path("years/<uuid:pk>/compliance/loan-acknowledgment/", views_compliance_docs.generate_loan_acknowledgment, name="generate_loan_acknowledgment"),
     path("years/<uuid:pk>/compliance/management-rep-letter/", views_compliance_docs.generate_management_rep_letter, name="generate_management_rep_letter"),
     path("years/<uuid:pk>/compliance/cover-letter/", views_compliance_docs.generate_cover_letter, name="generate_cover_letter"),

@@ -1,14 +1,14 @@
 {% extends "base.html" %}
 {% load humanize %}
 
-{% block title %}Partner Statements — {{ entity.name }}{% endblock %}
+{% block title %}Partner Statements — {{ entity.entity_name }}{% endblock %}
 
 {% block content %}
 <div class="container-fluid py-3">
     <nav aria-label="breadcrumb">
         <ol class="breadcrumb">
             <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
-            <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.name }}</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
             <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy }}</a></li>
             <li class="breadcrumb-item active">Partner Statements</li>
         </ol>
@@ -56,7 +56,7 @@
                         <tbody id="partner-body">
                             {% for p in partners %}
                             <tr data-id="{{ p.pk }}">
-                                <td>{{ p.name }}</td>
+                                <td>{{ p.full_name }}</td>
                                 <td><input type="number" class="form-control form-control-sm text-end pct-input"
                                            value="{% widthratio 1 partners|length 100 %}" min="0" max="100" step="0.01"
                                            oninput="recalcPartners()"></td>

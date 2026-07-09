@@ -18,6 +18,7 @@ import uuid
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
+from django.db import transaction
 from django.db.models import Q
 from django.http import FileResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -114,27 +115,30 @@ def legal_template_upload(request):
     if not file or not doc_type:
         return JsonResponse({"error": "File and document type are required."}, status=400)
 
-    # Check if template already exists for this type
-    existing = LegalDocumentTemplate.objects.filter(
-        document_type=doc_type, is_active=True
-    ).first()
+    # Check if template already exists for this type. Deactivate-then-create
+    # runs atomically so a failure can't leave the type with no active
+    # template (uniqueness is enforced per active row only).
+    with transaction.atomic():
+        existing = LegalDocumentTemplate.objects.filter(
+            document_type=doc_type, is_active=True
+        ).first()
 
-    if existing:
-        # Version up
-        existing.is_active = False
-        existing.save(update_fields=["is_active"])
-        version = existing.version + 1
-    else:
-        version = 1
+        if existing:
+            # Version up
+            existing.is_active = False
+            existing.save(update_fields=["is_active"])
+            version = existing.version + 1
+        else:
+            version = 1
 
-    template = LegalDocumentTemplate.objects.create(
-        name=name or dict(LegalDocumentTemplate.DocumentType.choices).get(doc_type, doc_type),
-        document_type=doc_type,
-        entity_types=entity_types,
-        template_file=file,
-        version=version,
-        created_by=request.user,
-    )
+        template = LegalDocumentTemplate.objects.create(
+            name=name or dict(LegalDocumentTemplate.DocumentType.choices).get(doc_type, doc_type),
+            document_type=doc_type,
+            entity_types=entity_types,
+            template_file=file,
+            version=version,
+            created_by=request.user,
+        )
 
     # Extract variable schema from template
     try:
@@ -191,21 +195,23 @@ def legal_template_replace(request, pk):
         return JsonResponse({"error": "No file uploaded."}, status=400)
     if not file.name.lower().endswith(".docx"):
         return JsonResponse({"error": "Only .docx files are accepted."}, status=400)
-    # Deactivate the current version
-    template.is_active = False
-    template.save(update_fields=["is_active"])
-    # Create the new version
-    new_template = LegalDocumentTemplate.objects.create(
-        name=template.name,
-        document_type=template.document_type,
-        entity_types=template.entity_types,
-        template_file=file,
-        version=template.version + 1,
-        is_active=True,
-        solicitor_approved=False,
-        variable_schema=template.variable_schema,
-        created_by=request.user,
-    )
+    # Deactivate the current version and create the new one atomically so a
+    # failure can't leave the type with no active template.
+    with transaction.atomic():
+        template.is_active = False
+        template.save(update_fields=["is_active"])
+        # Create the new version
+        new_template = LegalDocumentTemplate.objects.create(
+            name=template.name,
+            document_type=template.document_type,
+            entity_types=template.entity_types,
+            template_file=file,
+            version=template.version + 1,
+            is_active=True,
+            solicitor_approved=False,
+            variable_schema=template.variable_schema,
+            created_by=request.user,
+        )
     # Re-extract variable schema from the new file
     try:
         schema = _extract_template_variables(new_template)
@@ -1105,11 +1111,11 @@ def legal_doc_send_fusesign(request, doc_pk):
         return JsonResponse({"error": "PDF file required for FuseSign."}, status=400)
 
     fusesign_api_key = getattr(settings, "FUSESIGN_API_KEY", "")
-    fusesign_base_url = getattr(settings, "FUSESIGN_BASE_URL", "")
+    fusesign_base_url = getattr(settings, "FUSESIGN_API_URL", "")
 
     if not fusesign_api_key or not fusesign_base_url:
         return JsonResponse(
-            {"error": "FuseSign is not configured. Set FUSESIGN_API_KEY and FUSESIGN_BASE_URL in settings."},
+            {"error": "FuseSign is not configured. Set FUSESIGN_API_KEY and FUSESIGN_API_URL in settings."},
             status=400,
         )
 

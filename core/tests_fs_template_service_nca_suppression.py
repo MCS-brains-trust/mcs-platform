@@ -9,6 +9,9 @@ section on the detailed balance sheet face.
 
 The fix: `has_noncurrent_assets` is now True when *any individual line* in
 sections["noncurrent_assets"] has a non-zero cy_amount or py_amount balance.
+The same fix applies to `has_noncurrent_liabilities`, which had the identical
+net-based bug. Both flags now share the production helper
+`_section_has_nonzero_line`, which these tests exercise directly.
 
 These tests call _get_tb_sections and _sum_section directly (not the full
 build_company_context orchestrator, which has a Linux-only strftime call unrelated
@@ -19,7 +22,11 @@ from decimal import Decimal
 
 from django.test import TestCase, override_settings
 
-from core.fs_template_service import _get_tb_sections, _sum_section
+from core.fs_template_service import (
+    _get_tb_sections,
+    _section_has_nonzero_line,
+    _sum_section,
+)
 from core.models import Client, Entity, FinancialYear, TrialBalanceLine
 
 
@@ -30,11 +37,8 @@ STORAGES_OVERRIDE = {
 
 
 def _compute_has_noncurrent_assets(sections):
-    """Mirror of the fixed fs_template_service.py:1372 logic."""
-    return any(
-        (item.get("cy_amount") or 0) != 0 or (item.get("py_amount") or 0) != 0
-        for item in sections["noncurrent_assets"]
-    )
+    """Production logic for the has_noncurrent_assets flag."""
+    return _section_has_nonzero_line(sections["noncurrent_assets"])
 
 
 @override_settings(STORAGES=STORAGES_OVERRIDE)
@@ -139,4 +143,95 @@ class FullyDepreciatedNcaSuppressionTests(TestCase):
             total_nca_cy,
             Decimal("50000.00"),
             f"Subtotal must be 80,000 - 30,000 = 50,000; got {total_nca_cy}",
+        )
+
+
+@override_settings(STORAGES=STORAGES_OVERRIDE)
+class NetZeroNclSuppressionTests(TestCase):
+    """has_noncurrent_liabilities must use per-line balances, not the section net.
+
+    Regression for the sibling bug to the NCA one: the flag was computed from
+    total_noncurrent_liab_cy/py, so two offsetting non-current liability lines
+    (net $0) wrongly suppressed the whole section.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.client_obj = Client.objects.create(name="NCL Suppression Test Client")
+        cls.entity = Entity.objects.create(
+            entity_name="Orwell Test Co Pty Ltd",
+            entity_type="company",
+            client=cls.client_obj,
+        )
+        cls.fy = FinancialYear.objects.create(
+            entity=cls.entity,
+            year_label="FY2025",
+            start_date=date(2024, 7, 1),
+            end_date=date(2025, 6, 30),
+        )
+
+    def _make_row(self, code, name, cy, py="0.00", source="tb_import"):
+        kwargs = dict(
+            financial_year=self.fy,
+            account_code=code,
+            account_name=name,
+            opening_balance=Decimal("0"),
+            debit=Decimal("0"),
+            credit=Decimal("0"),
+            closing_balance=Decimal(cy),
+            prior_debit=Decimal(py) if Decimal(py) >= 0 else Decimal("0"),
+            prior_credit=Decimal("0") if Decimal(py) >= 0 else abs(Decimal(py)),
+            source=source,
+        )
+        return TrialBalanceLine.objects.create(**kwargs)
+
+    def test_offsetting_ncl_lines_do_not_suppress_section(self):
+        """Loan CR $250,000 + offsetting contra DR $250,000 → net $0.
+        has_noncurrent_liabilities must be True; both lines present; subtotal nil."""
+        # Codes 3500-3999 fall in the noncurrent_liabilities bucket
+        self._make_row("3600", "Loan - Bank of Example (non-current)", "-250000.00")
+        self._make_row("3610", "Loan contra / formation adjustment", "250000.00")
+
+        sections = _get_tb_sections(self.fy)
+
+        self.assertTrue(
+            _section_has_nonzero_line(sections["noncurrent_liabilities"]),
+            "has_noncurrent_liabilities must be True when individual NCL lines "
+            "are non-zero even if their net is zero",
+        )
+        ncl_codes = [item["account_code"] for item in sections["noncurrent_liabilities"]]
+        self.assertIn("3600", ncl_codes)
+        self.assertIn("3610", ncl_codes)
+        self.assertEqual(_sum_section(sections["noncurrent_liabilities"]), Decimal("0"))
+
+    def test_no_ncl_section_suppressed(self):
+        """Entity with no non-current liabilities: flag must be False."""
+        self._make_row("3100", "Trade creditors", "-15000.00")  # current liability bucket
+
+        sections = _get_tb_sections(self.fy)
+        self.assertFalse(_section_has_nonzero_line(sections["noncurrent_liabilities"]))
+
+    def test_prior_year_only_ncl_still_renders(self):
+        """A liability fully repaid this year (CY $0, PY non-zero) must still
+        render so the comparative column shows the prior balance.
+
+        Model A storage: the rollover row carries opening (= PY closing) in
+        closing_balance and the PY balance in prior_debit/prior_credit; the
+        tb_import row carries the period movement. Aggregated CY nets to $0.
+        """
+        self._make_row(
+            "3600", "Loan - Bank of Example (non-current)",
+            "-100000.00", py="-100000.00", source="rollover",
+        )
+        self._make_row(
+            "3600", "Loan - Bank of Example (non-current)",
+            "100000.00", source="tb_import",  # repayment movement
+        )
+
+        sections = _get_tb_sections(self.fy)
+        ncl = sections["noncurrent_liabilities"]
+        self.assertEqual(_sum_section(ncl), Decimal("0"), "CY must net to $0 after repayment")
+        self.assertTrue(
+            _section_has_nonzero_line(ncl),
+            "PY-only balances must keep the section visible for comparatives",
         )

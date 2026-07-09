@@ -315,6 +315,40 @@ def generate_directors_declaration(request, pk):
 # ---------------------------------------------------------------------------
 # 5.5 Director's Report (Hybrid — structured + Eva narrative)
 # ---------------------------------------------------------------------------
+
+# Wizard section ids/labels, and their mapping onto the keys the bundle PDF
+# template (core/pdf/directors_report.html) renders. Sections without a PDF
+# key are still stored in context_data["sections"] for round-tripping.
+DIRECTORS_REPORT_SECTIONS = [
+    ("principal_activities", "Principal Activities"),
+    ("review_of_operations", "Review of Operations"),
+    ("significant_changes", "Significant Changes in State of Affairs"),
+    ("events_after_reporting", "Events After the Reporting Period"),
+    ("likely_developments", "Likely Developments and Expected Results"),
+    ("environmental_regulation", "Environmental Regulation"),
+    ("dividends", "Dividends"),
+    ("indemnification_insurance", "Indemnification and Insurance of Officers"),
+]
+
+_DIRECTORS_REPORT_PDF_KEYS = {
+    "principal_activities": "principal_activities",
+    "review_of_operations": "operating_results",
+    "significant_changes": "significant_changes",
+    "events_after_reporting": "events_after_balance_date",
+    "dividends": "dividends_paid",
+}
+
+
+def _get_existing_directors_report(fy):
+    return (
+        LegalDocument.objects.filter(
+            financial_year=fy, document_type="directors_report",
+        )
+        .order_by("-generated_at")
+        .first()
+    )
+
+
 @login_required
 def directors_report_wizard(request, pk):
     """Wizard for Director's Report — structured sections + Eva drafting."""
@@ -326,10 +360,97 @@ def directors_report_wizard(request, pk):
         role__in=["director", "director_shareholder"],
     )
 
+    # Prefill from a previously saved report so edits round-trip.
+    existing = _get_existing_directors_report(fy)
+    saved_sections = (existing.context_data or {}).get("sections", {}) if existing else {}
+    sections = [
+        {"id": sid, "label": label, "value": saved_sections.get(sid, "")}
+        for sid, label in DIRECTORS_REPORT_SECTIONS
+    ]
+
     return render(request, "core/compliance/directors_report_wizard.html", {
         "fy": fy,
         "entity": entity,
         "directors": directors,
+        "sections": sections,
+    })
+
+
+@login_required
+@require_POST
+def directors_report_save(request, pk):
+    """Persist the Director's Report as a LegalDocument context record.
+
+    Like the other compliance documents, the record stores context_data only;
+    the PDF is rendered at package-bundle time from core/pdf/directors_report.html.
+    Re-saving updates the existing record rather than duplicating it.
+    """
+    fy = get_financial_year_for_user(request, pk)
+    entity = fy.entity
+
+    try:
+        data = json.loads(request.body)
+    except json.JSONDecodeError:
+        return JsonResponse({"status": "error", "error": "Invalid JSON"}, status=400)
+
+    raw_sections = data.get("sections", {})
+    if not isinstance(raw_sections, dict):
+        return JsonResponse({"status": "error", "error": "sections must be an object"}, status=400)
+
+    valid_ids = {sid for sid, _ in DIRECTORS_REPORT_SECTIONS}
+    sections = {
+        sid: str(raw_sections.get(sid, "") or "").strip()
+        for sid in valid_ids
+    }
+
+    directors = EntityOfficer.objects.filter(
+        entity=entity,
+        role__in=["director", "director_shareholder"],
+    )
+
+    acn = entity.acn or ""
+    abn = entity.abn or ""
+    fy_end_formatted = fy.end_date.strftime("%-d %B %Y") if fy.end_date else ""
+    context = {
+        "entity_name": entity.entity_name,
+        "acn": acn,
+        "abn": abn,
+        "acn_abn": _format_acn_abn(acn, abn),
+        "directors": [{"name": d.full_name} for d in directors],
+        "signatories": [{"name": d.full_name, "role": "Director"} for d in directors],
+        "financial_year": str(fy.end_date.year),
+        "financial_year_end": fy_end_formatted,
+        # Raw wizard sections (for reloading the wizard)
+        "sections": sections,
+    }
+    # Flatten onto the keys the bundle PDF template renders
+    for sid, pdf_key in _DIRECTORS_REPORT_PDF_KEYS.items():
+        if sections.get(sid):
+            context[pdf_key] = sections[sid]
+
+    existing = _get_existing_directors_report(fy)
+    if existing:
+        existing.title = f"Director's Report — {entity.entity_name} — {fy.end_date.year}"
+        existing.context_data = _sanitise_context_for_storage(context)
+        existing.generated_by = request.user
+        existing.status = "generated"
+        existing.save(update_fields=["title", "context_data", "generated_by", "status"])
+        doc = existing
+    else:
+        doc = LegalDocument.objects.create(
+            financial_year=fy,
+            entity=entity,
+            document_type="directors_report",
+            title=f"Director's Report — {entity.entity_name} — {fy.end_date.year}",
+            context_data=_sanitise_context_for_storage(context),
+            generated_by=request.user,
+            status="generated",
+        )
+
+    return JsonResponse({
+        "status": "ok",
+        "document_id": str(doc.pk),
+        "message": "Director's report saved.",
     })
 
 
@@ -337,9 +458,6 @@ def directors_report_wizard(request, pk):
 @require_POST
 def directors_report_draft_with_eva(request, pk):
     """Use Eva to draft narrative sections of the Director's Report."""
-    import anthropic
-    import os
-
     fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
@@ -365,9 +483,10 @@ def directors_report_draft_with_eva(request, pk):
     prompt_text = section_prompts.get(section, f"Write the '{section}' section.")
 
     try:
-        client = anthropic.Anthropic(
-            api_key=os.environ.get("ANTHROPIC_API_KEY", ""),
-        )
+        # Route through the shared client layer (retry, provider fallback,
+        # centrally managed model tiers) instead of a hand-rolled Anthropic
+        # client with a hardcoded model id.
+        from core.ai_service import _call_llm
 
         try:
             from core.models import FirmSettings
@@ -385,16 +504,11 @@ def directors_report_draft_with_eva(request, pk):
         if existing_text:
             user_prompt += f"The user has already drafted:\n{existing_text}\n\nPlease improve and expand this."
 
-        response = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=1500,
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_prompt}],
-        )
+        text = _call_llm(system_prompt, user_prompt, tier="sonnet", max_tokens=1500)
 
         return JsonResponse({
             "status": "ok",
-            "text": response.content[0].text,
+            "text": text,
             "section": section,
         })
 
