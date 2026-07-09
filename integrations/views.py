@@ -558,7 +558,6 @@ def _do_cloud_import(
             },
         )
         if connection_obj:
-            from integrations.models import QBTenantConnection, XeroTenantConnection
             type(connection_obj).objects.filter(pk=connection_obj.pk).update(
                 last_sync_at=timezone.now()
             )

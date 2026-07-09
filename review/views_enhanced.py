@@ -16,6 +16,7 @@ from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
+from django.db.models import Q
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -139,7 +140,9 @@ def search_transactions(request, pk):
     }
     for name, num in months.items():
         if re.search(rf'\b{name}\b', query, re.I):
-            txns = txns.filter(date__contains=f"/{num}/")
+            # Dates are stored as ISO "YYYY-MM-DD" strings by all parsers;
+            # keep the legacy "DD/MM/YYYY" match for any older rows.
+            txns = txns.filter(Q(date__contains=f"-{num}-") | Q(date__contains=f"/{num}/"))
             filters_applied["month"] = name.capitalize()
             break
 

@@ -19,7 +19,6 @@ from core.models import (
     FinancialYear,
     LegalDocument,
     LegalDocumentTemplate,
-    TrialBalanceLine,
 )
 
 logger = logging.getLogger(__name__)
@@ -125,22 +124,19 @@ def partner_statements(request, pk):
     partners = EntityOfficer.objects.filter(
         entity=entity,
         role="partner",
-    ).order_by("name")
+        date_ceased__isnull=True,
+    ).order_by("display_order", "full_name")
 
-    # Get profit allocation from TB
-    profit_lines = TrialBalanceLine.objects.filter(
-        financial_year=fy,
-    ).select_related("mapped_line_item")
-
-    total_revenue = 0
-    total_expenses = 0
-    for line in profit_lines:
-        balance = float(line.net_balance or line.balance or 0)
-        acct_type = getattr(line.account, "account_type", "") if line.account else ""
-        if acct_type in ("revenue", "income"):
-            total_revenue += balance
-        elif acct_type in ("expense", "cost_of_sales"):
-            total_expenses += balance
+    # P&L totals from the TB using the canonical section bucketing.
+    # Income sections are credit-normal (raw TB value negative), so negate.
+    from core.fs_template_service import _get_tb_sections, _sum_section
+    sections = _get_tb_sections(fy)
+    total_revenue = -(
+        _sum_section(sections["income"]) + _sum_section(sections["trading_income"])
+    )
+    total_expenses = (
+        _sum_section(sections["expenses"]) + _sum_section(sections["cogs"])
+    )
 
     net_profit = total_revenue - total_expenses
 
@@ -244,14 +240,16 @@ def generate_partnership_tax_summary(request, pk):
     fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
-    partners = EntityOfficer.objects.filter(entity=entity, role="partner")
+    partners = EntityOfficer.objects.filter(
+        entity=entity, role="partner", date_ceased__isnull=True,
+    )
 
     context = {
         "entity_name": entity.entity_name,
         "abn": entity.abn or "",
         "tfn": entity.tfn or "",
         "financial_year_end": str(fy.end_date),
-        "partners": [{"name": p.name, "tfn": ""} for p in partners],
+        "partners": [{"name": p.full_name, "tfn": ""} for p in partners],
         "document_type": "internal_summary",
     }
 

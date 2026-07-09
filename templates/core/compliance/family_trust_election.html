@@ -409,7 +409,7 @@
             const value = cb.checked;
             const row = document.getElementById('adv-check-row-' + field);
 
-            fetch('/core/api/fte/' + DOC_PK + '/toggle-checklist/', {
+            fetch('/api/fte/' + DOC_PK + '/toggle-checklist/', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',

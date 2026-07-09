@@ -1022,6 +1022,71 @@ def bulk_approve_group(request, pk):
 # Bank Statement Upload (manual PDF/Excel upload)
 # ---------------------------------------------------------------------------
 
+def _try_vision_fallback(content, filename, direct_error=None, log_prefix='[upload-statement]'):
+    """Claude Vision OCR fallback for a PDF whose direct parse failed or
+    returned zero transactions. Shared by the single-file parse_statement
+    path and the bulk upload_bank_statement path so the two cannot drift.
+
+    Returns ``(extracted, error_message)``: on success ``extracted`` is the
+    Vision result dict (flagged ``unverified`` if balances are missing or the
+    totals don't foot) and ``error_message`` is None; on failure ``extracted``
+    is None and ``error_message`` is a user-facing explanation.
+    """
+    import base64
+    try:
+        from .pdf_parsers import detect_bank as _detect_bank
+        bank_name = _detect_bank(content)
+    except Exception:
+        bank_name = 'unknown'
+    reason = 'parse_error' if direct_error is not None else 'empty_result'
+    logger.warning(
+        f'{log_prefix} Vision fallback triggered: file={filename} bank={bank_name} '
+        f'reason={reason} direct_error={direct_error}'
+    )
+    try:
+        from .email_ingestion import extract_transactions_from_pdf as claude_extract
+        from .statement_geometry import _reconcile, StatementParseError as _SGError
+        pdf_b64 = base64.b64encode(content).decode('utf-8')
+        vision_result = claude_extract(pdf_b64, filename)
+        # Soft reconciliation: flag as unverified rather than discarding if balances
+        # are missing or the totals don't foot — Vision output has API cost and latency.
+        v_open = vision_result.get('opening_balance')
+        v_close = vision_result.get('closing_balance')
+        v_txns = vision_result.get('transactions') or []
+        if v_open is not None and v_close is not None:
+            try:
+                _reconcile(v_txns, float(v_open), float(v_close))
+                logger.info(f'{log_prefix} Vision OCR reconciled OK for {filename}')
+            except _SGError as recon_err:
+                logger.warning(
+                    f'{log_prefix} Vision reconciliation failed for {filename}: {recon_err}'
+                )
+                vision_result['unverified'] = True
+                vision_result['reconciliation_warning'] = str(recon_err)
+        else:
+            logger.warning(
+                f'{log_prefix} Vision OCR missing balance anchors for {filename} — unverified'
+            )
+            vision_result['unverified'] = True
+        logger.info(f'{log_prefix} Claude Vision OCR succeeded for {filename}')
+        return vision_result, None
+    except Exception as vision_err:
+        logger.error(
+            f'{log_prefix} Claude Vision OCR also failed for {filename}: {vision_err}'
+        )
+        if direct_error is not None:
+            msg = (
+                f'Could not parse {filename}. '
+                f'Direct parser: {direct_error}. Vision OCR: {vision_err}'
+            )
+        else:
+            msg = (
+                f'No transactions found in {filename}; '
+                f'Vision OCR also failed: {vision_err}'
+            )
+        return None, msg
+
+
 @login_required
 def upload_bank_statement(request):
     """
@@ -1099,6 +1164,8 @@ def upload_bank_statement(request):
             errors.append(f"{filename}: File content does not match Excel format")
             continue
 
+        extracted = None
+        used_vision = False
         try:
             if filename.lower().endswith(".pdf"):
                 extracted = extract_transactions_from_pdf_direct(content, filename)
@@ -1106,14 +1173,32 @@ def upload_bank_statement(request):
                 extracted = _parse_excel_bank_statement(content, filename)
         except Exception as exc:
             logger.error(f"Extraction exception (entity_id={entity_id}): {exc}", exc_info=True)
-            errors.append(f"{filename}: Extraction error — {exc}")
-            continue
+            if filename.lower().endswith(".pdf"):
+                # Vision OCR fallback — same net as the single-file
+                # parse_statement path.
+                extracted, vision_msg = _try_vision_fallback(
+                    content, filename, direct_error=exc,
+                )
+                used_vision = extracted is not None
+                if extracted is None:
+                    errors.append(f"{filename}: {vision_msg}")
+                    continue
+            else:
+                errors.append(f"{filename}: Extraction error — {exc}")
+                continue
 
         logger.info(f"Extraction result (entity_id={entity_id}): txn_count={len(extracted.get('transactions', [])) if isinstance(extracted, dict) else 0}")
 
         if not extracted or not extracted.get("transactions"):
-            errors.append(f"{filename}: No transactions could be extracted")
-            continue
+            if filename.lower().endswith(".pdf") and not used_vision:
+                # Direct parse succeeded but found nothing — try Vision OCR.
+                extracted, vision_msg = _try_vision_fallback(content, filename)
+                if extracted is None:
+                    errors.append(f"{filename}: {vision_msg}")
+                    continue
+            if not extracted or not extracted.get("transactions"):
+                errors.append(f"{filename}: No transactions could be extracted")
+                continue
 
         transactions = extracted["transactions"]
 
@@ -1981,7 +2066,6 @@ def parse_statement(request):
     Used by the preview flow: upload → preview → confirm.
     """
     import time
-    import base64
     start_time = time.time()
     from datetime import datetime as dt
     from .pdf_parsers import extract_transactions_from_pdf_direct
@@ -2047,64 +2131,20 @@ def parse_statement(request):
         return JsonResponse({'status': 'error', 'message': f'Extraction error: {exc}'}, status=400)
 
     # Vision fallback — PDF only, triggered by parse error OR zero transactions.
+    # Shared implementation with the bulk upload path (_try_vision_fallback).
     if filename.lower().endswith('.pdf') and (
         direct_error is not None
         or not extracted
         or not extracted.get('transactions')
     ):
-        try:
-            from .pdf_parsers import detect_bank as _detect_bank
-            bank_name = _detect_bank(content)
-        except Exception:
-            bank_name = 'unknown'
-        reason = 'parse_error' if direct_error is not None else 'empty_result'
-        logger.warning(
-            f'[parse-statement] Vision fallback triggered: file={filename} bank={bank_name} '
-            f'reason={reason} direct_error={direct_error}'
+        vision_result, vision_msg = _try_vision_fallback(
+            content, filename, direct_error=direct_error,
+            log_prefix='[parse-statement]',
         )
-        try:
-            from .email_ingestion import extract_transactions_from_pdf as claude_extract
-            from .statement_geometry import _reconcile, StatementParseError as _SGError2
-            pdf_b64 = base64.b64encode(content).decode('utf-8')
-            vision_result = claude_extract(pdf_b64, filename)
-            # Soft reconciliation: flag as unverified rather than discarding if balances
-            # are missing or the totals don't foot — Vision output has API cost and latency.
-            v_open = vision_result.get('opening_balance')
-            v_close = vision_result.get('closing_balance')
-            v_txns = vision_result.get('transactions') or []
-            if v_open is not None and v_close is not None:
-                try:
-                    _reconcile(v_txns, float(v_open), float(v_close))
-                    logger.info(f'[parse-statement] Vision OCR reconciled OK for {filename}')
-                except _SGError2 as recon_err:
-                    logger.warning(
-                        f'[parse-statement] Vision reconciliation failed for {filename}: {recon_err}'
-                    )
-                    vision_result['unverified'] = True
-                    vision_result['reconciliation_warning'] = str(recon_err)
-            else:
-                logger.warning(
-                    f'[parse-statement] Vision OCR missing balance anchors for {filename} — unverified'
-                )
-                vision_result['unverified'] = True
-            extracted = vision_result
-            used_vision = True
-            logger.info(f'[parse-statement] Claude Vision OCR succeeded for {filename}')
-        except Exception as vision_err:
-            logger.error(
-                f'[parse-statement] Claude Vision OCR also failed for {filename}: {vision_err}'
-            )
-            if direct_error is not None:
-                msg = (
-                    f'Could not parse {filename}. '
-                    f'Direct parser: {direct_error}. Vision OCR: {vision_err}'
-                )
-            else:
-                msg = (
-                    f'No transactions found in {filename}; '
-                    f'Vision OCR also failed: {vision_err}'
-                )
-            return JsonResponse({'status': 'error', 'message': msg}, status=400)
+        if vision_result is None:
+            return JsonResponse({'status': 'error', 'message': vision_msg}, status=400)
+        extracted = vision_result
+        used_vision = True
 
     if not extracted or not extracted.get('transactions'):
         file_ext = _os.path.splitext(filename)[1].lower()

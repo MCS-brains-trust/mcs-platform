@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 
-{% block title %}Director's Report — {{ entity.name }}{% endblock %}
+{% block title %}Director's Report — {{ entity.entity_name }}{% endblock %}
 
 {% block content %}
 <div class="container-fluid py-3">
     <nav aria-label="breadcrumb">
         <ol class="breadcrumb">
             <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
-            <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.name }}</a></li>
+            <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
             <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy }}</a></li>
             <li class="breadcrumb-item active">Director's Report</li>
         </ol>
@@ -15,21 +15,22 @@
 
     <div class="card">
         <div class="card-header bg-primary text-white">
-            <h5 class="mb-0"><i class="bi bi-file-earmark-text"></i> Director's Report — {{ entity.name }}</h5>
+            <h5 class="mb-0"><i class="bi bi-file-earmark-text"></i> Director's Report — {{ entity.entity_name }}</h5>
         </div>
         <div class="card-body">
             <p class="text-muted">Complete each section below. Use "Draft with Eva" to auto-generate narrative content.</p>
 
-            {% for section_id, section_label in sections %}
+            {% for section in sections %}
             <div class="mb-4">
                 <div class="d-flex justify-content-between align-items-center mb-2">
-                    <h6 class="mb-0">{{ section_label }}</h6>
-                    <button class="btn btn-sm btn-outline-info" onclick="draftWithEva('{{ section_id }}')">
+                    <h6 class="mb-0">{{ section.label }}</h6>
+                    <button class="btn btn-sm btn-outline-info" onclick="draftWithEva('{{ section.id }}')">
                         <i class="bi bi-stars"></i> Draft with Eva
                     </button>
                 </div>
-                <textarea id="section-{{ section_id }}" class="form-control" rows="4"
-                          placeholder="Enter {{ section_label|lower }} or click 'Draft with Eva'..."></textarea>
+                <textarea id="section-{{ section.id }}" class="form-control section-textarea" rows="4"
+                          data-section-id="{{ section.id }}"
+                          placeholder="Enter {{ section.label|lower }} or click 'Draft with Eva'...">{{ section.value }}</textarea>
             </div>
             {% endfor %}
 
@@ -40,7 +41,7 @@
                 </thead>
                 <tbody>
                     {% for d in directors %}
-                    <tr><td>{{ d.name }}</td><td>{{ d.get_role_display }}</td></tr>
+                    <tr><td>{{ d.full_name }}</td><td>{{ d.get_role_display }}</td></tr>
                     {% endfor %}
                 </tbody>
             </table>
@@ -58,16 +59,8 @@
 <script>
 const CSRF_TOKEN = '{{ csrf_token }}';
 const DRAFT_URL = '{% url "core:directors_report_draft_eva" pk=fy.pk %}';
-const SECTIONS = [
-    ['principal_activities', 'Principal Activities'],
-    ['review_of_operations', 'Review of Operations'],
-    ['significant_changes', 'Significant Changes in State of Affairs'],
-    ['events_after_reporting', 'Events After the Reporting Period'],
-    ['likely_developments', 'Likely Developments and Expected Results'],
-    ['environmental_regulation', 'Environmental Regulation'],
-    ['dividends', 'Dividends'],
-    ['indemnification_insurance', 'Indemnification and Insurance of Officers'],
-];
+const SAVE_URL = '{% url "core:directors_report_save" pk=fy.pk %}';
+const DETAIL_URL = '{% url "core:financial_year_detail" pk=fy.pk %}';
 
 function draftWithEva(sectionId) {
     const textarea = document.getElementById('section-' + sectionId);
@@ -105,7 +98,39 @@ function draftWithEva(sectionId) {
 }
 
 function saveReport() {
-    alert('Director\'s Report saved. Document generation will be available once templates are uploaded.');
+    const btn = event.target.closest('button');
+    const originalHtml = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Saving...';
+
+    const sections = {};
+    document.querySelectorAll('.section-textarea').forEach(function (ta) {
+        sections[ta.dataset.sectionId] = ta.value;
+    });
+
+    fetch(SAVE_URL, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': CSRF_TOKEN,
+        },
+        body: JSON.stringify({ sections: sections }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+        if (data.status === 'ok') {
+            window.location.href = DETAIL_URL;
+        } else {
+            alert('Error: ' + (data.error || 'Could not save the report.'));
+        }
+    })
+    .catch(err => {
+        btn.disabled = false;
+        btn.innerHTML = originalHtml;
+        alert('Error: ' + err.message);
+    });
 }
 </script>
 {% endblock %}

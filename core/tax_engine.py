@@ -55,7 +55,7 @@ def get_tax_rates(fy_label):
         "bracket_3_upper": D("190000"),
         "bracket_4_rate": D("0.45"),
         "medicare_levy_rate": D("0.02"),
-        "medicare_low_income_threshold": D("26000"),
+        "medicare_low_income_threshold": D("27222"),  # 2024-25 singles threshold
         "lito_max_offset": D("700"),
         "lito_shade_out_start": D("37500"),
         "lito_shade_out_end": D("66667"),

@@ -2290,6 +2290,14 @@ def financial_year_status(request, pk):
         messages.error(request, "Invalid status.")
         return redirect("core:financial_year_detail", pk=pk)
 
+    # Finalising and reopening carry the same privilege requirement as the
+    # dedicated endpoints (financial_year_finalise_full / reopen_financial_year)
+    # — without this, any user with entity access could finalise or reopen a
+    # year via the status dropdown.
+    if new_status in ("finalised", "reopened") and not request.user.can_finalise:
+        messages.error(request, "Only senior accountants or admins can finalise or reopen a financial year.")
+        return redirect("core:financial_year_detail", pk=pk)
+
     # Allowed manual transitions via the status dropdown.
     # Finalise and reopen have dedicated endpoints but are included
     # here for admin correction purposes.
