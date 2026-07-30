@@ -870,7 +870,7 @@ def bas_reallocate_transaction(request, pk):
         tax_type:   New tax type (e.g. "GST on Expenses", "N-T")
     """
     import json
-    from review.models import PendingTransaction
+    from review.models import PendingTransaction, canonical_tax_type
 
     fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
@@ -897,6 +897,16 @@ def bas_reallocate_transaction(request, pk):
         txn = PendingTransaction.objects.get(pk=txn_id, job__entity=entity)
     except PendingTransaction.DoesNotExist:
         return JsonResponse({"ok": False, "error": "Transaction not found."}, status=404)
+
+    # Normalise before storing: this endpoint used to persist any string it was
+    # given, which is how chart-of-accounts tax codes ("GST", "INP") ended up in
+    # confirmed_tax_type and desynchronised the BAS from the ledger.
+    new_tax = canonical_tax_type(new_tax, is_income=txn.amount > 0)
+    if new_tax is None:
+        return JsonResponse(
+            {"ok": False, "error": f"Unrecognised tax type: {data.get('tax_type')!r}"},
+            status=400,
+        )
 
     old_code = txn.confirmed_code or txn.ai_suggested_code
     old_name = txn.confirmed_name or txn.ai_suggested_name
@@ -946,7 +956,7 @@ def bas_bulk_reallocate(request, pk):
         tax_type:     New tax type
     """
     import json
-    from review.models import PendingTransaction
+    from review.models import PendingTransaction, canonical_tax_type
 
     fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
@@ -962,12 +972,20 @@ def bas_bulk_reallocate(request, pk):
     txn_ids = data.get("txn_ids", [])
     new_code = (data.get("account_code") or "").strip()
     new_name = (data.get("account_name") or "").strip()
-    new_tax = (data.get("tax_type") or "").strip()
+    raw_tax = (data.get("tax_type") or "").strip()
 
     if not txn_ids:
         return JsonResponse({"ok": False, "error": "txn_ids is required."}, status=400)
     if not new_code:
         return JsonResponse({"ok": False, "error": "account_code is required."}, status=400)
+
+    # Reject an unrecognised tax type up front rather than persisting it (see
+    # bas_reallocate_transaction). Income/expense direction is resolved per
+    # transaction below, so validate against both directions here.
+    if raw_tax and canonical_tax_type(raw_tax, is_income=True) is None:
+        return JsonResponse(
+            {"ok": False, "error": f"Unrecognised tax type: {raw_tax!r}"}, status=400
+        )
 
     txns = PendingTransaction.objects.filter(pk__in=txn_ids, job__entity=entity)
     count = txns.count()
@@ -978,6 +996,7 @@ def bas_bulk_reallocate(request, pk):
     for txn in txns:
         txn.confirmed_code = new_code
         txn.confirmed_name = new_name or new_code
+        new_tax = canonical_tax_type(raw_tax, is_income=txn.amount > 0)
         if new_tax:
             txn.confirmed_tax_type = new_tax
             txn.calculate_gst(tax_type=new_tax, is_gst_registered=entity.is_gst_registered)
@@ -988,7 +1007,7 @@ def bas_bulk_reallocate(request, pk):
 
     _log_action(
         request, "bas_bulk_reallocate",
-        f"Bulk-reallocated {count} transactions to {new_code}/{new_tax} "
+        f"Bulk-reallocated {count} transactions to {new_code}/{raw_tax or '(tax type unchanged)'} "
         f"(entity: {entity.entity_name}, FY: {fy.year_label})",
     )
 

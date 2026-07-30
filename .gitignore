@@ -44,3 +44,7 @@ handiledger_reference/_scarft_raw.txt
 mcs-platform/
 archives/
 test_fixtures/*.pdf
+
+# Data-repair snapshots hold live client transaction detail — keep them on the
+# server that ran the repair, never in the repository.
+data_fixes/*snapshot*.json

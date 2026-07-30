@@ -24,7 +24,10 @@ from django_ratelimit.decorators import ratelimit
 from config.webhook_auth import verify_webhook
 from config.authorization import get_review_job_for_user
 from .ato_due_dates import get_next_ato_due_dates
-from .models import PendingTransaction, ReviewActivity, ReviewJob, TransactionPattern
+from .models import (
+    PendingTransaction, ReviewActivity, ReviewJob, TransactionPattern,
+    canonical_tax_type, is_taxable_tax_type,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -608,11 +611,12 @@ def confirm_transaction(request, pk):
             status=400,
         )
 
-    VALID_TAX_TYPES = {
-        "", "GST on Income", "GST on Expenses", "Input Taxed", "N-T",
-        "GST Free Income", "GST Free Expenses", "BAS Excluded",
-    }
-    if confirmed_tax_type and confirmed_tax_type not in VALID_TAX_TYPES:
+    # Accept either vocabulary but persist only canonical TAX_TYPE_CHOICES
+    # values. Rejecting legacy tax codes outright would break older clients;
+    # storing them verbatim is what desynchronised the BAS from the ledger.
+    # The income/expense direction is only known once the transaction is loaded,
+    # so recognition is checked here and the mapping applied below.
+    if canonical_tax_type(confirmed_tax_type) is None:
         return JsonResponse({"status": "error", "message": "Invalid tax type"}, status=400)
 
     # Lock the transaction row for the duration of the fetch-set-post cycle so
@@ -626,6 +630,9 @@ def confirm_transaction(request, pk):
 
         txn.confirmed_code = confirmed_code
         txn.confirmed_name = confirmed_name
+        confirmed_tax_type = canonical_tax_type(
+            confirmed_tax_type, is_income=txn.amount > 0
+        ) or ""
         txn.confirmed_tax_type = confirmed_tax_type
         txn.is_confirmed = True
 
@@ -1951,8 +1958,15 @@ def classify_batch(request, pk):
         if gst_treatment:
             txn.gst_treatment = gst_treatment
 
-        # Calculate GST
-        tax_type = cls.get("tax_type", "")
+        # Calculate GST.
+        # The classifier may return a chart-of-accounts tax code ("GST", "INP")
+        # rather than a TAX_TYPE_CHOICES label. Persisting that verbatim made the
+        # transaction taxable to the BAS engine while the branches below zeroed
+        # its GST — normalise first so both agree.
+        tax_type = canonical_tax_type(
+            cls.get("tax_type", ""), is_income=txn.amount > 0
+        ) or ""
+        txn.ai_suggested_tax_type = tax_type
         abs_amount = abs(txn.amount)
         if is_gst and tax_type in ("GST on Income", "GST on Expenses"):
             txn.gst_amount = (abs_amount / Decimal("11")).quantize(Decimal("0.01"))

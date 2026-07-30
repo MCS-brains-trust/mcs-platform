@@ -7887,6 +7887,18 @@ def meeting_note_toggle_followup(request, pk):
 
 # ---------------------------------------------------------------------------
 # GST Activity Statement
+#
+# SUPERSEDED — NOT ROUTED. Both `core:gst_activity_statement` and
+# `core:gst_activity_statement_download` resolve to core.views_bas
+# (bas_dashboard / bas_download); see core/urls.py. This older implementation
+# and gst_activity_statement_download() below are unreachable.
+#
+# They are retained only as reference and must NOT be re-wired as-is: they
+# classify each account by its *aggregated* TrialBalanceLine tax code and gross
+# the whole balance up by 11/10, which reports GST-free income as taxable. That
+# defect overstated one live client's GST on sales by $28.8k. The corrected
+# calculation lives in core/bas_utils.calculate_gst_for_period, which derives
+# the worksheet from per-transaction tax treatment.
 # ---------------------------------------------------------------------------
 @login_required
 def gst_activity_statement(request, pk):
@@ -7894,6 +7906,8 @@ def gst_activity_statement(request, pk):
     Generate a GST Activity Statement (BAS summary) for a financial year.
     Maps trial balance lines to BAS labels using ChartOfAccount tax codes.
     Supports both Simpler BAS (G1, 1A, 1B) and Full BAS (G1-G20).
+
+    SUPERSEDED by core.views_bas.bas_dashboard — see the note above.
     """
     fy = get_financial_year_for_user(request, pk)
     # Re-fetch with select_related for efficiency
@@ -9845,9 +9859,20 @@ def review_approve_transaction(request, pk):
     if not request.user.can_do_accounting:
         return JsonResponse({"error": "Permission denied"}, status=403)
 
+    from review.models import canonical_tax_type, is_taxable_tax_type
+
     txn.confirmed_code = request.POST.get("confirmed_code", txn.ai_suggested_code)
     txn.confirmed_name = request.POST.get("confirmed_name", txn.ai_suggested_name)
-    txn.confirmed_tax_type = request.POST.get("confirmed_tax_type", txn.ai_suggested_tax_type)
+    # Normalise: legacy chart-of-accounts tax codes ("GST", "INP") used to be
+    # persisted verbatim, which left the transaction taxable to the BAS engine
+    # while the confirm logic below zeroed its GST.
+    raw_tax = request.POST.get("confirmed_tax_type", txn.ai_suggested_tax_type)
+    normalised_tax = canonical_tax_type(raw_tax, is_income=txn.amount > 0)
+    if normalised_tax is None:
+        return JsonResponse(
+            {"error": f"Unrecognised tax type: {raw_tax!r}"}, status=400
+        )
+    txn.confirmed_tax_type = normalised_tax
 
     # Handle GST toggle from the review form
     has_gst = request.POST.get("has_gst", "0") == "1"
@@ -9859,14 +9884,14 @@ def review_approve_transaction(request, pk):
         txn.net_amount = net_amount
         txn.confirmed_gst_amount = gst_amount
         # Ensure tax type is set correctly for GST
-        if not txn.confirmed_tax_type or 'Free' in (txn.confirmed_tax_type or '') or txn.confirmed_tax_type in ('BAS Excluded', 'N-T', ''):
+        if not is_taxable_tax_type(txn.confirmed_tax_type, is_income=txn.amount > 0):
             txn.confirmed_tax_type = 'GST on Expenses' if txn.amount < 0 else 'GST on Income'
     else:
         txn.gst_amount = Decimal("0.00")
         txn.net_amount = abs(txn.amount)
         txn.confirmed_gst_amount = Decimal("0.00")
         # Set GST-free tax type if currently GST
-        if txn.confirmed_tax_type in ('GST on Income', 'GST on Expenses'):
+        if is_taxable_tax_type(txn.confirmed_tax_type, is_income=txn.amount > 0):
             txn.confirmed_tax_type = 'GST Free Expenses' if txn.amount < 0 else 'GST Free Income'
 
     txn.is_confirmed = True
@@ -10115,7 +10140,9 @@ def review_approve_selected(request, pk):
     if fy.is_locked:
         return JsonResponse({"status": "error", "message": "Cannot post to a finalised year."}, status=400)
 
-    from review.models import PendingTransaction
+    from review.models import (
+        PendingTransaction, canonical_tax_type, is_taxable_tax_type,
+    )
 
     try:
         body = json.loads(request.body)
@@ -10146,7 +10173,13 @@ def review_approve_selected(request, pk):
 
         txn.confirmed_code = td.get("confirmed_code", txn.ai_suggested_code)
         txn.confirmed_name = td.get("confirmed_name", txn.ai_suggested_name)
-        txn.confirmed_tax_type = td.get("confirmed_tax_type", txn.ai_suggested_tax_type)
+        # Normalise legacy tax codes rather than persisting them verbatim; an
+        # unrecognised value falls back to no tax type instead of poisoning the
+        # BAS, since this endpoint approves in bulk and must not abort the batch.
+        raw_tax = td.get("confirmed_tax_type", txn.ai_suggested_tax_type)
+        txn.confirmed_tax_type = canonical_tax_type(
+            raw_tax, is_income=txn.amount > 0
+        ) or ""
 
         has_gst = td.get("has_gst", "0") == "1"
         if has_gst:
@@ -10159,13 +10192,13 @@ def review_approve_selected(request, pk):
             txn.net_amount = net_amount
             txn.confirmed_gst_amount = gst_amount
             txn.creditable_percentage = cred_pct
-            if not txn.confirmed_tax_type or 'Free' in (txn.confirmed_tax_type or '') or txn.confirmed_tax_type in ('BAS Excluded', 'N-T', ''):
+            if not is_taxable_tax_type(txn.confirmed_tax_type, is_income=txn.amount > 0):
                 txn.confirmed_tax_type = 'GST on Expenses' if txn.amount < 0 else 'GST on Income'
         else:
             txn.gst_amount = Decimal("0.00")
             txn.net_amount = abs(txn.amount)
             txn.confirmed_gst_amount = Decimal("0.00")
-            if txn.confirmed_tax_type in ('GST on Income', 'GST on Expenses'):
+            if is_taxable_tax_type(txn.confirmed_tax_type, is_income=txn.amount > 0):
                 txn.confirmed_tax_type = 'GST Free Expenses' if txn.amount < 0 else 'GST Free Income'
 
         txn.is_confirmed = True
@@ -10939,18 +10972,39 @@ def review_bulk_edit_transactions(request, pk):
         'ADS': {'expense': 'GST on Expenses', 'income': 'GST on Income'},
     }
 
+    # A GST treatment the accountant set by hand is an explicit decision about
+    # the transaction, whereas the account's tax_code is only a default for the
+    # account. Re-assigning the account must not overwrite the decision: doing
+    # so silently turned GST-free medical income into taxable income (and booked
+    # GST on it) whenever those receipts were assigned to a GST-coded revenue
+    # account, which is how one client's BAS came to report GST on sales it had
+    # been told were GST-free.
+    TREATMENT_TO_TAX_TYPE = {
+        'taxable': {'expense': 'GST on Expenses', 'income': 'GST on Income'},
+        'gst_free': {'expense': 'GST Free Expenses', 'income': 'GST Free Income'},
+        'input_taxed': {'expense': 'Input Taxed', 'income': 'Input Taxed'},
+        'out_of_scope': {'expense': 'BAS Excluded', 'income': 'BAS Excluded'},
+        'not_registered': {'expense': 'N-T', 'income': 'N-T'},
+    }
+
     count = 0
     tb_count = 0
     for txn in txns:
         direction = 'expense' if txn.amount < 0 else 'income'
-        tax_type = ''
-        if tax_code and tax_code in TAX_CODE_MAP:
-            tax_type = TAX_CODE_MAP[tax_code][direction]
-        elif txn.ai_suggested_tax_type:
-            tax_type = txn.ai_suggested_tax_type
+        manual_treatment = txn.gst_treatment if txn.is_gst_manual else ''
+
+        if manual_treatment in TREATMENT_TO_TAX_TYPE:
+            tax_type = TREATMENT_TO_TAX_TYPE[manual_treatment][direction]
+            has_gst = manual_treatment == 'taxable'
+        else:
+            tax_type = ''
+            if tax_code and tax_code in TAX_CODE_MAP:
+                tax_type = TAX_CODE_MAP[tax_code][direction]
+            elif txn.ai_suggested_tax_type:
+                tax_type = txn.ai_suggested_tax_type
+            has_gst = tax_code in ('GST', 'INP', 'CAP', 'GNR', 'ADS')
 
         # Determine GST
-        has_gst = tax_code in ('GST', 'INP', 'CAP', 'GNR', 'ADS')
         abs_amount = abs(txn.amount)
         if has_gst:
             gst_amount = (abs_amount / Decimal('11')).quantize(Decimal('0.01'))
@@ -10959,15 +11013,20 @@ def review_bulk_edit_transactions(request, pk):
             gst_amount = Decimal('0.00')
             net_amount = abs_amount
 
-        # Auto-set gst_treatment based on the account's tax_code
+        # Auto-set gst_treatment from the account's tax_code — but only as a
+        # default, never over a manually-set treatment (see above).
+        # 'taxable' — not 'gst' — is the valid GST_TREATMENT_CHOICES value.
+        # Writing 'gst' put an off-choices value on 400 live transactions, and
+        # every downstream check compares against 'taxable'.
         TAX_CODE_TO_GST_TREATMENT = {
-            'GST': 'gst', 'INP': 'gst', 'CAP': 'gst', 'GNR': 'gst', 'ADS': 'gst',
+            'GST': 'taxable', 'INP': 'taxable', 'CAP': 'taxable',
+            'GNR': 'taxable', 'ADS': 'taxable',
             'FRE': 'gst_free', 'FOA': 'gst_free',
             'ITS': 'input_taxed', 'IOA': 'input_taxed',
             'N-T': 'out_of_scope',
         }
         gst_treatment = TAX_CODE_TO_GST_TREATMENT.get(tax_code.upper(), '') if tax_code else ''
-        if gst_treatment:
+        if gst_treatment and not manual_treatment:
             txn.gst_treatment = gst_treatment
 
         # Update the AI suggestion fields so the row displays correctly
