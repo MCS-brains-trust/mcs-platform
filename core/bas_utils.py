@@ -243,13 +243,88 @@ def compute_period_status(fy, period_start, period_end, bas_period=None):
 
 # ── GST Calculation Engine (period-filtered) ─────────────────────────────────
 
+# ── Tax-treatment vocabulary ────────────────────────────────────────────────
+#
+# Two different vocabularies describe GST treatment in this codebase:
+#
+#   * "tax types"  — the long-form labels in PendingTransaction.TAX_TYPE_CHOICES
+#                    ("GST on Income", "GST Free Expenses", ...)
+#   * "tax codes"  — the MYOB-style codes on ChartOfAccount.tax_code
+#                    ("GST", "INP", "FRE", "CAP", "ITS", "N-T", ...)
+#
+# Several write paths store a tax *code* in PendingTransaction.confirmed_tax_type
+# without validating it against TAX_TYPE_CHOICES (core/views.py
+# review_approve_selected / review_confirm_transaction, core/views_bas.py
+# bas_reallocate_transaction and bas_bulk_reallocate). The engine therefore has
+# to understand both vocabularies: an unrecognised value used to fall through to
+# the account's default tax code, which is how transactions explicitly coded as
+# taxable ended up reported as GST-free (and vice versa).
+TAX_TREATMENT_ALIASES = {
+    # Canonical long-form tax types
+    "GST ON INCOME": "GST",
+    "GST ON EXPENSES": "INP",
+    "GST FREE INCOME": "FRE",
+    "GST FREE EXPENSES": "FRE",
+    "GST FREE": "FRE",
+    "INPUT TAXED": "ITS",
+    "BAS EXCLUDED": "N-T",
+    "NOT REPORTABLE": "N-T",
+    "N-T": "N-T",
+    # MYOB / chart-of-accounts tax codes
+    "GST": "GST",
+    "INP": "INP",
+    "GNR": "GST",
+    "ADS": "ADS",
+    "CAP": "CAP",
+    "FCA": "FCA",
+    "FRE": "FRE",
+    "FOA": "FOA",
+    "ITS": "ITS",
+    "IOA": "IOA",
+}
+
+# Treatment groups, direction-agnostic. A revenue line carrying "INP" (or an
+# expense line carrying "GST") is a direction mix-up in the source data, not a
+# reason to drop the amount or flip its GST treatment.
+TAXABLE_CODES = {"GST", "INP", "GNR", "CAP", "ADS"}
+GST_FREE_CODES = {"FRE", "FOA", "FCA"}
+INPUT_TAXED_CODES = {"ITS", "IOA"}
+CAPITAL_CODES = {"CAP", "FCA"}
+# Explicitly out of scope for the BAS: not merely GST-free, but excluded from
+# the worksheet entirely (drawings, loan principal, transfers, wages).
+NON_REPORTABLE_CODES = {"N-T"}
+
+
+def normalise_tax_treatment(raw):
+    """
+    Map either vocabulary onto a single internal tax code.
+
+    Returns "" when the value is empty or unrecognised, so callers can apply
+    their own fallback (usually the account's default tax code).
+    """
+    if not raw:
+        return ""
+    return TAX_TREATMENT_ALIASES.get(str(raw).strip().upper(), "")
+
+
 def calculate_gst_for_period(fy, period_start=None, period_end=None):
     """
     Calculate GST figures (G1–G20, 1A, 1B, Net) for a financial year,
     optionally filtered to a specific date range.
 
-    When period_start/period_end are None, calculates for the full year
-    (identical to the pre-redesign behaviour).
+    When period_start/period_end are None the full year is calculated, which
+    additionally picks up undated balances (imported trial balances, rollover
+    lines, journal-sourced adjustment lines) that cannot be attributed to a
+    single period.
+
+    The bank-statement portion is always derived from the underlying confirmed
+    PendingTransactions, for both the full-year and the period views. It used to
+    be calculated from the aggregated per-account TrialBalanceLine in the
+    full-year view, which destroyed the per-transaction tax treatment: a revenue
+    account holding both GST-free and taxable sales was reported 100% taxable
+    at the account's default tax code, and the whole balance was grossed up by
+    11/10. Sharing one source also makes the four quarters reconcile to the
+    full year whenever every dollar is bank-statement sourced.
 
     Returns a dict with:
         - bas_data: {G1, G2, ..., G20, 1A, 1B, gst_payable}
@@ -260,10 +335,7 @@ def calculate_gst_for_period(fy, period_start=None, period_end=None):
         - sales_transactions: [...]   (individual transaction details)
         - purchase_transactions: [...] (individual transaction details)
     """
-    from .models import (
-        ChartOfAccount, EntityChartOfAccount, TrialBalanceLine,
-        AdjustingJournal, JournalLine,
-    )
+    from .models import ChartOfAccount, EntityChartOfAccount
 
     entity = fy.entity
     entity_type = entity.entity_type
@@ -277,99 +349,106 @@ def calculate_gst_for_period(fy, period_start=None, period_end=None):
     for ecoa in EntityChartOfAccount.objects.filter(entity=entity):
         entity_coa_lookup[ecoa.account_code] = ecoa
 
-    # Get TB lines — for period filtering we need to handle two cases:
-    # 1. Non-adjustment TB lines (from imports/bank statements) — these represent
-    #    full-year balances and don't have individual dates. For period filtering,
-    #    we only include bank_statement-sourced lines that fall within the period.
-    # 2. Adjustment TB lines (from journals) — these have a linked journal with
-    #    a journal_date that we can filter on.
-
-    if period_start and period_end:
-        # Period-specific filtering
-        # For bank_statement lines, we need to match by the transaction dates
-        # For now, include all non-adjustment lines (they represent aggregated
-        # balances) and filter adjustment lines by journal date.
-        # The key insight: bank_statement TB lines are created per-account with
-        # aggregated balances. For period filtering, we need to look at the
-        # underlying PendingTransactions.
-        #
-        # APPROACH: For period-specific views, we recalculate from
-        # PendingTransactions (bank statement source) + JournalLines (adjustments)
-        # rather than using pre-aggregated TB lines.
-        return _calculate_gst_from_transactions(
-            fy, entity, entity_type, coa_lookup, entity_coa_lookup,
-            period_start, period_end
-        )
-    else:
-        # Full year — use existing TB line approach (preserves pre-redesign behaviour)
-        return _calculate_gst_from_tb_lines(
-            fy, entity, entity_type, coa_lookup, entity_coa_lookup
-        )
+    full_year = not (period_start and period_end)
+    return _calculate_gst(
+        fy, entity, entity_type, coa_lookup, entity_coa_lookup,
+        period_start or fy.start_date,
+        period_end or fy.end_date,
+        full_year=full_year,
+    )
 
 
-def _classify_line(account_code, tax_code, section, amount, coa_lookup, entity_coa_lookup, source=None):
+def _classify_line(account_code, tax_code, section, amount, coa_lookup,
+                   entity_coa_lookup, source=None, gross_up=None):
     """
     Classify a single account into BAS labels and return the
     contribution to each G-label bucket.
 
-    Returns (bas_label, g_contributions) where g_contributions is a dict
+    Returns (bas_label, g_contributions, amount) where g_contributions is a dict
     of label -> amount to add.
+
+    `amount` must already be GROSS (GST-inclusive) unless `gross_up` applies.
+    Aggregated TrialBalanceLines store NET amounts (ex-GST) with the GST in the
+    3380 control account, so those are grossed up by 11/10. Per-transaction
+    amounts come straight off the bank statement and are already gross — passing
+    gross_up=False for those avoids fabricating a further 10%.
     """
-    # BAS requires GROSS amounts (including GST).
-    # Bank statement TB lines store NET amounts (ex-GST) with GST in 3380 (GST payable control account).
-    if tax_code in ('INP', 'GST') and source == 'bank_statement':
-        amount = (amount * Decimal('11') / Decimal('10')).quantize(Decimal('0.01'))
+    if gross_up is None:
+        gross_up = source == "bank_statement"
+    if gross_up and tax_code in TAXABLE_CODES:
+        amount = (amount * Decimal("11") / Decimal("10")).quantize(Decimal("0.01"))
 
     contributions = {}
     bas_label = ""
+
+    # Explicitly non-reportable amounts stay off the worksheet entirely. They
+    # used to be reported as GST-free sales (G1/G3) or GST-free purchases
+    # (G11/G14), which overstated turnover and purchases on a lodged figure.
+    if tax_code in NON_REPORTABLE_CODES:
+        return "", {}, amount
 
     if section in ("revenue", "Revenue"):
         contributions["G1"] = amount
         bas_label = "G1"
 
-        if tax_code == "GST":
-            bas_label = "G1 (Taxable)"
-        elif tax_code == "ITS":
+        if tax_code in INPUT_TAXED_CODES:
             contributions["G4"] = amount
             bas_label = "G4 (Input Taxed)"
         elif tax_code == "ADS":
             contributions["G7"] = amount
             bas_label = "G7 (Adjustment)"
-        elif tax_code in ("", "FRE", "N-T"):
+        elif tax_code in GST_FREE_CODES or not tax_code:
             contributions["G3"] = amount
             bas_label = "G3 (GST-Free)"
+        elif tax_code in TAXABLE_CODES:
+            bas_label = "G1 (Taxable)"
 
     elif section in ("expenses", "Expenses", "cost_of_sales", "Cost of Sales"):
-        if tax_code in ("INP", "GST"):
-            contributions["G11"] = amount
-            bas_label = "G11 (Non-Capital)"
-        elif tax_code == "IOA":
+        if tax_code in CAPITAL_CODES:
+            contributions["G10"] = amount
+            bas_label = "G10 (Capital)"
+            if tax_code == "FCA":
+                contributions["G14"] = amount
+                bas_label = "G10/G14 (GST-Free Capital)"
+        elif tax_code in INPUT_TAXED_CODES:
             contributions["G11"] = amount
             contributions["G13"] = amount
             bas_label = "G11/G13 (Input Taxed)"
-        elif tax_code in ("FOA", "FRE"):
-            contributions["G11"] = amount
-            contributions["G14"] = amount
-            bas_label = "G11/G14 (GST-Free)"
         elif tax_code == "ADS":
             contributions["G11"] = amount
             contributions["G18"] = amount
             bas_label = "G11/G18 (Adjustment)"
+        elif tax_code in TAXABLE_CODES:
+            contributions["G11"] = amount
+            bas_label = "G11 (Non-Capital)"
         else:
             contributions["G11"] = amount
             contributions["G14"] = amount
-            bas_label = "G11/G14 (No GST)"
+            bas_label = "G11/G14 (GST-Free)" if tax_code else "G11/G14 (No GST)"
 
     elif section in ("assets", "Assets"):
-        if tax_code == "CAP":
-            contributions["G10"] = amount
-            bas_label = "G10 (Capital)"
-        elif tax_code == "FCA":
+        # Capital acquisitions belong at G10. Accounts with no tax code at all
+        # (bank accounts, receivables, loans) contribute nothing.
+        if tax_code == "FCA":
             contributions["G10"] = amount
             contributions["G14"] = amount
             bas_label = "G10/G14 (GST-Free Capital)"
+        elif tax_code in TAXABLE_CODES:
+            contributions["G10"] = amount
+            bas_label = "G10 (Capital)"
 
     return bas_label, contributions, amount
+
+
+def _display_tax_code(tax_code):
+    """Short label shown in the BAS detail tabs."""
+    if tax_code in NON_REPORTABLE_CODES:
+        return "N-T"
+    if tax_code in INPUT_TAXED_CODES:
+        return "ITS"
+    if tax_code in GST_FREE_CODES:
+        return "FRE"
+    return tax_code or "N-T"
 
 
 def _resolve_section_and_tax(account_code, coa_lookup, entity_coa_lookup, line_tax=""):
@@ -377,6 +456,8 @@ def _resolve_section_and_tax(account_code, coa_lookup, entity_coa_lookup, line_t
     coa = coa_lookup.get(account_code)
     ecoa = entity_coa_lookup.get(account_code)
 
+    # Section inferred from the tax type alone, for accounts that are not in any
+    # chart of accounts. Only the income/expense-specific labels imply a section.
     tax_type_map = {
         'GST on Income': ('revenue', 'GST'),
         'GST on Expenses': ('expenses', 'INP'),
@@ -392,6 +473,12 @@ def _resolve_section_and_tax(account_code, coa_lookup, entity_coa_lookup, line_t
             return None, None, "gst_clearing"
 
         mapped = tax_type_map.get(line_tax)
+        if mapped is None:
+            # Not a long-form tax type — it may still be a recognised tax code
+            # ("GST", "INP", "FRE", ...) written by an unvalidated confirm path.
+            normalised = normalise_tax_treatment(line_tax)
+            if normalised:
+                mapped = (None, normalised)
         if mapped and mapped[0]:
             return mapped[0], mapped[1], None
         elif mapped:
@@ -404,41 +491,103 @@ def _resolve_section_and_tax(account_code, coa_lookup, entity_coa_lookup, line_t
             return None, None, f"Not in chart of accounts" + (f" (tax: {line_tax})" if line_tax else "")
     else:
         section = ecoa.section if ecoa else coa.section
-        ecoa_tax = (ecoa.tax_code or "").upper().strip() if ecoa else ""
-        coa_tax = (coa.tax_code or "").upper().strip() if coa else ""
+        ecoa_tax = normalise_tax_treatment(ecoa.tax_code) if ecoa else ""
+        coa_tax = normalise_tax_treatment(coa.tax_code) if coa else ""
         base_tax = ecoa_tax or coa_tax
 
         # Transaction-level tax type (line_tax) takes precedence over the
         # account-level default (base_tax).  The account default is only
         # used as a fallback when no transaction-level type was supplied.
         # This ensures that a transaction confirmed as e.g. "GST Free Income"
-        # is classified as FRE even when the account's default is GST.
-        tax_map = {
-            'GST on Income': 'GST',
-            'GST on Expenses': 'INP',
-            'GST Free Income': 'FRE',
-            'GST Free Expenses': 'FRE',
-            'BAS Excluded': 'N-T',
-            'N-T': 'N-T',
-            'Input Taxed': 'ITS',
-            'GST': 'GST',
-            'GST Free': 'FRE',
-        }
-        if line_tax and line_tax in tax_map:
-            tax_code = tax_map[line_tax]
-        else:
-            tax_code = base_tax
+        # is classified as FRE even when the account's default is GST — the
+        # defect that reported a medical practice's GST-free income as taxable.
+        tax_code = normalise_tax_treatment(line_tax) or base_tax
 
         return section, tax_code, None
 
 
-def _calculate_gst_from_tb_lines(fy, entity, entity_type, coa_lookup, entity_coa_lookup):
+def _parse_txn_date(date_str):
     """
-    Full-year GST calculation using TB lines — identical to pre-redesign logic.
-    Also collects individual transaction details from PendingTransactions for
-    the GST Detail Report when available.
+    Parse a PendingTransaction.date string (a free-text CharField) into a date.
+
+    Returns None when no known format matches; callers must decide what to do
+    with an undatable transaction rather than silently dropping it.
     """
-    tb_lines = fy.trial_balance_lines.all()
+    from datetime import datetime as _dt
+
+    if not date_str:
+        return None
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d %b %Y"):
+        try:
+            return _dt.strptime(date_str.strip(), fmt).date()
+        except (ValueError, AttributeError):
+            continue
+    return None
+
+
+def _confirmed_transactions(fy, entity):
+    """
+    All confirmed bank-statement transactions that belong to this financial year.
+
+    Jobs are matched on the financial year when they carry one (legacy jobs may
+    not), so a second open year cannot leak its transactions into this year's
+    worksheet.
+    """
+    from review.models import PendingTransaction, ReviewJob
+
+    jobs = ReviewJob.objects.filter(entity=entity).filter(
+        Q(financial_year=fy) | Q(financial_year__isnull=True)
+    )
+    if not jobs.exists():
+        return PendingTransaction.objects.none()
+    return PendingTransaction.objects.filter(job__in=jobs, is_confirmed=True)
+
+
+def _txn_gross_and_gst(txn, tax_code):
+    """
+    Return (gross, gst) for a transaction under the resolved tax code.
+
+    The bank statement amount IS the gross (GST-inclusive) figure the BAS
+    worksheet asks for, so it is used directly — no 11/10 gross-up.
+
+    A stored GST amount is respected when present (it carries accountant
+    overrides and partial input tax credits). A zero on a taxable transaction
+    means "never calculated" rather than "no GST": several confirm paths force
+    confirmed_gst_amount to 0.00 whenever the stored tax type is not one of the
+    two long-form GST labels, so 91 transactions on the live file were taxable
+    with no GST recorded. Fall back to the ATO 1/11th method in that case.
+    """
+    gross = abs(txn.amount)
+    if tax_code not in TAXABLE_CODES:
+        return gross, Decimal("0.00")
+
+    stored = txn.confirmed_gst_amount
+    if stored is None:
+        stored = txn.gst_amount
+    stored = abs(stored or Decimal("0"))
+    if stored:
+        return gross, stored
+    return gross, (gross / Decimal("11")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _calculate_gst(fy, entity, entity_type, coa_lookup, entity_coa_lookup,
+                   window_start, window_end, full_year):
+    """
+    Build the GST calculation worksheet for a date window.
+
+    Three sources contribute, and each is read from exactly one place so that
+    the full-year view and the period views cannot disagree:
+
+    1. Bank statements — from the confirmed PendingTransactions dated inside the
+       window, using each transaction's own tax treatment and gross amount.
+       Falls back to bank_statement TrialBalanceLines only for entities that
+       have no review data at all.
+    2. Posted adjusting journals dated inside the window.
+    3. Undated balances (imported trial balances, rollover lines, journal-sourced
+       adjustment lines). These carry no transaction dates and so can only be
+       reported in the full-year view — unchanged from previous behaviour.
+    """
+    from .models import AdjustingJournal, TrialBalanceLine
 
     g_totals = {f"G{i}": Decimal("0") for i in range(1, 21)}
     sales_lines = []
@@ -448,94 +597,49 @@ def _calculate_gst_from_tb_lines(fy, entity, entity_type, coa_lookup, entity_coa
     sales_transactions = []
     purchase_transactions = []
 
-    for line in tb_lines:
-        line_tax = (getattr(line, 'tax_type', '') or '').strip()
-        section, tax_code, exclude_reason = _resolve_section_and_tax(
-            line.account_code, coa_lookup, entity_coa_lookup, line_tax
-        )
-
-        if exclude_reason == "gst_clearing":
-            excluded_lines.append({
-                "code": line.account_code,
-                "name": line.account_name,
-                "amount": abs(line.closing_balance),
-                "reason": "GST clearing account",
-            })
-            continue
-
-        if exclude_reason:
-            excluded_lines.append({
-                "code": line.account_code,
-                "name": line.account_name,
-                "amount": abs(line.closing_balance),
-                "reason": exclude_reason,
-            })
-            continue
-
-        # Determine amount
-        if line.closing_balance != 0:
-            amount = abs(line.closing_balance)
-        else:
-            amount = max(line.debit, line.credit)
-
-        bas_label, contributions, amount = _classify_line(
-            line.account_code, tax_code, section, amount,
-            coa_lookup, entity_coa_lookup, source=line.source
-        )
-
-        for label, val in contributions.items():
-            g_totals[label] = g_totals[label] + val
-
+    def _bucket_line(section, bas_label, line_data):
         if section in ("revenue", "Revenue"):
-            sales_lines.append({
-                "code": line.account_code,
-                "name": line.account_name,
-                "tax_code": tax_code or "N-T",
-                "amount": amount,
-                "bas_label": bas_label,
-            })
+            sales_lines.append(line_data)
         elif section in ("expenses", "Expenses", "cost_of_sales", "Cost of Sales"):
-            purchase_lines.append({
-                "code": line.account_code,
-                "name": line.account_name,
-                "tax_code": tax_code or "N-T",
-                "amount": amount,
-                "bas_label": bas_label,
-            })
+            purchase_lines.append(line_data)
         elif section in ("assets", "Assets") and bas_label:
-            capital_lines.append({
-                "code": line.account_code,
-                "name": line.account_name,
-                "tax_code": tax_code or "N-T",
-                "amount": amount,
-                "bas_label": bas_label,
-            })
+            capital_lines.append(line_data)
 
-    # ── Collect individual transaction details from PendingTransactions ──
-    from review.models import PendingTransaction, ReviewJob
-    from datetime import datetime as _dt
+    def _bucket_txn(section, txn_row, is_deposit):
+        if section in ("revenue", "Revenue"):
+            sales_transactions.append(txn_row)
+        elif section in ("expenses", "Expenses", "cost_of_sales", "Cost of Sales"):
+            purchase_transactions.append(txn_row)
+        elif section in ("assets", "Assets"):
+            purchase_transactions.append(txn_row)
+        else:
+            # No section (BAS Excluded, N-T, not in the chart of accounts).
+            # Still listed in the detail tabs so it can be found and reallocated;
+            # it contributes nothing to the G-labels.
+            (sales_transactions if is_deposit else purchase_transactions).append(txn_row)
 
-    jobs = ReviewJob.objects.filter(entity=entity)
-    if jobs.exists():
-        all_confirmed = PendingTransaction.objects.filter(
-            job__in=jobs,
-            is_confirmed=True,
-        )
+    # ── 1. Bank statement transactions ──────────────────────────────────────
+    all_confirmed = _confirmed_transactions(fy, entity)
+    has_review_data = all_confirmed.exists()
 
-        def _parse_txn_date_fy(date_str):
-            if not date_str:
-                return None
-            for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d %b %Y"):
-                try:
-                    return _dt.strptime(date_str.strip(), fmt).date()
-                except (ValueError, AttributeError):
-                    continue
-            return None
-
+    if has_review_data:
+        account_totals = {}
         for txn in all_confirmed:
-            txn_date = _parse_txn_date_fy(txn.date)
+            txn_date = _parse_txn_date(txn.date)
+            if not txn_date or txn_date < window_start or txn_date > window_end:
+                continue
+
             code = txn.confirmed_code or txn.ai_suggested_code
             if not code:
+                # Confirmed but never given an account code — it cannot be
+                # classified, but it must not vanish from a lodged figure
+                # without trace.
+                excluded_lines.append({
+                    "code": "—",
+                    "name": (txn.description or "")[:60] or "Uncoded transaction",
+                    "amount": abs(txn.amount),
+                    "reason": "No account code — not included in any BAS label",
+                })
                 continue
             name = txn.confirmed_name or txn.ai_suggested_name or code
             tax_type = txn.confirmed_tax_type or txn.ai_suggested_tax_type or ""
@@ -545,64 +649,79 @@ def _calculate_gst_from_tb_lines(fy, entity, entity_type, coa_lookup, entity_coa
             )
             if exclude_reason == "gst_clearing":
                 continue
-            # Even if exclude_reason is set (e.g. "Not in chart of accounts"),
-            # we still include the transaction in the detail tabs so the user
-            # can see and reallocate it.  It just won't contribute to G-totals.
 
-            # Use transaction-level tax_type for GST classification
-            gst_bearing_tax_types = ("GST on Income", "GST on Expenses")
-            non_gst_tax_types = ("GST Free Income", "GST Free Expenses", "BAS Excluded", "N-T", "Input Taxed")
-            if tax_type in gst_bearing_tax_types:
-                has_gst = True
-            elif tax_type in non_gst_tax_types:
-                has_gst = False
+            gross, gst = _txn_gross_and_gst(txn, tax_code)
+
+            # Aggregate by account *and* resolved tax treatment, so one account
+            # carrying both GST-free and taxable amounts produces one line per
+            # treatment instead of a single line at the account default.
+            if exclude_reason:
+                key = (code, name, tax_code, exclude_reason)
+                bucket = account_totals.setdefault(
+                    key, {"gross": Decimal("0"), "section": section,
+                          "exclude_reason": exclude_reason}
+                )
             else:
-                has_gst = tax_code in ("GST", "INP")
+                key = (code, name, tax_code, "")
+                bucket = account_totals.setdefault(
+                    key, {"gross": Decimal("0"), "section": section,
+                          "exclude_reason": ""}
+                )
+            bucket["gross"] += gross
 
-            gross = abs(txn.amount)
-            gst_amt = abs(txn.confirmed_gst_amount or txn.gst_amount or Decimal("0")) if has_gst else Decimal("0")
-            taxable = gross - gst_amt if has_gst else gross
-
-            # Determine display tax code from transaction tax type
-            display_tax_code = tax_code or "N-T"
-            if tax_type in ("GST Free Income", "GST Free Expenses"):
-                display_tax_code = "FRE"
-            elif tax_type in ("BAS Excluded", "N-T"):
-                display_tax_code = "N-T"
-            elif tax_type == "Input Taxed":
-                display_tax_code = "ITS"
-
-            txn_row = {
-                "date": txn_date or fy.start_date,
+            has_gst = tax_code in TAXABLE_CODES
+            _bucket_txn(section, {
+                "date": txn_date,
                 "txn_type": "Deposit" if txn.amount > 0 else "Expense",
                 "description": txn.description or "",
                 "account_code": code,
                 "account_name": name,
-                "tax_code": display_tax_code,
+                "tax_code": _display_tax_code(tax_code),
                 "has_gst": has_gst,
                 "gst_rate": Decimal("10.00") if has_gst else Decimal("0"),
-                "taxable_amount": taxable,
-                "gst_amount": gst_amt,
+                "taxable_amount": gross - gst,
+                "gst_amount": gst,
                 "gross_amount": gross,
                 "txn_id": str(txn.id),
-            }
-            if section in ("revenue", "Revenue"):
-                sales_transactions.append(txn_row)
-            elif section in ("expenses", "Expenses", "cost_of_sales", "Cost of Sales"):
-                purchase_transactions.append(txn_row)
-            elif section in ("assets", "Assets"):
-                purchase_transactions.append(txn_row)
-            else:
-                # section is None (N-T, BAS Excluded, not in COA, etc.)
-                # Use transaction direction as fallback
-                if txn.amount > 0:
-                    sales_transactions.append(txn_row)
-                else:
-                    purchase_transactions.append(txn_row)
+            }, txn.amount > 0)
 
-    # Also include journal entries as transaction details
-    from .models import AdjustingJournal
-    for journal in AdjustingJournal.objects.filter(financial_year=fy, status="posted"):
+        for (code, name, tax_code, _reason), bucket in account_totals.items():
+            if bucket["exclude_reason"]:
+                excluded_lines.append({
+                    "code": code, "name": name,
+                    "amount": bucket["gross"],
+                    "reason": bucket["exclude_reason"],
+                })
+                continue
+
+            bas_label, contributions, amount = _classify_line(
+                code, tax_code, bucket["section"], bucket["gross"],
+                coa_lookup, entity_coa_lookup, gross_up=False,
+            )
+            for label, val in contributions.items():
+                g_totals[label] = g_totals[label] + val
+            _bucket_line(bucket["section"], bas_label, {
+                "code": code, "name": name,
+                "tax_code": _display_tax_code(tax_code),
+                "amount": amount, "bas_label": bas_label,
+            })
+    else:
+        # No review data — fall back to the aggregated bank_statement TB lines.
+        for line in TrialBalanceLine.objects.filter(
+            financial_year=fy, source="bank_statement"
+        ):
+            _add_tb_line(
+                line, coa_lookup, entity_coa_lookup, g_totals,
+                excluded_lines, _bucket_line,
+            )
+
+    # ── 2. Posted adjusting journals dated inside the window ────────────────
+    counted_journal_ids = set()
+    for journal in AdjustingJournal.objects.filter(
+        financial_year=fy, status="posted",
+        journal_date__gte=window_start, journal_date__lte=window_end,
+    ):
+        counted_journal_ids.add(journal.pk)
         for jl in journal.lines.all():
             section, tax_code, exclude_reason = _resolve_section_and_tax(
                 jl.account_code, coa_lookup, entity_coa_lookup, ""
@@ -613,338 +732,34 @@ def _calculate_gst_from_tb_lines(fy, entity, entity_type, coa_lookup, entity_coa
             if amount == 0:
                 continue
 
-            has_gst = tax_code in ("GST", "INP")
-            txn_row = {
-                "date": journal.journal_date,
-                "txn_type": "Journal",
-                "description": f"{journal.reference_number}: {jl.description or journal.description}",
-                "account_code": jl.account_code,
-                "account_name": jl.account_name,
-                "tax_code": tax_code or "N-T",
-                "has_gst": has_gst,
-                "gst_rate": Decimal("10.00") if has_gst else Decimal("0"),
-                "taxable_amount": amount,
-                "gst_amount": (amount / Decimal("11")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) if has_gst else Decimal("0"),
-                "gross_amount": amount,
-            }
-            if section in ("revenue", "Revenue"):
-                sales_transactions.append(txn_row)
-            elif section in ("expenses", "Expenses", "cost_of_sales", "Cost of Sales"):
-                purchase_transactions.append(txn_row)
-
-    sales_transactions.sort(key=lambda x: x["date"])
-    purchase_transactions.sort(key=lambda x: x["date"])
-
-    return _build_bas_result(
-        g_totals, sales_lines, purchase_lines, capital_lines, excluded_lines,
-        sales_transactions=sales_transactions,
-        purchase_transactions=purchase_transactions,
-    )
-
-
-def _calculate_gst_from_transactions(fy, entity, entity_type, coa_lookup, entity_coa_lookup,
-                                      period_start, period_end):
-    """
-    Period-specific GST calculation.
-
-    Uses the same TB-line approach but filters lines that are relevant to
-    the period. For bank_statement-sourced lines, we check the underlying
-    PendingTransaction dates. For adjustment lines, we check journal dates.
-    For tb_import lines (annual imports), we pro-rate or include based on
-    the full-year approach (they don't have per-transaction dates).
-
-    PRACTICAL APPROACH for Sprint 3:
-    Since TB lines from bank statements are aggregated per-account and don't
-    carry individual transaction dates, and the spec says to filter by
-    transaction_date, we take a hybrid approach:
-    - bank_statement TB lines: Recalculate from PendingTransactions in the
-      date range, grouped by confirmed_code.
-    - adjustment TB lines: Include if the parent journal's journal_date
-      falls within the period.
-    - tb_import lines: Only include in Full Year view (handled by caller
-      passing period_start=None).
-    """
-    from .models import AdjustingJournal, JournalLine, TrialBalanceLine
-    from review.models import PendingTransaction, ReviewJob
-
-    g_totals = {f"G{i}": Decimal("0") for i in range(1, 21)}
-    sales_lines = []
-    purchase_lines = []
-    capital_lines = []
-    excluded_lines = []
-    # Individual transaction details for GST Detail Report
-    sales_transactions = []
-    purchase_transactions = []
-
-    # ── 1. Bank statement transactions in this period ──
-    jobs = ReviewJob.objects.filter(entity=entity)
-    if jobs.exists():
-        # Get confirmed transactions with dates in the period range.
-        # PendingTransaction.date is a CharField stored in various formats
-        # (e.g. "1/08/2025", "2025-08-01", "15/10/2025"). We cannot rely
-        # on lexicographic string comparison, so we fetch all confirmed
-        # transactions and filter in Python after parsing the date.
-        from datetime import datetime as _dt
-
-        all_confirmed = PendingTransaction.objects.filter(
-            job__in=jobs,
-            is_confirmed=True,
-        )
-
-        def _parse_txn_date(date_str):
-            """Parse a PendingTransaction date string into a date object."""
-            if not date_str:
-                return None
-            for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d %b %Y"):
-                try:
-                    return _dt.strptime(date_str.strip(), fmt).date()
-                except (ValueError, AttributeError):
-                    continue
-            return None
-
-        # ── Collect individual transactions AND aggregate by account ──
-        account_totals = {}
-        period_txns = []  # individual transactions within period
-        for txn in all_confirmed:
-            txn_date = _parse_txn_date(txn.date)
-            if not txn_date or txn_date < period_start or txn_date > period_end:
-                continue
-
-            code = txn.confirmed_code or txn.ai_suggested_code
-            if not code:
-                continue
-            name = txn.confirmed_name or txn.ai_suggested_name or code
-            tax_type = txn.confirmed_tax_type or txn.ai_suggested_tax_type or ""
-
-            key = (code, name, tax_type)
-            if key not in account_totals:
-                account_totals[key] = Decimal("0")
-            # Use net_amount (ex-GST) as that's what gets posted to TB
-            net = abs(txn.net_amount or txn.amount)
-            account_totals[key] += net
-
-            # Collect individual transaction detail
-            period_txns.append({
-                "date": txn_date,
-                "description": txn.description or "",
-                "gross_amount": abs(txn.amount),
-                "gst_amount": abs(txn.confirmed_gst_amount or txn.gst_amount or Decimal("0")),
-                "net_amount": net,
-                "account_code": code,
-                "account_name": name,
-                "tax_type": tax_type,
-                "txn_type": "Deposit" if txn.amount > 0 else "Expense",
-                "source": "bank_statement",
-                "txn_id": str(txn.id),
-            })
-
-        for (code, name, tax_type), total in account_totals.items():
-            section, tax_code, exclude_reason = _resolve_section_and_tax(
-                code, coa_lookup, entity_coa_lookup, tax_type
-            )
-
-            if exclude_reason == "gst_clearing":
-                continue
-            if exclude_reason:
-                excluded_lines.append({
-                    "code": code, "name": name,
-                    "amount": total, "reason": exclude_reason,
-                })
-                continue
-
-            bas_label, contributions, amount = _classify_line(
-                code, tax_code, section, total,
-                coa_lookup, entity_coa_lookup, source="bank_statement"
-            )
-
-            for label, val in contributions.items():
-                g_totals[label] = g_totals[label] + val
-
-            line_data = {
-                "code": code, "name": name,
-                "tax_code": tax_code or "N-T",
-                "amount": amount, "bas_label": bas_label,
-            }
-            if section in ("revenue", "Revenue"):
-                sales_lines.append(line_data)
-            elif section in ("expenses", "Expenses", "cost_of_sales", "Cost of Sales"):
-                purchase_lines.append(line_data)
-            elif section in ("assets", "Assets") and bas_label:
-                capital_lines.append(line_data)
-
-        # ── Classify individual transactions into sales/purchase detail ──
-        for txn_detail in period_txns:
-            section, tax_code, exclude_reason = _resolve_section_and_tax(
-                txn_detail["account_code"], coa_lookup, entity_coa_lookup,
-                txn_detail["tax_type"]
-            )
-            if exclude_reason == "gst_clearing":
-                continue
-            # Even if exclude_reason is set (e.g. "Not in chart of accounts"),
-            # we still include the transaction in the detail tabs so the user
-            # can see and reallocate it.  It just won't contribute to G-totals.
-
-            # Use the transaction-level tax_type to determine GST status.
-            # The COA-derived tax_code is used for BAS label aggregation, but
-            # individual transactions should reflect their actual confirmed
-            # tax treatment (e.g. a transaction confirmed as "GST Free Expenses"
-            # should appear in the GST-free section even if the COA account
-            # defaults to GST).
-            txn_tax_type = txn_detail.get("tax_type", "")
-            gst_bearing_tax_types = ("GST on Income", "GST on Expenses")
-            non_gst_tax_types = ("GST Free Income", "GST Free Expenses", "BAS Excluded", "N-T", "Input Taxed")
-
-            if txn_tax_type in gst_bearing_tax_types:
-                has_gst = True
-            elif txn_tax_type in non_gst_tax_types:
-                has_gst = False
-            else:
-                # Fallback to COA-derived tax_code
-                has_gst = tax_code in ("GST", "INP")
-
-            gst_rate = Decimal("10.00") if has_gst else Decimal("0")
-            gross = txn_detail["gross_amount"]
-            gst_amt = txn_detail["gst_amount"] if has_gst else Decimal("0")
-            taxable = gross - gst_amt if has_gst else gross
-
-            # Determine display tax code from the transaction tax type
-            display_tax_code = tax_code or "N-T"
-            if txn_tax_type in ("GST Free Income", "GST Free Expenses"):
-                display_tax_code = "FRE"
-            elif txn_tax_type == "BAS Excluded":
-                display_tax_code = "N-T"
-            elif txn_tax_type == "N-T":
-                display_tax_code = "N-T"
-            elif txn_tax_type == "Input Taxed":
-                display_tax_code = "ITS"
-
-            txn_row = {
-                "date": txn_detail["date"],
-                "txn_type": txn_detail["txn_type"],
-                "description": txn_detail["description"],
-                "account_code": txn_detail["account_code"],
-                "account_name": txn_detail["account_name"],
-                "tax_code": display_tax_code,
-                "has_gst": has_gst,
-                "gst_rate": gst_rate,
-                "taxable_amount": taxable,
-                "gst_amount": gst_amt,
-                "gross_amount": gross,
-                "txn_id": txn_detail.get("txn_id", ""),
-            }
-
-            # Route to sales or purchases based on section.
-            # If section is None (e.g. BAS Excluded, N-T, not in COA),
-            # fall back to transaction type: Deposit → sales, Expense → purchases.
-            if section in ("revenue", "Revenue"):
-                sales_transactions.append(txn_row)
-            elif section in ("expenses", "Expenses", "cost_of_sales", "Cost of Sales"):
-                purchase_transactions.append(txn_row)
-            elif section in ("assets", "Assets"):
-                purchase_transactions.append(txn_row)  # capital purchases in purchase detail
-            else:
-                # Fallback: use transaction direction
-                if txn_detail["txn_type"] == "Deposit":
-                    sales_transactions.append(txn_row)
-                else:
-                    purchase_transactions.append(txn_row)
-
-    # ── 2. TB lines from bank_statement source (fallback if no PendingTransactions) ──
-    # If no review jobs exist, fall back to TB lines with source=bank_statement
-    if not jobs.exists():
-        bank_tb_lines = TrialBalanceLine.objects.filter(
-            financial_year=fy,
-            source="bank_statement",
-        )
-        for line in bank_tb_lines:
-            line_tax = (getattr(line, 'tax_type', '') or '').strip()
-            section, tax_code, exclude_reason = _resolve_section_and_tax(
-                line.account_code, coa_lookup, entity_coa_lookup, line_tax
-            )
-            if exclude_reason:
-                if exclude_reason != "gst_clearing":
-                    excluded_lines.append({
-                        "code": line.account_code, "name": line.account_name,
-                        "amount": abs(line.closing_balance), "reason": exclude_reason,
-                    })
-                continue
-
-            if line.closing_balance != 0:
-                amount = abs(line.closing_balance)
-            else:
-                amount = max(line.debit, line.credit)
-
-            bas_label, contributions, amount = _classify_line(
-                line.account_code, tax_code, section, amount,
-                coa_lookup, entity_coa_lookup, source=line.source
-            )
-            for label, val in contributions.items():
-                g_totals[label] = g_totals[label] + val
-
-            line_data = {
-                "code": line.account_code, "name": line.account_name,
-                "tax_code": tax_code or "N-T",
-                "amount": amount, "bas_label": bas_label,
-            }
-            if section in ("revenue", "Revenue"):
-                sales_lines.append(line_data)
-            elif section in ("expenses", "Expenses", "cost_of_sales", "Cost of Sales"):
-                purchase_lines.append(line_data)
-            elif section in ("assets", "Assets") and bas_label:
-                capital_lines.append(line_data)
-
-    # ── 3. Adjusting journal lines within the period ──
-    journals = AdjustingJournal.objects.filter(
-        financial_year=fy,
-        status="posted",
-        journal_date__gte=period_start,
-        journal_date__lte=period_end,
-    )
-    for journal in journals:
-        for jl in journal.lines.all():
-            line_tax = ""
-            section, tax_code, exclude_reason = _resolve_section_and_tax(
-                jl.account_code, coa_lookup, entity_coa_lookup, line_tax
-            )
-            if exclude_reason:
-                continue
-
-            amount = max(jl.debit, jl.credit)
-            if amount == 0:
-                continue
-
             bas_label, contributions, amount = _classify_line(
                 jl.account_code, tax_code, section, amount,
-                coa_lookup, entity_coa_lookup, source="manual_journal"
+                coa_lookup, entity_coa_lookup, source="manual_journal",
             )
             for label, val in contributions.items():
                 g_totals[label] = g_totals[label] + val
-
-            line_data = {
+            _bucket_line(section, bas_label, {
                 "code": jl.account_code, "name": jl.account_name,
-                "tax_code": tax_code or "N-T",
+                "tax_code": _display_tax_code(tax_code),
                 "amount": amount, "bas_label": bas_label,
-            }
-            if section in ("revenue", "Revenue"):
-                sales_lines.append(line_data)
-            elif section in ("expenses", "Expenses", "cost_of_sales", "Cost of Sales"):
-                purchase_lines.append(line_data)
-            elif section in ("assets", "Assets") and bas_label:
-                capital_lines.append(line_data)
+            })
 
-            # Also add to transaction detail for journals
-            has_gst = tax_code in ("GST", "INP")
+            has_gst = tax_code in TAXABLE_CODES
+            gst = (
+                (amount / Decimal("11")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+                if has_gst else Decimal("0")
+            )
             txn_row = {
                 "date": journal.journal_date,
                 "txn_type": "Journal",
                 "description": f"{journal.reference_number}: {jl.description or journal.description}",
                 "account_code": jl.account_code,
                 "account_name": jl.account_name,
-                "tax_code": tax_code or "N-T",
+                "tax_code": _display_tax_code(tax_code),
                 "has_gst": has_gst,
                 "gst_rate": Decimal("10.00") if has_gst else Decimal("0"),
-                "taxable_amount": amount,
-                "gst_amount": (amount / Decimal("11")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) if has_gst else Decimal("0"),
+                "taxable_amount": amount - gst,
+                "gst_amount": gst,
                 "gross_amount": amount,
             }
             if section in ("revenue", "Revenue"):
@@ -952,7 +767,22 @@ def _calculate_gst_from_transactions(fy, entity, entity_type, coa_lookup, entity
             elif section in ("expenses", "Expenses", "cost_of_sales", "Cost of Sales"):
                 purchase_transactions.append(txn_row)
 
-    # Sort transactions by date
+    # ── 3. Undated balances — full-year view only ───────────────────────────
+    # Imported trial balances and rollover lines have no transaction dates, so
+    # they cannot be attributed to a quarter. Lines produced by a journal that
+    # step 2 already counted are skipped to avoid double counting; lines from a
+    # bulk journal upload (which creates no AdjustingJournal) are still picked
+    # up here, so they are not silently lost.
+    if full_year:
+        undated = TrialBalanceLine.objects.filter(financial_year=fy).exclude(
+            source="bank_statement"
+        ).exclude(source_journal_id__in=counted_journal_ids)
+        for line in undated:
+            _add_tb_line(
+                line, coa_lookup, entity_coa_lookup, g_totals,
+                excluded_lines, _bucket_line,
+            )
+
     sales_transactions.sort(key=lambda x: x["date"])
     purchase_transactions.sort(key=lambda x: x["date"])
 
@@ -962,6 +792,60 @@ def _calculate_gst_from_transactions(fy, entity, entity_type, coa_lookup, entity
         purchase_transactions=purchase_transactions,
     )
 
+
+def _add_tb_line(line, coa_lookup, entity_coa_lookup, g_totals,
+                 excluded_lines, bucket_line):
+    """
+    Fold one aggregated TrialBalanceLine into the G-label totals.
+
+    Used for imported/rollover balances and, for entities with no review data,
+    for bank_statement lines too. These are per-account aggregates carrying only
+    the account's default tax treatment; where confirmed transactions exist they
+    are superseded by the per-transaction calculation.
+    """
+    line_tax = (getattr(line, "tax_type", "") or "").strip()
+    section, tax_code, exclude_reason = _resolve_section_and_tax(
+        line.account_code, coa_lookup, entity_coa_lookup, line_tax
+    )
+
+    if exclude_reason == "gst_clearing":
+        excluded_lines.append({
+            "code": line.account_code,
+            "name": line.account_name,
+            "amount": abs(line.closing_balance),
+            "reason": "GST clearing account",
+        })
+        return
+    if exclude_reason:
+        excluded_lines.append({
+            "code": line.account_code,
+            "name": line.account_name,
+            "amount": abs(line.closing_balance),
+            "reason": exclude_reason,
+        })
+        return
+
+    if line.closing_balance != 0:
+        amount = abs(line.closing_balance)
+    else:
+        amount = max(line.debit, line.credit)
+    if amount == 0:
+        return
+
+    bas_label, contributions, amount = _classify_line(
+        line.account_code, tax_code, section, amount,
+        coa_lookup, entity_coa_lookup, source=line.source,
+    )
+    for label, val in contributions.items():
+        g_totals[label] = g_totals[label] + val
+
+    bucket_line(section, bas_label, {
+        "code": line.account_code,
+        "name": line.account_name,
+        "tax_code": _display_tax_code(tax_code),
+        "amount": amount,
+        "bas_label": bas_label,
+    })
 
 def _build_bas_result(g_totals, sales_lines, purchase_lines, capital_lines, excluded_lines,
                       sales_transactions=None, purchase_transactions=None):

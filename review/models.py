@@ -94,6 +94,67 @@ class ReviewJob(models.Model):
         return int((self.confirmed_count / self.flagged_count) * 100)
 
 
+# ── Tax type normalisation ──────────────────────────────────────────────────
+#
+# PendingTransaction.confirmed_tax_type is meant to hold one of
+# TAX_TYPE_CHOICES, but several endpoints wrote whatever the client sent —
+# including MYOB-style chart-of-accounts tax codes ("GST", "INP", "CAP"). Those
+# codes are not recognised by the confirm paths that decide whether GST applies,
+# so a transaction could be stored as taxable while its GST amount was forced to
+# zero, and the BAS then disagreed with the ledger.
+#
+# Callers should route user/API input through canonical_tax_type() so only
+# TAX_TYPE_CHOICES values are ever persisted. The capital-acquisition
+# distinction deliberately is not encoded here: whether a purchase is capital is
+# a property of the account it is coded to, not of its GST treatment.
+_TAX_CODE_TO_TAX_TYPE = {
+    "GST": ("GST on Income", "GST on Expenses"),
+    "INP": ("GST on Income", "GST on Expenses"),
+    "CAP": ("GST on Income", "GST on Expenses"),
+    "GNR": ("GST on Income", "GST on Expenses"),
+    "ADS": ("GST on Income", "GST on Expenses"),
+    "FRE": ("GST Free Income", "GST Free Expenses"),
+    "FOA": ("GST Free Income", "GST Free Expenses"),
+    "FCA": ("GST Free Income", "GST Free Expenses"),
+    "ITS": ("Input Taxed", "Input Taxed"),
+    "IOA": ("Input Taxed", "Input Taxed"),
+    "N-T": ("N-T", "N-T"),
+    "BAS EXCLUDED": ("BAS Excluded", "BAS Excluded"),
+    "NOT REPORTABLE": ("N-T", "N-T"),
+    "GST FREE": ("GST Free Income", "GST Free Expenses"),
+}
+
+# The two tax types that carry GST. Compare against this rather than repeating
+# the string literals, so a new taxable label cannot be missed in one place.
+TAXABLE_TAX_TYPES = frozenset({"GST on Income", "GST on Expenses"})
+
+
+def canonical_tax_type(raw, is_income=True):
+    """
+    Normalise a tax type or legacy tax code onto TAX_TYPE_CHOICES.
+
+    Returns "" for empty input and None for a value that is neither a canonical
+    tax type nor a recognised tax code, so callers can reject it explicitly
+    instead of persisting something the rest of the system cannot interpret.
+    """
+    if raw is None:
+        return ""
+    value = str(raw).strip()
+    if not value:
+        return ""
+    if value in {c for c, _ in PendingTransaction.TAX_TYPE_CHOICES if c}:
+        return value
+    mapped = _TAX_CODE_TO_TAX_TYPE.get(value.upper())
+    if mapped:
+        return mapped[0] if is_income else mapped[1]
+    return None
+
+
+def is_taxable_tax_type(raw, is_income=True):
+    """True when the tax type (or legacy tax code) attracts GST."""
+    return canonical_tax_type(raw, is_income) in TAXABLE_TAX_TYPES
+
+
 class PendingTransaction(models.Model):
     """
     Represents a single flagged transaction awaiting review.
