@@ -1,0 +1,87 @@
+name: E2E Regression Suite
+
+# Runs on a self-hosted runner on the application droplet, deliberately.
+#
+# The suite needs a restored copy of the production database, which contains real
+# client financial data. GitHub-hosted runners would mean uploading that to
+# infrastructure outside the firm's control on every run, so the data never leaves the
+# droplet it already lives on.
+
+on:
+  pull_request:
+    branches: [main]
+  schedule:
+    # Nightly, after which the data is refreshed from production so the suite keeps
+    # running against representative rather than steadily staler data.
+    - cron: "0 17 * * *"  # 03:00 AEST
+  workflow_dispatch:
+    inputs:
+      refresh_data:
+        description: "Refresh the E2E database from production first"
+        type: boolean
+        default: false
+
+concurrency:
+  # The rig has one template database and one port per tier, so concurrent runs would
+  # fight over both. Queue instead of racing.
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tier1:
+    name: Tier 1 route sweep
+    runs-on: self-hosted
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Refresh E2E database
+        # Nightly and on explicit request only. A refresh on every pull request would
+        # add several minutes and, more importantly, would change the data underneath
+        # the committed status baseline — making unrelated pull requests fail on
+        # differences in production data rather than on their own changes.
+        if: github.event_name == 'schedule' || inputs.refresh_data
+        run: bash scripts/refresh_e2e_db.sh
+
+      - name: Install suite dependencies
+        working-directory: e2e
+        run: npm ci
+
+      - name: Verify route manifest is current
+        # A pull request that adds a route without regenerating the manifest would
+        # otherwise pass while leaving the new route uncovered.
+        run: |
+          source venv/bin/activate
+          python3 manage.py e2e_dump_routes --settings=config.settings_e2e \
+            --output=/tmp/routes.check.json
+          if ! diff -q <(python3 -c "import json;d=json.load(open('/tmp/routes.check.json'));print(json.dumps([r['name'] for r in d['routes']],indent=0))") \
+                       <(python3 -c "import json;d=json.load(open('e2e/tier1/routes.manifest.json'));print(json.dumps([r['name'] for r in d['routes']],indent=0))"); then
+            echo "::error::Route manifest is stale. Regenerate with:"
+            echo "::error::  python3 manage.py e2e_dump_routes --settings=config.settings_e2e"
+            exit 1
+          fi
+
+      - name: Run Tier 1
+        working-directory: e2e
+        run: npx playwright test --project=tier1
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-tier1
+          path: |
+            e2e/playwright-report
+            e2e/test-results
+          retention-days: 14
+
+      - name: Upload Django log
+        # DEBUG is False so the browser never sees a traceback; the log is where the
+        # actual cause of a failing route lives.
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: django-log
+          path: .e2e/logs/django.log
+          retention-days: 14

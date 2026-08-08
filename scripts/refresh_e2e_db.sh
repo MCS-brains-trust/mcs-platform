@@ -138,6 +138,24 @@ fi
 MARKED="$(psql_e2e -d "${E2E_TEMPLATE_DB}" -tAc "SELECT count(*) FROM e2e_marker WHERE is_e2e;")"
 [[ "${MARKED}" -ge 1 ]] || fail "e2e_marker missing after hardening"
 
+# --- Mirror media -----------------------------------------------------------
+# The database references uploaded files by path, so restoring rows without the
+# files leaves every page that renders one — the firm logo on the dashboard, a
+# governing document, a workpaper template — serving a broken asset. Tier 1 treats a
+# 404 sub-resource as a failure, correctly, so the files have to come across too.
+#
+# A copy, not a symlink: settings_e2e points MEDIA_ROOT here, and the suite
+# generates statements and packages, which under a symlink would be written into
+# production's media tree.
+#
+# Direction is production → E2E and must stay that way. --delete makes the E2E tree
+# a faithful mirror, which also clears whatever the previous run generated.
+
+log "mirroring media (${REPO_DIR}/media → ${E2E_DIR}/media)"
+mkdir -p "${E2E_DIR}/media"
+rsync -a --delete "${REPO_DIR}/media/" "${E2E_DIR}/media/"
+log "media mirrored ($(du -sh "${E2E_DIR}/media" | cut -f1))"
+
 # --- Seal as template -------------------------------------------------------
 # datistemplate lets test files branch from it; datallowconn stays on so the
 # bootstrap commands can still write to it between refreshes.
