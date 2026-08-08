@@ -350,8 +350,17 @@ def noa_tracker(request):
 @login_required
 def asic_returns_list(request):
     """ASIC returns list."""
-    items = ASICReturn.objects.select_related("entity").all()[:100]
-    burning_count = items.filter(status="burning").count()
+    # burning_count is counted against the full table rather than the sliced page.
+    # Filtering the sliced queryset raised "Cannot filter a query once a slice has been
+    # taken" and returned HTTP 500 for every request to this page; it would also have
+    # under-reported the badge, since a burning return beyond the first 100 rows would
+    # not have been counted.
+    burning_count = ASICReturn.objects.filter(status="burning").count()
+
+    # Ordered before slicing: a LIMIT without ORDER BY leaves it to the database which
+    # 100 rows come back, so the page could show a different set each load. Due date
+    # matches how burning_list presents the same records.
+    items = ASICReturn.objects.select_related("entity").order_by("due_date")[:100]
     context = {
         "items": items,
         "burning_count": burning_count,

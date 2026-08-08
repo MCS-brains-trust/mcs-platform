@@ -119,6 +119,14 @@ const GENERATE_URL = '{% url "core:generate_partner_statements" pk=fy.pk %}';
 const NET_PROFIT = {{ net_profit|default:0 }};
 
 function recalcPartners() {
+    // The allocation table is only rendered on the success branch of this template.
+    // On the error branch (a year with no partners, or a non-partnership entity) these
+    // elements do not exist, and this script block sits outside that conditional.
+    // Without the guard the page threw "Cannot set properties of null".
+    const totalPctCell = document.getElementById('total-pct');
+    const totalShareCell = document.getElementById('total-share');
+    if (!totalPctCell || !totalShareCell) return;
+
     let totalPct = 0;
     let totalShare = 0;
     document.querySelectorAll('#partner-body tr').forEach(row => {
@@ -128,9 +136,9 @@ function recalcPartners() {
         totalPct += pct;
         totalShare += share;
     });
-    document.getElementById('total-pct').textContent = totalPct.toFixed(1) + '%';
-    document.getElementById('total-pct').className = Math.abs(totalPct - 100) < 0.01 ? 'text-end text-success' : 'text-end text-danger';
-    document.getElementById('total-share').textContent = '$' + totalShare.toFixed(2);
+    totalPctCell.textContent = totalPct.toFixed(1) + '%';
+    totalPctCell.className = Math.abs(totalPct - 100) < 0.01 ? 'text-end text-success' : 'text-end text-danger';
+    totalShareCell.textContent = '$' + totalShare.toFixed(2);
 }
 
 function generateStatements() {

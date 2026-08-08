@@ -32,7 +32,11 @@ from .forms import (
     MeetingNoteForm,
 )
 from django import forms
-from config.authorization import get_entity_for_user, get_financial_year_for_user
+from config.authorization import (
+    authorize_entity_or_client_scoped,
+    get_entity_for_user,
+    get_financial_year_for_user,
+)
 import re as _re_mod
 
 
@@ -1304,7 +1308,7 @@ def entity_create(request, client_pk=None):
     else:
         form = EntityForm(user=request.user)
     return render(request, "core/entity_form.html", {
-        "form": form, "title": "Create Entity"
+        "form": form, "title": "Create Entity", "is_edit": False
     })
 
 
@@ -1416,7 +1420,7 @@ def entity_edit(request, pk):
     else:
         form = EntityForm(instance=entity, user=request.user)
     return render(request, "core/entity_form.html", {
-        "form": form, "title": f"Edit: {entity.entity_name}"
+        "form": form, "title": f"Edit: {entity.entity_name}", "is_edit": True
     })
 
 
@@ -6884,6 +6888,7 @@ def entity_officer_create(request, entity_pk):
     return render(request, "core/entity_officer_form.html", {
         "form": form,
         "entity": entity,
+        "is_edit": False,
     })
 
 
@@ -6917,6 +6922,7 @@ def entity_officer_edit(request, pk):
     return render(request, "core/entity_officer_form.html", {
         "form": form,
         "entity": entity,
+        "is_edit": True,
     })
 
 
@@ -7602,46 +7608,78 @@ def associate_create(request, entity_pk):
     else:
         form = ClientAssociateForm()
     return render(request, "core/associate_form.html", {
-        "form": form, "entity": entity, "title": "Add Associate"
+        "form": form,
+        "entity": entity,
+        "client": entity.client,
+        # Always entity-scoped here (the route takes entity_pk), but the shared template
+        # links to back_url, so it must be supplied.
+        "back_url": reverse("core:entity_detail", kwargs={"pk": entity.pk}) + "#associates",
+        "title": "Add Associate",
     })
+
+
+def _entity_or_client_back_url(entity, fragment=""):
+    """
+    Where to send the user after acting on an entity- or client-scoped record.
+
+    ClientAssociate and MeetingNote may be scoped to a client with no entity, in which
+    case there is no entity_detail page to return to. There is no client detail route
+    (core:client_list resolves to entity_list), so the client list is the closest
+    equivalent landing page.
+    """
+    if entity is not None:
+        return reverse("core:entity_detail", kwargs={"pk": entity.pk}) + fragment
+    return reverse("core:client_list")
 
 
 @login_required
 def associate_edit(request, pk):
-    assoc = get_object_or_404(ClientAssociate, pk=pk)
-    entity = assoc.entity
-    get_entity_for_user(request, entity.pk)  # IDOR check
+    assoc = get_object_or_404(
+        ClientAssociate.objects.select_related("entity", "entity__client", "client"), pk=pk
+    )
+    # entity may be None: these records can be scoped to a client instead, which is how
+    # every associate row in production is stored.
+    entity = authorize_entity_or_client_scoped(request, assoc, "this associate")
+    back_url = _entity_or_client_back_url(entity, "#associates")
+
     if not request.user.can_edit:
         messages.error(request, "You do not have permission to edit associates.")
-        return redirect("core:entity_detail", pk=entity.pk)
+        return redirect(back_url)
 
     if request.method == "POST":
         form = ClientAssociateForm(request.POST, instance=assoc)
         if form.is_valid():
             form.save()
             messages.success(request, f"Associate '{assoc.name}' updated.")
-            return redirect("core:entity_detail", pk=entity.pk)
+            return redirect(back_url)
     else:
         form = ClientAssociateForm(instance=assoc)
     return render(request, "core/associate_form.html", {
-        "form": form, "entity": entity, "title": f"Edit: {assoc.name}"
+        "form": form,
+        "entity": entity,
+        "client": assoc.client,
+        "back_url": back_url,
+        "title": f"Edit: {assoc.name}",
     })
 
 
 @login_required
 def associate_delete(request, pk):
-    assoc = get_object_or_404(ClientAssociate, pk=pk)
-    entity = assoc.entity
-    get_entity_for_user(request, entity.pk)  # IDOR check
+    assoc = get_object_or_404(
+        ClientAssociate.objects.select_related("entity", "entity__client", "client"), pk=pk
+    )
+    entity = authorize_entity_or_client_scoped(request, assoc, "this associate")
+    back_url = _entity_or_client_back_url(entity, "#associates")
+
     if not request.user.can_edit:
         messages.error(request, "You do not have permission to delete associates.")
-        return redirect("core:entity_detail", pk=entity.pk)
+        return redirect(back_url)
 
     if request.method == "POST":
         name = assoc.name
         assoc.delete()
         messages.success(request, f"Associate '{name}' removed.")
-    return redirect("core:entity_detail", pk=entity.pk)
+    return redirect(back_url)
 
 
 # ---------------------------------------------------------------------------
@@ -7820,63 +7858,85 @@ def meeting_note_create(request, entity_pk):
     else:
         form = MeetingNoteForm(initial={"meeting_date": timezone.now().date()})
     return render(request, "core/meeting_note_form.html", {
-        "form": form, "entity": entity, "title": "New Meeting Note"
+        "form": form,
+        "entity": entity,
+        "client": entity.client,
+        "back_url": reverse("core:entity_detail", kwargs={"pk": entity.pk}) + "#notes",
+        "title": "New Meeting Note",
     })
 
 
 @login_required
 def meeting_note_edit(request, pk):
-    note = get_object_or_404(MeetingNote, pk=pk)
-    entity = note.entity
-    get_entity_for_user(request, entity.pk)  # IDOR check
+    note = get_object_or_404(
+        MeetingNote.objects.select_related("entity", "entity__client", "client"), pk=pk
+    )
+    # entity may be None: notes can be scoped to a client instead, which is how every
+    # note row in production is stored.
+    entity = authorize_entity_or_client_scoped(request, note, "this meeting note")
+    back_url = _entity_or_client_back_url(entity, "#notes")
+
     if not request.user.can_edit:
         messages.error(request, "You do not have permission.")
-        return redirect("core:entity_detail", pk=entity.pk)
+        return redirect(back_url)
 
     if request.method == "POST":
         form = MeetingNoteForm(request.POST, instance=note)
         if form.is_valid():
             form.save()
             messages.success(request, f"Meeting note '{note.title}' updated.")
-            return redirect("core:entity_detail", pk=entity.pk)
+            return redirect(back_url)
     else:
         form = MeetingNoteForm(instance=note)
     return render(request, "core/meeting_note_form.html", {
-        "form": form, "entity": entity, "title": f"Edit: {note.title}"
+        "form": form,
+        "entity": entity,
+        "client": note.client,
+        "back_url": back_url,
+        "title": f"Edit: {note.title}",
     })
 
 
 @login_required
 def meeting_note_detail(request, pk):
-    note = get_object_or_404(MeetingNote, pk=pk)
-    entity = note.entity
-    get_entity_for_user(request, entity.pk)  # IDOR check
+    note = get_object_or_404(
+        MeetingNote.objects.select_related("entity", "entity__client", "client"), pk=pk
+    )
+    entity = authorize_entity_or_client_scoped(request, note, "this meeting note")
     return render(request, "core/meeting_note_detail.html", {
-        "note": note, "entity": entity,
+        "note": note,
+        "entity": entity,
+        "client": note.client,
+        "back_url": _entity_or_client_back_url(entity, "#notes"),
     })
 
 
 @login_required
 def meeting_note_delete(request, pk):
-    note = get_object_or_404(MeetingNote, pk=pk)
-    entity = note.entity
-    get_entity_for_user(request, entity.pk)  # IDOR check
+    note = get_object_or_404(
+        MeetingNote.objects.select_related("entity", "entity__client", "client"), pk=pk
+    )
+    entity = authorize_entity_or_client_scoped(request, note, "this meeting note")
+    back_url = _entity_or_client_back_url(entity, "#notes")
+
     if not request.user.can_edit:
         messages.error(request, "You do not have permission.")
-        return redirect("core:entity_detail", pk=entity.pk)
+        return redirect(back_url)
 
     if request.method == "POST":
         title = note.title
         note.delete()
         messages.success(request, f"Meeting note '{title}' deleted.")
-    return redirect("core:entity_detail", pk=entity.pk)
+    return redirect(back_url)
 
 
 @login_required
 def meeting_note_toggle_followup(request, pk):
     """HTMX endpoint to toggle follow-up completion."""
-    note = get_object_or_404(MeetingNote, pk=pk)
-    get_entity_for_user(request, note.entity.pk)  # IDOR check
+    note = get_object_or_404(
+        MeetingNote.objects.select_related("entity", "entity__client", "client"), pk=pk
+    )
+    authorize_entity_or_client_scoped(request, note, "this meeting note")
     if not request.user.can_edit:
         return JsonResponse({"error": "Permission denied"}, status=403)
     note.follow_up_completed = not note.follow_up_completed

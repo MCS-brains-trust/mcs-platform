@@ -105,6 +105,47 @@ class EntityForm(forms.ModelForm):
         if user and not user.is_senior:
             self.fields.pop("assigned_accountant", None)
 
+    def _unchanged(self, field, value):
+        """True when *value* matches what was already stored for this instance.
+
+        Legacy records predate checksum validation (e.g. a trust saved with an
+        8-digit TFN). Grandfathering unchanged values keeps those records
+        editable while still blocking newly-entered invalid identifiers.
+        """
+        from core.validators import normalise
+        original = self.initial.get(field) or getattr(self.instance, field, "")
+        return normalise(original) == normalise(value)
+
+    def clean_abn(self):
+        from core.validators import is_valid_abn
+        value = self.cleaned_data.get("abn", "")
+        if value and not self._unchanged("abn", value) and not is_valid_abn(value):
+            raise forms.ValidationError(
+                "That ABN is not valid — check for a mistyped or transposed digit. "
+                "An ABN is 11 digits and carries a check digit."
+            )
+        return value
+
+    def clean_acn(self):
+        from core.validators import is_valid_acn
+        value = self.cleaned_data.get("acn", "")
+        if value and not self._unchanged("acn", value) and not is_valid_acn(value):
+            raise forms.ValidationError(
+                "That ACN is not valid — check for a mistyped or transposed digit. "
+                "An ACN is 9 digits and carries a check digit."
+            )
+        return value
+
+    def clean_tfn(self):
+        from core.validators import is_valid_tfn
+        value = self.cleaned_data.get("tfn", "")
+        if value and not self._unchanged("tfn", value) and not is_valid_tfn(value):
+            raise forms.ValidationError(
+                "That TFN is not valid — check for a mistyped or transposed digit. "
+                "A TFN is 9 digits and carries a check digit."
+            )
+        return value
+
     def clean(self):
         cleaned = super().clean()
         entity_type = cleaned.get("entity_type", "")

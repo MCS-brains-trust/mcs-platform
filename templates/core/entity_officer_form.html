@@ -1,17 +1,17 @@
 {% extends "base.html" %}
 
-{% block title %}{% if form.instance.pk %}Edit{% else %}Add{% endif %} {% if entity.entity_type == 'sole_trader' %}Proprietor{% else %}Officer{% endif %} - {{ entity.entity_name }} | StatementHub{% endblock %}
+{% block title %}{% if is_edit %}Edit{% else %}Add{% endif %} {% if entity.entity_type == 'sole_trader' %}Proprietor{% else %}Officer{% endif %} - {{ entity.entity_name }} | StatementHub{% endblock %}
 
 {% block content %}
 <div class="mb-4">
-    <h2>{% if form.instance.pk %}Edit{% else %}Add{% endif %} {% if entity.entity_type == 'sole_trader' %}Proprietor{% else %}Officer / Signatory{% endif %}</h2>
+    <h2>{% if is_edit %}Edit{% else %}Add{% endif %} {% if entity.entity_type == 'sole_trader' %}Proprietor{% else %}Officer / Signatory{% endif %}</h2>
     <p class="text-muted">
         <a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a>
         &raquo;
         <a href="{% url 'core:entity_detail' entity.pk %}">{{ entity.entity_name }}</a>
         &raquo;
         <a href="{% url 'core:entity_officers' entity.pk %}">Officers</a>
-        &raquo; {% if form.instance.pk %}Edit{% else %}Add{% endif %}
+        &raquo; {% if is_edit %}Edit{% else %}Add{% endif %}
     </p>
 </div>
 
@@ -111,7 +111,7 @@
 
             <div class="d-flex gap-2">
                 <button type="submit" class="btn btn-primary">
-                    <i class="bi bi-check-lg"></i> {% if form.instance.pk %}Update{% else %}Add{% endif %} {% if entity.entity_type == 'sole_trader' %}Proprietor{% else %}Officer{% endif %}
+                    <i class="bi bi-check-lg"></i> {% if is_edit %}Update{% else %}Add{% endif %} {% if entity.entity_type == 'sole_trader' %}Proprietor{% else %}Officer{% endif %}
                 </button>
                 <a href="{% url 'core:entity_officers' entity.pk %}" class="btn btn-outline-secondary">Cancel</a>
             </div>

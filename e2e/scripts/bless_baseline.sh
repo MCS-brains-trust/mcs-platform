@@ -77,7 +77,17 @@ merged = {**old, **observed}
 # that is broken from a route nobody has looked at yet.
 old_known = set(json.loads(baseline_path.read_text()).get("known_failures", [])
                 if baseline_path.exists() else [])
-known = sorted(old_known | set(server_errors))
+
+# A previously-known failure that was observed returning under 500 has been fixed, so it
+# is dropped. Entries not seen in this run are kept, because a filtered run is no
+# evidence that they are fixed.
+fixed = {k for k in old_known if k in observed}
+known = sorted((old_known - fixed) | set(server_errors))
+
+if fixed:
+    print(f"\n{len(fixed)} previously-broken route(s) now return a non-5xx status:")
+    for k in sorted(fixed):
+        print(f"  FIXED {k}: {observed[k]}")
 
 baseline_path.write_text(json.dumps({
     "_comment": (

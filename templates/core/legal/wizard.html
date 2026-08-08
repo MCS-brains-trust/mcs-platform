@@ -243,10 +243,21 @@
     {% endif %}
 </div>
 
+{% comment %}
+variable_schema and pre_populated are Python dicts, so rendering them with |safe emitted
+Python's repr — True/False/None, which are not defined in JavaScript. That threw
+"False is not defined" and broke every script on this page. json_script serialises to
+real JSON and escapes it safely, which also matters because pre_populated carries entity
+data: a client name containing a closing script tag would otherwise have broken out of
+this block.
+{% endcomment %}
+{{ variable_schema|json_script:"variable-schema-data" }}
+{{ pre_populated|json_script:"pre-populated-data" }}
+
 <script>
 const CSRF_TOKEN = '{{ csrf_token }}';
 const GENERATE_URL = '{% url "core:legal_doc_generate" pk=fy.pk doc_type=doc_type %}';
-const VARIABLE_SCHEMA = {{ variable_schema|safe }};
+const VARIABLE_SCHEMA = JSON.parse(document.getElementById('variable-schema-data').textContent);
 let generatedDocId = null;
 
 function goToStep(step) {
@@ -263,7 +274,7 @@ function goToStep(step) {
 document.addEventListener('DOMContentLoaded', function() {
     const container = document.getElementById('custom-fields-container');
     const vars = VARIABLE_SCHEMA.variables || [];
-    const prePopulated = {{ pre_populated|safe }};
+    const prePopulated = JSON.parse(document.getElementById('pre-populated-data').textContent);
 
     vars.forEach(v => {
         if (prePopulated[v]) return; // Skip pre-populated fields
