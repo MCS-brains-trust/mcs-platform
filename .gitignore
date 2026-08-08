@@ -48,3 +48,10 @@ test_fixtures/*.pdf
 # Data-repair snapshots hold live client transaction detail — keep them on the
 # server that ran the repair, never in the repository.
 data_fixes/*snapshot*.json
+
+# E2E test rig — local DB dumps, credentials, generated media, auth state
+.e2e/
+e2e/node_modules/
+e2e/test-results/
+e2e/playwright-report/
+e2e/.auth/
