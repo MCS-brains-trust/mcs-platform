@@ -48,9 +48,17 @@ def dump_figures(financial_year) -> dict:
         )
 
     journals = []
+    # Ordered by (journal_type, journal_date, description, pk). The first three
+    # alone tie for real: depreciation_post_to_tb() reverses and re-posts on every
+    # call, so a year can hold several DEPRECIATION/DEPRECIATION_REVERSAL journals
+    # that all share journal_type, the fixed year-end journal_date, and a
+    # description built from a fixed template — exactly the rows a later task's
+    # idempotency check (dump after first post vs. dump after second post) depends
+    # on comparing byte-for-byte. Without the pk tie-break that comparison could
+    # fail on row order alone, which is not the idempotency bug it would appear to be.
     for journal in (
         AdjustingJournal.objects.filter(financial_year=financial_year)
-        .order_by("journal_type", "journal_date", "description")
+        .order_by("journal_type", "journal_date", "description", "pk")
         .prefetch_related("lines")
     ):
         journals.append(
@@ -60,6 +68,15 @@ def dump_figures(financial_year) -> dict:
                 "description": journal.description,
                 "total_debit": _money(journal.total_debit),
                 "total_credit": _money(journal.total_credit),
+                # (account_code, line_number) is not a DB-enforced unique key, but
+                # every JournalLine creation path in the app assigns strictly
+                # increasing line_number values within one journal (and edits
+                # renumber from 1 on save), so the pair is unique in practice.
+                # Belt-and-braces: journal.lines.all() already comes back ordered
+                # by JournalLine.Meta.ordering = ["line_number", "id"], and
+                # Python's sorted() is stable, so even a hypothetical tie would
+                # keep a deterministic id-based sub-order rather than an arbitrary
+                # one — no explicit pk key needed here.
                 "lines": [
                     {
                         "account_code": jl.account_code,
@@ -74,6 +91,9 @@ def dump_figures(financial_year) -> dict:
             }
         )
 
+    # Ordered by (asset_name, pk) for the same reason as the trial balance and
+    # journals above: nothing stops two assets sharing a name (e.g. two "Laptop"
+    # entries bought in the same year), so asset_name alone is not a total order.
     depreciation = [
         {
             "asset_name": asset.asset_name,
@@ -86,7 +106,7 @@ def dump_figures(financial_year) -> dict:
         }
         for asset in DepreciationAsset.objects.filter(
             financial_year=financial_year
-        ).order_by("asset_name")
+        ).order_by("asset_name", "pk")
     ]
 
     return {

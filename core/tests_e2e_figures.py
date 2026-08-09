@@ -45,3 +45,44 @@ class DumpFiguresTests(TestCase):
     def test_depreciation_rows_come_from_the_year_being_dumped(self):
         self.assertEqual(len(dump_figures(self.current)["depreciation"]), 1)
         self.assertEqual(len(dump_figures(self.prior)["depreciation"]), 0)
+
+    def test_tied_journals_order_by_pk_not_insertion_order(self):
+        # depreciation_post_to_tb() reverses and re-posts on every call, so a year
+        # can end up holding several journals that share journal_type, the fixed
+        # year-end journal_date, and a description built from a fixed template —
+        # exactly the tie the brief's three ordering keys can't break on their own.
+        # A later task's idempotency check dumps figures after a first post and
+        # again after a second post and diffs them, so this tie has to resolve the
+        # same way every time regardless of which journal the DB happened to
+        # create first.
+        #
+        # Insert the journal with the *lower* pk second, so "creation order" and
+        # "pk order" actively disagree. If dump_figures ever loses its pk
+        # tie-break, ties fall back to something like insertion order and the
+        # assertion below flips — this is the regression a silent order_by edit
+        # would otherwise sail through.
+        from core.models import AdjustingJournal
+
+        tied_fields = dict(
+            financial_year=self.current,
+            journal_type=AdjustingJournal.JournalType.DEPRECIATION,
+            journal_date=self.current.end_date,
+            description="Depreciation for year ended tie test",
+        )
+        AdjustingJournal.objects.create(
+            pk="e2e00000-0000-4000-8000-0000000000b1",
+            total_debit="111.11",
+            total_credit="111.11",
+            **tied_fields,
+        )
+        AdjustingJournal.objects.create(
+            pk="e2e00000-0000-4000-8000-0000000000a1",
+            total_debit="222.22",
+            total_credit="222.22",
+            **tied_fields,
+        )
+
+        journals = dump_figures(self.current)["journals"]
+        tied = [j for j in journals if j["description"] == "Depreciation for year ended tie test"]
+        # Lower pk ("...a1") sorts first even though it was created second.
+        self.assertEqual([j["total_debit"] for j in tied], ["222.22", "111.11"])
