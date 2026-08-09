@@ -283,3 +283,11 @@ LOGGING = {
     },
     "root": {"handlers": ["file"], "level": "INFO"},
 }
+
+
+# The Tier 3 AI pass sends trial balance figures to the Anthropic API. This suite
+# finalises a financial year against a production-derived copy of the client
+# database, so leaving it on would send real client financials off the droplet on
+# every nightly run -- the same contradiction the workflow header rules out for the
+# database dump and the DEBUG log -- and bill for the privilege.
+AUTO_TIER3_ON_IN_REVIEW = False

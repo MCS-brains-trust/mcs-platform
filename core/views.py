@@ -168,6 +168,72 @@ _BS_SECTIONS = {"assets", "liabilities", "equity", "capital_accounts",
 _BS_STATEMENTS = {"balance_sheet", "equity"}
 
 
+def _dispatch_auto_tier3(financial_year):
+    """Queue the Tier 3 AI pass for a year entering review. Returns True if queued.
+
+    Queued, not run inline. The pass makes several Anthropic calls of 6-12 seconds
+    each; run on the request thread it left an accountant watching the finalise page
+    hang for the whole batch. Nobody had felt that, because _build_entity_context
+    raised FieldError on every call and the caller's try/except swallowed it — the
+    pass had never once actually executed.
+
+    Gated by settings.AUTO_TIER3_ON_IN_REVIEW so config/settings_e2e.py can switch it
+    off: the e2e suite finalises a year against a production-derived database, and
+    this sends trial balance figures to a third-party API.
+
+    Queueing is best effort — a broker outage must not stop a year being finalised —
+    but the failure is logged with a stack trace rather than swallowed, which is how
+    the original defect stayed invisible for so long.
+    """
+    from django.conf import settings
+
+    if not getattr(settings, "AUTO_TIER3_ON_IN_REVIEW", True):
+        logger.info(
+            "Auto Tier 3 AI analysis disabled by AUTO_TIER3_ON_IN_REVIEW; "
+            "skipping for FY %s", financial_year.pk,
+        )
+        return False
+
+    try:
+        from core.tasks import batch_analyse_flags_task
+        batch_analyse_flags_task.delay(str(financial_year.pk))
+        return True
+    except Exception:
+        logger.exception(
+            "Could not queue Tier 3 AI analysis for FY %s; finalisation continues",
+            financial_year.pk,
+        )
+        return False
+
+
+def _coa_sections_for_entity(entity):
+    """Account code -> section, the entity's own chart layered over its type template.
+
+    ChartOfAccount models the standard chart for an entity type. An entity whose
+    chart arrived from MYOB, Xero or a hand-built import carries codes the template
+    has never heard of — and those are precisely the accounts whose classification
+    cannot be recovered from the code itself, because _is_balance_sheet_account's
+    numeric fallback only understands purely numeric codes and reads anything else as
+    P&L. EntityChartOfAccount is the authority for that entity's own accounts, so it
+    is applied last and wins on conflict.
+
+    Built here rather than at each call site: five call sites had grown the same
+    template-only lookup independently, so the omission had to be fixed five times to
+    be fixed at all.
+    """
+    sections = dict(
+        ChartOfAccount.objects.filter(
+            entity_type=entity.entity_type, is_active=True
+        ).values_list("account_code", "section")
+    )
+    sections.update(
+        EntityChartOfAccount.objects.filter(
+            entity=entity, is_active=True
+        ).values_list("account_code", "section")
+    )
+    return sections
+
+
 def _is_balance_sheet_account(account_code, mapped_line_item, coa_sections):
     """Classify an account as balance sheet or P&L.
 
@@ -2191,19 +2257,12 @@ def financial_year_finalise_full(request, pk):
         # Replicate in_review side effects from financial_year_status
         from core.signals import trigger_risk_recalc
         trigger_risk_recalc(fy, "status_in_review", force=True)
-        try:
-            from .ai_service import batch_analyse_flags
-            ai_result = batch_analyse_flags(fy, force=False)
+        if _dispatch_auto_tier3(fy):
             _log_action(
                 request, "audit_run",
-                f"Auto Tier 3 AI analysis on status→In Review: "
-                f"{ai_result.get('analysed', 0)} analysed, "
-                f"{ai_result.get('skipped', 0)} cached",
+                "Auto Tier 3 AI analysis queued on status→In Review",
                 fy
             )
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f"Auto Tier 3 on In Review failed: {e}")
 
     # ── Step 2: Block finalisation if trust balance sheet doesn't reconcile
     if fy.entity.entity_type == "trust":
@@ -2326,19 +2385,12 @@ def financial_year_status(request, pk):
         from core.signals import trigger_risk_recalc
         trigger_risk_recalc(fy, "status_in_review", force=True)
         # Auto-run Tier 3 AI analysis on all open flags
-        try:
-            from .ai_service import batch_analyse_flags
-            ai_result = batch_analyse_flags(fy, force=False)
+        if _dispatch_auto_tier3(fy):
             _log_action(
                 request, "audit_run",
-                f"Auto Tier 3 AI analysis on status→In Review: "
-                f"{ai_result.get('analysed', 0)} analysed, "
-                f"{ai_result.get('skipped', 0)} cached",
+                "Auto Tier 3 AI analysis queued on status→In Review",
                 fy
             )
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f"Auto Tier 3 on In Review failed: {e}")
 
     # ── Draft revert: clear all Eva findings and risk flags ─────────
     if new_status == "draft":
@@ -2557,11 +2609,7 @@ def reroll_forward_diff(request, pk):
         return JsonResponse({"error": "No subsequent financial year found."}, status=404)
 
     # Build CoA section lookup for BS/PL classification
-    coa_sections = dict(
-        ChartOfAccount.objects.filter(
-            entity_type=entity.entity_type, is_active=True
-        ).values_list("account_code", "section")
-    )
+    coa_sections = _coa_sections_for_entity(entity)
 
     # Build aggregated closing balances for the current year (BS accounts only)
     from django.db.models import Sum as _Sum
@@ -2649,11 +2697,7 @@ def reroll_forward_apply(request, pk):
         return JsonResponse({"error": "No subsequent financial year found."}, status=404)
 
     # Build CoA section lookup for BS/PL classification
-    coa_sections = dict(
-        ChartOfAccount.objects.filter(
-            entity_type=entity.entity_type, is_active=True
-        ).values_list("account_code", "section")
-    )
+    coa_sections = _coa_sections_for_entity(entity)
 
     # Re-compute the diff to ensure consistency (don't trust client-side data).
     # Only include balance sheet accounts — P&L accounts reset to zero.
@@ -2820,11 +2864,7 @@ def reroll_forward(request, pk):
         # (Replicates the core logic from roll_forward but targets the
         #  existing next_fy instead of creating a new one.)
 
-        coa_sections = dict(
-            ChartOfAccount.objects.filter(
-                entity_type=entity.entity_type, is_active=True
-            ).values_list("account_code", "section")
-        )
+        coa_sections = _coa_sections_for_entity(entity)
 
         # -----------------------------------------------------------------
         # Pass 1: Classify lines and calculate net P&L
@@ -3146,11 +3186,7 @@ def reroll_forward(request, pk):
     BS_STATEMENTS = {"balance_sheet", "equity"}
     BS_SECTIONS   = {"assets", "liabilities", "equity", "capital_accounts"}
 
-    coa_sections = dict(
-        ChartOfAccount.objects.filter(
-            entity_type=entity.entity_type, is_active=True
-        ).values_list("account_code", "section")
-    )
+    coa_sections = _coa_sections_for_entity(entity)
 
     def _is_bs(line):
         hl_sec = _hl_section_for_code(line.account_code)
@@ -3345,11 +3381,7 @@ def _populate_rolled_forward_fy(current_fy, new_fy):
     EntityChartOfAccount.seed_from_template(entity)
 
     # Build lookup of account_code -> section from ChartOfAccount
-    coa_sections = dict(
-        ChartOfAccount.objects.filter(
-            entity_type=entity.entity_type, is_active=True
-        ).values_list("account_code", "section")
-    )
+    coa_sections = _coa_sections_for_entity(entity)
 
     # -----------------------------------------------------------------
     # Pass 1: Classify all lines and calculate net P&L result

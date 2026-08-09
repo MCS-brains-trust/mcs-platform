@@ -384,3 +384,11 @@ AWS_TEXTRACT_ROLE_ARN = os.environ.get("AWS_TEXTRACT_ROLE_ARN", "")
 # ── FuseSign Integration ────────────────────────────────────────────────────
 FUSESIGN_API_KEY = os.environ.get("FUSESIGN_API_KEY", "")
 FUSESIGN_API_URL = os.environ.get("FUSESIGN_API_URL", "https://api.fusesign.com")
+
+
+# Run the Tier 3 AI risk analysis automatically when a financial year enters
+# review. Queued to Celery rather than run inline (see core.views._dispatch_auto_tier3),
+# so this switches the pass on and off, not its synchronicity. config/settings_e2e.py
+# turns it off: the e2e suite finalises a year against a production-derived database,
+# and this pass sends trial balance figures to the Anthropic API.
+AUTO_TIER3_ON_IN_REVIEW = True

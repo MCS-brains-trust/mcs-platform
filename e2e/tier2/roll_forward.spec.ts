@@ -229,11 +229,19 @@ test('rolling the finalised prior year into its existing next year succeeds', as
   ]);
   await expect(page.locator('body')).toContainText('Re-rolled forward to 2026');
 
-  // Whether the seven rollover lines it created hold the *right* figures is checked
-  // by the final test in this file, not here -- see this file's header comment on
-  // why the check with a known-bad outcome has to be the last test in the file.
+  // Eight rows out of seven prior accounts: the five balance-sheet accounts carry an
+  // opening balance, Sales and Administration carry a comparative only, and the
+  // $20,000 net profit between them (Sales 30,000 - Administration 10,000) is closed
+  // into a retained-profits line that _populate_rolled_forward_fy synthesises,
+  // because this fixture's chart has no 4199 account of its own to hold it.
+  //
+  // This asserted 7 while the misclassification defect was live -- with every
+  // account reading as P&L, nothing carried an opening balance, the net P&L summed
+  // to zero across the whole balanced trial balance, and so no retained-profits line
+  // was created either. The count was a product of the bug.
+  // (core/tests_rollforward_classification.py pins all eight rows and their figures.)
   const rolled = await dumpFigures(instance.dbName, CURRENT_FY, 'after_first_roll');
-  expect(rolled.trial_balance.length).toBe(7);
+  expect(rolled.trial_balance.length).toBe(8);
 
   await page.context().close();
 });
