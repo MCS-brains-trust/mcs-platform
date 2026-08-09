@@ -1,8 +1,12 @@
 import { test, expect } from '@playwright/test';
 import * as fs from 'fs';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
 import { startInstance, type Instance } from '../fixtures/instance';
 import { loadUsers, loginAs } from '../fixtures/login';
 import { dumpFigures, compareToBaseline, recordObserved } from '../fixtures/figures';
+
+const execFileAsync = promisify(execFile);
 
 /**
  * Year-end close: trial balance import through to posted depreciation.
@@ -219,16 +223,74 @@ test('posting without confirmed=1 does nothing', async ({ browser }) => {
   await page.context().close();
 });
 
+/**
+ * Retag the imported accumulated-depreciation opening balance as a rollover line.
+ *
+ * This is the remediation depreciation_post_to_tb's refusal message asks the
+ * accountant for. The fixture's opening TB carries $4,000 of accumulated
+ * depreciation on a `tb_import` line; the handler's current-movement query excludes
+ * only `rollover`, so until it is retagged that prior-year balance reads as
+ * current-year movement with no expense-side counterpart.
+ */
+async function retagAccumDepOpeningAsRollover(dbName: string): Promise<void> {
+  const script = `
+from core.models import TrialBalanceLine
+updated = TrialBalanceLine.objects.filter(
+    financial_year_id=${JSON.stringify(FY)},
+    account_code="1-2100",
+    source="tb_import",
+).update(source="rollover")
+assert updated == 1, f"expected exactly one accum-dep import line, retagged {updated}"
+`;
+  await execFileAsync(
+    '/opt/statementhub/venv/bin/python',
+    ['manage.py', 'shell', '-c', script],
+    {
+      cwd: '/opt/statementhub',
+      env: {
+        ...process.env,
+        DJANGO_SETTINGS_MODULE: 'config.settings_e2e',
+        E2E_DB_NAME: dbName,
+      },
+    },
+  );
+}
+
+test('posting depreciation is refused while the accumulated-depreciation opening sits on a current-year line', async ({
+  browser,
+}) => {
+  const page = await accountantPage(browser);
+
+  const before = await dumpFigures(instance.dbName, FY, 'before_asymmetric_dep_post');
+
+  // The pair is asymmetric: $4,000 of accumulated-depreciation movement against no
+  // depreciation-expense movement. Backing both sides out cannot produce a balanced
+  // journal, so the handler must write nothing rather than post a single-sided one.
+  expect(await postDepreciationViaModal(page)).toBeLessThan(400);
+
+  const after = await dumpFigures(instance.dbName, FY, 'after_asymmetric_dep_post');
+  expect(
+    JSON.stringify(after),
+    'a refused depreciation post must not change a single figure',
+  ).toBe(JSON.stringify(before));
+  expect(after.journals, 'a refused depreciation post must write no journal').toEqual([]);
+
+  // The accountant has to be told which account is wrong, or the refusal is a dead end.
+  await expect(page.locator('body')).toContainText('1-2100');
+
+  await page.context().close();
+});
+
 test('posting depreciation is idempotent and leaves opening balances alone', async ({
   browser,
 }) => {
   const page = await accountantPage(browser);
 
+  // Apply the remediation the refusal above asks for, so this test exercises the
+  // real post-and-repost path rather than passing because nothing happened.
+  await retagAccumDepOpeningAsRollover(instance.dbName);
+
   const before = await dumpFigures(instance.dbName, FY, 'before_depreciation_post');
-  const openingBefore = before.trial_balance.map((r: any) => [
-    r.account_code,
-    r.opening_balance,
-  ]);
 
   // Both presses go through the real modal (see postDepreciationViaModal) so this
   // test proves the idempotency contract the way an accountant would actually
@@ -237,29 +299,17 @@ test('posting depreciation is idempotent and leaves opening balances alone', asy
   expect(await postDepreciationViaModal(page)).toBeLessThan(400);
   const first = await dumpFigures(instance.dbName, FY, 'after_depreciation_post');
 
-  // Recorded here, immediately after the first press, rather than after the
-  // assertions below -- every one of which can throw before reaching this point
-  // once the idempotency defect fires. A checkpoint captured only once everything
-  // else has passed is never captured at all on the one test in this file that is
-  // known to fail; recording first means `first`'s figures land in the observed
-  // dump regardless of what happens next, ready to bless the day the defect is
-  // fixed.
+  // Recorded before the assertions below rather than after, so the figures land in
+  // the observed dump even on a run where one of them throws -- a checkpoint
+  // captured only once everything has passed is never captured at all on a failing
+  // run, which is exactly when it is wanted.
   //
-  // Recorded but deliberately NOT compared. Dumping right after this very first
-  // press already reflects the confirmed defect (see the totals check a few lines
-  // down and this file's final comment) -- the pre-existing $4,000 Accumulated
-  // Depreciation balance already in the imported opening TB is non-'rollover', so
-  // depreciation_post_to_tb's current-movement query counts it as current-year
-  // movement on the FIRST press, not only on a repeat one, and posts a single-sided
-  // $4,000 reversal with no matching expense-side movement. Blessing that would
-  // encode the bug as "expected", so this checkpoint has no baseline entry -- and a
-  // compareToBaseline call against a checkpoint that is deliberately never blessed
-  // can only ever report "not in the baseline yet". Adding one here would make this
-  // test fail on baseline bookkeeping *before* reaching the three assertions below
-  // that are its whole purpose, would make known_failures.json's stated reason for
-  // this test untrue, and would keep it red even after the depreciation defect is
-  // fixed -- defeating the check that a silently-fixed known failure must be loud.
-  // The compare belongs here only once the figures are correct enough to bless.
+  // Recorded, not yet compared. These figures are now honest -- the pair is
+  // symmetric once the opening balance is retagged, so the reversal balances and
+  // the accounts land on the schedule total -- but the checkpoint has no baseline
+  // entry until someone blesses it, and comparing against an unblessed checkpoint
+  // can only ever report "not in the baseline yet". Run `npm run bless:figures` to
+  // promote it, then add the compare.
   recordObserved('after_depreciation_post', first);
 
   expect(await postDepreciationViaModal(page)).toBeLessThan(400);
@@ -267,23 +317,70 @@ test('posting depreciation is idempotent and leaves opening balances alone', asy
 
   // The docstring promises "on repeat presses with an unchanged schedule the net
   // change is zero". Stacking is the classic failure here.
+  //
+  // Compared as account positions rather than as raw rows: each press appends its
+  // reversal and its re-post rather than rewriting history, so the TB line list and
+  // the journal audit trail both grow by design, and their absolute totals grow with
+  // them. What the contract fixes is where each account nets out. (core's
+  // test_repeat_press_leaves_every_trial_balance_row_unchanged pins the same
+  // property directly against the ORM.)
+  const positions = (figures: any): Record<string, number> => {
+    const net: Record<string, number> = {};
+    for (const row of figures.trial_balance) {
+      net[row.account_code] =
+        (net[row.account_code] ?? 0) + Number(row.debit) - Number(row.credit);
+    }
+    return net;
+  };
   expect(
-    JSON.stringify(second),
-    'pressing post-to-TB twice must not change the figures',
-  ).toBe(JSON.stringify(first));
+    positions(second),
+    'pressing post-to-TB twice must not move any account',
+  ).toEqual(positions(first));
+  expect(
+    second.depreciation,
+    'pressing post-to-TB twice must not change the depreciation schedule',
+  ).toEqual(first.depreciation);
+  expect(
+    second.totals.debit,
+    'the trial balance must still balance after a repeat press',
+  ).toBe(second.totals.credit);
 
-  const openingAfter = first.trial_balance.map((r: any) => [r.account_code, r.opening_balance]);
+  // Summed per account for the same reason the positions check above is: posting
+  // adds rows, and a row-by-row comparison would report every added row as a
+  // difference. Summing keeps the check strict -- an altered opening balance on an
+  // existing row moves its account's total, and so does a newly added row carrying
+  // a non-zero opening -- while tolerating the rows that legitimately appear.
+  const openings = (figures: any): Record<string, number> => {
+    const total: Record<string, number> = {};
+    for (const row of figures.trial_balance) {
+      total[row.account_code] =
+        (total[row.account_code] ?? 0) + Number(row.opening_balance);
+    }
+    return total;
+  };
+  // Compared over the union of account codes, defaulting to zero. Posting
+  // introduces account codes that had no TB row at all (the fixture carries no
+  // 6-1200 Depreciation row until the schedule posts one), and _apply_journal_line_to_tb
+  // creates every row with opening_balance 0 — so an account appearing for the first
+  // time must contribute nothing. Defaulting rather than intersecting keeps that
+  // strict: a new row arriving with a non-zero opening fails here, where an
+  // intersection would quietly skip it.
+  const beforeOpenings = openings(before);
+  const afterOpenings = openings(first);
+  const allCodes = [
+    ...new Set([...Object.keys(beforeOpenings), ...Object.keys(afterOpenings)]),
+  ].sort();
+  const normalise = (totals: Record<string, number>) =>
+    Object.fromEntries(allCodes.map((code) => [code, totals[code] ?? 0]));
   expect(
-    openingAfter.filter(([code]: any) =>
-      openingBefore.some(([c]: any) => c === code),
-    ),
+    normalise(afterOpenings),
     'posting depreciation must not touch opening balances',
-  ).toEqual(openingBefore.filter(([code]: any) => openingAfter.some(([c]: any) => c === code)));
+  ).toEqual(normalise(beforeOpenings));
 
-  // Also expected to fail today, for the same root cause as the idempotency check
-  // above: the single-sided reversal journal on the very first press already
-  // leaves the TB out of balance (observed 120,000 debit / 116,000 credit against
-  // this fixture), before a second press ever stacks anything on top.
+  // Every journal this handler posts must balance, so the trial balance it leaves
+  // behind must too. This is the assertion the single-sided reversal used to fail:
+  // it left 120,000 debit against 116,000 credit on the very first press, before a
+  // second press ever stacked anything on top.
   expect(first.totals.debit).toBe(first.totals.credit);
 
   await page.context().close();

@@ -9388,53 +9388,10 @@ def depreciation_post_to_tb(request, pk):
         messages.warning(request, "Total business depreciation is zero. Nothing to post.")
         return redirect("core:financial_year_detail", pk=pk)
 
-    # ── Build the fresh depreciation journal (not yet saved) ──
-    journal = AdjustingJournal(
-        financial_year=fy,
-        journal_type=AdjustingJournal.JournalType.DEPRECIATION,
-        status=AdjustingJournal.JournalStatus.DRAFT,
-        journal_date=fy.end_date,
-        description=f"Depreciation for year ended {fy.end_date.strftime('%d/%m/%Y')}",
-        narration=(
-            f"Auto-generated from depreciation schedule. "
-            f"Total depreciation: ${total_depreciation:,.2f} "
-            f"(business portion only, private use excluded). "
-            f"Grouped into {len(account_groups)} account pair(s)."
-        ),
-        total_debit=total_depreciation,
-        total_credit=total_depreciation,
-        created_by=request.user,
-    )
-    journal.save()
-
-    line_number = 0
-    line_descriptions = []
-    for (dep_code, dep_name, accum_code, accum_name), amount in account_groups.items():
-        line_number += 1
-        JournalLine.objects.create(
-            journal=journal,
-            line_number=line_number,
-            account_code=dep_code,
-            account_name=dep_name,
-            description=f"Depreciation charge — {dep_name}",
-            debit=amount,
-            credit=Decimal("0"),
-        )
-        line_number += 1
-        JournalLine.objects.create(
-            journal=journal,
-            line_number=line_number,
-            account_code=accum_code,
-            account_name=accum_name,
-            description=f"Accumulated depreciation — {accum_name}",
-            debit=Decimal("0"),
-            credit=amount,
-        )
-        line_descriptions.append(
-            f"Dr {dep_code} {dep_name} ${amount:,.2f} / Cr {accum_code} {accum_name} ${amount:,.2f}"
-        )
-
-    # ── Atomic: reversal (if needed) then fresh posting ──
+    # ── Atomic: reconcilability check, fresh journal, reversal, then posting ──
+    #
+    # The journal is built inside the transaction, after the check below, so a
+    # year whose accounts cannot be reconciled is left with no orphaned draft.
     reversal = None
     with db_transaction.atomic():
         # Lock the target account TB rows so a concurrent double-click blocks
@@ -9454,6 +9411,7 @@ def depreciation_post_to_tb(request, pk):
         # lock, so it reflects any concurrent post that already committed.
         # Excludes rollover lines (prior-year accumulated-depreciation opening).
         current_movements = {}
+        unreconcilable = []
         for (dep_code, dep_name, accum_code, accum_name) in account_groups:
             dep_mv = TrialBalanceLine.objects.filter(
                 financial_year=fy, account_code=dep_code,
@@ -9469,10 +9427,81 @@ def depreciation_post_to_tb(request, pk):
             )
             accum_net_cr = (accum_mv["cr"] or Decimal("0")) - (accum_mv["dr"] or Decimal("0"))
 
-            if dep_net or accum_net_cr:
+            # The reversal backs out both sides of the pair. If they do not carry
+            # the same movement there is no pair of equal-and-opposite lines that
+            # backs them both out, and the reversal below would post debits and
+            # credits that differ — an unbalanced journal written straight into a
+            # client's trial balance. The usual cause is an opening
+            # accumulated-depreciation balance that arrived on a tb_import line
+            # instead of a rollover one, so it reads as current-year movement.
+            # Refuse rather than guess which side is wrong.
+            if dep_net != accum_net_cr:
+                unreconcilable.append(
+                    f"{accum_code} {accum_name} has ${accum_net_cr:,.2f} of current-year "
+                    f"movement against ${dep_net:,.2f} on {dep_code} {dep_name}"
+                )
+            elif dep_net or accum_net_cr:
                 current_movements[(dep_code, dep_name, accum_code, accum_name)] = (
                     dep_net, accum_net_cr
                 )
+
+        if unreconcilable:
+            messages.error(
+                request,
+                "Cannot post depreciation: the depreciation accounts do not "
+                "reconcile, so backing out the current-year movement would post "
+                "an unbalanced journal. "
+                + "; ".join(unreconcilable)
+                + ". If that movement is a prior-year opening balance, retag it "
+                "as a rollover line before posting.",
+            )
+            return redirect("core:financial_year_detail", pk=pk)
+
+        # ── Build the fresh depreciation journal ──
+        journal = AdjustingJournal(
+            financial_year=fy,
+            journal_type=AdjustingJournal.JournalType.DEPRECIATION,
+            status=AdjustingJournal.JournalStatus.DRAFT,
+            journal_date=fy.end_date,
+            description=f"Depreciation for year ended {fy.end_date.strftime('%d/%m/%Y')}",
+            narration=(
+                f"Auto-generated from depreciation schedule. "
+                f"Total depreciation: ${total_depreciation:,.2f} "
+                f"(business portion only, private use excluded). "
+                f"Grouped into {len(account_groups)} account pair(s)."
+            ),
+            total_debit=total_depreciation,
+            total_credit=total_depreciation,
+            created_by=request.user,
+        )
+        journal.save()
+
+        line_number = 0
+        line_descriptions = []
+        for (dep_code, dep_name, accum_code, accum_name), amount in account_groups.items():
+            line_number += 1
+            JournalLine.objects.create(
+                journal=journal,
+                line_number=line_number,
+                account_code=dep_code,
+                account_name=dep_name,
+                description=f"Depreciation charge — {dep_name}",
+                debit=amount,
+                credit=Decimal("0"),
+            )
+            line_number += 1
+            JournalLine.objects.create(
+                journal=journal,
+                line_number=line_number,
+                account_code=accum_code,
+                account_name=accum_name,
+                description=f"Accumulated depreciation — {accum_name}",
+                debit=Decimal("0"),
+                credit=amount,
+            )
+            line_descriptions.append(
+                f"Dr {dep_code} {dep_name} ${amount:,.2f} / Cr {accum_code} {accum_name} ${amount:,.2f}"
+            )
 
         if current_movements:
             total_rev_dr = sum(accum for _, accum in current_movements.values())
