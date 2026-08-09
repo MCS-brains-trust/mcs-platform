@@ -13,6 +13,8 @@ from pathlib import Path
 
 import openpyxl
 
+from core.e2e_support import atomic_write
+
 HEADER = ("Account Code", "Account Name", "Debit", "Credit")
 
 # Current-year TB. Carries the prior year's balance sheet forward and adds a trading
@@ -36,8 +38,9 @@ def _write(path: Path, rows) -> Path:
     sheet.append(HEADER)
     for code, name, debit, credit in rows:
         sheet.append([code, name, float(debit), float(credit)])
-    workbook.save(path)
-    return path
+    # Atomic: concurrently booting instances re-run the seed command and rewrite these
+    # same paths while other instances are uploading them. See atomic_write.
+    return atomic_write(path, workbook.save)
 
 
 def write_tb_workbooks(directory: str | Path) -> dict[str, Path]:

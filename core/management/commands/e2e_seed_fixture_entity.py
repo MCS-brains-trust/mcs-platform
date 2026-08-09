@@ -6,12 +6,11 @@ Idempotent, so it runs after every branch. Writes .e2e/fixture_entity.json for t
 Playwright specs to read, mirroring how e2e_bootstrap_users publishes its fixtures.
 """
 import json
-from pathlib import Path
 
 from django.core.management.base import BaseCommand
 
 from core.e2e_fixture_data import seed_fixture_entity
-from core.e2e_support import assert_e2e_database
+from core.e2e_support import assert_e2e_database, atomic_write_text
 from core.e2e_tb_workbooks import write_tb_workbooks
 
 
@@ -28,9 +27,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         assert_e2e_database()
         ids = seed_fixture_entity()
-        output = Path(options["output"])
-        output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(json.dumps(ids, indent=2) + "\n")
+        output = atomic_write_text(options["output"], json.dumps(ids, indent=2) + "\n")
         self.stdout.write(self.style.SUCCESS(f"fixture entity seeded → {output}"))
         workbooks = write_tb_workbooks("/opt/statementhub/.e2e/tb")
         self.stdout.write(self.style.SUCCESS(f"tb workbooks written: {len(workbooks)}"))

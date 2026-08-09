@@ -115,7 +115,13 @@ async function seniorPage(browser: any) {
  * without either this comment or the assertion below noticing).
  */
 async function writeAmendedPriorTbWorkbook(path: string): Promise<void> {
+  // Written the same atomic way core.e2e_support.atomic_write publishes the other
+  // .e2e/tb workbooks: temp file in the same directory, then os.replace. This path is
+  // shared rig state under a fixed name, so a concurrently booting instance reading
+  // the directory must never catch a half-written xlsx -- and 0600 keeps it
+  // consistent with everything else the rig writes there.
   const script = `
+import os, tempfile
 import openpyxl
 wb = openpyxl.Workbook()
 ws = wb.active
@@ -131,7 +137,18 @@ for row in [
     ("6-1000", "Administration", 11000.00, 0.00),
 ]:
     ws.append(row)
-wb.save(${JSON.stringify(path)})
+target = ${JSON.stringify(path)}
+os.makedirs(os.path.dirname(target), exist_ok=True)
+fd, tmp = tempfile.mkstemp(dir=os.path.dirname(target), prefix=".tb_prior_amended.", suffix=".tmp")
+os.close(fd)
+try:
+    wb.save(tmp)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, target)
+except BaseException:
+    if os.path.exists(tmp):
+        os.unlink(tmp)
+    raise
 `;
   await execFileAsync('/opt/statementhub/venv/bin/python', ['-c', script]);
 }

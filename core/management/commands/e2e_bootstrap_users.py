@@ -12,14 +12,17 @@ it can run after every database refresh.
 """
 
 import json
-import os
-from pathlib import Path
 
 from django.contrib.auth import get_user_model
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
-from core.e2e_support import E2E_PASSWORD, E2E_ROLES, assert_e2e_database
+from core.e2e_support import (
+    E2E_PASSWORD,
+    E2E_ROLES,
+    assert_e2e_database,
+    atomic_write_text,
+)
 
 ASSIGNMENT_COUNT = 3
 
@@ -45,11 +48,29 @@ class Command(BaseCommand):
 
         # Assign real entities to the roles that cannot view all entities, so their
         # crawl exercises genuine permission behaviour rather than an empty account.
-        assignable = list(Entity.objects.order_by("entity_name")[:ASSIGNMENT_COUNT])
-        if not assignable:
+        #
+        # Entity.assigned_accountant is a single FK, not a many-to-many, so handing the
+        # same entity to a second role does not share it — it reassigns it, silently
+        # emptying the role that got there first. Each role therefore gets its own
+        # disjoint slice of the pool, and the manifest below records what the role
+        # actually ended up holding rather than what was requested.
+        assign_keys = [k for k, s in E2E_ROLES.items() if s["needs_assignments"]]
+        needed = ASSIGNMENT_COUNT * len(assign_keys)
+        pool = list(Entity.objects.order_by("entity_name")[:needed])
+        if not pool:
             self.stderr.write(self.style.WARNING(
                 "no entities in this database — restricted roles will have nothing to view"
             ))
+        elif len(pool) < needed:
+            self.stderr.write(self.style.WARNING(
+                f"only {len(pool)} entities available but {needed} are needed to give "
+                f"each of the {len(assign_keys)} restricted roles {ASSIGNMENT_COUNT} of "
+                "its own — later roles will get fewer entities, or none"
+            ))
+        assignments = {
+            key: pool[i * ASSIGNMENT_COUNT:(i + 1) * ASSIGNMENT_COUNT]
+            for i, key in enumerate(assign_keys)
+        }
 
         for key, spec in E2E_ROLES.items():
             user, created = User.objects.update_or_create(
@@ -74,11 +95,10 @@ class Command(BaseCommand):
             user.save(update_fields=["password"])
 
             assigned = []
-            if spec["needs_assignments"] and assignable:
-                for entity in assignable:
-                    entity.assigned_accountant = user
-                    entity.save(update_fields=["assigned_accountant"])
-                    assigned.append(str(entity.pk))
+            for entity in assignments.get(key, []):
+                entity.assigned_accountant = user
+                entity.save(update_fields=["assigned_accountant"])
+                assigned.append(str(entity.pk))
 
             manifest["roles"][key] = {
                 "username": spec["username"],
@@ -100,10 +120,7 @@ class Command(BaseCommand):
             for e in Entity.objects.order_by("entity_name")[:10]
         ]
 
-        out_path = Path(options["output"])
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(json.dumps(manifest, indent=2))
-        os.chmod(out_path, 0o600)
+        out_path = atomic_write_text(options["output"], json.dumps(manifest, indent=2))
 
         self.stdout.write(self.style.SUCCESS(
             f"wrote {len(manifest['roles'])} role fixtures to {out_path}"

@@ -5,8 +5,49 @@ Kept outside core/management/commands/ so Django does not mistake it for a
 management command.
 """
 
+import os
+import tempfile
+from pathlib import Path
+
 from django.core.management.base import CommandError
 from django.db import connection
+
+
+def atomic_write(path, writer, *, mode: int = 0o600) -> Path:
+    """Publish `path` so a concurrent reader never observes a partial file.
+
+    Every booting E2E instance re-runs e2e_bootstrap_users and
+    e2e_seed_fixture_entity, and both write fixed shared paths under .e2e/ while
+    other instances may be part-way through reading them. Neither Path.write_text
+    nor openpyxl's save is atomic, so a reader can catch a half-written file. The
+    content is deterministic, so this is a torn-read hazard rather than a wrong-data
+    one — which makes it worse to diagnose, not better: it surfaces as a
+    non-reproducible JSON parse error or a corrupt workbook, exactly the shape of
+    failure that gets waved off as flake.
+
+    Writing to a temp file in the *same* directory (so the rename cannot cross a
+    filesystem boundary and degrade into a copy) and then os.replace-ing it onto the
+    target makes the swap atomic: a reader sees either the whole old file or the
+    whole new one. `writer` is called with the temp path and produces the content.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    os.close(fd)
+    tmp = Path(tmp_name)
+    try:
+        writer(tmp)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+    return path
+
+
+def atomic_write_text(path, text: str, *, mode: int = 0o600) -> Path:
+    """atomic_write for the common case of writing a string."""
+    return atomic_write(path, lambda tmp: tmp.write_text(text), mode=mode)
 
 # Fixed credentials for the E2E role fixtures. Deterministic by design: the
 # Playwright global setup needs to derive a valid TOTP code without a shared
