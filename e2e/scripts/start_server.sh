@@ -48,6 +48,9 @@ export E2E_CACHE_PREFIX="${DB_NAME}"
 echo "[start_server] seeding role fixtures"
 python3 manage.py e2e_bootstrap_users >/dev/null
 
+echo "[start_server] seeding tier 2 fixture entity"
+python3 manage.py e2e_seed_fixture_entity >/dev/null
+
 echo "[start_server] serving ${DB_NAME} on 127.0.0.1:${PORT}"
 # --noreload because the autoreloader forks, which detaches the child from the
 # process group Playwright signals on teardown and leaves an orphan holding the port.
