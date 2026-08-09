@@ -1,0 +1,15 @@
+{
+  "_comment": "Tier 2 tests that fail on purpose, each pinned to a confirmed application defect rather than a rig problem -- see e2e/README.md's 'Known defects found by the suite' and each spec file's own header for the full mechanism. This file exists so a THIRD test going red is distinguishable from these two expected failures: scripts/check_tier2_failures.sh compares the actual set of failing Tier 2 test titles against this list in both directions, the same job Tier 1's known_failures does for 5xx routes. A new failure and a silently-fixed known one are both loud rather than being lost in 'the suite is red, as usual'.",
+  "known_failures": [
+    {
+      "title": "posting depreciation is idempotent and leaves opening balances alone",
+      "spec_file": "tier2/yearend_close.spec.ts",
+      "reason": "depreciation_post_to_tb builds its reversal journal from two independent ifs, so an asymmetric depreciation schedule (accumulated-depreciation movement with no matching expense movement) posts a single-sided, unbalanced journal with no balance check; pressing Post to Trial Balance twice leaves the TB out of balance instead of a net-zero change."
+    },
+    {
+      "title": "every balance-sheet account should carry its prior-year closing balance forward, and the reroll diff should catch it if one later changes",
+      "spec_file": "tier2/roll_forward.spec.ts",
+      "reason": "_is_balance_sheet_account's callers (reroll_forward, reroll_forward_diff, reroll_forward_apply, _populate_rolled_forward_fy) build coa_sections from the entity-TYPE ChartOfAccount template and never consult the entity's own EntityChartOfAccount, so a chart of accounts like this fixture's (hyphenated codes, no mapped_line_item, no matching ChartOfAccount rows) misclassifies every account as P&L and rolls it forward with a zeroed opening balance instead of its prior closing balance."
+    }
+  ]
+}

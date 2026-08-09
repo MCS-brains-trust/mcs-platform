@@ -143,3 +143,80 @@ jobs:
           name: django-log
           path: .e2e/logs/django.log
           retention-days: 14
+
+  tier2:
+    name: Tier 2 accounting flows (scheduled only)
+    runs-on: self-hosted
+    timeout-minutes: 45
+    # Deliberately not on pull_request: each Tier 2 spec file boots its own Django
+    # instance and branches its own 500MB database (30-60s apiece), and the flows
+    # it drives make one-way transitions (finalising a year, posting depreciation)
+    # that a fast per-PR gate has no business affecting. Nightly/scheduled and
+    # manual dispatch only. Same untested-workflow caveat as Tier 1 above applies.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Guard against workspace/deployment path collision
+        # Identical to Tier 1's guard above -- see that job's copy and this file's
+        # header comment for the full reasoning. Duplicated rather than factored
+        # into a composite action because this workflow has never run and a shared
+        # action would be one more untested thing to get right.
+        run: |
+          set -euo pipefail
+          DEPLOY_DIR="/opt/statementhub"
+          WORKSPACE_REAL="$(realpath "${GITHUB_WORKSPACE}")"
+
+          if [[ -d "${DEPLOY_DIR}" ]]; then
+            DEPLOY_REAL="$(realpath "${DEPLOY_DIR}")"
+            if [[ "${WORKSPACE_REAL}" == "${DEPLOY_REAL}" ]]; then
+              echo "::error::GITHUB_WORKSPACE (${WORKSPACE_REAL}) IS the live deployment directory (${DEPLOY_DIR}). gunicorn, celery and celerybeat run from here in production. actions/checkout would hard-reset the production working tree on every run of this workflow. Refusing to continue -- see the header comment in .github/workflows/e2e.yml."
+              exit 1
+            fi
+
+            if [[ -d "${DEPLOY_DIR}/.git" ]]; then
+              DEPLOY_GIT_COMMON="$(git -C "${DEPLOY_DIR}" rev-parse --git-common-dir 2>/dev/null || true)"
+              WORKSPACE_GIT_COMMON="$(git -C "${WORKSPACE_REAL}" rev-parse --git-common-dir 2>/dev/null || true)"
+              if [[ -n "${DEPLOY_GIT_COMMON}" && -n "${WORKSPACE_GIT_COMMON}" ]]; then
+                DEPLOY_GIT_COMMON_REAL="$(cd "${DEPLOY_DIR}" && realpath "${DEPLOY_GIT_COMMON}")"
+                WORKSPACE_GIT_COMMON_REAL="$(cd "${WORKSPACE_REAL}" && realpath "${WORKSPACE_GIT_COMMON}")"
+                if [[ "${DEPLOY_GIT_COMMON_REAL}" == "${WORKSPACE_GIT_COMMON_REAL}" ]]; then
+                  echo "::error::${DEPLOY_DIR} is a git worktree sharing history with this checkout (common git dir ${DEPLOY_GIT_COMMON_REAL}). Running here risks mutating the production working tree through shared git state. Refusing to continue -- see the header comment in .github/workflows/e2e.yml."
+                  exit 1
+                fi
+              fi
+            fi
+          fi
+
+          echo "guard passed: ${WORKSPACE_REAL} is independent of ${DEPLOY_DIR}"
+
+      - uses: actions/checkout@v4
+
+      - name: Refresh E2E database
+        if: github.event_name == 'schedule' || inputs.refresh_data
+        run: bash scripts/refresh_e2e_db.sh
+
+      - name: Install suite dependencies
+        working-directory: e2e
+        run: npm ci
+
+      - name: Run Tier 2
+        working-directory: e2e
+        # Non-fatal here on purpose: a Tier 2 failure might be one of the two known
+        # ones (expected, and handled by the next step) or a genuine new regression
+        # (also handled by the next step) -- either way the check has to run
+        # against the completed results.json rather than have the job stop here.
+        run: npx playwright test --project=tier2 || true
+
+      - name: Check Tier 2 failures match known_failures.json
+        working-directory: e2e
+        run: npm run check:tier2-failures
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-tier2
+          path: |
+            e2e/playwright-report
+            e2e/test-results
+          retention-days: 14

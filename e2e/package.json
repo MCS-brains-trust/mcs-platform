@@ -10,8 +10,9 @@
     "test:unit": "playwright test --config=playwright.unit.config.ts",
     "report": "playwright show-report",
     "refresh-db": "bash ../scripts/refresh_e2e_db.sh",
-    "bootstrap": "bash ./scripts/bootstrap.sh",
-    "bless:figures": "bash ./scripts/bless_figures.sh"
+    "bless": "bash ./scripts/bless_baseline.sh",
+    "bless:figures": "bash ./scripts/bless_figures.sh",
+    "check:tier2-failures": "bash ./scripts/check_tier2_failures.sh"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.0",
