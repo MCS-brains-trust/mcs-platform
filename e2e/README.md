@@ -114,7 +114,7 @@ later assertions order-dependent). Those are Tier 2's job.
 - 435 application routes (Django admin's 432 are reported separately, being third-party)
 - 213 crawlable, 210 excluded by category, 12 unresolved
 - Tier 1: 207 passing, 8 failing on genuine defects (see `known_failures` and below)
-- Tier 2: not yet built
+- Tier 2: two flows — year-end close and roll-forward — asserting figures, not statuses
 
 ## Known defects found by the suite
 
@@ -132,6 +132,48 @@ All confirmed present in production, not artefacts of this environment:
 Separately: the review dashboard calls the Airtable API on **every render** and logs
 `404 ... api.airtable.com/v0//` — an empty base ID. Not a test failure, but a live
 external call on a page load.
+
+## Tier 2
+
+```bash
+npm run test:tier2
+npm run bless:figures      # after reading the diff
+```
+
+Deep accounting flows against a seeded fixture entity, one Django instance and one
+database branch per spec file — both flows perform one-way transitions that no cleanup
+can undo. Assertions come in two kinds: rule-based invariants taken from the views'
+own docstrings (a committed TB balances, depreciation posts idempotently, a new year's
+opening balance equals the prior year's closing) and a manually blessed golden file,
+`tier2/figures.baseline.json`, which catches drift nobody thought to assert. Only the
+golden file is blessable; the invariants either hold or the run fails.
+
+The fixture entity is seeded by `manage.py e2e_seed_fixture_entity` on every boot, so
+its figures survive a `refresh_e2e_db.sh` and the baseline changes only when the code
+does.
+
+**Two Tier 2 tests are intentionally red**, each the last test in its file so
+Playwright's serial mode (which skips every remaining test in a file after the first
+failure) still runs everything else:
+
+- `yearend_close.spec.ts` — "posting depreciation is idempotent and leaves opening
+  balances alone". `depreciation_post_to_tb` posts an unbalanced reversal journal;
+  pressing "Post to Trial Balance" twice leaves the trial balance out of balance
+  rather than at a net-zero change.
+- `roll_forward.spec.ts` — "every balance-sheet account should carry its prior-year
+  closing balance forward, and the reroll diff should catch it if one later changes".
+  `_is_balance_sheet_account` (core/views.py) has no classification path for an
+  account whose code isn't in the internal numeric HandiLedger ranges, has no
+  `mapped_line_item`, and isn't in the *entity-type* `ChartOfAccount` template (a
+  different model from the entity's own `EntityChartOfAccount`, which is never
+  consulted at all) — exactly this fixture's chart of accounts. Every account,
+  including balance-sheet ones, is misclassified as P&L and rolls forward with a
+  zeroed opening balance instead of carrying its closing balance; the same
+  classification call inside `reroll_forward_diff` makes the reconciliation "Re-Roll
+  Forward" modal blind to the resulting drift too, even after a genuine correction.
+
+Neither is a rig problem — a red Tier 2 suite with exactly these two failures named is
+the expected, healthy state until both are fixed in application code.
 
 ## Layout
 
