@@ -235,12 +235,25 @@ AWS_TEXTRACT_ROLE_ARN = ""
 
 
 # --- Logging ----------------------------------------------------------------
-# DEBUG is False, so the browser never sees a traceback. Tracebacks are written to
-# a file the suite attaches to failing tests instead, keeping production-like
-# responses without sacrificing diagnosability.
+# DEBUG is False, so the browser never sees a traceback. Tracebacks go to a log file
+# on the droplet instead, keeping production-like responses without sacrificing
+# diagnosability.
+#
+# That log is written at DEBUG level against a restored copy of the production
+# database, so it carries real client financial data in query text and request
+# payloads. It therefore stays on the box: the CI workflow deliberately does not
+# upload it (see .github/workflows/e2e.yml), and it is kept 0600 in a 0700 directory
+# rather than the 0644/0755 the default umask would give it. The log file is
+# pre-created with the right mode because logging.FileHandler opens in append mode —
+# it will inherit an existing file's permissions, but creates a world-readable one
+# if it has to make the file itself.
 
 E2E_LOG_DIR = E2E_DIR / "logs"
 os.makedirs(E2E_LOG_DIR, exist_ok=True)
+os.chmod(E2E_LOG_DIR, 0o700)
+E2E_LOG_FILE = E2E_LOG_DIR / "django.log"
+E2E_LOG_FILE.touch(mode=0o600, exist_ok=True)
+os.chmod(E2E_LOG_FILE, 0o600)
 
 LOGGING = {
     "version": 1,
@@ -252,7 +265,7 @@ LOGGING = {
         "file": {
             "level": "DEBUG",
             "class": "logging.FileHandler",
-            "filename": str(E2E_LOG_DIR / "django.log"),
+            "filename": str(E2E_LOG_FILE),
             "formatter": "verbose",
         },
         "console": {

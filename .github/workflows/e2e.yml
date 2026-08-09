@@ -134,15 +134,15 @@ jobs:
             e2e/test-results
           retention-days: 14
 
-      - name: Upload Django log
-        # DEBUG is False so the browser never sees a traceback; the log is where the
-        # actual cause of a failing route lives.
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: django-log
-          path: .e2e/logs/django.log
-          retention-days: 14
+      # There is deliberately no step uploading .e2e/logs/django.log. It is the most
+      # useful artifact for diagnosing a failing route -- DEBUG is False, so the
+      # browser never sees a traceback and the log is where the actual cause lives --
+      # but it is written at DEBUG level against the production database, so it
+      # carries real client financial data in query text and request payloads.
+      # Uploading it would contradict this file's own opening rationale: the suite
+      # runs on the droplet precisely so that data never leaves it. Scrubbing is not
+      # the answer either -- a DEBUG log of production data has no reliable boundary
+      # to scrub to. Read it on the droplet at .e2e/logs/django.log instead.
 
   tier2:
     name: Tier 2 accounting flows (scheduled only)

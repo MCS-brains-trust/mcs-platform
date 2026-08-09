@@ -61,6 +61,12 @@ psql_e2e() { psql -h "${E2E_DB_HOST}" -p "${E2E_DB_PORT}" -U "${E2E_DB_USER}" -v
 # (the host also has a 16 client on PATH, which aborts against an 18 server).
 
 mkdir -p "${DUMP_DIR}"
+# The dump is a byte-for-byte copy of the production database — every client's
+# financial data, sitting at rest on the droplet. Under the default umask pg_dump
+# would leave it 0644 inside a 0755 directory, readable by any account on the box.
+# The directory is locked down before pg_dump writes into it, and the file itself
+# immediately after, so the window where it exists world-readable is closed.
+chmod 0700 "${DUMP_DIR}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 DUMP_FILE="${DUMP_DIR}/prod-${STAMP}.dump"
 
@@ -71,6 +77,7 @@ log "dumping production → ${DUMP_FILE}"
     --no-privileges \
     --file="${DUMP_FILE}" \
     "${SOURCE_URL}"
+chmod 0600 "${DUMP_FILE}"
 
 log "dump complete ($(du -h "${DUMP_FILE}" | cut -f1))"
 
