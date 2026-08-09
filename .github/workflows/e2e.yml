@@ -6,6 +6,30 @@ name: E2E Regression Suite
 # client financial data. GitHub-hosted runners would mean uploading that to
 # infrastructure outside the firm's control on every run, so the data never leaves the
 # droplet it already lives on.
+#
+# ============================================================================
+# UNTESTED. No self-hosted runner is registered on this host, so nothing in this
+# file has ever actually fired. It cannot be exercised safely until the conflict
+# below is resolved, so treat every step here as reviewed-on-paper, not verified.
+#
+# actions/checkout@v4 checks the PR (or scheduled) ref out to $GITHUB_WORKSPACE,
+# wherever the runner's work directory happens to be. The rig underneath this
+# workflow does NOT follow that path: e2e/scripts/start_server.sh,
+# config/settings_e2e.py and e2e/fixtures/instance.ts all hardcode
+# /opt/statementhub -- the live production tree, where gunicorn, celery and
+# celerybeat run from today. So as written, the Django instance under test would
+# serve whatever is checked out at /opt/statementhub, not the PR's checkout, while
+# the manifest and baselines being asserted against come from $GITHUB_WORKSPACE.
+# That is silently wrong, not just broken: a runner registered with its work
+# directory pointed AT /opt/statementhub to "fix" the mismatch would be worse --
+# actions/checkout hard-resets its target on every run, which would blow away the
+# live deployment. The guard step below refuses to proceed if that is ever the
+# case, but the real fix (making the rig's paths follow $GITHUB_WORKSPACE, or
+# deliberately running from a fixed worktree checkout of /opt/statementhub that
+# checkout itself never touches) has not been designed or attempted here. Do not
+# register a self-hosted runner against this workflow until that reconciliation is
+# done.
+# ============================================================================
 
 on:
   pull_request:
@@ -34,6 +58,40 @@ jobs:
     timeout-minutes: 30
 
     steps:
+      - name: Guard against workspace/deployment path collision
+        # Deliberately the first step: everything after this assumes the checkout
+        # is not, and cannot corrupt, /opt/statementhub. See the header comment --
+        # this guard is the one thing standing between "misleading" and
+        # "destructive" until the rig's hardcoded paths are reconciled with
+        # $GITHUB_WORKSPACE.
+        run: |
+          set -euo pipefail
+          DEPLOY_DIR="/opt/statementhub"
+          WORKSPACE_REAL="$(realpath "${GITHUB_WORKSPACE}")"
+
+          if [[ -d "${DEPLOY_DIR}" ]]; then
+            DEPLOY_REAL="$(realpath "${DEPLOY_DIR}")"
+            if [[ "${WORKSPACE_REAL}" == "${DEPLOY_REAL}" ]]; then
+              echo "::error::GITHUB_WORKSPACE (${WORKSPACE_REAL}) IS the live deployment directory (${DEPLOY_DIR}). gunicorn, celery and celerybeat run from here in production. actions/checkout would hard-reset the production working tree on every run of this workflow. Refusing to continue -- see the header comment in .github/workflows/e2e.yml."
+              exit 1
+            fi
+
+            if [[ -d "${DEPLOY_DIR}/.git" ]]; then
+              DEPLOY_GIT_COMMON="$(git -C "${DEPLOY_DIR}" rev-parse --git-common-dir 2>/dev/null || true)"
+              WORKSPACE_GIT_COMMON="$(git -C "${WORKSPACE_REAL}" rev-parse --git-common-dir 2>/dev/null || true)"
+              if [[ -n "${DEPLOY_GIT_COMMON}" && -n "${WORKSPACE_GIT_COMMON}" ]]; then
+                DEPLOY_GIT_COMMON_REAL="$(cd "${DEPLOY_DIR}" && realpath "${DEPLOY_GIT_COMMON}")"
+                WORKSPACE_GIT_COMMON_REAL="$(cd "${WORKSPACE_REAL}" && realpath "${WORKSPACE_GIT_COMMON}")"
+                if [[ "${DEPLOY_GIT_COMMON_REAL}" == "${WORKSPACE_GIT_COMMON_REAL}" ]]; then
+                  echo "::error::${DEPLOY_DIR} is a git worktree sharing history with this checkout (common git dir ${DEPLOY_GIT_COMMON_REAL}). Running here risks mutating the production working tree through shared git state. Refusing to continue -- see the header comment in .github/workflows/e2e.yml."
+                  exit 1
+                fi
+              fi
+            fi
+          fi
+
+          echo "guard passed: ${WORKSPACE_REAL} is independent of ${DEPLOY_DIR}"
+
       - uses: actions/checkout@v4
 
       - name: Refresh E2E database
@@ -52,7 +110,7 @@ jobs:
         # A pull request that adds a route without regenerating the manifest would
         # otherwise pass while leaving the new route uncovered.
         run: |
-          source venv/bin/activate
+          source /opt/statementhub/venv/bin/activate
           python3 manage.py e2e_dump_routes --settings=config.settings_e2e \
             --output=/tmp/routes.check.json
           if ! diff -q <(python3 -c "import json;d=json.load(open('/tmp/routes.check.json'));print(json.dumps([r['name'] for r in d['routes']],indent=0))") \
