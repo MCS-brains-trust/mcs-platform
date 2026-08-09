@@ -27,6 +27,14 @@ def dump_figures(financial_year) -> dict:
     # same account), so the first three keys alone are not a total order. Falling
     # back to pk lets the database pick any order it likes on ties without making
     # the dump non-deterministic between runs, since the pk is never emitted.
+    #
+    # This ordering is load-bearing on the far side of the dump, not just here:
+    # compareToBaseline (e2e/fixtures/figures.ts) groups rows by account code and
+    # pairs a group's baseline and observed rows POSITIONALLY, having no key that
+    # distinguishes two lines on the same code. Reorder these keys and rows that
+    # merely swapped places start reporting as changed figures. The dependency is
+    # documented on the TypeScript side too, but it points this way, so it is
+    # recorded here where someone editing the order will actually see it.
     lines = TrialBalanceLine.objects.filter(financial_year=financial_year).order_by(
         "account_code", "account_name", "source", "pk"
     )

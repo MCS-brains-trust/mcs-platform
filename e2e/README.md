@@ -89,6 +89,13 @@ npm test -- --project=tier1
 npm run bless        # promote observed statuses, after reading the diff
 ```
 
+Bless in the same breath as the run that produced the figures. Playwright wipes
+`test-results/` at the **start** of every run, and both blessing scripts read their
+observed figures out of it — so running `--project=tier1` and then `--project=tier2`
+destroys `observed-status.json` before `npm run bless` ever sees it, and the reverse
+order destroys the Tier 2 observations the same way. Run one project, bless it, then
+run the other.
+
 Blessing is deliberately manual. A suite that rewrote its own expectations could never
 detect a regression — a route that broke would be recorded as broken and reported as
 passing from then on. 5xx responses are **refused** for the baseline and listed under

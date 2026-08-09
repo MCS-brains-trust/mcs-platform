@@ -12,7 +12,6 @@ import * as path from 'path';
  */
 
 const AUTH_DIR = path.join(__dirname, '..', '.auth');
-const USERS_MANIFEST = '/opt/statementhub/.e2e/users.json';
 
 export type RoleKey = 'admin' | 'senior' | 'accountant' | 'office_admin' | 'read_only';
 
@@ -52,10 +51,6 @@ export function loadRouteManifest(): RouteManifest {
     );
   }
   return JSON.parse(fs.readFileSync(p, 'utf-8'));
-}
-
-export function loadUsersManifest() {
-  return JSON.parse(fs.readFileSync(USERS_MANIFEST, 'utf-8'));
 }
 
 /** Build an authenticated page for a role, from the saved storage state. */

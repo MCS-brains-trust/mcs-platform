@@ -12,7 +12,7 @@
         {% if entity %}
         <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
         {% elif client %}
-        <li class="breadcrumb-item"><a href="{% url 'core:client_list' %}">{{ client.client_name|default:client }}</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:client_list' %}">{{ client.name }}</a></li>
         {% endif %}
         <li class="breadcrumb-item active">{{ note.title }}</li>
     </ol>

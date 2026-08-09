@@ -45,6 +45,12 @@ export async function loginAs(page: Page, spec: RoleSpec, password: string): Pro
   await page.fill('input[name="password"]', password);
   await page.click('button[type="submit"], input[type="submit"]');
 
+  // The second step is expected, not optional. Every fixture user is created with
+  // totp_confirmed set (core/e2e_support.py), so a correct password always lands on
+  // the verify page — never straight through to the dashboard. Treating this as a
+  // hard requirement rather than a "if we happen to be asked for a code" branch is
+  // what makes a fixture that has lost its 2FA state fail loudly here, instead of
+  // silently exercising a weaker login than production uses.
   await page.waitForURL(/totp-verify/, { timeout: 30_000 }).catch(() => {
     throw new Error(
       `${spec.username}: expected redirect to /accounts/totp-verify/ after login but ` +
@@ -60,6 +66,11 @@ export async function loginAs(page: Page, spec: RoleSpec, password: string): Pro
 
   await page.waitForURL((url) => !/totp-verify/.test(url.pathname), { timeout: 30_000 });
 
+  // Require2FAMiddleware diverts any user without confirmed 2FA to the mandatory
+  // setup page. Landing there therefore says nothing about the login flow itself —
+  // it means this fixture user is misconfigured — so it is reported as a fixture
+  // problem rather than left to surface later as an unexplained wrong-page failure
+  // in whatever test happens to run next.
   if (/setup-2fa/.test(page.url())) {
     throw new Error(
       `${spec.username}: redirected to 2FA setup after verifying, which means ` +
