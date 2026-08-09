@@ -8,9 +8,9 @@ name: E2E Regression Suite
 # droplet it already lives on.
 #
 # ============================================================================
-# UNTESTED. No self-hosted runner is registered on this host, so nothing in this
-# file has ever actually fired. It cannot be exercised safely until the conflict
-# below is resolved, so treat every step here as reviewed-on-paper, not verified.
+# NOT YET RUN BY A RUNNER. No self-hosted runner is registered on this host, so no
+# step in this file has ever fired as a workflow. The rig it drives, however, is no
+# longer reviewed-on-paper: see the verification note at the end of this header.
 #
 # actions/checkout@v4 checks the PR (or scheduled) ref out to $GITHUB_WORKSPACE,
 # wherever the runner's work directory happens to be. The rig used to ignore that
@@ -37,10 +37,23 @@ name: E2E Regression Suite
 # target every run, which would blow away the live deployment -- so the guard step
 # below stays, and still refuses to proceed if that is ever the case.
 #
-# What remains unverified is the run itself, not the paths: no self-hosted runner has
-# ever been registered against this workflow, so no step below this line has executed
-# anywhere. The path reconciliation was verified the only way it can be without a
-# runner -- the full tier 2 suite passes unchanged against the defaults.
+# Verified by simulation, not by a runner. The whole arrangement was exercised from a
+# detached git worktree standing in for $GITHUB_WORKSPACE, with STATEMENTHUB_ROOT
+# pointed at it and STATEMENTHUB_RUNTIME_ROOT left at the deployment -- exactly what
+# the env block on each job below sets. Tier 2 from that separate checkout produced
+# the same result as from the deployment: 13 passed, 1 failed on the one known
+# defect. Two things that no amount of reading would have caught surfaced that way
+# and are fixed here:
+#
+#   - config/settings.py reads .env relative to its own BASE_DIR, so a checkout that
+#     is not the deployment has no secrets at all and died on KeyError: 'SECRET_KEY'
+#     before a single test ran. settings_e2e now loads it from the runtime root.
+#   - ManifestStaticFilesStorage needs staticfiles.json, which is build output and so
+#     absent from a fresh checkout: every page render failed with "Missing staticfiles
+#     manifest entry". There was no collectstatic step; there is one now.
+#
+# What is still genuinely untested is the runner-shaped part -- actions/checkout, the
+# artifact upload, concurrency, and the guard step firing for real.
 # ============================================================================
 
 on:
@@ -123,6 +136,19 @@ jobs:
         # differences in production data rather than on their own changes.
         if: github.event_name == 'schedule' || inputs.refresh_data
         run: bash scripts/refresh_e2e_db.sh
+
+      - name: Collect static files
+        # settings_e2e inherits production's ManifestStaticFilesStorage wholesale, so
+        # every {% static %} tag is resolved through staticfiles.json. That manifest is
+        # build output rather than source: a fresh checkout has none, and without it
+        # every page render dies with "Missing staticfiles manifest entry for
+        # 'css/style.css'" before a single assertion runs. The deployment's copy cannot
+        # stand in -- a pull request that changes CSS has to be tested against its own.
+        run: |
+          source "${STATEMENTHUB_RUNTIME_ROOT}/venv/bin/activate"
+          python manage.py collectstatic --no-input
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings_e2e
 
       - name: Install suite dependencies
         working-directory: e2e
@@ -227,6 +253,19 @@ jobs:
       - name: Refresh E2E database
         if: github.event_name == 'schedule' || inputs.refresh_data
         run: bash scripts/refresh_e2e_db.sh
+
+      - name: Collect static files
+        # settings_e2e inherits production's ManifestStaticFilesStorage wholesale, so
+        # every {% static %} tag is resolved through staticfiles.json. That manifest is
+        # build output rather than source: a fresh checkout has none, and without it
+        # every page render dies with "Missing staticfiles manifest entry for
+        # 'css/style.css'" before a single assertion runs. The deployment's copy cannot
+        # stand in -- a pull request that changes CSS has to be tested against its own.
+        run: |
+          source "${STATEMENTHUB_RUNTIME_ROOT}/venv/bin/activate"
+          python manage.py collectstatic --no-input
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings_e2e
 
       - name: Install suite dependencies
         working-directory: e2e

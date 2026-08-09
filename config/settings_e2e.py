@@ -22,7 +22,22 @@ import os
 import sys
 from pathlib import Path
 
-from config.settings import *  # noqa: F401,F403
+import environ
+
+# The deployment's .env is machine state, in the same category as the virtualenv and
+# .e2e: it holds this box's secrets, is deliberately not in git, and so does not exist
+# in a CI checkout. config/settings.py reads .env relative to its own BASE_DIR -- the
+# checkout -- and would find nothing there, failing with KeyError: 'SECRET_KEY' before
+# a single test ran. Loaded here, from the runtime root, before those settings are
+# imported: django-environ's read_env uses setdefault, so a value already exported by
+# the environment still wins, and production's own load below is left untouched.
+_RUNTIME_ENV_FILE = (
+    Path(os.environ.get("STATEMENTHUB_RUNTIME_ROOT", "/opt/statementhub")) / ".env"
+)
+if _RUNTIME_ENV_FILE.exists():
+    environ.Env.read_env(str(_RUNTIME_ENV_FILE))
+
+from config.settings import *  # noqa: E402,F401,F403
 
 # Runtime state, not code: the venv and .e2e belong to the machine and stay at the
 # deployment root even when the checkout under test lives elsewhere (CI). See
