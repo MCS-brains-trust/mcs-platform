@@ -40,3 +40,33 @@ class WriteTbWorkbooksTests(SimpleTestCase):
             diff = abs(debit - credit)
             self.assertGreater(diff, Decimal("0"))
             self.assertLessEqual(diff, Decimal("0.02"))
+
+    def test_the_workbook_directory_is_not_world_readable(self):
+        """
+        The workbooks themselves are written 0600 by atomic_write, but the directory
+        holding them was created with mkdir's default 0755, so any account on the box
+        could list it. Matches the 0700 that refresh_e2e_db.sh applies to .e2e/dumps.
+        """
+        import os
+        import stat
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "tb"
+            write_tb_workbooks(target)
+            self.assertEqual(stat.S_IMODE(os.stat(target).st_mode), 0o700)
+
+    def test_an_existing_directory_is_tightened_too(self):
+        """
+        .e2e/tb already exists on every box this has ever run on, and mkdir with
+        exist_ok=True leaves an existing directory's mode alone.
+        """
+        import os
+        import stat
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "tb"
+            target.mkdir(mode=0o755)
+            os.chmod(target, 0o755)
+
+            write_tb_workbooks(target)
+            self.assertEqual(stat.S_IMODE(os.stat(target).st_mode), 0o700)

@@ -5,6 +5,7 @@ import { promisify } from 'util';
 import { startInstance, type Instance } from '../fixtures/instance';
 import { loadUsers, loginAs } from '../fixtures/login';
 import { dumpFigures, recordObserved, compareToBaseline } from '../fixtures/figures';
+import { E2E_STATE_DIR, VENV_PYTHON } from '../fixtures/paths';
 
 const execFileAsync = promisify(execFile);
 
@@ -65,10 +66,10 @@ const execFileAsync = promisify(execFile);
  */
 
 const PORT = 8202;
-const IDS = JSON.parse(fs.readFileSync('/opt/statementhub/.e2e/fixture_entity.json', 'utf-8'));
+const IDS = JSON.parse(fs.readFileSync(`${E2E_STATE_DIR}/fixture_entity.json`, 'utf-8'));
 const PRIOR_FY = IDS.prior_fy;
 const CURRENT_FY = IDS.current_fy;
-const AMENDED_TB_PATH = '/opt/statementhub/.e2e/tb/tb_prior_amended.xlsx';
+const AMENDED_TB_PATH = `${E2E_STATE_DIR}/tb/tb_prior_amended.xlsx`;
 
 let instance: Instance;
 
@@ -150,7 +151,7 @@ except BaseException:
         os.unlink(tmp)
     raise
 `;
-  await execFileAsync('/opt/statementhub/venv/bin/python', ['-c', script]);
+  await execFileAsync(VENV_PYTHON, ['-c', script]);
 }
 
 /** Upload a TB workbook the same way a real accountant would: pick the file, submit

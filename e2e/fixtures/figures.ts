@@ -5,7 +5,7 @@ import * as path from 'path';
 
 const execFileAsync = promisify(execFile);
 
-const REPO_DIR = '/opt/statementhub';
+import { REPO_DIR, VENV_PYTHON } from './paths';
 const BASELINE = path.join(__dirname, '..', 'tier2', 'figures.baseline.json');
 // One file per checkpoint rather than one shared JSON document. playwright.config.ts
 // runs spec *files* concurrently across workers (fullyParallel: false only serialises
@@ -22,7 +22,7 @@ export async function dumpFigures(
   checkpoint: string,
 ): Promise<any> {
   const { stdout } = await execFileAsync(
-    `${REPO_DIR}/venv/bin/python`,
+    VENV_PYTHON,
     ['manage.py', 'e2e_dump_figures', '--year', yearId, '--checkpoint', checkpoint],
     {
       cwd: REPO_DIR,

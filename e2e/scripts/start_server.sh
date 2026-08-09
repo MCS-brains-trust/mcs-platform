@@ -17,8 +17,11 @@ set -euo pipefail
 DB_NAME="${1:?usage: start_server.sh <db_name> <port>}"
 PORT="${2:?usage: start_server.sh <db_name> <port>}"
 
-REPO_DIR="/opt/statementhub"
-E2E_DIR="${REPO_DIR}/.e2e"
+# Two roots, deliberately separate -- see e2e/fixtures/paths.ts for why.
+# REPO_DIR is the checkout under test; RUNTIME_DIR owns the venv and .e2e state.
+REPO_DIR="${STATEMENTHUB_ROOT:-/opt/statementhub}"
+RUNTIME_DIR="${STATEMENTHUB_RUNTIME_ROOT:-/opt/statementhub}"
+E2E_DIR="${RUNTIME_DIR}/.e2e"
 
 # shellcheck disable=SC1091
 set -a; source "${E2E_DIR}/db.env"; set +a
@@ -34,8 +37,10 @@ ${PSQL} -d postgres -qc "DROP DATABASE IF EXISTS ${DB_NAME} WITH (FORCE);"
 ${PSQL} -d postgres -qc "CREATE DATABASE ${DB_NAME} TEMPLATE ${E2E_TEMPLATE_DB};"
 
 cd "${REPO_DIR}"
+# The interpreter belongs to the machine, not to the checkout under test: a CI
+# workspace has no venv of its own.
 # shellcheck disable=SC1091
-source venv/bin/activate
+source "${RUNTIME_DIR}/venv/bin/activate"
 
 export DJANGO_SETTINGS_MODULE=config.settings_e2e
 export E2E_DB_NAME="${DB_NAME}"

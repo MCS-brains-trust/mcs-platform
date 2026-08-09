@@ -5,6 +5,7 @@ import { promisify } from 'util';
 import { startInstance, type Instance } from '../fixtures/instance';
 import { loadUsers, loginAs } from '../fixtures/login';
 import { dumpFigures, compareToBaseline, recordObserved } from '../fixtures/figures';
+import { E2E_STATE_DIR, REPO_DIR, VENV_PYTHON } from '../fixtures/paths';
 
 const execFileAsync = promisify(execFile);
 
@@ -18,9 +19,9 @@ const execFileAsync = promisify(execFile);
  */
 
 const PORT = 8201;
-const IDS = JSON.parse(fs.readFileSync('/opt/statementhub/.e2e/fixture_entity.json', 'utf-8'));
+const IDS = JSON.parse(fs.readFileSync(`${E2E_STATE_DIR}/fixture_entity.json`, 'utf-8'));
 const FY = IDS.current_fy;
-const TB_DIR = '/opt/statementhub/.e2e/tb';
+const TB_DIR = `${E2E_STATE_DIR}/tb`;
 
 let instance: Instance;
 
@@ -243,10 +244,10 @@ updated = TrialBalanceLine.objects.filter(
 assert updated == 1, f"expected exactly one accum-dep import line, retagged {updated}"
 `;
   await execFileAsync(
-    '/opt/statementhub/venv/bin/python',
+    VENV_PYTHON,
     ['manage.py', 'shell', '-c', script],
     {
-      cwd: '/opt/statementhub',
+      cwd: REPO_DIR,
       env: {
         ...process.env,
         DJANGO_SETTINGS_MODULE: 'config.settings_e2e',

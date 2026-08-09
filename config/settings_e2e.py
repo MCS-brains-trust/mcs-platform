@@ -24,7 +24,10 @@ from pathlib import Path
 
 from config.settings import *  # noqa: F401,F403
 
-E2E_DIR = Path("/opt/statementhub/.e2e")
+# Runtime state, not code: the venv and .e2e belong to the machine and stay at the
+# deployment root even when the checkout under test lives elsewhere (CI). See
+# e2e/fixtures/paths.ts.
+E2E_DIR = Path(os.environ.get("STATEMENTHUB_RUNTIME_ROOT", "/opt/statementhub")) / ".e2e"
 
 
 def _load_db_env():

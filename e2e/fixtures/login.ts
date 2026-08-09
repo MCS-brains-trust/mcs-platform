@@ -12,7 +12,9 @@ import * as fs from 'fs';
  * instance instead.
  */
 
-const USERS_MANIFEST = '/opt/statementhub/.e2e/users.json';
+import { E2E_STATE_DIR } from './paths';
+
+const USERS_MANIFEST = `${E2E_STATE_DIR}/users.json`;
 
 export interface RoleSpec {
   username: string;

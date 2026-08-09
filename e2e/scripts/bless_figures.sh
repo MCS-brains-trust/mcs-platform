@@ -15,7 +15,7 @@
 
 set -euo pipefail
 
-E2E_DIR="/opt/statementhub/e2e"
+E2E_DIR="${STATEMENTHUB_ROOT:-/opt/statementhub}/e2e"
 # One file per checkpoint, not one shared JSON document — see figures.ts's
 # recordObserved for why (concurrent spec files would otherwise race on a single
 # read-modify-write file and silently lose a checkpoint).

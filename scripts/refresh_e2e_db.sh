@@ -16,7 +16,7 @@
 
 set -euo pipefail
 
-REPO_DIR="/opt/statementhub"
+REPO_DIR="${STATEMENTHUB_RUNTIME_ROOT:-/opt/statementhub}"
 E2E_DIR="${REPO_DIR}/.e2e"
 DUMP_DIR="${E2E_DIR}/dumps"
 HARDEN_SQL="${REPO_DIR}/scripts/e2e_harden.sql"

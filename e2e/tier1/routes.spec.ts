@@ -1,6 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { test, expect, loadRouteManifest, pageForRole, type RouteRecord } from '../fixtures/roles';
+import { E2E_STATE_DIR } from '../fixtures/paths';
 
 /**
  * Tier 1: assert every GET route in the committed manifest behaves as it did before.
@@ -143,7 +144,7 @@ test.describe('Tier 1 — route regression sweep', () => {
         expect(
           status,
           `${route.name} (${route.url}) returned ${status} — a server error is never an ` +
-            `acceptable baseline. See /opt/statementhub/.e2e/logs/django.log`,
+            `acceptable baseline. See ${E2E_STATE_DIR}/logs/django.log`,
         ).toBeLessThan(500);
 
         const contentType = response.headers()['content-type'] ?? '';

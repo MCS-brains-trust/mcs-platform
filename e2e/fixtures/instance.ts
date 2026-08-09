@@ -17,7 +17,8 @@ const execFileAsync = promisify(execFile);
  * would collide.
  */
 
-const REPO_DIR = '/opt/statementhub';
+import { REPO_DIR, E2E_STATE_DIR } from './paths';
+
 const START_SERVER = `${REPO_DIR}/e2e/scripts/start_server.sh`;
 const BOOT_TIMEOUT_MS = 180_000;
 // Bound each readiness probe so a connection that is accepted but never answered
@@ -108,7 +109,7 @@ async function killProcessGroup(proc: ChildProcess, slug: string): Promise<void>
 async function dropDatabase(dbName: string, slug: string): Promise<void> {
   await execFileAsync('bash', [
     '-c',
-    `set -a; source ${REPO_DIR}/.e2e/db.env; set +a; ` +
+    `set -a; source ${E2E_STATE_DIR}/db.env; set +a; ` +
       `PGPASSWORD="$E2E_DB_PASSWORD" psql -h "$E2E_DB_HOST" -p "$E2E_DB_PORT" ` +
       `-U "$E2E_DB_USER" -d postgres -qc 'DROP DATABASE IF EXISTS ${dbName} WITH (FORCE);'`,
   ]).catch((err) => {

@@ -17,7 +17,7 @@
 
 set -euo pipefail
 
-E2E_DIR="/opt/statementhub/e2e"
+E2E_DIR="${STATEMENTHUB_ROOT:-/opt/statementhub}/e2e"
 RESULTS="${E2E_DIR}/test-results/results.json"
 KNOWN="${E2E_DIR}/tier2/known_failures.json"
 

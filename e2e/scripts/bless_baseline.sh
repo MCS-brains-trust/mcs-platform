@@ -14,7 +14,7 @@
 
 set -euo pipefail
 
-E2E_DIR="/opt/statementhub/e2e"
+E2E_DIR="${STATEMENTHUB_ROOT:-/opt/statementhub}/e2e"
 OBSERVED="${E2E_DIR}/test-results/observed-status.json"
 BASELINE="${E2E_DIR}/tier1/status.baseline.json"
 

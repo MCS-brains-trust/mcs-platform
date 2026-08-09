@@ -8,6 +8,7 @@ the first row treated as a header.
 """
 from __future__ import annotations
 
+import os
 from decimal import Decimal
 from pathlib import Path
 
@@ -45,7 +46,12 @@ def _write(path: Path, rows) -> Path:
 
 def write_tb_workbooks(directory: str | Path) -> dict[str, Path]:
     directory = Path(directory)
-    directory.mkdir(parents=True, exist_ok=True)
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    # chmod as well as mode=: mkdir's mode is masked by the umask on creation and
+    # ignored entirely when the directory already exists, which it does on every box
+    # this has ever run on. The workbooks inside are 0600 (see atomic_write); a 0755
+    # directory around them still lets any account on the droplet list what is there.
+    os.chmod(directory, 0o700)
 
     balanced = _write(directory / "tb_balanced.xlsx", BALANCED_ROWS)
 
