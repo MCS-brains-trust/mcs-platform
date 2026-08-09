@@ -7,9 +7,11 @@
     "test": "playwright test",
     "test:tier1": "playwright test --project=tier1",
     "test:tier2": "playwright test --project=tier2",
+    "test:unit": "playwright test --config=playwright.unit.config.ts",
     "report": "playwright show-report",
     "refresh-db": "bash ../scripts/refresh_e2e_db.sh",
-    "bootstrap": "bash ./scripts/bootstrap.sh"
+    "bootstrap": "bash ./scripts/bootstrap.sh",
+    "bless:figures": "bash ./scripts/bless_figures.sh"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.0",
