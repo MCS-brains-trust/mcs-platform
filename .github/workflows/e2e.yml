@@ -172,15 +172,24 @@ jobs:
         working-directory: e2e
         run: npx playwright test --project=tier1
 
-      - name: Upload report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-report-tier1
-          path: |
-            e2e/playwright-report
-            e2e/test-results
-          retention-days: 14
+      # There is deliberately no step uploading this job's playwright-report or
+      # test-results either, for the same reason as the log below. Tier 1 crawls 215
+      # routes across the REAL entities in the restored production copy, and on failure
+      # Playwright writes a screenshot of the page and a trace -- a recording carrying
+      # that page's own HTML -- for each one. Those are pictures of real client
+      # financial data, and uploading them would put it on GitHub for fourteen days,
+      # readable by anyone with access to this repository. Tier 2 does upload its
+      # equivalents: that job drives a synthetic fixture entity with invented figures
+      # (core/e2e_fixture_data.py), so its artifacts carry nothing real, and it is where
+      # the accounting logic that actually breaks lives.
+      #
+      # This narrows the exposure rather than closing it. The job's own console output
+      # still goes to GitHub, and Playwright prints assertion failures there -- a failed
+      # figure comparison puts whole trial balances in the error text. Constraining the
+      # reporter is a separate piece of work and has not been done.
+      #
+      # To diagnose a Tier 1 failure, read e2e/playwright-report and e2e/test-results
+      # on the droplet, in the runner's workspace for that run.
 
       # There is deliberately no step uploading .e2e/logs/django.log. It is the most
       # useful artifact for diagnosing a failing route -- DEBUG is False, so the
