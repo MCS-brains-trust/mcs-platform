@@ -80,16 +80,39 @@ const ROW_SPLIT_B = {
   is_adjustment: true,
 };
 
+const ASSET_LAPTOP = {
+  asset_name: 'Laptop',
+  opening_wdv: '2000.00',
+  depreciation_amount: '400.00',
+  private_depreciation: '0.00',
+  closing_wdv: '1600.00',
+  dep_expense_code: '6-1200',
+  accum_dep_code: '1-2100',
+};
+
+// Two assets sharing asset_name ("Laptop") -- core/e2e_figures.py orders
+// depreciation by (asset_name, pk) specifically because this happens (e.g. two
+// laptops bought the same year), so only the grouped comparator can tell them apart.
+const ASSET_LAPTOP_A = { ...ASSET_LAPTOP, closing_wdv: '1600.00' };
+const ASSET_LAPTOP_B = { ...ASSET_LAPTOP, opening_wdv: '3000.00', closing_wdv: '2500.00' };
+
 const BASELINE_FIXTURE = {
   after_depreciation_post: {
     trial_balance: [ROW_CASH, ROW_DEPRECIATION],
     totals: { debit: '4100.00', credit: '4100.00' },
     journals: [{ id: 'j1', description: 'depreciation' }],
+    depreciation: [ASSET_LAPTOP],
   },
   after_split_adjustment: {
     trial_balance: [ROW_SPLIT_A, ROW_SPLIT_B],
     totals: { debit: '150.00', credit: '0.00' },
     journals: [],
+  },
+  after_two_assets: {
+    trial_balance: [],
+    totals: { debit: '0.00', credit: '0.00' },
+    journals: [],
+    depreciation: [ASSET_LAPTOP_A, ASSET_LAPTOP_B],
   },
 };
 
@@ -155,6 +178,87 @@ test('totals and journal-count mismatches are reported', () => {
     'after_depreciation_post: totals.debit expected 4100.00, got 9999.00',
   );
   expect(diffs.some((d) => d.includes('journals differ'))).toBe(true);
+});
+
+test('a changed prior_closing_balance is reported (Finding 4)', () => {
+  // Load-bearing for the comparatives story -- see figures.ts's field list comment.
+  // Undetected, a comparative-year regression would sail through unnoticed because
+  // every other TB field on the row can be unchanged.
+  const figures = clone('after_depreciation_post');
+  figures.trial_balance[0] = { ...figures.trial_balance[0], prior_closing_balance: '999.00' };
+
+  const diffs = compareToBaseline('after_depreciation_post', figures, BASELINE_PATH);
+
+  expect(diffs).toContain(
+    'after_depreciation_post: 1-1000|import prior_closing_balance expected 0.00, got 999.00',
+  );
+});
+
+test('a changed account_name is reported (Finding 4)', () => {
+  const figures = clone('after_depreciation_post');
+  figures.trial_balance[0] = { ...figures.trial_balance[0], account_name: 'Petty Cash' };
+
+  const diffs = compareToBaseline('after_depreciation_post', figures, BASELINE_PATH);
+
+  expect(diffs).toContain(
+    'after_depreciation_post: 1-1000|import account_name expected Cash, got Petty Cash',
+  );
+});
+
+test('a changed is_adjustment is reported (Finding 4)', () => {
+  const figures = clone('after_depreciation_post');
+  figures.trial_balance[1] = { ...figures.trial_balance[1], is_adjustment: false };
+
+  const diffs = compareToBaseline('after_depreciation_post', figures, BASELINE_PATH);
+
+  expect(diffs).toContain(
+    'after_depreciation_post: 6-1200|journal is_adjustment expected true, got false',
+  );
+});
+
+test('a changed depreciation figure names the asset, the field, and both values (Finding 4)', () => {
+  const figures = clone('after_depreciation_post');
+  figures.depreciation[0] = { ...figures.depreciation[0], closing_wdv: '1200.00' };
+
+  const diffs = compareToBaseline('after_depreciation_post', figures, BASELINE_PATH);
+
+  expect(diffs).toContain(
+    'after_depreciation_post: depreciation Laptop closing_wdv expected 1600.00, got 1200.00',
+  );
+});
+
+test('a depreciation row missing from the run is reported against its expected closing_wdv (Finding 4)', () => {
+  const figures = clone('after_depreciation_post');
+  figures.depreciation = [];
+
+  const diffs = compareToBaseline('after_depreciation_post', figures, BASELINE_PATH);
+
+  expect(diffs).toContain(
+    'after_depreciation_post: depreciation Laptop missing — expected closing_wdv 1600.00',
+  );
+});
+
+test('a depreciation row absent from the baseline is reported as new (Finding 4)', () => {
+  const figures = clone('after_depreciation_post');
+  figures.depreciation.push({ ...ASSET_LAPTOP, asset_name: 'Delivery Van' });
+
+  const diffs = compareToBaseline('after_depreciation_post', figures, BASELINE_PATH);
+
+  expect(diffs).toContain(
+    'after_depreciation_post: depreciation Delivery Van is new — not in the baseline',
+  );
+});
+
+test('a regression on the second of two depreciation assets sharing a name is reported (Finding 4)', () => {
+  const figures = clone('after_two_assets');
+  figures.depreciation[1] = { ...figures.depreciation[1], closing_wdv: '0.00' };
+
+  const diffs = compareToBaseline('after_two_assets', figures, BASELINE_PATH);
+
+  expect(diffs).toContain(
+    'after_two_assets: depreciation Laptop[1] closing_wdv expected 2500.00, got 0.00',
+  );
+  expect(diffs.some((d) => d.includes('Laptop[0]'))).toBe(false);
 });
 
 test('a checkpoint the baseline has never seen is reported, not silently passed', () => {

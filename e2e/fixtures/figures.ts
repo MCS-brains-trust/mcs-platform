@@ -53,17 +53,51 @@ export function recordObserved(checkpoint: string, figures: any): void {
   fs.writeFileSync(file, JSON.stringify({ checkpoint, figures }, null, 2) + '\n');
 }
 
-/** Group trial-balance rows by account_code|source, preserving row order within a key. */
-function groupRows(rows: any[] | undefined): Map<string, any[]> {
+/**
+ * Group rows by a caller-supplied key, preserving row order within a key.
+ *
+ * Both trial-balance rows and depreciation rows can legitimately repeat their
+ * "obvious" identifier (core/e2e_figures.py orders each by a tie-breaking pk for
+ * exactly this reason: two lines can share account_code|source, and two assets can
+ * share asset_name), so grouping instead of overwriting is needed in both places —
+ * see keyFn below for the two shapes this is called with.
+ */
+function groupRows(rows: any[] | undefined, keyFn: (row: any) => string): Map<string, any[]> {
   const groups = new Map<string, any[]>();
   for (const r of rows ?? []) {
-    const key = `${r.account_code}|${r.source}`;
+    const key = keyFn(r);
     const group = groups.get(key);
     if (group) group.push(r);
     else groups.set(key, [r]);
   }
   return groups;
 }
+
+const TB_KEY = (r: any) => `${r.account_code}|${r.source}`;
+const DEPRECIATION_KEY = (r: any) => r.asset_name;
+
+/** Fields compared on every trial-balance row. Keep in sync with what
+ * core/e2e_figures.py emits and bless_figures.sh's describe_changes prints —
+ * a field compared here but not printed there is exactly Finding 5's bug. */
+const TB_FIELDS = [
+  'opening_balance',
+  'debit',
+  'credit',
+  'closing_balance',
+  'prior_closing_balance',
+  'account_name',
+  'is_adjustment',
+];
+
+/** Fields compared on every depreciation row. */
+const DEPRECIATION_FIELDS = [
+  'opening_wdv',
+  'depreciation_amount',
+  'private_depreciation',
+  'closing_wdv',
+  'dep_expense_code',
+  'accum_dep_code',
+];
 
 /**
  * Compare a snapshot to the blessed baseline.
@@ -104,8 +138,8 @@ export function compareToBaseline(
   // so account_code|source alone is not always a unique key here. Grouping instead of
   // overwriting means a regression on the second row of a colliding pair still gets a
   // diff line, rather than being silently shadowed by the first row's match.
-  const expectedGroups = groupRows(expected.trial_balance);
-  const actualGroups = groupRows(figures.trial_balance);
+  const expectedGroups = groupRows(expected.trial_balance, TB_KEY);
+  const actualGroups = groupRows(figures.trial_balance, TB_KEY);
   const allKeys = new Set<string>([...expectedGroups.keys(), ...actualGroups.keys()]);
 
   for (const key of allKeys) {
@@ -127,10 +161,44 @@ export function compareToBaseline(
         diffs.push(`${checkpoint}: ${label} is new — not in the baseline`);
         continue;
       }
-      for (const field of ['opening_balance', 'debit', 'credit', 'closing_balance']) {
+      for (const field of TB_FIELDS) {
         if (exp[field] !== act[field]) {
           diffs.push(
             `${checkpoint}: ${label} ${field} expected ${exp[field]}, got ${act[field]}`,
+          );
+        }
+      }
+    }
+  }
+
+  // Same grouped, pairwise-by-position comparison as the trial balance above, and for
+  // the same reason: core/e2e_figures.py orders depreciation by (asset_name, pk)
+  // specifically because two assets can share a name (e.g. two "Laptop" purchases in
+  // the same year), so asset_name alone is not a unique key here either.
+  const expectedDepGroups = groupRows(expected.depreciation, DEPRECIATION_KEY);
+  const actualDepGroups = groupRows(figures.depreciation, DEPRECIATION_KEY);
+  const allDepKeys = new Set<string>([...expectedDepGroups.keys(), ...actualDepGroups.keys()]);
+
+  for (const key of allDepKeys) {
+    const expGroup = expectedDepGroups.get(key) ?? [];
+    const actGroup = actualDepGroups.get(key) ?? [];
+    const maxLen = Math.max(expGroup.length, actGroup.length);
+    for (let i = 0; i < maxLen; i++) {
+      const label = maxLen > 1 ? `${key}[${i}]` : key;
+      const exp = expGroup[i];
+      const act = actGroup[i];
+      if (exp && !act) {
+        diffs.push(`${checkpoint}: depreciation ${label} missing — expected closing_wdv ${exp.closing_wdv}`);
+        continue;
+      }
+      if (act && !exp) {
+        diffs.push(`${checkpoint}: depreciation ${label} is new — not in the baseline`);
+        continue;
+      }
+      for (const field of DEPRECIATION_FIELDS) {
+        if (exp[field] !== act[field]) {
+          diffs.push(
+            `${checkpoint}: depreciation ${label} ${field} expected ${exp[field]}, got ${act[field]}`,
           );
         }
       }
