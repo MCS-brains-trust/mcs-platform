@@ -106,5 +106,92 @@
         "source": "tb_import"
       }
     ]
+  },
+  "prior_before_amendment": {
+    "depreciation": [],
+    "journals": [],
+    "totals": {
+      "credit": "100000.00",
+      "debit": "100000.00"
+    },
+    "trial_balance": [
+      {
+        "account_code": "1-1000",
+        "account_name": "Cash at Bank",
+        "closing_balance": "70000.00",
+        "credit": "0.00",
+        "debit": "70000.00",
+        "is_adjustment": false,
+        "opening_balance": "0.00",
+        "prior_closing_balance": "0.00",
+        "source": "tb_import"
+      },
+      {
+        "account_code": "1-2000",
+        "account_name": "Plant and Equipment",
+        "closing_balance": "20000.00",
+        "credit": "0.00",
+        "debit": "20000.00",
+        "is_adjustment": false,
+        "opening_balance": "0.00",
+        "prior_closing_balance": "0.00",
+        "source": "tb_import"
+      },
+      {
+        "account_code": "1-2100",
+        "account_name": "Accumulated Depreciation",
+        "closing_balance": "-4000.00",
+        "credit": "4000.00",
+        "debit": "0.00",
+        "is_adjustment": false,
+        "opening_balance": "0.00",
+        "prior_closing_balance": "0.00",
+        "source": "tb_import"
+      },
+      {
+        "account_code": "2-1000",
+        "account_name": "Trade Creditors",
+        "closing_balance": "-6000.00",
+        "credit": "6000.00",
+        "debit": "0.00",
+        "is_adjustment": false,
+        "opening_balance": "0.00",
+        "prior_closing_balance": "0.00",
+        "source": "tb_import"
+      },
+      {
+        "account_code": "3-1000",
+        "account_name": "Retained Earnings",
+        "closing_balance": "-60000.00",
+        "credit": "60000.00",
+        "debit": "0.00",
+        "is_adjustment": false,
+        "opening_balance": "0.00",
+        "prior_closing_balance": "0.00",
+        "source": "tb_import"
+      },
+      {
+        "account_code": "4-1000",
+        "account_name": "Sales",
+        "closing_balance": "-30000.00",
+        "credit": "30000.00",
+        "debit": "0.00",
+        "is_adjustment": false,
+        "opening_balance": "0.00",
+        "prior_closing_balance": "0.00",
+        "source": "tb_import"
+      },
+      {
+        "account_code": "6-1000",
+        "account_name": "Administration",
+        "closing_balance": "10000.00",
+        "credit": "0.00",
+        "debit": "10000.00",
+        "is_adjustment": false,
+        "opening_balance": "0.00",
+        "prior_closing_balance": "0.00",
+        "source": "tb_import"
+      }
+    ]
   }
 }

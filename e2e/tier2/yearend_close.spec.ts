@@ -237,6 +237,31 @@ test('posting depreciation is idempotent and leaves opening balances alone', asy
   expect(await postDepreciationViaModal(page)).toBeLessThan(400);
   const first = await dumpFigures(instance.dbName, FY, 'after_depreciation_post');
 
+  // Recorded here, immediately after the first press, rather than after the
+  // assertions below -- every one of which can throw before reaching this point
+  // once the idempotency defect fires. A checkpoint captured only once everything
+  // else has passed is never captured at all on the one test in this file that is
+  // known to fail; recording first means `first`'s figures land in the observed
+  // dump regardless of what happens next, ready to bless the day the defect is
+  // fixed.
+  //
+  // Recorded but deliberately NOT compared. Dumping right after this very first
+  // press already reflects the confirmed defect (see the totals check a few lines
+  // down and this file's final comment) -- the pre-existing $4,000 Accumulated
+  // Depreciation balance already in the imported opening TB is non-'rollover', so
+  // depreciation_post_to_tb's current-movement query counts it as current-year
+  // movement on the FIRST press, not only on a repeat one, and posts a single-sided
+  // $4,000 reversal with no matching expense-side movement. Blessing that would
+  // encode the bug as "expected", so this checkpoint has no baseline entry -- and a
+  // compareToBaseline call against a checkpoint that is deliberately never blessed
+  // can only ever report "not in the baseline yet". Adding one here would make this
+  // test fail on baseline bookkeeping *before* reaching the three assertions below
+  // that are its whole purpose, would make known_failures.json's stated reason for
+  // this test untrue, and would keep it red even after the depreciation defect is
+  // fixed -- defeating the check that a silently-fixed known failure must be loud.
+  // The compare belongs here only once the figures are correct enough to bless.
+  recordObserved('after_depreciation_post', first);
+
   expect(await postDepreciationViaModal(page)).toBeLessThan(400);
   const second = await dumpFigures(instance.dbName, FY, 'after_depreciation_post_twice');
 
@@ -255,10 +280,11 @@ test('posting depreciation is idempotent and leaves opening balances alone', asy
     'posting depreciation must not touch opening balances',
   ).toEqual(openingBefore.filter(([code]: any) => openingAfter.some(([c]: any) => c === code)));
 
+  // Also expected to fail today, for the same root cause as the idempotency check
+  // above: the single-sided reversal journal on the very first press already
+  // leaves the TB out of balance (observed 120,000 debit / 116,000 credit against
+  // this fixture), before a second press ever stacks anything on top.
   expect(first.totals.debit).toBe(first.totals.credit);
-
-  recordObserved('after_depreciation_post', first);
-  expect(compareToBaseline('after_depreciation_post', first)).toEqual([]);
 
   await page.context().close();
 });

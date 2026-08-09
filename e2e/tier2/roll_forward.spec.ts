@@ -4,7 +4,7 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { startInstance, type Instance } from '../fixtures/instance';
 import { loadUsers, loginAs } from '../fixtures/login';
-import { dumpFigures } from '../fixtures/figures';
+import { dumpFigures, recordObserved, compareToBaseline } from '../fixtures/figures';
 
 const execFileAsync = promisify(execFile);
 
@@ -44,6 +44,24 @@ const execFileAsync = promisify(execFile);
  * consequences (see the last test), so exactly one test is allowed to fail and it has
  * to be the last one in the file — matching yearend_close.spec.ts's own convention of
  * placing its single known-red test last.
+ *
+ * Golden baseline: only 'prior_before_amendment' is recorded/compared against
+ * tier2/figures.baseline.json. It was the one checkpoint in this file confirmed by
+ * inspection to be untouched by the roll-forward defect: it is 2025's own trial
+ * balance, dumped before anything here amends or re-finalises it, so it is exactly
+ * core/e2e_fixture_data.py's PRIOR_YEAR_TB (verified balanced at 100,000.00/
+ * 100,000.00 -- see the report for the full field-by-field check). Every *rolled*
+ * (2026) checkpoint this file computes -- 'after_first_roll', 'after_roll_forward',
+ * etc. -- was inspected directly the same way and found to have EVERY trial-balance
+ * field zeroed (opening_balance, closing_balance, debit, credit,
+ * prior_closing_balance -- not only the balance-sheet subset the final test's own
+ * comment calls out) as a direct consequence of the confirmed misclassification
+ * defect. Blessing any of those would promote the defect's own output to "expected",
+ * and adding an unblessed compareToBaseline call to any of the tests above (all of
+ * which currently pass) would turn a passing test permanently red -- silently
+ * growing this suite's two known failures to three. Neither is acceptable, so those
+ * checkpoints stay dumpFigures()-only, feeding the JS assertions already written
+ * against them directly.
  */
 
 const PORT = 8202;
@@ -279,6 +297,16 @@ test('every balance-sheet account should carry its prior-year closing balance fo
 
   // ── Part A: the central invariant, against the roll two tests ago ────────────
   const prior = await dumpFigures(instance.dbName, PRIOR_FY, 'prior_before_amendment');
+
+  // Recorded and compared here, before Part A's own mismatches.push() calls below
+  // and before Part B's reopen/amend/re-finalise -- the same "capture before the
+  // known failure can throw" placement as yearend_close.spec.ts's Finding 3 fix.
+  // Safe to bless (and blessed): this is 2025's untouched trial balance, not
+  // 2026's rolled-forward one -- see this file's header comment for why only this
+  // checkpoint, of everything dumped in this file, is not defect output.
+  recordObserved('prior_before_amendment', prior);
+  expect(compareToBaseline('prior_before_amendment', prior)).toEqual([]);
+
   const rolled = await dumpFigures(instance.dbName, CURRENT_FY, 'after_roll_forward');
   const rolledByCode = new Map<string, any>(
     rolled.trial_balance.map((r: any) => [r.account_code, r]),
