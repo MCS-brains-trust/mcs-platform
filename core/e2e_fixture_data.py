@@ -25,13 +25,25 @@ FIXTURE_IDS = {
 
 # Prior-year closing balances. Balanced, and deliberately small and round so a spec
 # failure reports a number a human can reason about.
+#
+# Includes two P&L accounts (Sales, Administration) alongside the balance-sheet ones
+# so a roll-forward spec has a real, non-zero net profit to close into retained
+# earnings and real P&L accounts to check "carries as comparative, not opening"
+# against -- a fixture with balance-sheet accounts only cannot exercise either
+# promise (see Task 9's fix round 1: both the net-profit-closing formula and the
+# P&L-comparative check evaluate to a trivial 0 == 0 without this). Cash at Bank is
+# $20,000 higher than the balance-sheet-only version of this fixture (70,000 instead
+# of 50,000) precisely to absorb that $20,000 net profit (Sales 30,000 − Admin
+# 10,000) and keep the whole trial balance balanced.
 PRIOR_YEAR_TB = [
     # (code, name, debit, credit)
-    ("1-1000", "Cash at Bank", Decimal("50000.00"), Decimal("0.00")),
+    ("1-1000", "Cash at Bank", Decimal("70000.00"), Decimal("0.00")),
     ("1-2000", "Plant and Equipment", Decimal("20000.00"), Decimal("0.00")),
     ("1-2100", "Accumulated Depreciation", Decimal("0.00"), Decimal("4000.00")),
     ("2-1000", "Trade Creditors", Decimal("0.00"), Decimal("6000.00")),
     ("3-1000", "Retained Earnings", Decimal("0.00"), Decimal("60000.00")),
+    ("4-1000", "Sales", Decimal("0.00"), Decimal("30000.00")),
+    ("6-1000", "Administration", Decimal("10000.00"), Decimal("0.00")),
 ]
 
 # Section values are EntityChartOfAccount.StatementSection choices (core/models.py) —
@@ -43,6 +55,8 @@ CHART_OF_ACCOUNTS = [
     ("1-2100", "Accumulated Depreciation", "non_current_assets"),
     ("2-1000", "Trade Creditors", "current_liabilities"),
     ("3-1000", "Retained Earnings", "equity"),
+    ("4-1000", "Sales", "revenue"),
+    ("6-1000", "Administration", "expenses"),
     ("6-1200", "Depreciation", "expenses"),
 ]
 

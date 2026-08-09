@@ -38,9 +38,13 @@ class DumpFiguresTests(TestCase):
         self.assertEqual(first, second)
 
     def test_totals_report_the_balance(self):
+        # Prior-year totals per core/e2e_fixture_data.py's PRIOR_YEAR_TB, which
+        # Task 9's fix round 1 grew from five balance-sheet-only rows (70,000/70,000)
+        # to seven rows including a real Sales/Administration P&L pair, so the total
+        # grew to 100,000/100,000 -- still balanced, just larger.
         totals = dump_figures(self.prior)["totals"]
-        self.assertEqual(totals["debit"], "70000.00")
-        self.assertEqual(totals["credit"], "70000.00")
+        self.assertEqual(totals["debit"], "100000.00")
+        self.assertEqual(totals["credit"], "100000.00")
 
     def test_depreciation_rows_come_from_the_year_being_dumped(self):
         self.assertEqual(len(dump_figures(self.current)["depreciation"]), 1)

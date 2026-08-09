@@ -36,6 +36,24 @@ class SeedFixtureEntityTests(TestCase):
             sum(line.credit for line in lines),
         )
 
+    def test_prior_year_carries_a_real_net_profit(self):
+        # Task 9's roll-forward spec needs a genuine, non-zero net profit to close
+        # into retained earnings and real P&L accounts to check "carries as
+        # comparative, not opening" against -- a balance-sheet-only prior year makes
+        # both checks collapse to a trivial 0 == 0. Sales (credit) must exceed
+        # Administration (debit) so the year is a profit, not a loss or a wash.
+        seed_fixture_entity()
+        lines = {
+            line.account_code: line
+            for line in TrialBalanceLine.objects.filter(
+                financial_year_id=FIXTURE_IDS["prior_fy"]
+            )
+        }
+        self.assertIn("4-1000", lines)
+        self.assertIn("6-1000", lines)
+        net_profit = lines["4-1000"].credit - lines["6-1000"].debit
+        self.assertGreater(net_profit, Decimal("0"))
+
     def test_seeds_depreciation_accounts_so_posting_can_resolve_them(self):
         # _resolve_depreciation_account_groups falls back to EntityChartOfAccount
         # matched on name, so both accounts must exist or post-to-TB errors out.
@@ -60,5 +78,5 @@ class SeedFixtureEntityTests(TestCase):
         self.assertEqual(Entity.objects.filter(pk=FIXTURE_IDS["entity"]).count(), 1)
         self.assertEqual(
             TrialBalanceLine.objects.filter(financial_year_id=FIXTURE_IDS["prior_fy"]).count(),
-            5,
+            7,
         )
