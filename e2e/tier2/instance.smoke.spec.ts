@@ -13,6 +13,12 @@ const PORT = 8209;
 let instance: Instance;
 
 test.beforeAll(async () => {
+  // instance.ts's BOOT_TIMEOUT_MS (180s) matches Tier 1's webServer.timeout for the
+  // same branch-and-boot work, so it must not be lowered. Playwright's global
+  // `timeout: 120_000` also bounds this hook, though, and a hook timeout firing
+  // first would produce a generic "Test timeout exceeded" instead of this file's
+  // specific diagnostics -- so the hook budget must safely exceed the boot budget.
+  test.setTimeout(240_000);
   instance = await startInstance('smoke', PORT);
 });
 
