@@ -238,6 +238,49 @@ class DepreciationPostToTBTests(TestCase):
             2,
         )
 
+    def test_repeat_press_leaves_every_trial_balance_row_unchanged(self):
+        """
+        The idempotency contract is about the accounts, not the audit trail.
+
+        After a second press every trial-balance row must be identical to what the
+        first press left, while the journal records themselves necessarily
+        accumulate — each press writes its own reversal and re-post for audit.
+        """
+        schedule = Decimal("16868.94")
+        self._make_asset(schedule)
+
+        def account_positions():
+            """Net movement per account — the position, not the line history.
+
+            Each press appends its reversal and re-post lines rather than editing
+            history, so the row count grows by design; what must not move is where
+            each account nets out.
+            """
+            from django.db.models import Sum
+            return {
+                row["account_code"]: (row["dr"] or Decimal("0")) - (row["cr"] or Decimal("0"))
+                for row in TrialBalanceLine.objects.filter(financial_year=self.fy)
+                .values("account_code")
+                .annotate(dr=Sum("debit"), cr=Sum("credit"))
+            }
+
+        self._post()
+        after_first = account_positions()
+        journals_after_first = AdjustingJournal.objects.filter(
+            financial_year=self.fy
+        ).count()
+
+        self._post()
+        self.assertEqual(
+            account_positions(), after_first,
+            "a second press must leave every account exactly where it was",
+        )
+        self.assertGreater(
+            AdjustingJournal.objects.filter(financial_year=self.fy).count(),
+            journals_after_first,
+            "each press writes its own journals — the audit trail is expected to grow",
+        )
+
     # ------------------------------------------------------------------
     # Test 3: rollover opening balance on accum-dep is untouched
     # ------------------------------------------------------------------
@@ -298,6 +341,121 @@ class DepreciationPostToTBTests(TestCase):
         self.assertIsNotNone(reversal)
         # Reversal total_debit = imported_current (reversed the accum dep credit)
         self.assertEqual(reversal.total_debit, imported_current)
+
+    # ------------------------------------------------------------------
+    # Asymmetric prior movement must never post a single-sided journal
+    # ------------------------------------------------------------------
+    def _messages(self, response):
+        from django.contrib.messages import get_messages
+        return [str(m) for m in get_messages(response.wsgi_request)]
+
+    def test_one_sided_pair_movement_is_refused_without_writing_anything(self):
+        """
+        The imported TB carries accumulated-depreciation movement with no
+        matching depreciation-expense movement (an opening accum-dep balance
+        that came in via import rather than being tagged rollover).
+
+        Reversing it would emit a single-sided journal — 5000 debit, no credit.
+        The handler must refuse and leave client data untouched.
+        """
+        schedule = Decimal("8000.00")
+        imported_accum_only = Decimal("5000.00")
+
+        self._make_asset(schedule)
+        TrialBalanceLine.objects.create(
+            financial_year=self.fy,
+            account_code="2895",
+            account_name="Accumulated Depreciation",
+            debit=Decimal("0"), credit=imported_accum_only,
+            source="tb_import",
+        )
+
+        resp = self._post()
+        self.assertEqual(resp.status_code, 302)
+
+        self.assertFalse(
+            AdjustingJournal.objects.filter(financial_year=self.fy).exists(),
+            "no journal may be written when the pair cannot be reconciled",
+        )
+        self.assertEqual(
+            self._tb_net("2895"), -imported_accum_only,
+            "the imported accum-dep line must be left exactly as it was",
+        )
+        self.assertTrue(
+            any("2895" in m for m in self._messages(resp)),
+            f"the refusal must name the offending account: {self._messages(resp)}",
+        )
+
+    def test_unequal_pair_movement_is_refused(self):
+        """
+        Both sides carry movement, but different amounts — 3000 of expense
+        against 5000 of accumulated depreciation. Reversing each by its own
+        movement gives a journal with 5000 debits and 3000 credits, which is
+        just as unbalanced as the one-sided case.
+        """
+        schedule = Decimal("8000.00")
+        self._make_asset(schedule)
+
+        TrialBalanceLine.objects.create(
+            financial_year=self.fy,
+            account_code="1617",
+            account_name="Depreciation – Other",
+            debit=Decimal("3000.00"), credit=Decimal("0"),
+            source="tb_import",
+        )
+        TrialBalanceLine.objects.create(
+            financial_year=self.fy,
+            account_code="2895",
+            account_name="Accumulated Depreciation",
+            debit=Decimal("0"), credit=Decimal("5000.00"),
+            source="tb_import",
+        )
+
+        resp = self._post()
+        self.assertEqual(resp.status_code, 302)
+        self.assertFalse(
+            AdjustingJournal.objects.filter(financial_year=self.fy).exists(),
+            "no journal may be written when the pair cannot be reconciled",
+        )
+
+    def test_asymmetric_prior_movement_leaves_the_trial_balance_in_balance(self):
+        """
+        Whatever the handler decides to do with an asymmetric pair, the trial
+        balance it leaves behind must still balance. Today the single-sided
+        reversal pushes total debits 5000 above total credits.
+        """
+        from django.db.models import Sum
+
+        schedule = Decimal("8000.00")
+        imported_accum_only = Decimal("5000.00")
+
+        self._make_asset(schedule)
+        TrialBalanceLine.objects.create(
+            financial_year=self.fy,
+            account_code="2895",
+            account_name="Accumulated Depreciation",
+            debit=Decimal("0"), credit=imported_accum_only,
+            source="tb_import",
+        )
+        # A balancing contra line so the TB starts balanced, as a real import would
+        TrialBalanceLine.objects.create(
+            financial_year=self.fy,
+            account_code="1000",
+            account_name="Plant and Equipment",
+            debit=imported_accum_only, credit=Decimal("0"),
+            source="tb_import",
+        )
+
+        self._post()
+
+        totals = TrialBalanceLine.objects.filter(
+            financial_year=self.fy
+        ).aggregate(dr=Sum("debit"), cr=Sum("credit"))
+        self.assertEqual(
+            totals["dr"] or Decimal("0"),
+            totals["cr"] or Decimal("0"),
+            "trial balance must still balance after posting depreciation",
+        )
 
     # ------------------------------------------------------------------
     # Test 4: _post_journal_to_tb source param defaults to manual_journal

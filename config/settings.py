@@ -180,19 +180,30 @@ EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
 
 # ─── Caching (for concurrent user performance) ───────────────────────────────
-# Use database-backed cache in production; falls back to local memory for dev.
-# For 100+ concurrent users, consider Redis: CACHE_URL=redis://localhost:6379/0
+# The default cache MUST be shared across processes.
+#
+# gunicorn runs multiple workers and SESSION_ENGINE is "cached_db", which reads
+# the session from the cache and only falls back to the database on a miss.
+# With a per-process LocMemCache each worker keeps its own copy, so a worker
+# holding a stale pre-staging copy of a session serves that instead of re-reading
+# the DB. Every multi-step flow that stages data in the session (trial balance
+# import, journal upload, bulk entity import) then fails intermittently depending
+# on which worker happens to receive the follow-up request — silently, because the
+# staged payload simply looks absent.
+#
+# Redis is already a hard dependency here (Celery broker), so use it. DB 1 keeps
+# cache entries separate from the Celery broker on DB 0.
 CACHES = {
     "default": {
         "BACKEND": os.environ.get(
             "CACHE_BACKEND",
-            "django.core.cache.backends.locmem.LocMemCache",
+            "django.core.cache.backends.redis.RedisCache",
         ),
-        "LOCATION": os.environ.get("CACHE_LOCATION", "statementhub-cache"),
+        "LOCATION": os.environ.get("CACHE_LOCATION", "redis://127.0.0.1:6379/1"),
         "TIMEOUT": 300,
-        "OPTIONS": {
-            "MAX_ENTRIES": 1000,
-        },
+        # NB: no OPTIONS here. MAX_ENTRIES is a LocMemCache-only setting; RedisCache
+        # forwards OPTIONS straight to the redis connection, which rejects it with
+        # "AbstractConnection.__init__() got an unexpected keyword argument".
     }
 }
 
@@ -373,3 +384,11 @@ AWS_TEXTRACT_ROLE_ARN = os.environ.get("AWS_TEXTRACT_ROLE_ARN", "")
 # ── FuseSign Integration ────────────────────────────────────────────────────
 FUSESIGN_API_KEY = os.environ.get("FUSESIGN_API_KEY", "")
 FUSESIGN_API_URL = os.environ.get("FUSESIGN_API_URL", "https://api.fusesign.com")
+
+
+# Run the Tier 3 AI risk analysis automatically when a financial year enters
+# review. Queued to Celery rather than run inline (see core.views._dispatch_auto_tier3),
+# so this switches the pass on and off, not its synchronicity. config/settings_e2e.py
+# turns it off: the e2e suite finalises a year against a production-derived database,
+# and this pass sends trial balance figures to the Anthropic API.
+AUTO_TIER3_ON_IN_REVIEW = True

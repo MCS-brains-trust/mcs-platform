@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -10,13 +11,25 @@ import requests
 from bs4 import BeautifulSoup
 from django.core.cache import cache
 
+logger = logging.getLogger(__name__)
+
 ATO_BASE_URL = (
+    "https://www.ato.gov.au/tax-and-super-professionals/for-tax-professionals/"
+    "prepare-and-lodge/registered-agent-lodgment-program/due-dates-by-month"
+)
+ATO_MONTH_URL_TEMPLATE = ATO_BASE_URL + "/{slug}"
+
+# The ATO previously versioned this path by lodgment-program year
+# (".../registered-agent-lodgment-program-2025-26/..."). That form now 404s,
+# but keep it as a secondary candidate so the widget survives a revert.
+ATO_LEGACY_BASE_URL = (
     "https://www.ato.gov.au/tax-and-super-professionals/for-tax-professionals/"
     "prepare-and-lodge/registered-agent-lodgment-program-{program}/due-dates-by-month"
 )
-ATO_MONTH_URL_TEMPLATE = ATO_BASE_URL + "/{slug}"
+ATO_LEGACY_MONTH_URL_TEMPLATE = ATO_LEGACY_BASE_URL + "/{slug}"
+
 MELBOURNE_TZ = ZoneInfo("Australia/Melbourne")
-CACHE_KEY = "review_dashboard_ato_due_dates_v4"
+CACHE_KEY = "review_dashboard_ato_due_dates_v5"
 CACHE_TTL_SECONDS = 60 * 60 * 6
 DATE_HEADING_RE = re.compile(
     r"^(\d{1,2})\s+"
@@ -117,7 +130,13 @@ def get_next_ato_due_dates(limit: int = 3) -> List[dict]:
     upcoming: List[DueDateItem] = []
 
     for page in month_pages:
-        sections = _parse_month_page(session, page["url"], page["month_year"])
+        # A month page that 404s (or whose markup we cannot parse) must not take
+        # the whole widget down with it — skip it and keep collecting the rest.
+        try:
+            sections = _parse_month_page(session, page["urls"], page["month_year"])
+        except Exception:
+            logger.warning("ATO due dates: skipping %s", page["month_year"], exc_info=True)
+            continue
         for section in sections:
             if section.due_date < today:
                 continue
@@ -172,7 +191,10 @@ def _build_fallback_month_pages(today: date) -> List[dict]:
         program = _program_slug_for_date(current)
         months.append(
             {
-                "url": ATO_MONTH_URL_TEMPLATE.format(program=program, slug=slug),
+                "urls": [
+                    ATO_MONTH_URL_TEMPLATE.format(slug=slug),
+                    ATO_LEGACY_MONTH_URL_TEMPLATE.format(program=program, slug=slug),
+                ],
                 "month_year": month_year,
             }
         )
@@ -185,8 +207,12 @@ def _build_fallback_month_pages(today: date) -> List[dict]:
     return months
 
 
-def _parse_month_page(session: requests.Session, url: str, month_year: str) -> List[DueDateSection]:
-    html = _get_month_page_html(session, url, month_year)
+def _parse_month_page(
+    session: requests.Session, urls: List[str] | str, month_year: str
+) -> List[DueDateSection]:
+    if isinstance(urls, str):
+        urls = [urls]
+    html, url = _get_month_page_html(session, urls, month_year)
     soup = BeautifulSoup(html, "html.parser")
 
     article = soup.find("main") or soup
@@ -226,17 +252,24 @@ def _parse_month_page(session: requests.Session, url: str, month_year: str) -> L
     return sections
 
 
-def _get_month_page_html(session: requests.Session, url: str, month_year: str) -> str:
-    try:
-        response = session.get(url, timeout=30)
-        response.raise_for_status()
-        return response.text
-    except requests.RequestException:
-        slug = _slug_from_month_year(month_year)
-        fallback = FALLBACK_MONTH_CONTENT.get(slug)
-        if fallback:
-            return fallback
-        raise
+def _get_month_page_html(
+    session: requests.Session, urls: List[str], month_year: str
+) -> tuple[str, str]:
+    """Fetch the first URL candidate that responds, returning (html, url)."""
+    last_error: Exception | None = None
+    for url in urls:
+        try:
+            response = session.get(url, timeout=30)
+            response.raise_for_status()
+            return response.text, url
+        except requests.RequestException as exc:
+            last_error = exc
+
+    slug = _slug_from_month_year(month_year)
+    fallback = FALLBACK_MONTH_CONTENT.get(slug)
+    if fallback:
+        return fallback, urls[0]
+    raise last_error if last_error else RuntimeError(f"No URL candidates for {month_year}")
 
 
 def _parse_due_date(text: str, month_year: str) -> date:

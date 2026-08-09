@@ -5,7 +5,15 @@
 <nav aria-label="breadcrumb">
     <ol class="breadcrumb">
         <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+        {% comment %}
+        A note may be scoped to a client with no entity, in which case there is no
+        entity_detail page to link to and reversing that URL would raise NoReverseMatch.
+        {% endcomment %}
+        {% if entity %}
         <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
+        {% elif client %}
+        <li class="breadcrumb-item"><a href="{% url 'core:client_list' %}">{{ client.name }}</a></li>
+        {% endif %}
         <li class="breadcrumb-item active">{{ title }}</li>
     </ol>
 </nav>
@@ -95,7 +103,7 @@
                     </div>
 
                     <div class="d-flex justify-content-between">
-                        <a href="{% url 'core:entity_detail' pk=entity.pk %}#notes" class="btn btn-outline-secondary">Cancel</a>
+                        <a href="{{ back_url }}" class="btn btn-outline-secondary">Cancel</a>
                         <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Save Note</button>
                     </div>
                 </form>

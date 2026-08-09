@@ -32,7 +32,11 @@ from .forms import (
     MeetingNoteForm,
 )
 from django import forms
-from config.authorization import get_entity_for_user, get_financial_year_for_user
+from config.authorization import (
+    authorize_entity_or_client_scoped,
+    get_entity_for_user,
+    get_financial_year_for_user,
+)
 import re as _re_mod
 
 
@@ -162,6 +166,72 @@ _BS_SECTIONS = {"assets", "liabilities", "equity", "capital_accounts",
                 "current_assets", "non_current_assets",
                 "current_liabilities", "non_current_liabilities"}
 _BS_STATEMENTS = {"balance_sheet", "equity"}
+
+
+def _dispatch_auto_tier3(financial_year):
+    """Queue the Tier 3 AI pass for a year entering review. Returns True if queued.
+
+    Queued, not run inline. The pass makes several Anthropic calls of 6-12 seconds
+    each; run on the request thread it left an accountant watching the finalise page
+    hang for the whole batch. Nobody had felt that, because _build_entity_context
+    raised FieldError on every call and the caller's try/except swallowed it — the
+    pass had never once actually executed.
+
+    Gated by settings.AUTO_TIER3_ON_IN_REVIEW so config/settings_e2e.py can switch it
+    off: the e2e suite finalises a year against a production-derived database, and
+    this sends trial balance figures to a third-party API.
+
+    Queueing is best effort — a broker outage must not stop a year being finalised —
+    but the failure is logged with a stack trace rather than swallowed, which is how
+    the original defect stayed invisible for so long.
+    """
+    from django.conf import settings
+
+    if not getattr(settings, "AUTO_TIER3_ON_IN_REVIEW", True):
+        logger.info(
+            "Auto Tier 3 AI analysis disabled by AUTO_TIER3_ON_IN_REVIEW; "
+            "skipping for FY %s", financial_year.pk,
+        )
+        return False
+
+    try:
+        from core.tasks import batch_analyse_flags_task
+        batch_analyse_flags_task.delay(str(financial_year.pk))
+        return True
+    except Exception:
+        logger.exception(
+            "Could not queue Tier 3 AI analysis for FY %s; finalisation continues",
+            financial_year.pk,
+        )
+        return False
+
+
+def _coa_sections_for_entity(entity):
+    """Account code -> section, the entity's own chart layered over its type template.
+
+    ChartOfAccount models the standard chart for an entity type. An entity whose
+    chart arrived from MYOB, Xero or a hand-built import carries codes the template
+    has never heard of — and those are precisely the accounts whose classification
+    cannot be recovered from the code itself, because _is_balance_sheet_account's
+    numeric fallback only understands purely numeric codes and reads anything else as
+    P&L. EntityChartOfAccount is the authority for that entity's own accounts, so it
+    is applied last and wins on conflict.
+
+    Built here rather than at each call site: five call sites had grown the same
+    template-only lookup independently, so the omission had to be fixed five times to
+    be fixed at all.
+    """
+    sections = dict(
+        ChartOfAccount.objects.filter(
+            entity_type=entity.entity_type, is_active=True
+        ).values_list("account_code", "section")
+    )
+    sections.update(
+        EntityChartOfAccount.objects.filter(
+            entity=entity, is_active=True
+        ).values_list("account_code", "section")
+    )
+    return sections
 
 
 def _is_balance_sheet_account(account_code, mapped_line_item, coa_sections):
@@ -1304,7 +1374,7 @@ def entity_create(request, client_pk=None):
     else:
         form = EntityForm(user=request.user)
     return render(request, "core/entity_form.html", {
-        "form": form, "title": "Create Entity"
+        "form": form, "title": "Create Entity", "is_edit": False
     })
 
 
@@ -1416,7 +1486,7 @@ def entity_edit(request, pk):
     else:
         form = EntityForm(instance=entity, user=request.user)
     return render(request, "core/entity_form.html", {
-        "form": form, "title": f"Edit: {entity.entity_name}"
+        "form": form, "title": f"Edit: {entity.entity_name}", "is_edit": True
     })
 
 
@@ -2187,19 +2257,12 @@ def financial_year_finalise_full(request, pk):
         # Replicate in_review side effects from financial_year_status
         from core.signals import trigger_risk_recalc
         trigger_risk_recalc(fy, "status_in_review", force=True)
-        try:
-            from .ai_service import batch_analyse_flags
-            ai_result = batch_analyse_flags(fy, force=False)
+        if _dispatch_auto_tier3(fy):
             _log_action(
                 request, "audit_run",
-                f"Auto Tier 3 AI analysis on status→In Review: "
-                f"{ai_result.get('analysed', 0)} analysed, "
-                f"{ai_result.get('skipped', 0)} cached",
+                "Auto Tier 3 AI analysis queued on status→In Review",
                 fy
             )
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f"Auto Tier 3 on In Review failed: {e}")
 
     # ── Step 2: Block finalisation if trust balance sheet doesn't reconcile
     if fy.entity.entity_type == "trust":
@@ -2322,19 +2385,12 @@ def financial_year_status(request, pk):
         from core.signals import trigger_risk_recalc
         trigger_risk_recalc(fy, "status_in_review", force=True)
         # Auto-run Tier 3 AI analysis on all open flags
-        try:
-            from .ai_service import batch_analyse_flags
-            ai_result = batch_analyse_flags(fy, force=False)
+        if _dispatch_auto_tier3(fy):
             _log_action(
                 request, "audit_run",
-                f"Auto Tier 3 AI analysis on status→In Review: "
-                f"{ai_result.get('analysed', 0)} analysed, "
-                f"{ai_result.get('skipped', 0)} cached",
+                "Auto Tier 3 AI analysis queued on status→In Review",
                 fy
             )
-        except Exception as e:
-            import logging
-            logging.getLogger(__name__).error(f"Auto Tier 3 on In Review failed: {e}")
 
     # ── Draft revert: clear all Eva findings and risk flags ─────────
     if new_status == "draft":
@@ -2553,11 +2609,7 @@ def reroll_forward_diff(request, pk):
         return JsonResponse({"error": "No subsequent financial year found."}, status=404)
 
     # Build CoA section lookup for BS/PL classification
-    coa_sections = dict(
-        ChartOfAccount.objects.filter(
-            entity_type=entity.entity_type, is_active=True
-        ).values_list("account_code", "section")
-    )
+    coa_sections = _coa_sections_for_entity(entity)
 
     # Build aggregated closing balances for the current year (BS accounts only)
     from django.db.models import Sum as _Sum
@@ -2645,11 +2697,7 @@ def reroll_forward_apply(request, pk):
         return JsonResponse({"error": "No subsequent financial year found."}, status=404)
 
     # Build CoA section lookup for BS/PL classification
-    coa_sections = dict(
-        ChartOfAccount.objects.filter(
-            entity_type=entity.entity_type, is_active=True
-        ).values_list("account_code", "section")
-    )
+    coa_sections = _coa_sections_for_entity(entity)
 
     # Re-compute the diff to ensure consistency (don't trust client-side data).
     # Only include balance sheet accounts — P&L accounts reset to zero.
@@ -2816,11 +2864,7 @@ def reroll_forward(request, pk):
         # (Replicates the core logic from roll_forward but targets the
         #  existing next_fy instead of creating a new one.)
 
-        coa_sections = dict(
-            ChartOfAccount.objects.filter(
-                entity_type=entity.entity_type, is_active=True
-            ).values_list("account_code", "section")
-        )
+        coa_sections = _coa_sections_for_entity(entity)
 
         # -----------------------------------------------------------------
         # Pass 1: Classify lines and calculate net P&L
@@ -3142,11 +3186,7 @@ def reroll_forward(request, pk):
     BS_STATEMENTS = {"balance_sheet", "equity"}
     BS_SECTIONS   = {"assets", "liabilities", "equity", "capital_accounts"}
 
-    coa_sections = dict(
-        ChartOfAccount.objects.filter(
-            entity_type=entity.entity_type, is_active=True
-        ).values_list("account_code", "section")
-    )
+    coa_sections = _coa_sections_for_entity(entity)
 
     def _is_bs(line):
         hl_sec = _hl_section_for_code(line.account_code)
@@ -3341,11 +3381,7 @@ def _populate_rolled_forward_fy(current_fy, new_fy):
     EntityChartOfAccount.seed_from_template(entity)
 
     # Build lookup of account_code -> section from ChartOfAccount
-    coa_sections = dict(
-        ChartOfAccount.objects.filter(
-            entity_type=entity.entity_type, is_active=True
-        ).values_list("account_code", "section")
-    )
+    coa_sections = _coa_sections_for_entity(entity)
 
     # -----------------------------------------------------------------
     # Pass 1: Classify all lines and calculate net P&L result
@@ -6884,6 +6920,7 @@ def entity_officer_create(request, entity_pk):
     return render(request, "core/entity_officer_form.html", {
         "form": form,
         "entity": entity,
+        "is_edit": False,
     })
 
 
@@ -6917,6 +6954,7 @@ def entity_officer_edit(request, pk):
     return render(request, "core/entity_officer_form.html", {
         "form": form,
         "entity": entity,
+        "is_edit": True,
     })
 
 
@@ -7602,46 +7640,78 @@ def associate_create(request, entity_pk):
     else:
         form = ClientAssociateForm()
     return render(request, "core/associate_form.html", {
-        "form": form, "entity": entity, "title": "Add Associate"
+        "form": form,
+        "entity": entity,
+        "client": entity.client,
+        # Always entity-scoped here (the route takes entity_pk), but the shared template
+        # links to back_url, so it must be supplied.
+        "back_url": reverse("core:entity_detail", kwargs={"pk": entity.pk}) + "#associates",
+        "title": "Add Associate",
     })
+
+
+def _entity_or_client_back_url(entity, fragment=""):
+    """
+    Where to send the user after acting on an entity- or client-scoped record.
+
+    ClientAssociate and MeetingNote may be scoped to a client with no entity, in which
+    case there is no entity_detail page to return to. There is no client detail route
+    (core:client_list resolves to entity_list), so the client list is the closest
+    equivalent landing page.
+    """
+    if entity is not None:
+        return reverse("core:entity_detail", kwargs={"pk": entity.pk}) + fragment
+    return reverse("core:client_list")
 
 
 @login_required
 def associate_edit(request, pk):
-    assoc = get_object_or_404(ClientAssociate, pk=pk)
-    entity = assoc.entity
-    get_entity_for_user(request, entity.pk)  # IDOR check
+    assoc = get_object_or_404(
+        ClientAssociate.objects.select_related("entity", "entity__client", "client"), pk=pk
+    )
+    # entity may be None: these records can be scoped to a client instead, which is how
+    # every associate row in production is stored.
+    entity = authorize_entity_or_client_scoped(request, assoc, "this associate")
+    back_url = _entity_or_client_back_url(entity, "#associates")
+
     if not request.user.can_edit:
         messages.error(request, "You do not have permission to edit associates.")
-        return redirect("core:entity_detail", pk=entity.pk)
+        return redirect(back_url)
 
     if request.method == "POST":
         form = ClientAssociateForm(request.POST, instance=assoc)
         if form.is_valid():
             form.save()
             messages.success(request, f"Associate '{assoc.name}' updated.")
-            return redirect("core:entity_detail", pk=entity.pk)
+            return redirect(back_url)
     else:
         form = ClientAssociateForm(instance=assoc)
     return render(request, "core/associate_form.html", {
-        "form": form, "entity": entity, "title": f"Edit: {assoc.name}"
+        "form": form,
+        "entity": entity,
+        "client": assoc.client,
+        "back_url": back_url,
+        "title": f"Edit: {assoc.name}",
     })
 
 
 @login_required
 def associate_delete(request, pk):
-    assoc = get_object_or_404(ClientAssociate, pk=pk)
-    entity = assoc.entity
-    get_entity_for_user(request, entity.pk)  # IDOR check
+    assoc = get_object_or_404(
+        ClientAssociate.objects.select_related("entity", "entity__client", "client"), pk=pk
+    )
+    entity = authorize_entity_or_client_scoped(request, assoc, "this associate")
+    back_url = _entity_or_client_back_url(entity, "#associates")
+
     if not request.user.can_edit:
         messages.error(request, "You do not have permission to delete associates.")
-        return redirect("core:entity_detail", pk=entity.pk)
+        return redirect(back_url)
 
     if request.method == "POST":
         name = assoc.name
         assoc.delete()
         messages.success(request, f"Associate '{name}' removed.")
-    return redirect("core:entity_detail", pk=entity.pk)
+    return redirect(back_url)
 
 
 # ---------------------------------------------------------------------------
@@ -7820,63 +7890,85 @@ def meeting_note_create(request, entity_pk):
     else:
         form = MeetingNoteForm(initial={"meeting_date": timezone.now().date()})
     return render(request, "core/meeting_note_form.html", {
-        "form": form, "entity": entity, "title": "New Meeting Note"
+        "form": form,
+        "entity": entity,
+        "client": entity.client,
+        "back_url": reverse("core:entity_detail", kwargs={"pk": entity.pk}) + "#notes",
+        "title": "New Meeting Note",
     })
 
 
 @login_required
 def meeting_note_edit(request, pk):
-    note = get_object_or_404(MeetingNote, pk=pk)
-    entity = note.entity
-    get_entity_for_user(request, entity.pk)  # IDOR check
+    note = get_object_or_404(
+        MeetingNote.objects.select_related("entity", "entity__client", "client"), pk=pk
+    )
+    # entity may be None: notes can be scoped to a client instead, which is how every
+    # note row in production is stored.
+    entity = authorize_entity_or_client_scoped(request, note, "this meeting note")
+    back_url = _entity_or_client_back_url(entity, "#notes")
+
     if not request.user.can_edit:
         messages.error(request, "You do not have permission.")
-        return redirect("core:entity_detail", pk=entity.pk)
+        return redirect(back_url)
 
     if request.method == "POST":
         form = MeetingNoteForm(request.POST, instance=note)
         if form.is_valid():
             form.save()
             messages.success(request, f"Meeting note '{note.title}' updated.")
-            return redirect("core:entity_detail", pk=entity.pk)
+            return redirect(back_url)
     else:
         form = MeetingNoteForm(instance=note)
     return render(request, "core/meeting_note_form.html", {
-        "form": form, "entity": entity, "title": f"Edit: {note.title}"
+        "form": form,
+        "entity": entity,
+        "client": note.client,
+        "back_url": back_url,
+        "title": f"Edit: {note.title}",
     })
 
 
 @login_required
 def meeting_note_detail(request, pk):
-    note = get_object_or_404(MeetingNote, pk=pk)
-    entity = note.entity
-    get_entity_for_user(request, entity.pk)  # IDOR check
+    note = get_object_or_404(
+        MeetingNote.objects.select_related("entity", "entity__client", "client"), pk=pk
+    )
+    entity = authorize_entity_or_client_scoped(request, note, "this meeting note")
     return render(request, "core/meeting_note_detail.html", {
-        "note": note, "entity": entity,
+        "note": note,
+        "entity": entity,
+        "client": note.client,
+        "back_url": _entity_or_client_back_url(entity, "#notes"),
     })
 
 
 @login_required
 def meeting_note_delete(request, pk):
-    note = get_object_or_404(MeetingNote, pk=pk)
-    entity = note.entity
-    get_entity_for_user(request, entity.pk)  # IDOR check
+    note = get_object_or_404(
+        MeetingNote.objects.select_related("entity", "entity__client", "client"), pk=pk
+    )
+    entity = authorize_entity_or_client_scoped(request, note, "this meeting note")
+    back_url = _entity_or_client_back_url(entity, "#notes")
+
     if not request.user.can_edit:
         messages.error(request, "You do not have permission.")
-        return redirect("core:entity_detail", pk=entity.pk)
+        return redirect(back_url)
 
     if request.method == "POST":
         title = note.title
         note.delete()
         messages.success(request, f"Meeting note '{title}' deleted.")
-    return redirect("core:entity_detail", pk=entity.pk)
+    return redirect(back_url)
 
 
 @login_required
 def meeting_note_toggle_followup(request, pk):
     """HTMX endpoint to toggle follow-up completion."""
-    note = get_object_or_404(MeetingNote, pk=pk)
-    get_entity_for_user(request, note.entity.pk)  # IDOR check
+    note = get_object_or_404(
+        MeetingNote.objects.select_related("entity", "entity__client", "client"), pk=pk
+    )
+    authorize_entity_or_client_scoped(request, note, "this meeting note")
     if not request.user.can_edit:
         return JsonResponse({"error": "Permission denied"}, status=403)
     note.follow_up_completed = not note.follow_up_completed
@@ -9328,53 +9420,10 @@ def depreciation_post_to_tb(request, pk):
         messages.warning(request, "Total business depreciation is zero. Nothing to post.")
         return redirect("core:financial_year_detail", pk=pk)
 
-    # ── Build the fresh depreciation journal (not yet saved) ──
-    journal = AdjustingJournal(
-        financial_year=fy,
-        journal_type=AdjustingJournal.JournalType.DEPRECIATION,
-        status=AdjustingJournal.JournalStatus.DRAFT,
-        journal_date=fy.end_date,
-        description=f"Depreciation for year ended {fy.end_date.strftime('%d/%m/%Y')}",
-        narration=(
-            f"Auto-generated from depreciation schedule. "
-            f"Total depreciation: ${total_depreciation:,.2f} "
-            f"(business portion only, private use excluded). "
-            f"Grouped into {len(account_groups)} account pair(s)."
-        ),
-        total_debit=total_depreciation,
-        total_credit=total_depreciation,
-        created_by=request.user,
-    )
-    journal.save()
-
-    line_number = 0
-    line_descriptions = []
-    for (dep_code, dep_name, accum_code, accum_name), amount in account_groups.items():
-        line_number += 1
-        JournalLine.objects.create(
-            journal=journal,
-            line_number=line_number,
-            account_code=dep_code,
-            account_name=dep_name,
-            description=f"Depreciation charge — {dep_name}",
-            debit=amount,
-            credit=Decimal("0"),
-        )
-        line_number += 1
-        JournalLine.objects.create(
-            journal=journal,
-            line_number=line_number,
-            account_code=accum_code,
-            account_name=accum_name,
-            description=f"Accumulated depreciation — {accum_name}",
-            debit=Decimal("0"),
-            credit=amount,
-        )
-        line_descriptions.append(
-            f"Dr {dep_code} {dep_name} ${amount:,.2f} / Cr {accum_code} {accum_name} ${amount:,.2f}"
-        )
-
-    # ── Atomic: reversal (if needed) then fresh posting ──
+    # ── Atomic: reconcilability check, fresh journal, reversal, then posting ──
+    #
+    # The journal is built inside the transaction, after the check below, so a
+    # year whose accounts cannot be reconciled is left with no orphaned draft.
     reversal = None
     with db_transaction.atomic():
         # Lock the target account TB rows so a concurrent double-click blocks
@@ -9394,6 +9443,7 @@ def depreciation_post_to_tb(request, pk):
         # lock, so it reflects any concurrent post that already committed.
         # Excludes rollover lines (prior-year accumulated-depreciation opening).
         current_movements = {}
+        unreconcilable = []
         for (dep_code, dep_name, accum_code, accum_name) in account_groups:
             dep_mv = TrialBalanceLine.objects.filter(
                 financial_year=fy, account_code=dep_code,
@@ -9409,10 +9459,81 @@ def depreciation_post_to_tb(request, pk):
             )
             accum_net_cr = (accum_mv["cr"] or Decimal("0")) - (accum_mv["dr"] or Decimal("0"))
 
-            if dep_net or accum_net_cr:
+            # The reversal backs out both sides of the pair. If they do not carry
+            # the same movement there is no pair of equal-and-opposite lines that
+            # backs them both out, and the reversal below would post debits and
+            # credits that differ — an unbalanced journal written straight into a
+            # client's trial balance. The usual cause is an opening
+            # accumulated-depreciation balance that arrived on a tb_import line
+            # instead of a rollover one, so it reads as current-year movement.
+            # Refuse rather than guess which side is wrong.
+            if dep_net != accum_net_cr:
+                unreconcilable.append(
+                    f"{accum_code} {accum_name} has ${accum_net_cr:,.2f} of current-year "
+                    f"movement against ${dep_net:,.2f} on {dep_code} {dep_name}"
+                )
+            elif dep_net or accum_net_cr:
                 current_movements[(dep_code, dep_name, accum_code, accum_name)] = (
                     dep_net, accum_net_cr
                 )
+
+        if unreconcilable:
+            messages.error(
+                request,
+                "Cannot post depreciation: the depreciation accounts do not "
+                "reconcile, so backing out the current-year movement would post "
+                "an unbalanced journal. "
+                + "; ".join(unreconcilable)
+                + ". If that movement is a prior-year opening balance, retag it "
+                "as a rollover line before posting.",
+            )
+            return redirect("core:financial_year_detail", pk=pk)
+
+        # ── Build the fresh depreciation journal ──
+        journal = AdjustingJournal(
+            financial_year=fy,
+            journal_type=AdjustingJournal.JournalType.DEPRECIATION,
+            status=AdjustingJournal.JournalStatus.DRAFT,
+            journal_date=fy.end_date,
+            description=f"Depreciation for year ended {fy.end_date.strftime('%d/%m/%Y')}",
+            narration=(
+                f"Auto-generated from depreciation schedule. "
+                f"Total depreciation: ${total_depreciation:,.2f} "
+                f"(business portion only, private use excluded). "
+                f"Grouped into {len(account_groups)} account pair(s)."
+            ),
+            total_debit=total_depreciation,
+            total_credit=total_depreciation,
+            created_by=request.user,
+        )
+        journal.save()
+
+        line_number = 0
+        line_descriptions = []
+        for (dep_code, dep_name, accum_code, accum_name), amount in account_groups.items():
+            line_number += 1
+            JournalLine.objects.create(
+                journal=journal,
+                line_number=line_number,
+                account_code=dep_code,
+                account_name=dep_name,
+                description=f"Depreciation charge — {dep_name}",
+                debit=amount,
+                credit=Decimal("0"),
+            )
+            line_number += 1
+            JournalLine.objects.create(
+                journal=journal,
+                line_number=line_number,
+                account_code=accum_code,
+                account_name=accum_name,
+                description=f"Accumulated depreciation — {accum_name}",
+                debit=Decimal("0"),
+                credit=amount,
+            )
+            line_descriptions.append(
+                f"Dr {dep_code} {dep_name} ${amount:,.2f} / Cr {accum_code} {accum_name} ${amount:,.2f}"
+            )
 
         if current_movements:
             total_rev_dr = sum(accum for _, accum in current_movements.values())

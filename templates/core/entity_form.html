@@ -17,7 +17,12 @@
         <nav aria-label="breadcrumb">
             <ol class="breadcrumb">
                 <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
-                {% if form.instance.pk %}
+                {% comment %}
+                Must use the explicit `is_edit` flag, NOT `form.instance.pk`: Entity.id is a
+                UUIDField with default=uuid.uuid4, so an unsaved instance already has a pk and
+                the usual "is this an edit?" idiom is always true on the create form.
+                {% endcomment %}
+                {% if is_edit %}
                 <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=form.instance.pk %}">{{ form.instance.entity_name }}</a></li>
                 {% endif %}
                 <li class="breadcrumb-item active">{{ title }}</li>
@@ -31,7 +36,7 @@
                     {{ form|crispy }}
                     <div class="d-flex gap-2 mt-3">
                         <button type="submit" class="btn btn-primary">Save</button>
-                        {% if form.instance.pk %}
+                        {% if is_edit %}
                         <a href="{% url 'core:entity_detail' pk=form.instance.pk %}" class="btn btn-outline-secondary">Cancel</a>
                         {% else %}
                         <a href="{% url 'core:entity_list' %}" class="btn btn-outline-secondary">Cancel</a>

@@ -262,6 +262,48 @@ def _serialise_values(obj):
 # ---------------------------------------------------------------------------
 # Materiality Scaling
 # ---------------------------------------------------------------------------
+def _tb_line_section(line):
+    """
+    Section label for a trial balance line.
+
+    TrialBalanceLine has no section column. The classification lives either on the
+    mapped AccountMapping or in the account code's HandiLedger range, and
+    core/views_audit.py's _section_for_code already encodes those ranges — reused
+    rather than restated so the two cannot drift apart. Imported inside the function
+    because views_audit's handlers import this module, so a module-level import would
+    close the cycle.
+
+    Returns a human label ("Current Assets"), which is also what the callers' keyword
+    matching keys off — "asset" in "Current Assets", "liabilit" in "Current
+    Liabilities", and so on.
+    """
+    mapped = line.mapped_line_item
+    if mapped is not None:
+        section = (
+            getattr(mapped, "statement_section", "")
+            or getattr(mapped, "financial_statement", "")
+        )
+        if section:
+            return str(section)
+
+    from core.views_audit import _section_for_code
+
+    matches = _section_for_code(line.account_code or "")
+    if matches:
+        return matches[0][1]
+    return "Unclassified"
+
+
+def _tb_line_balance(line):
+    """Current-year closing balance, debit-positive — the model's own convention."""
+    return line.closing_balance or Decimal("0")
+
+
+def _tb_line_prior_balance(line):
+    """Prior-year comparative, the balance a variance is measured against."""
+    return line.prior_closing_balance or Decimal("0")
+
+
 def _calculate_materiality(financial_year):
     """
     Calculate materiality thresholds based on entity revenue.
@@ -281,8 +323,8 @@ def _calculate_materiality(financial_year):
     total_revenue = Decimal("0")
     total_assets = Decimal("0")
     for line in lines:
-        balance = abs(line.adjusted_balance or line.original_balance or Decimal("0"))
-        section = (line.section or "").lower()
+        balance = abs(_tb_line_balance(line))
+        section = _tb_line_section(line).lower()
         if "revenue" in section or "income" in section:
             total_revenue += balance
         elif "asset" in section:
@@ -334,7 +376,12 @@ def _build_entity_context(financial_year, include_materiality=True):
     for use in AI prompts. Includes materiality thresholds.
     """
     entity = financial_year.entity
-    lines = financial_year.trial_balance_lines.all().order_by("section", "account_code")
+    # Sorted in Python rather than by the database: the section is derived from the
+    # mapping or the code range, so there is no column to ORDER BY.
+    lines = sorted(
+        financial_year.trial_balance_lines.select_related("mapped_line_item"),
+        key=lambda line: (_tb_line_section(line), line.account_code or ""),
+    )
 
     # Basic info
     ctx = f"Entity: {entity.entity_name}\n"
@@ -361,9 +408,10 @@ def _build_entity_context(financial_year, include_materiality=True):
     total_liabilities = Decimal("0")
 
     for line in lines:
-        balance = line.adjusted_balance or line.original_balance or Decimal("0")
-        prior = line.prior_year_balance or Decimal("0")
+        balance = _tb_line_balance(line)
+        prior = _tb_line_prior_balance(line)
         variance = balance - prior if prior else None
+        section_label = _tb_line_section(line)
 
         ctx += f"  {line.account_code} | {line.account_name} | "
         ctx += f"Current: ${balance:,.2f}"
@@ -372,11 +420,14 @@ def _build_entity_context(financial_year, include_materiality=True):
         if variance is not None and prior:
             pct = (variance / abs(prior) * 100) if prior != 0 else Decimal("0")
             ctx += f" | Var: ${variance:,.2f} ({pct:,.1f}%)"
-        ctx += f" | Section: {line.section}\n"
+        ctx += f" | Section: {section_label}\n"
 
-        section = (line.section or "").lower()
+        # Reported as magnitudes. Balances are debit-positive, so revenue and
+        # liabilities carry credit (negative) balances; a summary reading
+        # "Revenue=$-400,000.00" would invite the model to reason about it as a loss.
+        section = section_label.lower()
         if "revenue" in section or "income" in section:
-            total_revenue += balance
+            total_revenue += abs(balance)
         elif "expense" in section or "cost" in section:
             total_expenses += abs(balance)
         elif "asset" in section:

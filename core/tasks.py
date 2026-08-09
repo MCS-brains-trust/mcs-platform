@@ -426,3 +426,33 @@ def eva_daily_proactive_scan(self):
     except Exception as exc:
         logger.error("eva_daily_proactive_scan failed: %s", exc)
         raise self.retry(exc=exc)
+
+
+# ---------------------------------------------------------------------------
+# Tier 3 — automatic AI risk analysis when a year enters review
+# ---------------------------------------------------------------------------
+@shared_task(name="core.batch_analyse_flags", bind=True, max_retries=2)
+def batch_analyse_flags_task(self, financial_year_id):
+    """
+    Run Tier 3 AI analysis over a financial year's open risk flags.
+
+    Queued rather than run inline: this makes several Anthropic calls of 6-12
+    seconds each, and it used to run on the request thread of the finalise view,
+    where an accountant sat watching the page hang for the whole batch.
+    """
+    from core.ai_service import batch_analyse_flags
+    from core.models import FinancialYear
+    try:
+        financial_year = FinancialYear.objects.get(pk=financial_year_id)
+        result = batch_analyse_flags(financial_year, force=False)
+        logger.info(
+            "Tier 3 AI analysis complete for FY %s: %s analysed, %s cached",
+            financial_year_id, result.get("analysed", 0), result.get("skipped", 0),
+        )
+        return result
+    except FinancialYear.DoesNotExist:
+        logger.error("Tier 3 AI analysis skipped: FY %s no longer exists", financial_year_id)
+        return {"analysed": 0, "skipped": 0}
+    except Exception as exc:
+        logger.exception("Tier 3 AI analysis failed for FY %s", financial_year_id)
+        raise self.retry(exc=exc, countdown=30)

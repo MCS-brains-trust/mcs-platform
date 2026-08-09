@@ -1,0 +1,10 @@
+{
+  "_comment": "Tier 2 tests that fail on purpose, each pinned to a confirmed application defect rather than a rig problem -- see e2e/README.md's 'Known defects found by the suite' and each spec file's own header for the full mechanism. This file exists so a THIRD test going red is distinguishable from these two expected failures: scripts/check_tier2_failures.sh compares the actual set of failing Tier 2 test titles against this list in both directions, the same job Tier 1's known_failures does for 5xx routes. A new failure and a silently-fixed known one are both loud rather than being lost in 'the suite is red, as usual'.",
+  "known_failures": [
+    {
+      "title": "every balance-sheet account should carry its prior-year closing balance forward, and the reroll diff should catch it if one later changes",
+      "spec_file": "tier2/roll_forward.spec.ts",
+      "reason": "_populate_rolled_forward_fy identifies the retained-profits account by numeric code alone (code_prefix == '4199'), a HandiLedger code that a hyphenated MYOB/Xero-style chart never carries. This fixture's own equity account is 3-1000 Retained Earnings, so no retained_profits_line is found and the year's net P&L is closed into a NEW synthesised 4199 'Retained profits' line instead. Total equity is right -- -80,000 across the two lines -- but the entity ends up with two retained-earnings accounts on its balance sheet, and 3-1000 keeps its prior closing balance untouched where the year's result should have been absorbed into it. Income tax is already detected by account NAME as well as code in the same function; retained profits is not. NOT the classification defect this test originally pinned: that one (coa_sections built from the entity-TYPE template, never consulting EntityChartOfAccount) is fixed -- all five balance-sheet accounts now carry their prior closing balance forward and the reroll diff now reports the amended account. This is a distinct defect the fix made visible; see core/tests_rollforward_classification.py, which pins the fixed behaviour including the synthesised line as it currently stands."
+    }
+  ]
+}

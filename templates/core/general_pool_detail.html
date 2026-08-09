@@ -1,0 +1,373 @@
+{% extends "base.html" %}
+{% load humanize %}
+{% block title %}General Pool — {{ entity.entity_name }} {{ fy.year_label }} — StatementHub{% endblock %}
+{% block content %}
+{% comment %}
+This template did not exist; general_pool_detail raised TemplateDoesNotExist and
+returned HTTP 500 on every request. Field names on the forms below match what the POST
+handlers read from request.POST (general_pool_add_asset, general_pool_add_disposal,
+general_pool_update_settings).
+{% endcomment %}
+<nav aria-label="breadcrumb">
+    <ol class="breadcrumb">
+        <li class="breadcrumb-item"><a href="{% url 'core:entity_list' %}">Entities</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a></li>
+        <li class="breadcrumb-item"><a href="{% url 'core:financial_year_detail' pk=fy.pk %}">{{ fy.year_label }}</a></li>
+        <li class="breadcrumb-item active">General Pool</li>
+    </ol>
+</nav>
+
+<div class="d-flex justify-content-between align-items-start mb-4">
+    <div>
+        <h4 class="mb-1"><i class="bi bi-box-seam"></i> Small Business General Pool</h4>
+        <p class="text-muted mb-0">{{ entity.entity_name }} — {{ fy.year_label }}</p>
+    </div>
+    <div class="d-flex gap-2">
+        {% if pool.status %}<span class="badge bg-secondary align-self-center">{{ pool.get_status_display|default:pool.status }}</span>{% endif %}
+        <a href="{% url 'core:financial_year_detail' pk=fy.pk %}" class="btn btn-outline-secondary btn-sm">
+            <i class="bi bi-arrow-left"></i> Back to Financial Year
+        </a>
+    </div>
+</div>
+
+<!-- Pool calculation -->
+<div class="card mb-4">
+    <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+        <h6 class="mb-0"><i class="bi bi-calculator"></i> Pool Calculation</h6>
+        <form method="post" action="{% url 'core:general_pool_calculate' pk=fy.pk %}" class="d-inline">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-light btn-sm"><i class="bi bi-arrow-repeat"></i> Recalculate</button>
+        </form>
+    </div>
+    <div class="card-body">
+        <table class="table table-sm mb-0">
+            <tbody>
+                <tr>
+                    <td>Opening pool balance</td>
+                    <td class="text-end">${{ pool.opening_pool_balance|floatformat:2|intcomma }}</td>
+                </tr>
+                <tr>
+                    <td>Additions (taxable use)</td>
+                    <td class="text-end">${{ pool.total_additions|floatformat:2|intcomma }}</td>
+                </tr>
+                <tr>
+                    <td>Improvements</td>
+                    <td class="text-end">${{ pool.total_improvements|floatformat:2|intcomma }}</td>
+                </tr>
+                <tr>
+                    <td>Less disposals (termination values)</td>
+                    <td class="text-end">(${{ pool.total_disposals|floatformat:2|intcomma }})</td>
+                </tr>
+                <tr class="table-light fw-semibold">
+                    <td>Subtotal (E)</td>
+                    <td class="text-end">${{ pool.subtotal_e|floatformat:2|intcomma }}</td>
+                </tr>
+                <tr>
+                    <td>Deduction — opening balance (30%)</td>
+                    <td class="text-end">${{ pool.deduction_opening|floatformat:2|intcomma }}</td>
+                </tr>
+                <tr>
+                    <td>Deduction — additions (15%)</td>
+                    <td class="text-end">${{ pool.deduction_additions|floatformat:2|intcomma }}</td>
+                </tr>
+                <tr>
+                    <td>Deduction — improvements (15%)</td>
+                    <td class="text-end">${{ pool.deduction_improvements|floatformat:2|intcomma }}</td>
+                </tr>
+                <tr class="table-light fw-semibold">
+                    <td>Total deduction</td>
+                    <td class="text-end">${{ pool.total_deduction|floatformat:2|intcomma }}</td>
+                </tr>
+                <tr class="fw-bold border-top">
+                    <td>Closing pool balance</td>
+                    <td class="text-end">${{ pool.closing_pool_balance|floatformat:2|intcomma }}</td>
+                </tr>
+                {% if pool.assessable_income_adjustment %}
+                <tr>
+                    <td>Assessable income adjustment</td>
+                    <td class="text-end">${{ pool.assessable_income_adjustment|floatformat:2|intcomma }}</td>
+                </tr>
+                {% endif %}
+            </tbody>
+        </table>
+
+        {% if pool.low_pool_writeoff %}
+        <div class="alert alert-info mt-3 mb-0">
+            <i class="bi bi-info-circle"></i> Closing balance is below the instant asset
+            write-off threshold of ${{ pool.iawo_threshold|floatformat:0|intcomma }}, so the
+            pool is written off in full.
+        </div>
+        {% endif %}
+    </div>
+    <div class="card-footer d-flex gap-2">
+        <form method="post" action="{% url 'core:general_pool_post_to_tb' pk=fy.pk %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-primary btn-sm"
+                    onclick="return confirm('Post the pool deduction to the trial balance?');">
+                <i class="bi bi-upload"></i> Post to Trial Balance
+            </button>
+        </form>
+        <form method="post" action="{% url 'core:general_pool_roll_forward' pk=fy.pk %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-outline-secondary btn-sm">
+                <i class="bi bi-arrow-right-circle"></i> Roll Forward
+            </button>
+        </form>
+        {% if pool.posted_journal %}
+        <span class="align-self-center text-muted small">
+            <i class="bi bi-check-circle text-success"></i> Posted
+        </span>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Assets -->
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h6 class="mb-0"><i class="bi bi-tools"></i> Pooled Assets &amp; Improvements</h6>
+        <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addAssetModal">
+            <i class="bi bi-plus-lg"></i> Add Asset
+        </button>
+    </div>
+    <div class="card-body p-0">
+        <table class="table table-sm table-hover mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Asset</th>
+                    <th>First used</th>
+                    <th class="text-end">Cost</th>
+                    <th class="text-end">Business use</th>
+                    <th>Type</th>
+                    <th class="text-end">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for asset in assets %}
+                <tr>
+                    <td>
+                        {{ asset.asset_name }}
+                        {% if asset.description %}<br><small class="text-muted">{{ asset.description }}</small>{% endif %}
+                    </td>
+                    <td>{{ asset.date_first_used|date:"d/m/Y"|default:"—" }}</td>
+                    <td class="text-end">
+                        ${{ asset.cost|floatformat:2|intcomma }}
+                        {% if asset.car_limit_applied %}
+                        <br><small class="text-warning">car limit applied</small>
+                        {% endif %}
+                    </td>
+                    <td class="text-end">{{ asset.business_use_pct|floatformat:0 }}%</td>
+                    <td>
+                        {% if asset.is_improvement %}<span class="badge bg-info text-dark">Improvement</span>{% endif %}
+                        {% if asset.is_car %}<span class="badge bg-secondary">Car</span>{% endif %}
+                    </td>
+                    <td class="text-end">
+                        <form method="post" action="{% url 'core:general_pool_delete_asset' asset_pk=asset.pk %}" class="d-inline">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-outline-danger btn-sm"
+                                    onclick="return confirm('Remove {{ asset.asset_name|escapejs }} from the pool?');">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </form>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="6" class="text-center text-muted py-4">No assets pooled for this year.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Disposals -->
+<div class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <h6 class="mb-0"><i class="bi bi-box-arrow-right"></i> Disposals</h6>
+        <button class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addDisposalModal">
+            <i class="bi bi-plus-lg"></i> Add Disposal
+        </button>
+    </div>
+    <div class="card-body p-0">
+        <table class="table table-sm table-hover mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Asset</th>
+                    <th>Disposal date</th>
+                    <th class="text-end">Termination value</th>
+                    <th class="text-end">Business use</th>
+                    <th class="text-end">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for disposal in disposals %}
+                <tr>
+                    <td>{{ disposal.asset_name }}</td>
+                    <td>{{ disposal.disposal_date|date:"d/m/Y"|default:"—" }}</td>
+                    <td class="text-end">${{ disposal.termination_value|floatformat:2|intcomma }}</td>
+                    <td class="text-end">{{ disposal.business_use_pct|floatformat:0 }}%</td>
+                    <td class="text-end">
+                        <form method="post" action="{% url 'core:general_pool_delete_disposal' disposal_pk=disposal.pk %}" class="d-inline">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-outline-danger btn-sm"
+                                    onclick="return confirm('Remove this disposal?');">
+                                <i class="bi bi-trash"></i>
+                            </button>
+                        </form>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="5" class="text-center text-muted py-4">No disposals recorded for this year.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- Settings -->
+<div class="card mb-4">
+    <div class="card-header">
+        <h6 class="mb-0"><i class="bi bi-gear"></i> Pool Settings</h6>
+    </div>
+    <div class="card-body">
+        <form method="post" action="{% url 'core:general_pool_update_settings' pk=fy.pk %}">
+            {% csrf_token %}
+            <div class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label" for="opening_pool_balance">Opening pool balance</label>
+                    <input type="number" step="0.01" class="form-control" id="opening_pool_balance"
+                           name="opening_pool_balance" value="{{ pool.opening_pool_balance|floatformat:2 }}">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label" for="iawo_threshold">Instant write-off threshold</label>
+                    <input type="number" step="0.01" class="form-control" id="iawo_threshold"
+                           name="iawo_threshold" value="{{ pool.iawo_threshold|floatformat:2 }}">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label" for="dep_expense_code">Depreciation expense account</label>
+                    <select class="form-select" id="dep_expense_code" name="dep_expense_code">
+                        <option value="">— select —</option>
+                        {% for code, name in expense_accounts %}
+                        <option value="{{ code }}" {% if code == pool.dep_expense_code %}selected{% endif %}>{{ code }} — {{ name }}</option>
+                        {% endfor %}
+                    </select>
+                    <input type="hidden" name="dep_expense_name" value="{{ pool.dep_expense_name }}">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label" for="pool_asset_code">Pool asset account</label>
+                    <select class="form-select" id="pool_asset_code" name="pool_asset_code">
+                        <option value="">— select —</option>
+                        {% for code, name in asset_accounts %}
+                        <option value="{{ code }}" {% if code == pool.pool_asset_code %}selected{% endif %}>{{ code }} — {{ name }}</option>
+                        {% endfor %}
+                    </select>
+                    <input type="hidden" name="pool_asset_name" value="{{ pool.pool_asset_name }}">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label" for="assessable_income_code">Assessable income account</label>
+                    <select class="form-select" id="assessable_income_code" name="assessable_income_code">
+                        <option value="">— select —</option>
+                        {% for code, name in revenue_accounts %}
+                        <option value="{{ code }}">{{ code }} — {{ name }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label" for="pool_notes">Notes</label>
+                    <input type="text" class="form-control" id="pool_notes" name="notes" value="{{ pool.notes|default:'' }}">
+                </div>
+            </div>
+            <div class="mt-3">
+                <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-check-lg"></i> Save Settings</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Add asset modal -->
+<div class="modal fade" id="addAssetModal" tabindex="-1" aria-labelledby="addAssetModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <form method="post" action="{% url 'core:general_pool_add_asset' pk=fy.pk %}" class="modal-content">
+            {% csrf_token %}
+            <div class="modal-header">
+                <h6 class="modal-title" id="addAssetModalLabel">Add Asset to Pool</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label" for="asset_name">Asset name</label>
+                    <input type="text" class="form-control" id="asset_name" name="asset_name" required>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label" for="asset_description">Description</label>
+                    <textarea class="form-control" id="asset_description" name="description" rows="2"></textarea>
+                </div>
+                <div class="row g-3">
+                    <div class="col-6">
+                        <label class="form-label" for="date_first_used">Date first used</label>
+                        <input type="date" class="form-control" id="date_first_used" name="date_first_used">
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label" for="cost">Cost</label>
+                        <input type="number" step="0.01" class="form-control" id="cost" name="cost" value="0" required>
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label" for="business_use_pct">Business use %</label>
+                        <input type="number" step="0.01" min="0" max="100" class="form-control"
+                               id="business_use_pct" name="business_use_pct" value="100">
+                    </div>
+                </div>
+                <div class="form-check mt-3">
+                    <input class="form-check-input" type="checkbox" value="1" id="is_improvement" name="is_improvement">
+                    <label class="form-check-label" for="is_improvement">This is an improvement to an existing pooled asset</label>
+                </div>
+                <div class="form-check">
+                    <input class="form-check-input" type="checkbox" value="1" id="is_car" name="is_car">
+                    <label class="form-check-label" for="is_car">Car (apply the car cost limit)</label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" class="btn btn-primary">Add Asset</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Add disposal modal -->
+<div class="modal fade" id="addDisposalModal" tabindex="-1" aria-labelledby="addDisposalModalLabel" aria-hidden="true">
+    <div class="modal-dialog">
+        <form method="post" action="{% url 'core:general_pool_add_disposal' pk=fy.pk %}" class="modal-content">
+            {% csrf_token %}
+            <div class="modal-header">
+                <h6 class="modal-title" id="addDisposalModalLabel">Record Disposal</h6>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label" for="disposal_asset_name">Asset name</label>
+                    <input type="text" class="form-control" id="disposal_asset_name" name="asset_name" required>
+                </div>
+                <div class="row g-3">
+                    <div class="col-6">
+                        <label class="form-label" for="disposal_date">Disposal date</label>
+                        <input type="date" class="form-control" id="disposal_date" name="disposal_date">
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label" for="termination_value">Termination value</label>
+                        <input type="number" step="0.01" class="form-control"
+                               id="termination_value" name="termination_value" value="0" required>
+                    </div>
+                    <div class="col-6">
+                        <label class="form-label" for="disposal_business_use_pct">Business use %</label>
+                        <input type="number" step="0.01" min="0" max="100" class="form-control"
+                               id="disposal_business_use_pct" name="business_use_pct" value="100">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" class="btn btn-primary">Record Disposal</button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,303 @@
+name: E2E Regression Suite
+
+# Runs on a self-hosted runner on the application droplet, deliberately.
+#
+# The suite needs a restored copy of the production database, which contains real
+# client financial data. GitHub-hosted runners would mean uploading that to
+# infrastructure outside the firm's control on every run, so the data never leaves the
+# droplet it already lives on.
+#
+# ============================================================================
+# NOT YET RUN BY A RUNNER. No self-hosted runner is registered on this host, so no
+# step in this file has ever fired as a workflow. The rig it drives, however, is no
+# longer reviewed-on-paper: see the verification note at the end of this header.
+#
+# actions/checkout@v4 checks the PR (or scheduled) ref out to $GITHUB_WORKSPACE,
+# wherever the runner's work directory happens to be. The rig used to ignore that
+# entirely: e2e/scripts/start_server.sh, config/settings_e2e.py, the tier 2 specs
+# and e2e/fixtures/{instance,figures,login}.ts all hardcoded /opt/statementhub --
+# the live production tree, where gunicorn, celery and celerybeat run from today --
+# so the Django instance under test would have served whatever is deployed rather
+# than the PR's code, while the manifest and baselines asserted against came from
+# $GITHUB_WORKSPACE. Silently wrong, not merely broken.
+#
+# The rig now follows two roots instead (see e2e/fixtures/paths.ts for the full
+# rationale), both defaulting to /opt/statementhub so a developer running the suite
+# by hand sees no change:
+#
+#   STATEMENTHUB_ROOT          the checkout under test -- specs, baselines, scripts,
+#                              manage.py. Set to $GITHUB_WORKSPACE by both jobs below.
+#   STATEMENTHUB_RUNTIME_ROOT  the machine's own state -- the virtualenv, and .e2e
+#                              (database credentials, the production dump, role
+#                              manifests, tb workbooks, logs). Stays at the deployment
+#                              root: none of it belongs to a checkout.
+#
+# Pointing a runner's work directory AT /opt/statementhub to make the two agree would
+# still be far worse than the original mismatch -- actions/checkout hard-resets its
+# target every run, which would blow away the live deployment -- so the guard step
+# below stays, and still refuses to proceed if that is ever the case.
+#
+# Verified by simulation, not by a runner. The whole arrangement was exercised from a
+# detached git worktree standing in for $GITHUB_WORKSPACE, with STATEMENTHUB_ROOT
+# pointed at it and STATEMENTHUB_RUNTIME_ROOT left at the deployment -- exactly what
+# the env block on each job below sets. Tier 2 from that separate checkout produced
+# the same result as from the deployment: 13 passed, 1 failed on the one known
+# defect. Two things that no amount of reading would have caught surfaced that way
+# and are fixed here:
+#
+#   - config/settings.py reads .env relative to its own BASE_DIR, so a checkout that
+#     is not the deployment has no secrets at all and died on KeyError: 'SECRET_KEY'
+#     before a single test ran. settings_e2e now loads it from the runtime root.
+#   - ManifestStaticFilesStorage needs staticfiles.json, which is build output and so
+#     absent from a fresh checkout: every page render failed with "Missing staticfiles
+#     manifest entry". There was no collectstatic step; there is one now.
+#
+# What is still genuinely untested is the runner-shaped part -- actions/checkout, the
+# artifact upload, concurrency, and the guard step firing for real.
+# ============================================================================
+
+on:
+  pull_request:
+    branches: [main]
+  schedule:
+    # Nightly, after which the data is refreshed from production so the suite keeps
+    # running against representative rather than steadily staler data.
+    - cron: "0 17 * * *"  # 03:00 AEST
+  workflow_dispatch:
+    inputs:
+      refresh_data:
+        description: "Refresh the E2E database from production first"
+        type: boolean
+        default: false
+
+concurrency:
+  # The rig has one template database and one port per tier, so concurrent runs would
+  # fight over both. Queue instead of racing.
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tier1:
+    name: Tier 1 route sweep
+    runs-on: self-hosted
+    timeout-minutes: 30
+
+    env:
+      # The rig reads both roots (see e2e/fixtures/paths.ts). STATEMENTHUB_ROOT is the
+      # ref actions/checkout just placed here, so the Django instance under test serves
+      # the PR's code rather than whatever is deployed. STATEMENTHUB_RUNTIME_ROOT stays
+      # at the deployment: the venv and .e2e (database credentials, production dump,
+      # role manifests, logs) belong to the machine, not to a checkout, and the guard
+      # step below still refuses to run if the two are ever the same directory.
+      STATEMENTHUB_ROOT: ${{ github.workspace }}
+      STATEMENTHUB_RUNTIME_ROOT: /opt/statementhub
+
+    steps:
+      - name: Guard against workspace/deployment path collision
+        # Deliberately the first step: everything after this assumes the checkout
+        # is not, and cannot corrupt, /opt/statementhub. See the header comment --
+        # this guard is the one thing standing between "misleading" and
+        # "destructive" until the rig's hardcoded paths are reconciled with
+        # $GITHUB_WORKSPACE.
+        run: |
+          set -euo pipefail
+          DEPLOY_DIR="/opt/statementhub"
+          WORKSPACE_REAL="$(realpath "${GITHUB_WORKSPACE}")"
+
+          if [[ -d "${DEPLOY_DIR}" ]]; then
+            DEPLOY_REAL="$(realpath "${DEPLOY_DIR}")"
+            if [[ "${WORKSPACE_REAL}" == "${DEPLOY_REAL}" ]]; then
+              echo "::error::GITHUB_WORKSPACE (${WORKSPACE_REAL}) IS the live deployment directory (${DEPLOY_DIR}). gunicorn, celery and celerybeat run from here in production. actions/checkout would hard-reset the production working tree on every run of this workflow. Refusing to continue -- see the header comment in .github/workflows/e2e.yml."
+              exit 1
+            fi
+
+            if [[ -d "${DEPLOY_DIR}/.git" ]]; then
+              DEPLOY_GIT_COMMON="$(git -C "${DEPLOY_DIR}" rev-parse --git-common-dir 2>/dev/null || true)"
+              WORKSPACE_GIT_COMMON="$(git -C "${WORKSPACE_REAL}" rev-parse --git-common-dir 2>/dev/null || true)"
+              if [[ -n "${DEPLOY_GIT_COMMON}" && -n "${WORKSPACE_GIT_COMMON}" ]]; then
+                DEPLOY_GIT_COMMON_REAL="$(cd "${DEPLOY_DIR}" && realpath "${DEPLOY_GIT_COMMON}")"
+                WORKSPACE_GIT_COMMON_REAL="$(cd "${WORKSPACE_REAL}" && realpath "${WORKSPACE_GIT_COMMON}")"
+                if [[ "${DEPLOY_GIT_COMMON_REAL}" == "${WORKSPACE_GIT_COMMON_REAL}" ]]; then
+                  echo "::error::${DEPLOY_DIR} is a git worktree sharing history with this checkout (common git dir ${DEPLOY_GIT_COMMON_REAL}). Running here risks mutating the production working tree through shared git state. Refusing to continue -- see the header comment in .github/workflows/e2e.yml."
+                  exit 1
+                fi
+              fi
+            fi
+          fi
+
+          echo "guard passed: ${WORKSPACE_REAL} is independent of ${DEPLOY_DIR}"
+
+      - uses: actions/checkout@v4
+
+      - name: Refresh E2E database
+        # Nightly and on explicit request only. A refresh on every pull request would
+        # add several minutes and, more importantly, would change the data underneath
+        # the committed status baseline — making unrelated pull requests fail on
+        # differences in production data rather than on their own changes.
+        if: github.event_name == 'schedule' || inputs.refresh_data
+        run: bash scripts/refresh_e2e_db.sh
+
+      - name: Collect static files
+        # settings_e2e inherits production's ManifestStaticFilesStorage wholesale, so
+        # every {% static %} tag is resolved through staticfiles.json. That manifest is
+        # build output rather than source: a fresh checkout has none, and without it
+        # every page render dies with "Missing staticfiles manifest entry for
+        # 'css/style.css'" before a single assertion runs. The deployment's copy cannot
+        # stand in -- a pull request that changes CSS has to be tested against its own.
+        run: |
+          source "${STATEMENTHUB_RUNTIME_ROOT}/venv/bin/activate"
+          python manage.py collectstatic --no-input
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings_e2e
+
+      - name: Install suite dependencies
+        working-directory: e2e
+        run: npm ci
+
+      - name: Verify route manifest is current
+        # A pull request that adds a route without regenerating the manifest would
+        # otherwise pass while leaving the new route uncovered.
+        run: |
+          source "${STATEMENTHUB_RUNTIME_ROOT}/venv/bin/activate"
+          python3 manage.py e2e_dump_routes --settings=config.settings_e2e \
+            --output=/tmp/routes.check.json
+          if ! diff -q <(python3 -c "import json;d=json.load(open('/tmp/routes.check.json'));print(json.dumps([r['name'] for r in d['routes']],indent=0))") \
+                       <(python3 -c "import json;d=json.load(open('e2e/tier1/routes.manifest.json'));print(json.dumps([r['name'] for r in d['routes']],indent=0))"); then
+            echo "::error::Route manifest is stale. Regenerate with:"
+            echo "::error::  python3 manage.py e2e_dump_routes --settings=config.settings_e2e"
+            exit 1
+          fi
+
+      - name: Run Tier 1
+        working-directory: e2e
+        run: npx playwright test --project=tier1
+
+      # There is deliberately no step uploading this job's playwright-report or
+      # test-results either, for the same reason as the log below. Tier 1 crawls 215
+      # routes across the REAL entities in the restored production copy, and on failure
+      # Playwright writes a screenshot of the page and a trace -- a recording carrying
+      # that page's own HTML -- for each one. Those are pictures of real client
+      # financial data, and uploading them would put it on GitHub for fourteen days,
+      # readable by anyone with access to this repository. Tier 2 does upload its
+      # equivalents: that job drives a synthetic fixture entity with invented figures
+      # (core/e2e_fixture_data.py), so its artifacts carry nothing real, and it is where
+      # the accounting logic that actually breaks lives.
+      #
+      # This narrows the exposure rather than closing it. The job's own console output
+      # still goes to GitHub, and Playwright prints assertion failures there -- a failed
+      # figure comparison puts whole trial balances in the error text. Constraining the
+      # reporter is a separate piece of work and has not been done.
+      #
+      # To diagnose a Tier 1 failure, read e2e/playwright-report and e2e/test-results
+      # on the droplet, in the runner's workspace for that run.
+
+      # There is deliberately no step uploading .e2e/logs/django.log. It is the most
+      # useful artifact for diagnosing a failing route -- DEBUG is False, so the
+      # browser never sees a traceback and the log is where the actual cause lives --
+      # but it is written at DEBUG level against the production database, so it
+      # carries real client financial data in query text and request payloads.
+      # Uploading it would contradict this file's own opening rationale: the suite
+      # runs on the droplet precisely so that data never leaves it. Scrubbing is not
+      # the answer either -- a DEBUG log of production data has no reliable boundary
+      # to scrub to. Read it on the droplet at .e2e/logs/django.log instead.
+
+  tier2:
+    name: Tier 2 accounting flows (scheduled only)
+    runs-on: self-hosted
+    timeout-minutes: 45
+    # Deliberately not on pull_request: each Tier 2 spec file boots its own Django
+    # instance and branches its own 500MB database (30-60s apiece), and the flows
+    # it drives make one-way transitions (finalising a year, posting depreciation)
+    # that a fast per-PR gate has no business affecting. Nightly/scheduled and
+    # manual dispatch only. Same untested-workflow caveat as Tier 1 above applies.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+
+
+    env:
+      # The rig reads both roots (see e2e/fixtures/paths.ts). STATEMENTHUB_ROOT is the
+      # ref actions/checkout just placed here, so the Django instance under test serves
+      # the PR's code rather than whatever is deployed. STATEMENTHUB_RUNTIME_ROOT stays
+      # at the deployment: the venv and .e2e (database credentials, production dump,
+      # role manifests, logs) belong to the machine, not to a checkout, and the guard
+      # step below still refuses to run if the two are ever the same directory.
+      STATEMENTHUB_ROOT: ${{ github.workspace }}
+      STATEMENTHUB_RUNTIME_ROOT: /opt/statementhub
+
+    steps:
+      - name: Guard against workspace/deployment path collision
+        # Identical to Tier 1's guard above -- see that job's copy and this file's
+        # header comment for the full reasoning. Duplicated rather than factored
+        # into a composite action because this workflow has never run and a shared
+        # action would be one more untested thing to get right.
+        run: |
+          set -euo pipefail
+          DEPLOY_DIR="/opt/statementhub"
+          WORKSPACE_REAL="$(realpath "${GITHUB_WORKSPACE}")"
+
+          if [[ -d "${DEPLOY_DIR}" ]]; then
+            DEPLOY_REAL="$(realpath "${DEPLOY_DIR}")"
+            if [[ "${WORKSPACE_REAL}" == "${DEPLOY_REAL}" ]]; then
+              echo "::error::GITHUB_WORKSPACE (${WORKSPACE_REAL}) IS the live deployment directory (${DEPLOY_DIR}). gunicorn, celery and celerybeat run from here in production. actions/checkout would hard-reset the production working tree on every run of this workflow. Refusing to continue -- see the header comment in .github/workflows/e2e.yml."
+              exit 1
+            fi
+
+            if [[ -d "${DEPLOY_DIR}/.git" ]]; then
+              DEPLOY_GIT_COMMON="$(git -C "${DEPLOY_DIR}" rev-parse --git-common-dir 2>/dev/null || true)"
+              WORKSPACE_GIT_COMMON="$(git -C "${WORKSPACE_REAL}" rev-parse --git-common-dir 2>/dev/null || true)"
+              if [[ -n "${DEPLOY_GIT_COMMON}" && -n "${WORKSPACE_GIT_COMMON}" ]]; then
+                DEPLOY_GIT_COMMON_REAL="$(cd "${DEPLOY_DIR}" && realpath "${DEPLOY_GIT_COMMON}")"
+                WORKSPACE_GIT_COMMON_REAL="$(cd "${WORKSPACE_REAL}" && realpath "${WORKSPACE_GIT_COMMON}")"
+                if [[ "${DEPLOY_GIT_COMMON_REAL}" == "${WORKSPACE_GIT_COMMON_REAL}" ]]; then
+                  echo "::error::${DEPLOY_DIR} is a git worktree sharing history with this checkout (common git dir ${DEPLOY_GIT_COMMON_REAL}). Running here risks mutating the production working tree through shared git state. Refusing to continue -- see the header comment in .github/workflows/e2e.yml."
+                  exit 1
+                fi
+              fi
+            fi
+          fi
+
+          echo "guard passed: ${WORKSPACE_REAL} is independent of ${DEPLOY_DIR}"
+
+      - uses: actions/checkout@v4
+
+      - name: Refresh E2E database
+        if: github.event_name == 'schedule' || inputs.refresh_data
+        run: bash scripts/refresh_e2e_db.sh
+
+      - name: Collect static files
+        # settings_e2e inherits production's ManifestStaticFilesStorage wholesale, so
+        # every {% static %} tag is resolved through staticfiles.json. That manifest is
+        # build output rather than source: a fresh checkout has none, and without it
+        # every page render dies with "Missing staticfiles manifest entry for
+        # 'css/style.css'" before a single assertion runs. The deployment's copy cannot
+        # stand in -- a pull request that changes CSS has to be tested against its own.
+        run: |
+          source "${STATEMENTHUB_RUNTIME_ROOT}/venv/bin/activate"
+          python manage.py collectstatic --no-input
+        env:
+          DJANGO_SETTINGS_MODULE: config.settings_e2e
+
+      - name: Install suite dependencies
+        working-directory: e2e
+        run: npm ci
+
+      - name: Run Tier 2
+        working-directory: e2e
+        # Non-fatal here on purpose: a Tier 2 failure might be one of the two known
+        # ones (expected, and handled by the next step) or a genuine new regression
+        # (also handled by the next step) -- either way the check has to run
+        # against the completed results.json rather than have the job stop here.
+        run: npx playwright test --project=tier2 || true
+
+      - name: Check Tier 2 failures match known_failures.json
+        working-directory: e2e
+        run: npm run check:tier2-failures
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-tier2
+          path: |
+            e2e/playwright-report
+            e2e/test-results
+          retention-days: 14
