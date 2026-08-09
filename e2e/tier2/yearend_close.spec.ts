@@ -305,13 +305,21 @@ test('posting depreciation is idempotent and leaves opening balances alone', asy
   // captured only once everything has passed is never captured at all on a failing
   // run, which is exactly when it is wanted.
   //
-  // Recorded, not yet compared. These figures are now honest -- the pair is
-  // symmetric once the opening balance is retagged, so the reversal balances and
-  // the accounts land on the schedule total -- but the checkpoint has no baseline
-  // entry until someone blesses it, and comparing against an unblessed checkpoint
-  // can only ever report "not in the baseline yet". Run `npm run bless:figures` to
-  // promote it, then add the compare.
+  // Blessed. These figures were checked field by field before being promoted, not
+  // just eyeballed for shape: the trial balance balances at 116,000.00 each way (a
+  // 112,000.00 import plus this year's 4,000.00 on both sides); there is exactly one
+  // journal and it balances 4,000.00/4,000.00 as Dr 6-1200 / Cr 1-2100, with no
+  // reversal journal at all -- correct, because once the opening accumulated
+  // depreciation is retagged there is no current-year movement left to back out, and
+  // that single-sided 4,000.00 reversal was the whole defect; and the two halves tie
+  // together independently, with accumulated depreciation of 8,000.00 (4,000.00
+  // rollover + 4,000.00 posted) against Plant and Equipment of 20,000.00 giving a net
+  // book value of 12,000.00, exactly the schedule's own closing_wdv.
+  //
+  // Recorded before the compare, so the figures still reach the observed dump on a
+  // run where the comparison itself is what fails.
   recordObserved('after_depreciation_post', first);
+  expect(compareToBaseline('after_depreciation_post', first)).toEqual([]);
 
   expect(await postDepreciationViaModal(page)).toBeLessThan(400);
   const second = await dumpFigures(instance.dbName, FY, 'after_depreciation_post_twice');

@@ -1,4 +1,156 @@
 {
+  "after_depreciation_post": {
+    "depreciation": [
+      {
+        "accum_dep_code": "1-2100",
+        "asset_name": "Fixture Forklift",
+        "closing_wdv": "12000.00",
+        "dep_expense_code": "6-1200",
+        "depreciation_amount": "4000.00",
+        "opening_wdv": "16000.00",
+        "private_depreciation": "0.00"
+      }
+    ],
+    "journals": [
+      {
+        "description": "Depreciation for year ended 30/06/2026",
+        "journal_type": "depreciation",
+        "lines": [
+          {
+            "account_code": "1-2100",
+            "account_name": "Accumulated Depreciation",
+            "credit": "4000.00",
+            "debit": "0.00"
+          },
+          {
+            "account_code": "6-1200",
+            "account_name": "Depreciation",
+            "credit": "0.00",
+            "debit": "4000.00"
+          }
+        ],
+        "status": "posted",
+        "total_credit": "4000.00",
+        "total_debit": "4000.00"
+      }
+    ],
+    "totals": {
+      "credit": "116000.00",
+      "debit": "116000.00"
+    },
+    "trial_balance": [
+      {
+        "account_code": "1-1000",
+        "account_name": "Cash at Bank",
+        "closing_balance": "62000.00",
+        "credit": "0.00",
+        "debit": "62000.00",
+        "is_adjustment": false,
+        "opening_balance": "0.00",
+        "prior_closing_balance": "0.00",
+        "source": "tb_import"
+      },
+      {
+        "account_code": "1-2000",
+        "account_name": "Plant and Equipment",
+        "closing_balance": "20000.00",
+        "credit": "0.00",
+        "debit": "20000.00",
+        "is_adjustment": false,
+        "opening_balance": "0.00",
+        "prior_closing_balance": "0.00",
+        "source": "tb_import"
+      },
+      {
+        "account_code": "1-2100",
+        "account_name": "Accumulated Depreciation",
+        "closing_balance": "-4000.00",
+        "credit": "4000.00",
+        "debit": "0.00",
+        "is_adjustment": true,
+        "opening_balance": "0.00",
+        "prior_closing_balance": "0.00",
+        "source": "depreciation_schedule"
+      },
+      {
+        "account_code": "1-2100",
+        "account_name": "Accumulated Depreciation",
+        "closing_balance": "-4000.00",
+        "credit": "4000.00",
+        "debit": "0.00",
+        "is_adjustment": false,
+        "opening_balance": "0.00",
+        "prior_closing_balance": "0.00",
+        "source": "rollover"
+      },
+      {
+        "account_code": "2-1000",
+        "account_name": "Trade Creditors",
+        "closing_balance": "-8000.00",
+        "credit": "8000.00",
+        "debit": "0.00",
+        "is_adjustment": false,
+        "opening_balance": "0.00",
+        "prior_closing_balance": "0.00",
+        "source": "tb_import"
+      },
+      {
+        "account_code": "3-1000",
+        "account_name": "Retained Earnings",
+        "closing_balance": "-60000.00",
+        "credit": "60000.00",
+        "debit": "0.00",
+        "is_adjustment": false,
+        "opening_balance": "0.00",
+        "prior_closing_balance": "0.00",
+        "source": "tb_import"
+      },
+      {
+        "account_code": "4-1000",
+        "account_name": "Sales",
+        "closing_balance": "-40000.00",
+        "credit": "40000.00",
+        "debit": "0.00",
+        "is_adjustment": false,
+        "opening_balance": "0.00",
+        "prior_closing_balance": "0.00",
+        "source": "tb_import"
+      },
+      {
+        "account_code": "5-1000",
+        "account_name": "Cost of Sales",
+        "closing_balance": "18000.00",
+        "credit": "0.00",
+        "debit": "18000.00",
+        "is_adjustment": false,
+        "opening_balance": "0.00",
+        "prior_closing_balance": "0.00",
+        "source": "tb_import"
+      },
+      {
+        "account_code": "6-1000",
+        "account_name": "Administration",
+        "closing_balance": "12000.00",
+        "credit": "0.00",
+        "debit": "12000.00",
+        "is_adjustment": false,
+        "opening_balance": "0.00",
+        "prior_closing_balance": "0.00",
+        "source": "tb_import"
+      },
+      {
+        "account_code": "6-1200",
+        "account_name": "Depreciation",
+        "closing_balance": "4000.00",
+        "credit": "0.00",
+        "debit": "4000.00",
+        "is_adjustment": true,
+        "opening_balance": "0.00",
+        "prior_closing_balance": "0.00",
+        "source": "depreciation_schedule"
+      }
+    ]
+  },
   "after_tb_commit": {
     "depreciation": [
       {
