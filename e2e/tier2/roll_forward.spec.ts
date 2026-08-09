@@ -417,21 +417,6 @@ test('every balance-sheet account should carry its prior-year closing balance fo
   // the numeric-code fallback, which also fails (a hyphenated code is not
   // `.isdigit()`), and _is_balance_sheet_account returns False across the board.
   //
-  // A sibling but DIFFERENT bug, reported by code review and not independently
-  // confirmed by this suite (this spec's fixture and flows never reach it), exists
-  // in _build_coa_section_lookup -- used by the statement-rendering views this spec
-  // does not touch, not by any of the four callers above. It converts a raw
-  // EntityChartOfAccount.section value ("current_assets") into a display string
-  // ("Current Assets") via _COA_SECTION_TO_DISPLAY, and somewhere downstream that
-  // display string is tested against a set that holds the raw values instead
-  // (_BS_SECTIONS) -- an intersection that would always be empty. I searched
-  // _build_coa_section_lookup's own call sites in core/views.py for this exact
-  // pattern and did not find one; noting the report here as told rather than
-  // asserting it as independently verified, so a fixer knows both a confirmed bug
-  // (above) and a reported-but-unconfirmed one with the same symptom exist in the
-  // same file, and that a fix to one is not a fix to the other. Whoever picks this
-  // up should re-trace it rather than trust either account uncritically.
-  //
   // Part A's consequence: every account is run through the roll's P&L branch,
   // which is correct for real P&L accounts (comparative only, opening zeroed,
   // resetting each year -- see the passing "P&L accounts carry ... as a comparative
