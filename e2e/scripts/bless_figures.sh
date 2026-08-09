@@ -46,59 +46,112 @@ for path in sorted(observed_dir.glob("*.json")):
 old = json.loads(baseline_path.read_text()) if baseline_path.exists() else {}
 
 
-def group_rows(rows):
-    """Group trial-balance rows by account_code|source, same as figures.ts's
-    compareToBaseline — an account_code can legitimately repeat (see
-    core/e2e_figures.py), so the print here has to agree with the comparator on what
-    counts as "the same row", or an added/removed/changed row at that granularity
-    would print differently here than it fails there."""
+# Kept in sync with figures.ts's TB_FIELDS/DEPRECIATION_FIELDS by hand — this
+# script and that comparator must agree on what "changed" means, because printing
+# fewer fields than the comparator checks is exactly Finding 5's bug: a change the
+# comparator would fail on gets promoted here with nothing printed, so the operator
+# sees "no changes" and commits a baseline that hides a real regression.
+TB_FIELDS = [
+    "opening_balance", "debit", "credit", "closing_balance",
+    "prior_closing_balance", "account_name", "is_adjustment",
+]
+DEPRECIATION_FIELDS = [
+    "opening_wdv", "depreciation_amount", "private_depreciation",
+    "closing_wdv", "dep_expense_code", "accum_dep_code",
+]
+
+
+def group_rows(rows, key_fn):
+    """Group rows by a caller-supplied key, same as figures.ts's compareToBaseline
+    — both trial-balance rows (account_code|source) and depreciation rows
+    (asset_name) can legitimately repeat their identifier (see core/e2e_figures.py),
+    so the print here has to agree with the comparator on what counts as "the same
+    row", or an added/removed/changed row at that granularity would print
+    differently here than it fails there."""
     groups: dict[str, list] = {}
     for r in rows:
-        groups.setdefault(f"{r['account_code']}|{r['source']}", []).append(r)
+        groups.setdefault(key_fn(r), []).append(r)
     return groups
 
 
-def describe_changes(before_tb, after_tb):
-    """Return (changed, added, removed) description lines for one checkpoint's
-    trial balance, matching compareToBaseline's pairwise-by-position comparison
-    within a colliding key so this print and that assertion never disagree."""
-    before_groups = group_rows(before_tb)
-    after_groups = group_rows(after_tb)
+def describe_group_changes(before_rows, after_rows, key_fn, fields, id_field, label_prefix=""):
+    """Return (changed, added, removed) description lines for one group of rows
+    (a checkpoint's trial balance, or its depreciation schedule), matching
+    compareToBaseline's pairwise-by-position comparison within a colliding key so
+    this print and that assertion never disagree. Prints every field in `fields`,
+    not just one, so nothing the comparator checks can change silently."""
+    before_groups = group_rows(before_rows, key_fn)
+    after_groups = group_rows(after_rows, key_fn)
     changed, added, removed = [], [], []
 
     for key in sorted(set(before_groups) | set(after_groups)):
-        before_rows = before_groups.get(key, [])
-        after_rows = after_groups.get(key, [])
-        max_len = max(len(before_rows), len(after_rows))
+        before_grp = before_groups.get(key, [])
+        after_grp = after_groups.get(key, [])
+        max_len = max(len(before_grp), len(after_grp))
         for i in range(max_len):
-            label = f"{key}[{i}]" if max_len > 1 else key
-            before_row = before_rows[i] if i < len(before_rows) else None
-            after_row = after_rows[i] if i < len(after_rows) else None
+            label = f"{label_prefix}{key}[{i}]" if max_len > 1 else f"{label_prefix}{key}"
+            before_row = before_grp[i] if i < len(before_grp) else None
+            after_row = after_grp[i] if i < len(after_grp) else None
             if before_row is None:
-                added.append(f"  + {label} closing {after_row['closing_balance']}")
+                added.append(f"  + {label} {id_field} {after_row[id_field]}")
             elif after_row is None:
-                removed.append(f"  - {label} closing {before_row['closing_balance']}")
-            elif before_row["closing_balance"] != after_row["closing_balance"]:
-                changed.append(
-                    f"  ~ {label} closing {before_row['closing_balance']} -> "
-                    f"{after_row['closing_balance']}"
-                )
+                removed.append(f"  - {label} {id_field} {before_row[id_field]}")
+            else:
+                for field in fields:
+                    if before_row.get(field) != after_row.get(field):
+                        changed.append(
+                            f"  ~ {label} {field}: {before_row.get(field)} -> "
+                            f"{after_row.get(field)}"
+                        )
     return changed, added, removed
+
+
+def describe_totals_and_journals(before, after):
+    """Return description lines for totals and journal changes -- the two fields
+    compareToBaseline fails on that are not per-row, and which describe_changes
+    previously merged silently with everything else it didn't print either."""
+    lines = []
+    before_totals = before.get("totals", {})
+    after_totals = after.get("totals", {})
+    for field in ("debit", "credit"):
+        if before_totals.get(field) != after_totals.get(field):
+            lines.append(
+                f"  ~ totals.{field}: {before_totals.get(field)} -> {after_totals.get(field)}"
+            )
+    before_journals = before.get("journals", [])
+    after_journals = after.get("journals", [])
+    if json.dumps(before_journals, sort_keys=True) != json.dumps(after_journals, sort_keys=True):
+        lines.append(
+            f"  ~ journals: {len(before_journals)} journal(s) -> {len(after_journals)} journal(s) "
+            "(content differs — see the observed-figures file for detail)"
+        )
+    return lines
 
 
 for checkpoint, figures in sorted(observed.items()):
     if checkpoint not in old:
         print(f"\n+ {checkpoint}: newly baselined "
-              f"({len(figures.get('trial_balance', []))} TB rows)")
+              f"({len(figures.get('trial_balance', []))} TB rows, "
+              f"{len(figures.get('depreciation', []))} depreciation row(s))")
         continue
     before = old[checkpoint]
-    changed, added, removed = describe_changes(
-        before.get("trial_balance", []), figures.get("trial_balance", [])
+
+    tb_changed, tb_added, tb_removed = describe_group_changes(
+        before.get("trial_balance", []), figures.get("trial_balance", []),
+        key_fn=lambda r: f"{r['account_code']}|{r['source']}",
+        fields=TB_FIELDS, id_field="closing_balance",
     )
-    total = len(changed) + len(added) + len(removed)
-    if total:
-        print(f"\n~ {checkpoint}: {total} trial-balance row(s) changed — confirm each is intended:")
-        for line in changed + added + removed:
+    dep_changed, dep_added, dep_removed = describe_group_changes(
+        before.get("depreciation", []), figures.get("depreciation", []),
+        key_fn=lambda r: r["asset_name"],
+        fields=DEPRECIATION_FIELDS, id_field="closing_wdv", label_prefix="depreciation ",
+    )
+    totals_journals = describe_totals_and_journals(before, figures)
+
+    lines = tb_changed + tb_added + tb_removed + dep_changed + dep_added + dep_removed + totals_journals
+    if lines:
+        print(f"\n~ {checkpoint}: {len(lines)} change(s) — confirm each is intended:")
+        for line in lines:
             print(line)
 
 # Checkpoints not seen in this run are kept: a filtered run is no evidence that they
