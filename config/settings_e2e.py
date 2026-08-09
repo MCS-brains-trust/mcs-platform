@@ -187,6 +187,12 @@ CACHES = {
         "BACKEND": "django.core.cache.backends.redis.RedisCache",
         "LOCATION": os.environ.get("E2E_CACHE_URL", "redis://127.0.0.1:6379/4"),
         "TIMEOUT": 300,
+        # Instances share redis DB 4, and SESSION_ENGINE is cached_db. Without a
+        # per-instance prefix, a session created against one instance's database is
+        # visible to another instance that branched before that session existed —
+        # which surfaces as an intermittent, baffling auth failure. start_server.sh
+        # sets this to the branch database name.
+        "KEY_PREFIX": os.environ.get("E2E_CACHE_PREFIX", ""),
     }
 }
 

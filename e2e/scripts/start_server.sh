@@ -40,6 +40,10 @@ source venv/bin/activate
 export DJANGO_SETTINGS_MODULE=config.settings_e2e
 export E2E_DB_NAME="${DB_NAME}"
 export E2E_PORT="${PORT}"
+# Give this instance its own cache keyspace. Instances share redis DB 4 and
+# sessions are cached_db, so without this a session from another instance's
+# database can be served from cache here, where its user row may not exist.
+export E2E_CACHE_PREFIX="${DB_NAME}"
 
 echo "[start_server] seeding role fixtures"
 python3 manage.py e2e_bootstrap_users >/dev/null
