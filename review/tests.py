@@ -17,9 +17,11 @@ import json
 from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import Client as TestClient, TestCase
+from django.test import Client as TestClient, TestCase, override_settings
+from django.urls import reverse
 
 from accounts.models import User
+from review import views
 from review.models import PendingTransaction, ReviewJob
 
 
@@ -171,3 +173,67 @@ class BulkUploadVisionFallbackTests(TestCase):
 
         self.assertFalse(ReviewJob.objects.filter(client_name="Vision Test").exists())
         self.assertIn("Vision OCR", response.content.decode())
+
+
+class AirtableConfigGuardTests(TestCase):
+    """A partial Airtable config must count as "not configured".
+
+    Production sets AIRTABLE_API_KEY and none of the identifiers the request URL
+    is built from, so the old key-only guard reported "configured", the dashboard
+    synced on every render, and the URL collapsed to
+    ``https://api.airtable.com/v0//?pageSize=100`` — a 404 per page load, logged
+    as "Airtable sync failed". The guard has to check every value the call needs,
+    the way integrations/providers.py's is_configured() does.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = _make_admin("review_airtable_guard_admin")
+
+    def setUp(self):
+        self.client_ = _login(self.user)
+
+    @override_settings(
+        AIRTABLE_API_KEY="key123", AIRTABLE_BASE_ID="", AIRTABLE_PENDING_TABLE=""
+    )
+    def test_key_without_base_id_is_not_configured(self):
+        self.assertFalse(views._airtable_configured())
+
+    @override_settings(
+        AIRTABLE_API_KEY="key123", AIRTABLE_BASE_ID="", AIRTABLE_PENDING_TABLE=""
+    )
+    def test_key_without_base_id_yields_no_headers(self):
+        """The three URL-building call sites all gate on the headers helper."""
+        self.assertIsNone(views._get_airtable_headers())
+
+    @override_settings(
+        AIRTABLE_API_KEY="key123", AIRTABLE_BASE_ID="", AIRTABLE_PENDING_TABLE=""
+    )
+    def test_dashboard_makes_no_airtable_request_when_base_id_missing(self):
+        with patch("requests.get") as mock_get:
+            # Terminating stub: an unconfigured MagicMock returns a truthy paging
+            # offset forever, so the pre-fix code loops instead of failing.
+            mock_get.return_value.json.return_value = {"records": []}
+            mock_get.return_value.raise_for_status.return_value = None
+            response = self.client_.get(reverse("review:dashboard"), secure=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(mock_get.call_args_list, [])
+
+    @override_settings(
+        AIRTABLE_API_KEY="key123",
+        AIRTABLE_BASE_ID="appTest",
+        AIRTABLE_PENDING_TABLE="tblTest",
+    )
+    def test_dashboard_still_syncs_when_fully_configured(self):
+        """The guard must not over-tighten into disabling a working integration."""
+        with patch("requests.get") as mock_get:
+            mock_get.return_value.json.return_value = {"records": []}
+            mock_get.return_value.raise_for_status.return_value = None
+            response = self.client_.get(reverse("review:dashboard"), secure=True)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            mock_get.call_args_list[0][0][0],
+            "https://api.airtable.com/v0/appTest/tblTest",
+        )
