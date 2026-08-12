@@ -36,25 +36,55 @@ logger = logging.getLogger(__name__)
 # Airtable configuration
 # ---------------------------------------------------------------------------
 
-AIRTABLE_BASE_ID = getattr(settings, "AIRTABLE_BASE_ID", "")
-AIRTABLE_PENDING_TABLE = getattr(settings, "AIRTABLE_PENDING_TABLE", "")
 AIRTABLE_JOBS_TABLE = getattr(settings, "AIRTABLE_JOBS_TABLE", "")
 AIRTABLE_LEARNING_TABLE = getattr(settings, "AIRTABLE_LEARNING_TABLE", "")
 
 
+def _airtable_base_url():
+    """Base URL for this deployment's Airtable base.
+
+    Read at call time, not frozen at import: the guard below and the URL have to
+    agree about the same settings, and a value captured at import cannot be
+    overridden in tests or reloaded without a restart.
+    """
+    return f"https://api.airtable.com/v0/{getattr(settings, 'AIRTABLE_BASE_ID', '')}"
+
+
+def _airtable_pending_url():
+    """URL of the Pending Review table — the only table this module talks to."""
+    return f"{_airtable_base_url()}/{getattr(settings, 'AIRTABLE_PENDING_TABLE', '')}"
+
+
 def _get_airtable_headers():
-    """Return headers for Airtable API calls, or None if not configured."""
-    api_key = getattr(settings, "AIRTABLE_API_KEY", None)
-    if not api_key:
+    """Return headers for Airtable API calls, or None if not configured.
+
+    Every value the request URL is built from is required, not just the
+    credential. Production sets AIRTABLE_API_KEY alone, so a key-only check
+    reported "configured" and the URL collapsed to
+    ``https://api.airtable.com/v0//`` — a 404 on every dashboard render, logged
+    as "Airtable sync failed". The three call sites that build Airtable URLs all
+    gate on this helper, so completing the check here closes all of them.
+    """
+    if not _airtable_configured():
         return None
     return {
-        "Authorization": f"Bearer {api_key}",
+        "Authorization": f"Bearer {getattr(settings, 'AIRTABLE_API_KEY', '')}",
         "Content-Type": "application/json",
     }
 
 
 def _airtable_configured():
-    return bool(getattr(settings, "AIRTABLE_API_KEY", None))
+    """Is every setting an Airtable request needs present?
+
+    Mirrors integrations/providers.py's is_configured(), which requires the whole
+    credential pair rather than half of it. A partial config is a misconfiguration,
+    not a working integration: it can only produce 404s against a malformed URL.
+    """
+    return all((
+        getattr(settings, "AIRTABLE_API_KEY", ""),
+        getattr(settings, "AIRTABLE_BASE_ID", ""),
+        getattr(settings, "AIRTABLE_PENDING_TABLE", ""),
+    ))
 
 
 # ---------------------------------------------------------------------------
@@ -152,8 +182,6 @@ def _sync_from_airtable():
     if not headers:
         return False
 
-    base_url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}"
-
     try:
         # Fetch ALL records from Pending Review (paginated)
         all_records = []
@@ -163,7 +191,7 @@ def _sync_from_airtable():
             if offset:
                 params["offset"] = offset
             resp = requests.get(
-                f"{base_url}/{AIRTABLE_PENDING_TABLE}",
+                _airtable_pending_url(),
                 headers=headers,
                 params=params,
                 timeout=15,
@@ -683,9 +711,8 @@ def confirm_transaction(request, pk):
     if headers and txn.airtable_record_id:
         import requests as http_requests
         try:
-            base_url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}"
             http_requests.patch(
-                f"{base_url}/{AIRTABLE_PENDING_TABLE}/{txn.airtable_record_id}",
+                f"{_airtable_pending_url()}/{txn.airtable_record_id}",
                 headers=headers,
                 json={
                     "fields": {
@@ -802,8 +829,6 @@ def submit_review(request, pk):
     headers = _get_airtable_headers()
     if headers:
         import requests as http_requests
-        base_url = f"https://api.airtable.com/v0/{AIRTABLE_BASE_ID}"
-
         confirmed_txns = list(job.transactions.filter(
             is_confirmed=True
         ).exclude(airtable_record_id="").exclude(airtable_record_id__isnull=True))
@@ -823,7 +848,7 @@ def submit_review(request, pk):
                 })
             try:
                 http_requests.patch(
-                    f"{base_url}/{AIRTABLE_PENDING_TABLE}",
+                    _airtable_pending_url(),
                     headers=headers,
                     json={"records": records},
                     timeout=15,
