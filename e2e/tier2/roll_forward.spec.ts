@@ -13,11 +13,12 @@ const execFileAsync = promisify(execFile);
  * Roll-forward and comparatives.
  *
  * The central assertion — every balance-sheet account's opening balance in the new
- * year equals its closing balance in the prior year — is the invariant behind two
- * separate production fixes (f12a48d, de7d04d). It is absolute, so it needs no
- * baseline: if it does not hold, the figures are wrong regardless of what was blessed.
- * The final test below is exactly this check, and it is red: see its own comment for
- * what this suite found when it actually ran the flow.
+ * year equals its closing balance in the prior year, except retained profits, which
+ * absorbs the year's result — is the invariant behind two separate production fixes
+ * (f12a48d, de7d04d). It is absolute, so it needs no baseline: if it does not hold,
+ * the figures are wrong regardless of what was blessed. The final test below is
+ * exactly this check. It was red through two successive defects, both now fixed in
+ * application code; see its own comment for the history.
  *
  * Two roll-forward implementations exist side by side in this app:
  *   - `roll_forward` (views.py) creates a brand-new next financial year. The fixture's
@@ -41,28 +42,28 @@ const execFileAsync = promisify(execFile);
  *     fixture's state lets it do useful work.
  *
  * Ordering note: Playwright's serial mode skips every remaining test in a file after
- * the first failure. This suite found one confirmed defect with two visible
- * consequences (see the last test), so exactly one test is allowed to fail and it has
- * to be the last one in the file — matching yearend_close.spec.ts's own convention of
- * placing its single known-red test last.
+ * the first failure, so any test expected to be red has to be the last one in the
+ * file — the convention yearend_close.spec.ts follows too. This file has no expected
+ * failure left: every test here should pass, and tier2/known_failures.json is empty.
+ * The ordering is kept anyway, because the next defect this file finds will want it.
  *
- * Golden baseline: only 'prior_before_amendment' is recorded/compared against
- * tier2/figures.baseline.json. It was the one checkpoint in this file confirmed by
- * inspection to be untouched by the roll-forward defect: it is 2025's own trial
- * balance, dumped before anything here amends or re-finalises it, so it is exactly
- * core/e2e_fixture_data.py's PRIOR_YEAR_TB (verified balanced at 100,000.00/
- * 100,000.00 -- see the report for the full field-by-field check). Every *rolled*
- * (2026) checkpoint this file computes -- 'after_first_roll', 'after_roll_forward',
- * etc. -- was inspected directly the same way and found to have EVERY trial-balance
- * field zeroed (opening_balance, closing_balance, debit, credit,
- * prior_closing_balance -- not only the balance-sheet subset the final test's own
- * comment calls out) as a direct consequence of the confirmed misclassification
- * defect. Blessing any of those would promote the defect's own output to "expected",
- * and adding an unblessed compareToBaseline call to any of the tests above (all of
- * which currently pass) would turn a passing test permanently red -- silently
- * growing this suite's two known failures to three. Neither is acceptable, so those
- * checkpoints stay dumpFigures()-only, feeding the JS assertions already written
- * against them directly.
+ * Golden baseline: 'prior_before_amendment' and 'after_roll_forward' are recorded and
+ * compared against tier2/figures.baseline.json.
+ *
+ * 'prior_before_amendment' is 2025's own trial balance, dumped before anything here
+ * amends or re-finalises it, so it is exactly core/e2e_fixture_data.py's PRIOR_YEAR_TB
+ * (verified balanced at 100,000.00/100,000.00). It was for a long time the only
+ * blessable checkpoint in this file: every *rolled* (2026) checkpoint came back with
+ * every trial-balance field zeroed as a direct consequence of the misclassification
+ * defect, and blessing defect output would have promoted it to "expected".
+ *
+ * 'after_roll_forward' is blessable now that both defects are fixed: it is 2026's
+ * trial balance immediately after the roll, with each of the five balance-sheet
+ * accounts carrying its own prior closing balance and 3-1000 at -80,000.00 having
+ * absorbed the year's $20,000 result. The JS assertions below check the invariant
+ * arithmetic; the golden file catches the drift nobody thought to assert. The other
+ * intermediate checkpoints ('after_first_roll', 'before_duplicate_attempt', ...) stay
+ * dumpFigures()-only, feeding the JS assertions written against them directly.
  */
 
 const PORT = 8202;
@@ -230,19 +231,31 @@ test('rolling the finalised prior year into its existing next year succeeds', as
   ]);
   await expect(page.locator('body')).toContainText('Re-rolled forward to 2026');
 
-  // Eight rows out of seven prior accounts: the five balance-sheet accounts carry an
-  // opening balance, Sales and Administration carry a comparative only, and the
-  // $20,000 net profit between them (Sales 30,000 - Administration 10,000) is closed
-  // into a retained-profits line that _populate_rolled_forward_fy synthesises,
-  // because this fixture's chart has no 4199 account of its own to hold it.
+  // Seven rows out of seven prior accounts, one for one: the five balance-sheet
+  // accounts carry an opening balance, Sales and Administration carry a comparative
+  // only, and the $20,000 net profit between them (Sales 30,000 - Administration
+  // 10,000) is absorbed into 3-1000 Retained Earnings, taking it from -60,000 to
+  // -80,000.
   //
-  // This asserted 7 while the misclassification defect was live -- with every
-  // account reading as P&L, nothing carried an opening balance, the net P&L summed
-  // to zero across the whole balanced trial balance, and so no retained-profits line
-  // was created either. The count was a product of the bug.
-  // (core/tests_rollforward_classification.py pins all eight rows and their figures.)
+  // Two defects have moved this number, so it is worth being precise about which:
+  //   * It asserted 7 while the misclassification defect was live, but for the wrong
+  //     reason -- every account read as P&L, nothing carried an opening balance, the
+  //     net P&L summed to zero across the whole balanced trial balance, and no
+  //     retained-profits line was created at all.
+  //   * It then asserted 8, because retained profits was identified by the numeric
+  //     code 4199 alone. This fixture's chart has no such account, so the result was
+  //     closed into a synthesised 4199 line *beside* 3-1000, which kept its prior
+  //     closing balance untouched.
+  // It is 7 again now, with each row where it belongs.
+  // (core/tests_rollforward_retained_profits.py pins the figures account by account.)
   const rolled = await dumpFigures(instance.dbName, CURRENT_FY, 'after_first_roll');
-  expect(rolled.trial_balance.length).toBe(8);
+  expect(rolled.trial_balance.length).toBe(7);
+  const retained = rolled.trial_balance.find((l) => l.account_code === '3-1000');
+  expect(retained?.opening_balance).toBe('-80000.00');
+  expect(
+    rolled.trial_balance.some((l) => l.account_code === '4199'),
+    'a second retained-earnings account was synthesised beside 3-1000',
+  ).toBe(false);
 
   await page.context().close();
 });
@@ -311,7 +324,7 @@ test('P&L accounts carry the rolled-forward year as a comparative only, never as
   }
 });
 
-test('every balance-sheet account should carry its prior-year closing balance forward, and the reroll diff should catch it if one later changes', async ({
+test('every balance-sheet account carries its prior-year closing balance forward, and the reroll diff catches it when one later changes', async ({
   browser,
 }) => {
   // Part B below reopens, re-imports and re-finalises 2025 -- several real round
@@ -324,16 +337,18 @@ test('every balance-sheet account should carry its prior-year closing balance fo
   // ── Part A: the central invariant, against the roll two tests ago ────────────
   const prior = await dumpFigures(instance.dbName, PRIOR_FY, 'prior_before_amendment');
 
-  // Recorded and compared here, before Part A's own mismatches.push() calls below
-  // and before Part B's reopen/amend/re-finalise -- the same "capture before the
-  // known failure can throw" placement as yearend_close.spec.ts's Finding 3 fix.
-  // Safe to bless (and blessed): this is 2025's untouched trial balance, not
-  // 2026's rolled-forward one -- see this file's header comment for why only this
-  // checkpoint, of everything dumped in this file, is not defect output.
+  // Both checkpoints are recorded and compared here, before Part A's own
+  // mismatches.push() calls below and before Part B's reopen/amend/re-finalise -- the
+  // same "capture before an assertion can throw" placement as yearend_close.spec.ts's
+  // Finding 3 fix. 'prior_before_amendment' is 2025's untouched trial balance;
+  // 'after_roll_forward' is 2026's as the roll left it, blessable now that the two
+  // defects that made it defect output are fixed (see this file's header).
   recordObserved('prior_before_amendment', prior);
   expect(compareToBaseline('prior_before_amendment', prior)).toEqual([]);
 
   const rolled = await dumpFigures(instance.dbName, CURRENT_FY, 'after_roll_forward');
+  recordObserved('after_roll_forward', rolled);
+  expect(compareToBaseline('after_roll_forward', rolled)).toEqual([]);
   const rolledByCode = new Map<string, any>(
     rolled.trial_balance.map((r: any) => [r.account_code, r]),
   );
@@ -346,7 +361,12 @@ test('every balance-sheet account should carry its prior-year closing balance fo
       .filter((r: any) => /^[123]/.test(r.account_code))
       .map((r: any) => [r.account_code, r.closing_balance]),
   );
+  // Retained earnings is the one balance-sheet account this rule does NOT govern: it
+  // absorbs the year's net result, so its opening is deliberately not its own closing
+  // balance. The check immediately below is its rule, and it is the stricter one.
+  const RETAINED_EARNINGS = '3-1000';
   for (const [code, closing] of priorBsClosing) {
+    if (code === RETAINED_EARNINGS) continue;
     const openingNow = rolledByCode.get(code)?.opening_balance;
     if (openingNow !== closing) {
       mismatches.push(`${code}: expected opening ${closing} (2025's closing), got ${openingNow}`);
@@ -365,9 +385,9 @@ test('every balance-sheet account should carry its prior-year closing balance fo
     .filter((r: any) => !/^[123]/.test(r.account_code))
     .reduce((sum: number, r: any) => sum + parseFloat(r.closing_balance), 0);
   const taxAmount = 0;
-  const retainedEarningsNow = rolledByCode.get('3-1000')?.opening_balance;
+  const retainedEarningsNow = rolledByCode.get(RETAINED_EARNINGS)?.opening_balance;
   const retainedEarningsExpected = (
-    parseFloat(priorBsClosing.get('3-1000') as string) +
+    parseFloat(priorBsClosing.get(RETAINED_EARNINGS) as string) +
     netPlResult +
     taxAmount
   ).toFixed(2);
@@ -420,12 +440,16 @@ test('every balance-sheet account should carry its prior-year closing balance fo
   // Re-open the Re-Roll Forward modal and read the diff.
   const diff = await openRerollModalAndGetDiff(page, PRIOR_FY);
   const changedCodes = diff.changes.map((c: any) => c.account_code).sort();
-  // Only 2-1000 (Trade Creditors, 6,000→7,000) is expected: it is the one
-  // *balance-sheet* account that moved. 6-1000 (Administration, 10,000→11,000) also
-  // moved, but the endpoint's own documented job is to compare balance-sheet closing
-  // positions only -- a P&L account correctly never appearing here is the promise
-  // being kept, not a gap in this expectation.
-  const expectedChangedCodes = ['2-1000'];
+  // Two balance-sheet accounts moved, and both must be reported:
+  //   * 2-1000 Trade Creditors, 6,000 -> 7,000, the direct half of the amendment.
+  //   * 3-1000 Retained Earnings, -80,000 -> -79,000. The other half of the amendment
+  //     is an Administration expense, which reduces the year's profit by 1,000, and
+  //     retained earnings has to absorb that too. Leaving it out would leave 2026's
+  //     openings 1,000 out of balance.
+  // 6-1000 (Administration, 10,000->11,000) correctly never appears: the endpoint's
+  // documented job is to compare balance-sheet closing positions only, and a P&L
+  // account resets each year. That is the promise being kept, not a gap here.
+  const expectedChangedCodes = ['2-1000', '3-1000'];
   if (JSON.stringify(changedCodes) !== JSON.stringify(expectedChangedCodes)) {
     mismatches.push(
       `reroll diff: expected changed accounts ${JSON.stringify(expectedChangedCodes)} ` +
@@ -435,67 +459,39 @@ test('every balance-sheet account should carry its prior-year closing balance fo
 
   await page.context().close();
 
-  // DELIBERATELY NOT BLESSED, and DELIBERATELY the last test in the file (see the
-  // header comment). Both parts above fail, for one confirmed root cause:
+  // This test was red for a long time, through two different defects that each hid
+  // the other. Both are now fixed in application code and it passes; the history is
+  // kept because it is the reason for the shape of the checks above.
   //
-  // _is_balance_sheet_account() (core/views.py) is a pure, caller-agnostic
-  // classifier -- it takes a `coa_sections` dict as a parameter and touches no
-  // database itself, so it has nothing wrong with it in isolation. The bug is in its
-  // FOUR independent callers, each of which builds that dict the same way and each
-  // of which would need the same fix: `reroll_forward_diff`, `reroll_forward_apply`,
-  // `reroll_forward` (which builds it twice -- once in its POST branch, once again
-  // in its GET preview branch), and `_populate_rolled_forward_fy` (used by the
-  // plain, brand-new-year `roll_forward` view; not exercised by this file's fixture,
-  // since 2026 already exists, but carries the identical copy-pasted query). Every
-  // one of the four does:
+  // 1. Classification. _is_balance_sheet_account() is a pure, caller-agnostic
+  //    classifier, but each of its callers built its `coa_sections` argument from the
+  //    entity-TYPE ChartOfAccount template and never consulted this entity's own
+  //    EntityChartOfAccount -- a different model entirely. This fixture's codes
+  //    ("1-1000" etc.) are hyphenated, so they failed the numeric HandiLedger parse;
+  //    its EntityChartOfAccount rows carry a real `section` but no `maps_to`, so
+  //    mapped_line_item was never set; and the type template has no entries for these
+  //    codes. Every account -- balance-sheet ones included -- therefore classified as
+  //    P&L, so the whole balance sheet came back as comparatives only with
+  //    opening_balance zeroed, and reroll_forward_diff was blind to a real prior-year
+  //    correction for the same reason. Fixed by _coa_sections_for_entity(), which
+  //    layers the entity's own chart over the template
+  //    (core/tests_rollforward_classification.py).
   //
-  //   coa_sections = dict(
-  //       ChartOfAccount.objects.filter(
-  //           entity_type=entity.entity_type, is_active=True
-  //       ).values_list("account_code", "section")
-  //   )
-  //
-  // ChartOfAccount is the entity-TYPE template (386 rows for entity_type="company"
-  // in this database) -- a *different*, unrelated model from this entity's own
-  // EntityChartOfAccount, which none of the four callers ever consult. None of
-  // _is_balance_sheet_account()'s three fallbacks (a numeric HandiLedger code range,
-  // TrialBalanceLine.mapped_line_item, then this coa_sections dict) match this
-  // fixture's entity: its account codes ("1-1000" etc.) are hyphenated and fail the
-  // numeric parse; the fixture's EntityChartOfAccount rows are seeded with a real
-  // `section` ("current_assets", "equity", ...) but never a `maps_to`, so
-  // mapped_line_item is never set on any TrialBalanceLine created from them, whether
-  // seeded directly or imported through the real upload UI (verified directly
-  // against this exact fixture, both ways -- see task-9-report.md); and the 386-row
-  // ChartOfAccount(entity_type="company") template has no entries at all for these
-  // codes. So EVERY account -- including the balance-sheet ones -- falls through to
-  // the numeric-code fallback, which also fails (a hyphenated code is not
-  // `.isdigit()`), and _is_balance_sheet_account returns False across the board.
-  //
-  // Part A's consequence: every account is run through the roll's P&L branch,
-  // which is correct for real P&L accounts (comparative only, opening zeroed,
-  // resetting each year -- see the passing "P&L accounts carry ... as a comparative
-  // only" test above, which this same misclassification happens to leave correct)
-  // but silently erases a real balance-sheet position when misapplied to the
-  // balance-sheet accounts -- the entire trial balance comes back as
-  // prior_debit/prior_credit comparative figures only, with opening_balance and
-  // closing_balance both zero, contradicting both the confirm page's own copy
-  // ("Closing balances from 2025 will become opening balances") and the success
-  // message shown after clicking Apply Changes. The retained-earnings check above
-  // makes the same point with a genuine, non-zero net profit rather than the
-  // trivial zero case: $20,000 of real Sales-less-Administration profit never
-  // reaches 3-1000 at all.
-  //
-  // Part B's consequence: reroll_forward_diff filters both sides of its comparison
-  // through the same broken coa_sections lookup, so it is just as blind --
-  // confirmed directly (not just inferred) by altering 1-1000's closing_balance in
-  // the database by hand against this exact fixture and re-requesting this exact
-  // endpoint: it still returns change_count: 0. reroll_forward_apply carries the
-  // identical fourth copy of the query and would fail the same way if this test
-  // ever reached a state where it had something to apply -- it wasn't reachable
-  // here because the diff it depends on never reports a change to apply. The
-  // reconciliation tool this test exercises through the real UI cannot ever surface
-  // a genuine prior-year correction for an entity using this chart-of-accounts
-  // convention.
+  // 2. Retained profits. With classification fixed, the accounts carried forward but
+  //    the year's result did not land in the right place: retained profits was
+  //    identified by the numeric code 4199 alone, which a hyphenated chart never
+  //    carries, so the result was closed into a *synthesised* 4199 line beside
+  //    3-1000. Total equity was right and the trial balance balanced, which is why it
+  //    took a golden-figures comparison to see it -- but the entity ended up with two
+  //    retained-earnings accounts and its real one untouched. reroll_forward_diff and
+  //    _apply then compared each account's prior closing against its next-year
+  //    opening with no notion of that absorption at all, so once the result did reach
+  //    3-1000 they reported $20,000 of phantom drift on it, and applying that would
+  //    have written the year's profit back out of equity and left 2026 out of
+  //    balance. Fixed by _is_retained_profits_account() (name and mapped line item as
+  //    well as code, the same three ways the income-tax line beside it was always
+  //    found) and _expected_next_year_openings(), which both endpoints now reconcile
+  //    against (core/tests_rollforward_retained_profits.py).
   expect(
     mismatches,
     'roll-forward and its reconciliation diff are both silently blind to this ' +

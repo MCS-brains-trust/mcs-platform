@@ -258,6 +258,139 @@ def _is_balance_sheet_account(account_code, mapped_line_item, coa_sections):
     return code_prefix.isdigit() and int(code_prefix) >= 2000
 
 
+# The equity account a year's net P&L result is closed into, per entity type.
+# Matches core/mapping_engine.py's equity_map and the names _populate_rolled_forward_fy
+# gives a synthesised line when the entity has none.
+_RETAINED_PROFITS_STANDARD_CODES = {
+    "company": "BS-EQ-002",       # Retained profits
+    "trust": "BS-EQ-005",         # Undistributed income
+    "partnership": "BS-EQ-006",   # Partners' current accounts
+    "sole_trader": "BS-EQ-008",   # Proprietor's funds
+}
+
+# Deliberately narrow. A false positive here closes the year's result into the wrong
+# equity account, which is worse than not finding one at all — the miss synthesises a
+# 4199 line that at least leaves total equity right.
+_RETAINED_PROFITS_NAME_KEYWORDS = (
+    "retained profit", "retained earning",
+    "accumulated profit", "accumulated loss", "accumulated earning",
+    "unappropriated",
+    "undistributed income",
+    "partners' current account", "partners current account",
+    "partner's current account",
+    "proprietor's funds", "proprietors funds", "proprietor funds",
+)
+
+
+def _is_retained_profits_account(account_code, account_name, mapped_line_item, entity_type):
+    """Is this the account the year's net P&L result should be closed into?
+
+    Roll forward used to ask `code_prefix == "4199"` and nothing else. 4199 is a
+    HandiLedger appropriation code that a hyphenated MYOB/Xero-style chart never
+    carries, so on those charts no retained-profits account was found and the result
+    was closed into a newly synthesised 4199 line instead — leaving the entity with
+    two retained-earnings accounts and its real one untouched.
+
+    So this matches the same three ways the income-tax line beside it always has:
+    by code, by mapped line item, and by account name.
+
+    Returns a match rank rather than a bool, because a chart can offer more than one
+    candidate and the caller must not depend on trial-balance row order to choose:
+      2 = the HandiLedger 4199 appropriation account (authoritative)
+      1 = mapped to the entity type's retained-earnings line item
+      1 = named as retained earnings
+      0 = not a candidate
+    """
+    code_prefix = (account_code or "").split(".")[0]
+    if code_prefix == "4199":
+        return 2
+    expected = _RETAINED_PROFITS_STANDARD_CODES.get(entity_type)
+    if expected and mapped_line_item and (mapped_line_item.standard_code or "") == expected:
+        return 1
+    name_lower = (account_name or "").lower()
+    if any(kw in name_lower for kw in _RETAINED_PROFITS_NAME_KEYWORDS):
+        return 1
+    return 0
+
+
+def _is_income_tax_account(account_code, account_name, mapped_line_item):
+    """Is this the income-tax provision that gets cleared at year end?
+
+    Detected by code, mapped line item or name — the three ways roll forward has
+    always identified it. Extracted so the reconciliation endpoints ask the same
+    question as the roll itself rather than carrying their own copy.
+    """
+    if (account_code or "").split(".")[0] == "4110":
+        return True
+    if mapped_line_item and (mapped_line_item.standard_code or "") == "BS-EQ-011":
+        return True
+    return bool(account_name) and "income tax" in account_name.lower()
+
+
+def _expected_next_year_openings(fy):
+    """What the next year's opening balance should be for each of ``fy``'s
+    balance-sheet accounts: ``{account_code: (account_name, opening)}``.
+
+    This is Pass 1 and Pass 2 of _populate_rolled_forward_fy's opening arithmetic and
+    nothing else — no rows are written, no stock or assets are touched — so that
+    reroll_forward_diff and reroll_forward_apply can reconcile against the same
+    figures the roll would produce instead of against the prior year's raw closing
+    balances.
+
+    Two accounts are not simply carried across, and both endpoints used to miss it:
+      * retained profits absorbs the year's net P&L result (plus income tax), so its
+        opening is deliberately NOT its own closing balance;
+      * the income-tax provision is cleared to zero.
+    Comparing those two raw reported drift on a year that was rolled correctly, and
+    applying it stripped the year's result back out of equity.
+    """
+    entity = fy.entity
+    coa_sections = _coa_sections_for_entity(entity)
+
+    # Net ALL lines per account code, adjustments included — the same aggregation
+    # Pass 1 does. A diff that ignored adjustment journals disagreed with the roll
+    # for any year carrying one.
+    account_map = {}
+    for line in fy.trial_balance_lines.select_related("mapped_line_item"):
+        code = line.account_code or ""
+        if code not in account_map:
+            account_map[code] = {"closing": Decimal("0"), "rep": line}
+        account_map[code]["closing"] += line.closing_balance or Decimal("0")
+        if not line.is_adjustment:
+            account_map[code]["rep"] = line
+
+    net_pl_result = Decimal("0")
+    bs_accounts = {}
+    retained_code, retained_rank = None, 0
+    income_tax_code = None
+
+    for code, data in account_map.items():
+        rep = data["rep"]
+        if not _is_balance_sheet_account(code, rep.mapped_line_item, coa_sections):
+            net_pl_result += data["closing"]
+            continue
+        bs_accounts[code] = (rep.account_name, data["closing"])
+        rank = _is_retained_profits_account(
+            code, rep.account_name, rep.mapped_line_item, entity.entity_type
+        )
+        if rank > retained_rank:
+            retained_code, retained_rank = code, rank
+        if _is_income_tax_account(code, rep.account_name, rep.mapped_line_item):
+            income_tax_code = code
+
+    tax_amount = bs_accounts[income_tax_code][1] if income_tax_code else Decimal("0")
+
+    expected = {}
+    for code, (name, closing) in bs_accounts.items():
+        if code == income_tax_code:
+            expected[code] = (name, Decimal("0"))
+        elif code == retained_code:
+            expected[code] = (name, closing + net_pl_result + tax_amount)
+        else:
+            expected[code] = (name, closing)
+    return expected
+
+
 def _comparative_for_line(line):
     """Return (prior_debit, prior_credit) for a BS rollover line's comparative column.
 
@@ -2608,28 +2741,12 @@ def reroll_forward_diff(request, pk):
     if not next_fy:
         return JsonResponse({"error": "No subsequent financial year found."}, status=404)
 
-    # Build CoA section lookup for BS/PL classification
+    # What a roll forward from this year would open the next one with, per
+    # balance-sheet account. Compared against what is actually there, so retained
+    # profits and the income-tax provision reconcile on the same terms the roll
+    # applies rather than against their own raw closing balances.
     coa_sections = _coa_sections_for_entity(entity)
-
-    # Build aggregated closing balances for the current year (BS accounts only)
-    from django.db.models import Sum as _Sum
-    current_lines = (
-        current_fy.trial_balance_lines
-        .select_related("mapped_line_item")
-        .filter(is_adjustment=False)
-    )
-    current_map = {}
-    for line in current_lines:
-        if not _is_balance_sheet_account(line.account_code, line.mapped_line_item, coa_sections):
-            continue
-        cb = line.closing_balance or Decimal("0")
-        if line.account_code in current_map:
-            current_map[line.account_code]["closing"] += cb
-        else:
-            current_map[line.account_code] = {
-                "account_name": line.account_name,
-                "closing": cb,
-            }
+    expected = _expected_next_year_openings(current_fy)
 
     # Build opening balances in the next year (rollover lines only, BS only)
     next_rollover = (
@@ -2648,17 +2765,16 @@ def reroll_forward_diff(request, pk):
         }
 
     changes = []
-    for code, cur in current_map.items():
-        closing = cur["closing"] or Decimal("0")
+    for code, (account_name, should_open_at) in expected.items():
         if code in next_map:
             opening = next_map[code]["opening"] or Decimal("0")
-            if closing != opening:
+            if should_open_at != opening:
                 changes.append({
                     "account_code": code,
-                    "account_name": cur["account_name"],
+                    "account_name": account_name,
                     "original_opening": str(opening),
-                    "new_closing": str(closing),
-                    "difference": str(closing - opening),
+                    "new_closing": str(should_open_at),
+                    "difference": str(should_open_at - opening),
                     "line_id": next_map[code]["line_id"],
                 })
         # New accounts in current year not in next year rollover are ignored
@@ -2696,26 +2812,11 @@ def reroll_forward_apply(request, pk):
     if not next_fy:
         return JsonResponse({"error": "No subsequent financial year found."}, status=404)
 
-    # Build CoA section lookup for BS/PL classification
-    coa_sections = _coa_sections_for_entity(entity)
-
     # Re-compute the diff to ensure consistency (don't trust client-side data).
-    # Only include balance sheet accounts — P&L accounts reset to zero.
-    from django.db.models import Sum as _Sum
-    current_lines = (
-        current_fy.trial_balance_lines
-        .select_related("mapped_line_item")
-        .filter(is_adjustment=False)
-    )
-    current_map = {}
-    for line in current_lines:
-        if not _is_balance_sheet_account(line.account_code, line.mapped_line_item, coa_sections):
-            continue
-        cb = line.closing_balance or Decimal("0")
-        if line.account_code in current_map:
-            current_map[line.account_code] += cb
-        else:
-            current_map[line.account_code] = cb
+    # Only include balance sheet accounts — P&L accounts reset to zero. Same helper
+    # the diff endpoint reads, so what gets written is what the modal showed.
+    coa_sections = _coa_sections_for_entity(entity)
+    expected = _expected_next_year_openings(current_fy)
 
     next_rollover = (
         next_fy.trial_balance_lines
@@ -2729,7 +2830,8 @@ def reroll_forward_apply(request, pk):
             # Skip P&L rollover lines — they should keep opening_balance=0
             if not _is_balance_sheet_account(line.account_code, line.mapped_line_item, coa_sections):
                 continue
-            new_closing = current_map.get(line.account_code)
+            _expected = expected.get(line.account_code)
+            new_closing = _expected[1] if _expected else None
             if new_closing is not None and new_closing != (line.opening_balance or Decimal("0")):
                 old_opening = line.opening_balance
                 line.opening_balance = new_closing
@@ -2887,6 +2989,7 @@ def reroll_forward(request, pk):
 
         net_pl_result = Decimal("0")
         retained_profits_line = None
+        retained_profits_rank = 0
         income_tax_line = None
         bs_lines = []
         pl_lines = []
@@ -2910,18 +3013,14 @@ def reroll_forward(request, pk):
             is_bs = _is_balance_sheet_account(_code, _rep.mapped_line_item, coa_sections)
 
             if is_bs:
-                code_prefix = _code.split(".")[0]
-                if code_prefix == "4199":
+                _rp_rank = _is_retained_profits_account(
+                    _code, _rep.account_name, _rep.mapped_line_item, entity.entity_type
+                )
+                if _rp_rank > retained_profits_rank:
                     retained_profits_line = sl
+                    retained_profits_rank = _rp_rank
 
-                is_income_tax = False
-                if _rep.account_name and "income tax" in _rep.account_name.lower():
-                    is_income_tax = True
-                if code_prefix == "4110":
-                    is_income_tax = True
-                if _rep.mapped_line_item and (_rep.mapped_line_item.standard_code or "") == "BS-EQ-011":
-                    is_income_tax = True
-                if is_income_tax:
+                if _is_income_tax_account(_code, _rep.account_name, _rep.mapped_line_item):
                     income_tax_line = sl
 
                 bs_lines.append(sl)
@@ -3183,21 +3282,20 @@ def reroll_forward(request, pk):
     # GET: compute diff and show preview page
     from decimal import Decimal
 
-    BS_STATEMENTS = {"balance_sheet", "equity"}
-    BS_SECTIONS   = {"assets", "liabilities", "equity", "capital_accounts"}
-
     coa_sections = _coa_sections_for_entity(entity)
 
+    # Classified by the same _is_balance_sheet_account the POST handler and
+    # _populate_rolled_forward_fy use. This preview used to carry its own copy of the
+    # logic, whose section set held only {assets, liabilities, equity,
+    # capital_accounts} -- so every current_assets / non_current_assets /
+    # current_liabilities account on a chart classified by section (rather than by
+    # HandiLedger code) read as P&L here while rolling forward correctly. The diff
+    # then proposed wiping their openings and closed the whole balance sheet into
+    # retained profits, i.e. it reported drift on figures that were right.
     def _is_bs(line):
-        hl_sec = _hl_section_for_code(line.account_code)
-        if hl_sec is not None:
-            return hl_sec not in ('Income', 'Cost of Sales', 'Expenses')
-        if line.mapped_line_item:
-            return line.mapped_line_item.financial_statement in BS_STATEMENTS
-        if line.account_code in coa_sections:
-            return coa_sections[line.account_code] in BS_SECTIONS
-        code_prefix = line.account_code.split(".")[0] if line.account_code else ""
-        return code_prefix.isdigit() and int(code_prefix) >= 2000
+        return _is_balance_sheet_account(
+            line.account_code, line.mapped_line_item, coa_sections
+        )
 
     # Build what the new opening balance WOULD be for each BS account in current_fy
     # (mirrors the Pass 1 / Pass 2 logic in the POST handler)
@@ -3214,6 +3312,7 @@ def reroll_forward(request, pk):
 
     net_pl = Decimal("0")
     retained_line = None
+    retained_rank = 0
     income_tax_line = None
     bs_lines_cur = []
     pl_lines_cur = []
@@ -3235,17 +3334,13 @@ def reroll_forward(request, pk):
         psl.closing_balance = _net_closing
 
         if _is_bs(psl):
-            code_prefix = _code.split(".")[0]
-            if code_prefix == "4199":
+            _rp_rank = _is_retained_profits_account(
+                _code, _rep.account_name, _rep.mapped_line_item, entity.entity_type
+            )
+            if _rp_rank > retained_rank:
                 retained_line = psl
-            is_it = False
-            if _rep.account_name and "income tax" in _rep.account_name.lower():
-                is_it = True
-            if code_prefix == "4110":
-                is_it = True
-            if _rep.mapped_line_item and (_rep.mapped_line_item.standard_code or "") == "BS-EQ-011":
-                is_it = True
-            if is_it:
+                retained_rank = _rp_rank
+            if _is_income_tax_account(_code, _rep.account_name, _rep.mapped_line_item):
                 income_tax_line = psl
             bs_lines_cur.append(psl)
         else:
@@ -3425,6 +3520,7 @@ def _populate_rolled_forward_fy(current_fy, new_fy):
 
     net_pl_result = _D("0")
     retained_profits_line = None
+    retained_profits_rank = 0
     income_tax_line = None
     bs_lines = []   # list of synthetic line objects
     pl_lines = []   # list of synthetic line objects
@@ -3448,17 +3544,13 @@ def _populate_rolled_forward_fy(current_fy, new_fy):
 
         is_bs = _is_balance_sheet_account(code, rep.mapped_line_item, coa_sections)
         if is_bs:
-            code_prefix = code.split(".")[0]
-            if code_prefix == "4199":
+            rp_rank = _is_retained_profits_account(
+                code, rep.account_name, rep.mapped_line_item, entity.entity_type
+            )
+            if rp_rank > retained_profits_rank:
                 retained_profits_line = sl
-            is_income_tax = False
-            if rep.account_name and "income tax" in rep.account_name.lower():
-                is_income_tax = True
-            if code_prefix == "4110":
-                is_income_tax = True
-            if rep.mapped_line_item and (rep.mapped_line_item.standard_code or "") == "BS-EQ-011":
-                is_income_tax = True
-            if is_income_tax:
+                retained_profits_rank = rp_rank
+            if _is_income_tax_account(code, rep.account_name, rep.mapped_line_item):
                 income_tax_line = sl
             bs_lines.append(sl)
         else:
