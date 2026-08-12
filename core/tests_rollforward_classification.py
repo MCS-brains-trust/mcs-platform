@@ -135,13 +135,16 @@ class RollForwardClassificationTests(TestCase):
         End to end over _populate_rolled_forward_fy, on the fixture's own figures.
 
         Five balance-sheet accounts carry their closing balance forward as an
-        opening; the two P&L accounts carry a comparative with a zero opening; and
-        because this chart has no 4199 account to hold it, the $20,000 net profit
-        (Sales 30,000 − Administration 10,000) is closed into a synthesised retained
-        profits line. Eight rows, and they balance.
+        opening, and the two P&L accounts carry a comparative with a zero opening.
+        The $20,000 net profit (Sales 30,000 − Administration 10,000) is absorbed
+        into 3-1000 Retained Earnings, taking it from −60,000 to −80,000. Seven rows,
+        and they balance.
 
-        Before the fix every one of these accounts classified as P&L, so nothing
-        carried an opening balance at all.
+        Before the classification fix every one of these accounts classified as P&L,
+        so nothing carried an opening balance at all. This chart has no 4199 account,
+        so the net profit then went to a *synthesised* retained profits line beside
+        3-1000 — see core/tests_rollforward_retained_profits.py, which covers finding
+        the real one by name.
         """
         from datetime import date
 
@@ -194,7 +197,7 @@ class RollForwardClassificationTests(TestCase):
             ("1-2000", Decimal("20000.00")),
             ("1-2100", Decimal("-4000.00")),
             ("2-1000", Decimal("-6000.00")),
-            ("3-1000", Decimal("-60000.00")),
+            ("3-1000", Decimal("-80000.00")),
         ]:
             self.assertIn(code, rolled, f"{code} did not roll forward at all")
             self.assertEqual(
@@ -207,11 +210,11 @@ class RollForwardClassificationTests(TestCase):
             self.assertIn(code, rolled)
             self.assertEqual(rolled[code].opening_balance, Decimal("0"))
 
-        # No 4199 exists on this chart, so the net P&L is closed into a new one.
-        self.assertIn("4199", rolled, "the net profit was not closed anywhere")
-        self.assertEqual(rolled["4199"].opening_balance, Decimal("-20000.00"))
+        # The net P&L went into the entity's own retained earnings account (asserted
+        # above), not into a second one synthesised beside it.
+        self.assertNotIn("4199", rolled, "a second retained earnings account appeared")
 
-        self.assertEqual(len(rolled), 8)
+        self.assertEqual(len(rolled), 7)
         self.assertEqual(
             sum(line.opening_balance for line in rolled.values()),
             Decimal("0.00"),
