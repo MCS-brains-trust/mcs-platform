@@ -282,3 +282,46 @@ class IncomeTaxTests(TestCase):
         """opening 205,000 + after-tax profit 180,000 = closing 385,000"""
         self.assertEqual(self.context["retained_profit_opening_cy"], "205,000")
         self.assertEqual(self.context["retained_profit_closing_cy"], "385,000")
+
+
+@override_settings(STORAGES=STORAGES_OVERRIDE)
+class ComparativeColumnTests(TestCase):
+    """The prior column, which a first-year entity never reaches.
+
+    Hand-computed, prior year:
+        income          800,000 + 10,000            = 810,000
+        cost of sales    50,000 + 360,000 - 60,000  = 350,000
+        other expenses    9,000 + 28,000 + 230,000  = 267,000
+        profit pretax   810,000 - 350,000 - 267,000 = 193,000
+        income tax                                     50,000
+        profit after tax        193,000 - 50,000    = 143,000
+        net assets  150,000+100,000+60,000+300,000-90,000-80,000 = 440,000
+        equity      100,000 + 197,000 + 143,000                  = 440,000
+    """
+
+    def setUp(self):
+        self.context = build_company_context(build_company_fy(MAXIMAL_ROWS))
+
+    def test_prior_year_profit_and_loss(self):
+        self.assertEqual(self.context["total_income_py"], "810,000")
+        self.assertEqual(self.context["total_cogs_py"], "350,000")
+        self.assertEqual(self.context["total_expenses_py"], "617,000")
+        self.assertEqual(self.context["net_profit_pretax_py"], "193,000")
+        self.assertEqual(self.context["net_profit_py"], "143,000")
+
+    def test_prior_year_balance_sheet(self):
+        self.assertEqual(self.context["total_current_assets_py"], "310,000")
+        self.assertEqual(self.context["total_noncurrent_assets_py"], "210,000")
+        self.assertEqual(self.context["total_assets_py"], "520,000")
+        self.assertEqual(self.context["total_liabilities_py"], "80,000")
+        self.assertEqual(self.context["net_assets_py"], "440,000")
+        self.assertEqual(self.context["total_equity_py"], "440,000")
+
+    def test_prior_retained_profit_reconciles(self):
+        self.assertEqual(self.context["retained_profit_opening_py"], "197,000")
+        self.assertEqual(self.context["retained_profit_closing_py"], "340,000")
+
+    def test_a_first_year_entity_reports_no_comparatives(self):
+        context = build_company_context(build_company_fy(MAXIMAL_ROWS, with_prior=False))
+        self.assertEqual(context["total_income_py"], "—")
+        self.assertEqual(context["net_assets_py"], "—")
