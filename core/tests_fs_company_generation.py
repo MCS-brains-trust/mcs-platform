@@ -515,3 +515,74 @@ class FullSetTests(TestCase):
 
     def test_the_invariants_hold(self):
         assert_statements_are_internally_consistent(self, self.context)
+
+
+@override_settings(STORAGES=STORAGES_OVERRIDE)
+class DocumentRenderTests(TestCase):
+    """A correct figure that never reaches the page is still a broken statement.
+
+    generate_financial_statements returns rendered DOCX buffers keyed by document
+    type; PDF conversion is a separate LibreOffice step downstream and is not
+    covered here -- it needs an external binary and adds no figure coverage.
+    """
+
+    @staticmethod
+    def _text_of(buffer):
+        import docx
+
+        buffer.seek(0)
+        document = docx.Document(buffer)
+        parts = [p.text for p in document.paragraphs]
+        for table in document.tables:
+            for row in table.rows:
+                parts.extend(cell.text for cell in row.cells)
+        return "\n".join(parts)
+
+    def setUp(self):
+        from core.fs_template_service import generate_financial_statements
+
+        fy = build_company_fy(MAXIMAL_ROWS)
+        self.documents = generate_financial_statements(fy.pk)
+        self.assertTrue(self.documents, "no documents were rendered at all")
+
+    def test_the_profit_and_loss_totals_reach_the_document(self):
+        """Document types are BALANCE_SHEET, COMPILATION, COVER, DECLARATION,
+        DETAILED_PL, NOTES, SUMMARY_PL."""
+        rendered = self._text_of(self.documents["DETAILED_PL"])
+        for figure in ("920,000", "680,000", "240,000", "(60,000)", "180,000"):
+            with self.subTest(figure=figure):
+                self.assertIn(figure, rendered,
+                              f"{figure} was computed but never reached the P&L")
+
+    def test_the_balance_sheet_totals_reach_the_document(self):
+        rendered = self._text_of(self.documents["BALANCE_SHEET"])
+        for figure in ("400,000", "580,000", "95,000", "485,000"):
+            with self.subTest(figure=figure):
+                self.assertIn(figure, rendered,
+                              f"{figure} was computed but never reached the balance sheet")
+
+    def test_the_notes_tie_to_the_face_of_the_statements(self):
+        """The spec's fourth invariant, asserted where the notes actually exist.
+
+        Receivables 120,000 and plant 300,000 each appear in the notes AND on the
+        balance sheet -- which is what "ties" means here.
+
+        Inventories is deliberately NOT asserted. The application generates no
+        inventories note at all: _compute_note_map emits exactly six note types
+        (policies, receivables, ppe, related_party, income_tax, events), and
+        fs_template_service.py contains no reference to inventories. A
+        show_note_inventory flag is computed at document_context_builder.py:1355
+        and consumed by nothing, so the note was evidently intended and never
+        wired up. A company carrying trading stock therefore gets an Inventories
+        line on the balance sheet with no supporting note, where receivables and
+        PPE both get one. Confirmed 2026-08-13 and accepted as out of scope for
+        this test module, which changes no production code; fixing it needs a
+        note branch plus NOTES template content.
+        """
+        notes = self._text_of(self.documents["NOTES"])
+        balance_sheet = self._text_of(self.documents["BALANCE_SHEET"])
+        for figure in ("120,000", "300,000"):
+            with self.subTest(figure=figure):
+                self.assertIn(figure, notes, f"{figure} is missing from the notes")
+                self.assertIn(figure, balance_sheet,
+                              f"{figure} is in the notes but not on the balance sheet")
