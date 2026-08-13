@@ -325,3 +325,53 @@ class ComparativeColumnTests(TestCase):
         context = build_company_context(build_company_fy(MAXIMAL_ROWS, with_prior=False))
         self.assertEqual(context["total_income_py"], "—")
         self.assertEqual(context["net_assets_py"], "—")
+
+
+@override_settings(STORAGES=STORAGES_OVERRIDE)
+class TradingAndCostOfSalesTests(TestCase):
+    """0510 maps to IS-REV-001 (trading income); the stock and purchase lines map
+    to IS-COS-*, which sets has_trading and exercises the merge branch.
+
+    The merge is deliberate and is pinned here: a trading company's detailed P&L
+    shows a single Income and a single Expenses section, with cost of sales folded
+    into Expenses and NO gross profit line. Confirmed on Berwick Mechanical Services
+    FY2017, whose Purchases 210,029 renders under Expenses. Decision of 2026-08-13.
+    If the presentation is ever meant to change, this test changes with it -- it
+    records current intent, not an accounting standard.
+
+        cost of sales   60,000 + 400,000 - 70,000 = 390,000
+        other expenses  10,000 + 30,000 + 250,000 = 290,000
+        rendered total expenses                    = 680,000
+    """
+
+    def setUp(self):
+        self.context = build_company_context(build_company_fy(MAXIMAL_ROWS))
+
+    def test_trading_is_detected(self):
+        self.assertTrue(self.context["has_trading"])
+
+    def test_trading_income_and_other_income_are_separated_in_the_sections(self):
+        trading = {i["account_code"] for i in self.context["_sections"]["trading_income"]}
+        other = {i["account_code"] for i in self.context["_sections"]["income"]}
+        self.assertEqual(trading, {"0510"})
+        self.assertEqual(other, {"0570"})
+
+    def test_cost_of_sales_totals_correctly(self):
+        self.assertEqual(self.context["total_cogs_cy"], "390,000")
+
+    def test_cost_of_sales_is_merged_into_rendered_expenses(self):
+        """680,000 = cost of sales 390,000 + other expenses 290,000."""
+        self.assertEqual(self.context["total_expenses_cy"], "680,000")
+        rendered_codes = {row["account_code"] for row in self.context["expenses"]}
+        for code in ("1100", "1115", "1130"):
+            self.assertIn(code, rendered_codes, "cost of sales did not merge into Expenses")
+
+    def test_total_income_merges_trading_and_other_income(self):
+        self.assertEqual(self.context["total_income_cy"], "920,000")
+        rendered_codes = {row["account_code"] for row in self.context["income"]}
+        self.assertEqual(rendered_codes, {"0510", "0570"})
+
+    def test_gross_profit_is_computed_but_not_presented(self):
+        """900,000 trading income - 390,000 cost of sales = 510,000. The value is
+        exposed to templates; no .docx renders it, and none should."""
+        self.assertEqual(self.context["gross_profit_cy"], "510,000")
