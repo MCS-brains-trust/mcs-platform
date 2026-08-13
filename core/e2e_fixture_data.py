@@ -133,7 +133,81 @@ COMPANY = FixtureProfile(
     },
 )
 
-PROFILES = {"company": COMPANY}
+TRUST_IDS = {
+    "client": "e2e00001-0000-4000-8000-000000000001",
+    "entity": "e2e00001-0000-4000-8000-000000000002",
+    "prior_fy": "e2e00001-0000-4000-8000-000000000003",
+    "current_fy": "e2e00001-0000-4000-8000-000000000004",
+}
+
+# Codes and sections taken from E & J Chiaravalle Family Trust, verified by query
+# against sh_e2e_template. Two things to note, both deliberate:
+#
+#   * Real charts use the flat `assets`/`liabilities` sections, not the
+#     current_/non_current_ pair the company fixture uses. Not one of the ~5,000
+#     chart rows in the production copy is a hyphenated MYOB-style code either.
+#   * This trust's 4199 sits in pl_appropriation, where the partnership's and the
+#     sole trader's sit in capital_accounts. That difference is the point of this
+#     fixture: the year's result can only reach it if pl_appropriation is treated
+#     as a balance-sheet section.
+TRUST_CHART = [
+    ("2000", "Cash at bank", "assets"),
+    ("2860", "Plant & equipment (cost)", "assets"),
+    ("2869", "Less: Accumulated depreciation", "assets"),
+    ("3048", "Trade creditors", "liabilities"),
+    ("4000.01", "Opening balance - Beneficiary — Beneficiary One", "capital_accounts"),
+    ("4000.02", "Opening balance - Beneficiary — Beneficiary Two", "capital_accounts"),
+    ("4005.01", "Distribution for year — Beneficiary One", "capital_accounts"),
+    ("4005.02", "Distribution for year — Beneficiary Two", "capital_accounts"),
+    ("4199", "Undistributed income", "pl_appropriation"),
+    ("0105", "Sales", "revenue"),
+    ("1510", "Accountancy", "expenses"),
+]
+
+# Same arithmetic as every other profile in this file -- 100,000 a side, a 20,000
+# net profit (Sales 30,000 less Accountancy 10,000) -- so a failure on one entity
+# type can be compared against another directly. The distribution accounts exist in
+# the chart but carry no prior balance: they are movement accounts.
+TRUST_PRIOR_TB = [
+    ("2000", "Cash at bank", Decimal("70000.00"), Decimal("0.00")),
+    ("2860", "Plant & equipment (cost)", Decimal("20000.00"), Decimal("0.00")),
+    ("2869", "Less: Accumulated depreciation", Decimal("0.00"), Decimal("4000.00")),
+    ("3048", "Trade creditors", Decimal("0.00"), Decimal("6000.00")),
+    (
+        "4000.01",
+        "Opening balance - Beneficiary — Beneficiary One",
+        Decimal("0.00"),
+        Decimal("30000.00"),
+    ),
+    (
+        "4000.02",
+        "Opening balance - Beneficiary — Beneficiary Two",
+        Decimal("0.00"),
+        Decimal("30000.00"),
+    ),
+    ("0105", "Sales", Decimal("0.00"), Decimal("30000.00")),
+    ("1510", "Accountancy", Decimal("10000.00"), Decimal("0.00")),
+]
+
+TRUST = FixtureProfile(
+    key="trust",
+    ids=TRUST_IDS,
+    client_name="E2E Fixture Client (trust)",
+    entity_kwargs={
+        "entity_name": "E2E Fixture Family Trust",
+        "entity_type": "trust",
+        "abn": "11000000560",
+        "financial_year_end": "06-30",
+        "reporting_framework": "SPFR",
+        "is_gst_registered": True,
+        "include_comparative_figures": True,
+    },
+    chart=TRUST_CHART,
+    prior_year_tb=TRUST_PRIOR_TB,
+    retained_profits_code="4199",
+)
+
+PROFILES = {"company": COMPANY, "trust": TRUST}
 
 
 @transaction.atomic

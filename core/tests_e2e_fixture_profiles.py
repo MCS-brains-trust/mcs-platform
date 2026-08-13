@@ -85,3 +85,53 @@ class CompanyProfileUnchangedTests(TestCase):
     def test_a_profile_can_be_named_by_string(self):
         ids_by_string = seed_fixture_entity("company")
         self.assertEqual(ids_by_string["entity"], PROFILES["company"].ids["entity"])
+
+
+class TrustProfileTests(TestCase):
+    """Modelled on E & J Chiaravalle Family Trust: beneficiary sub-accounts at
+    .01/.02, and 4199 Undistributed income sitting in pl_appropriation rather than
+    capital_accounts -- which is where the partnership and sole trader put theirs."""
+
+    def test_the_prior_year_trial_balance_balances(self):
+        from core.models import TrialBalanceLine
+
+        ids = seed_fixture_entity(PROFILES["trust"])
+        lines = TrialBalanceLine.objects.filter(financial_year=ids["prior_fy"])
+        self.assertEqual(
+            sum(line.debit for line in lines), sum(line.credit for line in lines)
+        )
+        self.assertEqual(sum(line.debit for line in lines), Decimal("100000.00"))
+
+    def test_both_beneficiaries_have_their_own_sub_coded_capital_account(self):
+        from core.models import EntityChartOfAccount
+
+        ids = seed_fixture_entity(PROFILES["trust"])
+        codes = set(
+            EntityChartOfAccount.objects.filter(
+                entity_id=ids["entity"], section="capital_accounts"
+            ).values_list("account_code", flat=True)
+        )
+        self.assertIn("4000.01", codes)
+        self.assertIn("4000.02", codes)
+        self.assertIn("4005.01", codes)
+        self.assertIn("4005.02", codes)
+
+    def test_undistributed_income_is_in_the_pl_appropriation_section(self):
+        from core.models import EntityChartOfAccount
+
+        ids = seed_fixture_entity(PROFILES["trust"])
+        account = EntityChartOfAccount.objects.get(
+            entity_id=ids["entity"], account_code="4199"
+        )
+        self.assertEqual(account.account_name, "Undistributed income")
+        self.assertEqual(account.section, "pl_appropriation")
+        self.assertEqual(PROFILES["trust"].retained_profits_code, "4199")
+
+    def test_the_entity_is_a_trust_with_a_valid_abn(self):
+        from core.models import Entity
+        from core.validators import is_valid_abn
+
+        ids = seed_fixture_entity(PROFILES["trust"])
+        entity = Entity.objects.get(pk=ids["entity"])
+        self.assertEqual(entity.entity_type, "trust")
+        self.assertTrue(is_valid_abn(entity.abn))
