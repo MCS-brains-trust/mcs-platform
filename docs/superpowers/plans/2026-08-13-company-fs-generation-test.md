@@ -845,15 +845,29 @@ class DocumentRenderTests(TestCase):
     def test_the_notes_tie_to_the_face_of_the_statements(self):
         """The spec's fourth invariant, asserted where the notes actually exist.
 
-        Receivables 120,000, plant 300,000 less accumulated depreciation (120,000)
-        giving 180,000, and inventories 70,000 -- each of which also appears on the
-        balance sheet, which is what "ties" means here.
+        Receivables 120,000 and plant 300,000 each appear in the notes AND on the
+        balance sheet -- which is what "ties" means here. Asserted against the
+        labelled line ("Trade debtors\\n120,000", "Plant & equipment (cost)\\n300,000"),
+        not the bare figure, since the bare figure also matches unrelated text (the
+        PPE note's accumulated depreciation renders "(120,000)", which contains
+        "120,000" as a substring).
+
+        Inventories is deliberately NOT asserted here. The application generates no
+        inventories note at all: `_compute_note_map` emits exactly six note types
+        (policies, receivables, ppe, related_party, income_tax, events), and
+        `fs_template_service.py` has no inventories note branch. A company carrying
+        trading stock gets an Inventories line on the balance sheet with no
+        supporting note. Confirmed 2026-08-13 and accepted as out of scope for this
+        test module, which changes no production code.
         """
         notes = self._text_of(self.documents["NOTES"])
         balance_sheet = self._text_of(self.documents["BALANCE_SHEET"])
-        for figure in ("120,000", "300,000", "70,000"):
+        self.assertIn("Trade debtors\n120,000", notes,
+                      "the receivables note's labelled line is missing")
+        self.assertIn("Plant & equipment (cost)\n300,000", notes,
+                      "the PPE note's labelled line is missing")
+        for figure in ("120,000", "300,000"):
             with self.subTest(figure=figure):
-                self.assertIn(figure, notes, f"{figure} is missing from the notes")
                 self.assertIn(figure, balance_sheet,
                               f"{figure} is in the notes but not on the balance sheet")
 ```

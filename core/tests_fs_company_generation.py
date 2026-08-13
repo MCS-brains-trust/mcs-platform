@@ -54,8 +54,20 @@ MAPPINGS = [
     ("BS-EQ-011", "Income tax provision", "balance_sheet", "Equity"),
 ]
 
-# The maximal fixture: one company, two years, internally consistent.
+# The maximal fixture: one company, two years, each internally consistent.
 # (code, name, standard_code, cy_amount, py_amount) -- debit-positive.
+#
+# "Internally consistent" means each column balances on its own (assets = liabilities
+# + equity, income - expenses = profit, within that column) -- NOT that the two columns
+# chain across years. They deliberately do not: retained_profit_closing_py (340,000,
+# see ComparativeColumnTests) is not equal to retained_profit_opening_cy (205,000,
+# see IncomeTaxTests), and net assets move from 440,000 (PY) to 485,000 (CY) while
+# after-tax profit is only 180,000 with no dividend account to absorb the rest. That
+# gap is deliberate: it lets each column's arithmetic be verified independently of the
+# other, without also having to model a roll-forward between years. Do not add a
+# cross-year invariant such as `retained_profit_opening_cy == retained_profit_closing_py`
+# against this fixture -- it would fail, correctly, because the fixture was never built
+# to chain. Reworking the fixture to chain is a separate task.
 #
 # Every code was verified against the production copy. Codes 0570, 1100, 1115 and
 # 1130 are entity accounts rather than company-template accounts: the company
@@ -147,6 +159,23 @@ def build_company_fy(rows, *, with_prior=True, entity_name="FS Gen Test Co Pty L
         opening = py if is_balance_sheet else Decimal("0")
 
         if with_prior:
+            # The prior financial year needs its own trial balance too:
+            # _has_prior_year(fy) checks fy.prior_year.trial_balance_lines.exists(),
+            # and _post_process_fs_doc strips the comparative column entirely when
+            # that is False. Without this, no prior-year figure reaches any
+            # rendered document no matter what prior_debit/prior_credit carry on
+            # the current year's rows.
+            TrialBalanceLine.objects.create(
+                financial_year=prior_fy,
+                account_code=code,
+                account_name=name,
+                mapped_line_item=mapping,
+                closing_balance=py,
+                debit=py if py > 0 else Decimal("0"),
+                credit=-py if py < 0 else Decimal("0"),
+                source="tb_import",
+                is_adjustment=False,
+            )
             TrialBalanceLine.objects.create(
                 financial_year=fy,
                 account_code=code,
@@ -426,7 +455,11 @@ class TradingStockTests(TestCase):
 
 
 def assert_statements_are_internally_consistent(t, context):
-    """Four relationships that must hold for any company, whatever the figures.
+    """Three relationships that must hold for any company, whatever the figures.
+
+    A fourth -- each note ties to its face figure -- is asserted separately in
+    DocumentRenderTests.test_the_notes_tie_to_the_face_of_the_statements, since it
+    needs a rendered document rather than build_company_context's raw figures.
 
     The third is the one the ac69078 defect broke while the balance sheet still
     balanced, which is why an invariant-only suite would have passed it and why
@@ -549,14 +582,15 @@ class DocumentRenderTests(TestCase):
         """Document types are BALANCE_SHEET, COMPILATION, COVER, DECLARATION,
         DETAILED_PL, NOTES, SUMMARY_PL."""
         rendered = self._text_of(self.documents["DETAILED_PL"])
-        for figure in ("920,000", "680,000", "240,000", "(60,000)", "180,000"):
+        for figure in ("920,000", "680,000", "240,000", "(60,000)", "180,000",
+                       "810,000", "143,000"):
             with self.subTest(figure=figure):
                 self.assertIn(figure, rendered,
                               f"{figure} was computed but never reached the P&L")
 
     def test_the_balance_sheet_totals_reach_the_document(self):
         rendered = self._text_of(self.documents["BALANCE_SHEET"])
-        for figure in ("400,000", "580,000", "95,000", "485,000"):
+        for figure in ("400,000", "580,000", "95,000", "485,000", "440,000"):
             with self.subTest(figure=figure):
                 self.assertIn(figure, rendered,
                               f"{figure} was computed but never reached the balance sheet")
@@ -566,6 +600,15 @@ class DocumentRenderTests(TestCase):
 
         Receivables 120,000 and plant 300,000 each appear in the notes AND on the
         balance sheet -- which is what "ties" means here.
+
+        Asserted against the labelled line, not the bare figure: the bare string
+        "120,000" is also a substring of the PPE note's "Less: Accumulated
+        depreciation (120,000)", so a bare-figure assertion stays green even if the
+        entire receivables note is deleted from _compute_note_map. The docx text
+        extractor joins a table row's cells with newlines, so the label and its
+        figure appear as "Trade debtors\\n120,000" and
+        "Plant & equipment (cost)\\n300,000" verbatim -- asserting that adjacency
+        means the test fails if either note (or its figure) goes missing.
 
         Inventories is deliberately NOT asserted. The application generates no
         inventories note at all: _compute_note_map emits exactly six note types
@@ -581,8 +624,11 @@ class DocumentRenderTests(TestCase):
         """
         notes = self._text_of(self.documents["NOTES"])
         balance_sheet = self._text_of(self.documents["BALANCE_SHEET"])
+        self.assertIn("Trade debtors\n120,000", notes,
+                      "the receivables note's labelled line is missing")
+        self.assertIn("Plant & equipment (cost)\n300,000", notes,
+                      "the PPE note's labelled line is missing")
         for figure in ("120,000", "300,000"):
             with self.subTest(figure=figure):
-                self.assertIn(figure, notes, f"{figure} is missing from the notes")
                 self.assertIn(figure, balance_sheet,
                               f"{figure} is in the notes but not on the balance sheet")

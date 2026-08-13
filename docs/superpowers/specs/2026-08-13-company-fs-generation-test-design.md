@@ -28,11 +28,13 @@ is the oracle here.
 
 ## Decisions
 
-**Assert on `build_company_context()`, not on the PDF.** It exposes raw `Decimal`
-values (`_income_tax_cy`, `_net_profit_cy`), runs without file I/O, and is stable
-against layout change. One separate test renders a PDF end to end and confirms the key
-totals survive into it — enough to catch a figure that never reaches the page, without
-a brittle full-text baseline.
+**Assert on `build_company_context()`, not on the rendered document.** It exposes raw
+`Decimal` values (`_income_tax_cy`, `_net_profit_cy`), runs without file I/O, and is
+stable against layout change. One separate suite renders the DOCX documents end to end
+and confirms the key totals survive into them — enough to catch a figure that never
+reaches the page, without a brittle full-text baseline. PDF conversion is a further
+LibreOffice step downstream of the DOCX and is out of scope: it needs an external
+binary and adds no figure coverage beyond what the DOCX already proves.
 
 **A shared builder plus focused scenarios plus one maximal case.** Focused tests
 localise a failure to a single feature; the maximal one exercises the interactions,
@@ -192,9 +194,11 @@ minimal chart except where noted.
    closing stock ties to the balance-sheet carrying amount.
 5. **The full set.** The maximal fixture. Asserts every figure in the table above, both
    columns, plus all four invariants.
-6. **PDF render.** Generates the document end to end for the maximal fixture and
-   asserts the key totals appear in the extracted text: profit before tax, income tax,
-   profit after tax, net assets, total equity. Not a full-text baseline.
+6. **Document render.** Generates the DOCX documents end to end for the maximal
+   fixture and asserts the key totals appear in the extracted text: profit before tax,
+   income tax, profit after tax, net assets, total equity. Not a full-text baseline.
+   PDF conversion is a separate LibreOffice step downstream and is not covered — it
+   needs an external binary and adds no figure coverage over the DOCX.
 
 ## Invariants
 
@@ -203,7 +207,14 @@ Applied in every scenario, as a shared assertion helper:
 - total assets − total liabilities = net assets
 - net assets = total equity
 - profit after tax = profit before tax − income tax
-- each note ties to its face figure (receivables, PPE, inventories)
+- each note ties to its face figure (receivables, PPE)
+
+  Inventories is excluded here: the application generates no inventories note at all
+  (`_compute_note_map` emits exactly six note types — policies, receivables, ppe,
+  related_party, income_tax, events — and `fs_template_service.py` has no inventories
+  note branch). A company carrying trading stock gets an Inventories line on the
+  balance sheet with no supporting note. Confirmed 2026-08-13 and accepted as out of
+  scope for this test module, which changes no production code.
 
 The third is the one the income-tax defect broke while the balance sheet still
 balanced.
