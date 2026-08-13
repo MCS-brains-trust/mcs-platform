@@ -120,7 +120,9 @@ later assertions order-dependent). Those are Tier 2's job.
 
 - 435 application routes (Django admin's 432 are reported separately, being third-party)
 - 213 crawlable, 210 excluded by category, 12 unresolved
-- Tier 1: 207 passing, 8 failing on genuine defects (see `known_failures` and below)
+- Tier 1: 215 tests, all passing (verified 2026-08-13). 213 route statuses are
+  baselined and `known_failures` is empty — every route the crawler reaches is at its
+  blessed status, so any change is a regression.
 - Tier 2: 32 tests asserting figures, not statuses — year-end close, plus roll-forward
   across four entity types (company, trust, partnership, sole trader), each with its own
   deterministic fixture, Django instance and database branch
@@ -147,22 +149,39 @@ Run one profile with `npm run test:tier2 -- tier2/roll_forward_trust.spec.ts`. S
 files each boot a Django instance and a ~471 MB database branch, so use `--workers=2`
 for a full-tier run — production shares this host.
 
-## Known defects found by the suite
+## Defects found by the suite
 
-All confirmed present in production, not artefacts of this environment:
+**All of these are fixed.** The list is kept because it is the evidence the suite pays
+for itself, and because each entry says what a future regression on that route would
+look like. Nothing here is currently red — `known_failures` is empty in both tiers.
+
+Found by the Tier 1 route sweep, fixed in `41c8773` (2026-08-08):
 
 | Route | Defect |
 |---|---|
-| `/office-admin/asic/` | `views_office_admin.py:353` slices then filters → `Cannot filter a query once a slice has been taken` |
-| `/associates/<pk>/edit/` | `views.py:7615` does `assoc.entity.pk`, but `ClientAssociate.entity` is nullable and **all 3,987 production rows are NULL** |
-| `/notes/<pk>/` and `/edit/` | same pattern, `views.py:7833`/`7855`; **all 49 notes** have NULL entity |
-| `/years/<pk>/general-pool/` | renders `core/general_pool_detail.html`, which does not exist |
+| `/office-admin/asic/` | `views_office_admin.py` sliced then filtered → `Cannot filter a query once a slice has been taken` |
+| `/associates/<pk>/edit/` | reached `assoc.entity.pk`, but `ClientAssociate.entity` is nullable and **all 3,987 production rows are NULL** |
+| `/notes/<pk>/` and `/edit/` | same pattern; **all 49 notes** have NULL entity |
+| `/years/<pk>/general-pool/` | rendered `core/general_pool_detail.html`, which did not exist |
 | legal doc wizard ×2 | uncaught JS `False is not defined` — a Python bool rendered into JavaScript |
 | `/years/<pk>/partner-statements/` | uncaught JS `Cannot set properties of null (setting 'textContent')` |
 
-Separately: the review dashboard calls the Airtable API on **every render** and logs
-`404 ... api.airtable.com/v0//` — an empty base ID. Not a test failure, but a live
-external call on a page load.
+The same commit also replaced the per-process LocMemCache (which could shadow the
+database under multiple gunicorn workers and silently drop session-staged import
+payloads) and added ABN/ACN/TFN check-digit validation.
+
+Found by the Tier 2 accounting flows:
+
+| Fixed in | Defect |
+|---|---|
+| `7e11395` (PR #32) | `coa_sections` was built from the entity-TYPE template and never consulted `EntityChartOfAccount`, so an entity with its own chart had every account classify as P&L and nothing carried an opening balance |
+| `7e11395` (PR #32) | retained profits was identified by the numeric code `4199` alone, which a hyphenated MYOB/Xero chart never carries, so the year's result was closed into a synthesised line beside the entity's real equity account |
+| `5d1ae91` (PR #34) | `_expected_next_year_openings` predicted no retained-profits line when the prior year carried none, so the reconciliation diff omitted it — reporting half an amendment and leaving the next year out of balance if applied |
+
+Found by the Tier 1 sweep's console-error checks, fixed in `e4b63ab` (PR #33): the
+review dashboard called the Airtable API on **every render** and logged
+`404 ... api.airtable.com/v0//` — an empty base ID — a live external call with a 15s
+timeout on a page load, for an integration that had never worked.
 
 ## Tier 2
 
