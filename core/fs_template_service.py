@@ -1102,6 +1102,68 @@ def _assign_note_refs(items, note_lookup, classify_fn):
 # ---------------------------------------------------------------------------
 # 3. build_company_context
 # ---------------------------------------------------------------------------
+# The standard line item an account is mapped to when the accountant classifies it as
+# the equity-side income tax appropriation during trial balance import.
+_INCOME_TAX_STANDARD_CODE = "BS-EQ-011"
+
+# Matched against the account name when the row carries no mapping. "income tax" alone
+# is not enough: 4135 Over-provision of tax is on every company chart in this book and
+# names its concept without ever saying "income".
+_INCOME_TAX_NAME_KEYWORDS = (
+    "income tax",
+    "tax on profit",
+    "tax expense",
+    "provision of tax",
+    "provision for tax",
+    "provision of income tax",
+    "provision for income tax",
+)
+
+# The HandiLedger income tax range for companies. Retained only as a last resort, for a
+# row that is neither mapped nor recognisably named -- see _is_income_tax_appropriation.
+_INCOME_TAX_CODE_RANGE = (4100, 4149)
+
+
+def _is_income_tax_appropriation(item) -> bool:
+    """Is this equity-section item the income tax appropriation?
+
+    Every account coded 4000-4999 lands in sections["equity"], so this decides which
+    of them get pulled back out and reported as "Income tax attributable to operating
+    profit (loss)" instead. Getting it wrong is self-concealing: the balance sheet
+    still balances, because an account wrongly taken out of equity returns to it
+    through the profit line.
+
+    Three signals, most authoritative first:
+
+      1. The mapping the accountant set during import. The import gate refuses to
+         commit with anything unmapped, so this is present for any TB imported
+         through the UI, and it is a deliberate human decision about this exact
+         question.
+      2. The account name.
+      3. The HandiLedger code range, for a legacy row carrying neither of the above.
+
+    The code range used to be the *only* rule, which made it override (1). It caught
+    4115 -- "Other income" on all six company charts here, and "Profit -
+    Extraordinary" with a real -62,189.73 balance on Berwick Mechanical Services
+    FY2017 -- reporting extraordinary profit on the income tax line and adding it to
+    profit rather than deducting it.
+    """
+    standard_code = item.get("standard_code")
+    if standard_code:
+        return standard_code == _INCOME_TAX_STANDARD_CODE
+
+    name_lower = (item.get("account_name") or "").lower()
+    if name_lower:
+        return any(kw in name_lower for kw in _INCOME_TAX_NAME_KEYWORDS)
+
+    try:
+        code_num = int((item.get("account_code") or "").split(".")[0])
+    except (ValueError, TypeError):
+        return False
+    low, high = _INCOME_TAX_CODE_RANGE
+    return low <= code_num <= high
+
+
 def build_company_context(financial_year, include_watermark=True):
     """Build full Jinja2 context dict for a company entity."""
     from core.models import EntityOfficer
@@ -1170,16 +1232,7 @@ def build_company_context(financial_year, include_watermark=True):
     if entity_type == "company":
         equity_without_tax = []
         for item in sections["equity"]:
-            code_str = item.get("account_code", "")
-            name_lower = item.get("account_name", "").lower()
-            try:
-                code_num = int(code_str.split(".")[0]) if code_str else 0
-            except (ValueError, TypeError):
-                code_num = 0
-            is_tax = (4100 <= code_num <= 4149) or any(
-                kw in name_lower for kw in ["income tax", "tax on profit", "tax expense"]
-            )
-            if is_tax:
+            if _is_income_tax_appropriation(item):
                 income_tax_cy += item["cy_amount"] if item["cy_amount"] else Decimal("0")
                 income_tax_py += item["py_amount"] if item["py_amount"] else Decimal("0")
             else:
