@@ -272,10 +272,31 @@ class BuilderTests(TestCase):
                 by_code[item["account_code"]] = item
 
         for code, _name, _std, cy, py in MAXIMAL_ROWS:
+            # 4110 is deliberately absent from _sections. build_company_context
+            # extracts the income tax appropriation OUT of the equity section
+            # before returning, so it reaches no section at all; its figures are
+            # asserted through _income_tax_cy just below.
+            if code == "4110":
+                continue
             with self.subTest(code=code):
                 self.assertIn(code, by_code, f"{code} did not reach any section")
                 self.assertEqual(by_code[code]["cy_amount"], cy)
                 self.assertEqual(by_code[code]["py_amount"], py)
+
+        self.assertEqual(context["_income_tax_cy"], Decimal("60000"))
+        self.assertEqual(context["_income_tax_py"], Decimal("50000"))
+
+    def test_the_equity_section_carries_an_injected_current_year_profit_row(self):
+        """Under the unclosed-TB convention the equity accounts hold only opening
+        balances, so build_company_context injects a synthetic
+        'Current year profit / (loss)' row (account_code 'NET_PROFIT') to make
+        equity reconcile to net assets. Anything summing the equity section must
+        not then add the profit a second time."""
+        context = build_company_context(build_company_fy(MAXIMAL_ROWS))
+        injected = [i for i in context["_sections"]["equity"]
+                    if i["account_code"] == "NET_PROFIT"]
+        self.assertEqual(len(injected), 1)
+        self.assertEqual(injected[0]["cy_amount"], Decimal("-180000"))
 
     def test_without_prior_the_comparative_column_is_zero(self):
         fy = build_company_fy(MAXIMAL_ROWS, with_prior=False)
@@ -652,7 +673,11 @@ def assert_statements_are_internally_consistent(t, context):
 
     assets = total("current_assets") + total("noncurrent_assets")
     liabilities = -(total("current_liabilities") + total("noncurrent_liabilities"))
-    equity = -total("equity") + _after_tax_profit(context)
+    # The equity section already contains the injected 'Current year profit /
+    # (loss)' row (account_code 'NET_PROFIT'), which build_company_context adds
+    # because the trial balance is unclosed. Adding the profit again here would
+    # double-count it.
+    equity = -total("equity")
 
     t.assertEqual(assets - liabilities, equity,
                   "net assets do not equal total equity")
@@ -672,10 +697,6 @@ def _money(formatted):
     negative = formatted.startswith("(")
     digits = formatted.strip("()").replace(",", "")
     return Decimal(digits) * (-1 if negative else 1)
-
-
-def _after_tax_profit(context):
-    return _money(context["net_profit_cy"])
 
 
 @override_settings(STORAGES=STORAGES_OVERRIDE)
@@ -736,10 +757,11 @@ class FullSetTests(TestCase):
 cd /opt/statementhub && DATABASE_URL="sqlite:////tmp/claude-0/-opt-statementhub/19a1599b-63b8-4db9-9e11-41cdb9d787f8/scratchpad/t2.sqlite3" venv/bin/python manage.py test core.tests_fs_company_generation.FullSetTests -v1
 ```
 
-Expected: PASS. If `test_the_invariants_hold` fails on the equity comparison, the
-likely cause is the equity total in `assert_statements_are_internally_consistent`
-double-counting the current-year profit — the equity section holds only opening
-balances under the unclosed-TB convention, so the profit must be added once.
+Expected: PASS. The equity section already carries the injected `NET_PROFIT` row, so
+`assert_statements_are_internally_consistent` must NOT add the profit again —
+Task 1's `test_the_equity_section_carries_an_injected_current_year_profit_row`
+documents that. If the equity comparison fails by exactly the profit figure
+(180,000), the helper is double-counting.
 
 - [ ] **Step 3: Add the invariant call to the earlier scenarios**
 
