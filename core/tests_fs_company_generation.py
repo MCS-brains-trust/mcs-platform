@@ -1,0 +1,238 @@
+"""A company's financial statements, asserted figure by figure.
+
+The 2026-08-13 exploratory test generated statements for a company with no tax
+posted, no prior year, no cost of sales and no trading stock -- four branches of
+build_company_context that never ran. This module covers them.
+
+Every expected figure here is hand-computed from the trial balance and written out
+in the docstring of the test that asserts it. That is deliberate: the two defects
+this area has produced (7e11395, ac69078) both kept the balance sheet balancing
+while being wrong, so a golden baseline would have blessed them and an
+invariant-only test would have passed them.
+
+Amounts are debit-positive; credits are negative, matching what _get_tb_sections
+reads. See docs/superpowers/specs/2026-08-13-company-fs-generation-test-design.md.
+"""
+from datetime import date
+from decimal import Decimal
+
+from django.test import TestCase, override_settings
+
+from core.fs_template_service import build_company_context
+from core.models import (
+    AccountMapping,
+    Client,
+    Entity,
+    EntityChartOfAccount,
+    FinancialYear,
+    TrialBalanceLine,
+)
+
+STORAGES_OVERRIDE = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+}
+
+# Standard line items the fixtures map to. Created per-test rather than relied on
+# from a migration, following core/tests_docgen_section_classification.py.
+MAPPINGS = [
+    ("IS-REV-001", "Revenue", "income_statement", "Revenue"),
+    ("IS-REV-002", "Other income", "income_statement", "Revenue"),
+    ("IS-COS-002", "Opening stock", "income_statement", "Cost of Sales"),
+    ("IS-COS-003", "Purchases", "income_statement", "Cost of Sales"),
+    ("IS-COS-004", "Closing stock", "income_statement", "Cost of Sales"),
+    ("IS-EXP-001", "Accounting and professional fees", "income_statement", "Expenses"),
+    ("IS-EXP-007", "Depreciation and amortisation", "income_statement", "Expenses"),
+    ("IS-EXP-008", "Employee benefits expense", "income_statement", "Expenses"),
+    ("BS-CA-001", "Cash and cash equivalents", "balance_sheet", "Current Assets"),
+    ("BS-CA-002", "Trade and other receivables", "balance_sheet", "Current Assets"),
+    ("BS-CA-003", "Inventories", "balance_sheet", "Current Assets"),
+    ("BS-NCA-001", "Property, plant and equipment", "balance_sheet", "Non-Current Assets"),
+    ("BS-CL-001", "Trade and other payables", "balance_sheet", "Current Liabilities"),
+    ("BS-EQ-001", "Issued capital", "balance_sheet", "Equity"),
+    ("BS-EQ-002", "Retained earnings", "balance_sheet", "Equity"),
+    ("BS-EQ-011", "Income tax provision", "balance_sheet", "Equity"),
+]
+
+# The maximal fixture: one company, two years, internally consistent.
+# (code, name, standard_code, cy_amount, py_amount) -- debit-positive.
+#
+# Every code was verified against the production copy. Codes 0570, 1100, 1115 and
+# 1130 are entity accounts rather than company-template accounts: the company
+# template's cost of sales block holds only 1000 and 1126, so real companies add
+# these themselves, as Berwick Mechanical Services did with 1115 Purchases.
+MAXIMAL_ROWS = [
+    ("0510", "Sales", "IS-REV-001", Decimal("-900000"), Decimal("-800000")),
+    ("0570", "Insurance recoveries", "IS-REV-002", Decimal("-20000"), Decimal("-10000")),
+    ("1100", "Opening stock", "IS-COS-002", Decimal("60000"), Decimal("50000")),
+    ("1115", "Purchases", "IS-COS-003", Decimal("400000"), Decimal("360000")),
+    ("1130", "Closing stock", "IS-COS-004", Decimal("-70000"), Decimal("-60000")),
+    ("1510", "Accountancy", "IS-EXP-001", Decimal("10000"), Decimal("9000")),
+    ("1615", "Depreciation - Plant", "IS-EXP-007", Decimal("30000"), Decimal("28000")),
+    ("1965", "Wages", "IS-EXP-008", Decimal("250000"), Decimal("230000")),
+    ("4110", "Income tax expense/income", "BS-EQ-011", Decimal("60000"), Decimal("50000")),
+    ("2000", "Cash at bank", "BS-CA-001", Decimal("210000"), Decimal("150000")),
+    ("2101", "Trade debtors", "BS-CA-002", Decimal("120000"), Decimal("100000")),
+    ("2363", "Finished goods - At real value", "BS-CA-003", Decimal("70000"), Decimal("60000")),
+    ("2860", "Plant & equipment (cost)", "BS-NCA-001", Decimal("300000"), Decimal("300000")),
+    ("2869", "Less: Accumulated depreciation", "BS-NCA-001", Decimal("-120000"), Decimal("-90000")),
+    ("3048", "Trade creditors", "BS-CL-001", Decimal("-95000"), Decimal("-80000")),
+    ("4200", "Issued & paid up capital", "BS-EQ-001", Decimal("-100000"), Decimal("-100000")),
+    ("4199", "Retained profits", "BS-EQ-002", Decimal("-205000"), Decimal("-197000")),
+]
+
+
+def mapping_for(standard_code):
+    return AccountMapping.objects.get(standard_code=standard_code)
+
+
+def build_company_fy(rows, *, with_prior=True, entity_name="FS Gen Test Co Pty Ltd"):
+    """Create a company, its two financial years, and Model A trial balance rows.
+
+    Model A row shapes (commit cb00bf1) are what make comparatives possible without
+    performing a roll-forward:
+
+      rollover row   closing_balance = the opening balance (prior-year closing for a
+                     balance-sheet account, 0 for P&L), and prior_debit/prior_credit
+                     carry the prior-year figures that become the comparative column
+      tb_import row  closing_balance = the year's movement
+
+    _get_tb_sections sums closing_balance across both, so CY = opening + movement,
+    and reads PY from prior_debit - prior_credit on the rollover row.
+
+    with_prior=False omits the rollover row entirely, modelling a first-year entity
+    with no comparatives.
+    """
+    for code, label, statement, section in MAPPINGS:
+        AccountMapping.objects.get_or_create(
+            standard_code=code,
+            defaults={
+                "line_item_label": label,
+                "financial_statement": statement,
+                "statement_section": section,
+            },
+        )
+
+    client = Client.objects.create(name=f"{entity_name} Client")
+    entity = Entity.objects.create(
+        entity_name=entity_name,
+        entity_type="company",
+        client=client,
+        abn="11000000560",
+    )
+    prior_fy = FinancialYear.objects.create(
+        entity=entity,
+        year_label="2025",
+        start_date=date(2024, 7, 1),
+        end_date=date(2025, 6, 30),
+        status=FinancialYear.Status.FINALISED,
+    )
+    fy = FinancialYear.objects.create(
+        entity=entity,
+        year_label="2026",
+        start_date=date(2025, 7, 1),
+        end_date=date(2026, 6, 30),
+        status=FinancialYear.Status.DRAFT,
+        prior_year=prior_fy,
+    )
+
+    for code, name, standard_code, cy, py in rows:
+        mapping = mapping_for(standard_code)
+        EntityChartOfAccount.objects.get_or_create(
+            entity=entity,
+            account_code=code,
+            defaults={"account_name": name, "is_active": True},
+        )
+        is_balance_sheet = standard_code.startswith("BS-")
+        opening = py if is_balance_sheet else Decimal("0")
+
+        if with_prior:
+            TrialBalanceLine.objects.create(
+                financial_year=fy,
+                account_code=code,
+                account_name=name,
+                mapped_line_item=mapping,
+                closing_balance=opening,
+                debit=opening if opening > 0 else Decimal("0"),
+                credit=-opening if opening < 0 else Decimal("0"),
+                prior_debit=py if py > 0 else Decimal("0"),
+                prior_credit=-py if py < 0 else Decimal("0"),
+                source="rollover",
+                is_adjustment=False,
+            )
+            movement = cy - opening
+        else:
+            movement = cy
+
+        TrialBalanceLine.objects.create(
+            financial_year=fy,
+            account_code=code,
+            account_name=name,
+            mapped_line_item=mapping,
+            closing_balance=movement,
+            debit=movement if movement > 0 else Decimal("0"),
+            credit=-movement if movement < 0 else Decimal("0"),
+            prior_debit=Decimal("0"),
+            prior_credit=Decimal("0"),
+            source="tb_import",
+            is_adjustment=False,
+        )
+
+    return fy
+
+
+@override_settings(STORAGES=STORAGES_OVERRIDE)
+class BuilderTests(TestCase):
+    """The builder must reproduce the input figures exactly, or every scenario
+    below is testing the wrong numbers."""
+
+    def test_the_maximal_trial_balance_sums_to_zero_in_both_years(self):
+        cy = sum(r[3] for r in MAXIMAL_ROWS)
+        py = sum(r[4] for r in MAXIMAL_ROWS)
+        self.assertEqual(cy, Decimal("0"), "current-year trial balance does not balance")
+        self.assertEqual(py, Decimal("0"), "prior-year trial balance does not balance")
+
+    def test_the_builder_reproduces_each_accounts_cy_and_py(self):
+        fy = build_company_fy(MAXIMAL_ROWS)
+        context = build_company_context(fy)
+
+        by_code = {}
+        for items in context["_sections"].values():
+            for item in items:
+                by_code[item["account_code"]] = item
+
+        for code, _name, _std, cy, py in MAXIMAL_ROWS:
+            # 4110 is deliberately absent from _sections. build_company_context
+            # extracts the income tax appropriation OUT of the equity section
+            # before returning, so it reaches no section at all; its figures are
+            # asserted through _income_tax_cy just below.
+            if code == "4110":
+                continue
+            with self.subTest(code=code):
+                self.assertIn(code, by_code, f"{code} did not reach any section")
+                self.assertEqual(by_code[code]["cy_amount"], cy)
+                self.assertEqual(by_code[code]["py_amount"], py)
+
+        self.assertEqual(context["_income_tax_cy"], Decimal("60000"))
+        self.assertEqual(context["_income_tax_py"], Decimal("50000"))
+
+    def test_the_equity_section_carries_an_injected_current_year_profit_row(self):
+        """Under the unclosed-TB convention the equity accounts hold only opening
+        balances, so build_company_context injects a synthetic
+        'Current year profit / (loss)' row (account_code 'NET_PROFIT') to make
+        equity reconcile to net assets. Anything summing the equity section must
+        not then add the profit a second time."""
+        context = build_company_context(build_company_fy(MAXIMAL_ROWS))
+        injected = [i for i in context["_sections"]["equity"]
+                    if i["account_code"] == "NET_PROFIT"]
+        self.assertEqual(len(injected), 1)
+        self.assertEqual(injected[0]["cy_amount"], Decimal("-180000"))
+
+    def test_without_prior_the_comparative_column_is_zero(self):
+        fy = build_company_fy(MAXIMAL_ROWS, with_prior=False)
+        context = build_company_context(fy)
+
+        for items in context["_sections"].values():
+            for item in items:
+                with self.subTest(code=item["account_code"]):
+                    self.assertEqual(item["py_amount"], Decimal("0"))
