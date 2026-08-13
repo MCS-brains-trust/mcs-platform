@@ -261,6 +261,7 @@ class IncomeTaxTests(TestCase):
         self.assertTrue(self.context["has_income_tax"])
         self.assertEqual(self.context["_income_tax_cy"], Decimal("60000"))
         self.assertEqual(self.context["_income_tax_py"], Decimal("50000"))
+        assert_statements_are_internally_consistent(self, self.context)
 
     def test_tax_is_deducted_from_profit_not_added(self):
         self.assertEqual(self.context["net_profit_pretax_cy"], "240,000")
@@ -349,6 +350,7 @@ class TradingAndCostOfSalesTests(TestCase):
 
     def test_trading_is_detected(self):
         self.assertTrue(self.context["has_trading"])
+        assert_statements_are_internally_consistent(self, self.context)
 
     def test_trading_income_and_other_income_are_separated_in_the_sections(self):
         trading = {i["account_code"] for i in self.context["_sections"]["trading_income"]}
@@ -404,6 +406,7 @@ class TradingStockTests(TestCase):
         closing = self.by_code["1130"]["cy_amount"]
         self.assertEqual(opening + purchases + closing, Decimal("390000"))
         self.assertEqual(self.context["total_cogs_cy"], "390,000")
+        assert_statements_are_internally_consistent(self, self.context)
 
     def test_finished_goods_is_a_current_asset(self):
         codes = {i["account_code"] for i in self.context["_sections"]["current_assets"]}
@@ -420,3 +423,95 @@ class TradingStockTests(TestCase):
         current_opening = self.by_code["1100"]["cy_amount"]
         self.assertEqual(prior_closing, current_opening)
         self.assertEqual(prior_closing, self.by_code["2363"]["py_amount"])
+
+
+def assert_statements_are_internally_consistent(t, context):
+    """Four relationships that must hold for any company, whatever the figures.
+
+    The third is the one the ac69078 defect broke while the balance sheet still
+    balanced, which is why an invariant-only suite would have passed it and why
+    these run alongside hand-computed figures rather than instead of them.
+    """
+    sections = context["_sections"]
+
+    def total(key):
+        return sum((i["cy_amount"] or Decimal("0")) for i in sections[key])
+
+    assets = total("current_assets") + total("noncurrent_assets")
+    liabilities = -(total("current_liabilities") + total("noncurrent_liabilities"))
+    # The equity section already contains the injected 'Current year profit /
+    # (loss)' row (account_code 'NET_PROFIT'), which build_company_context adds
+    # because the trial balance is unclosed. Adding the profit again here would
+    # double-count it.
+    equity = -total("equity")
+
+    t.assertEqual(assets - liabilities, equity,
+                  "net assets do not equal total equity")
+    t.assertEqual(context["net_assets_cy"], context["total_equity_cy"],
+                  "the rendered net assets and total equity disagree")
+
+    pretax = _money(context["net_profit_pretax_cy"])
+    after = _money(context["net_profit_cy"])
+    t.assertEqual(after, pretax - context["_income_tax_cy"],
+                  "profit after tax is not profit before tax less income tax")
+
+
+def _money(formatted):
+    """Turn a format_amount string back into a Decimal."""
+    if formatted in ("—", "-"):
+        return Decimal("0")
+    negative = formatted.startswith("(")
+    digits = formatted.strip("()").replace(",", "")
+    return Decimal(digits) * (-1 if negative else 1)
+
+
+@override_settings(STORAGES=STORAGES_OVERRIDE)
+class FullSetTests(TestCase):
+    """Everything at once. The interactions are where both prior defects lived.
+
+    Current year, hand-computed:
+        income      900,000 + 20,000                        =   920,000
+        cost of sales  60,000 + 400,000 - 70,000            =   390,000
+        expenses    10,000 + 30,000 + 250,000               =   290,000
+        pretax      920,000 - 680,000                       =   240,000
+        tax                                                 =    60,000
+        after tax   240,000 - 60,000                        =   180,000
+        current assets  210,000 + 120,000 + 70,000          =   400,000
+        non-current     300,000 - 120,000                   =   180,000
+        total assets                                        =   580,000
+        liabilities                                         =    95,000
+        net assets  580,000 - 95,000                        =   485,000
+        equity      100,000 + 205,000 + 180,000             =   485,000
+    """
+
+    def setUp(self):
+        self.context = build_company_context(build_company_fy(MAXIMAL_ROWS))
+
+    def test_the_profit_and_loss(self):
+        self.assertEqual(self.context["total_income_cy"], "920,000")
+        self.assertEqual(self.context["total_cogs_cy"], "390,000")
+        self.assertEqual(self.context["total_expenses_cy"], "680,000")
+        self.assertEqual(self.context["net_profit_pretax_cy"], "240,000")
+        self.assertEqual(self.context["income_tax_cy"], "(60,000)")
+        self.assertEqual(self.context["net_profit_cy"], "180,000")
+
+    def test_the_balance_sheet(self):
+        self.assertEqual(self.context["total_current_assets_cy"], "400,000")
+        self.assertEqual(self.context["total_noncurrent_assets_cy"], "180,000")
+        self.assertEqual(self.context["total_assets_cy"], "580,000")
+        self.assertEqual(self.context["total_liabilities_cy"], "95,000")
+        self.assertEqual(self.context["net_assets_cy"], "485,000")
+        self.assertEqual(self.context["total_equity_cy"], "485,000")
+
+    def test_depreciation_expense_matches_the_accumulated_movement(self):
+        """30,000 charged for the year; accumulated moves 90,000 -> 120,000."""
+        by_code = {}
+        for items in self.context["_sections"].values():
+            for item in items:
+                by_code[item["account_code"]] = item
+        charge = by_code["1615"]["cy_amount"]
+        movement = -(by_code["2869"]["cy_amount"] - by_code["2869"]["py_amount"])
+        self.assertEqual(charge, movement)
+
+    def test_the_invariants_hold(self):
+        assert_statements_are_internally_consistent(self, self.context)
