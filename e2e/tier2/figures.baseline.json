@@ -442,5 +442,212 @@
         "source": "tb_import"
       }
     ]
+  },
+  "trust:after_roll_forward": {
+    "depreciation": [],
+    "journals": [],
+    "totals": {
+      "credit": "0.00",
+      "debit": "0.00"
+    },
+    "trial_balance": [
+      {
+        "account_code": "0105",
+        "account_name": "Sales",
+        "closing_balance": "0.00",
+        "credit": "0.00",
+        "debit": "0.00",
+        "is_adjustment": false,
+        "opening_balance": "0.00",
+        "prior_closing_balance": "0.00",
+        "source": "rollover"
+      },
+      {
+        "account_code": "1510",
+        "account_name": "Accountancy",
+        "closing_balance": "0.00",
+        "credit": "0.00",
+        "debit": "0.00",
+        "is_adjustment": false,
+        "opening_balance": "0.00",
+        "prior_closing_balance": "0.00",
+        "source": "rollover"
+      },
+      {
+        "account_code": "2000",
+        "account_name": "Cash at bank",
+        "closing_balance": "70000.00",
+        "credit": "0.00",
+        "debit": "0.00",
+        "is_adjustment": false,
+        "opening_balance": "70000.00",
+        "prior_closing_balance": "0.00",
+        "source": "rollover"
+      },
+      {
+        "account_code": "2860",
+        "account_name": "Plant & equipment (cost)",
+        "closing_balance": "20000.00",
+        "credit": "0.00",
+        "debit": "0.00",
+        "is_adjustment": false,
+        "opening_balance": "20000.00",
+        "prior_closing_balance": "0.00",
+        "source": "rollover"
+      },
+      {
+        "account_code": "2869",
+        "account_name": "Less: Accumulated depreciation",
+        "closing_balance": "-4000.00",
+        "credit": "0.00",
+        "debit": "0.00",
+        "is_adjustment": false,
+        "opening_balance": "-4000.00",
+        "prior_closing_balance": "0.00",
+        "source": "rollover"
+      },
+      {
+        "account_code": "3048",
+        "account_name": "Trade creditors",
+        "closing_balance": "-6000.00",
+        "credit": "0.00",
+        "debit": "0.00",
+        "is_adjustment": false,
+        "opening_balance": "-6000.00",
+        "prior_closing_balance": "0.00",
+        "source": "rollover"
+      },
+      {
+        "account_code": "4000.01",
+        "account_name": "Opening balance - Beneficiary \u2014 Beneficiary One",
+        "closing_balance": "-30000.00",
+        "credit": "0.00",
+        "debit": "0.00",
+        "is_adjustment": false,
+        "opening_balance": "-30000.00",
+        "prior_closing_balance": "0.00",
+        "source": "rollover"
+      },
+      {
+        "account_code": "4000.02",
+        "account_name": "Opening balance - Beneficiary \u2014 Beneficiary Two",
+        "closing_balance": "-30000.00",
+        "credit": "0.00",
+        "debit": "0.00",
+        "is_adjustment": false,
+        "opening_balance": "-30000.00",
+        "prior_closing_balance": "0.00",
+        "source": "rollover"
+      },
+      {
+        "account_code": "4199",
+        "account_name": "Undistributed income",
+        "closing_balance": "-20000.00",
+        "credit": "0.00",
+        "debit": "0.00",
+        "is_adjustment": false,
+        "opening_balance": "-20000.00",
+        "prior_closing_balance": "0.00",
+        "source": "rollover"
+      }
+    ]
+  },
+  "trust:prior_before_amendment": {
+    "depreciation": [],
+    "journals": [],
+    "totals": {
+      "credit": "100000.00",
+      "debit": "100000.00"
+    },
+    "trial_balance": [
+      {
+        "account_code": "0105",
+        "account_name": "Sales",
+        "closing_balance": "-30000.00",
+        "credit": "30000.00",
+        "debit": "0.00",
+        "is_adjustment": false,
+        "opening_balance": "0.00",
+        "prior_closing_balance": "0.00",
+        "source": "tb_import"
+      },
+      {
+        "account_code": "1510",
+        "account_name": "Accountancy",
+        "closing_balance": "10000.00",
+        "credit": "0.00",
+        "debit": "10000.00",
+        "is_adjustment": false,
+        "opening_balance": "0.00",
+        "prior_closing_balance": "0.00",
+        "source": "tb_import"
+      },
+      {
+        "account_code": "2000",
+        "account_name": "Cash at bank",
+        "closing_balance": "70000.00",
+        "credit": "0.00",
+        "debit": "70000.00",
+        "is_adjustment": false,
+        "opening_balance": "0.00",
+        "prior_closing_balance": "0.00",
+        "source": "tb_import"
+      },
+      {
+        "account_code": "2860",
+        "account_name": "Plant & equipment (cost)",
+        "closing_balance": "20000.00",
+        "credit": "0.00",
+        "debit": "20000.00",
+        "is_adjustment": false,
+        "opening_balance": "0.00",
+        "prior_closing_balance": "0.00",
+        "source": "tb_import"
+      },
+      {
+        "account_code": "2869",
+        "account_name": "Less: Accumulated depreciation",
+        "closing_balance": "-4000.00",
+        "credit": "4000.00",
+        "debit": "0.00",
+        "is_adjustment": false,
+        "opening_balance": "0.00",
+        "prior_closing_balance": "0.00",
+        "source": "tb_import"
+      },
+      {
+        "account_code": "3048",
+        "account_name": "Trade creditors",
+        "closing_balance": "-6000.00",
+        "credit": "6000.00",
+        "debit": "0.00",
+        "is_adjustment": false,
+        "opening_balance": "0.00",
+        "prior_closing_balance": "0.00",
+        "source": "tb_import"
+      },
+      {
+        "account_code": "4000.01",
+        "account_name": "Opening balance - Beneficiary \u2014 Beneficiary One",
+        "closing_balance": "-30000.00",
+        "credit": "30000.00",
+        "debit": "0.00",
+        "is_adjustment": false,
+        "opening_balance": "0.00",
+        "prior_closing_balance": "0.00",
+        "source": "tb_import"
+      },
+      {
+        "account_code": "4000.02",
+        "account_name": "Opening balance - Beneficiary \u2014 Beneficiary Two",
+        "closing_balance": "-30000.00",
+        "credit": "30000.00",
+        "debit": "0.00",
+        "is_adjustment": false,
+        "opening_balance": "0.00",
+        "prior_closing_balance": "0.00",
+        "source": "tb_import"
+      }
+    ]
   }
 }

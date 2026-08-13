@@ -327,6 +327,22 @@ def _is_income_tax_account(account_code, account_name, mapped_line_item):
     return bool(account_name) and "income tax" in account_name.lower()
 
 
+def _default_retained_profits_account(entity_type):
+    """The account the roll forward creates to hold the year's result when the prior
+    year has no retained-profits line of its own: ``(account_name, account_code)``.
+
+    Shared by _populate_rolled_forward_fy, which writes that line, and
+    _expected_next_year_openings, which has to predict it. They were allowed to
+    disagree once already (see _expected_next_year_openings' own docstring); keeping
+    the mapping in one place is what stops it happening again.
+    """
+    return {
+        "trust": ("Undistributed income", "4199"),
+        "partnership": ("Partners' current accounts", "4199"),
+        "sole_trader": ("Proprietor's funds", "4199"),
+    }.get(entity_type, ("Retained profits", "4199"))
+
+
 def _expected_next_year_openings(fy):
     """What the next year's opening balance should be for each of ``fy``'s
     balance-sheet accounts: ``{account_code: (account_name, opening)}``.
@@ -343,6 +359,14 @@ def _expected_next_year_openings(fy):
       * the income-tax provision is cleared to zero.
     Comparing those two raw reported drift on a year that was rolled correctly, and
     applying it stripped the year's result back out of equity.
+
+    A third case is easy to miss because the account map below is built from the prior
+    year's own trial-balance lines: an entity whose retained-profits account exists on
+    its chart but carries no line yet -- a first year, or any year whose result has not
+    been appropriated. The roll handles it by CREATING that line; this function has to
+    predict the same one, or the account is absent from the expected openings, they
+    fail to balance by the whole year's result, and reroll_forward_diff never compares
+    it at all. See the tail of this function.
     """
     entity = fy.entity
     coa_sections = _coa_sections_for_entity(entity)
@@ -388,6 +412,19 @@ def _expected_next_year_openings(fy):
             expected[code] = (name, closing + net_pl_result + tax_amount)
         else:
             expected[code] = (name, closing)
+
+    # No prior-year line held retained profits, so the roll will create one -- mirror
+    # it here on the same condition and with the same figure, or the year's result is
+    # simply missing from the expected openings.
+    #
+    # Guarded on the code being absent: if the prior year already carries a line under
+    # this code that was NOT identified as retained profits, its own carry-forward
+    # expectation above is the better answer, and overwriting it would report drift on
+    # a correctly rolled account.
+    if retained_code is None and (net_pl_result != Decimal("0") or tax_amount != Decimal("0")):
+        rp_name, rp_code = _default_retained_profits_account(entity.entity_type)
+        if rp_code not in expected:
+            expected[rp_code] = (rp_name, net_pl_result + tax_amount)
     return expected
 
 
@@ -3608,15 +3645,9 @@ def _populate_rolled_forward_fy(current_fy, new_fy):
     # If no retained profits line existed, create one to hold the net P&L
     tax_amount = income_tax_line.closing_balance if income_tax_line else _D("0")
     if retained_profits_line is None and (net_pl_result != _D("0") or tax_amount != _D("0")):
-        etype = entity.entity_type
-        if etype == "trust":
-            rp_name, rp_code = "Undistributed income", "4199"
-        elif etype == "partnership":
-            rp_name, rp_code = "Partners' current accounts", "4199"
-        elif etype == "sole_trader":
-            rp_name, rp_code = "Proprietor's funds", "4199"
-        else:
-            rp_name, rp_code = "Retained profits", "4199"
+        # Shared with _expected_next_year_openings, which has to predict this same
+        # line -- see _default_retained_profits_account.
+        rp_name, rp_code = _default_retained_profits_account(entity.entity_type)
         rp_opening = net_pl_result + tax_amount
         TrialBalanceLine.objects.create(
             financial_year=new_fy,

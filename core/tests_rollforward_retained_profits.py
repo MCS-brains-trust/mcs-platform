@@ -30,7 +30,7 @@ from core.models import (
     FinancialYear,
     TrialBalanceLine,
 )
-from core.views import _populate_rolled_forward_fy
+from core.views import _expected_next_year_openings, _populate_rolled_forward_fy
 
 STORAGES_OVERRIDE = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
@@ -462,4 +462,179 @@ class RerollForwardAgreesWithRollForwardTests(TestCase):
         self.assertEqual(
             sum(openings.values()), Decimal("0.00"),
             "the rolled-forward opening balances no longer balance",
+        )
+
+
+# A trust-shaped chart in the HandiLedger codes every real entity in this book uses.
+# 4199 exists on the chart but the prior year never posted to it -- the ordinary case
+# for a first year, and for any year whose result has not yet been appropriated.
+TRUST_CHART = [
+    ("2000", "Cash at bank", "assets"),
+    ("3048", "Trade creditors", "liabilities"),
+    ("4199", "Undistributed income", "pl_appropriation"),
+    ("0105", "Sales", "revenue"),
+    ("1510", "Accountancy", "expenses"),
+]
+
+# Sales 30,000 credit less Accountancy 10,000 debit = 20,000 net profit. No 4199 line.
+TRUST_PRIOR_FIGURES = [
+    ("2000", "Cash at bank", Decimal("100000.00")),
+    ("3048", "Trade creditors", Decimal("-80000.00")),
+    ("0105", "Sales", Decimal("-30000.00")),
+    ("1510", "Accountancy", Decimal("10000.00")),
+]
+
+
+@override_settings(STORAGES=STORAGES_OVERRIDE)
+class ExpectedOpeningsWithoutAPriorRetainedProfitsLineTests(TestCase):
+    """The prior year has no retained-profits LINE, only a chart entry.
+
+    _populate_rolled_forward_fy handles this: finding no retained_profits_line, it
+    CREATES a 4199 line to hold the year's result (views.py's "If no retained profits
+    line existed" branch).
+
+    _expected_next_year_openings did not. It builds its account map from the prior
+    year's own trial-balance lines, so with no 4199 line to find, retained_code stayed
+    None, net_pl_result was applied to nothing, and 4199 was absent from the expected
+    openings entirely -- leaving them out of balance by the year's whole result.
+
+    Because reroll_forward_diff iterates expected.items(), the account was never
+    compared. After a prior-year amendment that changes the year's profit, the diff
+    reported the trade-creditors half of the correction and silently omitted the
+    retained-profits half; applying it would have left the next year's openings out of
+    balance by the amendment.
+
+    Found by the Tier 2 trust roll-forward spec (e2e/tier2/roll_forward_trust.spec.ts),
+    which is exactly the case the company fixture cannot reach: its 3-1000 carries a
+    prior balance, so retained_code is always found.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user(
+            username="rollfwd_rp_noline",
+            password="testpass123",
+            role=User.Role.ADMIN,
+            totp_secret="dummy-secret-rollfwd-rp-noline",
+            totp_confirmed=True,
+        )
+        cls.client_obj = ClientModel.objects.create(name="No-RP-Line Test Client")
+        cls.entity = Entity.objects.create(
+            entity_name="No-RP-Line Family Trust",
+            entity_type="trust",
+            client=cls.client_obj,
+            primary_accountant=cls.user,
+        )
+        # The trust COA auto-seed signal fires on creation; the fixture's own chart is
+        # layered over it so 4199 keeps the name and section under test.
+        for code, name, section in TRUST_CHART:
+            EntityChartOfAccount.objects.update_or_create(
+                entity=cls.entity, account_code=code,
+                defaults={"account_name": name, "section": section, "is_active": True},
+            )
+
+    def setUp(self):
+        self.prior_fy = FinancialYear.objects.create(
+            entity=self.entity,
+            year_label="FY2025",
+            start_date=date(2024, 7, 1),
+            end_date=date(2025, 6, 30),
+            status=FinancialYear.Status.FINALISED,
+        )
+        self.next_fy = FinancialYear.objects.create(
+            entity=self.entity,
+            year_label="FY2026",
+            start_date=date(2025, 7, 1),
+            end_date=date(2026, 6, 30),
+            status=FinancialYear.Status.DRAFT,
+            prior_year=self.prior_fy,
+        )
+        for code, name, closing in TRUST_PRIOR_FIGURES:
+            TrialBalanceLine.objects.create(
+                financial_year=self.prior_fy,
+                account_code=code,
+                account_name=name,
+                closing_balance=closing,
+                debit=closing if closing > 0 else Decimal("0"),
+                credit=-closing if closing < 0 else Decimal("0"),
+                source="tb_import",
+            )
+
+    def test_the_expected_openings_include_the_retained_profits_account(self):
+        expected = _expected_next_year_openings(self.prior_fy)
+
+        self.assertIn(
+            "4199", expected,
+            "the year's result has nowhere to go: the account the roll forward would "
+            "create to hold it is missing from the expected openings",
+        )
+        self.assertEqual(expected["4199"][1], Decimal("-20000.00"))
+
+    def test_the_expected_openings_balance(self):
+        expected = _expected_next_year_openings(self.prior_fy)
+
+        self.assertEqual(
+            sum(opening for _name, opening in expected.values()),
+            Decimal("0.00"),
+            "expected openings that do not balance would roll an unbalanced year",
+        )
+
+    def test_the_expected_openings_match_what_the_roll_actually_writes(self):
+        """The contract this function exists to keep."""
+        expected = _expected_next_year_openings(self.prior_fy)
+        _populate_rolled_forward_fy(self.prior_fy, self.next_fy)
+
+        written = {
+            line.account_code: line.opening_balance
+            for line in TrialBalanceLine.objects.filter(
+                financial_year=self.next_fy, is_adjustment=False, source="rollover"
+            )
+            if line.opening_balance != Decimal("0")
+        }
+        self.assertEqual(
+            {code: opening for code, (_name, opening) in expected.items()
+             if opening != Decimal("0")},
+            written,
+        )
+
+    def test_the_reroll_diff_reports_the_retained_profits_account_after_an_amendment(self):
+        """The user-visible symptom.
+
+        Roll forward, then correct the prior year with an unrecorded $1,000 expense
+        invoice (Dr Accountancy, Cr Trade creditors). Both halves land on the balance
+        sheet -- creditors directly, and retained profits because the expense reduces
+        the year's profit -- so the reconciliation has to report both. Reporting only
+        creditors would leave the next year 1,000 out of balance.
+        """
+        _populate_rolled_forward_fy(self.prior_fy, self.next_fy)
+
+        creditors = TrialBalanceLine.objects.get(
+            financial_year=self.prior_fy, account_code="3048"
+        )
+        creditors.closing_balance = Decimal("-81000.00")
+        creditors.credit = Decimal("81000.00")
+        creditors.save(update_fields=["closing_balance", "credit"])
+        accountancy = TrialBalanceLine.objects.get(
+            financial_year=self.prior_fy, account_code="1510"
+        )
+        accountancy.closing_balance = Decimal("11000.00")
+        accountancy.debit = Decimal("11000.00")
+        accountancy.save(update_fields=["closing_balance", "debit"])
+
+        http = Client()
+        http.force_login(self.user)
+        session = http.session
+        session["2fa_verified"] = True
+        session.save()
+
+        response = http.get(
+            reverse("core:reroll_forward_diff", args=[self.prior_fy.pk]), secure=True
+        )
+        self.assertEqual(response.status_code, 200)
+        changed = sorted(c["account_code"] for c in response.json()["changes"])
+
+        self.assertEqual(
+            changed, ["3048", "4199"],
+            "the reconciliation is blind to the retained-profits half of the "
+            "amendment, so applying it would leave the next year out of balance",
         )
