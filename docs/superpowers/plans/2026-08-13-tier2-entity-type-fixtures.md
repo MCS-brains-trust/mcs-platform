@@ -296,7 +296,7 @@ Expected: PASS. `core.tests_e2e_fixture_data` is the pre-existing suite for this
 cd /opt/statementhub/e2e && npm run test:tier2 -- tier2/roll_forward.spec.ts
 ```
 
-Expected: all 7 tests pass against the **existing** blessed baseline, with no blessing step. If any figure moved, the refactor changed seeded data — fix that before continuing.
+Expected: all 6 tests pass against the **existing** blessed baseline, with no blessing step. If any figure moved, the refactor changed seeded data — fix that before continuing.
 
 - [ ] **Step 6: Commit**
 
@@ -972,7 +972,7 @@ Keep the existing file header comment — it documents two production fixes and 
 cd /opt/statementhub/e2e && npm run test:tier2 -- tier2/roll_forward.spec.ts
 ```
 
-Expected: the same 7 tests pass against the existing blessed baseline, with no blessing. Any figure change means the extraction altered behaviour.
+Expected: the same 6 tests pass against the existing blessed baseline, with no blessing. Any figure change means the extraction altered behaviour.
 
 - [ ] **Step 4: Commit**
 
