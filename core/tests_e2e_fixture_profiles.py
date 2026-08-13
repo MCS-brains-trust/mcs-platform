@@ -135,3 +135,114 @@ class TrustProfileTests(TestCase):
         entity = Entity.objects.get(pk=ids["entity"])
         self.assertEqual(entity.entity_type, "trust")
         self.assertTrue(is_valid_abn(entity.abn))
+
+
+class PartnershipProfileTests(TestCase):
+    """Modelled on D.P Vaughan & D Vriend: partner sub-accounts at .01/.02 as the
+    trust has, but 4199 Unappropriated profits in capital_accounts -- so this
+    fixture isolates the sub-account question from the section question."""
+
+    def test_the_prior_year_trial_balance_balances(self):
+        from core.models import TrialBalanceLine
+
+        ids = seed_fixture_entity(PROFILES["partnership"])
+        lines = TrialBalanceLine.objects.filter(financial_year=ids["prior_fy"])
+        self.assertEqual(
+            sum(line.debit for line in lines), sum(line.credit for line in lines)
+        )
+        self.assertEqual(sum(line.debit for line in lines), Decimal("100000.00"))
+
+    def test_both_partners_have_opening_balance_and_share_of_profit_accounts(self):
+        from core.models import EntityChartOfAccount
+
+        ids = seed_fixture_entity(PROFILES["partnership"])
+        codes = set(
+            EntityChartOfAccount.objects.filter(entity_id=ids["entity"]).values_list(
+                "account_code", flat=True
+            )
+        )
+        for code in ("4000.01", "4000.02", "4003.01", "4003.02", "4054.01", "4054.02"):
+            self.assertIn(code, codes)
+
+    def test_unappropriated_profits_is_the_retained_profits_account(self):
+        from core.models import EntityChartOfAccount
+
+        ids = seed_fixture_entity(PROFILES["partnership"])
+        account = EntityChartOfAccount.objects.get(
+            entity_id=ids["entity"], account_code="4199"
+        )
+        self.assertEqual(account.account_name, "Unappropriated profits")
+        self.assertEqual(account.section, "capital_accounts")
+        self.assertEqual(PROFILES["partnership"].retained_profits_code, "4199")
+
+
+class SoleTraderProfileTests(TestCase):
+    """Modelled on Daniel Habteslassie: no sub-coded capital accounts at all -- the
+    real chart has none -- and a 2850/2859 plant pairing rather than 2860/2869."""
+
+    def test_the_prior_year_trial_balance_balances(self):
+        from core.models import TrialBalanceLine
+
+        ids = seed_fixture_entity(PROFILES["sole_trader"])
+        lines = TrialBalanceLine.objects.filter(financial_year=ids["prior_fy"])
+        self.assertEqual(
+            sum(line.debit for line in lines), sum(line.credit for line in lines)
+        )
+        self.assertEqual(sum(line.debit for line in lines), Decimal("100000.00"))
+
+    def test_no_capital_account_is_sub_coded(self):
+        from core.models import EntityChartOfAccount
+
+        ids = seed_fixture_entity(PROFILES["sole_trader"])
+        codes = EntityChartOfAccount.objects.filter(
+            entity_id=ids["entity"], section="capital_accounts"
+        ).values_list("account_code", flat=True)
+        self.assertTrue(codes)
+        for code in codes:
+            self.assertNotIn(".", code)
+
+    def test_undistributed_income_is_the_retained_profits_account(self):
+        from core.models import EntityChartOfAccount
+
+        ids = seed_fixture_entity(PROFILES["sole_trader"])
+        account = EntityChartOfAccount.objects.get(
+            entity_id=ids["entity"], account_code="4199"
+        )
+        self.assertEqual(account.account_name, "Undistributed income")
+        self.assertEqual(account.section, "capital_accounts")
+        self.assertEqual(PROFILES["sole_trader"].retained_profits_code, "4199")
+
+
+class AllProfilesTests(TestCase):
+    """Invariants every profile has to satisfy, so a new one cannot be added
+    carelessly."""
+
+    def test_every_profile_has_a_distinct_set_of_fixed_ids(self):
+        seen = set()
+        for profile in PROFILES.values():
+            for value in profile.ids.values():
+                self.assertNotIn(value, seen, f"{profile.key} reuses id {value}")
+                seen.add(value)
+
+    def test_every_profile_declares_a_retained_profits_account_in_its_own_chart(self):
+        for profile in PROFILES.values():
+            codes = {code for code, _name, _section in profile.chart}
+            self.assertIn(
+                profile.retained_profits_code,
+                codes,
+                f"{profile.key}'s retained_profits_code is not in its chart",
+            )
+
+    def test_every_profiles_prior_year_trial_balance_balances(self):
+        for profile in PROFILES.values():
+            debits = sum(debit for _c, _n, debit, _cr in profile.prior_year_tb)
+            credits = sum(credit for _c, _n, _d, credit in profile.prior_year_tb)
+            self.assertEqual(debits, credits, f"{profile.key}'s prior TB is unbalanced")
+
+    def test_every_trial_balance_account_exists_in_its_chart(self):
+        for profile in PROFILES.values():
+            chart_codes = {code for code, _name, _section in profile.chart}
+            for code, _name, _debit, _credit in profile.prior_year_tb:
+                self.assertIn(
+                    code, chart_codes, f"{profile.key}: {code} is not in its chart"
+                )

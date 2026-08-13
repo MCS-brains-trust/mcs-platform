@@ -189,6 +189,22 @@ TRUST_PRIOR_TB = [
     ("1510", "Accountancy", Decimal("10000.00"), Decimal("0.00")),
 ]
 
+# NOTE: the trust is the one profile whose seeded chart is bigger than the list
+# above. core/signals.py's handle_trust_entity_created fires on Entity creation and
+# calls EntityChartOfAccount.seed_from_template, which adds the 466-row master trust
+# template -- so on the E2E database this entity ends up with 469 accounts, not 11.
+#
+# That is left in place deliberately. A trust created through the real UI gets those
+# accounts too, so suppressing them would make the fixture model a state that cannot
+# exist in production. The chart list above is still applied afterwards and wins on
+# every code it names (update_or_create), which is what keeps 4199 pointing at
+# Undistributed income in pl_appropriation. Verified on 2026-08-13 that the template
+# contributes no rival retained-profits candidate: 4199 is the only account in this
+# entity's whole chart matching undistributed/unappropriated/retained or sitting in
+# pl_appropriation.
+#
+# The prior-year trial balance -- which is what the roll-forward flow actually reads
+# -- stays at the 8 deterministic lines below regardless.
 TRUST = FixtureProfile(
     key="trust",
     ids=TRUST_IDS,
@@ -207,7 +223,130 @@ TRUST = FixtureProfile(
     retained_profits_code="4199",
 )
 
-PROFILES = {"company": COMPANY, "trust": TRUST}
+PARTNERSHIP_IDS = {
+    "client": "e2e00002-0000-4000-8000-000000000001",
+    "entity": "e2e00002-0000-4000-8000-000000000002",
+    "prior_fy": "e2e00002-0000-4000-8000-000000000003",
+    "current_fy": "e2e00002-0000-4000-8000-000000000004",
+}
+
+# Codes taken from D.P Vaughan & D Vriend. Share-of-profit (4003.x) and drawings
+# (4054.x) exist in the chart but carry no prior balance -- they are movement
+# accounts, and leaving them empty keeps the arithmetic identical across profiles.
+PARTNERSHIP_CHART = [
+    ("2000", "Cash at bank", "assets"),
+    ("2860", "Plant & equipment (cost)", "assets"),
+    ("2869", "Less: Accumulated depreciation", "assets"),
+    ("3048", "Trade creditors", "liabilities"),
+    ("4000.01", "Opening balance - Partner — Partner One", "capital_accounts"),
+    ("4000.02", "Opening balance - Partner — Partner Two", "capital_accounts"),
+    ("4003.01", "Share of profit — Partner One", "capital_accounts"),
+    ("4003.02", "Share of profit — Partner Two", "capital_accounts"),
+    ("4054.01", "Drawings - Partner One", "capital_accounts"),
+    ("4054.02", "Drawings - Partner Two", "capital_accounts"),
+    ("4199", "Unappropriated profits", "capital_accounts"),
+    ("0105", "Sales", "revenue"),
+    ("1510", "Accountancy", "expenses"),
+]
+
+PARTNERSHIP_PRIOR_TB = [
+    ("2000", "Cash at bank", Decimal("70000.00"), Decimal("0.00")),
+    ("2860", "Plant & equipment (cost)", Decimal("20000.00"), Decimal("0.00")),
+    ("2869", "Less: Accumulated depreciation", Decimal("0.00"), Decimal("4000.00")),
+    ("3048", "Trade creditors", Decimal("0.00"), Decimal("6000.00")),
+    (
+        "4000.01",
+        "Opening balance - Partner — Partner One",
+        Decimal("0.00"),
+        Decimal("30000.00"),
+    ),
+    (
+        "4000.02",
+        "Opening balance - Partner — Partner Two",
+        Decimal("0.00"),
+        Decimal("30000.00"),
+    ),
+    ("0105", "Sales", Decimal("0.00"), Decimal("30000.00")),
+    ("1510", "Accountancy", Decimal("10000.00"), Decimal("0.00")),
+]
+
+PARTNERSHIP = FixtureProfile(
+    key="partnership",
+    ids=PARTNERSHIP_IDS,
+    client_name="E2E Fixture Client (partnership)",
+    entity_kwargs={
+        "entity_name": "E2E Fixture Partners",
+        "entity_type": "partnership",
+        "abn": "11000000592",
+        "financial_year_end": "06-30",
+        "reporting_framework": "SPFR",
+        "is_gst_registered": True,
+        "include_comparative_figures": True,
+    },
+    chart=PARTNERSHIP_CHART,
+    prior_year_tb=PARTNERSHIP_PRIOR_TB,
+    retained_profits_code="4199",
+)
+
+SOLE_TRADER_IDS = {
+    "client": "e2e00003-0000-4000-8000-000000000001",
+    "entity": "e2e00003-0000-4000-8000-000000000002",
+    "prior_fy": "e2e00003-0000-4000-8000-000000000003",
+    "current_fy": "e2e00003-0000-4000-8000-000000000004",
+}
+
+# Codes taken from Daniel Habteslassie. This chart deliberately has no sub-coded
+# capital accounts -- the real one does not either -- so it tests "does the year's
+# result reach the type-correct account" with the sub-account variable removed.
+# Note the plant pairing is 2850/2859 here, not 2860/2869: the convention is cost
+# at N, accumulated depreciation at N+9, and this entity's plant sits at 2850.
+SOLE_TRADER_CHART = [
+    ("2000", "Cash at bank", "assets"),
+    ("2850", "Plant & equipment - At cost", "assets"),
+    ("2859", "Less: Accumulated depreciation", "assets"),
+    ("3048", "Trade creditors", "liabilities"),
+    ("4010", "Capital contribution", "capital_accounts"),
+    ("4049", "Share of profit", "capital_accounts"),
+    ("4080", "Drawings", "capital_accounts"),
+    ("4199", "Undistributed income", "capital_accounts"),
+    ("0105", "Sales", "revenue"),
+    ("1510", "Accountancy", "expenses"),
+]
+
+SOLE_TRADER_PRIOR_TB = [
+    ("2000", "Cash at bank", Decimal("70000.00"), Decimal("0.00")),
+    ("2850", "Plant & equipment - At cost", Decimal("20000.00"), Decimal("0.00")),
+    ("2859", "Less: Accumulated depreciation", Decimal("0.00"), Decimal("4000.00")),
+    ("3048", "Trade creditors", Decimal("0.00"), Decimal("6000.00")),
+    ("4010", "Capital contribution", Decimal("0.00"), Decimal("60000.00")),
+    ("0105", "Sales", Decimal("0.00"), Decimal("30000.00")),
+    ("1510", "Accountancy", Decimal("10000.00"), Decimal("0.00")),
+]
+
+SOLE_TRADER = FixtureProfile(
+    key="sole_trader",
+    ids=SOLE_TRADER_IDS,
+    client_name="E2E Fixture Client (sole_trader)",
+    entity_kwargs={
+        "entity_name": "E2E Fixture Sole Trader",
+        "entity_type": "sole_trader",
+        "abn": "11000000641",
+        "financial_year_end": "06-30",
+        "reporting_framework": "SPFR",
+        "is_gst_registered": True,
+        "include_comparative_figures": True,
+    },
+    chart=SOLE_TRADER_CHART,
+    prior_year_tb=SOLE_TRADER_PRIOR_TB,
+    retained_profits_code="4199",
+)
+
+PROFILES = {
+    "company": COMPANY,
+    "trust": TRUST,
+    "partnership": PARTNERSHIP,
+    "sole_trader": SOLE_TRADER,
+}
 
 
 @transaction.atomic
