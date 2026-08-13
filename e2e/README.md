@@ -121,7 +121,31 @@ later assertions order-dependent). Those are Tier 2's job.
 - 435 application routes (Django admin's 432 are reported separately, being third-party)
 - 213 crawlable, 210 excluded by category, 12 unresolved
 - Tier 1: 207 passing, 8 failing on genuine defects (see `known_failures` and below)
-- Tier 2: two flows — year-end close and roll-forward — asserting figures, not statuses
+- Tier 2: 32 tests asserting figures, not statuses — year-end close, plus roll-forward
+  across four entity types (company, trust, partnership, sole trader), each with its own
+  deterministic fixture, Django instance and database branch
+
+### Tier 2 fixtures
+
+The roll-forward flow lives in `tier2/roll_forward_flow.ts` and is called once per
+entity type by a thin spec file. Each type exists because its equity structure differs,
+which is where the defects have been:
+
+| Type | Account holding the year's result | Section | Sub-coded capital accounts |
+|---|---|---|---|
+| company | `3-1000` Retained earnings | `equity` | no |
+| trust | `4199` Undistributed income | `pl_appropriation` | yes, per beneficiary |
+| partnership | `4199` Unappropriated profits | `capital_accounts` | yes, per partner |
+| sole_trader | `4199` Undistributed income | `capital_accounts` | no |
+
+The company fixture is the odd one out on purpose: its chart uses MYOB-style hyphenated
+codes, and no entity in the production copy has one. That mismatch is what exposed the
+retained-profits defect. The other three use the HandiLedger numerics every real entity
+actually carries, modelled on a named exemplar entity each.
+
+Run one profile with `npm run test:tier2 -- tier2/roll_forward_trust.spec.ts`. Six spec
+files each boot a Django instance and a ~471 MB database branch, so use `--workers=2`
+for a full-tier run — production shares this host.
 
 ## Known defects found by the suite
 
