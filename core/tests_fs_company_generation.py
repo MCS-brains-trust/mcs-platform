@@ -375,3 +375,48 @@ class TradingAndCostOfSalesTests(TestCase):
         """900,000 trading income - 390,000 cost of sales = 510,000. The value is
         exposed to templates; no .docx renders it, and none should."""
         self.assertEqual(self.context["gross_profit_cy"], "510,000")
+
+
+@override_settings(STORAGES=STORAGES_OVERRIDE)
+class TradingStockTests(TestCase):
+    """The stock cycle, and its tie to the balance sheet.
+
+        opening stock              60,000   (prior year's closing stock)
+        purchases                 400,000
+        less closing stock        (70,000)
+        cost of sales             390,000
+
+    Closing stock 70,000 equals finished goods carried on the balance sheet, and
+    prior closing stock 60,000 equals both the prior carrying amount and the
+    current year's opening stock. Those ties make the fixture self-checking.
+    """
+
+    def setUp(self):
+        self.context = build_company_context(build_company_fy(MAXIMAL_ROWS))
+        self.by_code = {}
+        for items in self.context["_sections"].values():
+            for item in items:
+                self.by_code[item["account_code"]] = item
+
+    def test_the_stock_cycle_produces_cost_of_sales(self):
+        opening = self.by_code["1100"]["cy_amount"]
+        purchases = self.by_code["1115"]["cy_amount"]
+        closing = self.by_code["1130"]["cy_amount"]
+        self.assertEqual(opening + purchases + closing, Decimal("390000"))
+        self.assertEqual(self.context["total_cogs_cy"], "390,000")
+
+    def test_finished_goods_is_a_current_asset(self):
+        codes = {i["account_code"] for i in self.context["_sections"]["current_assets"]}
+        self.assertIn("2363", codes)
+        self.assertEqual(self.context["total_current_assets_cy"], "400,000")
+
+    def test_closing_stock_ties_to_the_balance_sheet_carrying_amount(self):
+        closing_stock = -self.by_code["1130"]["cy_amount"]
+        on_hand = self.by_code["2363"]["cy_amount"]
+        self.assertEqual(closing_stock, on_hand)
+
+    def test_prior_closing_stock_ties_to_current_opening_stock(self):
+        prior_closing = -self.by_code["1130"]["py_amount"]
+        current_opening = self.by_code["1100"]["cy_amount"]
+        self.assertEqual(prior_closing, current_opening)
+        self.assertEqual(prior_closing, self.by_code["2363"]["py_amount"])
