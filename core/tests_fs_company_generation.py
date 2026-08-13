@@ -236,3 +236,49 @@ class BuilderTests(TestCase):
             for item in items:
                 with self.subTest(code=item["account_code"]):
                     self.assertEqual(item["py_amount"], Decimal("0"))
+
+
+@override_settings(STORAGES=STORAGES_OVERRIDE)
+class IncomeTaxTests(TestCase):
+    """4110 mapped to BS-EQ-011 is the tax journal.
+
+    Hand-computed, current year:
+        income          900,000 + 20,000            = 920,000
+        cost of sales    60,000 + 400,000 - 70,000  = 390,000
+        other expenses   10,000 + 30,000 + 250,000  = 290,000
+        profit pretax   920,000 - 390,000 - 290,000 = 240,000
+        income tax                                     60,000
+        profit after tax        240,000 - 60,000    = 180,000
+
+    The ac69078 defect made profit after tax EXCEED profit before tax, because a
+    non-tax equity account was swept into the tax figure with a credit balance.
+    """
+
+    def setUp(self):
+        self.context = build_company_context(build_company_fy(MAXIMAL_ROWS))
+
+    def test_the_tax_journal_is_recognised(self):
+        self.assertTrue(self.context["has_income_tax"])
+        self.assertEqual(self.context["_income_tax_cy"], Decimal("60000"))
+        self.assertEqual(self.context["_income_tax_py"], Decimal("50000"))
+
+    def test_tax_is_deducted_from_profit_not_added(self):
+        self.assertEqual(self.context["net_profit_pretax_cy"], "240,000")
+        self.assertEqual(self.context["net_profit_cy"], "180,000")
+
+    def test_the_tax_line_displays_as_a_deduction(self):
+        """format_amount(-60000) -- brackets mean deducted. A positive figure here
+        is the ac69078 symptom."""
+        self.assertEqual(self.context["income_tax_cy"], "(60,000)")
+        self.assertEqual(self.context["income_tax_py"], "(50,000)")
+
+    def test_the_tax_account_is_removed_from_equity(self):
+        equity_codes = {i["account_code"] for i in self.context["_sections"]["equity"]}
+        self.assertNotIn("4110", equity_codes)
+        self.assertIn("4200", equity_codes)
+        self.assertIn("4199", equity_codes)
+
+    def test_the_retained_profit_appropriation_reconciles(self):
+        """opening 205,000 + after-tax profit 180,000 = closing 385,000"""
+        self.assertEqual(self.context["retained_profit_opening_cy"], "205,000")
+        self.assertEqual(self.context["retained_profit_closing_cy"], "385,000")
