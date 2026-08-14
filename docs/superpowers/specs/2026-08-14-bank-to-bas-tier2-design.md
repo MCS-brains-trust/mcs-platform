@@ -41,12 +41,31 @@ available in the venv. The committed PDF is a build artifact of
 `e2e/fixtures/statements/make_cba.py`, so what a reviewer reads is a transaction table
 and layout constants rather than an opaque blob. The properties it must reproduce:
 
-- kerning tight enough that `31 Oct` collapses to `31Oct` in non-layout extraction —
-  the exact condition that produced the empty-result defect
+- dates in the glued form `31Oct` that `statement_geometry.DATE_RE` expects
 - debit and credit column x-positions, the only encoding of the sign
-- header text matching the `detect_bank` regex, so the CBA path is selected
-- a running balance that reconciles, so the geometry engine's gate passes rather than
-  falling through to the legacy parser
+- a preamble containing "Commonwealth Bank", which is what actually routes the file
+- a table header that does **not** match `date\s+transaction\s+details\s+amount\s+balance`,
+  or the file is classified as the transaction-listing variant instead
+- opening and closing balance anchors that reconcile, so the geometry engine's gate passes
+  rather than falling through to the legacy parser
+
+**Correction, 2026-08-14.** An earlier draft of this section said the fixture needed
+"header text matching the `detect_bank` regex, so the CBA path is selected". That is
+false, and Task 2's review caught it against the source. `detect_bank`
+(`review/pdf_parsers.py:1741`) selects CBA on `"commonwealth bank" in text_lower or
+"commbank" in text_lower` — a bare substring match on the bank name. The only whitespace
+regex in that function discriminates the *transaction-listing* header shape, which this
+fixture never matches. The header's column spacing is therefore not what routes the file;
+it matters only to the legacy `parse_cba_statement`, which this fixture never reaches
+because the geometry engine succeeds first.
+
+**Fidelity limit worth stating plainly.** The fixture stores its dates as already-glued
+literals (`"02Oct"`) and draws each with one call. It does not *reproduce* the kerning
+collapse that caused the original defect — it assumes that collapse's outcome. That is the
+correct input shape for testing the geometry parser, which expects the glued form, but it
+means this fixture cannot catch a regression in how real-world kerning is handled. Only a
+real PDF can, and a real PDF cannot be committed. This belongs in the suite's
+"what it does not cover" list.
 
 The transaction set is deliberately mixed: GST-taxable, GST-free, a debit and a credit
 sharing one date, and a description long enough to wrap.

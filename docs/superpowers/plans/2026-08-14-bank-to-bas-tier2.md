@@ -37,7 +37,29 @@ All checked against the tree at `4403f5b` on 2026-08-14.
 | Furniture skipped | `Page\d+of\d+`, `DateTransactionDebitCreditBalance`, `AccountNumber`, `^\d{5}\.\d{5}` |
 | Sign convention | credit > 0, debit < 0 |
 
-**The dual property the fixture must have.** `detect_bank` matches `Date\s+Transaction\s+Debit\s+Credit\s+Balance` against `extract_text()`, which needs **real whitespace in the header**. The transaction dates must simultaneously collapse to `31Oct`. Both are true of real statements — the header is set with wide spacing, the date column is tight — and a fixture with uniformly wide spacing would be detected but parse zero rows, while a uniformly tight one would not be detected at all.
+**How the fixture actually gets routed — corrected 2026-08-14, after Task 2's review checked it against the source.**
+
+This section previously claimed `detect_bank` matches `Date\s+Transaction\s+Debit\s+Credit\s+Balance` against `extract_text()`, so the fixture needed real whitespace in its header. **That is false.** `detect_bank` (`review/pdf_parsers.py:1741`) selects CBA on:
+
+```python
+is_cba = "commonwealth bank" in text_lower or "commbank" in text_lower
+```
+
+A bare substring match on the preamble bank name. The only whitespace regex in that function (`:1743`) discriminates the transaction-listing variant, `date\s+transaction\s+details\s+amount\s+balance`, which this fixture never matches because its header says Debit/Credit rather than details/amount.
+
+So the properties that actually matter are:
+
+| Property | What needs it |
+|---|---|
+| Preamble contains "Commonwealth Bank" | `detect_bank` → `"cba"` |
+| Header does NOT say "details"/"amount" | avoids `"cba_txn_listing"` |
+| Dates glued as `02Oct` | `statement_geometry.DATE_RE` |
+| Debit/credit columns >12pt apart | `_money_columns` |
+| Opening/closing anchors reconcile | the geometry engine's gate |
+
+The header's column spacing matters only to the legacy `parse_cba_statement`, which this fixture never reaches because the geometry engine succeeds first. Task 2's tests are honest about this: only one of its two guards defends the header spacing, and it defends it as an input-shape property rather than as the routing mechanism.
+
+**A fidelity limit to record, not fix.** The dates are stored as glued literals and drawn with one call, so the fixture assumes the kerning collapse's outcome rather than reproducing it. Correct input shape for the parser; unable to catch a regression in real-world kerning handling. Task 9 documents this.
 
 **Selector hooks that exist.** There are **no `data-testid` attributes anywhere in the project** — Tier 2's convention is CSS ids plus `expect(page.locator('body')).toContainText(...)`.
 
@@ -948,6 +970,11 @@ git commit -m "test: the coverage gate, lodgement snapshot and unlodge permissio
 - [ ] **Step 1: Update the coverage section**
 
 Add the new spec to the Tier 2 description: seven spec files now, and the bank-to-BAS flow covering CBA only, company only, with the AI suggestion path excluded. State the port (8206) in the same table the others use, and record explicitly that the other eight bank parsers are uncovered and why — a reader must not infer that "bank statements are tested" means all banks.
+
+Two further limits must be stated, both discovered during execution and neither fixable with a committed fixture:
+
+1. **The fixture assumes the kerning collapse rather than reproducing it.** Dates are stored as glued literals (`02Oct`) and drawn with a single call. That is the input shape the geometry parser expects, so it is correct — but it means a regression in how real-world kerning is handled would not be caught here. Only a real PDF could catch that, and a real client statement cannot be committed.
+2. **The fixture carries no per-transaction running balance,** because a balance on every row out-populates the real debit and credit clusters in `_money_columns` and gets mistaken for a money column. Real statements have that column. The parser reads no balance from transaction rows, so nothing under test observes the difference — but the fixture is that much less like the real thing, and a reader comparing the two should know why.
 
 - [ ] **Step 2: Confirm nothing is red**
 
