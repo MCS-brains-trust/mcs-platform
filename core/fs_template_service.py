@@ -608,6 +608,23 @@ _BANK_KEYWORDS = (
 # _classify_current_asset) preserved for unmapped accounts.
 _CASH_STANDARD_CODES = {"BS-CA-001"}
 
+# Inventory names must be tested before the cash keywords: "on hand" is in the cash
+# list, so "Stock on Hand" — a default Xero account name — grouped under Cash and
+# Cash Equivalents until this existed.
+#
+# The list is deliberately tight, following the discipline _INCOME_TAX_NAME_KEYWORDS
+# documents below. Bare "stock" would catch "Stock options"; "work in progress" on a
+# services chart is unbilled labour, a receivable, not trading stock.
+_INVENTORY_STANDARD_CODES = {"BS-CA-003"}
+
+_INVENTORY_NAME_KEYWORDS = (
+    "stock on hand",
+    "inventor",
+    "finished goods",
+    "raw material",
+    "trading stock",
+)
+
 # AccountMapping.standard_code values that classify as Trading Income on the P&L.
 # Source of truth for the trading-vs-other-income predicate (Defect B Phase 2).
 # Currently narrow (IS-REV-001 'Revenue' only) — the seeded AccountMapping table
@@ -796,6 +813,26 @@ def _reclassify_sign_flips(sections):
     sections["current_liabilities"] = cl_keep
 
 
+def _is_inventory_item(item):
+    """Is this account trading stock?
+
+    The single predicate for inventory. The note trigger in ``_compute_note_map``,
+    the note body in ``_generate_notes_document`` and the balance-sheet sub-heading
+    in ``_classify_current_asset`` all call this one function: the comment at the
+    related-party render step records what happens when two of those drift apart —
+    a "(Note N)" reference pointing at a note with no matching line.
+
+    An explicit cash mapping beats a stock-sounding name, so an account the
+    accountant mapped to BS-CA-001 stays cash whatever it is called.
+    """
+    if item.get("standard_code") in _INVENTORY_STANDARD_CODES:
+        return True
+    if item.get("standard_code") in _CASH_STANDARD_CODES:
+        return False
+    name_lower = (item.get("account_name") or "").lower()
+    return any(kw in name_lower for kw in _INVENTORY_NAME_KEYWORDS)
+
+
 def _classify_current_asset(item):
     """Classify an aggregated current-asset entry into a sub-heading.
 
@@ -806,6 +843,8 @@ def _classify_current_asset(item):
     Account" group correctly even when no mapping has been set. Any loan
     recorded as a current asset routes to Receivables.
     """
+    if _is_inventory_item(item):
+        return "Inventories"
     if item.get("standard_code") in _CASH_STANDARD_CODES:
         return "Cash and Cash Equivalents"
     name_lower = (item.get("account_name") or "").lower()
@@ -1023,6 +1062,12 @@ def _compute_note_map(sections, entity_type, has_income_tax):
         for i in sections["current_assets"]
     )
 
+    # Inventories trigger
+    has_inventory = any(
+        _is_inventory_item(i) and (i["cy_amount"] != 0 or i["py_amount"] != 0)
+        for i in sections["current_assets"]
+    )
+
     # PPE trigger — any non-current asset that is PPE at cost with non-zero balance
     has_ppe = False
     for item in sections["noncurrent_assets"]:
@@ -1071,6 +1116,8 @@ def _compute_note_map(sections, entity_type, has_income_tax):
     note_map.append((n, "policies")); n += 1
     if has_trade_debtors:
         note_map.append((n, "receivables")); n += 1
+    if has_inventory:
+        note_map.append((n, "inventories")); n += 1
     if has_ppe:
         note_map.append((n, "ppe")); n += 1
     if has_related_party:
@@ -1087,11 +1134,12 @@ def _compute_note_map(sections, entity_type, has_income_tax):
 def _assign_note_refs(items, note_lookup, classify_fn):
     """Add a 'note_ref' key to each item dict based on a classification function.
 
-    classify_fn(account_name_lower) -> note_type string or None.
+    classify_fn(item) -> note_type string or None. It receives the whole item,
+    not just the lowered name, so a classifier can consult ``standard_code`` —
+    inventories is recognised by its BS-CA-003 mapping first and its name second.
     """
     for item in items:
-        nl = item["account_name"].lower()
-        note_type = classify_fn(nl)
+        note_type = classify_fn(item)
         if note_type and note_type in note_lookup:
             item["note_ref"] = str(note_lookup[note_type])
         else:
@@ -1373,10 +1421,13 @@ def build_company_context(financial_year, include_watermark=True):
     # Compute note_map and assign note_ref to items for the Note column
     note_map, note_lookup = _compute_note_map(sections, entity_type, has_income_tax)
 
-    def _classify_note(nl):
-        """Return note_type for an account name, or None."""
+    def _classify_note(item):
+        """Return note_type for an account, or None."""
+        nl = item["account_name"].lower()
         if "trade" in nl and "debtor" in nl:
             return "receivables"
+        if _is_inventory_item(item):
+            return "inventories"
         if any(kw in nl for kw in [
             "equipment", "vehicle", "furniture", "building", "fixture",
             "plant", "motor", "computer", "office", "at cost",
@@ -2957,6 +3008,13 @@ def _generate_notes_document(context):
         i["cy_amount"] != 0 or i["py_amount"] != 0 for i in trade_debtors
     )
 
+    # Inventories — same predicate the note map and the balance-sheet
+    # sub-heading use, so the note body cannot disagree with the note number.
+    inventory_items = [i for i in sections["current_assets"] if _is_inventory_item(i)]
+    has_inventory = any(
+        i["cy_amount"] != 0 or i["py_amount"] != 0 for i in inventory_items
+    )
+
     # PPE — group into asset classes by TB proximity.
     # In the TB, a cost account is immediately followed by its depreciation
     # account. Walk the NCA list in order and build (cost, depr) pairs.
@@ -3324,6 +3382,38 @@ def _generate_notes_document(context):
             "Trade receivables are non-interest bearing and are generally on 30 to "
             "90 day terms. An allowance for doubtful debts is made when there is "
             "objective evidence that a trade receivable is impaired.",
+            space_before=4, space_after=6)
+
+    # ==================================================================
+    # Inventories
+    # ==================================================================
+    if has_inventory:
+        _notes_spacer(doc, 8)
+        n = _note_num_for("inventories")
+        _notes_add_para(doc, f"Note {n}: Inventories",
+                        bold=True, space_before=18, space_after=6)
+
+        tbl = _notes_create_table(doc, has_prior)
+        total_cy = Decimal("0")
+        total_py = Decimal("0")
+        for item in inventory_items:
+            cy = item["cy_amount"] or Decimal("0")
+            py = item["py_amount"] or Decimal("0")
+            total_cy += cy
+            total_py += py
+            _notes_add_table_row(tbl, item["account_name"],
+                                 _fmt_note_amount(cy), _fmt_note_amount(py))
+
+        total_row = _notes_add_table_row(tbl, "Total", _fmt_note_amount(total_cy),
+                                         _fmt_note_amount(total_py), bold=True)
+        _notes_apply_grand_total_border(total_row)
+
+        _notes_add_para(
+            doc,
+            "Inventories are measured at the lower of cost and net realisable "
+            "value. Cost is assigned on a first-in first-out basis and comprises "
+            "the purchase price and the costs incurred in bringing the "
+            "inventories to their present location and condition.",
             space_before=4, space_after=6)
 
     # ==================================================================
