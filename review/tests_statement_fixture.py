@@ -50,3 +50,39 @@ class FixtureParsesTests(SimpleTestCase):
         reviewer cannot tell what they are approving, and reportlab embeds a
         /CreationDate unless invariant mode is on."""
         self.assertEqual(make_cba.build_pdf(), make_cba.build_pdf())
+
+
+class FixtureRoutingTests(SimpleTestCase):
+    """The dual property: a header with real whitespace so detect_bank fires,
+    and glued dates so the geometry engine is the thing that parses it."""
+
+    def setUp(self):
+        self.pdf = make_cba.build_pdf()
+
+    def test_detect_bank_identifies_it_as_cba(self):
+        """A guard, not a red test -- make_cba.py's preamble already carries
+        "Commonwealth Bank of Australia" and its header is drawn with real
+        spaces, both deliberately, per the generator's own docstring. This
+        stayed green on the first run; it is kept to prove the fixture is
+        routed to the geometry parser rather than falling through to
+        "unknown" or a different bank's parser."""
+        from review.pdf_parsers import detect_bank
+
+        self.assertEqual(detect_bank(self.pdf), "cba")
+
+    def test_the_header_keeps_its_spaces_but_the_dates_do_not(self):
+        """A guard, not a red test -- this is the dual property make_cba.py's
+        docstring already documents as deliberate: the header is drawn with
+        wide inter-word gaps ("Date    Transaction    ...") so detect_bank's
+        whitespace regex matches extract_text(), while each date is drawn as
+        a single close-set string ("02Oct") so pdfplumber's word-clustering
+        glues it into one token instead of "02 Oct". Both were true before
+        this test existed, so it passed on first run."""
+        import io
+        import pdfplumber
+
+        with pdfplumber.open(io.BytesIO(self.pdf)) as pdf:
+            text = pdf.pages[0].extract_text()
+        self.assertRegex(text, r"Date\s+Transaction\s+Debit\s+Credit\s+Balance")
+        self.assertIn("02Oct", text)
+        self.assertNotIn("02 Oct", text)
