@@ -53,31 +53,49 @@ class FixtureParsesTests(SimpleTestCase):
 
 
 class FixtureRoutingTests(SimpleTestCase):
-    """The dual property: a header with real whitespace so detect_bank fires,
-    and glued dates so the geometry engine is the thing that parses it."""
+    """Two independent properties, not two halves of one mechanism:
+    detect_bank routes this fixture to "cba" purely on the preamble's
+    bank-name text ("Commonwealth Bank of Australia"). The header's
+    real-whitespace spacing and the glued date literal are properties of
+    the fixture's input shape to the geometry parser, not of bank
+    detection -- test_the_header_keeps_its_spaces_but_the_dates_do_not
+    below covers those, independently of routing."""
 
     def setUp(self):
         self.pdf = make_cba.build_pdf()
 
     def test_detect_bank_identifies_it_as_cba(self):
         """A guard, not a red test -- make_cba.py's preamble already carries
-        "Commonwealth Bank of Australia" and its header is drawn with real
-        spaces, both deliberately, per the generator's own docstring. This
-        stayed green on the first run; it is kept to prove the fixture is
-        routed to the geometry parser rather than falling through to
-        "unknown" or a different bank's parser."""
+        "Commonwealth Bank of Australia", deliberately, per the generator's
+        own docstring. This stayed green on the first run; it is kept to
+        prove the fixture is routed to "cba" rather than falling through to
+        "unknown" or a different bank's parser.
+
+        The routing here is a bare substring match on the preamble text
+        (review/pdf_parsers.py's `is_cba = "commonwealth bank" in text_lower
+        or "commbank" in text_lower`), independent of the transaction
+        table's column spacing -- detect_bank's only whitespace-sensitive
+        regex distinguishes the CBA "Transaction Listing" (NetBank export)
+        header shape from the standard one, a branch this fixture's header
+        never reaches since it contains neither "details" nor "amount".
+        So this test does not exercise the header-spacing half of the fixture's
+        dual property; only test_the_header_keeps_its_spaces_but_the_dates_do_not
+        does that."""
         from review.pdf_parsers import detect_bank
 
         self.assertEqual(detect_bank(self.pdf), "cba")
 
     def test_the_header_keeps_its_spaces_but_the_dates_do_not(self):
-        """A guard, not a red test -- this is the dual property make_cba.py's
-        docstring already documents as deliberate: the header is drawn with
-        wide inter-word gaps ("Date    Transaction    ...") so detect_bank's
-        whitespace regex matches extract_text(), while each date is drawn as
-        a single close-set string ("02Oct") so pdfplumber's word-clustering
-        glues it into one token instead of "02 Oct". Both were true before
-        this test existed, so it passed on first run."""
+        """A guard, not a red test -- this checks two rendering properties
+        make_cba.py's docstring documents as deliberate, neither of which is
+        about bank detection (see the preceding test): the header is drawn
+        with wide inter-word gaps ("Date    Transaction    ...") so
+        extract_text() preserves real spaces there, while each date is
+        stored and drawn as a single glued literal ("02Oct", one
+        c.drawString call, no separate "02"/"Oct" word pair), so
+        extract_text() reproduces it unglued only if someone edits the
+        source string to add the space back in. Both were true before this
+        test existed, so it passed on first run."""
         import io
         import pdfplumber
 
