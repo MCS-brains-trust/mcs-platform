@@ -5,45 +5,78 @@ on:
     branches:
       - main
 
+# One deploy at a time. Two merges landing together would otherwise race each
+# other through the same working tree and restart the services underneath one
+# another.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
 
     steps:
+      # No third-party action here on purpose. The org's Actions policy permits
+      # only actions owned by MCS-brains-trust, made by GitHub, or matching the
+      # allowlisted actions/* patterns, so appleboy/ssh-action was refused before
+      # any step ran. ssh is already installed on the runner, so this deploy needs
+      # no action at all -- not even actions/checkout, since every command below
+      # runs on the droplet rather than on the runner.
       - name: Deploy to Digital Ocean Droplet
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.DO_HOST }}
-          username: ${{ secrets.DO_USER }}
-          key: ${{ secrets.DO_SSH_KEY }}
-          script: |
-            set -e
-            echo "=== Starting deploy ==="
+        env:
+          DO_HOST: ${{ secrets.DO_HOST }}
+          DO_USER: ${{ secrets.DO_USER }}
+          DO_SSH_KEY: ${{ secrets.DO_SSH_KEY }}
+        run: |
+          set -euo pipefail
 
-            cd /opt/statementhub
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DO_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "$DO_HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
-            echo "=== Pulling latest code ==="
-            git pull origin main
+          ssh -i ~/.ssh/deploy_key -o BatchMode=yes \
+            "$DO_USER@$DO_HOST" 'bash -seu -o pipefail' <<'REMOTE'
+          echo "=== Starting deploy ==="
+          cd /opt/statementhub
 
-            echo "=== Installing dependencies ==="
-            /opt/statementhub/venv/bin/pip install -r requirements.txt -q
+          # /opt/statementhub is the live tree and is sometimes left on a feature
+          # branch. "git pull origin main" would then merge main INTO that branch
+          # and deploy the result. Move to main explicitly and fast-forward only,
+          # so anything unexpected stops the deploy rather than inventing a merge.
+          echo "=== Pulling latest code ==="
+          git fetch origin main
+          git checkout main
+          git merge --ff-only origin/main
+          git --no-pager log -1 --oneline
 
-            echo "=== Running migrations ==="
-            /opt/statementhub/venv/bin/python manage.py makemigrations --no-input
-            /opt/statementhub/venv/bin/python manage.py migrate --no-input
+          echo "=== Installing dependencies ==="
+          /opt/statementhub/venv/bin/pip install -r requirements.txt -q
 
-            echo "=== Repairing journal-TB integrity ==="
-            /opt/statementhub/venv/bin/python manage.py verify_journal_tb_integrity --repair
+          # makemigrations is deliberately absent. Authoring migrations on the
+          # server from live model state produces migration files that exist in
+          # production and in nobody's git history. Only reviewed migrations that
+          # arrived with this commit get applied.
+          echo "=== Running migrations ==="
+          /opt/statementhub/venv/bin/python manage.py migrate --no-input
 
-            echo "=== Fixing TB balance orphans ==="
-            /opt/statementhub/venv/bin/python manage.py fix_tb_balance --fix
+          # verify_journal_tb_integrity --repair and fix_tb_balance --fix used to
+          # run here. Both mutate client financial data, and both are skipped on
+          # every manual deploy for exactly that reason. A data repair is a
+          # deliberate, supervised act -- not something every merge to main
+          # performs unattended. Run them by hand when they are actually needed.
 
-            echo "=== Collecting static files ==="
-            /opt/statementhub/venv/bin/python manage.py collectstatic --no-input
+          echo "=== Collecting static files ==="
+          /opt/statementhub/venv/bin/python manage.py collectstatic --no-input
 
-            echo "=== Restarting services ==="
-            sudo systemctl restart gunicorn
-            sudo systemctl restart celery
-            sudo systemctl restart celerybeat
+          # Order matters: celery first, celerybeat second, gunicorn last.
+          # Restarting gunicorn first brings the web tier up able to dispatch
+          # tasks that the still-old worker has not registered.
+          echo "=== Restarting services ==="
+          sudo systemctl restart celery
+          sudo systemctl restart celerybeat
+          sudo systemctl restart gunicorn
 
-            echo "=== Deploy complete ==="
+          echo "=== Deploy complete ==="
+          REMOTE
