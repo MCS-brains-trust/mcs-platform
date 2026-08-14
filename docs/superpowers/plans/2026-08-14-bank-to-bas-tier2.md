@@ -169,6 +169,26 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'e2e.fixtures.statemen
 
 - [ ] **Step 3: Write the generator**
 
+> **The code below does NOT parse as written — corrected in `7bcb260`.** Proven during
+> execution on 2026-08-14, twice over. Take the committed
+> `e2e/fixtures/statements/make_cba.py` as the authority, not this snippet. Two changes
+> were required:
+>
+> 1. **Draw no per-transaction running balance.** `_money_columns` picks the two *most
+>    populous* clusters of bare-amount right edges. A balance on every row gives 8 tokens
+>    against 3 each for debit and credit, so the balance out-populates them, is mistaken
+>    for a money column, and reconciliation fails by **+67,334.00**. Gluing the balance to
+>    `CR` excludes it from `MOVE_RE` but it then survives `_text_only` and contaminates
+>    every description instead. Only the OPENING and CLOSING anchor rows carry a balance,
+>    and that costs nothing: `parse_cba_geometry`'s transaction dicts have no balance
+>    field, so nothing downstream can observe its absence.
+> 2. **Give the preamble row a `Page 1 of 1` marker**, so `_is_furniture` skips it.
+>    Otherwise nothing resets the description accumulator before the first transaction and
+>    the bank's name prefixes it.
+>
+> The snippet is kept rather than rewritten because the two failures it produces are
+> instructive, and any future bank's fixture will hit the same two traps.
+
 Both properties matter: the header keeps real spaces so `detect_bank` fires, the date column is drawn tight so the date glues. `drawString` at explicit x positions is what puts the debit and credit columns >12pt apart.
 
 ```python
