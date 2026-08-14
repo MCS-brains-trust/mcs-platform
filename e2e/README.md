@@ -292,28 +292,18 @@ The fixture entity is seeded by `manage.py e2e_seed_fixture_entity` on every boo
 its figures survive a `refresh_e2e_db.sh` and the baseline changes only when the code
 does.
 
-**Two Tier 2 tests are intentionally red**, each the last test in its file so
-Playwright's serial mode (which skips every remaining test in a file after the first
-failure) still runs everything else:
+**Tier 2 is fully green, and that is the healthy state.** This section previously
+described two intentionally-red tests — a depreciation idempotency failure in
+`yearend_close.spec.ts` and a roll-forward classification failure in
+`roll_forward.spec.ts`. Both defects have since been fixed in application code and
+pinned by `core/tests_rollforward_classification.py` and
+`core/tests_rollforward_retained_profits.py`; `tier2/known_failures.json` records the
+same thing and its list is empty.
 
-- `yearend_close.spec.ts` — "posting depreciation is idempotent and leaves opening
-  balances alone". `depreciation_post_to_tb` posts an unbalanced reversal journal;
-  pressing "Post to Trial Balance" twice leaves the trial balance out of balance
-  rather than at a net-zero change.
-- `roll_forward.spec.ts` — "every balance-sheet account should carry its prior-year
-  closing balance forward, and the reroll diff should catch it if one later changes".
-  `_is_balance_sheet_account` (core/views.py) has no classification path for an
-  account whose code isn't in the internal numeric HandiLedger ranges, has no
-  `mapped_line_item`, and isn't in the *entity-type* `ChartOfAccount` template (a
-  different model from the entity's own `EntityChartOfAccount`, which is never
-  consulted at all) — exactly this fixture's chart of accounts. Every account,
-  including balance-sheet ones, is misclassified as P&L and rolls forward with a
-  zeroed opening balance instead of carrying its closing balance; the same
-  classification call inside `reroll_forward_diff` makes the reconciliation "Re-Roll
-  Forward" modal blind to the resulting drift too, even after a genuine correction.
-
-Neither is a rig problem — a red Tier 2 suite with exactly these two failures named is
-the expected, healthy state until both are fixed in application code.
+`known_failures.json` is the authority, not this file. `scripts/check_tier2_failures.sh`
+compares the actual failing set against it in both directions, so a new failure *and* a
+silently-fixed known one are both loud. An empty list means every Tier 2 test passes and
+any failure is a regression — do not add an entry to quiet a red test.
 
 ## Layout
 
