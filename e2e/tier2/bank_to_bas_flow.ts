@@ -174,13 +174,13 @@ export function describeBankToBas(opts: BankToBasOptions): void {
   });
 
   // The brief's tax types ('GST', 'FRE') are not valid <option> values --
-  // review_detail.html:635-642 enumerates exactly the seven below, and
+  // review_detail.html:636-642 enumerates exactly the seven below, and
   // selectOption would throw against anything else. The real vocabulary
   // encodes income-vs-expense direction (confirm_transaction,
   // review/views.py:661-663, maps it through canonical_tax_type), which is the
   // whole basis of the BAS's 1A/1B and G1/G11 split, so it isn't a detail to
   // paper over with the brief's flatter codes. Direction here is read off the
-  // sign make_cba.py:69-74 draws into each row (credit => income, debit =>
+  // sign make_cba.py:68-73 draws into each row (credit => income, debit =>
   // expense); FRESH FOOD SUPPLIES and EXPORT SALE INV 1003 are GST-free on
   // their respective sides, matching the design doc's arithmetic
   // (G1 4,100.00 / 1A 300.00 / G11 872.00 / 1B 52.00 / net 248.00).
@@ -199,10 +199,11 @@ export function describeBankToBas(opts: BankToBasOptions): void {
   // account's tax_code DOES resolve (0510 Sales, tax_code GST, was the first
   // choice here), clicking its option fires TWO concurrent writes to the same
   // transaction -- selectAccount's own confirm (tryAutoConfirm, :937) AND a
-  // parallel call to /gst-treatment/ (applyAccountGST, :873-885, hitting
-  // set_gst_treatment, review/views_enhanced.py:558-608). That second endpoint
-  // loads the row with a plain get_object_or_404 -- no select_for_update, no
-  // atomic block -- and its own unconditional txn.save() (:599) can overwrite
+  // parallel call to /gst-treatment/ (applyAccountGST, :873-912, the fetch
+  // itself at :896, hitting set_gst_treatment, review/views_enhanced.py:
+  // 558-608). That second endpoint loads the row with a plain
+  // get_object_or_404 -- no select_for_update, no atomic block -- and its
+  // own unconditional txn.save() (:599) can overwrite
   // is_confirmed/posted_to_tb back to their pre-confirm values if its stale
   // read lands before confirm_transaction's commit and its save lands after.
   // Measured on real runs, not assumed: with 0510 in this table, the suite
@@ -236,21 +237,52 @@ export function describeBankToBas(opts: BankToBasOptions): void {
     await page.goto(reviewJobUrl);
 
     // The page auto-starts AI classification 500ms after load whenever not every
-    // transaction arrived auto-coded (the IIFE at review_detail.html:1976-1979),
-    // and its async updates overwrite any row's account-picker input that hasn't
-    // been given a dataset.code yet (updateTransactionRow, :1823-1825) -- which
-    // includes the moment right after this loop's own .fill(code) below, since
-    // fill() only sets .value, and dataset.code isn't set until the .account-
-    // option click actually lands. Racing that window silently clobbered a row's
-    // manually-typed code with the AI's own suggestion on an earlier run of this
-    // test. #btn-classify is left disabled either way classification finishes --
-    // classifyComplete() disables it (:1789) once the async batches drain, and the
-    // auto-start IIFE's own else-branch disables it immediately if every
-    // transaction already arrived auto-coded (:1978) -- so waiting for disabled
-    // is the one condition that's a deterministic fix on both paths, not a sleep,
-    // since classification's duration (metered, several seconds here) is not this
-    // test's to control.
-    await expect(page.locator('#btn-classify')).toBeDisabled({ timeout: 60_000 });
+    // transaction arrived auto-coded (the IIFE at review_detail.html:1976-1979).
+    // #btn-classify going disabled is NOT a "finished" signal: startClassification()
+    // disables it the INSTANT classification starts (:1746, text "Classifying..."),
+    // so toBeDisabled() alone is satisfied immediately and proves nothing about
+    // completion -- a real, measured defect in an earlier version of this test.
+    // classifyComplete() is the only function that ever writes the exact text
+    // "Classification Complete" (:1787), once the async batches genuinely drain,
+    // so wait for that specifically. classifyError() (:1793-1800) re-enables the
+    // button with different text ("Retry Classification") on failure, so an AI
+    // outage fails this wait loudly once the 60s budget (metered AI step) expires,
+    // rather than hanging forever or silently passing on a stale state.
+    await expect(page.locator('#btn-classify')).toHaveText(
+      /Classification Complete/, { timeout: 60_000 },
+    );
+
+    // Genuine completion is not sufficient on its own either: updateTransactionRow
+    // (:1826) sets every row's .tax-select.value to the AI's own suggested
+    // tax_type client-side as each batch lands (the select only pre-selects from
+    // confirmed_tax_type server-side, :636-642, which is still empty pre-confirm
+    // -- so without classification the select's DOM value is genuinely blank, but
+    // classification fills it in regardless of whether anyone accepts the
+    // suggestion). That means the instant this loop's account-option click lands,
+    // selectAccount (:928) -> tryAutoConfirm (:943) finds BOTH the input's
+    // dataset.code and the AI-supplied tax-select value non-empty and fires
+    // confirmTransaction with the AI's tax type -- before this loop's own
+    // .selectOption() ever runs. That confirm posts to the TB and sets
+    // posted_to_tb (:694-695); the explicit .selectOption() below then only
+    // updates the record, since confirm_transaction's guard skips reposting. So
+    // without a reload here, what actually lands in the ledger -- the split
+    // between the P&L account and the 3380 GST control line -- is decided by the
+    // metered, non-deterministic AI, not by ALLOCATIONS; debits still equal
+    // credits either way (the AI's own tax type still nets to a balanced
+    // posting), which is why nothing else here would catch it. Reloading clears
+    // it: the server re-renders account-picker-input from confirmed_code and
+    // .tax-select from confirmed_tax_type (:625, :636-642), both still empty for
+    // every row at this point, so after the reload the account click can no
+    // longer auto-confirm. Crucially, this reload only runs after classification
+    // has GENUINELY finished (the wait above), not merely started -- classify_batch
+    // persists job.auto_coded_count to the database once a batch actually returns
+    // (review/views.py:2056-2058), so reloading mid-run (as the disabled-only wait
+    // used to allow) interrupts that persistence, leaves auto_coded_count below
+    // total_transactions, and makes the auto-start IIFE (:1977) re-fire
+    // classification on every later page load in this file -- which is exactly
+    // what produced stray, metered AI calls and an intermittent posting loss on a
+    // real run of this suite. Waiting for the real completion text closes that off.
+    await page.reload();
 
     for (const [description, code, taxType] of ALLOCATIONS) {
       const row = page.locator('[data-txn-id]').filter({ hasText: description });
@@ -270,14 +302,18 @@ export function describeBankToBas(opts: BankToBasOptions): void {
       // become actionable again.
       await row.locator('.account-picker-input').fill(code);
       await row.locator(`.account-option[data-code="${code}"]`).first().click();
-      // None of these six accounts carry a mapped tax_code (see the
-      // ALLOCATIONS comment for why that's deliberate), so the click above
-      // never does more than populate the picker -- this selectOption is the
-      // only thing that actually confirms and posts this row.
+      // Doubly true this click alone can't confirm the row: none of these six
+      // accounts carry a mapped tax_code (see the ALLOCATIONS comment), so
+      // applyAccountGST returns early and never touches .tax-select; and the
+      // reload above means classification's own client-side pre-fill of
+      // .tax-select is gone too (the select is genuinely blank again, per the
+      // reload's own comment above). So tryAutoConfirm's tax-select check is
+      // empty either way, and this selectOption is what actually confirms and
+      // posts this row.
       await row.locator('.tax-select').selectOption(taxType);
       // confirmTransaction's success handler (:958) sets data-confirmed on the
       // row directly from the fetch response, client-side, immediately -- no
-      // reload needed (the brief's fallback wasn't required for this page).
+      // further reload needed to observe it.
       await expect(row).toHaveAttribute('data-confirmed', 'true');
     }
 
@@ -314,7 +350,7 @@ export function describeBankToBas(opts: BankToBasOptions): void {
 
   test(`${opts.profile}: re-confirming a transaction does not post it twice`, async ({ browser }) => {
     /**
-     * confirm_transaction (review/views.py:651-655) takes select_for_update on
+     * confirm_transaction (review/views.py:653-655) takes select_for_update on
      * the PendingTransaction row and re-checks posted_to_tb (:694) before
      * calling _post_confirmed_txn_to_tb -- and that helper's own centralised
      * core (core/views.py:1058, _post_txn_to_tb) carries a second, independent
@@ -376,6 +412,38 @@ export function describeBankToBas(opts: BankToBasOptions): void {
     const creditText = await page.locator('#tb-header-credit').textContent();
     const num = (s: string | null) => parseFloat((s ?? '').replace(/[^0-9.-]/g, ''));
     expect(num(debitText)).toBeCloseTo(num(creditText), 2);
+
+    // The equal-totals check above can't catch a partial posting loss:
+    // _recalc_bank_contra (core/views.py:10571-10600) derives the bank line
+    // from confirmed+posted transactions and SETS it from scratch, so both
+    // header totals stay equal whatever the per-account split -- and stay
+    // equal even if one of the six transactions' posting were silently
+    // dropped (measured directly: an earlier version of the classification
+    // wait above let a page reload interrupt classification mid-run, which
+    // did exactly this to a real trial balance -- fixed above, not by
+    // anything here). Task 7 won't close this gap either:
+    // _confirmed_transactions (core/bas_utils.py:543) filters on
+    // is_confirmed=True and never on posted_to_tb, so the BAS would happily
+    // report a transaction whose TB posting never landed. Pin the bank
+    // account's own line instead -- NOT as separate gross Dr/Cr figures
+    // (financial_year_detail.html:811-812 render line.display_dr/display_cr,
+    // but core/views.py:1777-1787 derives both from the account's single
+    // signed closing_balance, not from raw debit/credit turnover, so one
+    // account can never show a nonzero figure in both columns at once,
+    // confirmed against a live run: this account rendered 3,228.00 in the Dr
+    // cell and nothing in the Cr cell, never "4,100.00 / 872.00" as two
+    // simultaneous cells). The net closing balance itself still catches a
+    // lost posting just as well, and it is ground truth rather than a
+    // baseline: 1100 + 2200 + 800 - 550 - 22 - 300 = 3,228.00, independently
+    // derived from the statement's own transactions, and it is exactly Task
+    // 1's own statement reconciliation total -- not a figure this test is
+    // the first to produce. Dropping any one of the six changes it.
+    const bankRow = page
+      .locator('#tb-table code', { hasText: /^\s*2000\s*$/ })
+      .locator('xpath=ancestor::tr[1]');
+    const bankCells = bankRow.locator('td');
+    await expect(bankCells.nth(2)).toHaveText('3,228.00');
+    await expect(bankCells.nth(3)).toHaveText('');
 
     await page.context().close();
   });
