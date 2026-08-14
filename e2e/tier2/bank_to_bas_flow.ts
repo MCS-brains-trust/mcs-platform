@@ -80,15 +80,22 @@ export function describeBankToBas(opts: BankToBasOptions): void {
 
   // The row's last <td> is always the amount cell (label, description,
   // amount -- gst_activity_statement.html:284, :311), whatever the row's
-  // exact column count, so `.last()` rather than a fixed index. Parsed to a
-  // number (stripping "$" and any thousands separator) rather than compared
-  // as a literal string: USE_THOUSAND_SEPARATOR is unset in this project's
-  // settings, so floatformat:2 may or may not group digits, and that
-  // formatting choice is not what this suite is pinning -- the figure is.
-  async function basValue(page: any, label: string): Promise<number> {
-    const row = await basRow(page, label);
+  // exact column count, so `.last()` rather than a fixed index -- this also
+  // covers the net row below, which has only two cells (colspan="2" label,
+  // then amount). Parsed to a number (stripping "$" and any thousands
+  // separator) rather than compared as a literal string: USE_THOUSAND_SEPARATOR
+  // is unset in this project's settings, so floatformat:2 may or may not
+  // group digits, and that formatting choice is not what this suite is
+  // pinning -- the figure is. Shared by basValue and basNetValue below so the
+  // two accessors can't drift apart on how a cell's text becomes a number.
+  async function readAmount(row: any): Promise<number> {
     const text = (await row.locator('td').last().textContent()) ?? '';
     return parseFloat(text.replace(/[^0-9.-]/g, ''));
+  }
+
+  async function basValue(page: any, label: string): Promise<number> {
+    const row = await basRow(page, label);
+    return readAmount(row);
   }
 
   // The net-GST row (gst_activity_statement.html:350-355) is shaped
@@ -102,8 +109,7 @@ export function describeBankToBas(opts: BankToBasOptions): void {
     const labelCell = page.locator('#summaryTab tr > td:first-child[colspan="2"]');
     await expect(labelCell, 'expected exactly one #summaryTab net-GST row').toHaveCount(1);
     const row = labelCell.locator('xpath=ancestor::tr[1]');
-    const text = (await row.locator('td').last().textContent()) ?? '';
-    return parseFloat(text.replace(/[^0-9.-]/g, ''));
+    return readAmount(row);
   }
 
   test(`${opts.profile}: the fixture entity has a GST dashboard`, async ({ browser }) => {
@@ -524,6 +530,19 @@ export function describeBankToBas(opts: BankToBasOptions): void {
      * application disagrees with any figure here, STOP and report which label
      * and by how much -- these are hand-derived from the fixture, not a
      * baseline, and are not to be edited to match a different output.
+     *
+     * G2's expected 0.00 is a STRUCTURAL constant, not a fixture-derived one:
+     * g_totals["G2"] is zero-initialized (core/bas_utils.py:592, the G1..G20
+     * dict comprehension) and then only ever READ (:856, G5 = G2+G3+G4; :872,
+     * copied into bas_data) -- _classify_line (:361-440) has no branch that
+     * ever writes "G2" into its contributions dict, so G2 renders 0.00 for
+     * every fixture, not just this one. The assertion still earns its place
+     * (it catches the row disappearing from the template, or the engine one
+     * day gaining a G2 path), but it is not evidence about our data the way
+     * the other seven figures are. Contrast G10's 0.00 just below: that one IS
+     * genuinely fixture-dependent -- _classify_line's expenses branch
+     * (core/bas_utils.py:407-412) can populate G10 from a capital-tax-coded
+     * purchase, and this fixture's six transactions simply don't produce one.
      */
     const page = await seniorPage(browser);
     await page.goto(`${instance.baseURL}/years/${FY}/gst/`);
@@ -546,6 +565,16 @@ export function describeBankToBas(opts: BankToBasOptions): void {
     // wrong regardless of what was asserted as the hand-computed value above.
     // Uses the same row-scoped accessors as that test, not the brief's
     // prefix-matching num() regex (Ruling 28).
+    //
+    // Honestly: for THIS fixture this test is redundant, not independent
+    // coverage. It reads 1A, 1B and net through the exact same accessors the
+    // preceding test already pins to 300, 52 and 248, so 300 - 52 ≈ 248
+    // cannot fail while that test passes -- it is not exercising a code path
+    // the other test doesn't already touch. It earns its keep as an
+    // invariant that would catch a REAL divergence the moment any profile
+    // parameterises these constants (a future fixture where 1A/1B/net are
+    // not hand-picked to satisfy the identity by construction), which is why
+    // it stays rather than being deleted.
     const page = await seniorPage(browser);
     await page.goto(`${instance.baseURL}/years/${FY}/gst/`);
 
