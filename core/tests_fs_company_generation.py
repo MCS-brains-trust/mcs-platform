@@ -98,6 +98,24 @@ def mapping_for(standard_code):
     return AccountMapping.objects.get(standard_code=standard_code)
 
 
+def docx_text(buffer):
+    """All text in a rendered DOCX, paragraphs then table cells.
+
+    A table row's cells are joined by newlines, so a labelled figure appears as
+    "Trade debtors\\n120,000" -- which is what lets a test assert the label and
+    its amount are adjacent rather than merely both present somewhere.
+    """
+    import docx
+
+    buffer.seek(0)
+    document = docx.Document(buffer)
+    parts = [p.text for p in document.paragraphs]
+    for table in document.tables:
+        for row in table.rows:
+            parts.extend(cell.text for cell in row.cells)
+    return "\n".join(parts)
+
+
 def build_company_fy(rows, *, with_prior=True, entity_name="FS Gen Test Co Pty Ltd"):
     """Create a company, its two financial years, and Model A trial balance rows.
 
@@ -559,17 +577,7 @@ class DocumentRenderTests(TestCase):
     covered here -- it needs an external binary and adds no figure coverage.
     """
 
-    @staticmethod
-    def _text_of(buffer):
-        import docx
-
-        buffer.seek(0)
-        document = docx.Document(buffer)
-        parts = [p.text for p in document.paragraphs]
-        for table in document.tables:
-            for row in table.rows:
-                parts.extend(cell.text for cell in row.cells)
-        return "\n".join(parts)
+    _text_of = staticmethod(docx_text)
 
     def setUp(self):
         from core.fs_template_service import generate_financial_statements
@@ -610,17 +618,17 @@ class DocumentRenderTests(TestCase):
         "Plant & equipment (cost)\\n300,000" verbatim -- asserting that adjacency
         means the test fails if either note (or its figure) goes missing.
 
-        Inventories is deliberately NOT asserted. The application generates no
-        inventories note at all: _compute_note_map emits exactly six note types
-        (policies, receivables, ppe, related_party, income_tax, events), and
-        fs_template_service.py contains no reference to inventories. A
-        show_note_inventory flag is computed at document_context_builder.py:1355
-        and consumed by nothing, so the note was evidently intended and never
-        wired up. A company carrying trading stock therefore gets an Inventories
-        line on the balance sheet with no supporting note, where receivables and
-        PPE both get one. Confirmed 2026-08-13 and accepted as out of scope for
-        this test module, which changes no production code; fixing it needs a
-        note branch plus NOTES template content.
+        Inventories now ties here too. It did not when this module was written:
+        _compute_note_map emitted six note types and none was inventories, so a
+        company carrying trading stock got a balance sheet line with no note
+        behind it. Added 2026-08-14 -- see InventoriesNoteTests for the note's
+        own coverage, which is where its numbering and policy text are asserted.
+
+        The show_note_inventory flag at document_context_builder.py:1355 is still
+        consumed by nothing. It is part of a parallel set of show_note_* flags
+        that no rendered document reads -- the notes are built programmatically
+        by _generate_notes_document, not from a .docx template -- and cleaning
+        that up is a separate task.
         """
         notes = self._text_of(self.documents["NOTES"])
         balance_sheet = self._text_of(self.documents["BALANCE_SHEET"])
@@ -628,7 +636,160 @@ class DocumentRenderTests(TestCase):
                       "the receivables note's labelled line is missing")
         self.assertIn("Plant & equipment (cost)\n300,000", notes,
                       "the PPE note's labelled line is missing")
-        for figure in ("120,000", "300,000"):
+        self.assertIn("Finished goods - At real value\n70,000", notes,
+                      "the inventories note's labelled line is missing")
+        for figure in ("120,000", "300,000", "70,000"):
             with self.subTest(figure=figure):
                 self.assertIn(figure, balance_sheet,
                               f"{figure} is in the notes but not on the balance sheet")
+
+
+class CurrentAssetInventoryClassificationTests(TestCase):
+    """Inventory must not be presented as cash.
+
+    _classify_current_asset tests the cash name keywords -- which include
+    "on hand" -- before anything inventory-related, so "Stock on Hand", a
+    default Xero account name, groups under Cash and Cash Equivalents. The
+    structured standard_code branch does not save it: that branch only
+    recognises cash codes, so an account correctly mapped to BS-CA-003
+    Inventories still falls through to the name keywords.
+    """
+
+    @staticmethod
+    def _classify(name, standard_code=None):
+        from core.fs_template_service import _classify_current_asset
+
+        item = {"account_name": name}
+        if standard_code:
+            item["standard_code"] = standard_code
+        return _classify_current_asset(item)
+
+    def test_stock_on_hand_is_inventory_not_cash(self):
+        self.assertEqual(self._classify("Stock on Hand"), "Inventories")
+
+    def test_the_mapping_classifies_a_name_no_keyword_would_catch(self):
+        """BS-CA-003 is the structured Inventories code, already used by
+        access_ledger_import.py and integrations/xero_gl_summary.py. Once an
+        accountant has mapped an account, the mapping is the source of truth and
+        the name should not need to look like stock at all."""
+        self.assertEqual(
+            self._classify("Goods for resale", standard_code="BS-CA-003"),
+            "Inventories",
+        )
+
+    def test_cash_on_hand_is_still_cash(self):
+        """A guard, not a red test -- it passed before the keyword reorder and
+        must keep passing after it. "Cash on hand" is the only "on hand" account
+        name in production (10 trial balance lines, checked 2026-08-14), so this
+        is the case the reorder could realistically have broken."""
+        self.assertEqual(self._classify("Cash on hand"), "Cash and Cash Equivalents")
+        self.assertEqual(
+            self._classify("Cash on hand", standard_code="BS-CA-001"),
+            "Cash and Cash Equivalents",
+        )
+
+    def test_the_keywords_do_not_reach_beyond_stock(self):
+        """Also a guard. Work in progress on a services chart is unbilled labour
+        and belongs in receivables-or-other, not inventories; "Stock options" is
+        an equity instrument. Both would be caught by a looser keyword list."""
+        self.assertEqual(self._classify("Work in Progress"), "Other Current Assets")
+        self.assertEqual(self._classify("Stock options reserve"), "Other Current Assets")
+
+
+@override_settings(STORAGES=STORAGES_OVERRIDE)
+class InventoriesNoteTests(TestCase):
+    """A company carrying trading stock gets a supporting note for it.
+
+    The maximal fixture holds 2363 Finished goods - At real value, mapped to
+    BS-CA-003, at 70,000 (CY) and 60,000 (PY). Before this note existed the
+    balance sheet showed that carrying amount with nothing behind it, while
+    receivables and PPE each had a note.
+    """
+
+    def setUp(self):
+        self.fy = build_company_fy(MAXIMAL_ROWS)
+        self.context = build_company_context(self.fy)
+
+    def test_the_note_map_places_inventories_after_receivables(self):
+        """Balance-sheet order: receivables, then inventories, then PPE. The map
+        is sequential, so inserting at position 3 renumbers everything below it.
+
+        Expected for this fixture: policies 1, receivables 2 (trade debtors
+        120,000), inventories 3, ppe 4 (plant at cost), income tax 5 (4110
+        posted), events 6 (company). No related party note -- the fixture has no
+        management fees and no director loans.
+        """
+        self.assertEqual(
+            self.context["_note_map"],
+            [(1, "policies"), (2, "receivables"), (3, "inventories"),
+             (4, "ppe"), (5, "income_tax"), (6, "events")],
+        )
+
+    def test_the_note_renders_with_its_figures_and_policy(self):
+        """Asserted against the labelled line, for the reason recorded in
+        DocumentRenderTests.test_the_notes_tie_to_the_face_of_the_statements: a
+        bare "70,000" is a substring of nothing else here today, but the PPE
+        note's accumulated depreciation once made exactly that assertion
+        worthless in the receivables note.
+        """
+        from core.fs_template_service import generate_financial_statements
+
+        notes = docx_text(generate_financial_statements(self.fy.pk)["NOTES"])
+        self.assertIn("Note 3: Inventories", notes)
+        self.assertIn("Finished goods - At real value\n70,000", notes)
+        self.assertIn("60,000", notes)
+        self.assertIn("lower of cost and net realisable value", notes)
+
+    def test_the_balance_sheet_line_points_at_the_note(self):
+        """The trap the related-party comment records is a "(Note N)" reference
+        with no matching line in the note body. This is the mirror of it: a note
+        that exists while the balance sheet line it explains never refers to it.
+        """
+        inventory_lines = [
+            i for i in self.context["current_assets"]
+            if i.get("account_name") == "Finished goods - At real value"
+        ]
+        self.assertEqual(len(inventory_lines), 1,
+                         "the inventory line is missing from current assets")
+        self.assertEqual(inventory_lines[0]["note_ref"], "3")
+
+    def test_the_note_total_ties_to_the_balance_sheet(self):
+        """70,000 CY and 60,000 PY appear in the note AND as the carrying amount
+        on the face of the balance sheet -- the spec's fourth invariant."""
+        from core.fs_template_service import generate_financial_statements
+
+        documents = generate_financial_statements(self.fy.pk)
+        notes = docx_text(documents["NOTES"])
+        balance_sheet = docx_text(documents["BALANCE_SHEET"])
+        self.assertIn("Finished goods - At real value\n70,000", notes)
+        # The balance sheet carries a Note column between label and figure, so the
+        # row reads label, note ref, CY -- asserting all three at once.
+        self.assertIn("Finished goods - At real value\n3\n70,000", balance_sheet)
+        for figure in ("70,000", "60,000"):
+            with self.subTest(figure=figure):
+                self.assertIn(figure, notes)
+                self.assertIn(figure, balance_sheet)
+
+    def test_a_company_without_stock_gets_no_note_and_the_old_numbering(self):
+        """A guard against an over-broad trigger, not a red test.
+
+        The inventory row is swapped for a prepayment of the same amount, so the
+        balance sheet still balances and the only thing that changes is that no
+        account is stock. Every note below inventories must renumber back up.
+        """
+        from core.fs_template_service import generate_financial_statements
+
+        rows = [r for r in MAXIMAL_ROWS if r[0] != "2363"]
+        rows.append(("2363", "Prepayments", "BS-CA-002",
+                     Decimal("70000"), Decimal("60000")))
+        fy = build_company_fy(rows, entity_name="No Stock Pty Ltd")
+
+        context = build_company_context(fy)
+        self.assertEqual(
+            context["_note_map"],
+            [(1, "policies"), (2, "receivables"), (3, "ppe"),
+             (4, "income_tax"), (5, "events")],
+        )
+        notes = docx_text(generate_financial_statements(fy.pk)["NOTES"])
+        self.assertNotIn("Inventories", notes)
+        self.assertIn("Note 3: Property, Plant and Equipment", notes)
