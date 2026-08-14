@@ -421,6 +421,28 @@ git commit -m "test: the fixture reaches the geometry parser, not the legacy one
 
 Codes here are HandiLedger numerics, matching the trust, partnership and sole-trader profiles and every real entity in the book. The company profile's MYOB-style `1-2000` codes are deliberately unlike production and exist to expose a specific defect; there is no reason to inherit that here.
 
+> **The snippet below does NOT seed as written — corrected in `67a838d`.** Proven during
+> execution on 2026-08-14. Take the committed `core/e2e_fixture_data.py` as the authority.
+> Three changes were required:
+>
+> 1. **`BANK_BAS_IDS` needs a `prior_fy` key.** `seed_fixture_entity` always creates a
+>    prior `FinancialYear` row — it is the row that carries `prior_year_tb`, even an empty
+>    one — so omitting the key is a `KeyError` on seed, not an inert no-op. The flow never
+>    reads that year; it exists only so the seeder's shared code path has somewhere to put
+>    the empty `prior_year_tb`.
+> 2. **Sales' section is `"revenue"`, not `"income"`.**
+>    `EntityChartOfAccount.StatementSection` has no `income` choice. Note the failure mode:
+>    sqlite carries no CHECK constraint, so a bad value saves silently there and only the
+>    hardened Postgres E2E copy rejects it — which is the second reason the verification in
+>    Step 3 below had to change.
+> 3. **`FixtureProfile` gained a `bank_account_code` field**, read by
+>    `e2e_seed_fixture_entity` to write the one extra manifest key this profile's flow
+>    needs. The Interfaces block above requires that key in the manifest but the snippet
+>    gave no way to produce it. No other profile populates the field.
+>
+> The snippet is annotated rather than rewritten because 1 and 2 are traps any future
+> fixture profile will hit.
+
 ```python
 # core/e2e_fixture_data.py — append after the existing profiles
 
@@ -485,13 +507,40 @@ The financial year the seeder creates must cover **1 July 2025 to 30 June 2026**
 
 - [ ] **Step 3: Verify the manifest is written**
 
+The sqlite command this step originally carried **cannot work for any profile**, not just
+this one: `e2e_seed_fixture_entity` calls `assert_e2e_database()`
+(`core/e2e_support.py:110`), which runs `SELECT to_regclass('public.e2e_marker')` and
+aborts unless the connected database is a hardened Postgres E2E copy. That guard is
+deliberate — these commands mutate financial data and must refuse to run anywhere else.
+Pre-existing, not introduced by this task. Seed against a scratch branch of the E2E
+template instead, which is what `e2e/scripts/start_server.sh:32-37` does per instance:
+
 ```bash
-cd /opt/statementhub && DATABASE_URL="sqlite:////tmp/seed.sqlite3" \
-  venv/bin/python manage.py e2e_seed_fixture_entity --profile bank_bas
-cat .e2e/fixture_entity_bank_bas.json
+cd /opt/statementhub          # or the worktree under test — this runs its checkout's code
+set -a; source /opt/statementhub/.e2e/db.env; set +a
+export PGPASSWORD="$E2E_DB_PASSWORD"
+PSQL="psql -h $E2E_DB_HOST -p $E2E_DB_PORT -U $E2E_DB_USER -v ON_ERROR_STOP=1"
+
+$PSQL -d postgres -qc "DROP DATABASE IF EXISTS e2e_scratch_bank_bas WITH (FORCE);"
+$PSQL -d postgres -qc "CREATE DATABASE e2e_scratch_bank_bas TEMPLATE ${E2E_TEMPLATE_DB};"
+
+DJANGO_SETTINGS_MODULE=config.settings_e2e E2E_DB_NAME=e2e_scratch_bank_bas \
+  /opt/statementhub/venv/bin/python manage.py e2e_seed_fixture_entity --profile bank_bas
+cat /opt/statementhub/.e2e/fixture_entity_bank_bas.json
+
+$PSQL -d postgres -qc "DROP DATABASE e2e_scratch_bank_bas WITH (FORCE);"
 ```
 
-Expected: JSON containing `entity` and `current_fy` UUIDs.
+Expected: JSON containing `entity`, `current_fy` and `bank_account_code`. The manifest is
+written under `STATEMENTHUB_RUNTIME_ROOT/.e2e`, not the checkout under test.
+
+Real use is unaffected either way: Tier 2 always seeds against a Postgres branch.
+
+**No further wiring is needed to reach Task 4.** `start_server.sh:57` runs
+`e2e_seed_fixture_entity` with no `--profile` on every instance boot, and the command
+defaults to `options["profile"] or sorted(PROFILES)` — every registered key. Registering
+`bank_bas` in `PROFILES` is therefore sufficient, and it is the cheapest of the five to
+seed against the ~4s database branch each boot already pays.
 
 - [ ] **Step 4: Commit**
 
