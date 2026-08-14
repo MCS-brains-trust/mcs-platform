@@ -360,7 +360,19 @@ git commit -m "test: a CBA statement fixture the geometry parser accepts"
 
 ### Task 2: The fixture routes to the CBA geometry path
 
-Task 1 proved the parser *can* read the fixture. This proves the application actually *sends* it there — the header-spacing property — and that the legacy fallback is not silently doing the work.
+Task 1 proved the parser *can* read the fixture. This proves the application actually *sends* it there, and that the legacy fallback is not silently doing the work.
+
+> **The "header-spacing property" this task was written around does not exist — corrected in
+> `bae8e9a`, after Task 2's own review checked it against the source.** `detect_bank`
+> (`review/pdf_parsers.py:1741`) selects CBA on a bare substring match for the preamble bank
+> name, not on the header regex. The header's column spacing routes nothing. See the corrected
+> "How the fixture actually gets routed" section near the top of this plan, which is the
+> authority. The docstring in the snippet below repeats the false claim as originally written;
+> the committed `review/tests_statement_fixture.py` does not.
+>
+> `test_the_header_keeps_its_spaces_but_the_dates_do_not` still earns its place, but as a guard
+> on the fixture's *input shape* — the legacy `parse_cba_statement` needs that spacing, and the
+> glued dates are what `statement_geometry.DATE_RE` requires — not as a test of routing.
 
 **Files:**
 - Modify: `review/tests_statement_fixture.py`
