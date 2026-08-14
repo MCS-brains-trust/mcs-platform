@@ -26,7 +26,7 @@ own logic cannot render safely both ways at once:
     clusters in _money_columns, so the balance column gets mistaken for the
     credit column and every real movement is overwritten by the running
     total (caught by test_the_statement_reconciles: movements summed to
-    70562 instead of 3350).
+    70562 instead of 3228).
   * drawn glued as "11,100.00CR" (no space, one word) it stops matching
     MOVE_RE -- fixing the above -- but now survives _text_only's filter
     (which only drops bare MOVE_RE amounts, literal "CR"/"DR", and date
