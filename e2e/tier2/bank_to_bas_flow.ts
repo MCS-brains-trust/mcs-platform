@@ -6,7 +6,7 @@
  * whatever the code produced the first time it ran. See
  * docs/superpowers/specs/2026-08-14-bank-to-bas-tier2-design.md.
  */
-import { test, expect } from '@playwright/test';
+import { test, expect, type Response } from '@playwright/test';
 import * as fs from 'fs';
 import { startInstance, type Instance } from '../fixtures/instance';
 import { loadUsers, loginAs } from '../fixtures/login';
@@ -94,6 +94,12 @@ export function describeBankToBas(opts: BankToBasOptions): void {
     // Task 3's fixture chart actually carries.
     await page.fill('#wizardBankSearch', IDS.bank_account_code);
     await page.locator(`.wizard-bank-pick[data-code="${IDS.bank_account_code}"]`).click();
+    // #wizardBankMapped only proves *a* mapping saved; #wizardBankSelected
+    // (financial_year_detail.html:3081) records which account was actually picked,
+    // and Task 6's contra entry depends on it being this one.
+    await expect(page.locator('#wizardBankSelected')).toHaveValue(
+      `${IDS.bank_account_code} - Cash at bank`,
+    );
     await page.locator('#wizardBankSaveBtn').click();
     await expect(page.locator('#wizardBankMapped')).toHaveValue('1');
 
@@ -110,14 +116,34 @@ export function describeBankToBas(opts: BankToBasOptions): void {
 
     // The click handler's first act is a native confirm() dialog
     // (upload_preview.html) before it ever fetches -- accept it like the real
-    // reviewer would, the same pattern yearend_close.spec.ts uses for #finaliseBtn.
-    page.once('dialog', (dialog: any) => dialog.accept());
+    // reviewer would, the same pattern roll_forward_flow.ts:466 uses for
+    // #finaliseBtn. Its message folds in a free reconciliation check across all
+    // six transactions (opening + Sum(amounts) vs closing, upload_preview.html:545-559)
+    // that our two explicit sign assertions below don't cover on their own, so
+    // capture it and assert on it rather than blind-accepting.
+    let confirmDialogMessage = '';
+    page.once('dialog', (dialog: any) => {
+      confirmDialogMessage = dialog.message();
+      dialog.accept();
+    });
     const [confirmResponse] = await Promise.all([
       page.waitForResponse(
-        (r: any) => r.url().includes('/confirm-import/') && r.request().method() === 'POST',
+        (r: Response) => r.url().includes('/confirm-import/') && r.request().method() === 'POST',
       ),
       page.locator('#confirmImportBtn').click(),
     ]);
+    expect(confirmDialogMessage).toContain('6 transactions');
+    expect(confirmDialogMessage).not.toContain('WARNING: Balance mismatch');
+
+    // confirm_import returns HTTP 200 even on rejection ({"status": "error"}), so
+    // waitForResponse above resolves either way and a rejection never redirects --
+    // assert success and exactly one job here, before waiting for a URL that a
+    // rejection would never produce, so a rejected import fails immediately and
+    // legibly instead of burning the full 60s timeout below.
+    const confirmData = await confirmResponse.json();
+    expect(confirmData.status).toBe('success');
+    expect(confirmData.job_ids).toHaveLength(1);
+
     await page.waitForURL(/(\?tab=review|\/review\/)/, { timeout: 60_000 });
 
     // confirm_import's own redirect always lands on the FY detail page
@@ -125,7 +151,6 @@ export function describeBankToBas(opts: BankToBasOptions): void {
     // (review/views.py:2648) -- so the job id is read off its JSON response
     // instead, and the job detail page (the one that actually renders
     // [data-txn-id] rows, per Ruling 18) is captured for the next test to visit.
-    const confirmData = await confirmResponse.json();
     const [jobId] = confirmData.job_ids;
     reviewJobUrl = `${instance.baseURL}/review/${jobId}/`;
 
