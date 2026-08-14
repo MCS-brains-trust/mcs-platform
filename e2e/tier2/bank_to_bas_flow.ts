@@ -45,12 +45,19 @@ export function describeBankToBas(opts: BankToBasOptions): void {
     await instance?.stop();
   });
 
-  async function seniorPage(browser: any) {
+  // Shared by every role-scoped page helper below (seniorPage, officeAdminPage)
+  // so a new context's construction can't drift between them -- each helper is
+  // now just this plus which key into users.roles to log in as.
+  async function rolePage(browser: any, roleKey: string) {
     const users = loadUsers();
     const context = await browser.newContext({ baseURL: instance.baseURL });
     const page = await context.newPage();
-    await loginAs(page, users.roles.senior, users.password);
+    await loginAs(page, users.roles[roleKey], users.password);
     return page;
+  }
+
+  async function seniorPage(browser: any) {
+    return rolePage(browser, 'senior');
   }
 
   // Row-scoped accessor for the GST Activity Statement's summary tab
@@ -86,11 +93,17 @@ export function describeBankToBas(opts: BankToBasOptions): void {
   // separator) rather than compared as a literal string: USE_THOUSAND_SEPARATOR
   // is unset in this project's settings, so floatformat:2 may or may not
   // group digits, and that formatting choice is not what this suite is
-  // pinning -- the figure is. Shared by basValue and basNetValue below so the
-  // two accessors can't drift apart on how a cell's text becomes a number.
+  // pinning -- the figure is. Shared by basValue, basNetValue and the
+  // lodgement snapshot check below (which reads a <div>'s text rather than a
+  // <td>'s, so it calls parseAmount directly instead of readAmount) so no two
+  // of them can drift apart on how a cell's text becomes a number.
+  function parseAmount(text: string): number {
+    return parseFloat(text.replace(/[^0-9.-]/g, ''));
+  }
+
   async function readAmount(row: any): Promise<number> {
     const text = (await row.locator('td').last().textContent()) ?? '';
-    return parseFloat(text.replace(/[^0-9.-]/g, ''));
+    return parseAmount(text);
   }
 
   async function basValue(page: any, label: string): Promise<number> {
@@ -597,11 +610,7 @@ export function describeBankToBas(opts: BankToBasOptions): void {
   const LODGE_PERIOD = 2;
 
   async function officeAdminPage(browser: any) {
-    const users = loadUsers();
-    const context = await browser.newContext({ baseURL: instance.baseURL });
-    const page = await context.newPage();
-    await loginAs(page, users.roles.office_admin, users.password);
-    return page;
+    return rolePage(browser, 'office_admin');
   }
 
   test(`${opts.profile}: lodgement is blocked while bank coverage is incomplete`, async ({ browser }) => {
@@ -641,6 +650,49 @@ export function describeBankToBas(opts: BankToBasOptions): void {
     await page.context().close();
   });
 
+  test(`${opts.profile}: the server refuses to lodge an incomplete period without an override`, async ({ browser }) => {
+    /**
+     * The test above proves only that the UI never offers an ungated lodge
+     * button for a partial period -- core/views_bas.py:252's own refusal
+     * (`coverage["status"] != "complete" and not override_reason`) is never
+     * actually exercised by a test that has nothing to click. This drives
+     * that refusal directly: POST to bas_lodge_period with no
+     * override_reason at all, and assert the exact message the guard
+     * produces (:253-258).
+     *
+     * Uses period 1 (Q1, Jul-Sep), NOT LODGE_PERIOD (2, the one the next
+     * test lodges): an already-'lodged' period is short-circuited by a
+     * DIFFERENT message before coverage is even checked
+     * (`bp.status == "lodged"`, :244-246), which would be a false pass for
+     * this test if it ever ran against period 2 after that lodge happened.
+     * Period 1 carries none of the fixture's transactions (all six are in
+     * October, Q2) so its coverage can never read "complete" either -- it
+     * exercises the exact same "not complete, no override" branch this test
+     * targets, without depending on run order relative to the lodge test.
+     */
+    const page = await seniorPage(browser);
+    const refusalPeriod = 1;
+    await page.goto(`${instance.baseURL}/years/${FY}/gst/?period=${refusalPeriod}`);
+
+    const result = await page.evaluate(async ({ fy, period }) => {
+      const token = (document.querySelector(
+        '#lodgePartialModal [name="csrfmiddlewaretoken"]',
+      ) as HTMLInputElement)?.value;
+      const response = await fetch(`/years/${fy}/gst/lodge/${period}/`, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': token, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams(), // deliberately no override_reason
+        redirect: 'follow',
+      });
+      return { status: response.status, text: await response.text() };
+    }, { fy: FY, period: refusalPeriod });
+
+    expect(result.status).toBeLessThan(400);
+    expect(result.text).toContain('incomplete bank coverage');
+
+    await page.context().close();
+  });
+
   test(`${opts.profile}: an override reason lets it lodge and freezes the figures`, async ({ browser }) => {
     /**
      * Drives the real override path: open #lodgePartialModal -- the only modal
@@ -651,6 +703,18 @@ export function describeBankToBas(opts: BankToBasOptions): void {
      * scoping the fill and the submit click to #lodgePartialModal is what
      * actually reaches the override branch rather than failing against the
      * wrong form.
+     *
+     * Ordering constraint, not just narrative convenience: once this test
+     * lodges LODGE_PERIOD, the bare (no `?period=`) auto-select fallback in
+     * bas_dashboard (core/views_bas.py:120-147) no longer resolves to it --
+     * with no 'ready' or 'partial' period left (Q1/Q3/Q4 carry none of the
+     * fixture's transactions, so they're 'empty', and Q2 is now 'lodged'),
+     * auto-select falls through to `period_data[0]` (Q1, all zero) instead of
+     * Q2. The two tests above ("the BAS labels equal their hand-computed
+     * values", "the GST identity holds") both navigate to the bare
+     * `/years/<FY>/gst/` URL and currently land on Q2 via the 'partial'
+     * auto-select branch (:127-130) -- so this test must stay after them, or
+     * they would silently start reading Q1's zero figures instead of failing.
      */
     const page = await seniorPage(browser);
     await page.goto(`${instance.baseURL}/years/${FY}/gst/?period=${LODGE_PERIOD}`);
@@ -670,10 +734,13 @@ export function describeBankToBas(opts: BankToBasOptions): void {
     // bas_lodge_period returns -- a redirect to the referer on success
     // (core/views_bas.py:284-290), which this response object reports as its
     // own hop rather than the page the browser lands on afterwards -- so
-    // status alone (not body) is what's checked here, and the actual load is
-    // awaited explicitly below before any assertion reads the resulting page.
+    // status alone (not body) is what's checked here, and the actual
+    // navigation is awaited explicitly below (by URL, not load-state: a
+    // waitForLoadState right after waitForResponse can observe the OLD
+    // document's already-completed load if the redirect hasn't started
+    // navigating yet) before any assertion reads the resulting page.
     expect(lodgeResponse.status()).toBeLessThan(400);
-    await page.waitForLoadState('load');
+    await page.waitForURL(/\/gst\//);
 
     // The strongest available proof the period is now genuinely 'lodged' as
     // this senior sees it: the Unlodge button is gated on BOTH
@@ -695,9 +762,9 @@ export function describeBankToBas(opts: BankToBasOptions): void {
     // template adds ONLY to the card matching the currently selected period
     // (:110), confirmed by grep to appear nowhere else in this template --
     // rather than matching "248.00" anywhere on the page, which is exactly
-    // the vacuous-match failure mode Ruling 28 exists to rule out. Parsed to a
-    // number, not compared as a literal string, for the same reason
-    // readAmount() above is.
+    // the vacuous-match failure mode Ruling 28 exists to rule out. Parsed via
+    // the shared parseAmount() rather than a literal string comparison, for
+    // the same reason readAmount() above uses it too.
     const selectedStripCard = page.locator('.card.border-dark.border-2');
     await expect(
       selectedStripCard,
@@ -711,7 +778,7 @@ export function describeBankToBas(opts: BankToBasOptions): void {
     const netLine = selectedStripCard.locator('div.text-muted.mt-1');
     await expect(netLine, 'expected exactly one "Net:" line on the selected period card').toHaveCount(1);
     const netText = (await netLine.textContent()) ?? '';
-    expect(parseFloat(netText.replace(/[^0-9.-]/g, ''))).toBeCloseTo(248.0, 2);
+    expect(parseAmount(netText)).toBeCloseTo(248.0, 2);
 
     await page.context().close();
   });
@@ -742,6 +809,19 @@ export function describeBankToBas(opts: BankToBasOptions): void {
     const page = await officeAdminPage(browser);
     await page.goto(`${instance.baseURL}/years/${FY}/gst/?period=${LODGE_PERIOD}`);
 
+    // A positive anchor before any absence check: three `toHaveCount(0)`
+    // assertions in a row prove nothing on their own -- a 403 page, a login
+    // redirect, or a render where selected_period came back None would ALSO
+    // satisfy all three (page.goto does not throw on a 4xx), and would
+    // silently certify a permission control on a page that never rendered
+    // it. #lodgePartialModal itself (not its trigger button) renders
+    // unconditionally inside `{% if selected_period %}`
+    // (gst_activity_statement.html:969-1050), regardless of the period's own
+    // status or the viewer's role, so its presence is what actually proves
+    // this page rendered with a period selected before any absence below is
+    // read as meaningful.
+    await expect(page.locator('#lodgePartialModal')).toHaveCount(1);
+
     // Confirms this is genuinely the 'lodged' branch for this viewer, not
     // merely a page this role failed to render meaningfully: neither
     // pre-lodge trigger should be present either.
@@ -758,11 +838,18 @@ export function describeBankToBas(opts: BankToBasOptions): void {
 
   test(`${opts.profile}: only a senior can unlodge, even by direct request`, async ({ browser }) => {
     /**
-     * core/views_bas.py:304-306 is the only guard bas_unlodge_period carries
-     * -- unlike bas_lodge_period it has no separate can_do_accounting check
-     * ahead of it, so there is no risk of this request tripping a DIFFERENT
-     * guard's message first (a real risk the brief flags for the lodge
-     * endpoint, not this one).
+     * bas_unlodge_period carries two guards, not one: get_financial_year_for_user
+     * (core/views_bas.py:300) checks entity access first and raises
+     * PermissionDenied for a user without it, before is_senior is ever
+     * checked (:304-306). office_admin clears that first gate --
+     * can_view_all_entities includes it (accounts/models.py:59-62) -- so a
+     * failure there is not the risk here; it would surface as a non-2xx/3xx
+     * final status that this test's own `result.status` assertion below
+     * rejects outright, before the message assertion is ever reached. Unlike
+     * bas_lodge_period, bas_unlodge_period has no separate can_do_accounting
+     * check either, so with the entity-access gate cleared, the ONLY path
+     * left that can produce a PASSING assertion here is the is_senior guard
+     * at :304-306.
      *
      * The test above only proves the button is hidden; it says nothing about
      * whether the endpoint itself would refuse a hand-crafted request. This
