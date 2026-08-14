@@ -48,7 +48,7 @@ export function describeBankToBas(opts: BankToBasOptions): void {
     return page;
   }
 
-  test('the fixture entity has a GST dashboard', async ({ browser }) => {
+  test(`${opts.profile}: the fixture entity has a GST dashboard`, async ({ browser }) => {
     const page = await seniorPage(browser);
     await page.goto(`${instance.baseURL}/years/${FY}/gst/`);
     await expect(page.locator('body')).toContainText('Activity Statement');
@@ -65,5 +65,7 @@ export function describeBankToBas(opts: BankToBasOptions): void {
     await expect(page.locator('body')).not.toContainText(
       'This entity is not marked as GST registered',
     );
+
+    await page.context().close();
   });
 }
