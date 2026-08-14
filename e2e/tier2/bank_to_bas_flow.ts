@@ -10,7 +10,7 @@ import { test, expect } from '@playwright/test';
 import * as fs from 'fs';
 import { startInstance, type Instance } from '../fixtures/instance';
 import { loadUsers, loginAs } from '../fixtures/login';
-import { E2E_STATE_DIR } from '../fixtures/paths';
+import { E2E_STATE_DIR, REPO_DIR } from '../fixtures/paths';
 
 export interface BankToBasOptions {
   profile: string;
@@ -25,6 +25,11 @@ export function describeBankToBas(opts: BankToBasOptions): void {
   const FY = IDS.current_fy;
 
   let instance: Instance;
+  // The review job detail page (/review/<uuid>/), captured by the upload test and
+  // read by every test after it -- not confirm-import's own redirect target, which
+  // lands on the FY detail page instead (see the upload test). Serial mode
+  // guarantees the ordering; a parallel file would need this per-test.
+  let reviewJobUrl = '';
 
   test.describe.configure({ mode: 'serial' });
 
@@ -66,6 +71,80 @@ export function describeBankToBas(opts: BankToBasOptions): void {
       'This entity is not marked as GST registered',
     );
 
+    await page.context().close();
+  });
+
+  const STATEMENT_PDF = `${REPO_DIR}/e2e/fixtures/statements/cba_sample.pdf`;
+
+  test(`${opts.profile}: the statement parses and imports all six transactions`, async ({ browser }) => {
+    const page = await seniorPage(browser);
+    await page.goto(`${instance.baseURL}/years/${FY}/?tab=review`);
+
+    await page.locator('button[data-bs-target="#uploadBankStatementModal"]').click();
+    await page.locator('#uploadBankStatementModal').waitFor({ state: 'visible' });
+
+    // Map the bank account before anything else in the modal. This is the genuine
+    // first-time-user path, not a workaround: `active_bank_mapping` (core/views.py)
+    // is only ever populated from a BankAccountMapping tied to THIS entity's own
+    // imported statements, so a freshly seeded fixture always starts unmapped no
+    // matter what Task 3 seeds directly -- there is no fixture shortcut here
+    // (Ruling 17). isBankMapped() gates #fyUploadSubmitBtn on exactly this, and the
+    // mapped tb_account_code also becomes the contra account Task 6's double-entry
+    // posting depends on. IDS.bank_account_code ("2000", Cash at bank) is the code
+    // Task 3's fixture chart actually carries.
+    await page.fill('#wizardBankSearch', IDS.bank_account_code);
+    await page.locator(`.wizard-bank-pick[data-code="${IDS.bank_account_code}"]`).click();
+    await page.locator('#wizardBankSaveBtn').click();
+    await expect(page.locator('#wizardBankMapped')).toHaveValue('1');
+
+    // #fyFileInput carries .d-none; setInputFiles works on hidden inputs.
+    await page.setInputFiles('#fyFileInput', STATEMENT_PDF);
+    await page.locator('#fyUploadSubmitBtn').click();
+
+    // The page JS posts to /parse-statement/ per file, then redirects.
+    await page.waitForURL(/\/upload-preview\//, { timeout: 60_000 });
+
+    // Six rows offered for import. A zero here is the exact defect b073cca
+    // fixed: bank detected, header matched, no transactions extracted.
+    await expect(page.locator('#importCount')).toHaveText('6');
+
+    // The click handler's first act is a native confirm() dialog
+    // (upload_preview.html) before it ever fetches -- accept it like the real
+    // reviewer would, the same pattern yearend_close.spec.ts uses for #finaliseBtn.
+    page.once('dialog', (dialog: any) => dialog.accept());
+    const [confirmResponse] = await Promise.all([
+      page.waitForResponse(
+        (r: any) => r.url().includes('/confirm-import/') && r.request().method() === 'POST',
+      ),
+      page.locator('#confirmImportBtn').click(),
+    ]);
+    await page.waitForURL(/(\?tab=review|\/review\/)/, { timeout: 60_000 });
+
+    // confirm_import's own redirect always lands on the FY detail page
+    // (?tab=review), never on the review job detail page it just created
+    // (review/views.py:2648) -- so the job id is read off its JSON response
+    // instead, and the job detail page (the one that actually renders
+    // [data-txn-id] rows, per Ruling 18) is captured for the next test to visit.
+    const confirmData = await confirmResponse.json();
+    const [jobId] = confirmData.job_ids;
+    reviewJobUrl = `${instance.baseURL}/review/${jobId}/`;
+
+    await page.context().close();
+  });
+
+  test(`${opts.profile}: the debit and credit signs survive into the review queue`, async ({ browser }) => {
+    // The sign is encoded only in the statement's column geometry -- nothing in
+    // the text says debit or credit -- so this is what proves the columns were
+    // read rather than guessed.
+    const page = await seniorPage(browser);
+    await page.goto(reviewJobUrl);
+    const rows = page.locator('[data-txn-id]');
+    await expect(rows.filter({ hasText: 'EFTPOS SALES INV 1001' })).toHaveAttribute(
+      'data-amount', '1100.00',
+    );
+    await expect(rows.filter({ hasText: 'OFFICE SUPPLIES PTY LTD' })).toHaveAttribute(
+      'data-amount', '-550.00',
+    );
     await page.context().close();
   });
 }
