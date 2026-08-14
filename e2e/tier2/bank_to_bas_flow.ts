@@ -585,4 +585,229 @@ export function describeBankToBas(opts: BankToBasOptions): void {
 
     await page.context().close();
   });
+
+  // ─── The coverage gate, lodgement and unlodge ────────────────────────────
+  //
+  // The fixture's six transactions all land in October, one calendar month of
+  // a three-month quarter. October's quarter -- Q2 of a 1 July financial year
+  // -- is therefore permanently "partial" coverage: two of its three months
+  // never have a statement. LODGE_PERIOD names that period's number, which is
+  // what `?period=` on the BAS dashboard selects (core/views_bas.py:95,
+  // :103-107) -- used below instead of a bare `2` so its meaning is stated once.
+  const LODGE_PERIOD = 2;
+
+  async function officeAdminPage(browser: any) {
+    const users = loadUsers();
+    const context = await browser.newContext({ baseURL: instance.baseURL });
+    const page = await context.newPage();
+    await loginAs(page, users.roles.office_admin, users.password);
+    return page;
+  }
+
+  test(`${opts.profile}: lodgement is blocked while bank coverage is incomplete`, async ({ browser }) => {
+    /**
+     * core/views_bas.py:252 refuses to lodge unless get_bank_coverage reports
+     * complete, or an override reason is supplied -- but that refusal is not
+     * reachable through the UI as the brief originally assumed: the plain
+     * lodge form is rendered ONLY for a 'ready' period
+     * (gst_activity_statement.html:200-204, the button targeting
+     * `#lodgeModal`). This fixture's period is 'partial' (one of three months
+     * present), so the template's `{% elif %}` chain (:200/:205/:212) never
+     * reaches that branch at all -- the only lodge control offered is the
+     * override-carrying "Lodge with Warning" button (:205-211, targeting
+     * `#lodgePartialModal`). Both assertions matter together: the presence of
+     * the override path is only informative once the plain path is confirmed
+     * gone too -- a regression that silently brought back the ungated button
+     * would otherwise pass unnoticed by a test that only checks what IS there.
+     */
+    const page = await seniorPage(browser);
+    await page.goto(`${instance.baseURL}/years/${FY}/gst/?period=${LODGE_PERIOD}`);
+
+    await expect(
+      page.locator('button[data-bs-target="#lodgeModal"]'),
+      'the plain (unconditional) lodge trigger must not render for a partial period',
+    ).toHaveCount(0);
+
+    const partialTrigger = page.locator('button[data-bs-target="#lodgePartialModal"]');
+    await expect(
+      partialTrigger,
+      'the override-carrying lodge trigger must be the only lodge control offered',
+    ).toHaveCount(1);
+    await expect(partialTrigger).toContainText('Lodge with Warning');
+
+    // gst_activity_statement.html:209-211, the only place "Missing:" renders.
+    await expect(page.locator('div.text-danger.mt-1')).toContainText('Missing:');
+
+    await page.context().close();
+  });
+
+  test(`${opts.profile}: an override reason lets it lodge and freezes the figures`, async ({ browser }) => {
+    /**
+     * Drives the real override path: open #lodgePartialModal -- the only modal
+     * carrying `name="override_reason"` (:1036) -- fill it, and submit THAT
+     * modal's own form. Two forms on this page post to bas_lodge_period for
+     * this same period (:978 inside #lodgeModal, :1013 inside
+     * #lodgePartialModal); #lodgeModal's has no override field at all, so
+     * scoping the fill and the submit click to #lodgePartialModal is what
+     * actually reaches the override branch rather than failing against the
+     * wrong form.
+     */
+    const page = await seniorPage(browser);
+    await page.goto(`${instance.baseURL}/years/${FY}/gst/?period=${LODGE_PERIOD}`);
+
+    await page.locator('button[data-bs-target="#lodgePartialModal"]').click();
+    await page.locator('#lodgePartialModal').waitFor({ state: 'visible' });
+    await page.locator('#lodgePartialModal textarea[name="override_reason"]')
+      .fill('e2e fixture: single month of quarter by design');
+
+    const [lodgeResponse] = await Promise.all([
+      page.waitForResponse(
+        (r: Response) => r.url().includes('/gst/lodge/') && r.request().method() === 'POST',
+      ),
+      page.locator('#lodgePartialModal form[action*="/gst/lodge/"] button[type="submit"]').click(),
+    ]);
+    // A real (non-fetch) form submit navigates the browser through whatever
+    // bas_lodge_period returns -- a redirect to the referer on success
+    // (core/views_bas.py:284-290), which this response object reports as its
+    // own hop rather than the page the browser lands on afterwards -- so
+    // status alone (not body) is what's checked here, and the actual load is
+    // awaited explicitly below before any assertion reads the resulting page.
+    expect(lodgeResponse.status()).toBeLessThan(400);
+    await page.waitForLoadState('load');
+
+    // The strongest available proof the period is now genuinely 'lodged' as
+    // this senior sees it: the Unlodge button is gated on BOTH
+    // `selected_period.status == 'lodged'` AND `request.user.is_senior`
+    // (gst_activity_statement.html:1053) -- so its appearance is not merely
+    // "some lodged badge rendered", it is markup that cannot exist unless the
+    // status transition actually committed. The previous test's two lodge
+    // triggers disappearing corroborates the same transition from the other
+    // direction: neither the 'ready' nor the 'partial' branch is selected now.
+    await expect(page.locator('button[data-bs-target="#unlodgeModal"]')).toHaveCount(1);
+    await expect(page.locator('button[data-bs-target="#lodgeModal"]')).toHaveCount(0);
+    await expect(page.locator('button[data-bs-target="#lodgePartialModal"]')).toHaveCount(0);
+
+    // The snapshot captured at lodge time (bp.snapshot_net, core/views_bas.py:
+    // 271) should carry Task 7's hand-computed net figure. Read it off the
+    // period status strip's own lodged-period rendering
+    // (gst_activity_statement.html:119-122, "Net: $..."), scoped to the one
+    // card carrying `border-dark border-2` -- the class combination the
+    // template adds ONLY to the card matching the currently selected period
+    // (:110), confirmed by grep to appear nowhere else in this template --
+    // rather than matching "248.00" anywhere on the page, which is exactly
+    // the vacuous-match failure mode Ruling 28 exists to rule out. Parsed to a
+    // number, not compared as a literal string, for the same reason
+    // readAmount() above is.
+    const selectedStripCard = page.locator('.card.border-dark.border-2');
+    await expect(
+      selectedStripCard,
+      'expected exactly one selected period card in the status strip',
+    ).toHaveCount(1);
+    // gst_activity_statement.html:120's own class list -- scoped this tightly
+    // because a looser `div` + `hasText` filter also matches every ANCESTOR
+    // div of this one (their combined textContent contains "Net:" too, since
+    // hasText tests the whole subtree, not just this element's own text) --
+    // measured directly: it returned 2 elements before this fix.
+    const netLine = selectedStripCard.locator('div.text-muted.mt-1');
+    await expect(netLine, 'expected exactly one "Net:" line on the selected period card').toHaveCount(1);
+    const netText = (await netLine.textContent()) ?? '';
+    expect(parseFloat(netText.replace(/[^0-9.-]/g, ''))).toBeCloseTo(248.0, 2);
+
+    await page.context().close();
+  });
+
+  test(`${opts.profile}: a non-senior sees no unlodge control on a lodged period`, async ({ browser }) => {
+    /**
+     * Ruling 32 calls for this "as an accountant" -- but the accountant role
+     * cannot reach this page at all. It needs an explicit entity assignment
+     * to view any entity (core/e2e_support.py:80-90, `needs_assignments`), and
+     * this fixture entity ("E2E Bank BAS Pty Ltd") never gets one:
+     * e2e_bootstrap_users assigns its pool of PRE-EXISTING entities, and runs
+     * strictly before e2e_seed_fixture_entity ever creates this one
+     * (e2e/scripts/start_server.sh:54, :57) -- so at assignment time the
+     * fixture entity does not exist yet and e2e_accountant can never be handed
+     * it. Logging in as e2e_accountant here would 403 on
+     * get_financial_year_for_user (config/authorization.py:107-122) before
+     * ever reaching the template, which would prove nothing about the unlodge
+     * control -- only that the entity is unassigned, a fact this test isn't
+     * about.
+     *
+     * office_admin is the role that actually isolates the property this test
+     * wants: can_view_all_entities includes it (accounts/models.py:59-62), so
+     * it reaches this page the way an admin or senior would, but is_senior
+     * does NOT (:55-57) -- so this is a genuine non-senior view of a lodged
+     * period, the exact gap the unlodge button's own template guard checks
+     * (gst_activity_statement.html:1053, `request.user.is_senior`).
+     */
+    const page = await officeAdminPage(browser);
+    await page.goto(`${instance.baseURL}/years/${FY}/gst/?period=${LODGE_PERIOD}`);
+
+    // Confirms this is genuinely the 'lodged' branch for this viewer, not
+    // merely a page this role failed to render meaningfully: neither
+    // pre-lodge trigger should be present either.
+    await expect(page.locator('button[data-bs-target="#lodgeModal"]')).toHaveCount(0);
+    await expect(page.locator('button[data-bs-target="#lodgePartialModal"]')).toHaveCount(0);
+
+    await expect(
+      page.locator('button[data-bs-target="#unlodgeModal"]'),
+      'a non-senior user must not see the unlodge trigger on a lodged period',
+    ).toHaveCount(0);
+
+    await page.context().close();
+  });
+
+  test(`${opts.profile}: only a senior can unlodge, even by direct request`, async ({ browser }) => {
+    /**
+     * core/views_bas.py:304-306 is the only guard bas_unlodge_period carries
+     * -- unlike bas_lodge_period it has no separate can_do_accounting check
+     * ahead of it, so there is no risk of this request tripping a DIFFERENT
+     * guard's message first (a real risk the brief flags for the lodge
+     * endpoint, not this one).
+     *
+     * The test above only proves the button is hidden; it says nothing about
+     * whether the endpoint itself would refuse a hand-crafted request. This
+     * one drives that request directly, in-page fetch() (the same pattern
+     * yearend_close.spec.ts:205-215 uses), reading a CSRF token off a form
+     * already in this office_admin's own DOM -- #lodgePartialModal's, which
+     * renders unconditionally whenever selected_period exists
+     * (gst_activity_statement.html:969-1050), regardless of viewer role or
+     * the period's current status, so it is a legitimate token this user's
+     * own session actually holds, not one borrowed from elsewhere.
+     *
+     * Supplying a real unlodge_reason is deliberate: bp.status genuinely is
+     * 'lodged' at this point (the previous test proved it), so if the
+     * is_senior guard were ever removed, this exact request carries
+     * everything bas_unlodge_period needs to actually unlodge the period.
+     * That means this assertion would fail loudly -- the wrong message, and a
+     * mutated period -- rather than passing regardless of whether the guard
+     * exists, which is what a test asserting only a hidden button cannot do.
+     */
+    const page = await officeAdminPage(browser);
+    await page.goto(`${instance.baseURL}/years/${FY}/gst/?period=${LODGE_PERIOD}`);
+
+    const result = await page.evaluate(async ({ fy, period }) => {
+      const token = (document.querySelector(
+        '#lodgePartialModal [name="csrfmiddlewaretoken"]',
+      ) as HTMLInputElement)?.value;
+      const response = await fetch(`/years/${fy}/gst/unlodge/${period}/`, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': token, 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ unlodge_reason: 'e2e probe: office_admin should be refused' }),
+        redirect: 'follow',
+      });
+      return { status: response.status, text: await response.text() };
+    }, { fy: FY, period: LODGE_PERIOD });
+
+    expect(result.status).toBeLessThan(400);
+    expect(result.text).toContain(
+      'Only senior accountants and administrators can unlodge BAS periods.',
+    );
+    // Belt-and-braces: a successful unlodge renders "has been unlodged"
+    // instead (core/views_bas.py:332). Its absence here is further proof this
+    // hit the refusal path, not a successful unlodge whose page happened to
+    // also contain the word "senior" somewhere unrelated.
+    expect(result.text).not.toContain('has been unlodged');
+
+    await page.context().close();
+  });
 }
