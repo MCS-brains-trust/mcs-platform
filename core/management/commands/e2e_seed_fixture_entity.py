@@ -43,7 +43,13 @@ class Command(BaseCommand):
         assert_e2e_database()
         keys = options["profile"] or sorted(PROFILES)
         for key in keys:
-            ids = seed_fixture_entity(PROFILES[key])
+            profile = PROFILES[key]
+            ids = seed_fixture_entity(profile)
+            # Only the bank-to-BAS profile's flow needs to know which chart account
+            # a bank statement reconciles against; every other profile's manifest
+            # is unchanged (bank_account_code is None and stays out of the dict).
+            if profile.bank_account_code:
+                ids = {**ids, "bank_account_code": profile.bank_account_code}
             output = atomic_write_text(
                 f"{options['output_dir']}/{manifest_name(key)}",
                 json.dumps(ids, indent=2) + "\n",

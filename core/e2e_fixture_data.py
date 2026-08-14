@@ -81,6 +81,10 @@ class FixtureProfile:
     retained_profits_code: str
     client_name: str
     depreciation_asset: dict | None = None
+    # Bank-statement-reconciliation account code, for profiles whose flow needs to
+    # know which chart account a bank statement is uploaded against. Optional
+    # because the four roll-forward/year-end profiles have no such flow.
+    bank_account_code: str | None = None
 
 
 COMPANY = FixtureProfile(
@@ -341,11 +345,74 @@ SOLE_TRADER = FixtureProfile(
     retained_profits_code="4199",
 )
 
+BANK_BAS_IDS = {
+    "client": "b1a5c0de-0000-4000-8000-000000000001",
+    "entity": "b1a5c0de-0000-4000-8000-000000000002",
+    "current_fy": "b1a5c0de-0000-4000-8000-000000000003",
+    # Not in the brief's illustrative dict, but seed_fixture_entity always creates a
+    # prior FinancialYear row (it is the one that carries prior_year_tb, even an
+    # empty one) -- omitting this key is a KeyError, not an inert no-op. The bank-
+    # to-BAS flow itself never reads this year; it exists only so the seeder's shared
+    # code path has somewhere to put the (empty) prior_year_tb below.
+    "prior_fy": "b1a5c0de-0000-4000-8000-000000000004",
+}
+
+BANK_BAS_CHART = [
+    ("2000", "Cash at bank", "current_assets"),
+    # "revenue", not the brief's "income" -- EntityChartOfAccount.StatementSection
+    # (core/models.py) has no "income" choice. sqlite has no CHECK constraint so a
+    # bad value here would save silently, but the hardened Postgres E2E copy would
+    # reject it -- same trap CHART_OF_ACCOUNTS's comment above already warns about.
+    ("0510", "Sales", "revenue"),
+    ("1520", "Office supplies", "expenses"),
+    ("1530", "Bank fees and charges", "expenses"),
+    ("1540", "Food supplies", "expenses"),
+    ("4199", "Retained profits", "equity"),
+]
+
+BANK_BAS = FixtureProfile(
+    key="bank_bas",
+    ids=BANK_BAS_IDS,
+    client_name="E2E Bank BAS Client",
+    entity_kwargs={
+        "entity_name": "E2E Bank BAS Pty Ltd",
+        "entity_type": "company",
+        # Valid check digits — core/validators.py rejects malformed identifiers,
+        # and a fixture that could not be saved through the UI is a trap.
+        "abn": "51824753556",
+        "acn": "004085616",
+        "financial_year_end": "06-30",
+        "reporting_framework": "SPFR",
+        "company_size": "small_proprietary",
+        # The whole point of this profile: without it there is no BAS to compute.
+        "is_gst_registered": True,
+        "include_comparative_figures": False,
+        # bas_frequency is a real Entity field (confirmed against Entity._meta,
+        # not the getattr fallback in core/views_bas.py) with choices
+        # quarterly/monthly and default quarterly -- set explicitly rather than
+        # relying on the model default, so this fixture states its own assumption.
+        "bas_frequency": "quarterly",
+    },
+    chart=BANK_BAS_CHART,
+    # No prior year trial balance. This flow never rolls forward, and an unnecessary
+    # prior year would only add figures that later assertions could trip over. The
+    # prior FinancialYear row itself still gets created (see BANK_BAS_IDS above) --
+    # it is just empty, which is a valid, trivially-balanced (0 == 0) trial balance.
+    prior_year_tb=[],
+    retained_profits_code="4199",
+    # Read by e2e_seed_fixture_entity to add the one extra manifest key this
+    # profile's flow needs: which chart account the bank statement's opening/
+    # closing balances reconcile against. No other profile's flow needs this, so it
+    # is not a field every profile must populate.
+    bank_account_code="2000",
+)
+
 PROFILES = {
     "company": COMPANY,
     "trust": TRUST,
     "partnership": PARTNERSHIP,
     "sole_trader": SOLE_TRADER,
+    "bank_bas": BANK_BAS,
 }
 
 
