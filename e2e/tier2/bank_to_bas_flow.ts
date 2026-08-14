@@ -53,6 +53,59 @@ export function describeBankToBas(opts: BankToBasOptions): void {
     return page;
   }
 
+  // Row-scoped accessor for the GST Activity Statement's summary tab
+  // (templates/core/gst_activity_statement.html:273-360, `#summaryTab`, the
+  // default-active tab per `:273`'s `show active`). Locating a label by
+  // substring is unsafe on this page: "G1" is a substring of "G10", "G11",
+  // "G12" and "G19", which is exactly the trap in the brief's prescribed
+  // num() regex helper (Ruling 28) -- so this matches the row's FIRST cell
+  // (`tr > td:first-child`, the label column, never the description or
+  // amount columns) against the label with anchors (`^...$`), an exact
+  // match rather than a prefix match. Scoping to `#summaryTab` also matters
+  // on its own: `#basDetailTab` (:363) stays in the DOM while hidden and
+  // renders "Total Sales (G1)" at :527, which a page-wide search would also
+  // see. `toHaveCount(1)` is asserted before reading anything, so a label
+  // that is missing or ambiguous fails loudly here instead of a `.first()`
+  // or bare `textContent()` silently reading the wrong row.
+  async function basRow(page: any, label: string) {
+    const labelCell = page
+      .locator('#summaryTab tr > td:first-child')
+      .filter({ hasText: new RegExp(`^${label}$`) });
+    await expect(
+      labelCell,
+      `expected exactly one #summaryTab row labelled "${label}"`,
+    ).toHaveCount(1);
+    return labelCell.locator('xpath=ancestor::tr[1]');
+  }
+
+  // The row's last <td> is always the amount cell (label, description,
+  // amount -- gst_activity_statement.html:284, :311), whatever the row's
+  // exact column count, so `.last()` rather than a fixed index. Parsed to a
+  // number (stripping "$" and any thousands separator) rather than compared
+  // as a literal string: USE_THOUSAND_SEPARATOR is unset in this project's
+  // settings, so floatformat:2 may or may not group digits, and that
+  // formatting choice is not what this suite is pinning -- the figure is.
+  async function basValue(page: any, label: string): Promise<number> {
+    const row = await basRow(page, label);
+    const text = (await row.locator('td').last().textContent()) ?? '';
+    return parseFloat(text.replace(/[^0-9.-]/g, ''));
+  }
+
+  // The net-GST row (gst_activity_statement.html:350-355) is shaped
+  // differently from every other summary row: its first cell is a
+  // colspan="2" label whose text is sign-dependent -- "Net GST Payable to
+  // ATO" when gst_payable > 0, "Net GST Refundable from ATO" otherwise
+  // (:352) -- so it cannot be found by basRow's exact-label match and needs
+  // its own accessor. No other row in #summaryTab carries a colspan, so the
+  // attribute alone identifies it regardless of which wording rendered.
+  async function basNetValue(page: any): Promise<number> {
+    const labelCell = page.locator('#summaryTab tr > td:first-child[colspan="2"]');
+    await expect(labelCell, 'expected exactly one #summaryTab net-GST row').toHaveCount(1);
+    const row = labelCell.locator('xpath=ancestor::tr[1]');
+    const text = (await row.locator('td').last().textContent()) ?? '';
+    return parseFloat(text.replace(/[^0-9.-]/g, ''));
+  }
+
   test(`${opts.profile}: the fixture entity has a GST dashboard`, async ({ browser }) => {
     const page = await seniorPage(browser);
     await page.goto(`${instance.baseURL}/years/${FY}/gst/`);
@@ -444,6 +497,62 @@ export function describeBankToBas(opts: BankToBasOptions): void {
     const bankCells = bankRow.locator('td');
     await expect(bankCells.nth(2)).toHaveText('3,228.00');
     await expect(bankCells.nth(3)).toHaveText('');
+
+    await page.context().close();
+  });
+
+  test(`${opts.profile}: the BAS labels equal their hand-computed values`, async ({ browser }) => {
+    /**
+     * From the fixture's transaction table, GST at 1/11 of the GST-inclusive
+     * amount:
+     *
+     *   G1  total sales incl GST      1,100 + 2,200 + 800 = 4,100.00
+     *   G2  export sales                                     0.00
+     *   G3  other GST-free sales                            800.00
+     *   G10 capital purchases                                 0.00
+     *   G11 non-capital purchases     550 + 22 + 300      =  872.00
+     *   1A  GST on sales              (1,100 + 2,200)/11  =  300.00
+     *   1B  GST on purchases          (550 + 22)/11       =   52.00
+     *   net                           300.00 - 52.00      =  248.00
+     *
+     * The export sale (EXPORT SALE INV 1003) is expected in G3, not G2: it is
+     * allocated tax type "GST Free Income" (ALLOCATIONS above), which
+     * normalise_tax_treatment (core/bas_utils.py:266) maps to tax code "FRE",
+     * and _classify_line's revenue branch (core/bas_utils.py:400-402) buckets
+     * any GST-free (or untagged) revenue line into G3 -- this engine has no
+     * path that ever populates G2 from a bank-statement transaction. If the
+     * application disagrees with any figure here, STOP and report which label
+     * and by how much -- these are hand-derived from the fixture, not a
+     * baseline, and are not to be edited to match a different output.
+     */
+    const page = await seniorPage(browser);
+    await page.goto(`${instance.baseURL}/years/${FY}/gst/`);
+
+    expect(await basValue(page, 'G1')).toBeCloseTo(4100.0, 2);
+    expect(await basValue(page, 'G2')).toBeCloseTo(0, 2);
+    expect(await basValue(page, 'G3')).toBeCloseTo(800.0, 2);
+    expect(await basValue(page, 'G10')).toBeCloseTo(0, 2);
+    expect(await basValue(page, 'G11')).toBeCloseTo(872.0, 2);
+    expect(await basValue(page, '1A')).toBeCloseTo(300.0, 2);
+    expect(await basValue(page, '1B')).toBeCloseTo(52.0, 2);
+    expect(await basNetValue(page)).toBeCloseTo(248.0, 2);
+
+    await page.context().close();
+  });
+
+  test(`${opts.profile}: the GST identity holds`, async ({ browser }) => {
+    // 1A - 1B = net, whatever the individual figures turn out to be. An
+    // absolute relationship needs no baseline: if it fails, the figures are
+    // wrong regardless of what was asserted as the hand-computed value above.
+    // Uses the same row-scoped accessors as that test, not the brief's
+    // prefix-matching num() regex (Ruling 28).
+    const page = await seniorPage(browser);
+    await page.goto(`${instance.baseURL}/years/${FY}/gst/`);
+
+    const oneA = await basValue(page, '1A');
+    const oneB = await basValue(page, '1B');
+    const net = await basNetValue(page);
+    expect(oneA - oneB).toBeCloseTo(net, 2);
 
     await page.context().close();
   });
