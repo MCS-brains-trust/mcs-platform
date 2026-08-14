@@ -17,7 +17,6 @@ export interface BankToBasOptions {
   port: number;
   manifest: string;
   instanceSlug: string;
-  checkpointPrefix: string;
 }
 
 export function describeBankToBas(opts: BankToBasOptions): void {
@@ -374,6 +373,20 @@ export function describeBankToBas(opts: BankToBasOptions): void {
       // become actionable again.
       await row.locator('.account-picker-input').fill(code);
       await row.locator(`.account-option[data-code="${code}"]`).first().click();
+      // Tripwire protecting the ALLOCATIONS constraint above, not an incidental
+      // check -- do not delete this as noise. applyAccountGST (review_detail.html:
+      // 873-912) sets .tax-select's value SYNCHRONOUSLY, inside the click handler,
+      // before tryAutoConfirm ever runs -- so if the account just clicked carried a
+      // mapped tax_code, .tax-select would already be non-empty by this point, and
+      // this assertion fails loudly right here instead of the suite silently
+      // exercising the auto-apply race the ALLOCATIONS comment documents but does
+      // not fix. As a bonus, this also proves the reload above genuinely cleared
+      // classification's own client-side pre-fill of .tax-select: if it hadn't,
+      // this would be non-empty regardless of the account's tax_code.
+      await expect(
+        row.locator('.tax-select'),
+        'chosen account must have no mapped tax_code — see the ALLOCATIONS comment',
+      ).toHaveValue('');
       // Doubly true this click alone can't confirm the row: none of these six
       // accounts carry a mapped tax_code (see the ALLOCATIONS comment), so
       // applyAccountGST returns early and never touches .tax-select; and the
@@ -446,9 +459,13 @@ export function describeBankToBas(opts: BankToBasOptions): void {
 
     await page.goto(reviewJobUrl);
     const row = page.locator('[data-txn-id]').filter({ hasText: 'BANK FEES AND CHARGES' });
-    // Code 1545 (Bank fees & charges), not the fixture's own 1530 -- see the
-    // ALLOCATIONS comment above for why the picker can't reach 1530 at all.
-    await row.locator('.account-picker-input').fill('1545');
+    // Read the code straight out of ALLOCATIONS rather than re-typing the literal
+    // here -- the two would otherwise fail loudly, not silently, if they ever
+    // diverged, but there's no reason to invite that at all. 1545 (Bank fees &
+    // charges), not the fixture's own 1530 -- see the ALLOCATIONS comment above
+    // for why the picker can't reach 1530 at all.
+    const [, bankFeesCode] = ALLOCATIONS.find(([desc]) => desc === 'BANK FEES AND CHARGES')!;
+    await row.locator('.account-picker-input').fill(bankFeesCode);
     // .tax-select already renders "GST on Expenses" selected (confirmed_tax_type
     // from the previous test's confirm), so re-picking the account alone is
     // enough: tryAutoConfirm (:937) fires confirmTransaction() as soon as both
@@ -461,7 +478,7 @@ export function describeBankToBas(opts: BankToBasOptions): void {
       page.waitForResponse(
         (r: Response) => r.url().includes('/confirm/') && r.request().method() === 'POST',
       ),
-      row.locator('.account-option[data-code="1545"]').first().click(),
+      row.locator(`.account-option[data-code="${bankFeesCode}"]`).first().click(),
     ]);
     const confirmData = await confirmResponse.json();
     expect(confirmData.status).toBe('ok');
@@ -510,8 +527,10 @@ export function describeBankToBas(opts: BankToBasOptions): void {
     // derived from the statement's own transactions, and it is exactly Task
     // 1's own statement reconciliation total -- not a figure this test is
     // the first to produce. Dropping any one of the six changes it.
+    // IDS.bank_account_code, not a re-typed "2000" literal -- see the upload
+    // test's own comment for why that's the code Task 3's fixture chart carries.
     const bankRow = page
-      .locator('#tb-table code', { hasText: /^\s*2000\s*$/ })
+      .locator('#tb-table code', { hasText: new RegExp(`^\\s*${IDS.bank_account_code}\\s*$`) })
       .locator('xpath=ancestor::tr[1]');
     const bankCells = bankRow.locator('td');
     await expect(bankCells.nth(2)).toHaveText('3,228.00');
@@ -519,6 +538,18 @@ export function describeBankToBas(opts: BankToBasOptions): void {
 
     await page.context().close();
   });
+
+  // The fixture's six transactions all land in October, one calendar month of
+  // a three-month quarter. October's quarter -- Q2 of a 1 July financial year
+  // -- is therefore permanently "partial" coverage: two of its three months
+  // never have a statement. LODGE_PERIOD names that period's number, which is
+  // what `?period=` on the BAS dashboard selects (core/views_bas.py:95,
+  // :103-107) -- used everywhere below instead of a bare `2` so its meaning is
+  // stated once. The two BAS-label tests immediately below pass it explicitly
+  // rather than relying on the bare `/years/<FY>/gst/` dashboard's
+  // auto-select landing on Q2 -- see the lodge test's docstring further down
+  // for why that auto-select is itself a fragile, order-dependent property.
+  const LODGE_PERIOD = 2;
 
   test(`${opts.profile}: the BAS labels equal their hand-computed values`, async ({ browser }) => {
     /**
@@ -558,7 +589,7 @@ export function describeBankToBas(opts: BankToBasOptions): void {
      * purchase, and this fixture's six transactions simply don't produce one.
      */
     const page = await seniorPage(browser);
-    await page.goto(`${instance.baseURL}/years/${FY}/gst/`);
+    await page.goto(`${instance.baseURL}/years/${FY}/gst/?period=${LODGE_PERIOD}`);
 
     expect(await basValue(page, 'G1')).toBeCloseTo(4100.0, 2);
     expect(await basValue(page, 'G2')).toBeCloseTo(0, 2);
@@ -589,7 +620,7 @@ export function describeBankToBas(opts: BankToBasOptions): void {
     // not hand-picked to satisfy the identity by construction), which is why
     // it stays rather than being deleted.
     const page = await seniorPage(browser);
-    await page.goto(`${instance.baseURL}/years/${FY}/gst/`);
+    await page.goto(`${instance.baseURL}/years/${FY}/gst/?period=${LODGE_PERIOD}`);
 
     const oneA = await basValue(page, '1A');
     const oneB = await basValue(page, '1B');
@@ -601,19 +632,14 @@ export function describeBankToBas(opts: BankToBasOptions): void {
 
   // ─── The coverage gate, lodgement and unlodge ────────────────────────────
   //
-  // The fixture's six transactions all land in October, one calendar month of
-  // a three-month quarter. October's quarter -- Q2 of a 1 July financial year
-  // -- is therefore permanently "partial" coverage: two of its three months
-  // never have a statement. LODGE_PERIOD names that period's number, which is
-  // what `?period=` on the BAS dashboard selects (core/views_bas.py:95,
-  // :103-107) -- used below instead of a bare `2` so its meaning is stated once.
-  const LODGE_PERIOD = 2;
+  // LODGE_PERIOD (Q2) is declared above, ahead of the BAS-label tests that
+  // also use it.
 
   async function officeAdminPage(browser: any) {
     return rolePage(browser, 'office_admin');
   }
 
-  test(`${opts.profile}: lodgement is blocked while bank coverage is incomplete`, async ({ browser }) => {
+  test(`${opts.profile}: the UI offers only the override lodge path for a partial period`, async ({ browser }) => {
     /**
      * core/views_bas.py:252 refuses to lodge unless get_bank_coverage reports
      * complete, or an override reason is supplied -- but that refusal is not
@@ -704,17 +730,22 @@ export function describeBankToBas(opts: BankToBasOptions): void {
      * actually reaches the override branch rather than failing against the
      * wrong form.
      *
-     * Ordering constraint, not just narrative convenience: once this test
-     * lodges LODGE_PERIOD, the bare (no `?period=`) auto-select fallback in
-     * bas_dashboard (core/views_bas.py:120-147) no longer resolves to it --
-     * with no 'ready' or 'partial' period left (Q1/Q3/Q4 carry none of the
-     * fixture's transactions, so they're 'empty', and Q2 is now 'lodged'),
-     * auto-select falls through to `period_data[0]` (Q1, all zero) instead of
-     * Q2. The two tests above ("the BAS labels equal their hand-computed
-     * values", "the GST identity holds") both navigate to the bare
-     * `/years/<FY>/gst/` URL and currently land on Q2 via the 'partial'
-     * auto-select branch (:127-130) -- so this test must stay after them, or
-     * they would silently start reading Q1's zero figures instead of failing.
+     * This USED to be an ordering constraint, not just narrative convenience:
+     * once this test lodges LODGE_PERIOD, the bare (no `?period=`) auto-select
+     * fallback in bas_dashboard (core/views_bas.py:120-147) no longer resolves
+     * to it -- with no 'ready' or 'partial' period left (Q1/Q3/Q4 carry none
+     * of the fixture's transactions, so they're 'empty', and Q2 is now
+     * 'lodged'), auto-select falls through to `period_data[0]` (Q1, all zero)
+     * instead of Q2. The two tests above ("the BAS labels equal their
+     * hand-computed values", "the GST identity holds") used to navigate to the
+     * bare `/years/<FY>/gst/` URL and land on Q2 only via that 'partial'
+     * auto-select branch (:127-130) -- an invisible dependency on this test
+     * staying after them, undocumented anywhere near those two tests
+     * themselves. They now pass `?period=${LODGE_PERIOD}` explicitly, the same
+     * as every other test on this page including this one, so that dependency
+     * is gone: they read Q2 on purpose, regardless of run order or of this
+     * test having lodged it. Serial mode (`describe.configure`, top of file)
+     * still fixes the declared order regardless.
      */
     const page = await seniorPage(browser);
     await page.goto(`${instance.baseURL}/years/${FY}/gst/?period=${LODGE_PERIOD}`);

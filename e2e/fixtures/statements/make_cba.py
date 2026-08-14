@@ -5,12 +5,25 @@ reads a transaction table instead of an opaque blob. Regenerate with:
 
     venv/bin/python e2e/fixtures/statements/make_cba.py
 
-Two properties must hold at once, and both are true of real CBA statements:
+This is routed to the CBA parser by a bare substring match on the bank name in
+the preamble text -- detect_bank (review/pdf_parsers.py:1741) sets
+is_cba = "commonwealth bank" in text_lower or "commbank" in text_lower, and
+that alone selects "cba" a few lines later. The "Commonwealth Bank of
+Australia" line drawn below is what does the routing; nothing else here does.
 
-  * the column header keeps real spaces, so detect_bank's
-    r"Date\\s+Transaction\\s+Debit\\s+Credit\\s+Balance" matches extract_text()
-  * the date column is drawn tight enough that "02 Oct" extracts as "02Oct",
-    which is the glued form review/statement_geometry.py's DATE_RE expects
+The header's column spacing is NOT load-bearing for routing. detect_bank's one
+whitespace regex, r"date\\s+transaction\\s+details\\s+amount\\s+balance",
+discriminates a different CBA variant (the NetBank "Transaction Listing"
+export, bank code "cba_txn_listing") from the standard bank-statement layout
+this fixture reproduces -- and this fixture's header ("Date    Transaction
+Debit    Credit    Balance") never matches that pattern regardless of spacing.
+Copying this file for a new bank: route on whatever substring or pattern that
+bank's own detect_bank branch actually keys on, not on reproducing this
+header's whitespace.
+
+One property below IS true of real CBA statements and is load-bearing: the
+date column is drawn tight enough that "02 Oct" extracts as "02Oct", which is
+the glued form review/statement_geometry.py's DATE_RE expects.
 
 The running balance is drawn ONLY on the OPENING BALANCE and CLOSING BALANCE
 anchor rows, not on every transaction row, even though a real CBA statement
@@ -92,7 +105,10 @@ def build_pdf():
     c.drawString(X_DATE, y, "Account Number 06 2000 12345678")
     y -= LINE_HEIGHT * 2
 
-    # Header with real spaces: detect_bank needs whitespace here.
+    # Column spacing here is cosmetic, not routing: detect_bank selects "cba"
+    # from the preamble's bank-name substring above, before this header is
+    # ever inspected. Real spaces are kept only because a real CBA statement
+    # has them, not because anything downstream requires it.
     c.drawString(X_DATE, y, "Date    Transaction    Debit    Credit    Balance")
     y -= LINE_HEIGHT
 

@@ -182,8 +182,26 @@ uncovered by this suite entirely.** They still carry whatever parsing defects pr
 this work; nothing here exercises them, and nothing here should be read as "bank
 statements are tested" in general — only CBA is. Building out a fixture for another bank
 needs a real exemplar statement from that bank (the same reason only CBA has one so far),
-plus a new fixture generator and a spec file like this one. Adding another entity type
-needs a new fixture profile plus a spec file like this one.
+plus a new fixture generator and a spec file like this one.
+
+Adding another entity type is more than a new fixture profile plus a spec file — three
+things in `bank_to_bas_flow.ts` are hard-coded to the company profile and would all need
+revisiting:
+
+- **`ALLOCATIONS`'s account codes** (`0602`, `1685`, `1545`, `1126`, `0578`) come from the
+  global, entity-type-scoped `ChartOfAccount` template (`review/views.py:553-555`), not
+  from the fixture's own chart — a different entity type may not carry these codes at
+  all. Whatever codes it uses instead must independently satisfy the constraint that
+  makes this suite pass: no mapped `tax_code`, or a `tax_code` outside
+  `taxCodeToTaxType`'s map (see the ALLOCATIONS comment and the limits section below).
+- The bank account name string (`Cash at bank`) asserted after the wizard mapping step is
+  hard-coded.
+- The `2000` trial-balance row the double-post and TB-balances tests key on
+  (`IDS.bank_account_code`) is this fixture's own chart code, not necessarily another
+  profile's.
+
+None of this is lifted into `BankToBasOptions` here, deliberately: doing so with no second
+profile to validate against would be speculative.
 
 **The AI suggestion path is excluded, deliberately.** Classification runs and is waited
 on to completion (proving the classify step itself works), but the test then reloads the
@@ -195,7 +213,7 @@ regression in the deterministic figures below would be invisible. The reload cle
 unconfirmed client-side state and forces the hand-picked allocations to be what land in
 the ledger.
 
-Three further limits, none fixable with a committed fixture:
+Five further limits, none fixable with a committed fixture:
 
 1. **The fixture assumes the kerning collapse rather than reproducing it.** Dates are
    stored as glued literals (`02Oct`) and drawn with a single call. That is the input
@@ -238,6 +256,31 @@ Three further limits, none fixable with a committed fixture:
    account) risks picking one with a mapped tax code and silently reintroducing this
    race.** If the underlying `/gst-treatment/` locking defect is ever fixed, this
    constraint — and the coverage gap it causes — should be revisited.
+4. **Correcting an already-confirmed transaction never re-posts the trial balance.**
+   `confirm_transaction` (`review/views.py:694`) guards the trial-balance post on
+   `posted_to_tb`: `if not txn.posted_to_tb: _post_confirmed_txn_to_tb(txn)`. A later
+   confirm on the same transaction — changing its account or tax type — updates the
+   transaction record (`confirmed_code`, `confirmed_tax_type`, `confirmed_gst_amount`,
+   etc.) but the guard skips reposting, so the ledger keeps the figures from the
+   *original* confirm. The BAS reads the transaction's own confirmed fields directly
+   (`core/bas_utils.py`), and the financial statements read the trial balance, so the
+   two disagree after any correction. This is the same guard the "re-confirming a
+   transaction does not post it twice" test above relies on for its own, intended
+   effect — it is a correct guard against double-posting, and this is its accepted,
+   documented cost, not a second bug to fix here.
+5. **The BAS reallocation endpoints post nothing to the trial balance at all.**
+   `bas_reallocate_transaction` and `bas_bulk_reallocate` (`core/views_bas.py`) update
+   `confirmed_code`/`confirmed_name`/`confirmed_tax_type`/`confirmed_gst_amount` and call
+   `.save()` — neither function calls `_post_confirmed_txn_to_tb`, `_post_txn_to_tb`, or
+   `_recalc_bank_contra` anywhere. A reallocation through the BAS detail tabs therefore
+   changes what the BAS reports immediately, while the trial balance (and anything
+   derived from it) keeps the transaction's original posting indefinitely.
+
+Both 4 and 5 are known, accepted-for-now application defects that this suite documents
+rather than covers or fixes — no test here exercises a correction or a BAS reallocation,
+so neither is caught red here. They are recorded so a reader of this file, not just of
+application source, knows the BAS and the trial balance can already disagree with each
+other in ways unrelated to anything Tier 2 asserts.
 
 ## Defects found by the suite
 

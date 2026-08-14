@@ -211,7 +211,15 @@ Expected: FAIL with `ModuleNotFoundError: No module named 'e2e.fixtures.statemen
 > The snippet is kept rather than rewritten because the two failures it produces are
 > instructive, and any future bank's fixture will hit the same two traps.
 
-Both properties matter: the header keeps real spaces so `detect_bank` fires, the date column is drawn tight so the date glues. `drawString` at explicit x positions is what puts the debit and credit columns >12pt apart.
+Both properties matter: the header keeps real spaces (true of a real CBA statement), the date column is drawn tight so the date glues. `drawString` at explicit x positions is what puts the debit and credit columns >12pt apart.
+
+> **Correction (post-merge cleanup, 2026-08-14):** the clause above once read "so
+> `detect_bank` fires" -- that is false, per the correction already noted at line
+> 42 of this file. `detect_bank` routes this fixture to "cba" on a bare substring
+> match of the bank name in the preamble ("commonwealth bank" in the lowercased
+> text), never on this header's whitespace. Left uncorrected in the quoted
+> snippet below, which this document already treats as a superseded historical
+> artefact (see the disclaimer immediately above it).
 
 ```python
 # e2e/fixtures/statements/make_cba.py
