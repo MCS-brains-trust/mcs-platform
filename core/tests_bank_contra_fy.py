@@ -108,3 +108,18 @@ class BankContraYearScopeTests(TestCase):
 
         self.assertNotEqual(result["status"], "no_mapping")
         self.assertEqual(result["status"], "ok")
+
+    def test_opening_balance_on_the_contra_row_survives_a_recalc(self):
+        # closing_balance was set to total_debit - total_credit, ignoring
+        # opening_balance entirely — a no-op today only because contra rows
+        # currently carry a zero opening balance.
+        self._post("2025-08-01", "-110.00")
+        line = bs_line(self.fy26, "1100")
+        line.opening_balance = D("300.00")
+        line.save(update_fields=["opening_balance"])
+
+        _recalc_bank_contra(self.fy26)
+
+        line.refresh_from_db()
+        self.assertEqual(line.opening_balance, D("300.00"))
+        self.assertEqual(line.closing_balance, D("190.00"))

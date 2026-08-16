@@ -1175,16 +1175,38 @@ def _bank_tb_totals(fy, fys=None):
     trial balance that disagrees with its transactions, not an aggregation rule
     that is itself wrong. The tests in core/tests_bank_tb_rebuild.py are the
     only thing standing behind the rule.
+
+    Precondition: this is only meaningful for a resolvable `fy` — one present
+    in entity_financial_years(fy.entity) (or in the `fys` passed in). Called on
+    a year outside that set (e.g. a 'reopened' year, see core/txn_periods.py),
+    no transaction can ever resolve back to it, so `accounts`/`gst` come back
+    empty — which looks exactly like "every posted transaction has left this
+    account" and is not. The result carries `fy_resolvable` so a caller (the
+    audit command in particular) cannot mistake one for the other by skipping
+    the check; _recalculate_bank_tb_lines never calls this function at all on
+    such a year, guarding before it gets here.
+
+    Returns two entanglement maps, deliberately different in width:
+    `unbacked` is broad — any code with posted transactions and no
+    bank_statement row, whatever its other rows' source — for a human to judge
+    via the audit command. `entangled` is narrow — only the shape actually
+    observed to hold bank money hiding from the rebuild (every existing row is
+    a manual adjustment, or more than one bank_statement row exists for the
+    code) — because the far more common case, a code that merely exists in the
+    client's imported trial balance and has not yet received a bank posting,
+    must not block every reallocation onto an imported account.
     """
     from review.models import PendingTransaction
     from core.txn_periods import entity_financial_years, resolve_fy_for_txn
 
     if fys is None:
         fys = entity_financial_years(fy.entity)
+    fy_resolvable = fy in fys
 
     accounts = {}
     gst = {'debit': Decimal("0"), 'credit': Decimal("0")}
     entangled = {}
+    unbacked = {}
 
     posted = PendingTransaction.objects.filter(
         job__entity=fy.entity, is_confirmed=True, posted_to_tb=True,
@@ -1202,12 +1224,14 @@ def _bank_tb_totals(fy, fys=None):
 
         bucket = accounts.setdefault(
             code, {'debit': Decimal("0"), 'credit': Decimal("0"),
-                   'name': txn.confirmed_name or code},
+                   'name': txn.confirmed_name or code, 'tax_type': ''},
         )
         if txn.amount < 0:
             bucket['debit'] += net_for_tb
         else:
             bucket['credit'] += net_for_tb
+        if not bucket['tax_type'] and txn.confirmed_tax_type:
+            bucket['tax_type'] = txn.confirmed_tax_type
 
         if has_gst:
             if txn.amount > 0:
@@ -1215,18 +1239,33 @@ def _bank_tb_totals(fy, fys=None):
             else:
                 gst['debit'] += txn.confirmed_gst_amount
 
-    # Entanglement: an account that received bank postings but has no
-    # bank_statement row to hold them, while carrying a row of another source.
-    # Rebuilding such an account would create a duplicate holding the same
-    # money. See the spec's "The rebuild assumes a partition that posting does
-    # not honour".
+    # Entanglement scan. Broad (`unbacked`): any code with posted transactions
+    # and no non-adjustment bank_statement row, whatever its other sources —
+    # reported to a human by audit_bank_tb_desync. Narrow (`entangled`): only
+    # the shape known to hold bank money hiding from the rebuild — every
+    # existing row is a manual adjustment (the Cerratti/Habteslassie shape), or
+    # more than one non-adjustment bank_statement row exists for the code
+    # (nothing enforces uniqueness, so picking one to rebuild would silently
+    # mis-state the account). See the spec's "The rebuild assumes a partition
+    # that posting does not honour".
     for code in list(accounts) + (['3380'] if (gst['debit'] or gst['credit']) else []):
-        rows = TrialBalanceLine.objects.filter(financial_year=fy, account_code=code)
-        sources = set(rows.values_list('source', flat=True))
-        if sources and 'bank_statement' not in sources:
-            entangled[code] = sorted(sources)
+        rows = list(TrialBalanceLine.objects.filter(financial_year=fy, account_code=code))
+        if not rows:
+            continue
+        sources = sorted({r.source for r in rows})
+        bank_rows = [r for r in rows if r.source == 'bank_statement' and not r.is_adjustment]
+        if not bank_rows:
+            unbacked[code] = sources
+            if all(r.is_adjustment for r in rows):
+                entangled[code] = sources
+        elif len(bank_rows) > 1:
+            entangled[code] = ['duplicate_bank_statement_rows']
 
-    return {'accounts': accounts, 'gst': gst, 'entangled': entangled}
+    return {
+        'accounts': accounts, 'gst': gst,
+        'entangled': entangled, 'unbacked': unbacked,
+        'fy_resolvable': fy_resolvable,
+    }
 
 
 def _recalculate_bank_tb_lines(fy):
@@ -1273,8 +1312,17 @@ def _recalculate_bank_tb_lines(fy):
         )
         return {"status": "entangled", "codes": sorted(totals['entangled'])}
 
-    # Every bank_statement row this year holds, so rows the transactions have
-    # left can be zeroed rather than standing at their old figure forever.
+    # Resolved before `wanted` is built, and split out of it below. A bank
+    # account's own TB row can legitimately hold two things at once: its own
+    # contra movement, and an account-side posting coded directly to it (e.g.
+    # the destination leg of an inter-account transfer). Only _recalc_bank_contra
+    # may write such a row — see its `extra_totals` parameter — so this
+    # function's own write loop must never touch a bank code.
+    bank_codes = set(
+        BankAccountMapping.objects.filter(entity=fy.entity)
+        .values_list('tb_account_code', flat=True)
+    )
+
     existing = {
         line.account_code: line
         for line in TrialBalanceLine.objects.filter(
@@ -1282,17 +1330,29 @@ def _recalculate_bank_tb_lines(fy):
         )
     }
 
-    wanted = {
-        code: (t['debit'], t['credit'], t['name'])
+    wanted_all = {
+        code: (t['debit'], t['credit'], t['name'], t.get('tax_type', ''))
         for code, t in totals['accounts'].items()
     }
     if totals['gst']['debit'] or totals['gst']['credit']:
-        wanted['3380'] = (
+        # Matches _post_txn_to_tb: the control account's tax_type is set once,
+        # on create, from whichever direction dominates — it is not overwritten
+        # afterwards by either posting or the rebuild.
+        gst_tax_type = 'GST on Expenses' if totals['gst']['debit'] else 'GST on Income'
+        wanted_all['3380'] = (
             totals['gst']['debit'], totals['gst']['credit'],
-            'GST payable control account',
+            'GST payable control account', gst_tax_type,
         )
 
-    for code, (debit, credit, name) in wanted.items():
+    wanted = {}
+    extra_totals = {}
+    for code, (debit, credit, name, tax_type) in wanted_all.items():
+        if code in bank_codes:
+            extra_totals[code] = {"debit": debit, "credit": credit, "name": name}
+        else:
+            wanted[code] = (debit, credit, name, tax_type)
+
+    for code, (debit, credit, name, tax_type) in wanted.items():
         tb_line = existing.get(code)
         if tb_line is None:
             tb_line, _created = _get_or_create_tb_line(
@@ -1304,6 +1364,7 @@ def _recalculate_bank_tb_lines(fy):
                     "credit": Decimal("0"),
                     "closing_balance": Decimal("0"),
                     "source": "bank_statement",
+                    "tax_type": tax_type,
                 },
                 bank_statement_only=True,
             )
@@ -1313,20 +1374,24 @@ def _recalculate_bank_tb_lines(fy):
         tb_line.closing_balance = ob + debit - credit
         tb_line.save(update_fields=["debit", "credit", "closing_balance"])
 
-    # Bank contra rows are owned by _recalc_bank_contra, which creates a missing
-    # row and consolidates duplicates. One writer, so the two cannot disagree
-    # about the same row.
-    bank_codes = set(
-        BankAccountMapping.objects.filter(entity=fy.entity)
-        .values_list('tb_account_code', flat=True)
-    )
-    _recalc_bank_contra(fy)
+    # Bank contra rows — including the account-side legs just split out above
+    # — are owned by _recalc_bank_contra, which creates a missing row and
+    # consolidates duplicates. One writer, so the two cannot disagree about the
+    # same row.
+    contra_result = _recalc_bank_contra(fy, extra_totals=extra_totals)
+    written_codes = set(contra_result.get('written_codes') or [])
 
-    # Zero the rows the transactions have left. Bank contra codes are excluded:
-    # _recalc_bank_contra has just set them and does its own zeroing.
-    for code, tb_line in existing.items():
-        if code in wanted or code in bank_codes:
-            continue
+    # Zero the rows the transactions have left. Codes _recalc_bank_contra just
+    # wrote or zeroed are excluded via its own report, not re-derived from
+    # BankAccountMapping — that would miss a contra resolved through the
+    # BankAccount fallback (_get_bank_mapping_for_txn step 5), which carries no
+    # BankAccountMapping row at all. Re-read from the database rather than
+    # reuse the `existing` snapshot: _recalc_bank_contra's duplicate-row
+    # consolidation can have deleted a row this function saw before the call.
+    stale_qs = TrialBalanceLine.objects.filter(
+        financial_year=fy, is_adjustment=False, source='bank_statement',
+    ).exclude(account_code__in=set(wanted) | written_codes)
+    for tb_line in stale_qs:
         ob = tb_line.opening_balance or Decimal("0")
         tb_line.debit = Decimal("0")
         tb_line.credit = Decimal("0")
@@ -10636,7 +10701,13 @@ def review_bank_account_mapping(request, pk):
 # ---------------------------------------------------------------------------
 def _zero_vacated_bank_rows(fy, live_bank_codes):
     """Zero any source='bank_statement' row for a mapped bank account of this
-    entity that no longer has transactions in this year."""
+    entity that no longer has transactions in this year.
+
+    Returns the set of account codes actually zeroed, so _recalc_bank_contra
+    can fold them into its `written_codes`: a row this function has just
+    zeroed is correctly stated and must not be re-processed by anything else
+    that zeroes vacated rows (see _recalculate_bank_tb_lines).
+    """
     mapped_codes = set(
         BankAccountMapping.objects.filter(entity=fy.entity)
         .values_list('tb_account_code', flat=True)
@@ -10647,14 +10718,17 @@ def _zero_vacated_bank_rows(fy, live_bank_codes):
         source='bank_statement',
         is_adjustment=False,
     )
+    zeroed = set()
     for line in stale:
         line.debit = Decimal('0')
         line.credit = Decimal('0')
         line.closing_balance = (line.opening_balance or Decimal('0'))
         line.save(update_fields=["debit", "credit", "closing_balance"])
+        zeroed.add(line.account_code)
+    return zeroed
 
 
-def _recalc_bank_contra(fy):
+def _recalc_bank_contra(fy, extra_totals=None):
     """
     Internal helper: recalculate bank contra TB line from scratch for all
     confirmed+posted transactions in this financial year.
@@ -10662,6 +10736,21 @@ def _recalc_bank_contra(fy):
     Fully idempotent — calculates correct totals from scratch and uses
     update_or_create to atomically SET values (never increment).
     Calling it 1 or 1000 times produces identical results.
+
+    extra_totals: optional {code: {"debit": Decimal, "credit": Decimal,
+    "name": str}} — account-side money posted directly to a bank account's own
+    TB code (e.g. the destination leg of an inter-account transfer). A bank
+    account's row legitimately carries both this and its own contra movement,
+    and only this function may write it: _recalculate_bank_tb_lines splits
+    such codes out of its own write loop and passes them in here instead of
+    writing them itself.
+
+    Returns "written_codes": the set of account codes this call wrote to or
+    correctly zeroed. _recalculate_bank_tb_lines's own zeroing loop must
+    exclude exactly this set — not re-derive it from BankAccountMapping, which
+    would miss a contra resolved through the BankAccount fallback in
+    _get_bank_mapping_for_txn (step 5) that carries no BankAccountMapping row
+    at all.
     """
     import logging
     logger = logging.getLogger('core.views')
@@ -10686,7 +10775,7 @@ def _recalc_bank_contra(fy):
         # unresolvable", not "every transaction has left it". Zeroing on that
         # basis would wipe out rows this year legitimately holds from when it
         # *was* postable. Leave the contra untouched and say so distinctly.
-        return {"status": "year_not_postable", "posted": 0}
+        return {"status": "year_not_postable", "posted": 0, "written_codes": []}
 
     confirmed_txns = [
         t for t in PendingTransaction.objects.filter(
@@ -10716,27 +10805,40 @@ def _recalc_bank_contra(fy):
         elif txn.amount < 0:
             grp["credit"] += gross
 
+    # Fold in the account-side legs the rebuild split out — a bank account's
+    # row carries both, and this is the only function that writes it.
+    if extra_totals:
+        for code, extra in extra_totals.items():
+            grp = groups.setdefault(
+                code,
+                {"name": extra.get("name") or code,
+                 "debit": Decimal('0'), "credit": Decimal('0')},
+            )
+            grp["debit"] += extra.get("debit") or Decimal('0')
+            grp["credit"] += extra.get("credit") or Decimal('0')
+
     # A bank row whose transactions have all moved to another year (or been
     # deleted) must go to zero. Without this the old figure stands forever and
     # the year-end realignment above could never take effect.
-    _zero_vacated_bank_rows(fy, set(groups))
+    zeroed = _zero_vacated_bank_rows(fy, set(groups))
 
-    if not confirmed_txns:
+    if not confirmed_txns and not extra_totals:
         # Nothing to group is not the same as nothing mapped — a freshly
         # opened year with a perfectly good bank mapping should not be told
         # its mapping is missing.
-        return {"status": "ok", "posted": 0}
+        return {"status": "ok", "posted": 0, "written_codes": sorted(zeroed)}
 
     if not groups:
         logger.warning(
             f"_recalc_bank_contra: No bank mapping for entity {fy.entity.pk} FY {fy.pk}"
         )
-        return {"status": "no_mapping", "posted": 0}
+        return {"status": "no_mapping", "posted": 0, "written_codes": sorted(zeroed)}
 
     grand_debit = Decimal('0')
     grand_credit = Decimal('0')
     posted_codes = []
     posted_names = []
+    written = set()
     for bank_code, grp in groups.items():
         bank_name = grp["name"]
         total_debit = grp["debit"]
@@ -10765,10 +10867,11 @@ def _recalc_bank_contra(fy):
                 source='bank_statement',
             )
 
+        ob = tb_line.opening_balance or Decimal('0')
         tb_line.account_name = bank_name
         tb_line.debit = total_debit
         tb_line.credit = total_credit
-        tb_line.closing_balance = total_debit - total_credit
+        tb_line.closing_balance = ob + total_debit - total_credit
         tb_line.tax_type = ""
         tb_line.save()
 
@@ -10776,6 +10879,7 @@ def _recalc_bank_contra(fy):
         grand_credit += total_credit
         posted_codes.append(bank_code)
         posted_names.append(bank_name)
+        written.add(bank_code)
 
         logger.info(
             f"Recalculated bank contra for entity {fy.entity.pk} FY {fy.pk}: "
@@ -10788,6 +10892,7 @@ def _recalc_bank_contra(fy):
         "posted_credit": str(grand_credit),
         "bank_code": ", ".join(posted_codes),
         "bank_name": ", ".join(posted_names),
+        "written_codes": sorted(written | zeroed),
     }
 
 

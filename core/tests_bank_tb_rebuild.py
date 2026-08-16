@@ -8,13 +8,16 @@ from decimal import Decimal
 
 from django.test import TestCase, override_settings
 
-from core.models import TrialBalanceLine
+from core.models import BankAccount, BankAccountMapping, TrialBalanceLine
 from core.tests_bank_tb_fixtures import (
     STORAGES_OVERRIDE, bs_line, make_bank_mapping, make_entity, make_fy,
     make_job, make_txn,
 )
 from core.txn_periods import resolve_fy_for_txn
-from core.views import _post_txn_to_tb, _recalculate_bank_tb_lines
+from core.views import (
+    _bank_tb_totals, _post_txn_to_tb, _recalc_bank_contra,
+    _recalculate_bank_tb_lines,
+)
 
 D = Decimal
 
@@ -65,6 +68,9 @@ class RebuildPrimitiveTests(TestCase):
         self.assertIsNotNone(line, "the rebuild must create the vacated-to line")
         self.assertEqual(line.debit, D("100.00"))
         self.assertEqual(line.account_name, "Repairs")
+        self.assertEqual(line.tax_type, "GST on Expenses",
+                          "a row created by the rebuild must carry the same "
+                          "tax_type a row created by posting would carry")
 
     def test_zeroes_the_line_the_transactions_left(self):
         txn = self._post("2025-08-01", "-110.00", "0400", gst="10.00")
@@ -96,6 +102,18 @@ class RebuildPrimitiveTests(TestCase):
 
         journal.refresh_from_db()
         self.assertEqual(journal.debit, D("777.00"))
+
+    def test_existing_row_keeps_its_tax_type_the_rebuild_does_not_overwrite_it(self):
+        # Matches _post_txn_to_tb: tax_type is only ever set on create.
+        self._post("2025-08-01", "-110.00", "0400", gst="10.00")
+        line = bs_line(self.fy, "0400")
+        line.tax_type = "GST Free"
+        line.save(update_fields=["tax_type"])
+
+        _recalculate_bank_tb_lines(self.fy)
+
+        line.refresh_from_db()
+        self.assertEqual(line.tax_type, "GST Free")
 
     def test_opening_balance_is_preserved(self):
         self._post("2025-08-01", "-110.00", "0400", gst="10.00")
@@ -211,6 +229,59 @@ class RebuildEntanglementGuardTests(TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertEqual(bs_line(self.fy, "3565").debit, D("500.00"))
 
+    def test_an_imported_account_with_no_bank_row_is_not_entangled(self):
+        # TrialBalanceLine.source defaults to 'tb_import' and is_adjustment to
+        # False, so reallocating a transaction onto an account that exists in
+        # the client's imported trial balance — the single most common
+        # reallocation there is — must proceed, not decline. Only a row shape
+        # that has actually been observed to hold bank money (every existing
+        # row is a manual adjustment) declines.
+        imported = TrialBalanceLine.objects.create(
+            financial_year=self.fy, account_code="6100",
+            account_name="Imported Account", source="tb_import",
+            is_adjustment=False, debit=D("250.00"), closing_balance=D("250.00"),
+        )
+        txn = make_txn(self.job, date_str="2025-08-01", amount="-110.00",
+                       code="0400", gst="10.00",
+                       tax_type="GST on Expenses")
+        _post_txn_to_tb(txn, resolve_fy_for_txn(txn), has_gst=True)
+        txn.confirmed_code = "6100"
+        txn.confirmed_name = "Imported Account"
+        txn.save(update_fields=["confirmed_code", "confirmed_name"])
+
+        result = _recalculate_bank_tb_lines(self.fy)
+
+        self.assertEqual(result["status"], "ok")
+        line = bs_line(self.fy, "6100")
+        self.assertIsNotNone(line, "the rebuild must proceed and create the row")
+        self.assertEqual(line.debit, D("100.00"))
+        imported.refresh_from_db()
+        self.assertEqual(imported.debit, D("250.00"),
+                          "the pre-existing tb_import row must be untouched")
+
+    def test_declines_on_duplicate_bank_statement_rows_for_a_wanted_code(self):
+        # No uniqueness constraint stops two non-adjustment bank_statement rows
+        # existing for the same code. Picking one arbitrarily would silently
+        # double- or under-state the account, so the rebuild declines instead.
+        TrialBalanceLine.objects.create(
+            financial_year=self.fy, account_code="0400",
+            account_name="Office costs", source="bank_statement",
+            is_adjustment=False, debit=D("50.00"), closing_balance=D("50.00"),
+        )
+        TrialBalanceLine.objects.create(
+            financial_year=self.fy, account_code="0400",
+            account_name="Office costs (dup)", source="bank_statement",
+            is_adjustment=False, debit=D("999.00"), closing_balance=D("999.00"),
+        )
+        txn = make_txn(self.job, date_str="2025-08-01", amount="-110.00",
+                       code="0400", gst="10.00", tax_type="GST on Expenses")
+        _post_txn_to_tb(txn, resolve_fy_for_txn(txn), has_gst=True)
+
+        result = _recalculate_bank_tb_lines(self.fy)
+
+        self.assertEqual(result["status"], "entangled")
+        self.assertIn("0400", result["codes"])
+
 
 @override_settings(STORAGES=STORAGES_OVERRIDE)
 class RebuildYearNotPostableGuardTests(TestCase):
@@ -250,3 +321,95 @@ class RebuildYearNotPostableGuardTests(TestCase):
         line_after = bs_line(self.fy, "0400")
         self.assertEqual(line_after.debit, D("1000.00"),
                           "an unresolvable year must not be zeroed")
+
+    def test_bank_tb_totals_reports_whether_the_year_is_resolvable(self):
+        # _bank_tb_totals has no guard of its own — called standalone on an
+        # unresolvable year it would return empty accounts, which a careless
+        # caller (the audit command) could misread as "every posted
+        # transaction is missing from the trial balance". The precondition is
+        # stated in the docstring; this pins the result key that lets a
+        # caller check it instead of trusting an empty dict.
+        self._post("2025-08-01", "-1100.00", "0400", gst="100.00")
+        self.assertTrue(_bank_tb_totals(self.fy)["fy_resolvable"])
+
+        self.fy.status = "reopened"
+        self.fy.save(update_fields=["status"])
+
+        self.assertFalse(_bank_tb_totals(self.fy)["fy_resolvable"])
+
+
+@override_settings(STORAGES=STORAGES_OVERRIDE)
+class RebuildBankContraBoundaryTests(TestCase):
+    """The rebuild and _recalc_bank_contra must agree on who writes a bank
+    account's TB row — the brief never specified the boundary, so it was
+    guessed twice, in two different directions, both wrong.
+    """
+
+    def setUp(self):
+        self.entity = make_entity()
+        self.fy = make_fy(self.entity)
+
+    def test_a_transfer_coded_to_a_second_bank_account_keeps_both_legs(self):
+        # 1100 is the default/catch-all mapping (blank bsb/account_number), so
+        # job1 (blank bsb/account_number) resolves to it via an exact match.
+        make_bank_mapping(self.entity, code="1100", name="Business Cheque Account")
+        # 1200 is a second, distinctly-identified bank account.
+        BankAccountMapping.objects.create(
+            entity=self.entity, bsb="062-000", account_number="11112222",
+            is_default=False, tb_account_code="1200", tb_account_name="Savings Account",
+        )
+        job1 = make_job(self.entity, self.fy)
+        job2 = make_job(self.entity, self.fy)
+        job2.bsb = "062-000"
+        job2.account_number = "11112222"
+        job2.save(update_fields=["bsb", "account_number"])
+
+        # A receipt that actually moves through the savings account itself —
+        # its own contra leg lands on 1200.
+        txn_a = make_txn(job2, date_str="2025-08-01", amount="500.00", code="0510")
+        _post_txn_to_tb(txn_a, resolve_fy_for_txn(txn_a), has_gst=False)
+        # A payment out of the cheque account, coded to the savings account's
+        # own TB code as its account-side leg — the transfer shape.
+        txn_b = make_txn(job1, date_str="2025-08-02", amount="-300.00", code="1200")
+        _post_txn_to_tb(txn_b, resolve_fy_for_txn(txn_b), has_gst=False)
+
+        before = bs_line(self.fy, "1200")
+        self.assertEqual(before.debit, D("800.00"),
+                          "incremental posting combines both legs on one row")
+        self.assertEqual(before.credit, D("0.00"))
+
+        result = _recalculate_bank_tb_lines(self.fy)
+
+        self.assertEqual(result["status"], "ok")
+        after = bs_line(self.fy, "1200")
+        self.assertEqual(after.debit, D("800.00"),
+                          "the rebuild must reproduce both legs, not just one")
+        self.assertEqual(after.credit, D("0.00"))
+
+    def test_a_contra_code_absent_from_bank_account_mapping_is_not_zeroed(self):
+        # _get_bank_mapping_for_txn's step 5 can resolve a bank contra to a
+        # BankAccount's tb_account_code with no BankAccountMapping behind it
+        # at all. Deriving "codes the rebuild must not touch" solely from
+        # BankAccountMapping misses this code entirely.
+        job = make_job(self.entity, self.fy)
+        job.bsb = "999-999"
+        job.account_number = "55550000"
+        job.save(update_fields=["bsb", "account_number"])
+        BankAccount.objects.create(
+            entity=self.entity, bsb="999-999", account_number="55550000",
+            tb_account_code="1200", tb_account_name="Fallback Savings",
+        )
+
+        txn = make_txn(job, date_str="2025-08-01", amount="-110.00", code="0400")
+        _post_txn_to_tb(txn, resolve_fy_for_txn(txn), has_gst=False)
+
+        before = bs_line(self.fy, "1200")
+        self.assertEqual(before.credit, D("110.00"))
+
+        result = _recalculate_bank_tb_lines(self.fy)
+
+        self.assertEqual(result["status"], "ok")
+        after = bs_line(self.fy, "1200")
+        self.assertEqual(after.credit, D("110.00"),
+                          "a contra row _recalc_bank_contra just wrote must "
+                          "not be zeroed by the rebuild's own loop")
