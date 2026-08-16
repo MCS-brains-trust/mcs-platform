@@ -9,11 +9,12 @@ from decimal import Decimal
 
 from django.test import TestCase, override_settings
 
+from core.models import TrialBalanceLine
 from core.tests_bank_tb_fixtures import (
     STORAGES_OVERRIDE, bs_line, make_bank_mapping, make_entity, make_fy,
     make_job, make_txn,
 )
-from core.views import _post_txn_to_tb, _recalc_bank_contra
+from core.views import _post_txn_to_tb, _recalc_bank_contra, _recalculate_bank_tb_lines
 
 D = Decimal
 
@@ -151,3 +152,64 @@ class BankContraYearScopeTests(TestCase):
         line.refresh_from_db()
         self.assertEqual(line.opening_balance, D("300.00"))
         self.assertEqual(line.closing_balance, D("190.00"))
+
+    def test_a_legacy_reversal_row_does_not_swallow_the_contra(self):
+        # This function's own row lookup filtered only source='bank_statement',
+        # unlike _get_or_create_tb_line(bank_statement_only=True), which also
+        # requires is_adjustment=False. So on a bank code whose only
+        # bank_statement row is a legacy is_adjustment=True "Reversal of ..."
+        # row (from an old posting pattern), that single row satisfied
+        # bs_lines.count() == 1 and the contra total was written straight into
+        # it. A full rebuild's cleanup tail then deletes exactly that kind of
+        # row (is_adjustment=True, source='bank_statement',
+        # description__startswith='Reversal of ') — taking the contra with
+        # it: money gone, status "ok", no error, no report.
+        TrialBalanceLine.objects.create(
+            financial_year=self.fy26, account_code="1100",
+            account_name="Business Cheque Account", source="bank_statement",
+            is_adjustment=True, description="Reversal of a duplicate import",
+            debit=D("0"), credit=D("0"), closing_balance=D("0"),
+        )
+        # Posted directly rather than through _post_txn_to_tb, which would
+        # itself resolve the contra row correctly (bank_statement_only=True)
+        # and mask the defect this test targets.
+        txn = make_txn(self.job, date_str="2025-08-01", amount="-110.00",
+                       code="0400")
+        txn.posted_to_tb = True
+        txn.save(update_fields=["posted_to_tb"])
+
+        _recalc_bank_contra(self.fy26)
+
+        line = bs_line(self.fy26, "1100")
+        self.assertIsNotNone(
+            line,
+            "the contra must land on a real non-adjustment row, not the "
+            "legacy reversal row",
+        )
+        self.assertEqual(line.credit, D("110.00"))
+
+        # The legacy row must still be there too — untouched money aside,
+        # nothing has cleaned it up yet.
+        legacy = TrialBalanceLine.objects.get(
+            financial_year=self.fy26, account_code="1100", is_adjustment=True,
+        )
+        self.assertEqual(legacy.credit, D("0.00"))
+
+        # A full rebuild's cleanup tail deletes the legacy reversal row. The
+        # real contra row must survive that untouched.
+        result = _recalculate_bank_tb_lines(self.fy26)
+        self.assertEqual(result["status"], "ok")
+
+        line.refresh_from_db()
+        self.assertEqual(
+            line.credit, D("110.00"),
+            "the contra must survive a full rebuild, not be deleted along "
+            "with the legacy row",
+        )
+        self.assertFalse(
+            TrialBalanceLine.objects.filter(
+                financial_year=self.fy26, account_code="1100",
+                is_adjustment=True,
+            ).exists(),
+            "the legacy reversal row should have been cleaned up",
+        )

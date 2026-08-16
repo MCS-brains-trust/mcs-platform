@@ -10957,11 +10957,17 @@ def _recalc_bank_contra(fy, extra_totals=None, candidate_codes=None):
         # Find the bank_statement TB line (or create it) and SET values from
         # scratch.  Multiple bank_statement lines may exist for the same account
         # code, so filter explicitly and consolidate rather than relying on
-        # update_or_create alone.
+        # update_or_create alone. is_adjustment=False matches
+        # _get_or_create_tb_line(bank_statement_only=True) exactly — without
+        # it, a bank code whose only bank_statement row is a legacy
+        # is_adjustment=True "Reversal of ..." row has the contra written
+        # straight into that adjustment row, which _recalculate_bank_tb_lines's
+        # cleanup tail then deletes: the contra vanishes with no error.
         bs_lines = TrialBalanceLine.objects.filter(
             financial_year=fy,
             account_code=bank_code,
             source='bank_statement',
+            is_adjustment=False,
         )
         if bs_lines.count() > 1:
             # Consolidate: keep the first, delete the rest
