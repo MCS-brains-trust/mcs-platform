@@ -1165,6 +1165,59 @@ def _post_txn_to_tb(txn, fy, has_gst):
     return True
 
 
+def _bank_contra_candidate_codes(fy, fys=None):
+    """Every account code _recalc_bank_contra may write to or zero for this
+    year: the codes _get_bank_mapping_for_txn resolves for this year's posted
+    transactions, union the entity's BankAccountMapping codes.
+
+    _recalc_bank_contra can touch a row two ways — by resolving a
+    transaction's contra to it (a code with no BankAccountMapping at all is
+    reachable this way, via _get_bank_mapping_for_txn's step-5 BankAccount
+    fallback), or by zeroing it as a mapped-but-now-quiet account
+    (_zero_vacated_bank_rows, which scans BankAccountMapping — a mapped code
+    with no transactions resolving their own contra there this year is
+    reachable only this way). Splitting "which wanted codes belong to
+    _recalc_bank_contra" on only one half of this union has twice lost the
+    other half's leg: splitting on BankAccountMapping alone missed a
+    fallback-resolved code; splitting on the per-transaction resolution alone
+    missed a mapped code with no transactions of its own this year. One
+    definition, both callers, no third derivation.
+
+    Per-transaction resolution is memoised by job_id within this call:
+    _get_bank_mapping_for_txn depends only on the job's bsb/account_number and
+    the entity, so every transaction sharing a job resolves once. This is the
+    only per-transaction resolution _bank_tb_totals performs (down from one
+    _get_bank_mapping_for_txn call per transaction); _recalc_bank_contra's own
+    resolution loop, building its transaction-amount groupings, is untouched.
+    """
+    from review.models import PendingTransaction
+    from core.txn_periods import entity_financial_years, resolve_fy_for_txn
+
+    if fys is None:
+        fys = entity_financial_years(fy.entity)
+
+    resolved_codes = set()
+    job_cache = {}
+    posted = PendingTransaction.objects.filter(
+        job__entity=fy.entity, is_confirmed=True, posted_to_tb=True,
+    ).select_related('job', 'job__entity')
+    for txn in posted:
+        if resolve_fy_for_txn(txn, fys) != fy:
+            continue
+        job_id = txn.job_id
+        if job_id not in job_cache:
+            job_cache[job_id] = _get_bank_mapping_for_txn(txn)
+        bank_mapping = job_cache[job_id]
+        if bank_mapping:
+            resolved_codes.add(bank_mapping.tb_account_code)
+
+    mapped_codes = set(
+        BankAccountMapping.objects.filter(entity=fy.entity)
+        .values_list('tb_account_code', flat=True)
+    )
+    return resolved_codes | mapped_codes
+
+
 def _bank_tb_totals(fy, fys=None):
     """Aggregate this year's posted bank transactions into the figures its
     source='bank_statement' TB rows should hold.
@@ -1201,15 +1254,9 @@ def _bank_tb_totals(fy, fys=None):
     *another* source's row, and a stale reversal row is not that — it is the
     cleanup tail's to remove, not a reason to decline the whole year.
 
-    Also returns `bank_codes`: every account code _get_bank_mapping_for_txn
-    resolves a contra to for this year's posted transactions — the same
-    resolution _recalc_bank_contra's own grouping uses, including its step-5
-    BankAccount fallback (core/views.py, _get_bank_mapping_for_txn). Deriving
-    this set from BankAccountMapping alone (a second, narrower derivation of
-    the same thing) misses a code reachable only through that fallback, and a
-    caller (the rebuild) would then write such a code itself before
-    _recalc_bank_contra overwrites it with the contra leg alone. One
-    resolution, one source of truth.
+    Also returns `bank_codes` — see _bank_contra_candidate_codes: every code
+    _recalc_bank_contra may write to or zero this year, the union of what
+    transactions resolve their contra to and what the entity has mapped.
     """
     from review.models import PendingTransaction
     from core.txn_periods import entity_financial_years, resolve_fy_for_txn
@@ -1222,7 +1269,7 @@ def _bank_tb_totals(fy, fys=None):
     gst = {'debit': Decimal("0"), 'credit': Decimal("0")}
     entangled = {}
     unbacked = {}
-    bank_codes = set()
+    bank_codes = _bank_contra_candidate_codes(fy, fys)
 
     posted = PendingTransaction.objects.filter(
         job__entity=fy.entity, is_confirmed=True, posted_to_tb=True,
@@ -1231,10 +1278,6 @@ def _bank_tb_totals(fy, fys=None):
     for txn in posted:
         if resolve_fy_for_txn(txn, fys) != fy:
             continue
-
-        bank_mapping = _get_bank_mapping_for_txn(txn)
-        if bank_mapping:
-            bank_codes.add(bank_mapping.tb_account_code)
 
         code = txn.confirmed_code
         if not code:
@@ -1405,8 +1448,13 @@ def _recalculate_bank_tb_lines(fy):
     # Bank contra rows — including the account-side legs just split out above
     # — are owned by _recalc_bank_contra, which creates a missing row and
     # consolidates duplicates. One writer, so the two cannot disagree about the
-    # same row.
-    contra_result = _recalc_bank_contra(fy, extra_totals=extra_totals)
+    # same row. bank_codes (== candidate_codes, already resolved once via the
+    # _bank_tb_totals call above) is handed straight through as _recalc_bank_
+    # contra's own written_codes rather than letting it reconstruct that set
+    # from what this particular call happened to write or zero.
+    contra_result = _recalc_bank_contra(
+        fy, extra_totals=extra_totals, candidate_codes=bank_codes,
+    )
     written_codes = set(contra_result.get('written_codes') or [])
 
     # Zero the rows the transactions have left. Codes _recalc_bank_contra just
@@ -10756,7 +10804,7 @@ def _zero_vacated_bank_rows(fy, live_bank_codes):
     return zeroed
 
 
-def _recalc_bank_contra(fy, extra_totals=None):
+def _recalc_bank_contra(fy, extra_totals=None, candidate_codes=None):
     """
     Internal helper: recalculate bank contra TB line from scratch for all
     confirmed+posted transactions in this financial year.
@@ -10773,10 +10821,23 @@ def _recalc_bank_contra(fy, extra_totals=None):
     such codes out of its own write loop and passes them in here instead of
     writing them itself.
 
-    Returns "written_codes": the set of account codes this call wrote to or
-    correctly zeroed. _recalculate_bank_tb_lines's own zeroing loop must
-    exclude exactly this set — not re-derive it from BankAccountMapping, which
-    would miss a contra resolved through the BankAccount fallback in
+    candidate_codes: optional pre-computed result of _bank_contra_candidate_codes
+    — every code this call may write to or zero this year, resolved once by
+    the caller (_recalculate_bank_tb_lines gets it for free from the
+    _bank_tb_totals call it already makes) and handed in rather than
+    re-derived here a second time. When given, it becomes `written_codes`
+    outright: it is the exclusion set a caller's own zeroing pass must respect,
+    and stating it directly is more robust than reconstructing it from what
+    this particular call happened to write or zero — a mapped code with no
+    transactions of its own this year is a candidate this function owns
+    (_zero_vacated_bank_rows may zero it) without ever appearing in `groups`.
+    When omitted (the four review/views.py call sites that call this function
+    directly), `written_codes` falls back to exactly what this call wrote or
+    zeroed, as before.
+
+    Returns "written_codes": the set of account codes a caller's own zeroing
+    pass must exclude — not re-derive from BankAccountMapping, which would
+    miss a contra resolved through the BankAccount fallback in
     _get_bank_mapping_for_txn (step 5) that carries no BankAccountMapping row
     at all.
     """
@@ -10854,13 +10915,19 @@ def _recalc_bank_contra(fy, extra_totals=None):
         # Nothing to group is not the same as nothing mapped — a freshly
         # opened year with a perfectly good bank mapping should not be told
         # its mapping is missing.
-        return {"status": "ok", "posted": 0, "written_codes": sorted(zeroed)}
+        return {
+            "status": "ok", "posted": 0,
+            "written_codes": sorted(candidate_codes) if candidate_codes is not None else sorted(zeroed),
+        }
 
     if not groups:
         logger.warning(
             f"_recalc_bank_contra: No bank mapping for entity {fy.entity.pk} FY {fy.pk}"
         )
-        return {"status": "no_mapping", "posted": 0, "written_codes": sorted(zeroed)}
+        return {
+            "status": "no_mapping", "posted": 0,
+            "written_codes": sorted(candidate_codes) if candidate_codes is not None else sorted(zeroed),
+        }
 
     grand_debit = Decimal('0')
     grand_credit = Decimal('0')
@@ -10920,7 +10987,10 @@ def _recalc_bank_contra(fy, extra_totals=None):
         "posted_credit": str(grand_credit),
         "bank_code": ", ".join(posted_codes),
         "bank_name": ", ".join(posted_names),
-        "written_codes": sorted(written | zeroed),
+        "written_codes": (
+            sorted(candidate_codes) if candidate_codes is not None
+            else sorted(written | zeroed)
+        ),
     }
 
 

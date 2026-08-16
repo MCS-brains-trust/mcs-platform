@@ -483,3 +483,38 @@ class RebuildBankContraBoundaryTests(TestCase):
                           "bank code is reachable only via the BankAccount "
                           "fallback, not BankAccountMapping")
         self.assertEqual(after.credit, D("0.00"))
+
+    def test_a_mapped_bank_account_with_no_transactions_of_its_own_keeps_its_account_side_leg(self):
+        # The re-reviewer's second probe. "1200" is in BankAccountMapping but
+        # has no transactions resolving their own contra there this year — so
+        # it is not in the per-transaction *resolved* set, only in the mapped
+        # set. Splitting `wanted` on the resolved set alone (round 3) leaves
+        # "1200" in `wanted`, the rebuild's own write loop SETs it correctly,
+        # but _zero_vacated_bank_rows then zeroes it as "mapped but not live",
+        # and because that zero is reported as written_codes the rebuild's own
+        # final loop never notices. The candidate-codes union (resolved ∪
+        # mapped) must be used for the split, not resolved alone.
+        make_bank_mapping(self.entity, code="1100", name="Business Cheque Account")
+        BankAccountMapping.objects.create(
+            entity=self.entity, bsb="062-000", account_number="11112222",
+            is_default=False, tb_account_code="1200", tb_account_name="Savings Account",
+        )
+        job = make_job(self.entity, self.fy)
+        # job stays on the default/catch-all mapping (1100) — no job resolves
+        # its own contra to "1200" at all this year.
+        txn = make_txn(job, date_str="2025-08-01", amount="-300.00", code="1200")
+        _post_txn_to_tb(txn, resolve_fy_for_txn(txn), has_gst=False)
+
+        before = bs_line(self.fy, "1200")
+        self.assertEqual(before.debit, D("300.00"),
+                          "posting accumulates the account-side leg onto 1200")
+
+        result = _recalculate_bank_tb_lines(self.fy)
+
+        self.assertEqual(result["status"], "ok")
+        after = bs_line(self.fy, "1200")
+        self.assertEqual(after.debit, D("300.00"),
+                          "a mapped bank account with no transactions of its "
+                          "own must not have its account-side leg zeroed as "
+                          "'vacated'")
+        self.assertEqual(after.credit, D("0.00"))
