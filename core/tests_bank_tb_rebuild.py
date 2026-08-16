@@ -8,10 +8,10 @@ from decimal import Decimal
 
 from django.test import TestCase, override_settings
 
-from core.models import BankAccount, BankAccountMapping, TrialBalanceLine
+from core.models import BankAccountMapping, TrialBalanceLine
 from core.tests_bank_tb_fixtures import (
-    STORAGES_OVERRIDE, bs_line, make_bank_mapping, make_entity, make_fy,
-    make_job, make_txn,
+    STORAGES_OVERRIDE, bs_line, make_bank_account, make_bank_mapping,
+    make_entity, make_fy, make_job, make_txn,
 )
 from core.txn_periods import resolve_fy_for_txn
 from core.views import (
@@ -282,6 +282,34 @@ class RebuildEntanglementGuardTests(TestCase):
         self.assertEqual(result["status"], "entangled")
         self.assertIn("0400", result["codes"])
 
+    def test_a_code_with_only_legacy_bank_statement_reversal_rows_is_not_entangled(self):
+        # A code whose only rows are the old source='bank_statement',
+        # is_adjustment=True "Reversal of ..." rows the cleanup tail deletes.
+        # These satisfied "every row is an adjustment" under the round-1 check,
+        # declining the whole year's rebuild — but the declining shape is about
+        # bank money hiding in *another* source's row, and a legacy reversal
+        # row (source='bank_statement' itself) is not that. Posted directly
+        # (not via _post_txn_to_tb, which would itself create a fresh
+        # non-adjustment bank_statement row) so the reversal row really is the
+        # only row on the code when the rebuild runs.
+        TrialBalanceLine.objects.create(
+            financial_year=self.fy, account_code="0400",
+            account_name="Office costs", source="bank_statement",
+            is_adjustment=True, description="Reversal of something",
+            debit=D("50.00"), closing_balance=D("50.00"),
+        )
+        txn = make_txn(self.job, date_str="2025-08-01", amount="-110.00",
+                       code="0400")
+        txn.posted_to_tb = True
+        txn.save(update_fields=["posted_to_tb"])
+
+        result = _recalculate_bank_tb_lines(self.fy)
+
+        self.assertEqual(result["status"], "ok")
+        line = bs_line(self.fy, "0400")
+        self.assertIsNotNone(line, "the rebuild must proceed and create the row")
+        self.assertEqual(line.debit, D("110.00"))
+
 
 @override_settings(STORAGES=STORAGES_OVERRIDE)
 class RebuildYearNotPostableGuardTests(TestCase):
@@ -395,10 +423,8 @@ class RebuildBankContraBoundaryTests(TestCase):
         job.bsb = "999-999"
         job.account_number = "55550000"
         job.save(update_fields=["bsb", "account_number"])
-        BankAccount.objects.create(
-            entity=self.entity, bsb="999-999", account_number="55550000",
-            tb_account_code="1200", tb_account_name="Fallback Savings",
-        )
+        make_bank_account(self.entity, bsb="999-999", account_number="55550000",
+                           code="1200", name="Fallback Savings")
 
         txn = make_txn(job, date_str="2025-08-01", amount="-110.00", code="0400")
         _post_txn_to_tb(txn, resolve_fy_for_txn(txn), has_gst=False)
@@ -413,3 +439,47 @@ class RebuildBankContraBoundaryTests(TestCase):
         self.assertEqual(after.credit, D("110.00"),
                           "a contra row _recalc_bank_contra just wrote must "
                           "not be zeroed by the rebuild's own loop")
+
+    def test_a_transfer_to_a_bank_account_reachable_only_via_the_fallback_keeps_both_legs(self):
+        # The re-reviewer's probe: no BankAccountMapping at all for the entity
+        # — both bank accounts are resolved solely through
+        # _get_bank_mapping_for_txn's step-5 BankAccount fallback. Deriving
+        # "which wanted codes are bank codes" from BankAccountMapping alone
+        # misses "1200" entirely: it stays in `wanted`, gets SET by the
+        # rebuild's own write loop to the account-side total only, and is then
+        # overwritten by _recalc_bank_contra with the contra leg alone.
+        make_bank_account(self.entity, bsb="111-111", account_number="10000001",
+                           code="1100", name="Business Cheque Account")
+        make_bank_account(self.entity, bsb="062-000", account_number="11112222",
+                           code="1200", name="Savings Account")
+        job1 = make_job(self.entity, self.fy)
+        job1.bsb = "111-111"
+        job1.account_number = "10000001"
+        job1.save(update_fields=["bsb", "account_number"])
+        job2 = make_job(self.entity, self.fy)
+        job2.bsb = "062-000"
+        job2.account_number = "11112222"
+        job2.save(update_fields=["bsb", "account_number"])
+
+        # A receipt that actually moves through the savings account itself.
+        txn_a = make_txn(job2, date_str="2025-08-01", amount="500.00", code="0510")
+        _post_txn_to_tb(txn_a, resolve_fy_for_txn(txn_a), has_gst=False)
+        # A payment out of the cheque account, coded to the savings account's
+        # own TB code as its account-side leg — the transfer shape.
+        txn_b = make_txn(job1, date_str="2025-08-02", amount="-300.00", code="1200")
+        _post_txn_to_tb(txn_b, resolve_fy_for_txn(txn_b), has_gst=False)
+
+        before = bs_line(self.fy, "1200")
+        self.assertEqual(before.debit, D("800.00"),
+                          "incremental posting combines both legs on one row")
+        self.assertEqual(before.credit, D("0.00"))
+
+        result = _recalculate_bank_tb_lines(self.fy)
+
+        self.assertEqual(result["status"], "ok")
+        after = bs_line(self.fy, "1200")
+        self.assertEqual(after.debit, D("800.00"),
+                          "the rebuild must reproduce both legs even when the "
+                          "bank code is reachable only via the BankAccount "
+                          "fallback, not BankAccountMapping")
+        self.assertEqual(after.credit, D("0.00"))

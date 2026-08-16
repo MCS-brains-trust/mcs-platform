@@ -1190,11 +1190,26 @@ def _bank_tb_totals(fy, fys=None):
     `unbacked` is broad — any code with posted transactions and no
     bank_statement row, whatever its other rows' source — for a human to judge
     via the audit command. `entangled` is narrow — only the shape actually
-    observed to hold bank money hiding from the rebuild (every existing row is
-    a manual adjustment, or more than one bank_statement row exists for the
-    code) — because the far more common case, a code that merely exists in the
-    client's imported trial balance and has not yet received a bank posting,
-    must not block every reallocation onto an imported account.
+    observed to hold bank money hiding from the rebuild (every *non*-
+    bank_statement row on the code is a manual adjustment, or more than one
+    non-adjustment bank_statement row exists for the code) — because the far
+    more common case, a code that merely exists in the client's imported trial
+    balance and has not yet received a bank posting, must not block every
+    reallocation onto an imported account. A legacy source='bank_statement',
+    is_adjustment=True "Reversal of ..." row is excluded from that
+    determination entirely: the declining shape is bank money hiding in
+    *another* source's row, and a stale reversal row is not that — it is the
+    cleanup tail's to remove, not a reason to decline the whole year.
+
+    Also returns `bank_codes`: every account code _get_bank_mapping_for_txn
+    resolves a contra to for this year's posted transactions — the same
+    resolution _recalc_bank_contra's own grouping uses, including its step-5
+    BankAccount fallback (core/views.py, _get_bank_mapping_for_txn). Deriving
+    this set from BankAccountMapping alone (a second, narrower derivation of
+    the same thing) misses a code reachable only through that fallback, and a
+    caller (the rebuild) would then write such a code itself before
+    _recalc_bank_contra overwrites it with the contra leg alone. One
+    resolution, one source of truth.
     """
     from review.models import PendingTransaction
     from core.txn_periods import entity_financial_years, resolve_fy_for_txn
@@ -1207,6 +1222,7 @@ def _bank_tb_totals(fy, fys=None):
     gst = {'debit': Decimal("0"), 'credit': Decimal("0")}
     entangled = {}
     unbacked = {}
+    bank_codes = set()
 
     posted = PendingTransaction.objects.filter(
         job__entity=fy.entity, is_confirmed=True, posted_to_tb=True,
@@ -1215,6 +1231,11 @@ def _bank_tb_totals(fy, fys=None):
     for txn in posted:
         if resolve_fy_for_txn(txn, fys) != fy:
             continue
+
+        bank_mapping = _get_bank_mapping_for_txn(txn)
+        if bank_mapping:
+            bank_codes.add(bank_mapping.tb_account_code)
+
         code = txn.confirmed_code
         if not code:
             continue
@@ -1243,11 +1264,15 @@ def _bank_tb_totals(fy, fys=None):
     # and no non-adjustment bank_statement row, whatever its other sources —
     # reported to a human by audit_bank_tb_desync. Narrow (`entangled`): only
     # the shape known to hold bank money hiding from the rebuild — every
-    # existing row is a manual adjustment (the Cerratti/Habteslassie shape), or
-    # more than one non-adjustment bank_statement row exists for the code
-    # (nothing enforces uniqueness, so picking one to rebuild would silently
-    # mis-state the account). See the spec's "The rebuild assumes a partition
-    # that posting does not honour".
+    # *non*-bank_statement row is a manual adjustment (the Cerratti/
+    # Habteslassie shape), or more than one non-adjustment bank_statement row
+    # exists for the code (nothing enforces uniqueness, so picking one to
+    # rebuild would silently mis-state the account). A code whose only rows
+    # are legacy source='bank_statement', is_adjustment=True reversal rows —
+    # with no *other*-sourced row at all — does not count: that is stale
+    # bank-side debris for the cleanup tail, not money hiding elsewhere. See
+    # the spec's "The rebuild assumes a partition that posting does not
+    # honour".
     for code in list(accounts) + (['3380'] if (gst['debit'] or gst['credit']) else []):
         rows = list(TrialBalanceLine.objects.filter(financial_year=fy, account_code=code))
         if not rows:
@@ -1256,7 +1281,8 @@ def _bank_tb_totals(fy, fys=None):
         bank_rows = [r for r in rows if r.source == 'bank_statement' and not r.is_adjustment]
         if not bank_rows:
             unbacked[code] = sources
-            if all(r.is_adjustment for r in rows):
+            other_source_rows = [r for r in rows if r.source != 'bank_statement']
+            if other_source_rows and all(r.is_adjustment for r in other_source_rows):
                 entangled[code] = sources
         elif len(bank_rows) > 1:
             entangled[code] = ['duplicate_bank_statement_rows']
@@ -1265,6 +1291,7 @@ def _bank_tb_totals(fy, fys=None):
         'accounts': accounts, 'gst': gst,
         'entangled': entangled, 'unbacked': unbacked,
         'fy_resolvable': fy_resolvable,
+        'bank_codes': bank_codes,
     }
 
 
@@ -1312,16 +1339,17 @@ def _recalculate_bank_tb_lines(fy):
         )
         return {"status": "entangled", "codes": sorted(totals['entangled'])}
 
-    # Resolved before `wanted` is built, and split out of it below. A bank
-    # account's own TB row can legitimately hold two things at once: its own
-    # contra movement, and an account-side posting coded directly to it (e.g.
-    # the destination leg of an inter-account transfer). Only _recalc_bank_contra
-    # may write such a row — see its `extra_totals` parameter — so this
-    # function's own write loop must never touch a bank code.
-    bank_codes = set(
-        BankAccountMapping.objects.filter(entity=fy.entity)
-        .values_list('tb_account_code', flat=True)
-    )
+    # Split out of `wanted` below. A bank account's own TB row can legitimately
+    # hold two things at once: its own contra movement, and an account-side
+    # posting coded directly to it (e.g. the destination leg of an
+    # inter-account transfer). Only _recalc_bank_contra may write such a row —
+    # see its `extra_totals` parameter — so this function's own write loop
+    # must never touch a bank code. `bank_codes` comes from _bank_tb_totals,
+    # which resolves it via _get_bank_mapping_for_txn — the same resolution
+    # _recalc_bank_contra's own grouping uses, including its BankAccount
+    # fallback. A second, BankAccountMapping-only derivation here would miss a
+    # code reachable only through that fallback.
+    bank_codes = totals['bank_codes']
 
     existing = {
         line.account_code: line

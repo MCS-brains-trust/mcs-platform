@@ -8,7 +8,8 @@ from datetime import date
 from decimal import Decimal
 
 from core.models import (
-    BankAccountMapping, Client, Entity, FinancialYear, TrialBalanceLine,
+    BankAccount, BankAccountMapping, Client, Entity, FinancialYear,
+    TrialBalanceLine,
 )
 from review.models import PendingTransaction, ReviewJob
 
@@ -41,6 +42,16 @@ def make_fy(entity, label="FY2026", start=date(2025, 7, 1), end=date(2026, 6, 30
 def make_bank_mapping(entity, code="1100", name="Business Cheque Account"):
     return BankAccountMapping.objects.create(
         entity=entity, bsb="", account_number="", is_default=True,
+        tb_account_code=code, tb_account_name=name,
+    )
+
+
+def make_bank_account(entity, bsb, account_number, code, name):
+    """A BankAccount with no BankAccountMapping behind it — resolved by
+    _get_bank_mapping_for_txn only through its step-5 fallback.
+    """
+    return BankAccount.objects.create(
+        entity=entity, bsb=bsb, account_number=account_number,
         tb_account_code=code, tb_account_name=name,
     )
 
