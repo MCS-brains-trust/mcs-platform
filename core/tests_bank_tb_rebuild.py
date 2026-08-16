@@ -484,6 +484,67 @@ class RebuildBankContraBoundaryTests(TestCase):
                           "fallback, not BankAccountMapping")
         self.assertEqual(after.credit, D("0.00"))
 
+    def _mapped_second_bank_account_with_an_account_side_posting(self, tax_type):
+        """A book whose "1200" row is a mapped bank account carrying an
+        account-side posting coded directly to it — the row _recalc_bank_contra
+        now owns (via extra_totals) but that incremental posting created and
+        filled in through _post_txn_to_tb's account leg.
+        """
+        make_bank_mapping(self.entity, code="1100", name="Business Cheque Account")
+        BankAccountMapping.objects.create(
+            entity=self.entity, bsb="062-000", account_number="11112222",
+            is_default=False, tb_account_code="1200", tb_account_name="Savings Account",
+        )
+        job = make_job(self.entity, self.fy)
+        txn = make_txn(job, date_str="2025-08-01", amount="-300.00", code="1200",
+                       name="Transfer to savings", tax_type=tax_type)
+        _post_txn_to_tb(txn, resolve_fy_for_txn(txn), has_gst=False)
+        return bs_line(self.fy, "1200")
+
+    def test_an_existing_bank_row_keeps_its_tax_type_the_rebuild_does_not_overwrite_it(self):
+        # The same invariant as RebuildPrimitiveTests'
+        # test_existing_row_keeps_its_tax_type_the_rebuild_does_not_overwrite_it,
+        # but on a *bank* code. That test only exercises "0400", which the
+        # rebuild's own write loop handles with
+        # update_fields=["debit", "credit", "closing_balance"]. A bank code goes
+        # to _recalc_bank_contra instead, which used to set tax_type = "" on
+        # every row it wrote. TrialBalanceLine.tax_type is the BAS fallback
+        # section/tax-code resolver for a code absent from the chart of
+        # accounts (core/bas_utils.py:806-807), so losing it is not cosmetic.
+        before = self._mapped_second_bank_account_with_an_account_side_posting(
+            "GST Free")
+        self.assertEqual(before.debit, D("300.00"))
+        self.assertEqual(before.tax_type, "GST Free",
+                          "posting sets tax_type on the row it creates")
+
+        result = _recalculate_bank_tb_lines(self.fy)
+
+        self.assertEqual(result["status"], "ok")
+        after = bs_line(self.fy, "1200")
+        self.assertEqual(after.debit, D("300.00"))
+        self.assertEqual(after.tax_type, "GST Free",
+                          "the rebuild must reproduce what posting produced — "
+                          "posting never rewrites an existing row's tax_type")
+
+    def test_an_existing_bank_row_keeps_its_account_name(self):
+        # _post_bank_contra_entry sets account_name only in its create
+        # defaults; on an existing row it touches the amounts and nothing else.
+        # _recalc_bank_contra used to rename every row it wrote to the bank
+        # mapping's name, reverting a manual rename on every recalculation.
+        self._mapped_second_bank_account_with_an_account_side_posting("")
+        line = bs_line(self.fy, "1200")
+        line.account_name = "Savings — renamed by the accountant"
+        line.save(update_fields=["account_name"])
+
+        result = _recalculate_bank_tb_lines(self.fy)
+
+        self.assertEqual(result["status"], "ok")
+        after = bs_line(self.fy, "1200")
+        self.assertEqual(after.debit, D("300.00"))
+        self.assertEqual(after.account_name, "Savings — renamed by the accountant",
+                          "the rebuild must not revert a rename posting would "
+                          "have left alone")
+
     def test_a_mapped_bank_account_with_no_transactions_of_its_own_keeps_its_account_side_leg(self):
         # The re-reviewer's second probe. "1200" is in BankAccountMapping but
         # has no transactions resolving their own contra there this year — so

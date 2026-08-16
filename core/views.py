@@ -10831,9 +10831,10 @@ def _recalc_bank_contra(fy, extra_totals=None, candidate_codes=None):
     this particular call happened to write or zero — a mapped code with no
     transactions of its own this year is a candidate this function owns
     (_zero_vacated_bank_rows may zero it) without ever appearing in `groups`.
-    When omitted (the four review/views.py call sites that call this function
-    directly), `written_codes` falls back to exactly what this call wrote or
-    zeroed, as before.
+    When omitted (the five call sites that call this function directly —
+    review/views.py:678, 917, 1014, 2032 and core/views.py:11007),
+    `written_codes` falls back to exactly what this call wrote or zeroed, as
+    before.
 
     Returns "written_codes": the set of account codes a caller's own zeroing
     pass must exclude — not re-derive from BankAccountMapping, which would
@@ -10864,7 +10865,21 @@ def _recalc_bank_contra(fy, extra_totals=None, candidate_codes=None):
         # unresolvable", not "every transaction has left it". Zeroing on that
         # basis would wipe out rows this year legitimately holds from when it
         # *was* postable. Leave the contra untouched and say so distinctly.
-        return {"status": "year_not_postable", "posted": 0, "written_codes": []}
+        #
+        # written_codes still reports the full candidate set, not []. Nothing
+        # was written here, but written_codes is the exclusion set a caller's
+        # own zeroing pass must respect, and "this function declined to act" is
+        # the one case where a caller must be *most* careful not to zero these
+        # rows itself. _recalculate_bank_tb_lines never reaches this branch (its
+        # own postable-year guard fires first), but the contract has to hold for
+        # every caller, not just that one.
+        return {
+            "status": "year_not_postable", "posted": 0,
+            "written_codes": sorted(
+                candidate_codes if candidate_codes is not None
+                else _bank_contra_candidate_codes(fy, fys)
+            ),
+        }
 
     confirmed_txns = [
         t for t in PendingTransaction.objects.filter(
@@ -10962,13 +10977,28 @@ def _recalc_bank_contra(fy, extra_totals=None, candidate_codes=None):
                 source='bank_statement',
             )
 
+        # account_name and tax_type are create-only, exactly as
+        # _post_bank_contra_entry has them: they sit in its _get_or_create_tb_line
+        # defaults, and its not-created branch adjusts the amounts and nothing
+        # else. Writing them on update diverged from posting in two ways — it
+        # reverted a manual rename on every recalculation, and once the rebuild
+        # started routing mapped-but-not-resolved codes through here (their
+        # account-side leg arrives in extra_totals) it blanked a tax_type that
+        # posting had set. TrialBalanceLine.tax_type is load-bearing for BAS: it
+        # is the fallback section and tax-code resolver for a code absent from
+        # the chart of accounts (core/bas_utils.py:806-807).
+        is_new = tb_line.pk is None
         ob = tb_line.opening_balance or Decimal('0')
-        tb_line.account_name = bank_name
+        if is_new:
+            tb_line.account_name = bank_name
+            tb_line.tax_type = ""
         tb_line.debit = total_debit
         tb_line.credit = total_credit
         tb_line.closing_balance = ob + total_debit - total_credit
-        tb_line.tax_type = ""
-        tb_line.save()
+        if is_new:
+            tb_line.save()
+        else:
+            tb_line.save(update_fields=["debit", "credit", "closing_balance"])
 
         grand_debit += total_debit
         grand_credit += total_credit
