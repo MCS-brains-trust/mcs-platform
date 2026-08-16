@@ -10572,6 +10572,26 @@ def review_bank_account_mapping(request, pk):
 # ---------------------------------------------------------------------------
 # Recalculate Bank Contra Entries
 # ---------------------------------------------------------------------------
+def _zero_vacated_bank_rows(fy, live_bank_codes):
+    """Zero any source='bank_statement' row for a mapped bank account of this
+    entity that no longer has transactions in this year."""
+    mapped_codes = set(
+        BankAccountMapping.objects.filter(entity=fy.entity)
+        .values_list('tb_account_code', flat=True)
+    )
+    stale = TrialBalanceLine.objects.filter(
+        financial_year=fy,
+        account_code__in=mapped_codes - live_bank_codes,
+        source='bank_statement',
+        is_adjustment=False,
+    )
+    for line in stale:
+        line.debit = Decimal('0')
+        line.credit = Decimal('0')
+        line.closing_balance = (line.opening_balance or Decimal('0'))
+        line.save(update_fields=["debit", "credit", "closing_balance"])
+
+
 def _recalc_bank_contra(fy):
     """
     Internal helper: recalculate bank contra TB line from scratch for all
@@ -10586,15 +10606,18 @@ def _recalc_bank_contra(fy):
 
     from review.models import PendingTransaction
 
-    confirmed_txns = PendingTransaction.objects.filter(
-        job__entity=fy.entity,
-        job__financial_year=fy,
-        is_confirmed=True,
-        posted_to_tb=True,
-    )
+    from core.txn_periods import entity_financial_years, resolve_fy_for_txn
 
-    if not confirmed_txns.exists():
-        return {"status": "ok", "posted": 0}
+    # Date-derived, matching the posting path. Scoping on job__financial_year
+    # put a July transaction from an FY2025 job into FY2025's contra while
+    # posting had sent it to FY2026. See core/txn_periods.py.
+    fys = entity_financial_years(fy.entity)
+    confirmed_txns = [
+        t for t in PendingTransaction.objects.filter(
+            job__entity=fy.entity, is_confirmed=True, posted_to_tb=True,
+        ).select_related('job', 'job__entity')
+        if resolve_fy_for_txn(t, fys) == fy
+    ]
 
     # Group confirmed transactions by their OWN resolved bank account mapping so
     # that entities with multiple bank accounts get one contra TB line per
@@ -10602,7 +10625,7 @@ def _recalc_bank_contra(fy):
     # Receipts (amount > 0) → debit the bank account
     # Payments (amount < 0) → credit the bank account
     groups = {}  # bank_code -> {"name": str, "debit": Decimal, "credit": Decimal}
-    for txn in confirmed_txns.select_related('job'):
+    for txn in confirmed_txns:
         bank_mapping = _get_bank_mapping_for_txn(txn)
         if not bank_mapping:
             continue
@@ -10616,6 +10639,11 @@ def _recalc_bank_contra(fy):
             grp["debit"] += gross
         elif txn.amount < 0:
             grp["credit"] += gross
+
+    # A bank row whose transactions have all moved to another year (or been
+    # deleted) must go to zero. Without this the old figure stands forever and
+    # the year-end realignment above could never take effect.
+    _zero_vacated_bank_rows(fy, set(groups))
 
     if not groups:
         logger.warning(
