@@ -108,37 +108,15 @@ def _post_confirmed_txn_to_tb(txn):
         return False
 
     # Avoid circular import at module level
-    from core.models import FinancialYear
+    from core.txn_periods import resolve_fy_for_txn
     from core.views import _post_txn_to_tb
-    from datetime import datetime as dt
 
-    entity = txn.job.entity if txn.job else None
-    if not entity:
+    if not txn.job or not txn.job.entity:
         return False
 
-    # Find the financial year that covers this transaction's date
-    fys = FinancialYear.objects.filter(
-        entity=entity, status__in=['draft', 'in_review', 'finished']
-    )
-    target_fy = None
-    txn_date = None
-    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%d %b %Y"):
-        try:
-            txn_date = dt.strptime(txn.date.strip(), fmt).date()
-            break
-        except (ValueError, AttributeError):
-            continue
-
-    if txn_date:
-        for fy_candidate in fys:
-            if fy_candidate.start_date <= txn_date <= fy_candidate.end_date:
-                target_fy = fy_candidate
-                break
-
-    # Fallback: use the most recent FY for this entity
-    if not target_fy and fys.exists():
-        target_fy = fys.order_by('-end_date').first()
-
+    # One rule for which year this belongs to, shared with the rebuild and the
+    # bank-contra recalculation. See core/txn_periods.py.
+    target_fy = resolve_fy_for_txn(txn)
     if not target_fy:
         return False
 
