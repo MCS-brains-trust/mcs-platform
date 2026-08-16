@@ -1379,14 +1379,16 @@ Expected: PASS, 4 tests
 Run: `python3 manage.py audit_bank_tb_desync`
 Expected: it reports Veronica Cerratti 3565 and Daniel Habteslassie 4080 as ENTANGLED, plus whatever variance exists. Save the output — it is the input to the repair gate.
 
+**Do not commit that output.** It is a bulk dump of live client names and balances across the whole estate. Write it to the git-ignored SDD workspace, never under `docs/`. Merging this branch to `main` auto-deploys, so anything committed here travels.
+
 ```bash
-python3 manage.py audit_bank_tb_desync > docs/superpowers/plans/2026-08-16-desync-audit-baseline.txt 2>&1 || true
+python3 manage.py audit_bank_tb_desync > .superpowers/sdd/2026-08-16-bas-tb-desync-fixes/production-audit-baseline.txt 2>&1 || true
 ```
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add core/management/commands/audit_bank_tb_desync.py core/tests_audit_bank_tb_desync.py docs/superpowers/plans/2026-08-16-desync-audit-baseline.txt
+git add core/management/commands/audit_bank_tb_desync.py core/tests_audit_bank_tb_desync.py
 git commit -m "feat: audit bank trial-balance rows against their transactions"
 ```
 
