@@ -76,3 +76,35 @@ class BankContraYearScopeTests(TestCase):
         first = bs_line(self.fy26, "1100").credit
         _recalc_bank_contra(self.fy26)
         self.assertEqual(bs_line(self.fy26, "1100").credit, first)
+
+    def test_a_reopened_year_is_left_untouched_not_zeroed(self):
+        # "reopened" is a live, unlocked status (is_locked is true only for
+        # "finalised") but entity_financial_years() currently only resolves
+        # transactions to draft/in_review/finished years — "finished" doesn't
+        # even match the real "finalised" choice, and "reopened" isn't listed
+        # at all. No transaction can ever resolve back to this year while it's
+        # in that state, so an empty groups here must mean "unresolvable", not
+        # "vacated" — the row must be left exactly as it was.
+        self._post("2025-06-20", "-100.00")
+        _recalc_bank_contra(self.fy25)
+        self.assertEqual(bs_line(self.fy25, "1100").credit, D("100.00"))
+
+        self.fy25.status = "reopened"
+        self.fy25.save(update_fields=["status"])
+
+        result = _recalc_bank_contra(self.fy25)
+
+        self.assertEqual(
+            bs_line(self.fy25, "1100").credit, D("100.00"),
+            "a year outside the postable set must not have its contra wiped",
+        )
+        self.assertEqual(result["status"], "year_not_postable")
+
+    def test_a_year_with_no_confirmed_transactions_is_not_reported_as_no_mapping(self):
+        # A freshly opened year with a perfectly good bank mapping and zero
+        # confirmed transactions must not be told its mapping is missing —
+        # that message is reserved for when a mapping genuinely can't be found.
+        result = _recalc_bank_contra(self.fy26)
+
+        self.assertNotEqual(result["status"], "no_mapping")
+        self.assertEqual(result["status"], "ok")

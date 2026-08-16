@@ -10612,6 +10612,20 @@ def _recalc_bank_contra(fy):
     # put a July transaction from an FY2025 job into FY2025's contra while
     # posting had sent it to FY2026. See core/txn_periods.py.
     fys = entity_financial_years(fy.entity)
+
+    if fy not in fys:
+        # entity_financial_years() only returns POSTABLE_FY_STATUSES years
+        # ("draft", "in_review", "finished" — core/txn_periods.py), and that
+        # set currently excludes this year: "finished" doesn't match the real
+        # "finalised" status choice, and "reopened" isn't listed at all, even
+        # though reopened is a live, unlocked status the rest of the codebase
+        # treats as postable. No transaction can ever resolve back to a year
+        # outside that set, so an empty result here means "this year is
+        # unresolvable", not "every transaction has left it". Zeroing on that
+        # basis would wipe out rows this year legitimately holds from when it
+        # *was* postable. Leave the contra untouched and say so distinctly.
+        return {"status": "year_not_postable", "posted": 0}
+
     confirmed_txns = [
         t for t in PendingTransaction.objects.filter(
             job__entity=fy.entity, is_confirmed=True, posted_to_tb=True,
@@ -10644,6 +10658,12 @@ def _recalc_bank_contra(fy):
     # deleted) must go to zero. Without this the old figure stands forever and
     # the year-end realignment above could never take effect.
     _zero_vacated_bank_rows(fy, set(groups))
+
+    if not confirmed_txns:
+        # Nothing to group is not the same as nothing mapped — a freshly
+        # opened year with a perfectly good bank mapping should not be told
+        # its mapping is missing.
+        return {"status": "ok", "posted": 0}
 
     if not groups:
         logger.warning(
@@ -10720,6 +10740,16 @@ def recalculate_bank_contra_entries(request, pk):
         return JsonResponse({"status": "error", "message": "Cannot post to a finalised year."}, status=400)
 
     result = _recalc_bank_contra(fy)
+
+    if result.get("status") == "year_not_postable":
+        return JsonResponse({
+            "status": "error",
+            "message": (
+                "This financial year isn't currently eligible for automatic "
+                "transaction posting, so its bank contra couldn't be "
+                "recalculated. No changes were made."
+            ),
+        }, status=400)
 
     if result.get("status") == "no_mapping":
         return JsonResponse({
