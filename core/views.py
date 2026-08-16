@@ -1165,113 +1165,173 @@ def _post_txn_to_tb(txn, fy, has_gst):
     return True
 
 
-def _recalculate_bank_tb_lines(fy):
-    """Recompute the debit/credit/closing_balance on bank-accumulated TB lines
-    by aggregating from all currently-posted PendingTransactions.
+def _bank_tb_totals(fy, fys=None):
+    """Aggregate this year's posted bank transactions into the figures its
+    source='bank_statement' TB rows should hold.
 
-    This is a safety-net function that ensures the TB reflects the true state
-    of all posted bank transactions.  It rebuilds each non-adjustment TB line
-    that has source='bank_statement' from scratch.
-
-    Journal-created adjustment lines (source='manual_journal') are never
-    touched — they are managed by _apply_journal_line_to_tb / _reverse_journal_line_from_tb.
+    The single aggregation rule. The rebuild writes these figures; the
+    audit_bank_tb_desync command compares them against what is stored. That
+    sharing is deliberate and it bounds what the audit proves: it detects a
+    trial balance that disagrees with its transactions, not an aggregation rule
+    that is itself wrong. The tests in core/tests_bank_tb_rebuild.py are the
+    only thing standing behind the rule.
     """
     from review.models import PendingTransaction
-    from django.db.models import Sum, Q, F
+    from core.txn_periods import entity_financial_years, resolve_fy_for_txn
 
-    posted_txns = PendingTransaction.objects.filter(
-        job__entity=fy.entity,
-        is_confirmed=True,
-        posted_to_tb=True,
-    ).select_related('job')
+    if fys is None:
+        fys = entity_financial_years(fy.entity)
 
-    # Build a mapping of account_code → (total_debit, total_credit) from posted txns
-    account_totals = {}  # code -> {'debit': D, 'credit': D}
-    gst_debit = Decimal("0")
-    gst_credit = Decimal("0")
-    bank_totals = {}  # bank_code -> {'debit': D, 'credit': D}
+    accounts = {}
+    gst = {'debit': Decimal("0"), 'credit': Decimal("0")}
+    entangled = {}
 
-    for txn in posted_txns:
-        has_gst = txn.confirmed_gst_amount and txn.confirmed_gst_amount > 0
-        net_for_tb = txn.net_amount if has_gst else abs(txn.amount)
+    posted = PendingTransaction.objects.filter(
+        job__entity=fy.entity, is_confirmed=True, posted_to_tb=True,
+    ).select_related('job', 'job__entity')
 
+    for txn in posted:
+        if resolve_fy_for_txn(txn, fys) != fy:
+            continue
         code = txn.confirmed_code
         if not code:
             continue
 
-        if code not in account_totals:
-            account_totals[code] = {'debit': Decimal("0"), 'credit': Decimal("0")}
+        has_gst = bool(txn.confirmed_gst_amount and txn.confirmed_gst_amount > 0)
+        net_for_tb = txn.net_amount if has_gst else abs(txn.amount)
 
+        bucket = accounts.setdefault(
+            code, {'debit': Decimal("0"), 'credit': Decimal("0"),
+                   'name': txn.confirmed_name or code},
+        )
         if txn.amount < 0:
-            account_totals[code]['debit'] += net_for_tb
+            bucket['debit'] += net_for_tb
         else:
-            account_totals[code]['credit'] += net_for_tb
+            bucket['credit'] += net_for_tb
 
-        # GST
         if has_gst:
-            gst_amt = txn.confirmed_gst_amount
             if txn.amount > 0:
-                gst_credit += gst_amt
+                gst['credit'] += txn.confirmed_gst_amount
             else:
-                gst_debit += gst_amt
+                gst['debit'] += txn.confirmed_gst_amount
 
-        # Bank contra
-        bank_mapping = _get_bank_mapping_for_txn(txn)
-        if bank_mapping:
-            bcode = bank_mapping.tb_account_code
-            if bcode not in bank_totals:
-                bank_totals[bcode] = {'debit': Decimal("0"), 'credit': Decimal("0")}
-            gross = abs(txn.amount)
-            if txn.amount > 0:
-                bank_totals[bcode]['debit'] += gross
-            else:
-                bank_totals[bcode]['credit'] += gross
+    # Entanglement: an account that received bank postings but has no
+    # bank_statement row to hold them, while carrying a row of another source.
+    # Rebuilding such an account would create a duplicate holding the same
+    # money. See the spec's "The rebuild assumes a partition that posting does
+    # not honour".
+    for code in list(accounts) + (['3380'] if (gst['debit'] or gst['credit']) else []):
+        rows = TrialBalanceLine.objects.filter(financial_year=fy, account_code=code)
+        sources = set(rows.values_list('source', flat=True))
+        if sources and 'bank_statement' not in sources:
+            entangled[code] = sorted(sources)
 
-    # Now update the non-adjustment TB lines for each account code
-    # Only touch lines with source='bank_statement' to avoid interfering with imports
-    for code, totals in account_totals.items():
-        tb_line = TrialBalanceLine.objects.filter(
-            financial_year=fy,
-            account_code=code,
-            is_adjustment=False,
-            source='bank_statement',
-        ).first()
-        if tb_line:
-            ob = tb_line.opening_balance or Decimal("0")
-            tb_line.debit = totals['debit']
-            tb_line.credit = totals['credit']
-            tb_line.closing_balance = ob + totals['debit'] - totals['credit']
-            tb_line.save(update_fields=["debit", "credit", "closing_balance"])
+    return {'accounts': accounts, 'gst': gst, 'entangled': entangled}
 
-    # GST control account
-    if gst_debit or gst_credit:
-        gst_line = TrialBalanceLine.objects.filter(
-            financial_year=fy,
-            account_code="3380",
-            is_adjustment=False,
-            source='bank_statement',
-        ).first()
-        if gst_line:
-            ob = gst_line.opening_balance or Decimal("0")
-            gst_line.debit = gst_debit
-            gst_line.credit = gst_credit
-            gst_line.closing_balance = ob + gst_debit - gst_credit
-            gst_line.save(update_fields=["debit", "credit", "closing_balance"])
 
-    # Bank contra accounts
-    for bcode, totals in bank_totals.items():
-        bank_line = TrialBalanceLine.objects.filter(
-            financial_year=fy,
-            account_code=bcode,
-            is_adjustment=False,
-            source='bank_statement',
-        ).first()
-        if bank_line:
-            ob = bank_line.opening_balance or Decimal("0")
-            bank_line.debit = totals['debit']
-            bank_line.credit = totals['credit']
-            bank_line.closing_balance = ob + totals['debit'] - totals['credit']
-            bank_line.save(update_fields=["debit", "credit", "closing_balance"])
+def _recalculate_bank_tb_lines(fy):
+    """Recompute this year's source='bank_statement' TB rows from the posted
+    transactions.
+
+    Rebuild-from-source rather than reverse-and-repost: _post_txn_to_tb
+    accumulates with +=, so re-posting a corrected transaction would double-count
+    it. The transaction set is the authority; these rows are derived from it.
+
+    Journal-created adjustment lines (source='manual_journal') are never touched
+    — they are managed by _apply_journal_line_to_tb / _reverse_journal_line_from_tb.
+
+    Returns {"status": "ok"}, {"status": "entangled", "codes": [...]}, or
+    {"status": "year_not_postable"}, having written nothing in the latter two
+    cases.
+    """
+    import logging
+    logger = logging.getLogger('core.views')
+
+    from core.txn_periods import entity_financial_years
+
+    # entity_financial_years() only returns POSTABLE_FY_STATUSES years ("draft",
+    # "in_review", "finished" — core/txn_periods.py), and that set currently
+    # excludes "reopened" even though reopened is a live, unlocked status. No
+    # transaction can ever resolve back to a year outside that set, so on such
+    # a year _bank_tb_totals would report every transaction as having left —
+    # an empty result means "unresolvable", not "vacated". Zeroing on that
+    # basis would wipe every source='bank_statement' row this year holds. Check
+    # and bail before any read or write of trial-balance rows: before the
+    # entanglement scan, before the zeroing loop, before _recalc_bank_contra.
+    fys = entity_financial_years(fy.entity)
+    if fy not in fys:
+        return {"status": "year_not_postable"}
+
+    totals = _bank_tb_totals(fy, fys)
+
+    if totals['entangled']:
+        logger.error(
+            "_recalculate_bank_tb_lines: refusing to rebuild entity %s FY %s — "
+            "bank postings are entangled with non-bank_statement rows on %s. "
+            "Repair by hand (see audit_bank_tb_desync) before rebuilding.",
+            fy.entity.pk, fy.pk, totals['entangled'],
+        )
+        return {"status": "entangled", "codes": sorted(totals['entangled'])}
+
+    # Every bank_statement row this year holds, so rows the transactions have
+    # left can be zeroed rather than standing at their old figure forever.
+    existing = {
+        line.account_code: line
+        for line in TrialBalanceLine.objects.filter(
+            financial_year=fy, is_adjustment=False, source='bank_statement',
+        )
+    }
+
+    wanted = {
+        code: (t['debit'], t['credit'], t['name'])
+        for code, t in totals['accounts'].items()
+    }
+    if totals['gst']['debit'] or totals['gst']['credit']:
+        wanted['3380'] = (
+            totals['gst']['debit'], totals['gst']['credit'],
+            'GST payable control account',
+        )
+
+    for code, (debit, credit, name) in wanted.items():
+        tb_line = existing.get(code)
+        if tb_line is None:
+            tb_line, _created = _get_or_create_tb_line(
+                financial_year=fy,
+                account_code=code,
+                defaults={
+                    "account_name": name,
+                    "debit": Decimal("0"),
+                    "credit": Decimal("0"),
+                    "closing_balance": Decimal("0"),
+                    "source": "bank_statement",
+                },
+                bank_statement_only=True,
+            )
+        ob = tb_line.opening_balance or Decimal("0")
+        tb_line.debit = debit
+        tb_line.credit = credit
+        tb_line.closing_balance = ob + debit - credit
+        tb_line.save(update_fields=["debit", "credit", "closing_balance"])
+
+    # Bank contra rows are owned by _recalc_bank_contra, which creates a missing
+    # row and consolidates duplicates. One writer, so the two cannot disagree
+    # about the same row.
+    bank_codes = set(
+        BankAccountMapping.objects.filter(entity=fy.entity)
+        .values_list('tb_account_code', flat=True)
+    )
+    _recalc_bank_contra(fy)
+
+    # Zero the rows the transactions have left. Bank contra codes are excluded:
+    # _recalc_bank_contra has just set them and does its own zeroing.
+    for code, tb_line in existing.items():
+        if code in wanted or code in bank_codes:
+            continue
+        ob = tb_line.opening_balance or Decimal("0")
+        tb_line.debit = Decimal("0")
+        tb_line.credit = Decimal("0")
+        tb_line.closing_balance = ob
+        tb_line.save(update_fields=["debit", "credit", "closing_balance"])
 
     # Clean up orphaned reversal adjustment lines from the old pattern
     TrialBalanceLine.objects.filter(
@@ -1280,6 +1340,8 @@ def _recalculate_bank_tb_lines(fy):
         source='bank_statement',
         description__startswith='Reversal of ',
     ).delete()
+
+    return {"status": "ok"}
 
 
 def _log_action(request, action, description, obj=None):
