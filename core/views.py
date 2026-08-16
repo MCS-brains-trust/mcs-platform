@@ -833,15 +833,23 @@ def _reverse_journal_line_from_tb(fy, account_code, jnl_debit, jnl_credit, journ
             adj.delete()
 
 
-def _get_or_create_tb_line(financial_year=None, account_code=None, defaults=None, fy=None):
+def _get_or_create_tb_line(financial_year=None, account_code=None, defaults=None,
+                           fy=None, bank_statement_only=False):
     """
-    Safely get or create a TrialBalanceLine for bank-statement pushes.
+    Safely get or create a TrialBalanceLine.
 
     Unlike Django's get_or_create, this handles the case where multiple
     rows already exist for the same (financial_year, account_code) — which
     is normal because journal adjustments create separate rows.  We pick
     the *first non-adjustment* row, or the first row overall, to accumulate
-    bank-statement amounts into.
+    into.
+
+    bank_statement_only=True narrows that to a source='bank_statement',
+    is_adjustment=False row, creating one when there is none. Bank postings
+    MUST use it. Without it the fall-through to qs.first() puts bank postings
+    inside a journal adjustment row on any account that has only adjustments,
+    and the rebuild — which reads bank_statement rows and never touches
+    manual_journal — cannot see that money.
 
     When creating a new line, automatically applies any existing
     ClientAccountMapping so the line is pre-mapped.
@@ -850,13 +858,19 @@ def _get_or_create_tb_line(financial_year=None, account_code=None, defaults=None
     qs = TrialBalanceLine.objects.filter(
         financial_year=fy_resolved, account_code=account_code,
     )
-    # Prefer the non-adjustment (original / bank_statement) row
-    tb_line = qs.filter(is_adjustment=False).first() or qs.first()
+    if bank_statement_only:
+        tb_line = qs.filter(is_adjustment=False, source='bank_statement').first()
+    else:
+        # Prefer the non-adjustment (original / bank_statement) row
+        tb_line = qs.filter(is_adjustment=False).first() or qs.first()
     if tb_line:
         return tb_line, False
     # No row exists — create one.
     # Apply existing ClientAccountMapping if available.
-    defaults = defaults or {}
+    defaults = dict(defaults or {})
+    if bank_statement_only:
+        defaults['source'] = 'bank_statement'
+        defaults['is_adjustment'] = False
     if 'mapped_line_item' not in defaults or defaults.get('mapped_line_item') is None:
         cam = ClientAccountMapping.objects.filter(
             entity=fy_resolved.entity,
@@ -980,6 +994,7 @@ def _post_bank_contra_entry(txn, fy, bank_mapping, has_gst):
             "tax_type": "",
             "source": "bank_statement",
         },
+        bank_statement_only=True,
     )
     if not created:
         if txn.amount > 0:
@@ -1080,6 +1095,7 @@ def _post_txn_to_tb(txn, fy, has_gst):
                 "tax_type": tax_type,
                 "source": "bank_statement",
             },
+            bank_statement_only=True,
         )
         if not created:
             if amount < 0:
@@ -1112,6 +1128,7 @@ def _post_txn_to_tb(txn, fy, has_gst):
                         "tax_type": "GST on Income",
                         "source": "bank_statement",
                     },
+                    bank_statement_only=True,
                 )
                 if not gst_created:
                     gst_line.credit += gst_amt
@@ -1130,6 +1147,7 @@ def _post_txn_to_tb(txn, fy, has_gst):
                         "tax_type": "GST on Expenses",
                         "source": "bank_statement",
                     },
+                    bank_statement_only=True,
                 )
                 if not gst_created:
                     gst_line.debit += gst_amt
