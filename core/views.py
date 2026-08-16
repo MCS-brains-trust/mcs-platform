@@ -10832,7 +10832,7 @@ def _recalc_bank_contra(fy, extra_totals=None, candidate_codes=None):
     transactions of its own this year is a candidate this function owns
     (_zero_vacated_bank_rows may zero it) without ever appearing in `groups`.
     When omitted (the five call sites that call this function directly —
-    review/views.py:678, 917, 1014, 2032 and core/views.py:11007),
+    review/views.py:678, 917, 1014, 2032 and core/views.py:11044),
     `written_codes` falls back to exactly what this call wrote or zeroed, as
     before.
 
@@ -10968,14 +10968,22 @@ def _recalc_bank_contra(fy, extra_totals=None, candidate_codes=None):
             keep = bs_lines.first()
             bs_lines.exclude(pk=keep.pk).delete()
             tb_line = keep
+            is_new = False
         elif bs_lines.count() == 1:
             tb_line = bs_lines.first()
+            is_new = False
         else:
             tb_line = TrialBalanceLine(
                 financial_year=fy,
                 account_code=bank_code,
                 source='bank_statement',
             )
+            # Set here, by the branch that knows. Do NOT reintroduce
+            # `tb_line.pk is None` as the test: TrialBalanceLine's primary key
+            # is a UUIDField with default=uuid.uuid4 (core/models.py:1419) and
+            # Django fills field defaults in Model.__init__, so this instance
+            # already has a pk and that test is never true.
+            is_new = True
 
         # account_name and tax_type are create-only, exactly as
         # _post_bank_contra_entry has them: they sit in its _get_or_create_tb_line
@@ -10987,7 +10995,6 @@ def _recalc_bank_contra(fy, extra_totals=None, candidate_codes=None):
         # posting had set. TrialBalanceLine.tax_type is load-bearing for BAS: it
         # is the fallback section and tax-code resolver for a code absent from
         # the chart of accounts (core/bas_utils.py:806-807).
-        is_new = tb_line.pk is None
         ob = tb_line.opening_balance or Decimal('0')
         if is_new:
             tb_line.account_name = bank_name

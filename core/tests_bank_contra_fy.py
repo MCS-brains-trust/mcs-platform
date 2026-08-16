@@ -109,6 +109,34 @@ class BankContraYearScopeTests(TestCase):
         self.assertNotEqual(result["status"], "no_mapping")
         self.assertEqual(result["status"], "ok")
 
+    def test_a_contra_row_this_function_creates_is_named_like_posting_names_it(self):
+        # account_name and tax_type are create-only here, matching
+        # _post_bank_contra_entry — but "create" must be detected by
+        # _state.adding, not by `pk is None`: TrialBalanceLine's pk is a
+        # UUIDField with default=uuid.uuid4 (core/models.py:1419), which Django
+        # populates in Model.__init__, so a freshly constructed row already has
+        # a pk. Getting that wrong leaves every contra row this function creates
+        # named '' where posting would have named it after the bank mapping.
+        #
+        # Posted directly rather than through _post_txn_to_tb, which would
+        # itself create the contra row and take us down the update path.
+        txn = make_txn(self.job, date_str="2025-08-01", amount="-110.00",
+                       code="0400")
+        txn.posted_to_tb = True
+        txn.save(update_fields=["posted_to_tb"])
+        self.assertIsNone(bs_line(self.fy26, "1100"),
+                          "the contra row must not exist yet, or this exercises "
+                          "the update path instead of the create path")
+
+        _recalc_bank_contra(self.fy26)
+
+        line = bs_line(self.fy26, "1100")
+        self.assertIsNotNone(line)
+        self.assertEqual(line.credit, D("110.00"))
+        self.assertEqual(line.account_name, "Business Cheque Account",
+                         "a contra row this function creates must carry the "
+                         "same name _post_bank_contra_entry would give it")
+
     def test_opening_balance_on_the_contra_row_survives_a_recalc(self):
         # closing_balance was set to total_debit - total_credit, ignoring
         # opening_balance entirely — a no-op today only because contra rows
