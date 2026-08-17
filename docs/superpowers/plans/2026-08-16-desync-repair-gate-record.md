@@ -422,9 +422,47 @@ way from everything above:
   still carried GST on income.
 - On GST-free medical supplies, that is **GST reported and remitted that was never owed.**
 
-The exposure, if the affected periods were lodged, is the same figures the audit surfaced from the
-other side: **Veronica $17,429.61 and Habteslassie $11,936.90 — roughly $29,000 combined.** Both
-clients would be candidates for a BAS amendment and recovery.
+The exposure, if the affected periods were lodged, would have been the same figures the audit
+surfaced from the other side: Veronica $17,429.61 and Habteslassie $11,936.90 — roughly $29,000
+combined.
+
+> ### RESOLVED — there is no refund exposure. `probe_lodged_bas.py`, 2026-08-17.
+>
+> **1A GST on sales is 0.00 in every lodged period, both as lodged and as recomputed today.**
+> Neither client ever reported GST on sales, so nothing was over-remitted, and there is nothing to
+> amend or recover. The ~$29,000 concern above is withdrawn.
+>
+> The reason is in the lodgement pattern: Veronica lodged Q1–Q3 only (2026-06-24), Habteslassie
+> Q1–Q2 only (2026-07-28). The periods carrying the reclassified income were never lodged.
+>
+> **It also closes Veronica's 3380 mystery.** Her ledger holds Cr 17,433.61 against transactions
+> saying Cr 4.00, and 1A was 0.00 at every lodgement — so that credit never reconciled to anything
+> reported, at any point. It is stale posting residue; the transactions were always the reliable
+> side; the rebuild replaces it. No client-facing consequence.
+
+### What the probe did find — the defect itself, live, in five lodged periods
+
+Four of the five lodged periods no longer match the transactions behind them:
+
+| Entity | Period | 1B as lodged | 1B today | Difference |
+|---|---|---|---|---|
+| Veronica | Q1 | 3,870.49 | 3,870.48 | +0.01 |
+| Veronica | Q2 | 4,331.52 | 4,361.49 | **−29.97** |
+| Veronica | Q3 | 2,782.38 | 2,802.21 | **−19.83** |
+| Habteslassie | Q1 | 1,349.10 | 1,349.10 | 0.00 |
+| Habteslassie | Q2 | 1,543.13 | 1,540.40 | **+2.73** |
+
+Immaterial in dollars — Veronica under-claimed about $49.80 of input credits, Habteslassie
+over-claimed $2.73. The significance is not the amount. **These are lodged BAS periods whose figures
+have drifted from their own transactions, with nothing on any screen saying so** — the desync
+defect, observed in production, in live client books. Task 7's `amended_since_lodgement` badge
+exists for precisely this and would have flagged three of them.
+
+**And it confirms follow-up 3's fix.** All three of Veronica's lodged rows are `quarterly`, matching
+her `bas_frequency`, despite 12 monthly rows covering the same dates. Lodgement already follows the
+entity's frequency, so filtering `resolve_bas_period_for_txn` on `bas_frequency` makes
+`flag_period_amended` agree with it. Unfixed, three of the periods above could have had their flag
+set on a monthly row the BAS screen never renders.
 
 `BASPeriod.snapshot_1a` / `_1b` / `_net` freeze what was reported at lodgement, so this is
 answerable from the record. `probe_lodged_bas.py` compares every lodged period's snapshot against
