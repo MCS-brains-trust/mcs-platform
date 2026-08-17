@@ -581,6 +581,16 @@ def review_detail(request, pk):
             entity=job.entity, is_active=True
         ).count()
 
+    # Only for rows already in the confirmed-but-unposted state; unpostable_reason
+    # issues a query per transaction, so it is not called for the common case.
+    # Iterating here fills the queryset's result cache, so the template renders
+    # these same annotated instances rather than re-fetching them.
+    from core.txn_periods import unpostable_reason
+    for t in transactions:
+        t.post_warning = (
+            unpostable_reason(t) if (t.is_confirmed and not t.posted_to_tb) else ""
+        )
+
     context = {
         "job": job,
         "transactions": transactions,
@@ -784,6 +794,14 @@ def confirm_transaction(request, pk):
     except Exception as e:
         logger.warning(f"Live learning propagation error: {e}")
 
+    # A transaction whose date falls outside every postable year confirms
+    # normally but posts nowhere — see core/txn_periods.unpostable_reason. Report
+    # it so the row can say so, instead of the user believing the ledger moved.
+    from core.txn_periods import unpostable_reason
+
+    txn.refresh_from_db(fields=["posted_to_tb"])
+    post_warning = "" if txn.posted_to_tb else (unpostable_reason(txn) or "")
+
     return JsonResponse({
         "status": "ok",
         "confirmed_count": job.confirmed_count,
@@ -792,6 +810,8 @@ def confirm_transaction(request, pk):
         "gst_amount": str(txn.gst_amount),
         "net_amount": str(txn.net_amount),
         "live_matches": live_matches,
+        "posted": txn.posted_to_tb,
+        "post_warning": post_warning,
     })
 
 
