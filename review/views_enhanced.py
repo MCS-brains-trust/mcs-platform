@@ -16,6 +16,7 @@ from decimal import Decimal, InvalidOperation
 
 from django.conf import settings
 from django.contrib.auth.decorators import login_required
+from django.db import transaction as db_transaction
 from django.db.models import Q
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -562,8 +563,6 @@ def set_gst_treatment(request, pk):
     POST /api/review/transaction/<pk>/gst-treatment/
     Body: {"gst_treatment": "taxable", "is_manual": true}
     """
-    txn = get_object_or_404(PendingTransaction, pk=pk)
-    get_review_job_for_user(request, txn.job_id)  # enforce access (B2 IDOR)
     try:
         data = json.loads(request.body)
     except json.JSONDecodeError:
@@ -574,29 +573,64 @@ def set_gst_treatment(request, pk):
     if treatment not in valid_treatments:
         return JsonResponse({"status": "error", "message": f"Invalid GST treatment: {treatment}"}, status=400)
 
-    txn.gst_treatment = treatment
-    txn.is_gst_manual = data.get("is_manual", True)
+    # The review screen fires this endpoint concurrently with /confirm/, which
+    # takes select_for_update inside an atomic block specifically to make
+    # confirmation race-safe. An unlocked full-row save here defeated that lock
+    # and reverted is_confirmed / posted_to_tb. Take the same lock, and write
+    # only the fields this endpoint owns so ordering cannot matter.
+    with db_transaction.atomic():
+        txn = get_object_or_404(
+            PendingTransaction.objects.select_for_update(), pk=pk
+        )
+        get_review_job_for_user(request, txn.job_id)  # enforce access (B2 IDOR)
 
-    # Map to legacy tax type for backward compatibility
-    TREATMENT_TO_TAX_TYPE = {
-        "taxable": "GST on Expenses" if txn.amount < 0 else "GST on Income",
-        "gst_free": "GST Free Expenses" if txn.amount < 0 else "GST Free Income",
-        "input_taxed": "Input Taxed",
-        "out_of_scope": "BAS Excluded",
-        "not_registered": "N-T",
-    }
-    if treatment:
-        legacy_tax = TREATMENT_TO_TAX_TYPE.get(treatment, "")
-        txn.confirmed_tax_type = legacy_tax
-        if not txn.ai_suggested_tax_type:
-            txn.ai_suggested_tax_type = legacy_tax
+        txn.gst_treatment = treatment
+        txn.is_gst_manual = data.get("is_manual", True)
 
-    # Reset creditable percentage for non-taxable treatments (AC-APT-01)
-    if treatment in ("gst_free", "input_taxed", "out_of_scope", "not_registered"):
-        txn.creditable_percentage = Decimal("0")
+        # Map to legacy tax type for backward compatibility
+        TREATMENT_TO_TAX_TYPE = {
+            "taxable": "GST on Expenses" if txn.amount < 0 else "GST on Income",
+            "gst_free": "GST Free Expenses" if txn.amount < 0 else "GST Free Income",
+            "input_taxed": "Input Taxed",
+            "out_of_scope": "BAS Excluded",
+            "not_registered": "N-T",
+        }
+        if treatment:
+            legacy_tax = TREATMENT_TO_TAX_TYPE.get(treatment, "")
+            txn.confirmed_tax_type = legacy_tax
+            if not txn.ai_suggested_tax_type:
+                txn.ai_suggested_tax_type = legacy_tax
 
-    _recalculate_gst(txn, txn.job.is_gst_registered)
-    txn.save()
+        # Reset creditable percentage for non-taxable treatments (AC-APT-01)
+        if treatment in ("gst_free", "input_taxed", "out_of_scope", "not_registered"):
+            txn.creditable_percentage = Decimal("0")
+
+        # Every field written above, plus the two _recalculate_gst writes
+        # (gst_amount, net_amount) — and nothing else. confirmed_gst_amount is
+        # deliberately absent: this endpoint has never set it, so listing it
+        # would only write a value back over itself.
+        _recalculate_gst(txn, txn.job.is_gst_registered)
+        txn.save(update_fields=[
+            "gst_treatment", "is_gst_manual", "confirmed_tax_type",
+            "ai_suggested_tax_type", "creditable_percentage",
+            "gst_amount", "net_amount",
+        ])
+
+        # A GST treatment change on an already-posted row changes what the ledger
+        # should hold. Rebuild rather than re-post: _post_txn_to_tb accumulates.
+        if txn.posted_to_tb:
+            from core.txn_periods import flag_period_amended, resolve_fy_for_txn
+            from core.views import _recalculate_bank_tb_lines
+
+            target_fy = resolve_fy_for_txn(txn)
+            if target_fy:
+                result = _recalculate_bank_tb_lines(target_fy)
+                if result.get("status") == "entangled":
+                    logger.error(
+                        "set_gst_treatment: trial balance not rebuilt for txn %s "
+                        "— entity is entangled on %s", txn.pk, result["codes"],
+                    )
+            flag_period_amended(txn, request.user)
 
     return JsonResponse({
         "status": "ok",
@@ -633,9 +667,6 @@ def bulk_set_gst_treatment(request, pk):
     if treatment not in valid_treatments:
         return JsonResponse({"status": "error", "message": f"Invalid GST treatment: {treatment}"}, status=400)
 
-    txns = job.transactions.filter(pk__in=txn_ids)
-    updated_ids = []
-
     TREATMENT_TO_TAX_TYPE = {
         "taxable": lambda txn: "GST on Expenses" if txn.amount < 0 else "GST on Income",
         "gst_free": lambda txn: "GST Free Expenses" if txn.amount < 0 else "GST Free Income",
@@ -644,17 +675,48 @@ def bulk_set_gst_treatment(request, pk):
         "not_registered": lambda txn: "N-T",
     }
 
-    for txn in txns:
-        txn.gst_treatment = treatment
-        txn.is_gst_manual = True
-        txn.confirmed_tax_type = TREATMENT_TO_TAX_TYPE[treatment](txn)
+    # Same lock-and-narrow treatment as set_gst_treatment above: an unlocked
+    # full-row save here reverted is_confirmed / posted_to_tb whenever it raced
+    # /confirm/.
+    from core.txn_periods import flag_period_amended, resolve_fy_for_txn
+    from core.views import _recalculate_bank_tb_lines
 
-        if treatment in ("gst_free", "input_taxed", "out_of_scope", "not_registered"):
-            txn.creditable_percentage = Decimal("0")
+    updated_ids = []
+    years_to_rebuild = set()
+    with db_transaction.atomic():
+        txns = job.transactions.select_for_update().filter(pk__in=txn_ids)
+        for txn in txns:
+            txn.gst_treatment = treatment
+            txn.is_gst_manual = True
+            txn.confirmed_tax_type = TREATMENT_TO_TAX_TYPE[treatment](txn)
 
-        _recalculate_gst(txn, job.is_gst_registered)
-        txn.save()
-        updated_ids.append(str(txn.pk))
+            if treatment in ("gst_free", "input_taxed", "out_of_scope", "not_registered"):
+                txn.creditable_percentage = Decimal("0")
+
+            _recalculate_gst(txn, job.is_gst_registered)
+            txn.save(update_fields=[
+                "gst_treatment", "is_gst_manual", "confirmed_tax_type",
+                "creditable_percentage", "gst_amount", "net_amount",
+            ])
+            updated_ids.append(str(txn.pk))
+
+            # Collect the years to rebuild rather than rebuilding per row: the
+            # rebuild recomputes a whole year from source, so calling it inside
+            # the loop would redo identical work once per transaction.
+            if txn.posted_to_tb:
+                target_fy = resolve_fy_for_txn(txn)
+                if target_fy:
+                    years_to_rebuild.add(target_fy)
+                flag_period_amended(txn, request.user)
+
+        for target_fy in years_to_rebuild:
+            result = _recalculate_bank_tb_lines(target_fy)
+            if result.get("status") == "entangled":
+                logger.error(
+                    "bulk_set_gst_treatment: trial balance not rebuilt for "
+                    "financial year %s — entity is entangled on %s",
+                    target_fy.pk, result["codes"],
+                )
 
     return JsonResponse({
         "status": "ok",

@@ -263,44 +263,54 @@ export function describeBankToBas(opts: BankToBasOptions): void {
   // guessed -- and two of those fixture codes (1520, 1530) don't exist there
   // at all.
   //
-  // Every code below was chosen, and verified against the database, for
-  // carrying NO mapped tax_code (0602, 0578, 1126 have none; 1545 and 1685
-  // carry 'FOA', which is absent from taxCodeToTaxType's map,
-  // review_detail.html:853-867). That is deliberate, not incidental: when an
-  // account's tax_code DOES resolve (0510 Sales, tax_code GST, was the first
-  // choice here), clicking its option fires TWO concurrent writes to the same
+  // EFTPOS SALES INV 1001 deliberately uses 0510 Sales, which carries tax_code
+  // 'GST' and therefore DOES resolve through taxCodeToTaxType
+  // (review_detail.html:853-867). That entry exists to exercise the account
+  // picker's auto-apply path, and it is a regression test for a race that used
+  // to make that path unusable.
+  //
+  // The history matters, because this table used to be the workaround. Clicking
+  // an account whose tax_code resolves fires TWO concurrent writes to the same
   // transaction -- selectAccount's own confirm (tryAutoConfirm, :937) AND a
-  // parallel call to /gst-treatment/ (applyAccountGST, :873-912, the fetch
-  // itself at :896, hitting set_gst_treatment, review/views_enhanced.py:
-  // 558-608). That second endpoint loads the row with a plain
-  // get_object_or_404 -- no select_for_update, no atomic block -- and its
-  // own unconditional txn.save() (:599) can overwrite
-  // is_confirmed/posted_to_tb back to their pre-confirm values if its stale
-  // read lands before confirm_transaction's commit and its save lands after.
-  // Measured on real runs, not assumed: with 0510 in this table, the suite
-  // failed intermittently (fail/pass/fail across three runs) with the
-  // transaction silently un-confirmed and its posting missing from the TB.
-  // This is a live, unsynchronized-write bug in the application (a third
-  // defect, distinct from the wrong-chart sourcing above and the posted_to_tb
-  // guard issue elsewhere), tracked separately and NOT fixed here. With every
-  // account below unmapped, applyAccountGST returns early (:878) before ever
-  // reaching /gst-treatment/, so selectAccount's click never does more than
-  // populate the picker -- confirming is left entirely to this loop's own
-  // .selectOption(), and the race cannot occur. Consequence, documented for
-  // Task 9: this suite now never exercises the auto-apply path at all.
-  // The account NAMES for three of these (Filing fees, Net foreign income,
-  // Goods for own use, Other non-operating revenue) are semantically
-  // arbitrary -- the global company chart has no office-supplies or food
-  // account -- chosen only for their tax_code, not their bookkeeping fit.
-  // What this test pins is the tax treatment and the resulting BAS figures,
-  // not account realism.
-  const ALLOCATIONS: Array<[string, string, string]> = [
-    ['EFTPOS SALES INV 1001', '0602', 'GST on Income'],
-    ['OFFICE SUPPLIES PTY LTD', '1685', 'GST on Expenses'],
-    ['BANK FEES AND CHARGES', '1545', 'GST on Expenses'],
-    ['CONSULTING FEE INV 1002', '0602', 'GST on Income'],
-    ['FRESH FOOD SUPPLIES', '1126', 'GST Free Expenses'],
-    ['EXPORT SALE INV 1003', '0578', 'GST Free Income'],
+  // parallel call to /gst-treatment/ (applyAccountGST, :873-912, fetch at :896,
+  // hitting set_gst_treatment in review/views_enhanced.py). That second endpoint
+  // used to load the row with a plain get_object_or_404 -- no select_for_update,
+  // no atomic block -- and save every column back from its stale in-memory copy,
+  // reverting is_confirmed and posted_to_tb. Measured, not assumed: with 0510
+  // here the suite failed fail/pass/fail across three runs, the transaction
+  // silently un-confirmed and its posting missing from the trial balance. So
+  // every code was chosen for carrying NO mapped tax_code, applyAccountGST
+  // returned early at :878, and the race could not occur -- at the cost of this
+  // suite never exercising the auto-apply path at all.
+  //
+  // That race is fixed: set_gst_treatment and bulk_set_gst_treatment now take
+  // transaction.atomic() + select_for_update() and save with update_fields
+  // naming only the fields they own, so neither confirmation flag can be
+  // clobbered whatever the ordering. Hence 0510 is back, and its row is the only
+  // one whose fourth column is non-empty. If the race ever returns, this is the
+  // test that goes intermittent again -- which is why the soak in e2e/README.md
+  // runs this spec ten times rather than once.
+  //
+  // The other five codes still carry no mapped tax_code (0602, 0578, 1126 have
+  // none; 1545 and 1685 carry 'FOA', absent from the map), which is now simply a
+  // fact about them rather than a constraint being maintained.
+  //
+  // The account NAMES for several of these (Net foreign income, Goods for own
+  // use, Other non-operating revenue) are semantically arbitrary -- the global
+  // company chart has no office-supplies or food account -- chosen only for
+  // their tax_code, not their bookkeeping fit. What this test pins is the tax
+  // treatment and the resulting BAS figures, not account realism.
+  // Fourth column is the value .tax-select is EXPECTED to hold immediately after
+  // the account click, i.e. what applyAccountGST auto-applies from the account's
+  // own tax_code. '' means the account carries no mapped tax_code and the click
+  // leaves the select alone.
+  const ALLOCATIONS: Array<[string, string, string, string]> = [
+    ['EFTPOS SALES INV 1001', '0510', 'GST on Income', 'GST on Income'],
+    ['OFFICE SUPPLIES PTY LTD', '1685', 'GST on Expenses', ''],
+    ['BANK FEES AND CHARGES', '1545', 'GST on Expenses', ''],
+    ['CONSULTING FEE INV 1002', '0602', 'GST on Income', ''],
+    ['FRESH FOOD SUPPLIES', '1126', 'GST Free Expenses', ''],
+    ['EXPORT SALE INV 1003', '0578', 'GST Free Income', ''],
   ];
 
   test(`${opts.profile}: every transaction allocates and posts to the trial balance`, async ({ browser }) => {
@@ -355,15 +365,17 @@ export function describeBankToBas(opts: BankToBasOptions): void {
     // real run of this suite. Waiting for the real completion text closes that off.
     await page.reload();
 
-    for (const [description, code, taxType] of ALLOCATIONS) {
+    for (const [description, code, taxType, expectedAutoTax] of ALLOCATIONS) {
       const row = page.locator('[data-txn-id]').filter({ hasText: description });
       // The account control is a filter-as-you-type picker, not a <select>:
       // .account-picker-input narrows THIS ROW'S OWN .account-dropdown of
       // .account-option divs (review_detail.html:619-629, one dropdown <div>
       // per transaction), and clicking one calls selectAccount(txnId, code,
-      // name). Two of these six rows share code 0602 (Other non-operating
-      // revenue) -- scoping the option click to `row` rather than the whole
-      // page matters: showDropdown (:812) sets a row's dropdown innerHTML but
+      // name). Scoping the option click to `row` rather than the whole page
+      // matters -- and keep it scoped even though no two rows now share a code
+      // (EFTPOS moved to 0510, leaving CONSULTING FEE the only 0602). The
+      // hazard is structural, not specific to a duplicate: showDropdown (:812)
+      // sets a row's dropdown innerHTML but
       // hideAllDropdowns (:845) never clears it, only drops the .show class,
       // so once EFTPOS's row has rendered a 0602 option, that (now-hidden)
       // element is still in the DOM when CONSULTING FEE later renders its
@@ -373,28 +385,32 @@ export function describeBankToBas(opts: BankToBasOptions): void {
       // become actionable again.
       await row.locator('.account-picker-input').fill(code);
       await row.locator(`.account-option[data-code="${code}"]`).first().click();
-      // Tripwire protecting the ALLOCATIONS constraint above, not an incidental
-      // check -- do not delete this as noise. applyAccountGST (review_detail.html:
-      // 873-912) sets .tax-select's value SYNCHRONOUSLY, inside the click handler,
-      // before tryAutoConfirm ever runs -- so if the account just clicked carried a
-      // mapped tax_code, .tax-select would already be non-empty by this point, and
-      // this assertion fails loudly right here instead of the suite silently
-      // exercising the auto-apply race the ALLOCATIONS comment documents but does
-      // not fix. As a bonus, this also proves the reload above genuinely cleared
-      // classification's own client-side pre-fill of .tax-select: if it hadn't,
-      // this would be non-empty regardless of the account's tax_code.
+      // Tripwire, not an incidental check -- do not delete this as noise. It used
+      // to assert .tax-select was ALWAYS empty here, which enforced the old
+      // constraint that no account in this table may carry a mapped tax_code. Now
+      // it asserts the exact value applyAccountGST (review_detail.html:873-912)
+      // should have auto-applied, which protects the constraint in both
+      // directions: an account silently losing its tax_code, or gaining one,
+      // both fail loudly right here.
+      //
+      // applyAccountGST sets .tax-select SYNCHRONOUSLY inside the click handler,
+      // before tryAutoConfirm runs, so this is observable immediately. For the
+      // unmapped rows it also still proves the reload above genuinely cleared
+      // classification's client-side pre-fill: without that, the select would be
+      // non-empty regardless of the account's tax_code.
       await expect(
         row.locator('.tax-select'),
-        'chosen account must have no mapped tax_code — see the ALLOCATIONS comment',
-      ).toHaveValue('');
-      // Doubly true this click alone can't confirm the row: none of these six
-      // accounts carry a mapped tax_code (see the ALLOCATIONS comment), so
-      // applyAccountGST returns early and never touches .tax-select; and the
-      // reload above means classification's own client-side pre-fill of
-      // .tax-select is gone too (the select is genuinely blank again, per the
-      // reload's own comment above). So tryAutoConfirm's tax-select check is
-      // empty either way, and this selectOption is what actually confirms and
-      // posts this row.
+        `tax-select after clicking ${code} must equal its auto-applied value `
+        + `(${expectedAutoTax || 'empty — account has no mapped tax_code'})`,
+      ).toHaveValue(expectedAutoTax);
+      // For the five unmapped rows this selectOption is what confirms and posts.
+      // For 0510 it is a SECOND confirm: applyAccountGST filled the select from
+      // tax_code 'GST', so tryAutoConfirm already fired confirmTransaction with
+      // 'GST on Income' before this line runs. That is deliberate -- it is the
+      // auto-apply path, unreachable while the race existed. The value selected
+      // here is identical, so the ledger figures are unchanged either way; what
+      // differs is that the second confirm now takes the rebuild branch rather
+      // than being silently dropped by the posted_to_tb guard.
       await row.locator('.tax-select').selectOption(taxType);
       // confirmTransaction's success handler (:958) sets data-confirmed on the
       // row directly from the fetch response, client-side, immediately -- no
@@ -925,6 +941,187 @@ export function describeBankToBas(opts: BankToBasOptions): void {
     // hit the refusal path, not a successful unlodge whose page happened to
     // also contain the word "senior" somewhere unrelated.
     expect(result.text).not.toContain('has been unlodged');
+
+    await page.context().close();
+  });
+
+  // ── Corrections and reallocations (Tasks 8, 9, 10) ─────────────────────────
+  //
+  // These four run LAST and deliberately mutate figures the tests above pinned;
+  // serial mode (describe.configure, top of file) is what makes that safe. What
+  // they inherit from those tests, and depend on:
+  //
+  //   * all six transactions confirmed and posted per ALLOCATIONS;
+  //   * 1685 (OFFICE SUPPLIES, GST on Expenses, gross 550) holding net 500.00;
+  //   * 0510 (EFTPOS SALES, GST on Income, gross 1100) holding net 1,000.00;
+  //   * Q2 LODGED, snapshot frozen at 1A 300.00 / 1B 52.00 / net 248.00 -- the
+  //     last test in the file only proves an office_admin unlodge is REFUSED, so
+  //     the period is still lodged by the time these run.
+  //
+  // Before Tasks 8 and 9 every one of these failed by leaving the ledger
+  // untouched while the BAS moved: the review screen's posted_to_tb guard
+  // silently dropped a corrected confirm, and the two BAS reallocation endpoints
+  // had no posting logic at all.
+
+  // Same shape as the bank-row assertion above: #tb-table's <code> cell holds the
+  // account code, amounts are cells 2 (debit) and 3 (credit).
+  function tbCells(page: any, code: string) {
+    return page
+      .locator('#tb-table code', { hasText: new RegExp(`^\\s*${code}\\s*$`) })
+      .locator('xpath=ancestor::tr[1]')
+      .locator('td');
+  }
+
+  test(`${opts.profile}: correcting a confirmed transaction moves the trial balance`, async ({ browser }) => {
+    const tb = await seniorPage(browser);
+    await tb.goto(`${instance.baseURL}/years/${FY}/`);
+    await expect(
+      tbCells(tb, '1685').nth(2),
+      'baseline from the allocation test: 550 gross at GST on Expenses posts 500.00 net',
+    ).toHaveText('500.00');
+
+    // Change ONLY the tax type, on a row that is already confirmed AND posted.
+    // That is the exact shape confirm_transaction used to drop: its posted_to_tb
+    // guard cannot tell "post this twice" from "this changed, post it again".
+    const review = await seniorPage(browser);
+    await review.goto(reviewJobUrl);
+    const row = review.locator('[data-txn-id]').filter({ hasText: 'OFFICE SUPPLIES PTY LTD' });
+    const [confirmResponse] = await Promise.all([
+      review.waitForResponse(
+        (r: Response) => r.url().includes('/confirm/') && r.request().method() === 'POST',
+      ),
+      row.locator('.tax-select').selectOption('GST Free Expenses'),
+    ]);
+    expect(confirmResponse.status()).toBe(200);
+
+    // GST-free means the whole gross lands in the expense account and the input
+    // credit disappears. Reloading rather than trusting the first page: the TB is
+    // server-rendered, so only a fresh request can show the rebuild.
+    await tb.reload();
+    await expect(
+      tbCells(tb, '1685').nth(2),
+      'the correction must reach the ledger, not just the transaction',
+    ).toHaveText('550.00');
+
+    // And the BAS must agree with it -- the two reports reading the same numbers
+    // is the whole point of the exercise. 1B drops by OFFICE SUPPLIES' own 50.00,
+    // leaving only BANK FEES' 2.00.
+    const bas = await seniorPage(browser);
+    await bas.goto(`${instance.baseURL}/years/${FY}/gst/?period=${LODGE_PERIOD}`);
+    expect(await basValue(bas, '1B')).toBeCloseTo(2.0, 2);
+    expect(await basValue(bas, 'G11')).toBeCloseTo(872.0, 2);
+
+    await tb.context().close();
+    await review.context().close();
+    await bas.context().close();
+  });
+
+  test(`${opts.profile}: reallocating from the BAS screen moves the trial balance`, async ({ browser }) => {
+    const page = await seniorPage(browser);
+    await page.goto(`${instance.baseURL}/years/${FY}/gst/?period=${LODGE_PERIOD}`);
+
+    // Driven through the endpoint the BAS detail tabs call, with the page's own
+    // CSRF token -- the same technique the unlodge test uses, and for the same
+    // reason: it exercises the server path under test without depending on the
+    // detail tab's markup, which is not what this test is about.
+    // Read the id off the row rather than regexing the HTML: the detail tab
+    // renders one <tr data-txn-id> per transaction (gst_activity_statement.html
+    // :439, :500, :570, :631, one table per section), and the description sits
+    // several cells into the row -- which is what defeated an earlier
+    // regex-on-fetched-HTML version of this. #basDetailTab is a hidden tab, but
+    // getAttribute needs no actionability, so the row is readable regardless.
+    const detailRow = page.locator('tr[data-txn-id]').filter({ hasText: 'FRESH FOOD' });
+    await expect(
+      detailRow,
+      'FRESH FOOD SUPPLIES must appear exactly once on the BAS detail tab',
+    ).toHaveCount(1);
+    const txnId = await detailRow.getAttribute('data-txn-id');
+    expect(txnId, 'the detail row must carry a data-txn-id').toBeTruthy();
+
+    const result = await page.evaluate(async ({ fy, id }) => {
+      const token = (document.querySelector('[name="csrfmiddlewaretoken"]') as HTMLInputElement)?.value;
+      const response = await fetch(`/years/${fy}/gst/reallocate/`, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          txn_id: id, account_code: '1060', account_name: 'Insurance',
+          tax_type: 'GST Free Expenses',
+        }),
+      });
+      return { status: response.status, body: await response.text() };
+    }, { fy: FY, id: txnId });
+    expect(result.status, result.body).toBe(200);
+
+    // FRESH FOOD SUPPLIES is 300 gross, GST-free, so the whole 300 moves out of
+    // 1126 and into 1060. A 409 here would mean the rebuild declined on an
+    // entangled account, which this fixture has none of.
+    const tb = await seniorPage(browser);
+    await tb.goto(`${instance.baseURL}/years/${FY}/`);
+    await expect(tbCells(tb, '1060').nth(2)).toHaveText('300.00');
+    // Both sides empty, not '0.00': the TB template renders a zero amount as an
+    // empty cell, which is the same convention the bank-row assertion above
+    // depends on (`toHaveText('')` for its credit side). Measured, not assumed --
+    // an earlier version of this expected '0.00' and got '' from a
+    // <td class="text-end"></td>. Asserting BOTH cells is what makes this mean
+    // "zeroed" rather than "the figure moved to the other column", which a
+    // single empty-debit check would also accept.
+    await expect(
+      tbCells(tb, '1126').nth(2),
+      'the vacated account must be zeroed, not left holding its old figure',
+    ).toHaveText('');
+    await expect(
+      tbCells(tb, '1126').nth(3),
+      'and zeroed on the credit side too, not flipped across',
+    ).toHaveText('');
+
+    await page.context().close();
+    await tb.context().close();
+  });
+
+  test(`${opts.profile}: the auto-apply path posts exactly once`, async ({ browser }) => {
+    // EFTPOS SALES uses 0510, whose tax_code 'GST' resolves -- so clicking it in
+    // the allocation loop fired tryAutoConfirm, and the loop's own selectOption
+    // then fired a second confirm. Two confirms, one posting: 1100 gross at GST
+    // on Income is 1,000.00 net. 2,000.00 here would mean the correction path
+    // re-posted on top of the original instead of rebuilding from source.
+    const page = await seniorPage(browser);
+    await page.goto(`${instance.baseURL}/years/${FY}/`);
+    await expect(tbCells(page, '0510').nth(3)).toHaveText('1,000.00');
+
+    // The GST side of the same transaction, for the same reason.
+    const bas = await seniorPage(browser);
+    await bas.goto(`${instance.baseURL}/years/${FY}/gst/?period=${LODGE_PERIOD}`);
+    expect(await basValue(bas, '1A')).toBeCloseTo(300.0, 2);
+    expect(await basValue(bas, 'G1')).toBeCloseTo(4100.0, 2);
+
+    await page.context().close();
+    await bas.context().close();
+  });
+
+  test(`${opts.profile}: a correction inside a lodged period is flagged, and the snapshot stays frozen`, async ({ browser }) => {
+    // The two correction tests above both landed inside Q2, which is lodged. That
+    // is allowed -- and it is exactly the divergence Task 7's flag exists to make
+    // visible, because the lodged snapshot is frozen by design while the live
+    // figures move underneath it.
+    const page = await seniorPage(browser);
+    await page.goto(`${instance.baseURL}/years/${FY}/gst/?period=${LODGE_PERIOD}`);
+
+    const card = page
+      .locator('.card', { hasText: new RegExp(`^\\s*Q${LODGE_PERIOD}`) })
+      .first();
+    await expect(
+      card,
+      'a corrected lodged period must say so on the period strip',
+    ).toContainText('Amended');
+
+    // Frozen, not recomputed: the snapshot on the card is what was reported to
+    // the ATO. 1B has moved from 52.00 to 2.00 in the live figures by now, so a
+    // card reading anything other than the original net proves the snapshot was
+    // overwritten -- which would destroy the only record of what was lodged.
+    await expect(
+      card,
+      'the lodged snapshot must not be rewritten by a later correction',
+    ).toContainText('248.00');
 
     await page.context().close();
   });

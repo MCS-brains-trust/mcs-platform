@@ -3770,6 +3770,18 @@ class BASPeriod(models.Model):
         null=True, blank=True, related_name="unlodged_bas_periods",
     )
     unlodged_at = models.DateTimeField(null=True, blank=True)
+    # Amendment audit — a correction landing inside a lodged period is allowed,
+    # but the lodged snapshot stays frozen, so the two diverge. Flag it rather
+    # than let the divergence be silent.
+    amended_since_lodgement = models.BooleanField(
+        default=False,
+        help_text="A transaction in this period changed after it was lodged",
+    )
+    amended_at = models.DateTimeField(null=True, blank=True)
+    amended_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name="amended_bas_periods",
+    )
     # Snapshot of GST figures at time of lodgement
     snapshot_1a = models.DecimalField(
         max_digits=12, decimal_places=2, null=True, blank=True,

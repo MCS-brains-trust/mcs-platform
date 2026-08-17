@@ -188,12 +188,14 @@ Adding another entity type is more than a new fixture profile plus a spec file �
 things in `bank_to_bas_flow.ts` are hard-coded to the company profile and would all need
 revisiting:
 
-- **`ALLOCATIONS`'s account codes** (`0602`, `1685`, `1545`, `1126`, `0578`) come from the
-  global, entity-type-scoped `ChartOfAccount` template (`review/views.py:553-555`), not
-  from the fixture's own chart — a different entity type may not carry these codes at
-  all. Whatever codes it uses instead must independently satisfy the constraint that
-  makes this suite pass: no mapped `tax_code`, or a `tax_code` outside
-  `taxCodeToTaxType`'s map (see the ALLOCATIONS comment and the limits section below).
+- **`ALLOCATIONS`'s account codes** (`0510`, `0602`, `1685`, `1545`, `1126`, `0578`) come
+  from the global, entity-type-scoped `ChartOfAccount` template
+  (`review/views.py:553-555`), not from the fixture's own chart — a different entity type
+  may not carry these codes at all. There is no longer a constraint that they carry no
+  mapped `tax_code`: `0510` Sales deliberately carries `GST` so the auto-apply path is
+  exercised, and the table's fourth column records the value each account should
+  auto-apply. A tripwire in the allocation loop asserts that value, so an account losing
+  or gaining a `tax_code` fails loudly rather than silently changing what is covered.
 - The bank account name string (`Cash at bank`) asserted after the wizard mapping step is
   hard-coded.
 - The `2000` trial-balance row the double-post and TB-balances tests key on
@@ -213,7 +215,8 @@ regression in the deterministic figures below would be invisible. The reload cle
 unconfirmed client-side state and forces the hand-picked allocations to be what land in
 the ledger.
 
-Five further limits, none fixable with a committed fixture:
+Two further limits, neither fixable with a committed fixture (three more used to be listed
+here and are all fixed — see "Previously documented here as accepted defects" below):
 
 1. **The fixture assumes the kerning collapse rather than reproducing it.** Dates are
    stored as glued literals (`02Oct`) and drawn with a single call. That is the input
@@ -226,61 +229,94 @@ Five further limits, none fixable with a committed fixture:
    balance from transaction rows, so nothing under test observes the difference — but the
    fixture is that much less like the real thing, and a reader comparing the two should
    know why.
-3. **Every account the allocation test uses was chosen for its `tax_code`, not its
-   bookkeeping fit — and that choice is load-bearing, not cosmetic.** Every code in
-   `bank_to_bas_flow.ts`'s `ALLOCATIONS` table (`0602`, `1685`, `1545`, `1126`, `0578`)
-   carries either no `tax_code` at all or a `tax_code` (`FOA`) that is absent from
-   `taxCodeToTaxType`'s client-side map (`review_detail.html:853-867`). Two consequences:
-   - **Coverage gap.** Because no chosen account has a mapped tax code, this suite never
-     exercises the account picker's auto-apply path at all — not the tax-dropdown
-     pre-fill, not the `/gst-treatment/` call it fires, not the auto-confirm that follows.
-     Do not infer that path is tested from this suite passing.
-   - **A live race, avoided by construction.** When an account's `tax_code` *does*
-     resolve (`0510` Sales, `tax_code` `GST`, was the first choice here), selecting it
-     fires two concurrent writes to the same transaction: `selectAccount`'s own confirm,
-     and a parallel `/gst-treatment/` call (`set_gst_treatment`,
-     `review/views_enhanced.py:558-608`) that loads the row with a plain
-     `get_object_or_404` — no `select_for_update`, no atomic block — and its own
-     unconditional `.save()` can overwrite `is_confirmed`/`posted_to_tb` back to their
-     pre-confirm values if its stale read lands after confirm's read but its save lands
-     after confirm's commit. Measured on real runs: with `0510` in this table the suite
-     failed intermittently (fail/pass/fail across three runs), with the transaction
-     silently un-confirmed and its posting missing from the trial balance. This is a real,
-     unsynchronized-write defect in the application, distinct from the roll-forward
-     defects below, and it is **not fixed** — it is avoided here only because every
-     account in `ALLOCATIONS` has no mapped tax code, so `applyAccountGST` returns before
-     ever reaching `/gst-treatment/` and the race cannot occur.
-   **Anyone "tidying" those account codes into semantically nicer ones (the current
-   names — Filing fees, Net foreign income, Goods for own use, Other non-operating
-   revenue — are arbitrary; the company chart has no office-supplies or bank-fees
-   account) risks picking one with a mapped tax code and silently reintroducing this
-   race.** If the underlying `/gst-treatment/` locking defect is ever fixed, this
-   constraint — and the coverage gap it causes — should be revisited.
-4. **Correcting an already-confirmed transaction never re-posts the trial balance.**
-   `confirm_transaction` (`review/views.py:694`) guards the trial-balance post on
-   `posted_to_tb`: `if not txn.posted_to_tb: _post_confirmed_txn_to_tb(txn)`. A later
-   confirm on the same transaction — changing its account or tax type — updates the
-   transaction record (`confirmed_code`, `confirmed_tax_type`, `confirmed_gst_amount`,
-   etc.) but the guard skips reposting, so the ledger keeps the figures from the
-   *original* confirm. The BAS reads the transaction's own confirmed fields directly
-   (`core/bas_utils.py`), and the financial statements read the trial balance, so the
-   two disagree after any correction. This is the same guard the "re-confirming a
-   transaction does not post it twice" test above relies on for its own, intended
-   effect — it is a correct guard against double-posting, and this is its accepted,
-   documented cost, not a second bug to fix here.
-5. **The BAS reallocation endpoints post nothing to the trial balance at all.**
-   `bas_reallocate_transaction` and `bas_bulk_reallocate` (`core/views_bas.py`) update
-   `confirmed_code`/`confirmed_name`/`confirmed_tax_type`/`confirmed_gst_amount` and call
-   `.save()` — neither function calls `_post_confirmed_txn_to_tb`, `_post_txn_to_tb`, or
-   `_recalc_bank_contra` anywhere. A reallocation through the BAS detail tabs therefore
-   changes what the BAS reports immediately, while the trial balance (and anything
-   derived from it) keeps the transaction's original posting indefinitely.
+## Previously documented here as accepted defects — all three now fixed
 
-Both 4 and 5 are known, accepted-for-now application defects that this suite documents
-rather than covers or fixes — no test here exercises a correction or a BAS reallocation,
-so neither is caught red here. They are recorded so a reader of this file, not just of
-application source, knows the BAS and the trial balance can already disagree with each
-other in ways unrelated to anything Tier 2 asserts.
+This section used to carry limits 3, 4 and 5, each describing a live application defect
+that the suite documented rather than covered. All three are fixed, and the text is kept
+because a reader of an older commit will find those limits and needs to know they were
+closed, not quietly dropped.
+
+**3. The allocation accounts were chosen to avoid a race — no longer.** Every code in
+`ALLOCATIONS` used to carry no `tax_code`, or one absent from `taxCodeToTaxType`'s map
+(`review_detail.html:853-867`), so `applyAccountGST` returned early and the account
+picker's auto-apply path was never exercised at all. That was not cosmetic: when an
+account's `tax_code` *did* resolve, selecting it fired two concurrent writes to the same
+transaction — `selectAccount`'s own confirm, and a parallel `/gst-treatment/` call that
+loaded the row with a plain `get_object_or_404`, no `select_for_update`, no atomic block,
+and saved every column back from its stale copy. Measured, not theorised: with `0510` in
+the table the suite failed fail/pass/fail across three runs, the transaction silently
+un-confirmed and its posting missing from the trial balance.
+
+`set_gst_treatment` and `bulk_set_gst_treatment` now take `transaction.atomic()` +
+`select_for_update()` and save with `update_fields` naming only the fields they own, so
+neither confirmation flag can be clobbered whatever the ordering. `0510` is back in
+`ALLOCATIONS` and the auto-apply path is covered again. Note what still cannot be proven
+by a Django test: `select_for_update` is a no-op on sqlite, so the **soak** below — this
+spec run ten consecutive times against Postgres — is the only evidence for the lock
+itself.
+
+**4. Correcting an already-confirmed transaction never re-posted the trial balance.**
+`confirm_transaction` guarded posting on `posted_to_tb`, which is correct for stopping a
+double-click double-post and cannot distinguish "post this twice" from "this changed, post
+it again". A corrected confirm updated the transaction and left the ledger holding the
+original figures, so the BAS (which reads the transaction's own confirmed fields) and the
+financial statements (which read the trial balance) disagreed after any correction.
+
+An already-posted row now takes a rebuild path instead of no path. Covered by
+*correcting a confirmed transaction moves the trial balance* above, and the double-post
+guard still holds — *re-confirming a transaction does not post it twice* is unchanged and
+still green.
+
+**5. The BAS reallocation endpoints posted nothing to the trial balance at all.**
+`bas_reallocate_transaction` and `bas_bulk_reallocate` updated the confirmed fields and
+returned, calling no posting helper anywhere. Both now rebuild; the single endpoint returns
+409 if the rebuild declines on an entangled account, and the bulk endpoint rebuilds once
+per financial year rather than once per transaction. Covered by *reallocating from the BAS
+screen moves the trial balance* above.
+
+## Running Tier 2 from a git worktree
+
+Three things silently mislead if you skip them, and the first is the dangerous one because
+it goes **green** while testing the wrong code:
+
+1. **`STATEMENTHUB_ROOT` must point at the worktree.** `scripts/start_server.sh` does
+   `cd "${REPO_DIR}"`, which defaults to `/opt/statementhub` — so without it the suite
+   serves the production checkout and tells you nothing about your branch. Leave
+   `STATEMENTHUB_RUNTIME_ROOT` alone: the venv and `.e2e` state belong to the machine, not
+   to the checkout under test (see `fixtures/paths.ts`).
+2. **The template database must carry your branch's migrations.** `start_server.sh`
+   branches `sh_e2e_template` with `CREATE DATABASE ... TEMPLATE` and never runs `migrate`,
+   so a migration that exists only on your branch is absent from every run and each query
+   touching the new column 500s. Apply it once:
+   `DJANGO_SETTINGS_MODULE=config.settings_e2e E2E_DB_NAME=sh_e2e_template python3 manage.py migrate`.
+3. **`collectstatic` must have run in the worktree.** `settings_e2e` uses manifest static
+   storage, and a fresh worktree has no `staticfiles/`, so every page 500s with
+   `Missing staticfiles manifest entry for 'css/style.css'`.
+
+```bash
+cd e2e
+STATEMENTHUB_ROOT=/path/to/worktree npx playwright test tier2/bank_to_bas_company.spec.ts --workers=1
+```
+
+## The soak
+
+The `/gst-treatment/` race failed intermittently — fail/pass/fail across three consecutive
+runs — so one green run is not evidence that it is fixed. Ten are the acceptance gate:
+
+```bash
+cd e2e
+for i in $(seq 1 10); do
+  echo "=== run $i ==="
+  STATEMENTHUB_ROOT=/path/to/worktree npx playwright test tier2/bank_to_bas_company.spec.ts --workers=1 \
+    || echo "RUN $i FAILED"
+done
+```
+
+Ten passes. A single failure means the lock is not fixed — stop and reopen it rather than
+re-running until it goes green. Run off-peak: production shares this host, and each pass
+makes real AI classification calls, so ten passes is ten metered classification cycles.
+
+This is a one-off gate, not part of the standing suite.
 
 ## Defects found by the suite
 

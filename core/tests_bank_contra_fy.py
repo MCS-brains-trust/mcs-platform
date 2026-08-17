@@ -1,0 +1,215 @@
+"""The bank contra is grouped by the same year rule as the posting it mirrors.
+
+_recalc_bank_contra scoped on job__financial_year while posting resolved the
+year from the transaction's own date, so a statement spanning a year end posted
+to one year and had its contra counted into the other.
+"""
+from datetime import date
+from decimal import Decimal
+
+from django.test import TestCase, override_settings
+
+from core.models import TrialBalanceLine
+from core.tests_bank_tb_fixtures import (
+    STORAGES_OVERRIDE, bs_line, make_bank_mapping, make_entity, make_fy,
+    make_job, make_txn,
+)
+from core.views import _post_txn_to_tb, _recalc_bank_contra, _recalculate_bank_tb_lines
+
+D = Decimal
+
+
+@override_settings(STORAGES=STORAGES_OVERRIDE)
+class BankContraYearScopeTests(TestCase):
+    def setUp(self):
+        self.entity = make_entity()
+        self.fy25 = make_fy(self.entity, "FY2025", date(2024, 7, 1), date(2025, 6, 30))
+        self.fy26 = make_fy(self.entity, "FY2026", date(2025, 7, 1), date(2026, 6, 30))
+        make_bank_mapping(self.entity)
+        # One job, attached to FY2025, holding a statement that crosses 30 June.
+        self.job = make_job(self.entity, self.fy25)
+
+    def _post(self, date_str, amount):
+        txn = make_txn(self.job, date_str=date_str, amount=amount, code="0400")
+        from core.txn_periods import resolve_fy_for_txn
+        _post_txn_to_tb(txn, resolve_fy_for_txn(txn), has_gst=False)
+        return txn
+
+    def test_a_year_spanning_statement_splits_its_contra(self):
+        self._post("2025-06-20", "-100.00")   # FY2025
+        self._post("2025-07-03", "-250.00")   # FY2026
+
+        _recalc_bank_contra(self.fy25)
+        _recalc_bank_contra(self.fy26)
+
+        self.assertEqual(bs_line(self.fy25, "1100").credit, D("100.00"))
+        self.assertEqual(bs_line(self.fy26, "1100").credit, D("250.00"),
+                         "the July transaction belongs to FY2026, not the job's year")
+
+    def test_a_vacated_bank_row_is_zeroed_not_left_standing(self):
+        txn = self._post("2025-06-20", "-100.00")
+        _recalc_bank_contra(self.fy25)
+        self.assertEqual(bs_line(self.fy25, "1100").credit, D("100.00"))
+
+        # The transaction is re-dated into the next year — the FY2025 contra
+        # must shed it rather than keep it forever.
+        txn.date = "2025-07-03"
+        txn.save(update_fields=["date"])
+
+        _recalc_bank_contra(self.fy25)
+
+        self.assertEqual(bs_line(self.fy25, "1100").credit, D("0.00"))
+        self.assertEqual(bs_line(self.fy25, "1100").closing_balance, D("0.00"))
+
+    def test_receipts_debit_and_payments_credit(self):
+        self._post("2025-08-01", "440.00")
+        self._post("2025-08-02", "-110.00")
+
+        _recalc_bank_contra(self.fy26)
+
+        line = bs_line(self.fy26, "1100")
+        self.assertEqual(line.debit, D("440.00"))
+        self.assertEqual(line.credit, D("110.00"))
+
+    def test_calling_it_twice_changes_nothing(self):
+        self._post("2025-08-01", "-330.00")
+        _recalc_bank_contra(self.fy26)
+        first = bs_line(self.fy26, "1100").credit
+        _recalc_bank_contra(self.fy26)
+        self.assertEqual(bs_line(self.fy26, "1100").credit, first)
+
+    def test_a_reopened_year_is_left_untouched_not_zeroed(self):
+        # "reopened" is a live, unlocked status (is_locked is true only for
+        # "finalised") but entity_financial_years() currently only resolves
+        # transactions to draft/in_review/finished years — "finished" doesn't
+        # even match the real "finalised" choice, and "reopened" isn't listed
+        # at all. No transaction can ever resolve back to this year while it's
+        # in that state, so an empty groups here must mean "unresolvable", not
+        # "vacated" — the row must be left exactly as it was.
+        self._post("2025-06-20", "-100.00")
+        _recalc_bank_contra(self.fy25)
+        self.assertEqual(bs_line(self.fy25, "1100").credit, D("100.00"))
+
+        self.fy25.status = "reopened"
+        self.fy25.save(update_fields=["status"])
+
+        result = _recalc_bank_contra(self.fy25)
+
+        self.assertEqual(
+            bs_line(self.fy25, "1100").credit, D("100.00"),
+            "a year outside the postable set must not have its contra wiped",
+        )
+        self.assertEqual(result["status"], "year_not_postable")
+
+    def test_a_year_with_no_confirmed_transactions_is_not_reported_as_no_mapping(self):
+        # A freshly opened year with a perfectly good bank mapping and zero
+        # confirmed transactions must not be told its mapping is missing —
+        # that message is reserved for when a mapping genuinely can't be found.
+        result = _recalc_bank_contra(self.fy26)
+
+        self.assertNotEqual(result["status"], "no_mapping")
+        self.assertEqual(result["status"], "ok")
+
+    def test_a_contra_row_this_function_creates_is_named_like_posting_names_it(self):
+        # account_name and tax_type are create-only here, matching
+        # _post_bank_contra_entry — but "create" must be detected by
+        # _state.adding, not by `pk is None`: TrialBalanceLine's pk is a
+        # UUIDField with default=uuid.uuid4 (core/models.py:1419), which Django
+        # populates in Model.__init__, so a freshly constructed row already has
+        # a pk. Getting that wrong leaves every contra row this function creates
+        # named '' where posting would have named it after the bank mapping.
+        #
+        # Posted directly rather than through _post_txn_to_tb, which would
+        # itself create the contra row and take us down the update path.
+        txn = make_txn(self.job, date_str="2025-08-01", amount="-110.00",
+                       code="0400")
+        txn.posted_to_tb = True
+        txn.save(update_fields=["posted_to_tb"])
+        self.assertIsNone(bs_line(self.fy26, "1100"),
+                          "the contra row must not exist yet, or this exercises "
+                          "the update path instead of the create path")
+
+        _recalc_bank_contra(self.fy26)
+
+        line = bs_line(self.fy26, "1100")
+        self.assertIsNotNone(line)
+        self.assertEqual(line.credit, D("110.00"))
+        self.assertEqual(line.account_name, "Business Cheque Account",
+                         "a contra row this function creates must carry the "
+                         "same name _post_bank_contra_entry would give it")
+
+    def test_opening_balance_on_the_contra_row_survives_a_recalc(self):
+        # closing_balance was set to total_debit - total_credit, ignoring
+        # opening_balance entirely — a no-op today only because contra rows
+        # currently carry a zero opening balance.
+        self._post("2025-08-01", "-110.00")
+        line = bs_line(self.fy26, "1100")
+        line.opening_balance = D("300.00")
+        line.save(update_fields=["opening_balance"])
+
+        _recalc_bank_contra(self.fy26)
+
+        line.refresh_from_db()
+        self.assertEqual(line.opening_balance, D("300.00"))
+        self.assertEqual(line.closing_balance, D("190.00"))
+
+    def test_a_legacy_reversal_row_does_not_swallow_the_contra(self):
+        # This function's own row lookup filtered only source='bank_statement',
+        # unlike _get_or_create_tb_line(bank_statement_only=True), which also
+        # requires is_adjustment=False. So on a bank code whose only
+        # bank_statement row is a legacy is_adjustment=True "Reversal of ..."
+        # row (from an old posting pattern), that single row satisfied
+        # bs_lines.count() == 1 and the contra total was written straight into
+        # it. A full rebuild's cleanup tail then deletes exactly that kind of
+        # row (is_adjustment=True, source='bank_statement',
+        # description__startswith='Reversal of ') — taking the contra with
+        # it: money gone, status "ok", no error, no report.
+        TrialBalanceLine.objects.create(
+            financial_year=self.fy26, account_code="1100",
+            account_name="Business Cheque Account", source="bank_statement",
+            is_adjustment=True, description="Reversal of a duplicate import",
+            debit=D("0"), credit=D("0"), closing_balance=D("0"),
+        )
+        # Posted directly rather than through _post_txn_to_tb, which would
+        # itself resolve the contra row correctly (bank_statement_only=True)
+        # and mask the defect this test targets.
+        txn = make_txn(self.job, date_str="2025-08-01", amount="-110.00",
+                       code="0400")
+        txn.posted_to_tb = True
+        txn.save(update_fields=["posted_to_tb"])
+
+        _recalc_bank_contra(self.fy26)
+
+        line = bs_line(self.fy26, "1100")
+        self.assertIsNotNone(
+            line,
+            "the contra must land on a real non-adjustment row, not the "
+            "legacy reversal row",
+        )
+        self.assertEqual(line.credit, D("110.00"))
+
+        # The legacy row must still be there too — untouched money aside,
+        # nothing has cleaned it up yet.
+        legacy = TrialBalanceLine.objects.get(
+            financial_year=self.fy26, account_code="1100", is_adjustment=True,
+        )
+        self.assertEqual(legacy.credit, D("0.00"))
+
+        # A full rebuild's cleanup tail deletes the legacy reversal row. The
+        # real contra row must survive that untouched.
+        result = _recalculate_bank_tb_lines(self.fy26)
+        self.assertEqual(result["status"], "ok")
+
+        line.refresh_from_db()
+        self.assertEqual(
+            line.credit, D("110.00"),
+            "the contra must survive a full rebuild, not be deleted along "
+            "with the legacy row",
+        )
+        self.assertFalse(
+            TrialBalanceLine.objects.filter(
+                financial_year=self.fy26, account_code="1100",
+                is_adjustment=True,
+            ).exists(),
+            "the legacy reversal row should have been cleaned up",
+        )

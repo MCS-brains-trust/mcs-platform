@@ -112,8 +112,16 @@
             <div class="card-body py-2 px-3">
                 <div class="d-flex justify-content-between align-items-center">
                     <span class="fw-semibold small">{{ pd.period.short_label }}</span>
-                    <span class="badge" style="background-color: {% if pd.status == 'lodged' %}#2E8B57{% elif pd.status == 'ready' %}#2E75B6{% elif pd.status == 'partial' %}#E8A317{% else %}#999999{% endif %}; font-size: 0.7rem;">
-                        {{ pd.status|title }}
+                    <span>
+                        <span class="badge" style="background-color: {% if pd.status == 'lodged' %}#2E8B57{% elif pd.status == 'ready' %}#2E75B6{% elif pd.status == 'partial' %}#E8A317{% else %}#999999{% endif %}; font-size: 0.7rem;">
+                            {{ pd.status|title }}
+                        </span>
+                        {% if pd.period.amended_since_lodgement %}
+                        <span class="badge ms-1" style="background-color: #B45309; font-size: 0.7rem;"
+                              title="A transaction in this period was corrected after lodgement. The lodged snapshot is unchanged.">
+                            Amended
+                        </span>
+                        {% endif %}
                     </span>
                 </div>
                 {% if pd.status == 'lodged' and pd.period.snapshot_net != None %}

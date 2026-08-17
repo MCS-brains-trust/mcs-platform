@@ -131,6 +131,27 @@ Stated so the suite is not read as proving more than it does:
 - Entity types other than company
 - ATO transmission, which does not exist in the code
 
+### Added since this spec was written (2026-08-17)
+
+The suite has grown four tests that this list predates, so it now covers more than the
+above implies:
+
+- **Correcting an already-confirmed transaction**, asserting the trial balance moves and
+  the BAS reconciles to it. When this spec was written that correction silently never
+  reached the ledger.
+- **Reallocating through the BAS detail tab**, same assertion. Those endpoints had no
+  posting logic at all.
+- **The account picker's auto-apply path.** The original suite could not touch it: every
+  account in `ALLOCATIONS` was chosen for carrying no mapped `tax_code`, because an account
+  whose code resolved triggered a concurrent-write race that made the run intermittent.
+  With that race fixed, `0510` Sales is in the table and the path is covered.
+- **A correction inside a lodged period**, asserting the Amended badge appears and the
+  lodged snapshot is not rewritten.
+
+Note the one thing no Django test can establish: `select_for_update` is a no-op on sqlite,
+so the row locking behind the auto-apply fix is evidenced only by the ten-run Postgres soak
+described in `e2e/README.md`.
+
 ## Operational constraint
 
 Each Tier 2 spec file boots a Django instance and a ~471 MB database branch, and

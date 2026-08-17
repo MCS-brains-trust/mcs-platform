@@ -1,0 +1,34 @@
+Eva style learning signals connected.
+
+ENTANGLED — repair by hand before rebuilding:
+  Daniel Habteslassie [d82ed91d-63a3-459e-a03c-b7a2ac755d07] 2026 account 4080: bank postings have no bank_statement row; rows present are manual_journal
+  Veronica Cerratti Pty Ltd [e0833e29-665b-49ea-914c-3632bd848524] 2026 account 3565: bank postings have no bank_statement row; rows present are manual_journal
+
+VARIANCE — trial balance disagrees with transactions:
+  Daniel Habteslassie [d82ed91d-63a3-459e-a03c-b7a2ac755d07] 2026 account 1801: transactions say Dr 374.96 / Cr 0, trial balance holds Dr 436.90 / Cr 0.00
+  Daniel Habteslassie [d82ed91d-63a3-459e-a03c-b7a2ac755d07] 2026 account 3380: transactions say Dr 6540.73 / Cr 88.00, trial balance holds Dr 6546.92 / Cr 12024.90
+  D.P Vaughan & D Vriend [6b2d88d7-8d7f-42aa-9b94-5f69c6e1e972] 2025 account 3380: transactions say Dr 2838.76 / Cr 20799.76, trial balance holds Dr 6320.76 / Cr 20799.76
+  Veronica Cerratti Pty Ltd [e0833e29-665b-49ea-914c-3632bd848524] 2026 account 3380: transactions say Dr 12456.33 / Cr 4.00, trial balance holds Dr 12456.33 / Cr 17433.61
+  Veronica Cerratti Pty Ltd [e0833e29-665b-49ea-914c-3632bd848524] 2026 account 630: transactions say Dr 0 / Cr 481561.21, trial balance holds Dr 0.00 / Cr 464131.60
+
+NOT AUDITED — year is not currently postable, skipped:
+  Berwick Mechanical Services [6b8a8e7c-83d9-4c17-95d6-d9334d98779b] 2017: status 'finalised' is outside this entity's postable year set, so no transaction can resolve back to it and the transaction-vs-trial-balance comparison would be meaningless
+  Berwick Mechanical Services [6b8a8e7c-83d9-4c17-95d6-d9334d98779b] 2018: status 'finalised' is outside this entity's postable year set, so no transaction can resolve back to it and the transaction-vs-trial-balance comparison would be meaningless
+  Berwick Mechanical Services [6b8a8e7c-83d9-4c17-95d6-d9334d98779b] 2019: status 'finalised' is outside this entity's postable year set, so no transaction can resolve back to it and the transaction-vs-trial-balance comparison would be meaningless
+  Berwick Mechanical Services [6b8a8e7c-83d9-4c17-95d6-d9334d98779b] 2020: status 'finalised' is outside this entity's postable year set, so no transaction can resolve back to it and the transaction-vs-trial-balance comparison would be meaningless
+  Berwick Mechanical Services [6b8a8e7c-83d9-4c17-95d6-d9334d98779b] 2021: status 'finalised' is outside this entity's postable year set, so no transaction can resolve back to it and the transaction-vs-trial-balance comparison would be meaningless
+  Berwick Mechanical Services [6b8a8e7c-83d9-4c17-95d6-d9334d98779b] 2022: status 'finalised' is outside this entity's postable year set, so no transaction can resolve back to it and the transaction-vs-trial-balance comparison would be meaningless
+  Berwick Mechanical Services [6b8a8e7c-83d9-4c17-95d6-d9334d98779b] 2023: status 'finalised' is outside this entity's postable year set, so no transaction can resolve back to it and the transaction-vs-trial-balance comparison would be meaningless
+  Berwick Mechanical Services [6b8a8e7c-83d9-4c17-95d6-d9334d98779b] 2024: status 'finalised' is outside this entity's postable year set, so no transaction can resolve back to it and the transaction-vs-trial-balance comparison would be meaningless
+  E & J Chiaravalle Family Trust [b352db4c-3734-4fe8-8947-0b29901fbe42] 2025: status 'finalised' is outside this entity's postable year set, so no transaction can resolve back to it and the transaction-vs-trial-balance comparison would be meaningless
+  Hazaway Operations Pty Ltd [1be5d8ac-6ac5-4461-86ae-e3b08762172d] 2024: status 'finalised' is outside this entity's postable year set, so no transaction can resolve back to it and the transaction-vs-trial-balance comparison would be meaningless
+  Hazaway Operations Pty Ltd [1be5d8ac-6ac5-4461-86ae-e3b08762172d] 2025: status 'finalised' is outside this entity's postable year set, so no transaction can resolve back to it and the transaction-vs-trial-balance comparison would be meaningless
+  Huxley Constructions Pty Ltd [1ef9e722-aba8-48b6-9c41-dcb7fb90d199] 2025: status 'finalised' is outside this entity's postable year set, so no transaction can resolve back to it and the transaction-vs-trial-balance comparison would be meaningless
+  Makhmalbaf Pty Ltd [ad61589c-9e98-4203-8d1e-ce895ac8e892] 2023: status 'finalised' is outside this entity's postable year set, so no transaction can resolve back to it and the transaction-vs-trial-balance comparison would be meaningless
+  Makhmalbaf Pty Ltd [ad61589c-9e98-4203-8d1e-ce895ac8e892] 2024: status 'finalised' is outside this entity's postable year set, so no transaction can resolve back to it and the transaction-vs-trial-balance comparison would be meaningless
+  Makhmalbaf Pty Ltd [ad61589c-9e98-4203-8d1e-ce895ac8e892] 2025: status 'finalised' is outside this entity's postable year set, so no transaction can resolve back to it and the transaction-vs-trial-balance comparison would be meaningless
+  The Chiaravalle Family Trust [626c9999-f17c-4fda-b3e3-4685fb027a1a] 2025: status 'finalised' is outside this entity's postable year set, so no transaction can resolve back to it and the transaction-vs-trial-balance comparison would be meaningless
+  Vincent Family Trust [edac6f7c-bf7c-4209-8bd0-336fdb09a0dc] 2023: status 'finalised' is outside this entity's postable year set, so no transaction can resolve back to it and the transaction-vs-trial-balance comparison would be meaningless
+  Vincent Family Trust [edac6f7c-bf7c-4209-8bd0-336fdb09a0dc] 2024: status 'finalised' is outside this entity's postable year set, so no transaction can resolve back to it and the transaction-vs-trial-balance comparison would be meaningless
+
+2 entangled account(s), 5 variance(s). Nothing was written.
