@@ -8,6 +8,17 @@ recalculation and the amended-period flag — and three of them used to answer
 therefore posted to one year and had its bank contra counted into another.
 
 One rule, one implementation. Everything asks here.
+
+The rule has an outcome it did not originally have: **no year, do not post**. A
+parseable date that no postable year covers resolves to None rather than falling
+back to the most recent open year, because posting it there put it in a year it
+had nothing to do with — a statement running to 31 July 2026 overstated FY2026.
+`None` from resolve_fy_for_txn is therefore deliberate and means "this does not
+post anywhere yet"; `unpostable_reason` turns it into a sentence for the user,
+and the transaction posts itself once the year it belongs to exists.
+
+The fallback survives for one case only: a date that cannot be parsed at all,
+where there is nothing to reason from. Two tests pin that deliberately.
 """
 from datetime import datetime
 
@@ -50,9 +61,12 @@ def entity_financial_years(entity):
 def resolve_fy_for_txn(txn, fys=None):
     """Return the FinancialYear this transaction posts to, or None.
 
-    The year whose date range covers the transaction's date. When the date is
-    unparseable, or falls outside every year, fall back to the most recent year
-    — the fallback the posting path has always used.
+    Three outcomes: the postable year whose date range covers the
+    transaction's date; `None` when the date is known but no postable year
+    covers it — posting it anywhere would put it in a year it has nothing to
+    do with; and, only when the date itself cannot be parsed, the most recent
+    year — the fallback the posting path has always used, kept because there
+    is nothing to reason from.
 
     The rebuild must reproduce this exactly, fallback included. Filtering on the
     date range instead would drop every unparseable-date transaction out of the
@@ -72,12 +86,73 @@ def resolve_fy_for_txn(txn, fys=None):
         return None
 
     txn_date = parse_txn_date(txn.date)
-    if txn_date:
-        for fy in fys:
-            if fy.start_date <= txn_date <= fy.end_date:
-                return fy
+    if not txn_date:
+        # Unparseable date: there is nothing to reason from, so keep the
+        # historical fallback. Deliberately NOT changed — see the spec's
+        # decision 3. Making these unpostable would strand transactions whose
+        # date may not be editable, and unreadable-date rows are the ones most
+        # likely to be already posted through this fallback.
+        return max(fys, key=lambda f: f.end_date)
 
-    return max(fys, key=lambda f: f.end_date)
+    for fy in fys:
+        if fy.start_date <= txn_date <= fy.end_date:
+            return fy
+
+    # The date is known and no POSTABLE year covers it. Posting it anywhere
+    # would put it in a year it has nothing to do with — which is how a
+    # statement running to 31 July 2026 overstated FY2026. Returning None means
+    # "do not post": _post_confirmed_txn_to_tb returns False, and every
+    # aggregation caller excludes it, so the rebuild can never zero a line for a
+    # transaction it also refuses to post.
+    return None
+
+
+def unpostable_reason(txn):
+    """Why this transaction cannot post, or None if it can.
+
+    Derived rather than stored: is_confirmed=True with posted_to_tb=False
+    already records the state, and the explanation follows from the date plus
+    the entity's years. Called only when posting was skipped, so the ordinary
+    path pays for no extra query.
+
+    Looks at ALL of the entity's years, not just the postable ones, because that
+    is what distinguishes the two cases — a year that exists but cannot receive
+    postings, versus no year at all. Only the second is fixed by creating a year,
+    so the messages must not be interchangeable.
+    """
+    from core.models import FinancialYear
+
+    if resolve_fy_for_txn(txn) is not None:
+        return None
+
+    # The entity is checked before the date, because a transaction with no
+    # entity has no years to reason about and the date tells us nothing more.
+    # Every confirmed+posted transaction in the book today sits in a job whose
+    # entity is NULL, so this is the live case, not a theoretical one.
+    entity = txn.job.entity if txn.job else None
+    if entity is None:
+        return "This transaction is not attached to an entity."
+
+    txn_date = parse_txn_date(txn.date)
+    if not txn_date:
+        # An unparseable date still posts, via the fallback, so it is not
+        # unpostable and resolve_fy_for_txn above would have returned a year.
+        # Reaching here means the entity has no postable year at all.
+        return "This entity has no financial year open for posting."
+
+    shown = txn_date.strftime("%d %b %Y")
+    covering = FinancialYear.objects.filter(
+        entity=entity, start_date__lte=txn_date, end_date__gte=txn_date,
+    ).first()
+    if covering:
+        return (
+            f"{covering.year_label} covers {shown} but its status is "
+            f"'{covering.status}', so it cannot receive postings."
+        )
+    return (
+        f"No financial year covers {shown}. Create that year to post this "
+        f"transaction — it will post itself once the year exists."
+    )
 
 
 def resolve_bas_period_for_txn(txn):

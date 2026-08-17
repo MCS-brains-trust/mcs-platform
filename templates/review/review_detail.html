@@ -583,6 +583,13 @@
                         {% if txn.matched_rule %}
                         <span class="rule-badge"><i class="bi bi-bookmark-fill"></i> Rule applied</span>
                         {% endif %}
+                        {# Confirmed but never posted — a date outside every open year. #}
+                        <span class="post-warning">
+                        {% if txn.is_confirmed and not txn.posted_to_tb %}
+                            <span class="badge bg-warning text-dark"
+                                  title="{{ txn.post_warning|default:'This transaction is confirmed but has not posted to the trial balance.' }}">Not posted</span>
+                        {% endif %}
+                        </span>
                         {% if txn.gst_amount_override %}
                         <span class="override-badge"><i class="bi bi-pencil-fill"></i> GST Override</span>
                         {% endif %}
@@ -957,6 +964,19 @@ function confirmTransaction(txnId, code, name, taxType) {
             row.classList.add('txn-row-confirmed');
             row.dataset.confirmed = 'true';
             row.querySelector('.status-icon').innerHTML = '<i class="bi bi-check-circle-fill text-success"></i>';
+            // A confirmed row that did not post must say so on the spot. The
+            // status icon alone would show a tick and imply the ledger moved.
+            const warnCell = row.querySelector('.post-warning');
+            if (warnCell) {
+                if (data.post_warning) {
+                    warnCell.innerHTML =
+                        '<span class="badge bg-warning text-dark" title="'
+                        + data.post_warning.replace(/"/g, '&quot;')
+                        + '">Not posted</span>';
+                } else {
+                    warnCell.innerHTML = '';
+                }
+            }
             if (IS_GST_REGISTERED && data.gst_amount !== undefined) {
                 const gstCell = row.querySelector('.gst-amount');
                 const netCell = row.querySelector('.net-amount');
