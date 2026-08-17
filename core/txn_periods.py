@@ -8,6 +8,17 @@ recalculation and the amended-period flag — and three of them used to answer
 therefore posted to one year and had its bank contra counted into another.
 
 One rule, one implementation. Everything asks here.
+
+The rule has an outcome it did not originally have: **no year, do not post**. A
+parseable date that no postable year covers resolves to None rather than falling
+back to the most recent open year, because posting it there put it in a year it
+had nothing to do with — a statement running to 31 July 2026 overstated FY2026.
+`None` from resolve_fy_for_txn is therefore deliberate and means "this does not
+post anywhere yet"; `unpostable_reason` turns it into a sentence for the user,
+and the transaction posts itself once the year it belongs to exists.
+
+The fallback survives for one case only: a date that cannot be parsed at all,
+where there is nothing to reason from. Two tests pin that deliberately.
 """
 from datetime import datetime
 

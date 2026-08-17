@@ -25,6 +25,19 @@
 
 ## Sequencing Gate
 
+> **Gate result, 2026-08-17: CLEARED.** The probe found zero transactions posted into a year their
+> date does not cover — 0 classified as NON_POSTABLE, 0 as NO_YEAR, 0 unparseable, and all 496
+> confirmed+posted transactions in the book accounted for as sitting in review jobs whose `entity`
+> is NULL. That is a mutually exclusive partition summing to 496, so the verdict has a real
+> denominator behind it. Those 496 already resolve to no year, so this change is neutral for every
+> one of them, and no historical repair is included in this plan.
+>
+> A landmine found on the way, out of scope and unfixed: those same 496 are `posted_to_tb=True` yet
+> invisible to every aggregation, so a rebuild would zero the `TrialBalanceLine` rows they created
+> if the year holding them were ever open. Not live today — those years are finalised and the
+> rebuild declines on non-postable years — and not caused by this plan. It deserves its own
+> investigation.
+
 **Task 1 is a gate, not a formality.** Tasks 2 onward must not start until Task 1's probe has been run and its result recorded in this file. If the probe finds any transaction already posted into a year its date does not cover, **stop and escalate** — the rule change would make the rebuild exclude those transactions and zero the trial-balance lines they created, and that is a decision about historical client ledgers.
 
 ---

@@ -4,6 +4,9 @@ Three functions used to answer this differently — see the spec's "Three
 functions disagree about which year a transaction belongs to". These tests pin
 the rule, including its fallback, because the rebuild reproduces posting only if
 it reproduces the fallback too.
+
+That fallback is now unparseable-dates-only: a parseable date outside every
+postable year resolves to None and posts nowhere. See StrictYearResolutionTests.
 """
 from datetime import date
 

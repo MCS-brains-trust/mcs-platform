@@ -1,7 +1,14 @@
 # Strict financial-year resolution: a transaction posts to the year its date falls in, or it does not post
 
 **Date:** 2026-08-17
-**Status:** design approved, not implemented
+**Status:** implemented on `fix/strict-fy-resolution`, commits `ee23eed..50306e8`
+(probe `ee23eed..3bc1fed`, rule `cbbd582`, reason `7d45a34`, review screen `2c805af`,
+reallocation endpoints `d8b3bb2`, BAS date window `50306e8`). Not merged — merging to `main`
+auto-deploys, so it waits on Elio.
+**Pre-flight probe result:** zero transactions are posted into a year their date does not cover,
+so the gate cleared and no historical repair is included. All 496 confirmed+posted transactions
+in the book sit in review jobs whose `entity` is NULL, so they resolve to no year both before and
+after this change — it is neutral for every one of them.
 **Raised by:** Elio, on being told he would need to create FY2027 before uploading a bank
 statement that runs to 31 July 2026 — "That is not practical."
 
