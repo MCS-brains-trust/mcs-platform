@@ -40,7 +40,9 @@ from config.authorization import get_financial_year_for_user
 # patch _recalculate_bank_tb_lines here and count the calls — a bulk
 # reallocation must rebuild once per year, not once per transaction. core.views
 # does not import this module at module load, so there is no cycle.
-from core.txn_periods import flag_period_amended, resolve_fy_for_txn
+from core.txn_periods import (
+    flag_period_amended, resolve_fy_for_txn, unpostable_reason,
+)
 from core.views import _recalculate_bank_tb_lines
 
 logger = logging.getLogger(__name__)
@@ -972,6 +974,11 @@ def bas_reallocate_transaction(request, pk):
         "tax_type": txn.confirmed_tax_type,
         "gst_amount": str(txn.gst_amount),
         "net_amount": str(txn.net_amount),
+        # A reallocation never changes the date, so a transaction that could not
+        # post still cannot. Say so rather than let the caller assume the ledger
+        # moved — target_fy is None for exactly that case.
+        "posted": bool(target_fy),
+        "post_warning": "" if target_fy else (unpostable_reason(txn) or ""),
     })
 
 
@@ -1027,6 +1034,7 @@ def bas_bulk_reallocate(request, pk):
 
     updated = []
     touched_fys = set()
+    unposted_count = 0
     for txn in txns:
         txn.confirmed_code = new_code
         txn.confirmed_name = new_name or new_code
@@ -1038,7 +1046,13 @@ def bas_bulk_reallocate(request, pk):
         txn.is_confirmed = True
         txn.save()
         updated.append(str(txn.id))
-        touched_fys.add(resolve_fy_for_txn(txn))
+        target_fy = resolve_fy_for_txn(txn)
+        # A count, not a reason per row: a bulk reallocation can touch hundreds
+        # of transactions, and the individual reasons are already on the review
+        # screen. None here means the date falls outside every postable year.
+        if target_fy is None:
+            unposted_count += 1
+        touched_fys.add(target_fy)
         flag_period_amended(txn, request.user)
 
     # Once per year, after the loop — not once per transaction. The rebuild is
@@ -1067,6 +1081,7 @@ def bas_bulk_reallocate(request, pk):
         "ok": True,
         "updated_count": count,
         "updated_ids": updated,
+        "unposted_count": unposted_count,
     })
 
 
