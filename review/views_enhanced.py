@@ -616,6 +616,22 @@ def set_gst_treatment(request, pk):
             "gst_amount", "net_amount",
         ])
 
+        # A GST treatment change on an already-posted row changes what the ledger
+        # should hold. Rebuild rather than re-post: _post_txn_to_tb accumulates.
+        if txn.posted_to_tb:
+            from core.txn_periods import flag_period_amended, resolve_fy_for_txn
+            from core.views import _recalculate_bank_tb_lines
+
+            target_fy = resolve_fy_for_txn(txn)
+            if target_fy:
+                result = _recalculate_bank_tb_lines(target_fy)
+                if result.get("status") == "entangled":
+                    logger.error(
+                        "set_gst_treatment: trial balance not rebuilt for txn %s "
+                        "— entity is entangled on %s", txn.pk, result["codes"],
+                    )
+            flag_period_amended(txn, request.user)
+
     return JsonResponse({
         "status": "ok",
         "gst_treatment": txn.gst_treatment,
@@ -662,7 +678,11 @@ def bulk_set_gst_treatment(request, pk):
     # Same lock-and-narrow treatment as set_gst_treatment above: an unlocked
     # full-row save here reverted is_confirmed / posted_to_tb whenever it raced
     # /confirm/.
+    from core.txn_periods import flag_period_amended, resolve_fy_for_txn
+    from core.views import _recalculate_bank_tb_lines
+
     updated_ids = []
+    years_to_rebuild = set()
     with db_transaction.atomic():
         txns = job.transactions.select_for_update().filter(pk__in=txn_ids)
         for txn in txns:
@@ -679,6 +699,24 @@ def bulk_set_gst_treatment(request, pk):
                 "creditable_percentage", "gst_amount", "net_amount",
             ])
             updated_ids.append(str(txn.pk))
+
+            # Collect the years to rebuild rather than rebuilding per row: the
+            # rebuild recomputes a whole year from source, so calling it inside
+            # the loop would redo identical work once per transaction.
+            if txn.posted_to_tb:
+                target_fy = resolve_fy_for_txn(txn)
+                if target_fy:
+                    years_to_rebuild.add(target_fy)
+                flag_period_amended(txn, request.user)
+
+        for target_fy in years_to_rebuild:
+            result = _recalculate_bank_tb_lines(target_fy)
+            if result.get("status") == "entangled":
+                logger.error(
+                    "bulk_set_gst_treatment: trial balance not rebuilt for "
+                    "financial year %s — entity is entangled on %s",
+                    target_fy.pk, result["codes"],
+                )
 
     return JsonResponse({
         "status": "ok",

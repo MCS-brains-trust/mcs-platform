@@ -669,13 +669,38 @@ def confirm_transaction(request, pk):
 
         # Post to trial balance (expense/income + GST + bank contra).
         # Re-check the freshly-locked row's posted flag before posting (A18).
+        # The posted_to_tb guard is correct for its own purpose — it stops a
+        # double-click double-posting (A18), and select_for_update above makes
+        # that race-safe. What it cannot do is tell "post this twice" from "this
+        # changed, post it again", which is how a corrected confirm used to
+        # update the transaction and silently leave the ledger stale. So an
+        # already-posted row now takes the rebuild path instead of no path.
         if not txn.posted_to_tb:
             _post_confirmed_txn_to_tb(txn)
 
-        # Recalc bank contra to ensure TB stays balanced
-        if txn.job and txn.job.financial_year:
-            from core.views import _recalc_bank_contra
-            _recalc_bank_contra(txn.job.financial_year)
+            # Recalc bank contra to ensure TB stays balanced
+            if txn.job and txn.job.financial_year:
+                from core.views import _recalc_bank_contra
+                _recalc_bank_contra(txn.job.financial_year)
+        else:
+            # Rebuild from source rather than re-post: _post_txn_to_tb
+            # accumulates with +=, so re-posting a correction would double it.
+            # _recalculate_bank_tb_lines calls _recalc_bank_contra itself, so the
+            # contra is covered here too and must not be called again.
+            from core.txn_periods import flag_period_amended, resolve_fy_for_txn
+            from core.views import _recalculate_bank_tb_lines
+
+            target_fy = resolve_fy_for_txn(txn)
+            if target_fy:
+                result = _recalculate_bank_tb_lines(target_fy)
+                if result.get("status") == "entangled":
+                    # Declining is the safe outcome, but it means this
+                    # correction did not reach the ledger. Say so loudly.
+                    logger.error(
+                        "confirm_transaction: trial balance not rebuilt for txn %s "
+                        "— entity is entangled on %s", txn.pk, result["codes"],
+                    )
+            flag_period_amended(txn, request.user)
 
         # Update job confirmed count
         job = txn.job

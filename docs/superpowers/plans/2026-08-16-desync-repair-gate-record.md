@@ -20,10 +20,57 @@ cannot be rebuilt safely until a human decides what they should read.
 | Step | State |
 |---|---|
 | 1. Run the audit, hand Elio the ENTANGLED section | **Done** 2026-08-17 |
-| 2. Elio decides, per account, journal vs bank posting | Open |
-| 3. Apply by hand, backup to `data_fixes/` first | Open |
-| 4. Re-run the audit; ENTANGLED must be empty | Open |
-| 5. Elio confirms in writing that both entities read correctly | Open |
+| 2. Elio decides, per account, journal vs bank posting | **Superseded** — see below |
+| 3. Apply by hand, backup to `data_fixes/` first | **Not done, and not needed** |
+| 4. Re-run the audit; ENTANGLED must be empty | Awaiting the confirming run |
+| 5. Elio confirms in writing that both entities read correctly | **Superseded** — nothing left to read |
+
+## HOW THIS GATE CLOSED — by deletion, not by repair
+
+**Read this before concluding a repair happened. It did not.**
+
+On 2026-08-17 Elio confirmed that all three affected entities — Veronica Cerratti Pty Ltd, Daniel
+Habteslassie and D.P Vaughan & D Vriend — were **test accounts, not client files**, and deleted
+them. The duplicate empty "Veronica Cerratti Pty Ltd" record
+(`53e7cb23-1e4f-43f0-a715-5ac5e7095e31`) went with them.
+
+So the gate's blocking condition is satisfied because the entangled data no longer exists. JE-003
+was never reversed, no rows were repartitioned, and `data_fixes/repair_gate_backup_20260817T033942Z.json`
+was never used. It remains on disk as the record of what those accounts held.
+
+**Why this was the right call rather than a shortcut.** The forward defect is genuinely fixed. Task 2
+added `bank_statement_only=True` to `_get_or_create_tb_line`, which narrows the lookup to a
+`source='bank_statement', is_adjustment=False` row and creates one when there is none — and all five
+production bank-posting call sites pass it (`core/views.py:986, 1087, 1120, 1139, 1429`, verified
+2026-08-17). Bank postings can no longer land inside a journal row, so no new entity can reach the
+state these two were in. Tasks 8 and 9 keep their safety regardless: the rebuild still declines on
+entanglement, and that behaviour is covered by `core/tests_bank_tb_rebuild.py`, not by these
+entities existing.
+
+**One caveat that deletion does not address.** That fix lives on this unmerged branch. Production
+runs main-equivalent code, where `_get_or_create_tb_line` still falls through to `qs.first()`. Until
+this branch merges, **new entanglement can still form** on any account whose only rows are journal
+adjustments. Deleting the test entities cleaned up history; shipping the branch is what stops it
+recurring.
+
+**What is genuinely lost.** These were the only production examples of the shape, so no repair path
+has ever been exercised against real entangled data. If a real book ever shows it, that repair gets
+built then — the target state and the arithmetic for deriving it are recorded in the sections below,
+which is why they are kept rather than deleted.
+
+### An audit blind spot found on the way out, still unfixed
+
+`audit_bank_tb_desync` **cannot see bank-mapped codes at all.** Its entanglement scan iterates
+`list(accounts) + ['3380']`, and `accounts` is keyed by `txn.confirmed_code`. A bank contra code like
+`2000` is never a `confirmed_code`, so it is never scanned.
+
+Veronica's `2000` had no `bank_statement` row and three `manual_journal` rows — the identical defect
+to 3565, on her cash at bank — and the audit never mentioned it. Habteslassie's `2000` carried
+Dr 415,838.29 in a `manual_journal` row alongside a correct `bank_statement` row.
+
+**So "ENTANGLED is empty" is a weaker statement than it reads as.** It does not cover cash at bank.
+That is unaffected by the deletion and applies to every entity in the book. Worth fixing in the audit
+command before it is relied on as an acceptance gate again.
 
 ---
 
@@ -498,7 +545,21 @@ which, and why, here.
 
 Tasks 8 and 9 may not merge until this is filled in.
 
-- [ ] Veronica Cerratti 3565 reads correctly — confirmed by: ______________ date: __________
-- [ ] Habteslassie 4080 reads correctly — confirmed by: ______________ date: __________
+- [x] ~~Veronica Cerratti 3565 reads correctly~~ — **entity deleted as test data**, Elio, 2026-08-17
+- [x] ~~Habteslassie 4080 reads correctly~~ — **entity deleted as test data**, Elio, 2026-08-17
 - [ ] Re-run audit shows ENTANGLED empty — output saved as: ______________________________
-- [ ] Remaining variances accepted, with reasons recorded above
+- [x] ~~Remaining variances accepted~~ — D.P Vaughan & D Vriend's 3380 variance (Dr 3,482.00) also
+      test data, deleted with the others. No variance remains against a client file.
+
+**Still required before Tasks 8 and 9 merge:** the confirming audit run. Everything else is closed.
+
+```bash
+cd /opt/statementhub/.claude/worktrees/bas-tb-desync
+python3 manage.py audit_bank_tb_desync || true
+```
+
+Expected now: `no variance and no entanglement found`, and exit 0 rather than 1 — the command only
+calls `sys.exit(1)` when it finds something. Anything else means a fourth entity carries the shape
+and was never in scope, which would reopen the gate rather than close it.
+
+Note the blind spot above: a clean result does **not** clear bank-mapped codes such as `2000`.
