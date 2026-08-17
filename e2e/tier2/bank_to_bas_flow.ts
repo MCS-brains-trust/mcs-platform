@@ -263,44 +263,54 @@ export function describeBankToBas(opts: BankToBasOptions): void {
   // guessed -- and two of those fixture codes (1520, 1530) don't exist there
   // at all.
   //
-  // Every code below was chosen, and verified against the database, for
-  // carrying NO mapped tax_code (0602, 0578, 1126 have none; 1545 and 1685
-  // carry 'FOA', which is absent from taxCodeToTaxType's map,
-  // review_detail.html:853-867). That is deliberate, not incidental: when an
-  // account's tax_code DOES resolve (0510 Sales, tax_code GST, was the first
-  // choice here), clicking its option fires TWO concurrent writes to the same
+  // EFTPOS SALES INV 1001 deliberately uses 0510 Sales, which carries tax_code
+  // 'GST' and therefore DOES resolve through taxCodeToTaxType
+  // (review_detail.html:853-867). That entry exists to exercise the account
+  // picker's auto-apply path, and it is a regression test for a race that used
+  // to make that path unusable.
+  //
+  // The history matters, because this table used to be the workaround. Clicking
+  // an account whose tax_code resolves fires TWO concurrent writes to the same
   // transaction -- selectAccount's own confirm (tryAutoConfirm, :937) AND a
-  // parallel call to /gst-treatment/ (applyAccountGST, :873-912, the fetch
-  // itself at :896, hitting set_gst_treatment, review/views_enhanced.py:
-  // 558-608). That second endpoint loads the row with a plain
-  // get_object_or_404 -- no select_for_update, no atomic block -- and its
-  // own unconditional txn.save() (:599) can overwrite
-  // is_confirmed/posted_to_tb back to their pre-confirm values if its stale
-  // read lands before confirm_transaction's commit and its save lands after.
-  // Measured on real runs, not assumed: with 0510 in this table, the suite
-  // failed intermittently (fail/pass/fail across three runs) with the
-  // transaction silently un-confirmed and its posting missing from the TB.
-  // This is a live, unsynchronized-write bug in the application (a third
-  // defect, distinct from the wrong-chart sourcing above and the posted_to_tb
-  // guard issue elsewhere), tracked separately and NOT fixed here. With every
-  // account below unmapped, applyAccountGST returns early (:878) before ever
-  // reaching /gst-treatment/, so selectAccount's click never does more than
-  // populate the picker -- confirming is left entirely to this loop's own
-  // .selectOption(), and the race cannot occur. Consequence, documented for
-  // Task 9: this suite now never exercises the auto-apply path at all.
-  // The account NAMES for three of these (Filing fees, Net foreign income,
-  // Goods for own use, Other non-operating revenue) are semantically
-  // arbitrary -- the global company chart has no office-supplies or food
-  // account -- chosen only for their tax_code, not their bookkeeping fit.
-  // What this test pins is the tax treatment and the resulting BAS figures,
-  // not account realism.
-  const ALLOCATIONS: Array<[string, string, string]> = [
-    ['EFTPOS SALES INV 1001', '0602', 'GST on Income'],
-    ['OFFICE SUPPLIES PTY LTD', '1685', 'GST on Expenses'],
-    ['BANK FEES AND CHARGES', '1545', 'GST on Expenses'],
-    ['CONSULTING FEE INV 1002', '0602', 'GST on Income'],
-    ['FRESH FOOD SUPPLIES', '1126', 'GST Free Expenses'],
-    ['EXPORT SALE INV 1003', '0578', 'GST Free Income'],
+  // parallel call to /gst-treatment/ (applyAccountGST, :873-912, fetch at :896,
+  // hitting set_gst_treatment in review/views_enhanced.py). That second endpoint
+  // used to load the row with a plain get_object_or_404 -- no select_for_update,
+  // no atomic block -- and save every column back from its stale in-memory copy,
+  // reverting is_confirmed and posted_to_tb. Measured, not assumed: with 0510
+  // here the suite failed fail/pass/fail across three runs, the transaction
+  // silently un-confirmed and its posting missing from the trial balance. So
+  // every code was chosen for carrying NO mapped tax_code, applyAccountGST
+  // returned early at :878, and the race could not occur -- at the cost of this
+  // suite never exercising the auto-apply path at all.
+  //
+  // That race is fixed: set_gst_treatment and bulk_set_gst_treatment now take
+  // transaction.atomic() + select_for_update() and save with update_fields
+  // naming only the fields they own, so neither confirmation flag can be
+  // clobbered whatever the ordering. Hence 0510 is back, and its row is the only
+  // one whose fourth column is non-empty. If the race ever returns, this is the
+  // test that goes intermittent again -- which is why the soak in e2e/README.md
+  // runs this spec ten times rather than once.
+  //
+  // The other five codes still carry no mapped tax_code (0602, 0578, 1126 have
+  // none; 1545 and 1685 carry 'FOA', absent from the map), which is now simply a
+  // fact about them rather than a constraint being maintained.
+  //
+  // The account NAMES for several of these (Net foreign income, Goods for own
+  // use, Other non-operating revenue) are semantically arbitrary -- the global
+  // company chart has no office-supplies or food account -- chosen only for
+  // their tax_code, not their bookkeeping fit. What this test pins is the tax
+  // treatment and the resulting BAS figures, not account realism.
+  // Fourth column is the value .tax-select is EXPECTED to hold immediately after
+  // the account click, i.e. what applyAccountGST auto-applies from the account's
+  // own tax_code. '' means the account carries no mapped tax_code and the click
+  // leaves the select alone.
+  const ALLOCATIONS: Array<[string, string, string, string]> = [
+    ['EFTPOS SALES INV 1001', '0510', 'GST on Income', 'GST on Income'],
+    ['OFFICE SUPPLIES PTY LTD', '1685', 'GST on Expenses', ''],
+    ['BANK FEES AND CHARGES', '1545', 'GST on Expenses', ''],
+    ['CONSULTING FEE INV 1002', '0602', 'GST on Income', ''],
+    ['FRESH FOOD SUPPLIES', '1126', 'GST Free Expenses', ''],
+    ['EXPORT SALE INV 1003', '0578', 'GST Free Income', ''],
   ];
 
   test(`${opts.profile}: every transaction allocates and posts to the trial balance`, async ({ browser }) => {
@@ -355,15 +365,17 @@ export function describeBankToBas(opts: BankToBasOptions): void {
     // real run of this suite. Waiting for the real completion text closes that off.
     await page.reload();
 
-    for (const [description, code, taxType] of ALLOCATIONS) {
+    for (const [description, code, taxType, expectedAutoTax] of ALLOCATIONS) {
       const row = page.locator('[data-txn-id]').filter({ hasText: description });
       // The account control is a filter-as-you-type picker, not a <select>:
       // .account-picker-input narrows THIS ROW'S OWN .account-dropdown of
       // .account-option divs (review_detail.html:619-629, one dropdown <div>
       // per transaction), and clicking one calls selectAccount(txnId, code,
-      // name). Two of these six rows share code 0602 (Other non-operating
-      // revenue) -- scoping the option click to `row` rather than the whole
-      // page matters: showDropdown (:812) sets a row's dropdown innerHTML but
+      // name). Scoping the option click to `row` rather than the whole page
+      // matters -- and keep it scoped even though no two rows now share a code
+      // (EFTPOS moved to 0510, leaving CONSULTING FEE the only 0602). The
+      // hazard is structural, not specific to a duplicate: showDropdown (:812)
+      // sets a row's dropdown innerHTML but
       // hideAllDropdowns (:845) never clears it, only drops the .show class,
       // so once EFTPOS's row has rendered a 0602 option, that (now-hidden)
       // element is still in the DOM when CONSULTING FEE later renders its
@@ -373,28 +385,32 @@ export function describeBankToBas(opts: BankToBasOptions): void {
       // become actionable again.
       await row.locator('.account-picker-input').fill(code);
       await row.locator(`.account-option[data-code="${code}"]`).first().click();
-      // Tripwire protecting the ALLOCATIONS constraint above, not an incidental
-      // check -- do not delete this as noise. applyAccountGST (review_detail.html:
-      // 873-912) sets .tax-select's value SYNCHRONOUSLY, inside the click handler,
-      // before tryAutoConfirm ever runs -- so if the account just clicked carried a
-      // mapped tax_code, .tax-select would already be non-empty by this point, and
-      // this assertion fails loudly right here instead of the suite silently
-      // exercising the auto-apply race the ALLOCATIONS comment documents but does
-      // not fix. As a bonus, this also proves the reload above genuinely cleared
-      // classification's own client-side pre-fill of .tax-select: if it hadn't,
-      // this would be non-empty regardless of the account's tax_code.
+      // Tripwire, not an incidental check -- do not delete this as noise. It used
+      // to assert .tax-select was ALWAYS empty here, which enforced the old
+      // constraint that no account in this table may carry a mapped tax_code. Now
+      // it asserts the exact value applyAccountGST (review_detail.html:873-912)
+      // should have auto-applied, which protects the constraint in both
+      // directions: an account silently losing its tax_code, or gaining one,
+      // both fail loudly right here.
+      //
+      // applyAccountGST sets .tax-select SYNCHRONOUSLY inside the click handler,
+      // before tryAutoConfirm runs, so this is observable immediately. For the
+      // unmapped rows it also still proves the reload above genuinely cleared
+      // classification's client-side pre-fill: without that, the select would be
+      // non-empty regardless of the account's tax_code.
       await expect(
         row.locator('.tax-select'),
-        'chosen account must have no mapped tax_code — see the ALLOCATIONS comment',
-      ).toHaveValue('');
-      // Doubly true this click alone can't confirm the row: none of these six
-      // accounts carry a mapped tax_code (see the ALLOCATIONS comment), so
-      // applyAccountGST returns early and never touches .tax-select; and the
-      // reload above means classification's own client-side pre-fill of
-      // .tax-select is gone too (the select is genuinely blank again, per the
-      // reload's own comment above). So tryAutoConfirm's tax-select check is
-      // empty either way, and this selectOption is what actually confirms and
-      // posts this row.
+        `tax-select after clicking ${code} must equal its auto-applied value `
+        + `(${expectedAutoTax || 'empty — account has no mapped tax_code'})`,
+      ).toHaveValue(expectedAutoTax);
+      // For the five unmapped rows this selectOption is what confirms and posts.
+      // For 0510 it is a SECOND confirm: applyAccountGST filled the select from
+      // tax_code 'GST', so tryAutoConfirm already fired confirmTransaction with
+      // 'GST on Income' before this line runs. That is deliberate -- it is the
+      // auto-apply path, unreachable while the race existed. The value selected
+      // here is identical, so the ledger figures are unchanged either way; what
+      // differs is that the second confirm now takes the rebuild branch rather
+      // than being silently dropped by the posted_to_tb guard.
       await row.locator('.tax-select').selectOption(taxType);
       // confirmTransaction's success handler (:958) sets data-confirmed on the
       // row directly from the fetch response, client-side, immediately -- no
