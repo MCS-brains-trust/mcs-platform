@@ -228,11 +228,11 @@ Three conclusions, in order of importance:
    `JournalLine` behind it at all. Elio did not recognise it because he never created it — it is
    accumulated bank postings sitting in a `manual_journal`-sourced row. **That row is the defect
    itself**, which is exactly why the account was flagged.
-2. **The opening-balance reading was right; the depreciation reading was not.** JE-001 is the
-   opening bank balance import, as recalled. But the only other journal on 3565 is JE-003,
-   described "balanced to bank account" and contra'd to Cash at bank — a plug, not depreciation.
-   No journal on this account mentions depreciation. Whether a depreciation journal exists
-   elsewhere in the year is what `probe_all_journals.py` answers.
+2. ~~**The opening-balance reading was right; the depreciation reading was not.**~~ **WRONG —
+   corrected below. Elio was right on all three journals; the misreading was mine.** He was
+   numbering by journal *reference* (JE-001/002/003), not by the row order this document printed.
+   `probe_all_journals.py` confirms: JE-002 is a genuine depreciation journal, and the journal he
+   did not recognise is **JE-003**, the plug. See "part 3".
 3. **"Every debit on 3565 is bank money" is withdrawn.** 164,680.00 of it is JE-003.
 
 **The two coincidences that decide the repair.** Comparing rows-minus-posted-journals against the
@@ -306,6 +306,82 @@ about $9,000 each cancelling out.
 Note for the repair: this row is `Drawings` on a sole trader, and its transactions are all
 `N-T` transfers to what look like personal and tax-savings accounts.
 
+## Step 2 evidence, part 3 — every journal in the year (`probe_all_journals.py`, 2026-08-17)
+
+Veronica FY2026 (`in_review`) holds **three** journals, all created and posted by `elio`:
+
+| Ref | Date | Entry | Narration |
+|---|---|---|---|
+| JE-001 | 2025-07-01 | Dr 2000 Cash at bank 23,897.37 / Cr 3565 Loan - Director 23,897.37 | "Auto-generated opening balance journal from bank statement review" |
+| JE-003 | 2026-01-30 | Dr 3565 Loan - Director 164,680.00 / Cr 2000 Cash at bank 164,680.00 | **none** — description only: "balanced to bank account" |
+| JE-002 | 2026-06-30 | Dr 1615 Depreciation - Plant 3,169.10 / Cr 2875 Accumulated 3,169.10 | "Auto-generated from depreciation schedule. Total depreciation: $3,169.10 (business portion only…)" |
+
+**Elio's recollection was accurate on every journal, and this document misread it.** He numbered
+them by reference; earlier sections assumed he meant the printed row order. Reference order is not
+chronological here — JE-002 is dated 2026-06-30, after JE-003 — which is what made the mismatch
+look like an error on his part rather than on ours:
+
+- **JE-001** — the opening bank balance import. Confirmed.
+- **JE-002** — legitimate depreciation. Confirmed, and it never touches 3565, which is why a
+  3565-only probe could not see it.
+- **JE-003** — the one he did not recognise. It is the 164,680.00 plug.
+
+### JE-003 is the whole problem, and its amount is the proof
+
+Note what the two auto-generated journals have that JE-003 lacks: a narration. JE-001 and JE-002
+announce themselves as machine-written. JE-003 has a bare description, "balanced to bank account",
+which reads as hand-entered through the UI.
+
+The arithmetic says what it was for:
+
+```
+accumulated bank postings actually in the rows   174,676.03
+JE-003 hand plug                               + 164,680.00
+                                               = 339,356.03  ← exactly what the transactions say
+```
+
+So **the ledger's total debit on 3565 is correct, but its composition is not.** Only 174,676.03 of
+real postings landed; someone noticed Cash at bank was out by the remainder and journalled the
+difference to the director loan. JE-003 is a hand compensation for this defect — the case
+`audit_bank_tb_desync`'s docstring says no sweep can distinguish from a deliberate correction.
+
+**Therefore the repair must reverse JE-003.** Rebuilding without doing so writes Dr 339,356.03 into
+a `bank_statement` row while JE-003's 164,680.00 remains, taking the account to 504,036.03 —
+overstated by exactly the plug.
+
+### The credit side corrects itself
+
+```
+rows hold          Cr 127,794.74  =  JE-001 23,897.37  +  accumulated 103,897.37
+transactions say   Cr  80,000.00
+accumulated excess     23,897.37  =  exactly JE-001
+```
+
+The opening balance is counted twice — once as the journal, once inside the accumulated row. The
+rebuild replaces the accumulated figure with the transactions' Cr 80,000.00 and JE-001 survives, so
+the duplicate disappears without intervention.
+
+### Net effect on the client, if JE-003 is reversed and the rebuild runs
+
+| | Debit | Credit | Net |
+|---|---|---|---|
+| Today | 339,356.03 | 127,794.74 | 211,561.29 Dr |
+| After | 339,356.03 | 103,897.37 | **235,458.66 Dr** |
+
+The director loan rises by 23,897.37 — the removal of the duplicated opening balance.
+
+### Two things this raises that are outside the gate
+
+1. **Account 2000 Cash at bank.** JE-003 has two legs, so reversing it also removes Cr 164,680.00
+   from 2000. Whether Cash at bank then reads correctly depends on the bank-contra rebuild, and
+   the audit cannot tell us — bank-mapped codes are excluded from its variance comparison by
+   design. Check 2000 explicitly before and after.
+2. **A duplicate entity record.** Two `Entity` rows are named "Veronica Cerratti Pty Ltd":
+   `53e7cb23-1e4f-43f0-a715-5ac5e7095e31` with no financial years at all, and
+   `e0833e29-665b-49ea-914c-3632bd848524` with FY2026. The empty one looks like an orphan from a
+   mis-click, harmless today, but worth deleting so work cannot land against it. This is what broke
+   the first version of `probe_all_journals.py`, which looked entities up by name.
+
 ## Step 2 — decisions required (to fill in)
 
 The audit cannot decide any of this, and deliberately does not try: it detects that two records
@@ -316,9 +392,11 @@ defect-induced variance from a deliberate accountant correction.
 
 | Account | Question | Decision | Date |
 |---|---|---|---|
-| Veronica Cerratti 3565 | **Was JE-003 ("balanced to bank account", Dr 164,680.00, 2026-01-30) a hand plug to make Cash at bank reconcile?** If yes it compensates for this defect and must be reversed as part of the repair, or the account double-counts by 164,680.00. | | |
-| Veronica Cerratti 3565 | Does a depreciation journal exist for FY2026, and where does it post? None touches 3565. Run `probe_all_journals.py`. | | |
-| Veronica Cerratti 3565 | Should the opening balance appear twice — once as JE-001 and again inside row `b72bcca5`'s 103,897.37? | | |
+| Veronica Cerratti 3565 | **Approve reversing JE-003** (Dr 3565 / Cr 2000, 164,680.00, 2026-01-30). The arithmetic shows it is a hand plug for missing postings; leaving it overstates the account by exactly that amount once the rebuild runs. This is the one decision the repair cannot proceed without. | | |
+| Veronica Cerratti 3565 | ~~Does a depreciation journal exist?~~ **Answered:** JE-002, 2026-06-30, Dr 1615 / Cr 2875, 3,169.10. Legitimate, does not touch 3565, unaffected by the repair. | n/a | 2026-08-17 |
+| Veronica Cerratti 3565 | ~~Should the opening balance appear twice?~~ **Answered:** no, and the rebuild removes the duplicate by itself. Net effect on the director loan is +23,897.37. | n/a | 2026-08-17 |
+| Veronica account 2000 | Confirm Cash at bank still reads correctly after JE-003's second leg is reversed. Outside the audit's reach — bank-mapped codes are excluded from its comparison. | | |
+| Habteslassie 4080 | **Resolved, needs confirmation only.** Cr 9,445.36 is JE-001 and stays; Dr 237,464.00 is bank; the 9,072.00 debit is a double-post — confirmed by exhaustion, since FY2026 contains only that one journal — and clears itself on rebuild. | | |
 | Habteslassie 4080 | **Resolved, needs confirmation only.** Cr 9,445.36 is JE-001 and stays; Dr 237,464.00 is bank; the 9,072.00 debit is a double-post with no journal behind it and clears itself on rebuild. | | |
 
 ### The five variances
