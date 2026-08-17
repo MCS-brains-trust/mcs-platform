@@ -944,4 +944,185 @@ export function describeBankToBas(opts: BankToBasOptions): void {
 
     await page.context().close();
   });
+
+  // ── Corrections and reallocations (Tasks 8, 9, 10) ─────────────────────────
+  //
+  // These four run LAST and deliberately mutate figures the tests above pinned;
+  // serial mode (describe.configure, top of file) is what makes that safe. What
+  // they inherit from those tests, and depend on:
+  //
+  //   * all six transactions confirmed and posted per ALLOCATIONS;
+  //   * 1685 (OFFICE SUPPLIES, GST on Expenses, gross 550) holding net 500.00;
+  //   * 0510 (EFTPOS SALES, GST on Income, gross 1100) holding net 1,000.00;
+  //   * Q2 LODGED, snapshot frozen at 1A 300.00 / 1B 52.00 / net 248.00 -- the
+  //     last test in the file only proves an office_admin unlodge is REFUSED, so
+  //     the period is still lodged by the time these run.
+  //
+  // Before Tasks 8 and 9 every one of these failed by leaving the ledger
+  // untouched while the BAS moved: the review screen's posted_to_tb guard
+  // silently dropped a corrected confirm, and the two BAS reallocation endpoints
+  // had no posting logic at all.
+
+  // Same shape as the bank-row assertion above: #tb-table's <code> cell holds the
+  // account code, amounts are cells 2 (debit) and 3 (credit).
+  function tbCells(page: any, code: string) {
+    return page
+      .locator('#tb-table code', { hasText: new RegExp(`^\\s*${code}\\s*$`) })
+      .locator('xpath=ancestor::tr[1]')
+      .locator('td');
+  }
+
+  test(`${opts.profile}: correcting a confirmed transaction moves the trial balance`, async ({ browser }) => {
+    const tb = await seniorPage(browser);
+    await tb.goto(`${instance.baseURL}/years/${FY}/`);
+    await expect(
+      tbCells(tb, '1685').nth(2),
+      'baseline from the allocation test: 550 gross at GST on Expenses posts 500.00 net',
+    ).toHaveText('500.00');
+
+    // Change ONLY the tax type, on a row that is already confirmed AND posted.
+    // That is the exact shape confirm_transaction used to drop: its posted_to_tb
+    // guard cannot tell "post this twice" from "this changed, post it again".
+    const review = await seniorPage(browser);
+    await review.goto(reviewJobUrl);
+    const row = review.locator('[data-txn-id]').filter({ hasText: 'OFFICE SUPPLIES PTY LTD' });
+    const [confirmResponse] = await Promise.all([
+      review.waitForResponse(
+        (r: Response) => r.url().includes('/confirm/') && r.request().method() === 'POST',
+      ),
+      row.locator('.tax-select').selectOption('GST Free Expenses'),
+    ]);
+    expect(confirmResponse.status()).toBe(200);
+
+    // GST-free means the whole gross lands in the expense account and the input
+    // credit disappears. Reloading rather than trusting the first page: the TB is
+    // server-rendered, so only a fresh request can show the rebuild.
+    await tb.reload();
+    await expect(
+      tbCells(tb, '1685').nth(2),
+      'the correction must reach the ledger, not just the transaction',
+    ).toHaveText('550.00');
+
+    // And the BAS must agree with it -- the two reports reading the same numbers
+    // is the whole point of the exercise. 1B drops by OFFICE SUPPLIES' own 50.00,
+    // leaving only BANK FEES' 2.00.
+    const bas = await seniorPage(browser);
+    await bas.goto(`${instance.baseURL}/years/${FY}/gst/?period=${LODGE_PERIOD}`);
+    expect(await basValue(bas, '1B')).toBeCloseTo(2.0, 2);
+    expect(await basValue(bas, 'G11')).toBeCloseTo(872.0, 2);
+
+    await tb.context().close();
+    await review.context().close();
+    await bas.context().close();
+  });
+
+  test(`${opts.profile}: reallocating from the BAS screen moves the trial balance`, async ({ browser }) => {
+    const page = await seniorPage(browser);
+    await page.goto(`${instance.baseURL}/years/${FY}/gst/?period=${LODGE_PERIOD}`);
+
+    // Driven through the endpoint the BAS detail tabs call, with the page's own
+    // CSRF token -- the same technique the unlodge test uses, and for the same
+    // reason: it exercises the server path under test without depending on the
+    // detail tab's markup, which is not what this test is about.
+    // Read the id off the row rather than regexing the HTML: the detail tab
+    // renders one <tr data-txn-id> per transaction (gst_activity_statement.html
+    // :439, :500, :570, :631, one table per section), and the description sits
+    // several cells into the row -- which is what defeated an earlier
+    // regex-on-fetched-HTML version of this. #basDetailTab is a hidden tab, but
+    // getAttribute needs no actionability, so the row is readable regardless.
+    const detailRow = page.locator('tr[data-txn-id]').filter({ hasText: 'FRESH FOOD' });
+    await expect(
+      detailRow,
+      'FRESH FOOD SUPPLIES must appear exactly once on the BAS detail tab',
+    ).toHaveCount(1);
+    const txnId = await detailRow.getAttribute('data-txn-id');
+    expect(txnId, 'the detail row must carry a data-txn-id').toBeTruthy();
+
+    const result = await page.evaluate(async ({ fy, id }) => {
+      const token = (document.querySelector('[name="csrfmiddlewaretoken"]') as HTMLInputElement)?.value;
+      const response = await fetch(`/years/${fy}/gst/reallocate/`, {
+        method: 'POST',
+        headers: { 'X-CSRFToken': token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          txn_id: id, account_code: '1060', account_name: 'Insurance',
+          tax_type: 'GST Free Expenses',
+        }),
+      });
+      return { status: response.status, body: await response.text() };
+    }, { fy: FY, id: txnId });
+    expect(result.status, result.body).toBe(200);
+
+    // FRESH FOOD SUPPLIES is 300 gross, GST-free, so the whole 300 moves out of
+    // 1126 and into 1060. A 409 here would mean the rebuild declined on an
+    // entangled account, which this fixture has none of.
+    const tb = await seniorPage(browser);
+    await tb.goto(`${instance.baseURL}/years/${FY}/`);
+    await expect(tbCells(tb, '1060').nth(2)).toHaveText('300.00');
+    // Both sides empty, not '0.00': the TB template renders a zero amount as an
+    // empty cell, which is the same convention the bank-row assertion above
+    // depends on (`toHaveText('')` for its credit side). Measured, not assumed --
+    // an earlier version of this expected '0.00' and got '' from a
+    // <td class="text-end"></td>. Asserting BOTH cells is what makes this mean
+    // "zeroed" rather than "the figure moved to the other column", which a
+    // single empty-debit check would also accept.
+    await expect(
+      tbCells(tb, '1126').nth(2),
+      'the vacated account must be zeroed, not left holding its old figure',
+    ).toHaveText('');
+    await expect(
+      tbCells(tb, '1126').nth(3),
+      'and zeroed on the credit side too, not flipped across',
+    ).toHaveText('');
+
+    await page.context().close();
+    await tb.context().close();
+  });
+
+  test(`${opts.profile}: the auto-apply path posts exactly once`, async ({ browser }) => {
+    // EFTPOS SALES uses 0510, whose tax_code 'GST' resolves -- so clicking it in
+    // the allocation loop fired tryAutoConfirm, and the loop's own selectOption
+    // then fired a second confirm. Two confirms, one posting: 1100 gross at GST
+    // on Income is 1,000.00 net. 2,000.00 here would mean the correction path
+    // re-posted on top of the original instead of rebuilding from source.
+    const page = await seniorPage(browser);
+    await page.goto(`${instance.baseURL}/years/${FY}/`);
+    await expect(tbCells(page, '0510').nth(3)).toHaveText('1,000.00');
+
+    // The GST side of the same transaction, for the same reason.
+    const bas = await seniorPage(browser);
+    await bas.goto(`${instance.baseURL}/years/${FY}/gst/?period=${LODGE_PERIOD}`);
+    expect(await basValue(bas, '1A')).toBeCloseTo(300.0, 2);
+    expect(await basValue(bas, 'G1')).toBeCloseTo(4100.0, 2);
+
+    await page.context().close();
+    await bas.context().close();
+  });
+
+  test(`${opts.profile}: a correction inside a lodged period is flagged, and the snapshot stays frozen`, async ({ browser }) => {
+    // The two correction tests above both landed inside Q2, which is lodged. That
+    // is allowed -- and it is exactly the divergence Task 7's flag exists to make
+    // visible, because the lodged snapshot is frozen by design while the live
+    // figures move underneath it.
+    const page = await seniorPage(browser);
+    await page.goto(`${instance.baseURL}/years/${FY}/gst/?period=${LODGE_PERIOD}`);
+
+    const card = page
+      .locator('.card', { hasText: new RegExp(`^\\s*Q${LODGE_PERIOD}`) })
+      .first();
+    await expect(
+      card,
+      'a corrected lodged period must say so on the period strip',
+    ).toContainText('Amended');
+
+    // Frozen, not recomputed: the snapshot on the card is what was reported to
+    // the ATO. 1B has moved from 52.00 to 2.00 in the live figures by now, so a
+    // card reading anything other than the original net proves the snapshot was
+    // overwritten -- which would destroy the only record of what was lodged.
+    await expect(
+      card,
+      'the lodged snapshot must not be rewritten by a later correction',
+    ).toContainText('248.00');
+
+    await page.context().close();
+  });
 }
