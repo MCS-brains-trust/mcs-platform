@@ -176,6 +176,36 @@ Bank postings say Dr 339,356.03 / Cr 80,000.00 (72 transactions, gross 419,356.0
 So the split is fully determined: **Dr 339,356.03 / Cr 80,000.00 is bank money; Cr 47,794.74 is
 genuine journal.** No apportionment judgement is required.
 
+> ### ⚠ OPEN CONFLICT — do not repair 3565 on the above conclusion
+>
+> Raised 2026-08-17. Elio reads the three rows as journals he recognises: the first as an
+> opening bank balance imported from a prior year, the second as legitimate depreciation, the
+> third unrecognised. If either of the first two is a genuine journal debit, the "every debit is
+> bank money" conclusion above is **wrong**.
+>
+> The two readings cannot both hold. `row = journal + bank` plus an exact debit match forces the
+> journal component to zero; Elio's reading puts it at 227,180.00 or more. They differ by roughly
+> $339k on a client's director loan.
+>
+> - If the plan's model holds, the repair moves Dr 339,356.03 / Cr 80,000.00 to a
+>   `bank_statement` row.
+> - If Elio's holds, the exact match means someone hand-journalled the same movements the bank
+>   feed later posted automatically — the money is recorded **twice**, and creating a
+>   `bank_statement` row would double the account instead of repairing it.
+>
+> Also unexplained on its own terms: neither an opening bank balance nor depreciation belongs on
+> a director loan account. The likely reading is that these are *lines* that multi-line journals
+> put on 3565 — an opening-balance journal would legitimately carry a director-loan opening
+> balance, which fits Dr 62,500.00. Depreciation touching 3565 fits nothing.
+>
+> **Caveat on the analysis above:** `TrialBalanceLine` has no FK to `AdjustingJournal`, so the
+> row-to-journal mapping was inferred from row shape, never read. "Two adjusting journals" was an
+> assumption. Elio's JNL 1/2/3 may not correspond to the printed row order.
+>
+> Resolved by `probe_entangled_journals.py`, which sums the posted `JournalLine` records on the
+> account and subtracts them from the rows: the shortfall *is* the accumulated bank money, with no
+> inference. Nothing gets repaired on this account until that has been run and read.
+
 Two things to confirm rather than assume: that the same 23,897.37 credit appearing in two
 separate adjusting journals is intentional and not a duplicated entry; and that a journal with
 47,794.74 of credits and no genuine debits on this account is the expected shape.
