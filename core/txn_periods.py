@@ -50,9 +50,12 @@ def entity_financial_years(entity):
 def resolve_fy_for_txn(txn, fys=None):
     """Return the FinancialYear this transaction posts to, or None.
 
-    The year whose date range covers the transaction's date. When the date is
-    unparseable, or falls outside every year, fall back to the most recent year
-    — the fallback the posting path has always used.
+    Three outcomes: the postable year whose date range covers the
+    transaction's date; `None` when the date is known but no postable year
+    covers it — posting it anywhere would put it in a year it has nothing to
+    do with; and, only when the date itself cannot be parsed, the most recent
+    year — the fallback the posting path has always used, kept because there
+    is nothing to reason from.
 
     The rebuild must reproduce this exactly, fallback included. Filtering on the
     date range instead would drop every unparseable-date transaction out of the
@@ -72,12 +75,25 @@ def resolve_fy_for_txn(txn, fys=None):
         return None
 
     txn_date = parse_txn_date(txn.date)
-    if txn_date:
-        for fy in fys:
-            if fy.start_date <= txn_date <= fy.end_date:
-                return fy
+    if not txn_date:
+        # Unparseable date: there is nothing to reason from, so keep the
+        # historical fallback. Deliberately NOT changed — see the spec's
+        # decision 3. Making these unpostable would strand transactions whose
+        # date may not be editable, and unreadable-date rows are the ones most
+        # likely to be already posted through this fallback.
+        return max(fys, key=lambda f: f.end_date)
 
-    return max(fys, key=lambda f: f.end_date)
+    for fy in fys:
+        if fy.start_date <= txn_date <= fy.end_date:
+            return fy
+
+    # The date is known and no POSTABLE year covers it. Posting it anywhere
+    # would put it in a year it has nothing to do with — which is how a
+    # statement running to 31 July 2026 overstated FY2026. Returning None means
+    # "do not post": _post_confirmed_txn_to_tb returns False, and every
+    # aggregation caller excludes it, so the rebuild can never zero a line for a
+    # transaction it also refuses to post.
+    return None
 
 
 def resolve_bas_period_for_txn(txn):
