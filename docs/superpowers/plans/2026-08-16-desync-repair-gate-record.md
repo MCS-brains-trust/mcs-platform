@@ -22,7 +22,7 @@ cannot be rebuilt safely until a human decides what they should read.
 | 1. Run the audit, hand Elio the ENTANGLED section | **Done** 2026-08-17 |
 | 2. Elio decides, per account, journal vs bank posting | **Superseded** — see below |
 | 3. Apply by hand, backup to `data_fixes/` first | **Not done, and not needed** |
-| 4. Re-run the audit; ENTANGLED must be empty | Awaiting the confirming run |
+| 4. Re-run the audit; ENTANGLED must be empty | **Done** 2026-08-17 — `no variance and no entanglement found` |
 | 5. Elio confirms in writing that both entities read correctly | **Superseded** — nothing left to read |
 
 ## HOW THIS GATE CLOSED — by deletion, not by repair
@@ -547,11 +547,28 @@ Tasks 8 and 9 may not merge until this is filled in.
 
 - [x] ~~Veronica Cerratti 3565 reads correctly~~ — **entity deleted as test data**, Elio, 2026-08-17
 - [x] ~~Habteslassie 4080 reads correctly~~ — **entity deleted as test data**, Elio, 2026-08-17
-- [ ] Re-run audit shows ENTANGLED empty — output saved as: ______________________________
+- [x] Re-run audit shows ENTANGLED empty — **confirmed 2026-08-17**, Elio ran it and the command
+      reported `no variance and no entanglement found`. Both the ENTANGLED and VARIANCE sections
+      are gone entirely; all that remains is the 18 NOT AUDITED finalised years, unchanged from the
+      baseline and skipped by design. The run was not redirected, so the pre-deletion
+      `2026-08-16-desync-audit-baseline.txt` stays the only committed output — now a historical
+      record of a state that no longer exists rather than a current picture.
 - [x] ~~Remaining variances accepted~~ — D.P Vaughan & D Vriend's 3380 variance (Dr 3,482.00) also
       test data, deleted with the others. No variance remains against a client file.
 
-**Still required before Tasks 8 and 9 merge:** the confirming audit run. Everything else is closed.
+# GATE CLOSED — 2026-08-17
+
+All five steps resolved: 2, 3 and 5 superseded by the entities being deleted as test data; 1 and 4
+evidenced by audit runs before and after. **Tasks 8 and 9 are cleared to merge**, subject to the
+plan's own remaining gates — Task 10's e2e coverage and Task 11's soak and verification.
+
+Two things survive this closure and are **not** resolved by it:
+
+1. **The audit cannot see bank-mapped codes** (the blind spot described above). A clean result does
+   not clear cash at bank, for any entity in the book.
+2. **The forward fix is not deployed.** Production still runs the old `_get_or_create_tb_line`, so
+   new entanglement can form until this branch merges. The clean audit describes production as it
+   is today, not as it will stay.
 
 ```bash
 cd /opt/statementhub/.claude/worktrees/bas-tb-desync

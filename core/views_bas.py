@@ -9,6 +9,7 @@ GST calculations.
 Additional endpoints handle lodgement, unlodgement, and document downloads.
 """
 import io
+import logging
 from datetime import date
 from decimal import Decimal
 
@@ -35,6 +36,14 @@ from .bas_utils import (
     compute_period_status,
 )
 from config.authorization import get_financial_year_for_user
+# Imported at module level, not inside the views, so the reallocation tests can
+# patch _recalculate_bank_tb_lines here and count the calls — a bulk
+# reallocation must rebuild once per year, not once per transaction. core.views
+# does not import this module at module load, so there is no cycle.
+from core.txn_periods import flag_period_amended, resolve_fy_for_txn
+from core.views import _recalculate_bank_tb_lines
+
+logger = logging.getLogger(__name__)
 
 
 def _log_action(request, action, description, obj=None):
@@ -929,6 +938,24 @@ def bas_reallocate_transaction(request, pk):
     txn.is_confirmed = True
     txn.save()
 
+    # The trial balance is derived from the transactions, so a reallocation has
+    # to rebuild it. This endpoint used to change the transaction and stop,
+    # which is why the BAS and the financial statements could disagree.
+    target_fy = resolve_fy_for_txn(txn)
+    if target_fy:
+        result = _recalculate_bank_tb_lines(target_fy)
+        if result.get("status") == "entangled":
+            return JsonResponse({
+                "ok": False,
+                "error": (
+                    "This entity's ledger cannot be rebuilt automatically "
+                    f"(accounts {', '.join(result['codes'])} need repair). "
+                    "The reallocation was saved but the trial balance was not "
+                    "updated — contact the accounting team."
+                ),
+            }, status=409)
+    flag_period_amended(txn, request.user)
+
     _log_action(
         request, "bas_reallocate",
         f"Reallocated transaction {txn.description[:60]} from "
@@ -999,6 +1026,7 @@ def bas_bulk_reallocate(request, pk):
         return JsonResponse({"ok": False, "error": "No matching transactions found."}, status=404)
 
     updated = []
+    touched_fys = set()
     for txn in txns:
         txn.confirmed_code = new_code
         txn.confirmed_name = new_name or new_code
@@ -1010,6 +1038,24 @@ def bas_bulk_reallocate(request, pk):
         txn.is_confirmed = True
         txn.save()
         updated.append(str(txn.id))
+        touched_fys.add(resolve_fy_for_txn(txn))
+        flag_period_amended(txn, request.user)
+
+    # Once per year, after the loop — not once per transaction. The rebuild is
+    # O(all posted transactions), so calling it inside the loop turns a bulk
+    # reallocation of n transactions into n full rebuilds.
+    for target_fy in touched_fys:
+        if not target_fy:
+            continue
+        result = _recalculate_bank_tb_lines(target_fy)
+        if result.get("status") == "entangled":
+            # No 409 here: some of the batch may have rebuilt fine, so failing
+            # the whole response would misreport what happened. Log it instead.
+            logger.error(
+                "bas_bulk_reallocate: trial balance not rebuilt for financial "
+                "year %s — entity is entangled on %s",
+                target_fy.pk, result["codes"],
+            )
 
     _log_action(
         request, "bas_bulk_reallocate",
