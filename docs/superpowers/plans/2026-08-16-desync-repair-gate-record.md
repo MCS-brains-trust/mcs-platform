@@ -205,6 +205,75 @@ genuine journal.** No apportionment judgement is required.
 > Resolved by `probe_entangled_journals.py`, which sums the posted `JournalLine` records on the
 > account and subtracts them from the rows: the shortfall *is* the accumulated bank money, with no
 > inference. Nothing gets repaired on this account until that has been run and read.
+>
+> **Run 2026-08-17. Outcome: the conflict resolved against the "all debits are bank money"
+> conclusion. See "part 2 — the journals" below. That conclusion is withdrawn.**
+
+## Step 2 evidence, part 2 — the journals (`probe_entangled_journals.py`, 2026-08-17)
+
+`TrialBalanceLine` has no FK to `AdjustingJournal`, so this reads the surviving `JournalLine`
+records on each account and subtracts the posted ones from the row balances. What is left is
+whatever accumulated outside the journals.
+
+### Veronica 3565 — only two journals touch this account
+
+| Ref | Date | On 3565 | Description | Contra |
+|---|---|---|---|---|
+| JE-001 | 2025-07-01 | Cr 23,897.37 | "Opening balance — brought forward from prior records" / narration: "Auto-generated opening balance journal from bank statement review" | Dr 2000 Cash at bank |
+| JE-003 | 2026-01-30 | Dr 164,680.00 | **"balanced to bank account"** | Cr 2000 Cash at bank |
+
+Three conclusions, in order of importance:
+
+1. **The third row is not a journal.** Row `b72bcca5` (Dr 112,176.03 / Cr 103,897.37) has no
+   `JournalLine` behind it at all. Elio did not recognise it because he never created it — it is
+   accumulated bank postings sitting in a `manual_journal`-sourced row. **That row is the defect
+   itself**, which is exactly why the account was flagged.
+2. **The opening-balance reading was right; the depreciation reading was not.** JE-001 is the
+   opening bank balance import, as recalled. But the only other journal on 3565 is JE-003,
+   described "balanced to bank account" and contra'd to Cash at bank — a plug, not depreciation.
+   No journal on this account mentions depreciation. Whether a depreciation journal exists
+   elsewhere in the year is what `probe_all_journals.py` answers.
+3. **"Every debit on 3565 is bank money" is withdrawn.** 164,680.00 of it is JE-003.
+
+**The two coincidences that decide the repair.** Comparing rows-minus-posted-journals against the
+bank postings:
+
+| | Rows − posted journals | Bank postings say | Difference |
+|---|---|---|---|
+| Debit | 174,676.03 | 339,356.03 | **−164,680.00** = exactly JE-003 |
+| Credit | 103,897.37 | 80,000.00 | **+23,897.37** = exactly JE-001 |
+
+Each journal's amount appears a *second* time in the gap between the rows and the bank postings.
+The natural reading of JE-003 — "balanced to bank account", created by hand in January — is a plug
+written to make Cash at bank reconcile, i.e. **a manual compensation for this very defect**. This
+is precisely the case `audit_bank_tb_desync`'s own docstring warns cannot be detected
+automatically: *"Some entities may have been compensated by hand by an accountant, and no
+automated sweep can tell a defect-induced variance from a deliberate correction."*
+
+**Consequence: rebuilding 3565 from transactions would post Dr 339,356.03 while JE-003's
+164,680.00 stays in the ledger — double-counting it.** The repair must decide JE-003's fate, not
+just partition the rows.
+
+The credit side suggests the same shape for the opening balance: row `b72bcca5` holds
+`80,000.00 + 23,897.37`, so the opening balance appears both as JE-001 and again as accumulated
+movement. Worth checking whether the "auto-generated opening balance journal from bank statement
+review" mechanism writes both a journal *and* a trial-balance row.
+
+### Habteslassie 4080 — both questions answered
+
+One journal line only: **JE-001, 2025-07-01, Cr 9,445.36**, "Opening balance — brought forward
+from prior records", contra Dr 2000 Cash at bank. Same auto-generated opening-balance journal as
+Veronica's.
+
+- **The 9,445.36 credit is explained.** It is that journal, and it must survive the repair.
+- **The 9,072.00 debit excess is a double-post — confirmed.** No `JournalLine` anywhere debits
+  4080. Journals account for Dr 0.00 against a row holding Dr 246,536.00, and bank postings
+  justify only 237,464.00. The sole source of 9,072.00 in the entire account is the 2026-05-02
+  transfer of exactly that amount, so it posted twice.
+
+**So 4080's split is fully determined:** Cr 9,445.36 stays as journal; Dr 237,464.00 becomes the
+`bank_statement` row; the 9,072.00 duplicate disappears — and it disappears *by itself*, because
+the rebuild computes 237,464.00 from the transactions rather than trusting the stored row.
 
 Two things to confirm rather than assume: that the same 23,897.37 credit appearing in two
 separate adjusting journals is intentional and not a duplicated entry; and that a journal with
@@ -247,8 +316,10 @@ defect-induced variance from a deliberate accountant correction.
 
 | Account | Question | Decision | Date |
 |---|---|---|---|
-| Veronica Cerratti 3565 | **Answered by arithmetic** — Dr 339,356.03 / Cr 80,000.00 is bank, Cr 47,794.74 is journal. Only needs confirming, plus: is the doubled 23,897.37 credit intentional? | | |
-| Habteslassie 4080 | Is the 9,072.00 debit excess a double-posted transaction or a genuine journal debit? And what is the 9,445.36 credit? | | |
+| Veronica Cerratti 3565 | **Was JE-003 ("balanced to bank account", Dr 164,680.00, 2026-01-30) a hand plug to make Cash at bank reconcile?** If yes it compensates for this defect and must be reversed as part of the repair, or the account double-counts by 164,680.00. | | |
+| Veronica Cerratti 3565 | Does a depreciation journal exist for FY2026, and where does it post? None touches 3565. Run `probe_all_journals.py`. | | |
+| Veronica Cerratti 3565 | Should the opening balance appear twice — once as JE-001 and again inside row `b72bcca5`'s 103,897.37? | | |
+| Habteslassie 4080 | **Resolved, needs confirmation only.** Cr 9,445.36 is JE-001 and stays; Dr 237,464.00 is bank; the 9,072.00 debit is a double-post with no journal behind it and clears itself on rebuild. | | |
 
 ### The five variances
 
