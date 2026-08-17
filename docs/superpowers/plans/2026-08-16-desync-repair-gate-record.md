@@ -403,10 +403,40 @@ defect-induced variance from a deliberate accountant correction.
 
 | Line | Question | Decision | Date |
 |---|---|---|---|
-| Veronica 3380 / 630 | Should the FY2026 income be GST-free? If yes the ledger is wrong by $17,429.61; if no, the transactions are. | | |
-| Habteslassie 3380 (Cr 11,936.90) | Same question for his income, whose counterpart sits in entangled 4080. | | |
+| Veronica 3380 / 630 | Should the FY2026 income be GST-free? | **YES.** Both are medical practitioners, so ~99% of income is GST-free, bar the occasional invoice. The July reclassification was correct and **the ledger is the stale side.** The rebuild corrects it. | 2026-08-17 |
+| Habteslassie 3380 (Cr 11,936.90) | Same question for his income. | **YES**, same reason. Note the July script was not the cause of his 3380 residue — his 42 income transactions carried `confirmed_gst_amount` of 0.00 even before it ran, so they never contributed to 3380. The 12,024.90 credit came from other postings. It no longer needs explaining: the transactions are authoritative, and the rebuild replaces the row with Dr 6,540.73 / Cr 88.00. | 2026-08-17 |
 | Habteslassie 1801 / 3380 (Dr 61.94 / 6.19) | Which $68.13 item is this, and where does it belong? | | |
 | D.P Vaughan & D Vriend 3380 (Dr 3,482.00) | Cause unknown — needs its own look before deciding. | | |
+
+## The consequence that outranks the ledger — possible over-remitted GST
+
+Raised 2026-08-17, on Elio confirming both entities are medical practitioners whose income is
+GST-free.
+
+The ledger being stale is a reporting problem. This is a money problem, and it points the other
+way from everything above:
+
+- **The BAS is computed from `PendingTransaction` records** (`core/bas_utils.py`), not from the
+  trial balance.
+- So a BAS lodged *before* the July 2026 reclassification was computed from transactions that
+  still carried GST on income.
+- On GST-free medical supplies, that is **GST reported and remitted that was never owed.**
+
+The exposure, if the affected periods were lodged, is the same figures the audit surfaced from the
+other side: **Veronica $17,429.61 and Habteslassie $11,936.90 — roughly $29,000 combined.** Both
+clients would be candidates for a BAS amendment and recovery.
+
+`BASPeriod.snapshot_1a` / `_1b` / `_net` freeze what was reported at lodgement, so this is
+answerable from the record. `probe_lodged_bas.py` compares every lodged period's snapshot against
+the same period recomputed from today's transactions and flags any period whose 1A was lodged
+higher than the transactions now support.
+
+This is precisely what Task 7's `amended_since_lodgement` flag exists to surface going forward.
+The probe looks backwards at what has already happened.
+
+**Sequencing note:** run this *before* the repair. Once the ledger is rebuilt the snapshots are
+still intact — they are frozen by design — but establishing the position before touching anything
+keeps the amendment case clean.
 
 ## Step 3 — applying the repair
 
