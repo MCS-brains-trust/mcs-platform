@@ -104,15 +104,17 @@ path is git-ignored, nothing in the plan or the repo points at it, and the plan'
 a stale count instead. Task 6 therefore paid for a second full suite run to re-establish by
 hand a set that was already on disk.
 
-The file holds only test names — no client data — so unlike the audit output there is no reason
-it cannot live in the repo.
+The file holds only test names, so nothing stands in the way of it living in the repo. (The
+audit output, which does hold client figures, was committed too — Elio's call on 2026-08-17.)
 
 ### Shape of a fix
 
 Make "no new failures" mechanical:
 
 1. Promote the existing `baseline-failures.txt` out of the ignored workspace into the repo as
-   a checked-in fixture. It is already the right content; it is only in the wrong place.
+   a checked-in fixture. It is already the right content; it is only in the wrong place. Note
+   it will need `git add -f`, or a non-`.txt` name — `.gitignore:38` carries a repo-wide
+   `*.txt` rule that makes a plain `git add` skip it without saying so.
 2. Give it a thin runner that runs the suite, extracts the set, diffs it against the fixture,
    and exits non-zero only on lines that are *new*. Disappearing failures are progress and
    should be reported, not failed on.
