@@ -142,7 +142,7 @@ Elio's stated position is that the count is zero. Note the classifier on this ho
 Replace this line with the actual output's summary counts and the date, then commit. If either
 `NON_POSTABLE` or `NO_YEAR` is non-zero, **stop here and escalate** rather than continuing.
 
-> **Probe result:** _not yet run_
+> **Probe result:** NON_POSTABLE: 0, NO_YEAR: 0, UNPARSEABLE DATE: 0 — 2026-08-17. Zero wrong-year postings confirmed. Safe to proceed.
 
 - [ ] **Step 5: Commit**
 
