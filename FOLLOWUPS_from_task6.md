@@ -97,17 +97,22 @@ counts, and Task 6 did exactly that by running the suite twice with the change s
 diffing the two sorted `FAIL:`/`ERROR:` lists. They came back identical, which is the only
 statement about regression worth making.
 
-The problem is that the comparison is remembered rather than recorded. Nothing in the repo
-holds the expected failure set, so every task pays for a second full suite run to
-re-establish it, and any session that skips that step is comparing against a number in a doc
-that was already stale two tasks ago.
+The problem is that the recorded set is undiscoverable. Task 1 *did* record it, at
+`.superpowers/sdd/2026-08-16-bas-tb-desync-fixes/baseline-failures.txt` — 65 lines, verified
+2026-08-17 to be byte-identical to the sorted failure set of a fresh pre-Task-6 run. But that
+path is git-ignored, nothing in the plan or the repo points at it, and the plan's line 17 cites
+a stale count instead. Task 6 therefore paid for a second full suite run to re-establish by
+hand a set that was already on disk.
+
+The file holds only test names — no client data — so unlike the audit output there is no reason
+it cannot live in the repo.
 
 ### Shape of a fix
 
 Make "no new failures" mechanical:
 
-1. Commit the current expected failure set — the sorted `FAIL:`/`ERROR:` lines — as a
-   checked-in fixture.
+1. Promote the existing `baseline-failures.txt` out of the ignored workspace into the repo as
+   a checked-in fixture. It is already the right content; it is only in the wrong place.
 2. Give it a thin runner that runs the suite, extracts the set, diffs it against the fixture,
    and exits non-zero only on lines that are *new*. Disappearing failures are progress and
    should be reported, not failed on.
