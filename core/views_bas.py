@@ -269,6 +269,12 @@ def bas_lodge_period(request, pk, period_number):
     bp.snapshot_1a = bas["1A"]
     bp.snapshot_1b = bas["1B"]
     bp.snapshot_net = bas["gst_payable"]
+    # A fresh lodgement takes a fresh snapshot that incorporates the amendment,
+    # so the flag has served its purpose. Unlodge deliberately preserves it —
+    # that is when the audit trail matters most.
+    bp.amended_since_lodgement = False
+    bp.amended_at = None
+    bp.amended_by = None
     if override_reason:
         bp.override_reason = override_reason
     bp.save()

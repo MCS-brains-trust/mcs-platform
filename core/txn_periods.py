@@ -78,3 +78,58 @@ def resolve_fy_for_txn(txn, fys=None):
                 return fy
 
     return max(fys, key=lambda f: f.end_date)
+
+
+def resolve_bas_period_for_txn(txn):
+    """Return the BASPeriod covering this transaction's date, or None.
+
+    Periods are created lazily, so a transaction may fall in a range with no
+    row. That is not a case to handle: no row means no lodgement, so there is
+    nothing to flag.
+
+    Note the deliberate difference from resolve_fy_for_txn: an unparseable date
+    returns None here rather than falling back to the most recent year. The
+    fallback exists so the rebuild reproduces what posting did; flagging a
+    lodged period is an audit claim about a specific date, and a guess is worse
+    than nothing.
+
+    Unlike the posting path this does not filter on period_type. Periods are
+    created from the entity's bas_frequency, so in practice a year holds only
+    one type — but an entity that changed frequency mid-year could hold both,
+    and this would then pick the lower period_number. Flagging one of two
+    overlapping rows is still better than flagging neither; revisit if the
+    frequency-change case turns out to be real.
+    """
+    from core.models import BASPeriod
+
+    txn_date = parse_txn_date(txn.date)
+    if not txn_date:
+        return None
+    fy = resolve_fy_for_txn(txn)
+    if not fy:
+        return None
+    return BASPeriod.objects.filter(
+        financial_year=fy, period_start__lte=txn_date, period_end__gte=txn_date,
+    ).first()
+
+
+def flag_period_amended(txn, user=None):
+    """Mark the transaction's BAS period as amended, if it is lodged.
+
+    A correction inside a lodged period is allowed — the BAS detail tabs offer
+    that workflow today. The trial balance rebuilds, the lodged snapshot stays
+    frozen, and this flag makes the resulting divergence visible instead of
+    silent. Returns the period it flagged, or None.
+    """
+    from django.utils import timezone
+
+    period = resolve_bas_period_for_txn(txn)
+    if period is None or period.status != "lodged":
+        return None
+    period.amended_since_lodgement = True
+    period.amended_at = timezone.now()
+    period.amended_by = user if (user and user.is_authenticated) else None
+    period.save(update_fields=[
+        "amended_since_lodgement", "amended_at", "amended_by",
+    ])
+    return period
