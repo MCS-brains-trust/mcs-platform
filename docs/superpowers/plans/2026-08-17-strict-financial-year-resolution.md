@@ -142,7 +142,7 @@ Elio's stated position is that the count is zero. Note the classifier on this ho
 Replace this line with the actual output's summary counts and the date, then commit. If either
 `NON_POSTABLE` or `NO_YEAR` is non-zero, **stop here and escalate** rather than continuing.
 
-> **Probe result:** ENTITIES examined: 3 (postable), skipped: 10 (no postable, 0 txns) | TRANSACTIONS classified: 0, unparseable: 0. VACUOUS — zero transactions to classify. Verdict triggers only on ledger ruling, not measurement. (2026-08-17)
+> **Probe result:** ENTITIES examined: 3, skipped: 10 (0 txns) | TRANSACTIONS classified: 0, unparseable: 0, invisible (NULL-entity jobs): 496. VACUOUS — the 496 confirmed+posted transactions in the book all sit in jobs with entity=NULL, unreachable by the per-entity loop. resolve_fy_for_txn already returns None for them. (2026-08-17)
 
 - [ ] **Step 5: Commit**
 
