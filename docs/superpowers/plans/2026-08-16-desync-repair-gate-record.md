@@ -85,10 +85,15 @@ Three things these numbers say:
    The trial balance still holds an income-vs-GST split the transactions no longer support. In
    financial-statement terms: income understated $17,429.61, GST payable overstated
    $17,429.61, so **net profit understated by $17,429.61**.
-2. **Habteslassie's income counterpart is missing from the table because it is 4080** — the
-   entangled account, which the audit skips for variance comparison
-   (`core/management/commands/audit_bank_tb_desync.py:102-103`, `if code in totals["unbacked"]:
-   continue`). So the $11,936.90 GST overstatement has no visible partner here by design.
+2. ~~**Habteslassie's income counterpart is missing from the table because it is 4080**~~ —
+   **WRONG, corrected 2026-08-17 by the probe below.** Account 4080 is *Drawings*, and all 25
+   posted transactions on it carry `gst 0.00` and a tax type of `N-T` or blank. They contribute
+   nothing to 3380, so 4080 cannot be the counterpart to the GST overstatement. It is true that
+   the audit skips entangled codes for variance comparison
+   (`core/management/commands/audit_bank_tb_desync.py:102-103`), but that is not what is hiding
+   the partner here. **The $11,936.90 GST overstatement on Habteslassie 3380 has no identified
+   counterpart and no explanation.** The 42 income transactions the July script rewrote sit on
+   some other account, which this audit did not flag — so nothing yet accounts for that figure.
 3. **Habteslassie 1801 + 3380 on the debit side tell a single-transaction story.**
    `61.94 + 6.19 = 68.13`, and `68.13 / 11 = 6.19`. Consistent with one $68.13 GST-inclusive
    expense the trial balance still holds and the transactions no longer allocate to 1801.
@@ -138,6 +143,70 @@ they are clean. A desync inside a finalised year is invisible to this command.
 
 ---
 
+## Step 2 evidence — the per-account decomposition
+
+Produced 2026-08-17 by `probe_entangled_accounts.py` (read-only, run via
+`python3 manage.py shell <` from the worktree). It takes the bank-posting figure from
+`_bank_tb_totals` — the same function the rebuild uses — and subtracts it from what the rows
+actually hold, **per side**. Netting the two sides hides the shape of the problem; the probe's
+first version made exactly that mistake and has been fixed.
+
+### Veronica Cerratti 3565 "Loan - Director" — decided by arithmetic
+
+Three `manual_journal` / `is_adjustment=True` rows:
+
+| Row | Debit | Credit |
+|---|---|---|
+| `1052b2f2` | 62,500.00 | 23,897.37 |
+| `522b7ebc` | 164,680.00 | 0.00 |
+| `b72bcca5` | 112,176.03 | 103,897.37 |
+| **Total** | **339,356.03** | **127,794.74** |
+
+Bank postings say Dr 339,356.03 / Cr 80,000.00 (72 transactions, gross 419,356.03, which splits
+`339,356.03 + 80,000.00` — the 80,000 being the single inflow, "Transfer from xx3378 … Car" on
+2025-11-24).
+
+- **Debit side reconciles to the cent.** `62,500.00 + 164,680.00 + 112,176.03 = 339,356.03`
+  exactly. Every debit on this account, across all three rows, is accumulated bank posting.
+  Nothing to decide.
+- **Credit side is out by 47,794.74**, and that decomposes exactly: `23,897.37 × 2 =
+  47,794.74`. Rows `1052b2f2` and `b72bcca5` each carry a 23,897.37 credit, and `b72bcca5`
+  additionally carries the 80,000 bank inflow (`80,000.00 + 23,897.37 = 103,897.37`).
+
+So the split is fully determined: **Dr 339,356.03 / Cr 80,000.00 is bank money; Cr 47,794.74 is
+genuine journal.** No apportionment judgement is required.
+
+Two things to confirm rather than assume: that the same 23,897.37 credit appearing in two
+separate adjusting journals is intentional and not a duplicated entry; and that a journal with
+47,794.74 of credits and no genuine debits on this account is the expected shape.
+
+### Habteslassie 4080 "Drawings" — needs a decision, and holds a probable double-post
+
+One `manual_journal` / `is_adjustment=True` row: Dr 246,536.00 / Cr 9,445.36.
+Bank postings say Dr 237,464.00 / Cr 0.00 (25 transactions, all `gst 0.00`, all `N-T` or blank).
+
+| Side | Row | Bank postings | Unexplained |
+|---|---|---|---|
+| Debit | 246,536.00 | 237,464.00 | **9,072.00** |
+| Credit | 9,445.36 | 0.00 | **9,445.36** |
+| Net | 237,090.64 | 237,464.00 | −373.36 |
+
+The net of −373.36 is the trap: it looks negligible, and it is two unrelated discrepancies of
+about $9,000 each cancelling out.
+
+- **Debit excess is exactly 9,072.00 — which is exactly one of the 25 transactions**
+  ("Transfer to xx2329 CommBank app Tax April 26", 2026-05-02). `237,464.00 + 9,072.00 =
+  246,536.00`. The leading explanation is that this transaction posted **twice** into the row:
+  once historically, and once again in the set the aggregation now counts. It cannot be
+  distinguished from a coincidental 9,072.00 journal debit without checking that entry's
+  history, so treat it as a lead, not a finding.
+- **Credit 9,445.36 is entirely unexplained by bank postings.** No posted transaction on this
+  account is an inflow, so this is journal in origin — most likely a year-end drawings
+  adjustment, but its provenance needs confirming.
+
+Note for the repair: this row is `Drawings` on a sole trader, and its transactions are all
+`N-T` transfers to what look like personal and tax-savings accounts.
+
 ## Step 2 — decisions required (to fill in)
 
 The audit cannot decide any of this, and deliberately does not try: it detects that two records
@@ -148,8 +217,8 @@ defect-induced variance from a deliberate accountant correction.
 
 | Account | Question | Decision | Date |
 |---|---|---|---|
-| Veronica Cerratti 3565 (FY2026) | Of the `manual_journal` row's balance, how much is accumulated bank posting and how much is genuine journal? What should 3565 read? | | |
-| Habteslassie 4080 (FY2026) | Same question. | | |
+| Veronica Cerratti 3565 | **Answered by arithmetic** — Dr 339,356.03 / Cr 80,000.00 is bank, Cr 47,794.74 is journal. Only needs confirming, plus: is the doubled 23,897.37 credit intentional? | | |
+| Habteslassie 4080 | Is the 9,072.00 debit excess a double-posted transaction or a genuine journal debit? And what is the 9,445.36 credit? | | |
 
 ### The five variances
 
