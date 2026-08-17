@@ -93,12 +93,24 @@ def resolve_bas_period_for_txn(txn):
     lodged period is an audit claim about a specific date, and a guess is worse
     than nothing.
 
-    Unlike the posting path this does not filter on period_type. Periods are
-    created from the entity's bas_frequency, so in practice a year holds only
-    one type — but an entity that changed frequency mid-year could hold both,
-    and this would then pick the lower period_number. Flagging one of two
-    overlapping rows is still better than flagging neither; revisit if the
-    frequency-change case turns out to be real.
+    Filters on period_type, because a year really does hold both. Veronica
+    Cerratti's live FY2026 carries 16 rows — 12 monthly and 4 quarterly, covering
+    the same dates — while her bas_frequency is quarterly. An earlier version of
+    this function left period_type out, on the assumption that periods are only
+    ever created from the entity's own frequency and a year would therefore hold
+    one type. Production says otherwise.
+
+    The entity's bas_frequency is the only defensible choice: it is what
+    bas_dashboard renders and what bas_lodge_period writes to, so anything else
+    sets the amended flag on a row no screen will ever show — the flag is set,
+    the badge never appears, and the feature silently does nothing.
+
+    Note how the unfiltered version failed, because it is not symmetric.
+    Meta.ordering is ["period_number"], and for any date the quarterly number is
+    always <= the monthly one (Q = ceil(M/3)). So .first() picked the quarterly
+    row almost always: accidentally right for a quarterly entity, always wrong
+    for a monthly one. July was the exception either way, being period_number 1
+    as both Q1 and Jul, with the tie broken by nothing at all.
     """
     from core.models import BASPeriod
 
@@ -108,8 +120,11 @@ def resolve_bas_period_for_txn(txn):
     fy = resolve_fy_for_txn(txn)
     if not fy:
         return None
+    entity = txn.job.entity if txn.job else None
+    period_type = getattr(entity, "bas_frequency", "quarterly") or "quarterly"
     return BASPeriod.objects.filter(
-        financial_year=fy, period_start__lte=txn_date, period_end__gte=txn_date,
+        financial_year=fy, period_type=period_type,
+        period_start__lte=txn_date, period_end__gte=txn_date,
     ).first()
 
 
