@@ -28,23 +28,30 @@ RULE = "=" * 78
 non_postable, no_year, unparseable = [], [], []
 entities_examined = 0
 entities_skipped = 0
-txns_examined = 0
-txns_skipped = 0
+txns_classified = 0
+txns_unparseable = 0
+txns_in_skipped_entities = 0
 
 # Note on the denominator: resolve_fy_for_txn currently has a fallback that
 # returns the most recent POSTABLE year when no postable year covers a
-# transaction's date. That fallback cannot fire if no entity has any postable
-# year at all. In that case, resolve_fy_for_txn already returns None for every
-# transaction in the book, and the strict rule changes nothing. The gate is
-# cleared by that argument, recorded in the ledger. This probe measures whether
-# any transaction has ALREADY posted into a wrong year despite having no fallback
-# to do it — which is impossible if the fallback has never fired. A zero
-# denominator here is not a gate failure; it is a redundant measurement.
+# transaction's date. That fallback cannot fire on transactions that live in
+# entities with no postable year, because it only looks at postable years.
+# In this book, all 496 confirmed+posted transactions sit in the 10 skipped
+# entities (no postable year); the 3 entities with postable years hold none.
+# So resolve_fy_for_txn already returns None for every transaction, and the
+# strict rule changes nothing about existing postings. The gate is cleared by
+# that argument, recorded in the ledger. This probe measures whether any
+# transaction has ALREADY posted into a wrong year — which cannot happen if
+# all transactions sit in entities where the fallback never looks.
 
 for entity in Entity.objects.all().order_by("entity_name"):
     postable = entity_financial_years(entity)
     if not postable:
         entities_skipped += 1
+        skipped_txns = PendingTransaction.objects.filter(
+            job__entity=entity, is_confirmed=True, posted_to_tb=True,
+        ).count()
+        txns_in_skipped_entities += skipped_txns
         continue
     entities_examined += 1
     all_years = list(FinancialYear.objects.filter(entity=entity))
@@ -56,9 +63,9 @@ for entity in Entity.objects.all().order_by("entity_name"):
         txn_date = parse_txn_date(txn.date)
         if not txn_date:
             unparseable.append((entity, txn))
-            txns_examined += 1
+            txns_unparseable += 1
             continue
-        txns_examined += 1
+        txns_classified += 1
         if any(fy.start_date <= txn_date <= fy.end_date for fy in postable):
             continue  # resolves correctly today and after the change
         covering = [fy for fy in all_years if fy.start_date <= txn_date <= fy.end_date]
@@ -73,11 +80,12 @@ print("WRONG-YEAR POSTING PROBE — read-only")
 print(RULE)
 
 print(f"\nENTITIES")
-print(f"  examined: {entities_examined}")
-print(f"  skipped (no postable financial year): {entities_skipped}")
+print(f"  examined (have postable year): {entities_examined}")
+print(f"  skipped (no postable year): {entities_skipped}, holding {txns_in_skipped_entities} confirmed+posted transactions")
 
-print(f"\nTRANSACTIONS EXAMINED")
-print(f"  confirmed+posted: {txns_examined}")
+print(f"\nTRANSACTIONS FROM EXAMINED ENTITIES")
+print(f"  classified (date parsed): {txns_classified}")
+print(f"  unparseable (date not parsed): {txns_unparseable}")
 
 print(f"\nNON_POSTABLE — date falls in a year that cannot receive postings: {len(non_postable)}")
 for entity, txn, covering, landed in non_postable[:40]:
@@ -98,11 +106,15 @@ print(f"\nUNPARSEABLE DATE (informational — behaviour unchanged by this work):
 
 print("\n" + RULE)
 total = len(non_postable) + len(no_year)
-if txns_examined > 0 and total == 0:
-    print(f"ZERO wrong-year postings out of {txns_examined} examined. Safe to proceed with the strict rule.")
-elif txns_examined == 0:
-    print(f"VACUOUS: 0 transactions examined ({entities_skipped} entities skipped for having no postable")
-    print("financial year). This probe proves NOTHING about wrong-year postings. See the ledger ruling.")
+if txns_classified > 0 and total == 0:
+    msg = f"ZERO wrong-year postings out of {txns_classified} classified"
+    if txns_unparseable > 0:
+        msg += f" ({txns_unparseable} unparseable, not classified)"
+    msg += ". Safe to proceed with the strict rule."
+    print(msg)
+elif txns_classified == 0:
+    print(f"VACUOUS: 0 transactions classified ({txns_unparseable} unparseable, {txns_in_skipped_entities} in")
+    print("skipped entities). This probe proves NOTHING about wrong-year postings. See the ledger ruling.")
 else:
     print(f"{total} wrong-year posting(s). STOP — do not change the rule.")
     print("The rebuild would zero the trial-balance lines these created.")

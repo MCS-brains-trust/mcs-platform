@@ -142,7 +142,7 @@ Elio's stated position is that the count is zero. Note the classifier on this ho
 Replace this line with the actual output's summary counts and the date, then commit. If either
 `NON_POSTABLE` or `NO_YEAR` is non-zero, **stop here and escalate** rather than continuing.
 
-> **Probe result:** ENTITIES examined: 3, skipped: 10 | TRANSACTIONS examined: 0. VACUOUS result — zero denominator. No entity currently has a postable year (all 10 non-examined entities are finalised/reopened), so resolve_fy_for_txn already returns None for every transaction in the book. The fallback cannot fire on today's data, so the strict rule changes nothing about existing postings. Gate cleared by ledger ruling, not this measurement. (2026-08-17)
+> **Probe result:** ENTITIES examined: 3 (postable), skipped: 10 (no postable, 0 txns) | TRANSACTIONS classified: 0, unparseable: 0. VACUOUS — zero transactions to classify. Verdict triggers only on ledger ruling, not measurement. (2026-08-17)
 
 - [ ] **Step 5: Commit**
 
