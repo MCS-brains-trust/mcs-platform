@@ -1,11 +1,15 @@
-# Follow-ups deferred from Task 6
+# Follow-ups deferred from Tasks 6 and 7
+
+> Filename says Task 6 for history's sake; follow-up 3 came out of Task 7 and is kept here rather
+> than in a second file.
 
 **Raised:** 2026-08-17, on completing Task 6 of `docs/superpowers/plans/2026-08-16-bas-tb-desync-fixes.md`
 (commit `5af720d`, branch `fix/bas-tb-desync-impl`).
-**Status:** neither is scoped or built. Elio's call on 2026-08-17: both need spec'ing and
-building at some point, not inside Task 6.
+**Status:** none is scoped or built. Elio's call on 2026-08-17: follow-ups 1 and 2 need spec'ing
+and building at some point, not inside Task 6. Follow-up 3 was found later the same day, from
+production data, and is a defect in Task 7's own new code.
 
-These are two independent work items. Either can be specced on its own.
+These are three independent work items. Any can be specced on its own.
 
 ---
 
@@ -131,3 +135,43 @@ Make "no new failures" mechanical:
 3. Whether the 47 + 18 are worth triaging at the same time. Some are order-dependent
    (`Missing staticfiles manifest entry for 'css/style.css'`), which means a fixture keyed on
    test names is stable but one keyed on counts is not.
+
+---
+
+## Follow-up 3 — `resolve_bas_period_for_txn` ignores `period_type`, and that is now a live case
+
+Raised 2026-08-17, from Task 7.
+
+`core/txn_periods.py:resolve_bas_period_for_txn` selects the `BASPeriod` covering a transaction's
+date **without filtering on `period_type`**, then takes `.first()`. Its docstring records this as a
+tolerable risk on the grounds that periods are created from the entity's `bas_frequency`, so a year
+would normally hold only one type, and flagging one of two overlapping rows beats flagging neither.
+
+**That assumption is false in production.** `probe_lodged_bas.py` found Veronica Cerratti's FY2026
+holding **16 `BASPeriod` rows** — quarterly *and* monthly — while her `bas_frequency` is
+`quarterly`. Overlapping rows cover the same dates, and `Meta.ordering = ["period_number"]` means
+`.first()` picks the lower `period_number`. So a July transaction can resolve to either `Q1` or
+`Jul`, decided by nothing meaningful.
+
+Consequences today:
+
+- `flag_period_amended` can set `amended_since_lodgement` on a monthly row that the BAS screen
+  never displays, because that screen renders only `getattr(entity, "bas_frequency")` periods. The
+  badge would then never appear despite the flag being set — a silent failure of the exact feature
+  Task 7 added.
+- The reverse also holds: it may flag a quarterly row when the monthly one is the lodged one.
+
+**Fix.** Filter on the entity's `bas_frequency`, matching what `bas_dashboard` and
+`bas_lodge_period` both already do (`getattr(entity, "bas_frequency", "quarterly") or "quarterly"`).
+Where a year genuinely holds both types, the entity's own frequency is the only defensible choice —
+it is the one the UI shows and the one lodgement writes to.
+
+Needs a test with both period types present for one year, which
+`core/tests_bas_amended_flag.py` does not currently construct: it calls
+`ensure_bas_periods(self.fy, "quarterly")` only. Add a monthly set alongside and assert the
+quarterly row is the one flagged.
+
+**Also worth deciding separately:** why does a quarterly-frequency entity have 12 monthly
+`BASPeriod` rows at all? `ensure_bas_periods` is called with the entity's frequency, so something
+created them under a different frequency — either the setting changed after the rows existed, or
+some other caller passes a literal. Worth finding before it produces a second class of bug.
