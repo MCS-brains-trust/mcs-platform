@@ -156,6 +156,53 @@ class DirectParseReconciliationTests(SimpleTestCase):
             verify_direct_parse(result, "anz", filename="anz.pdf")
 
 
+class MonthlyFeeBoxTests(SimpleTestCase):
+    """NAB closes each month inside the transaction table with a fee box:
+
+        30 Apr 2026 TRANSACTION SUMMARY QUANTITY U/COST FEE
+        Electronic Deposit 9 $0.00 $0.00
+        ...
+        Total Fees Charged $10.00
+
+    None of those lines is dot-filled, so none matches a transaction-row
+    regex, so every one of them falls through to the parser's "pure
+    description line" branch and accumulates. The next row that does carry an
+    amount then closes the buffer and inherits the whole box as its
+    description. Reported from the live import: 30/04/2026 and 29/05/2026 came
+    through reading "TRANSACTION SUMMARY QUANTITY U/COST FEE ... Total Fees
+    Charged $10.00" instead of the payer's name.
+
+    The amounts were never affected -- the box's figures are "$"-prefixed and
+    match neither the row regexes nor the column cross-check.
+    """
+
+    def setUp(self):
+        self.result = parse_nab_statement(make_nab.build_pdf(fee_box=True))
+        self.by_amount = {t["amount"]: t["description"] for t in self.result["transactions"]}
+
+    def test_the_transaction_after_the_fee_box_keeps_its_own_description(self):
+        self.assertEqual(self.by_amount[2675.30], "KATE BALABAN INVOICE 02069")
+
+    def test_no_description_carries_fee_box_text(self):
+        for description in self.by_amount.values():
+            self.assertNotIn("TRANSACTION SUMMARY", description)
+            self.assertNotIn("Total Fees Charged", description)
+            self.assertNotIn("Flat Monthly Fee", description)
+
+    def test_the_fee_box_does_not_invent_transactions(self):
+        """Skipping the box must drop it, not turn its figures into rows."""
+        self.assertEqual(len(self.result["transactions"]), 7)
+
+    def test_the_date_on_the_fee_box_header_still_applies(self):
+        """The month-end date is printed on the box's own header line, so a
+        skip that discarded the whole line would lose the date for every
+        transaction that follows it."""
+        self.assertEqual(
+            [t["date"] for t in self.result["transactions"] if t["amount"] == 2675.30],
+            ["2026-04-30"],
+        )
+
+
 class ParseEndpointContractTests(TestCase):
     """A guard, not a red test.
 
