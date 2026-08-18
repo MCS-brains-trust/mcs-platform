@@ -92,8 +92,24 @@ def chunk_payload(page_indexes, **overrides):
     return payload
 
 
+class _StreamContext:
+    """Stands in for the SDK's streaming context manager."""
+
+    def __init__(self, message):
+        self._message = message
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def get_final_message(self):
+        return self._message
+
+
 class VisionMock:
-    """Records every messages.create call and answers it per page range."""
+    """Records every messages.stream call and answers it per page range."""
 
     def __init__(self, responder=None):
         self.calls = []
@@ -104,11 +120,11 @@ class VisionMock:
     def __call__(self, **kwargs):
         pages = chunk_page_indexes_from_call(kwargs)
         self.calls.append({"pages": pages, "kwargs": kwargs})
-        return self.responder(pages)
+        return _StreamContext(self.responder(pages))
 
     def install(self):
-        """Patch the client factory so messages.create routes here."""
-        client = SimpleNamespace(messages=SimpleNamespace(create=self))
+        """Patch the client factory so messages.stream routes here."""
+        client = SimpleNamespace(messages=SimpleNamespace(stream=self))
         return patch(
             "review.email_ingestion._get_anthropic_client", return_value=client
         )
@@ -292,6 +308,36 @@ class ChunkedExtractionTests(TestCase):
             [t["description"] for t in result["transactions"]],
             [f"page-{i}" for i in range(8)],
         )
+
+    def test_a_dense_chunk_keeps_splitting_until_the_pages_fit(self):
+        # Production case: pages 5-8 of a scanned ANZ statement truncated, and
+        # so did the 2-page half they were split into. Splitting once and
+        # giving up failed the whole 24-page statement over two dense pages.
+        def truncate_anything_multi_page(pages):
+            if len(pages) > 1:
+                return vision_response(chunk_payload(pages), stop_reason="max_tokens")
+            return vision_response(chunk_payload(pages))
+
+        mock = VisionMock(responder=truncate_anything_multi_page)
+
+        with mock.install():
+            result = extract_transactions_from_pdf(make_pdf_b64(8), "ANZ.pdf")
+
+        self.assertEqual(
+            [t["description"] for t in result["transactions"]],
+            [f"page-{i}" for i in range(8)],
+        )
+        self.assertIn([5], mock.page_ranges)
+
+    def test_the_output_cap_leaves_room_for_a_dense_scanned_page(self):
+        # A single page of a dense scan was measured above 8,000 output
+        # tokens, so the old 16,384 cap could not hold even two pages.
+        mock = VisionMock()
+
+        with mock.install():
+            extract_transactions_from_pdf(make_pdf_b64(4), "ANZ.pdf")
+
+        self.assertGreaterEqual(mock.calls[0]["kwargs"]["max_tokens"], 64000)
 
     def test_a_chunk_still_truncated_after_the_retry_raises(self):
         mock = VisionMock(
