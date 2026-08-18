@@ -936,7 +936,12 @@ def review_import(request, fy_pk):
         })
 
     total = len(lines)
-    auto_mapped = sum(1 for l in lines if l.get("mapped_id") or l.get("entity_acct_code"))
+    # A row counts as mapped only when it has a statement line. An
+    # entity COA code alone is not enough: the wizard's commit gate
+    # (import_wizard.js checkUnmapped) keys on the statement-line
+    # select, so counting COA-only rows here reported "Needs Mapping: 0"
+    # while every row still blocked the Confirm button.
+    auto_mapped = sum(1 for l in lines if l.get("mapped_id"))
     unmapped = total - auto_mapped
 
     # Balance check — compute totals from staged data
@@ -2490,6 +2495,20 @@ def qb_global_callback(request):
             entity = Entity.objects.filter(pk=entity_pk).first()
             if entity:
                 QBTenant.objects.filter(entity=entity).exclude(realm_id=realm_id).update(entity=None)
+        if entity is None:
+            # Carry any existing link for this realm forward. The
+            # entity<->company association belongs to the QuickBooks company,
+            # not to the connection row — which is replaced whenever the app
+            # is reauthorised. Without this, reconnecting through the global
+            # flow left the link stranded on the old (now disconnected)
+            # connection while the import looked only at the active one.
+            previous = (
+                QBTenant.objects.filter(realm_id=realm_id, entity__isnull=False)
+                .order_by("-updated_at")
+                .first()
+            )
+            if previous:
+                entity = previous.entity
         # Create or update the tenant
         tenant, created = QBTenant.objects.update_or_create(
             connection=conn,

@@ -75,7 +75,15 @@ class MCSLoginView(auth_views.LoginView):
             self.request.session["2fa_user_pk"] = str(user.pk)
             # Validate `next` against the current host before storing it to
             # prevent an open redirect after the 2FA step (finding: open redirect).
-            next_url = self.request.POST.get("next", "")
+            # Read the destination from the body, falling back to the query
+            # string the way Django's own get_redirect_url() does. Without the
+            # fallback a deep link survives only if the template renders the
+            # hidden field, and any miss silently dumps the user on the
+            # dashboard — which is how a QuickBooks OAuth callback (and its
+            # one-shot authorisation code) used to get lost.
+            next_url = self.request.POST.get(
+                "next", self.request.GET.get("next", "")
+            )
             if not url_has_allowed_host_and_scheme(
                 next_url,
                 allowed_hosts={self.request.get_host()},
