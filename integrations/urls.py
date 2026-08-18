@@ -15,6 +15,11 @@ urlpatterns = [
         name="connection_manage",
     ),
     path(
+        "link-tenant/",
+        views.link_tenant,
+        name="link_tenant",
+    ),
+    path(
         "entities/<uuid:entity_pk>/connect/<str:provider_name>/",
         views.oauth_connect,
         name="oauth_connect",

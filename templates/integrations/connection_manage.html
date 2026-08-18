@@ -77,6 +77,11 @@
         </div>
         {% endif %}
 
+        <!-- Link an already-connected accounting file -->
+        <h6 class="text-muted mb-2">Linked Accounting File</h6>
+        {% include "integrations/_link_tenant_picker.html" with provider="quickbooks" provider_label="QuickBooks Online" linked=qb_linked choices=qb_choices %}
+        {% include "integrations/_link_tenant_picker.html" with provider="xero" provider_label="Xero" linked=xero_linked choices=xero_choices %}
+
         <!-- Connect New Platform -->
         <div class="card">
             <div class="card-header"><h6 class="mb-0">Connect a Platform</h6></div>
