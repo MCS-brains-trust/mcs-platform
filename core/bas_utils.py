@@ -543,6 +543,44 @@ def _confirmed_transactions(fy, entity):
     return PendingTransaction.objects.filter(job__in=jobs, is_confirmed=True)
 
 
+#: Sections whose natural movement is money OUT (a purchase or an asset
+#: acquisition). Revenue's natural movement is money in.
+_OUTGOING_SECTIONS = ("expenses", "Expenses", "cost_of_sales", "Cost of Sales",
+                      "assets", "Assets")
+
+
+def _is_contra(section, inflow):
+    """True when a movement runs against its account's natural direction.
+
+    A customer refund is money OUT of a revenue account; a supplier refund is
+    money IN to an expense account. Both are reversals, and both must be
+    SUBTRACTED from their own side of the worksheet rather than added to it or
+    to the other side.
+
+    ``inflow`` must be normalised so POSITIVE means money in, whatever the
+    caller's own convention. The two callers disagree, which is exactly why
+    this is spelled out rather than left to each of them:
+
+        transactions        txn.amount              (already: + is money in)
+        trial balance       -line.closing_balance   (closing_balance is
+                                                     debit - credit, so revenue
+                                                     sits negative when normal)
+
+    Before this existed the figure went through abs() and direction was
+    inferred from the section alone, so a refund was reported as another sale.
+    On the live June 2026 quarter that turned 1,872.96 of customer refunds into
+    a 3,745.92 overstatement of G1 and put 340.53 of GST on 1A that was not
+    owed.
+    """
+    if inflow == 0:
+        return False
+    if section in ("revenue", "Revenue"):
+        return inflow < 0
+    if section in _OUTGOING_SECTIONS:
+        return inflow > 0
+    return False
+
+
 def _txn_gross_and_gst(txn, tax_code):
     """
     Return (gross, gst) for a transaction under the resolved tax code.
@@ -651,6 +689,10 @@ def _calculate_gst(fy, entity, entity_type, coa_lookup, entity_coa_lookup,
                 continue
 
             gross, gst = _txn_gross_and_gst(txn, tax_code)
+            # A refund reduces its own side of the worksheet. _txn_gross_and_gst
+            # returns magnitudes; the sign belongs to the movement.
+            if _is_contra(section, txn.amount):
+                gross, gst = -gross, -gst
 
             # Aggregate by account *and* resolved tax treatment, so one account
             # carrying both GST-free and taxable amounts produces one line per
@@ -827,6 +869,11 @@ def _add_tb_line(line, coa_lookup, entity_coa_lookup, g_totals,
 
     if line.closing_balance != 0:
         amount = abs(line.closing_balance)
+        # closing_balance is debit - credit, so money in is its negation. A
+        # revenue account sitting in debit, or an expense account in credit, is
+        # a net refund position and must reduce its own side.
+        if _is_contra(section, -line.closing_balance):
+            amount = -amount
     else:
         amount = max(line.debit, line.credit)
     if amount == 0:
