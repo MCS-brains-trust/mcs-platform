@@ -4684,23 +4684,7 @@
     },
     {
       "account_code": "4000",
-      "account_name": "Opening balance - Partner",
-      "classification": "Opening balance",
-      "section": "Capital Accounts",
-      "tax_code": "",
-      "entity_type": "partnership"
-    },
-    {
-      "account_code": "4000.01",
-      "account_name": "Opening balance - Partner",
-      "classification": "Opening balance",
-      "section": "Capital Accounts",
-      "tax_code": "",
-      "entity_type": "partnership"
-    },
-    {
-      "account_code": "4000.02",
-      "account_name": "Opening balance - Partner",
+      "account_name": "Opening balance",
       "classification": "Opening balance",
       "section": "Capital Accounts",
       "tax_code": "",
@@ -4715,64 +4699,8 @@
       "entity_type": "partnership"
     },
     {
-      "account_code": "4003.01",
-      "account_name": "Share of profit",
-      "classification": "Capital credits",
-      "section": "Capital Accounts",
-      "tax_code": "",
-      "entity_type": "partnership"
-    },
-    {
-      "account_code": "4003.02",
-      "account_name": "Share of profit",
-      "classification": "Capital credits",
-      "section": "Capital Accounts",
-      "tax_code": "",
-      "entity_type": "partnership"
-    },
-    {
       "account_code": "4006",
-      "account_name": "Capital contribution - Angela",
-      "classification": "Capital credits",
-      "section": "Capital Accounts",
-      "tax_code": "",
-      "entity_type": "partnership"
-    },
-    {
-      "account_code": "4006.01",
-      "account_name": "Capital contribution - Angela",
-      "classification": "Capital credits",
-      "section": "Capital Accounts",
-      "tax_code": "",
-      "entity_type": "partnership"
-    },
-    {
-      "account_code": "4006.02",
-      "account_name": "Capital contribution - Angela",
-      "classification": "Capital credits",
-      "section": "Capital Accounts",
-      "tax_code": "",
-      "entity_type": "partnership"
-    },
-    {
-      "account_code": "4007",
-      "account_name": "Capital Contribution - Chris",
-      "classification": "Capital credits",
-      "section": "Capital Accounts",
-      "tax_code": "",
-      "entity_type": "partnership"
-    },
-    {
-      "account_code": "4007.01",
-      "account_name": "Capital Contribution - Chris",
-      "classification": "Capital credits",
-      "section": "Capital Accounts",
-      "tax_code": "",
-      "entity_type": "partnership"
-    },
-    {
-      "account_code": "4007.02",
-      "account_name": "Capital Contribution - Chris",
+      "account_name": "Capital contribution",
       "classification": "Capital credits",
       "section": "Capital Accounts",
       "tax_code": "",
@@ -4787,48 +4715,8 @@
       "entity_type": "partnership"
     },
     {
-      "account_code": "4009.01",
-      "account_name": "Salary undrawn",
-      "classification": "Capital credits",
-      "section": "Capital Accounts",
-      "tax_code": "",
-      "entity_type": "partnership"
-    },
-    {
-      "account_code": "4009.02",
-      "account_name": "Salary undrawn",
-      "classification": "Capital credits",
-      "section": "Capital Accounts",
-      "tax_code": "",
-      "entity_type": "partnership"
-    },
-    {
       "account_code": "4054",
       "account_name": "Drawings",
-      "classification": "Capital debits",
-      "section": "Capital Accounts",
-      "tax_code": "",
-      "entity_type": "partnership"
-    },
-    {
-      "account_code": "4054.01",
-      "account_name": "Drawings - Angela",
-      "classification": "Capital debits",
-      "section": "Capital Accounts",
-      "tax_code": "",
-      "entity_type": "partnership"
-    },
-    {
-      "account_code": "4054.02",
-      "account_name": "Drawings - Chris",
-      "classification": "Capital debits",
-      "section": "Capital Accounts",
-      "tax_code": "",
-      "entity_type": "partnership"
-    },
-    {
-      "account_code": "4054.03",
-      "account_name": "Drawings - Oskah",
       "classification": "Capital debits",
       "section": "Capital Accounts",
       "tax_code": "",

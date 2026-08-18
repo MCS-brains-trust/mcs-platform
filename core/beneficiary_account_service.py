@@ -74,6 +74,48 @@ SLOT_CODES_TO_REMOVE = [
     "4121", "4122", "4123",  # Interest on loan - Beneficiary 2/3/4
 ]
 
+
+# ---------------------------------------------------------------------------
+# Partnership equivalent — the five equity parents that carry a balance per
+# partner. Everything else in a partnership chart is shared.
+#
+# These use the same section as the seed template ("capital_accounts") but do
+# NOT pin maps_to: 4006 maps to Partners' capital accounts, 4054 to Drawings,
+# and 4000/4003/4009 to Partners' current accounts. Provisioning inherits
+# maps_to from the parent ECA, so each child lands on the right balance sheet
+# line without any of that being restated here.
+# ---------------------------------------------------------------------------
+PARTNER_PARENT_CODES = [
+    {"code": "4000", "name": "Opening balance",      "section": "capital_accounts", "group": "P", "requires_company_beneficiary": False},
+    {"code": "4003", "name": "Share of profit",      "section": "capital_accounts", "group": "P", "requires_company_beneficiary": False},
+    {"code": "4006", "name": "Capital contribution", "section": "capital_accounts", "group": "P", "requires_company_beneficiary": False},
+    {"code": "4009", "name": "Salary undrawn",       "section": "capital_accounts", "group": "P", "requires_company_beneficiary": False},
+    {"code": "4054", "name": "Drawings",             "section": "capital_accounts", "group": "P", "requires_company_beneficiary": False},
+]
+
+# The seed template shipped a three-partner firm's chart with the partners'
+# first names baked in, plus pre-made .01/.02 child rows. Both have to go
+# before provisioning, for different reasons:
+#
+#   4007 family      a duplicate "Capital contribution" parent that only
+#                    existed to hold the second partner. Under per-partner
+#                    children the second partner is 4006.02, so it is dead.
+#   the .NN rows     they occupy exactly the codes provisioning wants. Left
+#                    in place, get_or_create would find them, skip creation,
+#                    and leave an account that is named for nobody and linked
+#                    to no officer.
+#
+# _has_postings still guards every one of these: a slot carrying a balance is
+# escalated, never deleted.
+PARTNER_SLOT_CODES_TO_REMOVE = [
+    "4000.01", "4000.02",
+    "4003.01", "4003.02",
+    "4006.01", "4006.02",
+    "4007", "4007.01", "4007.02",
+    "4009.01", "4009.02",
+    "4054.01", "4054.02", "4054.03",
+]
+
 # Codes where unit-holder naming overrides the default "[parent name] — [Name]"
 # Per platform principle: unit holder loan accounts are labelled
 # "Unitholders' funds introduced — [Name]".
@@ -81,6 +123,28 @@ _UNIT_HOLDER_FUNDS_LOANED_CODES = {"4004", "4404", "4504"}
 
 # Set of parent codes (for fast membership tests)
 _PARENT_CODE_SET = {entry["code"] for entry in BENEFICIARY_PARENT_CODES}
+
+
+def _profile_for(officer):
+    """Which set of per-officer accounts this officer's entity uses, if any.
+
+    Returns a dict of {codes, slots} or None. Entity type and officer role
+    must BOTH match: a "partner" on a company gets nothing, and neither does a
+    director on a partnership. This pairing is the only thing keeping the
+    trust and partnership schemes apart, so it is checked in one place.
+    """
+    from core.models import EntityOfficer
+
+    entity_type = officer.entity.entity_type
+    if entity_type == "trust":
+        if officer.role not in EntityOfficer.DISTRIBUTION_ROLES:
+            return None
+        return {"codes": BENEFICIARY_PARENT_CODES, "slots": SLOT_CODES_TO_REMOVE}
+    if entity_type == "partnership":
+        if officer.role != EntityOfficer.OfficerRole.PARTNER:
+            return None
+        return {"codes": PARTNER_PARENT_CODES, "slots": PARTNER_SLOT_CODES_TO_REMOVE}
+    return None
 
 
 def _today():
@@ -202,9 +266,11 @@ def _cleanup_ghost_rows(entity):
     return {"deleted": deleted, "escalated": escalated}
 
 
-def _cleanup_slot_codes(entity):
-    """Delete the 9 superseded slot codes (4101..4103, 4111..4113, 4121..4123)
-    from this entity's ECAs where safe.
+def _cleanup_slot_codes(entity, slot_codes=None):
+    """Delete the superseded slot codes from this entity's ECAs where safe.
+
+    Trusts: 4101..4103, 4111..4113, 4121..4123.
+    Partnerships: the seed template's pre-named partner rows.
 
     Rules per Phase 2 review:
       - is_custom=True → keep, log warning
@@ -213,8 +279,15 @@ def _cleanup_slot_codes(entity):
     """
     from core.models import EntityChartOfAccount, ActivityLog
 
+    if slot_codes is None:
+        slot_codes = SLOT_CODES_TO_REMOVE
+    # auto_provisioned rows are ours: a partner's own account, created by this
+    # service. The partnership slot list overlaps the codes provisioning
+    # generates (both use .01/.02), so without this exclusion adding a second
+    # partner would delete the first partner's accounts on its way in. Trust
+    # slot codes never collide, so this is a no-op there.
     qs = EntityChartOfAccount.objects.filter(
-        entity=entity, account_code__in=SLOT_CODES_TO_REMOVE,
+        entity=entity, account_code__in=slot_codes, auto_provisioned=False,
     )
     deleted = 0
     escalated = []
@@ -260,7 +333,7 @@ def _cleanup_slot_codes(entity):
     return {"deleted": deleted, "escalated": escalated, "retained_custom": retained_custom}
 
 
-def _resolve_officer_suffix(entity, officer):
+def _resolve_officer_suffix(entity, officer, parent_codes=None):
     """Return a `.NN`-format suffix unique to this officer on this entity.
 
     Default = `.{display_order:02d}`. If that suffix is already used by a
@@ -269,8 +342,10 @@ def _resolve_officer_suffix(entity, officer):
     """
     from core.models import EntityChartOfAccount
 
+    if parent_codes is None:
+        parent_codes = BENEFICIARY_PARENT_CODES
     desired = f".{officer.display_order:02d}"
-    probe_parent = BENEFICIARY_PARENT_CODES[0]["code"]
+    probe_parent = parent_codes[0]["code"]
     probe_code = f"{probe_parent}{desired}"
 
     collision = EntityChartOfAccount.objects.filter(
@@ -309,15 +384,15 @@ def provision_beneficiary_accounts(officer_id):
         logger.warning("provision_beneficiary_accounts: officer %s not found", officer_id)
         return 0
 
-    if officer.role not in EntityOfficer.DISTRIBUTION_ROLES:
+    profile = _profile_for(officer)
+    if profile is None:
         return 0
+    parent_codes = profile["codes"]
 
     entity = officer.entity
-    if entity.entity_type != "trust":
-        return 0
 
     # First-officer-on-entity housekeeping
-    _cleanup_slot_codes(entity)
+    _cleanup_slot_codes(entity, profile["slots"])
     _cleanup_ghost_rows(entity)
 
     # Suffix from display_order. display_order is normally auto-assigned on
@@ -327,7 +402,7 @@ def provision_beneficiary_accounts(officer_id):
     # existing children and fall back to the next free two-digit suffix
     # (then to the officer.pk fragment as last resort) — mirrors the
     # 9000-series pattern at capital_account_service.py:79-82.
-    suffix = _resolve_officer_suffix(entity, officer)
+    suffix = _resolve_officer_suffix(entity, officer, parent_codes)
 
     today = _today()
     is_ceased = bool(officer.date_ceased and officer.date_ceased <= today)
@@ -336,7 +411,7 @@ def provision_beneficiary_accounts(officer_id):
     created = 0
     skipped = 0
     with transaction.atomic():
-        for idx, entry in enumerate(BENEFICIARY_PARENT_CODES):
+        for idx, entry in enumerate(parent_codes):
             if entry["requires_company_beneficiary"] and not is_company:
                 skipped += 1
                 continue
@@ -389,10 +464,11 @@ def sync_officer_account_names(officer_id):
     except EntityOfficer.DoesNotExist:
         return 0
 
-    if officer.role not in EntityOfficer.DISTRIBUTION_ROLES:
+    profile = _profile_for(officer)
+    if profile is None:
         return 0
 
-    parent_lookup = {entry["code"]: entry for entry in BENEFICIARY_PARENT_CODES}
+    parent_lookup = {entry["code"]: entry for entry in profile["codes"]}
 
     updated = 0
     with transaction.atomic():

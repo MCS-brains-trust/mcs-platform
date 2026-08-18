@@ -611,7 +611,9 @@ def handle_officer_saved(sender, instance, created, **kwargs):
     from core.models import EntityOfficer
 
     if created and instance.role in EntityOfficer.DISTRIBUTION_ROLES:
-        # Existing 9000-series provisioning — DO NOT TOUCH (Phase 3 will migrate)
+        # Existing 9000-series provisioning — DO NOT TOUCH (Phase 3 will migrate).
+        # Stays gated on DISTRIBUTION_ROLES: it is trust-only and partners
+        # must not reach it.
         try:
             from core.capital_account_service import provision_capital_accounts
             provision_capital_accounts(instance.pk)
@@ -619,7 +621,12 @@ def handle_officer_saved(sender, instance, created, **kwargs):
             logger.exception(
                 "Failed to provision capital accounts for officer %s", instance.pk
             )
-        # NEW: 4xxx beneficiary-account provisioning
+
+    if created:
+        # 4xxx per-officer provisioning. Deliberately NOT gated here: the
+        # service pairs entity type with role in one place (_profile_for), so
+        # trusts get beneficiaries and unit holders, partnerships get
+        # partners, and everything else gets nothing.
         try:
             from core.beneficiary_account_service import provision_beneficiary_accounts
             provision_beneficiary_accounts(instance.pk)
