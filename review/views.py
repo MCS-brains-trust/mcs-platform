@@ -1099,10 +1099,18 @@ def _try_vision_fallback(content, filename, direct_error=None, log_prefix='[uplo
         f'reason={reason} direct_error={direct_error}'
     )
     try:
-        from .email_ingestion import extract_transactions_from_pdf as claude_extract
+        from .email_ingestion import (
+            VisionExtractionError as _VisionError,
+            extract_transactions_from_pdf as claude_extract,
+        )
         from .statement_geometry import _reconcile, StatementParseError as _SGError
         pdf_b64 = base64.b64encode(content).decode('utf-8')
         vision_result = claude_extract(pdf_b64, filename)
+        # Guard the empty case explicitly: letting a falsy result reach .get()
+        # below turns a Vision failure into "'NoneType' object has no attribute
+        # 'get'", which reads to the user as a bank-detection problem.
+        if not vision_result:
+            raise _VisionError(f'no statement data was returned for {filename}')
         # Soft reconciliation: flag as unverified rather than discarding if balances
         # are missing or the totals don't foot — Vision output has API cost and latency.
         v_open = vision_result.get('opening_balance')

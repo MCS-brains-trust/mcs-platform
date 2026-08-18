@@ -7,10 +7,13 @@ Provides:
 - Dynamic chart of accounts from database
 - Claude Vision PDF extraction (fallback for scanned PDFs)
 """
+import base64
+import io
 import json
 import logging
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 
 from django.conf import settings
@@ -35,69 +38,273 @@ def _get_anthropic_client():
     return anthropic.Anthropic(api_key=api_key)
 
 
-def extract_transactions_from_pdf(pdf_b64, filename="statement.pdf"):
-    """
-    Use Anthropic Claude to extract transactions from a bank statement PDF.
-    Returns dict with: opening_balance, closing_balance, account_name,
-    bsb, account_number, period_start, period_end, transactions[]
-    """
-    client = _get_anthropic_client()
+class VisionExtractionError(Exception):
+    """Vision OCR could not produce a usable statement extraction.
 
-    system_prompt = (
-        "You are a bank statement parser for an Australian accounting firm. "
-        "Extract ALL transactions from the provided bank statement PDF. "
-        "For each transaction, extract: date (DD/MM/YYYY format), "
-        "description (the full transaction description as shown), "
-        "amount (positive for credits/deposits, negative for debits/withdrawals). "
-        "Return a JSON object with keys: opening_balance (number), "
-        "closing_balance (number), account_name (string), bsb (string), "
-        "account_number (string), period_start (string DD/MM/YYYY), "
-        "period_end (string DD/MM/YYYY), "
-        "transactions (array of {date, description, amount}). "
-        "Return ONLY valid JSON — no markdown, no code fences, just the JSON object."
+    Raised instead of returning None so the real cause reaches the caller's
+    error message rather than being swallowed.
+    """
+
+
+# A scanned page costs roughly 2,000 output tokens, so four pages sit
+# comfortably inside _VISION_MAX_TOKENS with room for a dense page.
+_VISION_MODEL = "claude-sonnet-4-6"
+_VISION_PAGES_PER_CHUNK = 4
+_VISION_MAX_WORKERS = 4
+_VISION_MAX_TOKENS = 16384
+
+_STATEMENT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "opening_balance": {"type": ["number", "null"]},
+        "closing_balance": {"type": ["number", "null"]},
+        "account_name": {"type": "string"},
+        "bsb": {"type": "string"},
+        "account_number": {"type": "string"},
+        "period_start": {"type": "string"},
+        "period_end": {"type": "string"},
+        "transactions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "date": {"type": "string"},
+                    "description": {"type": "string"},
+                    "amount": {"type": "number"},
+                },
+                "required": ["date", "description", "amount"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": [
+        "opening_balance", "closing_balance", "account_name", "bsb",
+        "account_number", "period_start", "period_end", "transactions",
+    ],
+    "additionalProperties": False,
+}
+
+_VISION_SYSTEM_PROMPT = (
+    "You are a bank statement parser for an Australian accounting firm. "
+    "You are given a slice of pages from one bank statement. "
+    "Extract EVERY transaction visible on these pages, in the order they appear. "
+    "For each transaction: date in DD/MM/YYYY, description exactly as shown, and "
+    "amount positive for credits/deposits and negative for debits/withdrawals. "
+    "Report opening_balance only if these pages actually show the statement's "
+    "opening balance, and closing_balance only if they show the closing balance; "
+    "otherwise use null. Never carry a running balance into either field. "
+    "Leave account_name, bsb, account_number, period_start and period_end as empty "
+    "strings unless these pages show them."
+)
+
+
+def _page_count(pdf_bytes):
+    from pypdf import PdfReader
+
+    return len(PdfReader(io.BytesIO(pdf_bytes)).pages)
+
+
+def _split_pdf_pages(pdf_bytes, pages_per_chunk):
+    """Split a PDF into a list of smaller PDFs of at most ``pages_per_chunk``
+    pages each, in page order. A statement shorter than one chunk comes back as
+    a single chunk, so there is no separate short-document path.
+    """
+    from pypdf import PdfReader, PdfWriter
+
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    chunks = []
+    for start in range(0, len(reader.pages), pages_per_chunk):
+        writer = PdfWriter()
+        for page in reader.pages[start:start + pages_per_chunk]:
+            writer.add_page(page)
+        buf = io.BytesIO()
+        writer.write(buf)
+        chunks.append(buf.getvalue())
+    return chunks
+
+
+def _call_vision(client, chunk_bytes, filename, label):
+    """One Vision call for one chunk. Returns ``(payload, truncated)``."""
+    response = client.messages.create(
+        model=_VISION_MODEL,
+        max_tokens=_VISION_MAX_TOKENS,
+        system=_VISION_SYSTEM_PROMPT,
+        output_config={
+            "format": {"type": "json_schema", "schema": _STATEMENT_SCHEMA}
+        },
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "document",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "application/pdf",
+                            "data": base64.b64encode(chunk_bytes).decode("utf-8"),
+                        },
+                    },
+                    {
+                        "type": "text",
+                        "text": (
+                            f"Extract every transaction on {label} of "
+                            f"{filename}."
+                        ),
+                    },
+                ],
+            },
+        ],
     )
 
-    try:
-        response = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=16384,
-            system=system_prompt,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "document",
-                            "source": {
-                                "type": "base64",
-                                "media_type": "application/pdf",
-                                "data": pdf_b64,
-                            },
-                        },
-                        {
-                            "type": "text",
-                            "text": "Extract ALL transactions from this bank statement PDF. Return valid JSON only.",
-                        },
-                    ],
-                },
-            ],
+    if getattr(response, "stop_reason", None) == "max_tokens":
+        return None, True
+
+    text = next(b.text for b in response.content if b.type == "text")
+    return json.loads(text), False
+
+
+def _extract_chunk(client, chunk_bytes, filename, first_page):
+    """Extract one chunk, halving it and retrying if the response truncates.
+
+    Returns a list of payloads in page order — more than one when a chunk had
+    to be split.
+    """
+    n_pages = _page_count(chunk_bytes)
+    last_page = first_page + n_pages - 1
+    label = (
+        f"page {first_page + 1}" if n_pages == 1
+        else f"pages {first_page + 1}-{last_page + 1}"
+    )
+
+    payload, truncated = _call_vision(client, chunk_bytes, filename, label)
+    if not truncated:
+        return [payload]
+
+    if n_pages == 1:
+        raise VisionExtractionError(
+            f"Vision output truncated on {label} of {filename}, which is a "
+            f"single page and cannot be split further."
         )
 
-        content = response.content[0].text
-        # Strip any markdown code fences if present
-        content = content.strip()
-        if content.startswith("```"):
-            content = content.split("\n", 1)[1] if "\n" in content else content[3:]
-        if content.endswith("```"):
-            content = content[:-3]
-        content = content.strip()
+    half = (n_pages + 1) // 2
+    logger.warning(
+        f"Vision output truncated on {label} of {filename} — retrying in "
+        f"halves of {half} page(s)."
+    )
+    halves = _split_pdf_pages(chunk_bytes, half)
+    payloads = []
+    offset = first_page
+    for sub_chunk in halves:
+        sub_pages = _page_count(sub_chunk)
+        sub_payload, sub_truncated = _call_vision(
+            client, sub_chunk, filename,
+            f"pages {offset + 1}-{offset + sub_pages}",
+        )
+        if sub_truncated:
+            raise VisionExtractionError(
+                f"Vision output truncated on pages {offset + 1}-"
+                f"{offset + sub_pages} of {filename} even after splitting."
+            )
+        payloads.append(sub_payload)
+        offset += sub_pages
+    return payloads
 
-        data = json.loads(content)
-        return data
 
+def _first_present(payloads, key):
+    for payload in payloads:
+        value = payload.get(key)
+        if value is not None and value != "":
+            return value
+    return None
+
+
+def _merge_chunk_results(payloads):
+    """Merge per-chunk extractions back into one statement, in page order.
+
+    Header details and the opening balance come from the earliest chunk that
+    reports them; the closing balance and period end from the latest. Balances
+    are matched on ``is not None`` so a genuine zero balance survives.
+    """
+    transactions = []
+    for payload in payloads:
+        transactions.extend(payload.get("transactions") or [])
+
+    opening = next(
+        (p["opening_balance"] for p in payloads
+         if p.get("opening_balance") is not None), None
+    )
+    closing = next(
+        (p["closing_balance"] for p in reversed(payloads)
+         if p.get("closing_balance") is not None), None
+    )
+
+    return {
+        "opening_balance": opening,
+        "closing_balance": closing,
+        "account_name": _first_present(payloads, "account_name") or "",
+        "bsb": _first_present(payloads, "bsb") or "",
+        "account_number": _first_present(payloads, "account_number") or "",
+        "period_start": _first_present(payloads, "period_start") or "",
+        "period_end": _first_present(list(reversed(payloads)), "period_end") or "",
+        "transactions": transactions,
+    }
+
+
+def extract_transactions_from_pdf(pdf_b64, filename="statement.pdf"):
+    """
+    Use Anthropic Claude Vision to extract transactions from a bank statement PDF.
+
+    The statement is split into page chunks and each chunk is extracted on its
+    own call, run concurrently, then merged back in page order — a whole
+    multi-page scan in one call overruns the output cap and truncates mid
+    transaction.
+
+    Returns dict with: opening_balance, closing_balance, account_name,
+    bsb, account_number, period_start, period_end, transactions[].
+    Raises VisionExtractionError if the statement cannot be extracted.
+    """
+    try:
+        pdf_bytes = base64.b64decode(pdf_b64)
+        chunks = _split_pdf_pages(pdf_bytes, _VISION_PAGES_PER_CHUNK)
+    except Exception as e:
+        logger.error(f"Vision OCR could not split {filename}: {e}")
+        raise VisionExtractionError(
+            f"Could not read {filename} as a PDF: {e}"
+        ) from e
+
+    if not chunks:
+        raise VisionExtractionError(f"{filename} contains no pages.")
+
+    client = _get_anthropic_client()
+    logger.info(
+        f"Vision OCR extracting {filename} as {len(chunks)} chunk(s) of up to "
+        f"{_VISION_PAGES_PER_CHUNK} page(s)."
+    )
+
+    offsets = [i * _VISION_PAGES_PER_CHUNK for i in range(len(chunks))]
+    try:
+        with ThreadPoolExecutor(max_workers=_VISION_MAX_WORKERS) as pool:
+            # map preserves submission order, so chunks merge front-to-back
+            # regardless of which call finishes first.
+            per_chunk = list(pool.map(
+                lambda pair: _extract_chunk(client, pair[0], filename, pair[1]),
+                zip(chunks, offsets),
+            ))
+    except VisionExtractionError:
+        raise
     except Exception as e:
         logger.error(f"PDF extraction failed for {filename}: {e}")
-        return None
+        raise VisionExtractionError(
+            f"Vision OCR failed on {filename}: {e}"
+        ) from e
+
+    payloads = [payload for chunk in per_chunk for payload in chunk]
+    merged = _merge_chunk_results(payloads)
+    logger.info(
+        f"Vision OCR extracted {len(merged['transactions'])} transaction(s) "
+        f"from {filename}."
+    )
+    return merged
 
 
 # ---------------------------------------------------------------------------
