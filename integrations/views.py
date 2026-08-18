@@ -24,6 +24,7 @@ from django.contrib.auth.decorators import login_required
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils import timezone
 from django.views.decorators.http import require_POST
 
@@ -65,13 +66,133 @@ def connection_manage(request, entity_pk):
         connections.filter(status="active").values_list("provider", flat=True)
     )
 
+    # The tenant tables are what imports read, so the page reports those
+    # rather than AccountingConnection (which no longer holds any rows).
+    # Only files on an active connection are offerable: a link to a
+    # disconnected one cannot import.
+    qb_choices = QBTenant.objects.filter(
+        connection__status="active"
+    ).select_related("entity").order_by("company_name")
+    xero_choices = XeroTenant.objects.filter(
+        connection__status="active"
+    ).select_related("entity").order_by("tenant_name")
+
     context = {
         "entity": entity,
         "connections": connections,
         "configured_providers": configured_providers,
         "connected_names": connected_names,
+        "qb_linked": qb_choices.filter(entity=entity).first(),
+        "xero_linked": xero_choices.filter(entity=entity).first(),
+        "qb_choices": qb_choices,
+        "xero_choices": xero_choices,
     }
     return render(request, "integrations/connection_manage.html", context)
+
+
+# Accounting files an entity can be attached to. Each platform keeps its
+# tenants in its own table, but the link itself behaves identically, so both
+# entry points (the entity page and the platform dashboards) post here.
+LINKABLE_TENANTS = {
+    "quickbooks": (QBTenant, "company_name", "QuickBooks company"),
+    "xero": (XeroTenant, "tenant_name", "Xero organisation"),
+}
+
+
+def _log_link_change(request, entity, description):
+    try:
+        from core.models import AuditLog
+        AuditLog.objects.create(
+            user=request.user,
+            action="tenant_link_changed",
+            description=description,
+            affected_object_type="Entity",
+            affected_object_id=str(entity.pk),
+            ip_address=request.META.get("REMOTE_ADDR", ""),
+        )
+    except Exception as exc:  # pragma: no cover - audit must never block the link
+        logger.warning("Failed to log tenant link change: %s", exc)
+
+
+@login_required
+@require_POST
+def link_tenant(request):
+    """Attach an already-connected accounting file to an entity (or detach it).
+
+    The OAuth callback used to be the only writer of these FKs, so a file that
+    was authorised without an entity in session could never be attached. One
+    file per entity per platform is enforced, matching the callback; anything
+    that would displace an existing link asks for confirmation first.
+    """
+    # The entity arrives in the body, not the path: from the entity page it
+    # is fixed, but from a platform dashboard the entity is exactly what the
+    # user is choosing.
+    entity = get_object_or_404(Entity, pk=request.POST.get("entity_pk") or None)
+    back = reverse("integrations:connection_manage", kwargs={"entity_pk": entity.pk})
+    next_url = request.POST.get("next", "")
+    if next_url and url_has_allowed_host_and_scheme(
+        next_url,
+        allowed_hosts={request.get_host()},
+        require_https=request.is_secure(),
+    ):
+        back = next_url
+
+    if not request.user.can_do_accounting:
+        messages.error(request, "You do not have permission to change software links.")
+        return redirect(back)
+
+    provider = request.POST.get("provider", "")
+    if provider not in LINKABLE_TENANTS:
+        messages.error(request, "Unknown accounting platform.")
+        return redirect(back)
+    model, label_field, provider_label = LINKABLE_TENANTS[provider]
+
+    tenant_pk = (request.POST.get("tenant_pk") or "").strip()
+
+    if not tenant_pk:
+        cleared = model.objects.filter(entity=entity).update(entity=None)
+        if cleared:
+            _log_link_change(
+                request, entity,
+                f"Unlinked {provider_label} from {entity.entity_name}",
+            )
+            messages.success(
+                request,
+                f"Unlinked the {provider_label} from {entity.entity_name}.",
+            )
+        return redirect(back)
+
+    tenant = get_object_or_404(model, pk=tenant_pk)
+    tenant_label = getattr(tenant, label_field)
+
+    # What this link would detach, stated before anything is written.
+    taken_from = tenant.entity if (tenant.entity_id and tenant.entity_id != entity.pk) else None
+    replaces = list(model.objects.filter(entity=entity).exclude(pk=tenant.pk))
+
+    if (taken_from or replaces) and request.POST.get("confirm") != "1":
+        return render(request, "integrations/link_tenant_confirm.html", {
+            "entity": entity,
+            "provider": provider,
+            "provider_label": provider_label,
+            "tenant": tenant,
+            "tenant_label": tenant_label,
+            "taken_from": taken_from,
+            "replaces": [getattr(t, label_field) for t in replaces],
+            "next": back,
+        })
+
+    model.objects.filter(entity=entity).exclude(pk=tenant.pk).update(entity=None)
+    tenant.entity = entity
+    tenant.save(update_fields=["entity"])
+
+    detail = f"Linked {provider_label} '{tenant_label}' to {entity.entity_name}"
+    if taken_from:
+        detail += f" (taken from {taken_from.entity_name})"
+    if replaces:
+        detail += f" (replacing {', '.join(getattr(t, label_field) for t in replaces)})"
+    _log_link_change(request, entity, detail)
+    messages.success(request, detail + ".")
+    return redirect(back)
 
 
 @login_required
@@ -1678,6 +1799,9 @@ def xero_global_dashboard(request):
         "tenants": tenants,
         "tenant_count": tenant_count,
         "xero_configured": xero_configured,
+        "assignable_entities": Entity.objects.filter(
+            is_archived=False
+        ).order_by("entity_name"),
     }
     return render(request, "integrations/xero_global_dashboard.html", context)
 
@@ -2345,6 +2469,9 @@ def qb_global_dashboard(request):
         "tenants": tenants,
         "tenant_count": tenant_count,
         "qb_configured": qb_configured,
+    "assignable_entities": Entity.objects.filter(
+            is_archived=False
+        ).order_by("entity_name"),
     }
     return render(request, "integrations/qb_global_dashboard.html", context)
 

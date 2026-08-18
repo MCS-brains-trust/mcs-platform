@@ -1,0 +1,37 @@
+{% comment %}
+Editable "Linked Entity" cell for a platform dashboard row.
+Expects: tenant, provider, assignable_entities.
+{% endcomment %}
+{% if tenant.entity %}
+<div class="d-flex align-items-center gap-2">
+    <a href="{% url 'core:entity_detail' pk=tenant.entity.pk %}">
+        <i class="bi bi-link-45deg"></i> {{ tenant.entity.entity_name }}
+    </a>
+    <form method="post" action="{% url 'integrations:link_tenant' %}">
+        {% csrf_token %}
+        <input type="hidden" name="entity_pk" value="{{ tenant.entity.pk }}">
+        <input type="hidden" name="provider" value="{{ provider }}">
+        <input type="hidden" name="tenant_pk" value="">
+        <input type="hidden" name="confirm" value="1">
+        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+        <button type="submit" class="btn btn-link btn-sm text-danger p-0"
+                title="Unlink this file from {{ tenant.entity.entity_name }}">
+            <i class="bi bi-x-circle"></i>
+        </button>
+    </form>
+</div>
+{% else %}
+<form method="post" action="{% url 'integrations:link_tenant' %}" class="d-flex gap-1">
+    {% csrf_token %}
+    <input type="hidden" name="provider" value="{{ provider }}">
+    <input type="hidden" name="tenant_pk" value="{{ tenant.pk }}">
+    <input type="hidden" name="next" value="{{ request.get_full_path }}">
+    <select name="entity_pk" class="form-select form-select-sm" style="max-width: 14rem;" required>
+        <option value="">Assign entity...</option>
+        {% for candidate in assignable_entities %}
+        <option value="{{ candidate.pk }}">{{ candidate.entity_name }}</option>
+        {% endfor %}
+    </select>
+    <button type="submit" class="btn btn-outline-primary btn-sm">Assign</button>
+</form>
+{% endif %}

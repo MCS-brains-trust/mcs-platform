@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Confirm software link - {{ entity.entity_name }} - StatementHub{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-lg-7">
+        <div class="card border-warning">
+            <div class="card-header bg-warning-subtle">
+                <h5 class="mb-0"><i class="bi bi-exclamation-triangle"></i> This will move an existing link</h5>
+            </div>
+            <div class="card-body">
+                <p>
+                    Linking the {{ provider_label }} <strong>{{ tenant_label }}</strong>
+                    to <strong>{{ entity.entity_name }}</strong> will also:
+                </p>
+                <ul>
+                    {% if taken_from %}
+                    <li>
+                        detach <strong>{{ tenant_label }}</strong> from
+                        <strong>{{ taken_from.entity_name }}</strong>, which will no longer
+                        import from it
+                    </li>
+                    {% endif %}
+                    {% for name in replaces %}
+                    <li>
+                        detach <strong>{{ name }}</strong> from
+                        <strong>{{ entity.entity_name }}</strong>
+                    </li>
+                    {% endfor %}
+                </ul>
+                <p class="text-muted small mb-0">
+                    An entity imports from one {{ provider_label }} at a time.
+                </p>
+            </div>
+            <div class="card-footer d-flex justify-content-between">
+                <a href="{{ next }}" class="btn btn-outline-secondary">
+                    <i class="bi bi-x-lg"></i> Cancel
+                </a>
+                <form method="post" action="{% url 'integrations:link_tenant' %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="entity_pk" value="{{ entity.pk }}">
+                    <input type="hidden" name="provider" value="{{ provider }}">
+                    <input type="hidden" name="tenant_pk" value="{{ tenant.pk }}">
+                    <input type="hidden" name="next" value="{{ next }}">
+                    <input type="hidden" name="confirm" value="1">
+                    <button type="submit" class="btn btn-warning">
+                        <i class="bi bi-link-45deg"></i> Move the link
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

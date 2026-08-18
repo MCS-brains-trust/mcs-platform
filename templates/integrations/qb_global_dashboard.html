@@ -149,13 +149,7 @@
                     <td class="fw-semibold">{{ tenant.company_name }}</td>
                     <td><code class="small">{{ tenant.realm_id }}</code></td>
                     <td>
-                        {% if tenant.entity %}
-                        <a href="{% url 'core:entity_detail' pk=tenant.entity.pk %}">
-                            <i class="bi bi-link-45deg"></i> {{ tenant.entity.entity_name }}
-                        </a>
-                        {% else %}
-                        <span class="text-muted">—</span>
-                        {% endif %}
+                        {% include "integrations/_assign_entity_cell.html" with provider="quickbooks" %}
                     </td>
                     <td>
                         {% if tenant.is_token_expired %}
