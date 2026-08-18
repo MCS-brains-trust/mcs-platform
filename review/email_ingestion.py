@@ -46,14 +46,19 @@ class VisionExtractionError(Exception):
     """
 
 
-# A dense scanned page has been measured above 8,000 output tokens, so the
-# cap has to leave real headroom: two such pages overran the old 16,384 and
-# failed a whole 24-page statement. Values this large need streaming, or the
-# request risks an HTTP timeout before the response completes.
+# The cap is deliberately modest. A chunk that overruns it is nearly always
+# degenerating rather than holding that much statement -- two pages of the
+# scanned ANZ exemplar ran to 64,000 tokens together while each page on its own
+# came back normally. A low cap turns that into a ~70s detection instead of a
+# ~270s one, and _extract_chunk then splits and retries. Streaming costs
+# nothing here and keeps long responses safe from HTTP timeouts.
 _VISION_MODEL = "claude-sonnet-4-6"
-_VISION_PAGES_PER_CHUNK = 4
-_VISION_MAX_WORKERS = 4
-_VISION_MAX_TOKENS = 64000
+_VISION_PAGES_PER_CHUNK = 2
+_VISION_MAX_WORKERS = 6
+_VISION_MAX_TOKENS = 16384
+
+# Balances are compared in cents; a statement rounds to the cent.
+_BALANCE_TOLERANCE = 0.005
 
 _STATEMENT_SCHEMA = {
     "type": "object",
@@ -73,8 +78,9 @@ _STATEMENT_SCHEMA = {
                     "date": {"type": "string"},
                     "description": {"type": "string"},
                     "amount": {"type": "number"},
+                    "balance": {"type": ["number", "null"]},
                 },
-                "required": ["date", "description", "amount"],
+                "required": ["date", "description", "amount", "balance"],
                 "additionalProperties": False,
             },
         },
@@ -91,7 +97,10 @@ _VISION_SYSTEM_PROMPT = (
     "You are given a slice of pages from one bank statement. "
     "Extract EVERY transaction visible on these pages, in the order they appear. "
     "For each transaction: date in DD/MM/YYYY, description exactly as shown, and "
-    "amount positive for credits/deposits and negative for debits/withdrawals. "
+    "amount positive for credits/deposits and negative for debits/withdrawals, and "
+    "balance copied from the statement's running-balance column for that row "
+    "(null only if the statement prints no balance for it). "
+    "Copy the balance exactly as printed — do not compute or infer it. "
     "Report opening_balance only if these pages actually show the statement's "
     "opening balance, and closing_balance only if they show the closing balance; "
     "otherwise use null. Never carry a running balance into either field. "
@@ -189,6 +198,19 @@ def _extract_chunk(client, chunk_bytes, filename, first_page):
 
     payload, truncated = _call_vision(client, chunk_bytes, filename, label)
     if not truncated:
+        # A chunk whose own balance column does not chain has misread its
+        # pages. One re-read is worth the call: it is the difference between
+        # importing wrong figures and importing right ones.
+        if _chain_breaks(payload.get("transactions") or []):
+            logger.warning(
+                f"Vision OCR balance chain broke on {label} of {filename} — "
+                f"re-extracting once."
+            )
+            retry, retry_truncated = _call_vision(
+                client, chunk_bytes, filename, label)
+            if not retry_truncated and not _chain_breaks(
+                    retry.get("transactions") or []):
+                return [retry]
         return [payload]
 
     if n_pages == 1:
@@ -210,6 +232,76 @@ def _extract_chunk(client, chunk_bytes, filename, first_page):
     return payloads
 
 
+def _chain_breaks(txns, opening=None):
+    """Indexes where the running balance fails to follow the previous row.
+
+    A statement's balance column is the extraction's only self-check: if a row
+    was dropped, read twice, or given the wrong sign, the next balance cannot
+    follow from the previous one. Rows the statement prints no balance for are
+    skipped rather than counted as breaks — not every statement has the column.
+    """
+    breaks = []
+    previous = opening
+    for i, t in enumerate(txns):
+        balance = t.get("balance")
+        if balance is None:
+            continue
+        amount = t.get("amount")
+        if previous is not None and amount is not None:
+            if abs((previous + amount) - balance) > _BALANCE_TOLERANCE:
+                breaks.append(i)
+        previous = balance
+    return breaks
+
+
+def _describe_chain_gaps(txns, breaks):
+    """Say where the running balance jumps, in terms a reviewer can act on.
+
+    A jump usually means the scan is missing a page rather than that the
+    extraction went wrong — no extractor can recover rows that are not in the
+    file — so naming the dates and the amount lets someone fetch the missing
+    page instead of re-uploading the same incomplete document.
+    """
+    parts = []
+    for i in breaks:
+        row = txns[i]
+        expected = None
+        if i > 0 and txns[i - 1].get("balance") is not None:
+            expected = txns[i - 1]["balance"] + (row.get("amount") or 0)
+        if expected is None:
+            parts.append(
+                f"the balance at {row.get('date')} does not follow the "
+                f"statement's opening figure"
+            )
+            continue
+        jump = row["balance"] - expected
+        parts.append(
+            f"the balance jumps by {jump:,.2f} between {txns[i - 1].get('date')} "
+            f"and {row.get('date')}"
+        )
+    return "; ".join(parts)
+
+
+def _drop_join_overlap(kept, incoming):
+    """Drop rows at the head of ``incoming`` already present at the tail of
+    ``kept``.
+
+    Adjacent chunks share a page boundary, and a row sitting across it gets
+    extracted by both. Matching on the printed balance as well as the date,
+    description and amount keeps a genuine repeat purchase (same shop, same
+    price, same day) — its balance differs.
+    """
+    def key(t):
+        return (t.get("date"), t.get("description"), t.get("amount"),
+                t.get("balance"))
+
+    max_overlap = min(len(kept), len(incoming))
+    for size in range(max_overlap, 0, -1):
+        if [key(t) for t in kept[-size:]] == [key(t) for t in incoming[:size]]:
+            return incoming[size:]
+    return incoming
+
+
 def _first_present(payloads, key):
     for payload in payloads:
         value = payload.get(key)
@@ -227,7 +319,8 @@ def _merge_chunk_results(payloads):
     """
     transactions = []
     for payload in payloads:
-        transactions.extend(payload.get("transactions") or [])
+        incoming = payload.get("transactions") or []
+        transactions.extend(_drop_join_overlap(transactions, incoming))
 
     opening = next(
         (p["opening_balance"] for p in payloads
@@ -238,7 +331,29 @@ def _merge_chunk_results(payloads):
          if p.get("closing_balance") is not None), None
     )
 
+    # Anchors read off the balance column beat anchors the model reports
+    # separately: the chain is printed on the statement, the summary figures
+    # are a second reading of it.
+    first_balance = next(
+        (t for t in transactions if t.get("balance") is not None), None)
+    if first_balance is not None and first_balance.get("amount") is not None:
+        opening = round(first_balance["balance"] - first_balance["amount"], 2)
+    last_balance = next(
+        (t for t in reversed(transactions) if t.get("balance") is not None), None)
+    if last_balance is not None:
+        closing = last_balance["balance"]
+
+    breaks = _chain_breaks(transactions, opening)
+    gap_detail = _describe_chain_gaps(transactions, breaks)
+    if breaks:
+        logger.warning(
+            f"Vision OCR balance chain breaks at {len(breaks)} row(s) after "
+            f"merging: {gap_detail}"
+        )
+
     return {
+        "chain_broken": bool(breaks),
+        "chain_gap_detail": gap_detail,
         "opening_balance": opening,
         "closing_balance": closing,
         "account_name": _first_present(payloads, "account_name") or "",
