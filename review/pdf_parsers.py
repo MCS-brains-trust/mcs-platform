@@ -982,6 +982,39 @@ NAB_DATE_RE = re.compile(
 )
 
 
+# NAB closes each month with a fee box printed INSIDE the transaction table:
+#
+#     30 Apr 2026 TRANSACTION SUMMARY QUANTITY U/COST FEE
+#     Electronic Deposit 9 $0.00 $0.00
+#     Transaction Fees $0.00
+#     Flat Monthly Fee $10.00
+#     Total Fees Charged $10.00
+#
+# None of it is dot-filled, so no row regex matches and every line would fall
+# through to the description branch and be inherited by the next transaction
+# carrying an amount. Two shapes identify it, and neither can collide with a
+# real row: across 783 transactions in the reference statements, not one
+# dot-filled row carries a "$".
+NAB_FEE_BOX_HEADER_RE = re.compile(r"^TRANSACTION\s+SUMMARY\b", re.IGNORECASE)
+NAB_FEE_BOX_AMOUNT_RE = re.compile(r"\$\s?[\d,]+\.\d{2}")
+
+
+def _is_nab_fee_box_line(text):
+    """True if this line belongs to NAB's monthly fee box rather than the table.
+
+    The date is NOT consumed here — it rides on the box's header line and
+    applies to the transactions that follow, so callers must extract it before
+    testing the remainder.
+    """
+    stripped = text.strip()
+    if NAB_FEE_BOX_HEADER_RE.match(stripped):
+        return True
+    if ".." in stripped:
+        # Dot filler means a real transaction row, whatever else it contains.
+        return False
+    return bool(NAB_FEE_BOX_AMOUNT_RE.search(stripped))
+
+
 def _nab_date_to_iso(date_str):
     """Convert 'D Mon YYYY' to 'YYYY-MM-DD'."""
     parts = date_str.strip().split()
@@ -1240,6 +1273,15 @@ def parse_nab_statement(pdf_content):
             rest = date_match.group(2)
         else:
             rest = line
+
+        # Monthly fee box — skipped after the date is taken off the header
+        # line, because that date applies to the transactions printed after
+        # the box. The box straddles a page break in one of the reference
+        # statements, so this test is deliberately stateless: a flag would
+        # have to survive the per-page reset above, and this does not.
+        if _is_nab_fee_box_line(rest):
+            _flush_current_to_pending()
+            continue
 
         # Interest line (with or without date prefix)
         int_m = NAB_INTEREST_RE.match(rest)

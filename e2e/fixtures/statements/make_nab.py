@@ -85,6 +85,28 @@ AMBIGUOUS_DAY = ("21 May 2026", [
     ("REFUND HARDWARE SUPPLIES", None, 100.00),
 ])
 
+# NAB closes each month inside the transaction table with a fee box. Verbatim
+# shape from both exemplars, figures changed. Note what it does NOT have: dot
+# filler. Every real transaction row is dot-filled to its amount, and across
+# 783 real transactions not one carries a "$" — which is what makes these
+# lines separable from descriptions at all.
+FEE_BOX = [
+    "TRANSACTION SUMMARY QUANTITY U/COST FEE",
+    "Electronic Deposit 9 $0.00 $0.00",
+    "Electronic Withdrawal 26 $0.00 $0.00",
+    "Transaction Fees $0.00",
+    "Flat Monthly Fee $10.00",
+    "Less Free Eligible Trans.(max 15) $0.00",
+    "Total Fees Charged $10.00",
+]
+
+# The transaction printed immediately after the fee box — the one that was
+# swallowing it. Real shape: a credit whose description wraps across two lines.
+# The month abbreviation is load-bearing: NAB prints "30 Apr 2026" and
+# NAB_DATE_RE only accepts the three-letter form, so "30 April 2026" would
+# silently carry the previous day's date forward.
+AFTER_FEE_BOX = ("30 Apr 2026", "KATE BALABAN INVOICE 02069", None, 2675.30)
+
 
 def _money(value):
     return f"{value:,.2f}"
@@ -96,7 +118,7 @@ def _dotted(description, width=58):
 
 
 def build_pdf(ambiguous_day=False, tamper_closing=None, omit_anchors=False,
-              trailing_prose=False):
+              trailing_prose=False, fee_box=False):
     """Build a NAB statement PDF.
 
     ambiguous_day:  add the equal-debit-and-credit day described above.
@@ -107,10 +129,16 @@ def build_pdf(ambiguous_day=False, tamper_closing=None, omit_anchors=False,
     trailing_prose: add the real statements' closing note, whose wording puts
                     the word "Debits" in running text well left of the Debits
                     column. Verbatim from page 14 of both exemplars.
+    fee_box:        close the month with NAB's fee box, then print one real
+                    transaction after it — the arrangement that was gluing the
+                    box's text onto that transaction's description.
     """
     days = list(DAYS)
     if ambiguous_day:
         days.append(AMBIGUOUS_DAY)
+    if fee_box:
+        date, description, debit, credit = AFTER_FEE_BOX
+        days.append((date, [(description, debit, credit)]))
 
     closing = OPENING
     total_debits = 0.0
@@ -184,8 +212,21 @@ def build_pdf(ambiguous_day=False, tamper_closing=None, omit_anchors=False,
 
     balance = OPENING
     for date, rows in days:
+        # NAB prints the month's fee box inside the table, immediately before
+        # the day it closes on, with the date on the box's own header line.
+        if fee_box and date == AFTER_FEE_BOX[0]:
+            for offset, box_line in enumerate(FEE_BOX):
+                # The date rides on the box's header line, which is why the
+                # date must survive the skip while the text does not.
+                if offset == 0:
+                    c.drawString(X_DATE, y, date)
+                # The whole box sits in the Particulars column; its figures
+                # never reach the Debits/Credits columns.
+                c.drawString(X_DESC, y, box_line)
+                y -= LINE_HEIGHT
+
         for index, (description, debit, credit) in enumerate(rows):
-            if index == 0:
+            if index == 0 and not (fee_box and date == AFTER_FEE_BOX[0]):
                 c.drawString(X_DATE, y, date)
             c.drawString(X_DESC, y, _dotted(description))
             if debit is not None:
