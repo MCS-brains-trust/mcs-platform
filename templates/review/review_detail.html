@@ -53,6 +53,22 @@
         white-space: nowrap;
     }
     .txn-table td { vertical-align: middle; padding: 8px 6px; }
+    /* Scanned statements produce descriptions long enough to wrap several
+       lines in a column sharing the table with nine others, which leaves every
+       row a different height and the list hard to scan. Clamp to two lines and
+       let a click open the rest. The text is all present either way — clamping
+       is CSS only, so the search filter still matches on the full string. */
+    .txn-description {
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+        cursor: pointer;
+    }
+    .txn-description.expanded {
+        -webkit-line-clamp: unset;
+        overflow: visible;
+    }
     .txn-row-pending { background: #fffde7; }
     .txn-row-confirmed { background: #f1f8e9; }
     .txn-row-learning { background: #e8f5e9; }
@@ -576,7 +592,7 @@
                         {% if txn.split_parent %}
                         <span style="color:#9c27b0;font-size:0.7rem;margin-right:4px;"><i class="bi bi-arrow-return-right"></i> Split {{ txn.split_line_number }}</span>
                         {% endif %}
-                        {{ txn.description }}
+                        <span class="txn-description">{{ txn.description }}</span>
                         {% if txn.from_learning and not txn.matched_rule %}
                         <span class="learning-badge"><i class="bi bi-lightbulb-fill"></i> Learned</span>
                         {% endif %}
@@ -1948,12 +1964,21 @@ function buildGroupView() {
         html += `<div class="group-card-body" id="body-${safeCode}"><table class="table table-sm table-hover mb-0"><thead><tr><th style="width:30px;"></th><th>Date</th><th>Description</th><th class="text-end">Amount</th></tr></thead><tbody>`;
         group.txns.forEach(t => {
             const icon = t.confirmed ? '<i class="bi bi-check-circle-fill text-success"></i>' : '<i class="bi bi-circle text-warning"></i>';
-            html += `<tr><td>${icon}</td><td style="white-space:nowrap;">${t.date}</td><td>${t.desc}</td><td class="text-end ${t.amount.includes('-') ? 'text-danger' : 'text-success'}" style="white-space:nowrap;">${t.amount}</td></tr>`;
+            html += `<tr><td>${icon}</td><td style="white-space:nowrap;">${t.date}</td><td><span class="txn-description">${t.desc}</span></td><td class="text-end ${t.amount.includes('-') ? 'text-danger' : 'text-success'}" style="white-space:nowrap;">${t.amount}</td></tr>`;
         });
         html += `</tbody></table></div></div>`;
     });
     document.getElementById('grouped-cards').innerHTML = html;
 }
+
+// Click a clamped description to see the whole thing, click again to close it.
+// Delegated from the document so it covers rows rendered by Django and rows
+// the grouped-by-account view builds later, without rebinding.
+document.addEventListener('click', function (event) {
+    const description = event.target.closest('.txn-description');
+    if (!description) return;
+    description.classList.toggle('expanded');
+});
 
 function toggleGroupBody(safeCode) {
     const body = document.getElementById('body-' + safeCode);
