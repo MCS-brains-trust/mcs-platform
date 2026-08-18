@@ -244,6 +244,49 @@ export function describeBankToBas(opts: BankToBasOptions): void {
     await page.context().close();
   });
 
+  test(`${opts.profile}: a description is clamped until it is clicked`, async ({ browser }) => {
+    // Scanned statements produce descriptions long enough to wrap several lines
+    // in a column sharing the table with nine others, leaving every row a
+    // different height. The clamp keeps the list scannable; the click is how
+    // the rest of the text is reached. Asserting on the computed line-clamp
+    // rather than on rendered height keeps this meaningful even though this
+    // fixture's descriptions are short enough to fit.
+    const page = await seniorPage(browser);
+    await page.goto(reviewJobUrl);
+
+    const description = page.locator('.txn-description').first();
+    await expect(description).toHaveCSS('-webkit-line-clamp', '2');
+
+    await description.click();
+    await expect(description).toHaveClass(/expanded/);
+    await expect(description).not.toHaveCSS('-webkit-line-clamp', '2');
+
+    await description.click();
+    await expect(description).not.toHaveClass(/expanded/);
+    await expect(description).toHaveCSS('-webkit-line-clamp', '2');
+
+    await page.context().close();
+  });
+
+  test(`${opts.profile}: searching still matches text hidden by the clamp`, async ({ browser }) => {
+    // The clamp is CSS only, so textContent still holds the whole description
+    // and the filter (review_detail.html reads row.cells[3].textContent) keeps
+    // matching words the reader cannot currently see. A clamp implemented by
+    // cutting the string instead would break this silently.
+    const page = await seniorPage(browser);
+    await page.goto(reviewJobUrl);
+
+    const full = await page.locator('.txn-description').first().textContent();
+    expect(full?.trim().length).toBeGreaterThan(0);
+
+    const rendered = await page.locator('.txn-description').first().evaluate(
+      (el) => el.textContent?.trim() ?? '',
+    );
+    expect(rendered).toBe(full?.trim());
+
+    await page.context().close();
+  });
+
   // The brief's tax types ('GST', 'FRE') are not valid <option> values --
   // review_detail.html:636-642 enumerates exactly the seven below, and
   // selectOption would throw against anything else. The real vocabulary
