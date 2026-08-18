@@ -12,10 +12,13 @@ Return shape matches extract_transactions_from_pdf_direct:
 amounts are signed: credit > 0, debit < 0.
 """
 import io
+import logging
 import re
 from collections import defaultdict
 
 import pdfplumber
+
+logger = logging.getLogger(__name__)
 
 
 class StatementParseError(Exception):
@@ -290,3 +293,174 @@ def parse_cba_geometry(pdf_content):
         'period_end': '',
         'transactions': txns,
     }
+
+
+# --------------------------------------------------------------------------
+# Direct-parse verification
+# --------------------------------------------------------------------------
+
+# A figure is read as belonging to a column when its right edge lands this
+# close to that column header's right edge. Measured from real NAB statements,
+# where figures scatter across x=394/396 under a "Debits" header ending at 396.
+COLUMN_TOLERANCE = 6.0
+
+
+def _nab_column_anchors(words):
+    """Right edges of this page's "Debits" and "Credits" column headers.
+
+    The anchor must come from the transaction table's header ROW, not from any
+    word that happens to read "Debits". Both real exemplars close with "Bank
+    Accounts Debits (BAD) Tax or State Debits Duty has been ...", running text
+    that sits well left of the table -- anchoring on the last matching word put
+    the debit column at x=208 and rejected a clean statement.
+
+    Returns (debit_x, credit_x), either of which may be None.
+    """
+    rows = defaultdict(list)
+    for word in words:
+        rows[round(word['top'] / 3)].append(word)
+
+    for row in rows.values():
+        by_text = {}
+        for word in row:
+            by_text.setdefault(word['text'].strip().rstrip(':'), word)
+        # "Particulars" is what distinguishes the table header from prose.
+        if {'Particulars', 'Debits', 'Credits'} <= set(by_text):
+            return by_text['Debits']['x1'], by_text['Credits']['x1']
+
+    return None, None
+
+
+def _nab_column_signs(pdf_content):
+    """The sign of every transaction figure, read from the page itself.
+
+    NAB prints debits and credits in separate right-aligned columns, so the
+    column a figure sits in states its sign outright. Returns a list of
+    (amount, column_name) in reading order, or None when the statement has no
+    column headers to anchor against.
+    """
+    signs = []
+    anchored = False
+    debit_x = credit_x = None
+
+    with pdfplumber.open(io.BytesIO(pdf_content)) as pdf:
+        for page in pdf.pages:
+            # extract_words is the expensive call here — on a 14-page
+            # statement it dominates the check — so each page is read once and
+            # both the header anchors and the figures come off that one pass.
+            page_words = page.extract_words()
+            page_debit_x, page_credit_x = _nab_column_anchors(page_words)
+            # Headers repeat on every transaction page; a page without them
+            # (a continuation) keeps the last page's columns.
+            if page_debit_x is not None:
+                debit_x = page_debit_x
+            if page_credit_x is not None:
+                credit_x = page_credit_x
+            if debit_x is None or credit_x is None:
+                continue
+            anchored = True
+
+            figures = [w for w in page_words if MOVE_RE.match(w['text'])]
+            figures.sort(key=lambda w: (round(w['top'], 1), w['x0']))
+            for word in figures:
+                amount = float(word['text'].replace(',', ''))
+                if abs(word['x1'] - debit_x) <= COLUMN_TOLERANCE:
+                    signs.append((-amount, 'debit'))
+                elif abs(word['x1'] - credit_x) <= COLUMN_TOLERANCE:
+                    signs.append((amount, 'credit'))
+
+    return signs if anchored else None
+
+
+def verify_nab_columns(pdf_content, transactions):
+    """Check a NAB parse against the debit/credit columns it was printed in.
+
+    parse_nab_statement reads flat text, which discards the column a figure
+    was printed in, and recovers signs by subset-sum against each day's
+    closing balance. That has a silent fallback cascade -- ambiguous tie,
+    then a relaxed 1.00 tolerance, then a greedy assignment -- and one case
+    reconciliation provably cannot catch: two equal figures on opposite sides
+    of the same day. Both assignments foot, so opening + sum == closing holds
+    either way. The columns are the only witness.
+
+    Raises StatementParseError on disagreement. Returns None when the
+    statement carries no column headers to check against -- absence of
+    evidence, not evidence of a fault.
+
+    Cost: this re-opens the PDF, which roughly doubles NAB parse time (6.1s ->
+    11.4s measured on a real 14-page, 413-transaction statement). Reading the
+    words once and sharing them with the parser would need _extract_all_text to
+    change shape, and it has eight callers across banks with no exemplars to
+    test against -- not a trade worth making inside a guardrail change.
+    """
+    expected = _nab_column_signs(pdf_content)
+    if expected is None:
+        return None
+
+    parsed = [t['amount'] for t in transactions]
+    if len(expected) != len(parsed):
+        raise StatementParseError(
+            f"Column cross-check failed: the page shows {len(expected)} "
+            f"transaction figures, the parser returned {len(parsed)}"
+        )
+
+    for index, ((want, column), got) in enumerate(zip(expected, parsed)):
+        if round(want, 2) == round(got, 2):
+            continue
+        description = transactions[index].get('description', '')
+        raise StatementParseError(
+            f"Column cross-check failed on row {index + 1} "
+            f"({description!r}): printed in the {column} column as "
+            f"{abs(want):,.2f}, parsed as {got:+,.2f}"
+        )
+
+    return None
+
+
+def verify_direct_parse(result, bank, pdf_content=None, filename=""):
+    """Check a direct parse before it is allowed to become an import.
+
+    Until this existed, ``_reconcile`` ran on exactly one path -- the Claude
+    Vision OCR fallback, which only fires after the direct parser has already
+    raised or returned nothing. A statement that parsed to plausible-but-wrong
+    figures was never balance-checked, so a mis-signed import landed clean and
+    the preview was the only thing standing in its way.
+
+    Raises StatementParseError when the statement contradicts its own printed
+    balances. Both callers of the direct parser treat that as the trigger for
+    the Vision fallback, so a rejected statement is re-read rather than lost.
+
+    A statement carrying no balance anchors is flagged ``unverified`` instead:
+    there is nothing to check it against, and refusing it would punish the
+    absence of evidence rather than a fault.
+    """
+    if not result or not result.get('transactions'):
+        return result
+
+    opening = result.get('opening_balance')
+    closing = result.get('closing_balance')
+
+    if not opening and not closing:
+        result['unverified'] = True
+        result['reconciliation_warning'] = (
+            'No opening or closing balance was found on this statement, so its '
+            'transactions could not be checked against it.'
+        )
+        logger.warning(
+            f'Direct parse unverified: file={filename} bank={bank} — '
+            f'no balance anchors to reconcile against '
+            f'({len(result["transactions"])} transactions)'
+        )
+        return result
+
+    try:
+        _reconcile(result['transactions'], float(opening), float(closing))
+        if bank == 'nab' and pdf_content is not None:
+            verify_nab_columns(pdf_content, result['transactions'])
+    except StatementParseError as err:
+        logger.warning(
+            f'Direct parse rejected: file={filename} bank={bank} — {err}'
+        )
+        raise
+
+    return result
