@@ -653,7 +653,7 @@ function quickGenerateEngagementLetter(entityPk, fyPk) {
 <ul class="nav nav-tabs" id="workspaceTabs" role="tablist">
     <li class="nav-item">
         <button class="nav-link{% if active_tab == 'tb' or active_tab == '' and active_tab != 'journals' %} active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-tb" data-tab-name="tb" type="button">
-            <i class="bi bi-table"></i> Trial Balance ({{ tb_lines.count }})
+            <i class="bi bi-table"></i> Trial Balance ({{ tb_lines|length }})
         </button>
     </li>
     <li class="nav-item">
@@ -730,7 +730,7 @@ function quickGenerateEngagementLetter(entityPk, fyPk) {
     {% endif %}
     <li class="nav-item">
         <button class="nav-link{% if active_tab == 'activity' %} active{% endif %}" data-bs-toggle="tab" data-bs-target="#tab-activity" data-tab-name="activity" type="button">
-            <i class="bi bi-clock-history"></i> Activity ({{ activity_logs.count }})
+            <i class="bi bi-clock-history"></i> Activity ({{ activity_logs|length }})
         </button>
     </li>
 </ul>
