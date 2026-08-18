@@ -27,12 +27,31 @@ QUARTERLY_BOUNDARIES = {
 MONTHLY_FY_ORDER = [7, 8, 9, 10, 11, 12, 1, 2, 3, 4, 5, 6]
 
 
+def _fy_start_year(fy):
+    """The calendar year the financial year's July falls in.
+
+    Derived from end_date, not start_date. An entity that began trading part
+    way through a year has a stub financial year — 1 Apr 2026 to 30 Jun 2026,
+    say — but it still ends 30 June and its BAS quarters are still the
+    statutory ones. Reading start_date.year as "the July this year opened in"
+    is only true for a full year: on that stub it yielded 2026, putting Q4 in
+    April–June 2027 and returning an empty BAS for every quarter of a year
+    whose ledger was fully allocated and reconciled.
+
+    A financial year is identified by the June it ENDS in, which holds for both
+    shapes.
+    """
+    if fy.end_date.month >= 7:
+        return fy.end_date.year
+    return fy.end_date.year - 1
+
+
 def get_period_dates(fy, period_type, period_number):
     """
     Return (start_date, end_date) for a given period within a financial year.
     Uses standard July–June boundaries for Sprint 3.
     """
-    fy_start_year = fy.start_date.year  # e.g. 2025 for FY2026 (Jul 2025 – Jun 2026)
+    fy_start_year = _fy_start_year(fy)  # e.g. 2025 for FY2026 (Jul 2025 – Jun 2026)
 
     if period_type == "quarterly":
         mm_start, mm_end = QUARTERLY_BOUNDARIES[period_number]
