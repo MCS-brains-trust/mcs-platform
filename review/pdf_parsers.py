@@ -1787,6 +1787,8 @@ def extract_transactions_from_pdf_direct(pdf_content, filename=""):
         ValueError if bank is not supported
         statement_geometry.StatementParseError if the geometry engine rejects the statement
     """
+    from .statement_geometry import verify_direct_parse
+
     bank = detect_bank(pdf_content)
     logger.info(f"Detected bank: {bank} for file: {filename}")
 
@@ -1795,7 +1797,9 @@ def extract_transactions_from_pdf_direct(pdf_content, filename=""):
     if bank == "cba":
         from .statement_geometry import parse_cba_geometry, StatementParseError
         try:
-            return parse_cba_geometry(pdf_content)
+            return verify_direct_parse(
+                parse_cba_geometry(pdf_content), bank, pdf_content, filename
+            )
         except StatementParseError as geom_err:
             # Geometry engine rejected the statement (column detection, year
             # extraction, or reconciliation failed). Fall back to the legacy
@@ -1807,7 +1811,11 @@ def extract_transactions_from_pdf_direct(pdf_content, filename=""):
                 f"Falling back to legacy parse_cba_statement."
             )
             try:
-                return parse_cba_statement(pdf_content)
+                # The legacy CBA parser does not reconcile on its own, so it
+                # gets the same gate as every other text-based parser.
+                return verify_direct_parse(
+                    parse_cba_statement(pdf_content), bank, pdf_content, filename
+                )
             except Exception:
                 raise geom_err
 
@@ -1826,7 +1834,7 @@ def extract_transactions_from_pdf_direct(pdf_content, filename=""):
 
     parser = parsers.get(bank)
     if parser:
-        return parser(pdf_content)
+        return verify_direct_parse(parser(pdf_content), bank, pdf_content, filename)
     else:
         raise ValueError(
             f"Unsupported bank format for '{filename}'. "

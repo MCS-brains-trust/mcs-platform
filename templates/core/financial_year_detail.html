@@ -2916,11 +2916,29 @@ function openEditAssetModal(pk, name, category, purchaseDate, totalCost, opening
 
                 if (data.status === 'success') {
                     barEl.style.width = '100%';
-                    barEl.className = 'progress-bar bg-success';
                     const txnCount = (data.transactions || []).length;
                     const excludedNote = data.excluded > 0 ? ` (${data.excluded} excluded)` : '';
-                    statusEl.textContent = `${txnCount} transactions${excludedNote} — ${data.elapsed_seconds}s`;
-                    statusEl.className = 'text-success';
+
+                    if (data.unverified) {
+                        // The statement parsed, but nothing could confirm its
+                        // figures against its own printed balances. A
+                        // statement that CONTRADICTS them never reaches here —
+                        // the parser rejects it — so this covers the case
+                        // where there was nothing to check against. Saying so
+                        // here is the only warning before the transactions are
+                        // imported; the flag was returned by the endpoint long
+                        // before this and rendered nowhere.
+                        barEl.className = 'progress-bar bg-warning';
+                        statusEl.textContent =
+                            `⚠ ${txnCount} transactions${excludedNote} — unverified: ` +
+                            (data.reconciliation_warning ||
+                             'could not be checked against the statement balances');
+                        statusEl.className = 'text-warning';
+                    } else {
+                        barEl.className = 'progress-bar bg-success';
+                        statusEl.textContent = `${txnCount} transactions${excludedNote} — ${data.elapsed_seconds}s`;
+                        statusEl.className = 'text-success';
+                    }
 
                     parsedStatements.push(data);
                 } else {
