@@ -1113,6 +1113,29 @@ def _try_vision_fallback(content, filename, direct_error=None, log_prefix='[uplo
             raise _VisionError(f'no statement data was returned for {filename}')
         # Soft reconciliation: flag as unverified rather than discarding if balances
         # are missing or the totals don't foot — Vision output has API cost and latency.
+        # A broken running-balance chain means rows are missing, duplicated or
+        # mis-signed. The totals can still foot over that — drop one row and
+        # duplicate another of the same value and the sum is unchanged — so the
+        # chain is checked independently of reconciliation.
+        if vision_result.get('chain_broken'):
+            logger.warning(
+                f'{log_prefix} Vision OCR balance chain broken for {filename} '
+                f'— importing unverified'
+            )
+            vision_result['unverified'] = True
+            detail = vision_result.get('chain_gap_detail')
+            vision_result.setdefault(
+                'reconciliation_warning',
+                (
+                    f'The running balance on this statement does not follow row '
+                    f'to row: {detail}. This usually means a page is missing '
+                    f'from the scan — check the original statement covers every '
+                    f'page before importing.'
+                ) if detail else (
+                    'The running balance on this statement does not follow row '
+                    'to row, so some transactions may be missing or duplicated.'
+                )
+            )
         v_open = vision_result.get('opening_balance')
         v_close = vision_result.get('closing_balance')
         v_txns = vision_result.get('transactions') or []

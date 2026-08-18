@@ -73,8 +73,23 @@ def vision_response(payload, stop_reason="end_turn"):
     )
 
 
-def chunk_payload(page_indexes, **overrides):
-    """A plausible per-chunk extraction result, one transaction per page."""
+def txn(desc, amount, balance=None, date="01/07/2025"):
+    return {"date": date, "description": desc, "amount": amount, "balance": balance}
+
+
+def chunk_payload(page_indexes, start_balance=None, **overrides):
+    """A plausible per-chunk extraction result, one transaction per page.
+
+    With ``start_balance`` set, each transaction carries the running balance a
+    real statement prints, so the chain can be checked.
+    """
+    transactions = []
+    running = start_balance
+    for i in page_indexes:
+        if running is not None:
+            running = round(running + 10.0, 2)
+        transactions.append(txn(f"page-{i}", 10.0, running))
+
     payload = {
         "opening_balance": None,
         "closing_balance": None,
@@ -83,10 +98,7 @@ def chunk_payload(page_indexes, **overrides):
         "account_number": "",
         "period_start": "",
         "period_end": "",
-        "transactions": [
-            {"date": "01/07/2025", "description": f"page-{i}", "amount": 10.0}
-            for i in page_indexes
-        ],
+        "transactions": transactions,
     }
     payload.update(overrides)
     return payload
@@ -239,13 +251,16 @@ class MergeChunkResultsTests(TestCase):
 
 class ChunkedExtractionTests(TestCase):
 
-    def test_a_24_page_scan_is_extracted_one_call_per_4_page_chunk(self):
+    def test_a_24_page_scan_is_extracted_one_call_per_chunk(self):
+        from .email_ingestion import _VISION_PAGES_PER_CHUNK
+
         mock = VisionMock()
 
         with mock.install():
             result = extract_transactions_from_pdf(make_pdf_b64(24), "ANZ.pdf")
 
-        self.assertEqual(len(mock.calls), 6)
+        expected_calls = -(-24 // _VISION_PAGES_PER_CHUNK)  # ceiling division
+        self.assertEqual(len(mock.calls), expected_calls)
         self.assertEqual(len(result["transactions"]), 24)
 
     def test_transactions_stay_in_page_order_when_chunks_finish_out_of_order(self):
@@ -329,15 +344,18 @@ class ChunkedExtractionTests(TestCase):
         )
         self.assertIn([5], mock.page_ranges)
 
-    def test_the_output_cap_leaves_room_for_a_dense_scanned_page(self):
-        # A single page of a dense scan was measured above 8,000 output
-        # tokens, so the old 16,384 cap could not hold even two pages.
+    def test_the_output_cap_stays_low_enough_to_catch_a_runaway_chunk_fast(self):
+        # Raising this cap to 64,000 was a mistake worth recording: two pages
+        # of the ANZ exemplar ran to the full 64,000 while each page alone came
+        # back normally, so overrunning the cap signals degenerate generation,
+        # not a chunk that genuinely holds that much. A low cap detects it in
+        # ~70s instead of ~270s and _extract_chunk splits and retries.
         mock = VisionMock()
 
         with mock.install():
             extract_transactions_from_pdf(make_pdf_b64(4), "ANZ.pdf")
 
-        self.assertGreaterEqual(mock.calls[0]["kwargs"]["max_tokens"], 64000)
+        self.assertLessEqual(mock.calls[0]["kwargs"]["max_tokens"], 24000)
 
     def test_a_chunk_still_truncated_after_the_retry_raises(self):
         mock = VisionMock(
