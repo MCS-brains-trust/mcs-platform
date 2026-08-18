@@ -46,12 +46,14 @@ class VisionExtractionError(Exception):
     """
 
 
-# A scanned page costs roughly 2,000 output tokens, so four pages sit
-# comfortably inside _VISION_MAX_TOKENS with room for a dense page.
+# A dense scanned page has been measured above 8,000 output tokens, so the
+# cap has to leave real headroom: two such pages overran the old 16,384 and
+# failed a whole 24-page statement. Values this large need streaming, or the
+# request risks an HTTP timeout before the response completes.
 _VISION_MODEL = "claude-sonnet-4-6"
 _VISION_PAGES_PER_CHUNK = 4
 _VISION_MAX_WORKERS = 4
-_VISION_MAX_TOKENS = 16384
+_VISION_MAX_TOKENS = 64000
 
 _STATEMENT_SCHEMA = {
     "type": "object",
@@ -124,8 +126,12 @@ def _split_pdf_pages(pdf_bytes, pages_per_chunk):
 
 
 def _call_vision(client, chunk_bytes, filename, label):
-    """One Vision call for one chunk. Returns ``(payload, truncated)``."""
-    response = client.messages.create(
+    """One Vision call for one chunk. Returns ``(payload, truncated)``.
+
+    Streamed because _VISION_MAX_TOKENS is large enough that a non-streaming
+    request could time out before the response finishes.
+    """
+    with client.messages.stream(
         model=_VISION_MODEL,
         max_tokens=_VISION_MAX_TOKENS,
         system=_VISION_SYSTEM_PROMPT,
@@ -154,7 +160,8 @@ def _call_vision(client, chunk_bytes, filename, label):
                 ],
             },
         ],
-    )
+    ) as stream:
+        response = stream.get_final_message()
 
     if getattr(response, "stop_reason", None) == "max_tokens":
         return None, True
@@ -164,7 +171,11 @@ def _call_vision(client, chunk_bytes, filename, label):
 
 
 def _extract_chunk(client, chunk_bytes, filename, first_page):
-    """Extract one chunk, halving it and retrying if the response truncates.
+    """Extract one chunk, halving and retrying until the pages fit.
+
+    Splitting recurses rather than stopping after one attempt: a scanned page
+    can be dense enough that even a half still overruns the output cap, and
+    giving up there fails the whole statement over a couple of pages.
 
     Returns a list of payloads in page order — more than one when a chunk had
     to be split.
@@ -191,22 +202,11 @@ def _extract_chunk(client, chunk_bytes, filename, first_page):
         f"Vision output truncated on {label} of {filename} — retrying in "
         f"halves of {half} page(s)."
     )
-    halves = _split_pdf_pages(chunk_bytes, half)
     payloads = []
     offset = first_page
-    for sub_chunk in halves:
-        sub_pages = _page_count(sub_chunk)
-        sub_payload, sub_truncated = _call_vision(
-            client, sub_chunk, filename,
-            f"pages {offset + 1}-{offset + sub_pages}",
-        )
-        if sub_truncated:
-            raise VisionExtractionError(
-                f"Vision output truncated on pages {offset + 1}-"
-                f"{offset + sub_pages} of {filename} even after splitting."
-            )
-        payloads.append(sub_payload)
-        offset += sub_pages
+    for sub_chunk in _split_pdf_pages(chunk_bytes, half):
+        payloads.extend(_extract_chunk(client, sub_chunk, filename, offset))
+        offset += _page_count(sub_chunk)
     return payloads
 
 
