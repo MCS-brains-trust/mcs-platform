@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     "csp",
     "django_celery_beat",
     "pgvector.django",
+    "mozilla_django_oidc",
     # Local apps
     "accounts.apps.AccountsConfig",
     "core.apps.CoreConfig",
@@ -103,6 +104,39 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
+
+# ---------------------------------------------------------------------------
+# Microsoft Entra SSO (Subsystem A)
+# ---------------------------------------------------------------------------
+# SH has its OWN Azure app registration, not a share of Job Tracker's: separate
+# secret, separate redirect URI, independently revocable.
+#
+# ModelBackend stays listed for the duration of the cutover. Password login is
+# removed only once all 7 staff have signed in through Entra at least once
+# (see docs/entra-cutover.md).
+AUTHENTICATION_BACKENDS = [
+    "accounts.oidc_backend.EntraLinkOnlyBackend",
+    "django.contrib.auth.backends.ModelBackend",
+]
+
+MS_TENANT_ID = env("MS_TENANT_ID", default="")
+OIDC_RP_CLIENT_ID = env("SH_ENTRA_CLIENT_ID", default="")
+OIDC_RP_CLIENT_SECRET = env("SH_ENTRA_CLIENT_SECRET", default="")
+OIDC_RP_SCOPES = "openid email profile"
+# RS256 + a live JWKS endpoint: mozilla-django-oidc verifies the id_token
+# signature. Do not weaken this.
+OIDC_RP_SIGN_ALGO = "RS256"
+_ENTRA_BASE = f"https://login.microsoftonline.com/{MS_TENANT_ID}"
+OIDC_OP_AUTHORIZATION_ENDPOINT = f"{_ENTRA_BASE}/oauth2/v2.0/authorize"
+OIDC_OP_TOKEN_ENDPOINT = f"{_ENTRA_BASE}/oauth2/v2.0/token"
+OIDC_OP_JWKS_ENDPOINT = f"{_ENTRA_BASE}/discovery/v2.0/keys"
+OIDC_OP_USER_ENDPOINT = "https://graph.microsoft.com/oidc/userinfo"
+# Link-only: an Entra identity with no matching accounts.User row is refused,
+# never provisioned. Every FK on the existing rows must survive the cutover.
+OIDC_CREATE_USER = False
+OIDC_STORE_ACCESS_TOKEN = False
+OIDC_STORE_ID_TOKEN = False
+LOGIN_REDIRECT_URL_FAILURE = "/accounts/login/?sso=failed"
 
 # Internationalization
 LANGUAGE_CODE = "en-au"
