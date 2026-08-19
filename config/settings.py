@@ -138,6 +138,21 @@ OIDC_STORE_ACCESS_TOKEN = False
 OIDC_STORE_ID_TOKEN = False
 LOGIN_REDIRECT_URL_FAILURE = "/accounts/login/?sso=failed"
 
+# ---------------------------------------------------------------------------
+# Job Tracker internal API (Subsystem B)
+# ---------------------------------------------------------------------------
+# JT is the source of truth for client identity. The secret is the same
+# service-auth secret CoWorker uses; the path is IP-allow-listed at JT's nginx
+# to this droplet's egress (134.199.150.35).
+JT_INTERNAL_BASE_URL = env(
+    "JT_INTERNAL_BASE_URL",
+    default="https://jobtracker.mcands.com.au/job-tracker/api/internal",
+)
+JT_INTERNAL_SERVICE_SECRET = env("JT_INTERNAL_SERVICE_SECRET", default="")
+# Bounded on purpose: this call sits in the entity page's render path, and a
+# statement must never wait on JT.
+JT_IDENTITY_TIMEOUT_SECONDS = env.float("JT_IDENTITY_TIMEOUT_SECONDS", default=5.0)
+
 # Internationalization
 LANGUAGE_CODE = "en-au"
 TIME_ZONE = "Australia/Melbourne"

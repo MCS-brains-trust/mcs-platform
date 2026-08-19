@@ -12,6 +12,7 @@ from django.views.decorators.http import require_POST
 from django.shortcuts import render, redirect, get_object_or_404
 from django.urls import reverse
 from django.utils import timezone
+from core.jt_identity import fetch_identity, search_clients
 
 logger = logging.getLogger("core.views")
 
@@ -1769,6 +1770,31 @@ def entity_create(request, client_pk=None):
     })
 
 
+def refresh_jt_identity(entity):
+    """Read identity from JT, cache it, and report whether the read failed.
+
+    Returns (fields, unavailable, not_found). On success the cache is refreshed
+    and the fresh fields are returned. On failure the LAST KNOWN cache is returned
+    untouched and unavailable is True, so the page renders values with a clear
+    indicator rather than blocking. `not_found` is reported separately: that
+    means the xpm_client_id on this entity is wrong, not that JT is down.
+    """
+    if not entity.xpm_client_id:
+        return {}, False, False
+
+    result = fetch_identity(entity.xpm_client_id)
+    if result.ok:
+        entity.jt_identity_cache = result.fields
+        entity.jt_identity_fetched_at = timezone.now()
+        entity.save(update_fields=["jt_identity_cache", "jt_identity_fetched_at"])
+        return result.fields, False, False
+
+    if result.state == "not_found":
+        return entity.jt_identity_cache, False, True
+
+    return entity.jt_identity_cache, True, False
+
+
 # core/views.py — immediately above entity_detail
 @login_required
 def entity_by_xpm(request, xpm_client_id):
@@ -1838,6 +1864,7 @@ def entity_detail(request, pk):
         follow_up_completed=False, follow_up_date__isnull=False
     ).order_by("follow_up_date")
     has_financial_years = financial_years.exists()
+    jt_identity, jt_identity_unavailable, jt_identity_not_found = refresh_jt_identity(entity)
 
     # ── Legal document prompt (Master Spec 4.6.3) ──────────────────────
     # Surface a one-time prompt after entity creation for companies/trusts
@@ -1873,6 +1900,9 @@ def entity_detail(request, pk):
         "officers": officers,
         "unfinalised_count": unfinalised_count,
         "has_financial_years": has_financial_years,
+        "jt_identity": jt_identity,
+        "jt_identity_unavailable": jt_identity_unavailable,
+        "jt_identity_not_found": jt_identity_not_found,
         "family_associates": family_associates,
         "business_associates": business_associates,
         "entity_relationships": entity_relationships,
@@ -7099,6 +7129,24 @@ def generate_distribution_minutes(request, pk):
 # ---------------------------------------------------------------------------
 # HTMX Partials
 # ---------------------------------------------------------------------------
+@login_required
+def htmx_jt_client_search(request):
+    """Search Job Tracker's client book, for the create-entity flow.
+
+    The XPM client uuid is the key the three systems agree on, so it is captured
+    when the entity is created rather than typed in from memory afterwards. A
+    failed search degrades to manual entry — the form is never blocked on JT.
+    """
+    query = request.GET.get("q", "").strip()
+    result = search_clients(query, limit=10)
+    return render(request, "partials/jt_client_search_results.html", {
+        "query": query,
+        "clients": result.clients,
+        "search_failed": result.failed,
+    })
+
+
+
 @login_required
 def htmx_client_search(request):
     """HTMX search endpoint for entities (replaces client search)."""
