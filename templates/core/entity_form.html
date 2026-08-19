@@ -33,6 +33,16 @@
             <div class="card-body">
                 <form method="post">
                     {% csrf_token %}
+                    <div class="mb-3">
+                      <label class="form-label" for="jtClientSearch">Job Tracker client</label>
+                      <input type="text" class="form-control" id="jtClientSearch" name="q"
+                             placeholder="Search Job Tracker by name or ABN…"
+                             hx-get="{% url 'core:htmx_jt_client_search' %}"
+                             hx-trigger="keyup changed delay:300ms"
+                             hx-target="#jtClientResults">
+                      <div id="jtClientResults" class="mt-2"></div>
+                      <div class="form-text">Linked client: <span id="jtPicked">{{ form.instance.xpm_client_id|default:"none yet" }}</span></div>
+                    </div>
                     {{ form|crispy }}
                     <div class="d-flex gap-2 mt-3">
                         <button type="submit" class="btn btn-primary">Save</button>

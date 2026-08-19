@@ -30,7 +30,7 @@ class EntityForm(forms.ModelForm):
     class Meta:
         model = Entity
         fields = (
-            "entity_name", "trading_as", "entity_type", "industry", "abn", "acn", "tfn",
+            "entity_name", "xpm_client_id", "trading_as", "entity_type", "industry", "abn", "acn", "tfn",
             "reporting_framework", "company_size",
             "provides_financial_statements", "provides_rdti",
             "show_cents", "include_comparative_figures",

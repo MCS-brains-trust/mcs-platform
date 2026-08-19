@@ -12,7 +12,7 @@ from django.views.decorators.http import require_POST
 from django.shortcuts import render, redirect, get_object_or_404
 from django.urls import reverse
 from django.utils import timezone
-from core.jt_identity import fetch_identity
+from core.jt_identity import fetch_identity, search_clients
 
 logger = logging.getLogger("core.views")
 
@@ -7085,6 +7085,24 @@ def generate_distribution_minutes(request, pk):
 # ---------------------------------------------------------------------------
 # HTMX Partials
 # ---------------------------------------------------------------------------
+@login_required
+def htmx_jt_client_search(request):
+    """Search Job Tracker's client book, for the create-entity flow.
+
+    The XPM client uuid is the key the three systems agree on, so it is captured
+    when the entity is created rather than typed in from memory afterwards. A
+    failed search degrades to manual entry — the form is never blocked on JT.
+    """
+    query = request.GET.get("q", "").strip()
+    result = search_clients(query, limit=10)
+    return render(request, "partials/jt_client_search_results.html", {
+        "query": query,
+        "clients": result.clients,
+        "search_failed": result.failed,
+    })
+
+
+
 @login_required
 def htmx_client_search(request):
     """HTMX search endpoint for entities (replaces client search)."""
