@@ -235,6 +235,41 @@
                 <div class="card h-100">
                     <div class="card-header"><h6 class="mb-0"><i class="bi bi-building"></i> Registration Details</h6></div>
                     <div class="card-body">
+                        {% if jt_identity_unavailable %}
+                        <div class="alert alert-warning py-2 px-3 small mb-3" role="alert">
+                          <i class="bi bi-exclamation-triangle"></i>
+                          StatementHub could not reach Job Tracker. Showing the last values it read
+                          {% if entity.jt_identity_fetched_at %}({{ entity.jt_identity_fetched_at|date:"j M Y, g:ia" }}){% endif %}.
+                        </div>
+                        {% elif jt_identity_not_found %}
+                        <div class="alert alert-danger py-2 px-3 small mb-3" role="alert">
+                          <i class="bi bi-exclamation-octagon"></i>
+                          XPM client <code>{{ entity.xpm_client_id }}</code> was not found in Job Tracker.
+                          The link on this entity is wrong.
+                        </div>
+                        {% elif jt_identity %}
+                        <p class="text-muted small mb-3">
+                          <i class="bi bi-link-45deg"></i> Identity from Job Tracker, read just now.
+                        </p>
+                        {% endif %}
+
+                        {% if jt_identity %}
+                        <table class="table table-sm mb-3">
+                          <tbody>
+                            <tr><td class="text-muted">Legal name</td><td>{{ jt_identity.legalName.value|default:"—" }}</td></tr>
+                            <tr><td class="text-muted">Entity type</td><td>{{ jt_identity.entityType.value|default:"—" }}</td></tr>
+                            <tr><td class="text-muted">ABN</td><td>{{ jt_identity.abn.value|default:"—" }}</td></tr>
+                            <tr><td class="text-muted">Registered address</td><td>{{ jt_identity.address.value|default:"—" }}</td></tr>
+                            <tr>
+                              <td class="text-muted">TFN</td>
+                              <td>
+                                {% if jt_identity.tfn.masked %}{{ jt_identity.tfn.masked }}
+                                {% else %}<span class="text-muted">not held</span>{% endif %}
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                        {% endif %}
                         <table class="table table-sm table-borderless mb-0">
                             <tbody>
                                 <tr>

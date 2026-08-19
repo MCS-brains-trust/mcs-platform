@@ -282,9 +282,18 @@ class Entity(models.Model):
         ),
     )
     xpm_client_id = models.CharField(
-        max_length=100, blank=True, verbose_name="XPM Client ID",
-        help_text="Xero Practice Manager reference",
+        max_length=100, blank=True, db_index=True, verbose_name="XPM Client ID",
+        help_text="Xero Practice Manager client reference. Job Tracker's Client.xpmId "
+                  "and CoWorker's entities.xpm_client_id hold the same value — this is "
+                  "the canonical key the three systems agree on. Deliberately NOT "
+                  "unique: one XPM client may own several entities here.",
     )
+    # Last successful identity read from Job Tracker, in JT's own typed-absence
+    # envelope ({"legalName": {"status": "held", "value": …}, …}). Written on every
+    # successful fetch, read when JT is unreachable and by the snapshot that lands
+    # on each GeneratedDocument. Never a substitute for a live read while working.
+    jt_identity_cache = models.JSONField(default=dict, blank=True)
+    jt_identity_fetched_at = models.DateTimeField(null=True, blank=True)
     contact_phone = EncryptedCharField(
         blank=True,
         help_text="Primary contact phone for this entity",
@@ -2171,6 +2180,20 @@ class GeneratedDocument(models.Model):
         related_name="generated_documents",
     )
     generated_at = models.DateTimeField(auto_now_add=True)
+
+    # Identity as used at generation time. Reopening a prior-year statement must
+    # show what it said when it was signed, not what Job Tracker says today —
+    # so this is written once, on insert, and never re-derived.
+    identity_snapshot = models.JSONField(default=dict, blank=True)
+
+    def save(self, *args, **kwargs):
+        # One choke point on purpose: GeneratedDocument is constructed at ten
+        # call sites across views.py, views_upgrades.py and views_tax_planning.py.
+        # No network call here — build_identity_snapshot reads the entity's cache.
+        if self._state.adding and not self.identity_snapshot:
+            from core.jt_identity import build_identity_snapshot
+            self.identity_snapshot = build_identity_snapshot(self.financial_year.entity)
+        super().save(*args, **kwargs)
 
     class Meta:
         ordering = ["-generated_at"]
