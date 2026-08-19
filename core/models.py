@@ -288,6 +288,12 @@ class Entity(models.Model):
                   "the canonical key the three systems agree on. Deliberately NOT "
                   "unique: one XPM client may own several entities here.",
     )
+    # Last successful identity read from Job Tracker, in JT's own typed-absence
+    # envelope ({"legalName": {"status": "held", "value": …}, …}). Written on every
+    # successful fetch, read when JT is unreachable and by the snapshot that lands
+    # on each GeneratedDocument. Never a substitute for a live read while working.
+    jt_identity_cache = models.JSONField(default=dict, blank=True)
+    jt_identity_fetched_at = models.DateTimeField(null=True, blank=True)
     contact_phone = EncryptedCharField(
         blank=True,
         help_text="Primary contact phone for this entity",
