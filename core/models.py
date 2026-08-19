@@ -282,8 +282,11 @@ class Entity(models.Model):
         ),
     )
     xpm_client_id = models.CharField(
-        max_length=100, blank=True, verbose_name="XPM Client ID",
-        help_text="Xero Practice Manager reference",
+        max_length=100, blank=True, db_index=True, verbose_name="XPM Client ID",
+        help_text="Xero Practice Manager client reference. Job Tracker's Client.xpmId "
+                  "and CoWorker's entities.xpm_client_id hold the same value — this is "
+                  "the canonical key the three systems agree on. Deliberately NOT "
+                  "unique: one XPM client may own several entities here.",
     )
     contact_phone = EncryptedCharField(
         blank=True,
