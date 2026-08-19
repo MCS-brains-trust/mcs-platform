@@ -33,6 +33,11 @@ from .forms import (
 
 logger = logging.getLogger(__name__)
 
+# With Entra listed alongside ModelBackend, django.contrib.auth.login() can no
+# longer infer which backend authenticated the user and raises AttributeError.
+# Every password path below names its backend explicitly.
+PASSWORD_BACKEND = "django.contrib.auth.backends.ModelBackend"
+
 
 def _log_2fa_event(user, action, request, admin_user=None):
     """Log a 2FA-related event to the audit trail."""
@@ -128,7 +133,7 @@ def totp_verify_view(request):
                     next_url = settings.LOGIN_REDIRECT_URL
                 # Cycle session key to prevent session fixation
                 request.session.cycle_key()
-                auth_login(request, user)
+                auth_login(request, user, backend=PASSWORD_BACKEND)
                 # Mark that TOTP was performed for this session. Require2FAMiddleware
                 # requires this flag for authenticated users on protected paths.
                 request.session["2fa_verified"] = True
@@ -357,7 +362,7 @@ def invitation_signup_view(request, token):
 
                 # Log the user in. TOTP was just verified during signup, so
                 # mark the session verified for Require2FAMiddleware.
-                auth_login(request, user)
+                auth_login(request, user, backend=PASSWORD_BACKEND)
                 request.session["2fa_verified"] = True
                 messages.success(
                     request,

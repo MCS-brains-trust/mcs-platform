@@ -64,6 +64,7 @@ class Require2FAMiddleware:
         "/accounts/logout/",
         "/accounts/totp-verify/",
         "/accounts/setup-2fa/",
+        "/accounts/oidc/",
         "/static/",
     ]
 
@@ -93,6 +94,11 @@ class Require2FAMiddleware:
 
     def __call__(self, request):
         if request.user.is_authenticated and not self._is_exempt(request.path):
+            # Entra-authenticated session: MFA is enforced centrally by Conditional
+            # Access, and an SSO user has no totp_secret by construction. Without
+            # this branch every SSO sign-in redirects to setup-2fa forever.
+            if request.session.get("auth_via_entra"):
+                return self.get_response(request)
             if not request.user.has_2fa:
                 # 2FA not configured yet — force setup.
                 return self._deny(request, reverse("accounts:setup_2fa"))

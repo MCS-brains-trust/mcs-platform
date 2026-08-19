@@ -37,6 +37,15 @@ class User(AbstractUser):
         help_text="Whether the user has confirmed their TOTP setup by entering a valid code.",
     )
 
+    # Entra link. Nullable so the dual-run cutover can leave rows unlinked, unique
+    # so one Entra identity can never map to two staff rows. Populated on first
+    # successful SSO sign-in by accounts.oidc_backend.EntraLinkOnlyBackend.
+    azure_object_id = models.CharField(
+        max_length=64, null=True, blank=True, unique=True, default=None,
+        verbose_name="Entra object ID",
+        help_text="Microsoft Entra immutable object id (oid claim). Set on first SSO sign-in.",
+    )
+
     class Meta:
         ordering = ["last_name", "first_name"]
 

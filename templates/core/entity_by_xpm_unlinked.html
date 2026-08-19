@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container py-5" style="max-width: 640px;">
+  <div class="card">
+    <div class="card-body text-center">
+      <h5 class="card-title">No StatementHub entity is linked to this client</h5>
+      <p class="text-muted mb-1">Job Tracker client reference</p>
+      <p><code>{{ xpm_client_id }}</code></p>
+      <p class="text-muted">
+        Link an existing entity by setting its XPM Client ID, or create the entity here.
+      </p>
+      <a href="{% url 'core:entity_create' %}" class="btn btn-primary">Create entity</a>
+      <a href="{% url 'core:entity_list' %}" class="btn btn-outline-secondary">All entities</a>
+    </div>
+  </div>
+</div>
+{% endblock %}

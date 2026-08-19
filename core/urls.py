@@ -34,6 +34,7 @@ urlpatterns = [
     # Entities (top-level — replaces old Clients)
     path("entities/", views.entity_list, name="entity_list"),
     path("entities/create/", views.entity_create, name="entity_create"),
+    path("entities/by-xpm/<str:xpm_client_id>/", views.entity_by_xpm, name="entity_by_xpm"),
     path("entities/<uuid:pk>/", views.entity_detail, name="entity_detail"),
     path("entities/<uuid:pk>/edit/", views.entity_edit, name="entity_edit"),
     path("entities/<uuid:pk>/dismiss-legal-prompt/", views.dismiss_legal_doc_prompt, name="dismiss_legal_doc_prompt"),

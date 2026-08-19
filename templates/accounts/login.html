@@ -37,6 +37,18 @@
                     {% endif %}
                 </div>
                 <div class="card-body p-4">
+                    <div class="d-grid mb-3">
+                      <a href="{% url 'oidc_authentication_init' %}" class="btn btn-primary">
+                        <i class="bi bi-microsoft"></i> Sign in with Microsoft
+                      </a>
+                    </div>
+                    {% if request.GET.sso == "failed" %}
+                    <div class="alert alert-danger" role="alert">
+                      Microsoft sign-in did not match a StatementHub account. Use your password below,
+                      or ask an administrator to check your account.
+                    </div>
+                    {% endif %}
+                    <p class="text-muted text-center small mb-3">or sign in with your password</p>
                     {% if form.errors %}
                     <div class="alert alert-danger">
                         Invalid username or password. Please try again.

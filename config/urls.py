@@ -5,6 +5,7 @@ from django.conf import settings
 from django.views.generic.base import RedirectView
 
 from config.media_serving import serve_protected_media
+from accounts.oidc_views import EntraCallbackView
 
 urlpatterns = [
     # Route the Django admin login through the custom, rate-limited and
@@ -20,6 +21,18 @@ urlpatterns = [
         name="admin_login_redirect",
     ),
     path("admin/", admin.site.urls),
+
+    # Entra SSO. Included at accounts/oidc/ so the callback lands on
+    # /accounts/oidc/callback/, matching the Azure app registration's redirect
+    # URI exactly. The custom callback view below wraps the library's to stamp
+    # the session flag Require2FAMiddleware reads (see Task 4).
+    path(
+        "accounts/oidc/callback/",
+        EntraCallbackView.as_view(),
+        name="oidc_authentication_callback",
+    ),
+    path("accounts/oidc/", include("mozilla_django_oidc.urls")),
+
     path("accounts/", include("accounts.urls")),
 
     # Office Admin dashboard (must be before core catch-all)

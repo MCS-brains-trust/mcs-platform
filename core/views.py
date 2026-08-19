@@ -1795,6 +1795,50 @@ def refresh_jt_identity(entity):
     return entity.jt_identity_cache, True, False
 
 
+# core/views.py — immediately above entity_detail
+@login_required
+def entity_by_xpm(request, xpm_client_id):
+    """Resolve an XPM client id to one of SH's entities.
+
+    The launch contract with Job Tracker: JT passes the XPM client uuid it
+    already holds (Client.xpmId) and never needs to know SH's entity UUIDs. One
+    XPM client can own several entities here — a company and its family trust —
+    so the multi-entity branch is the normal case, not an error.
+    """
+    xpm_client_id = (xpm_client_id or "").strip()
+
+    # Visibility mirrors htmx_client_search: admins and office admins see the
+    # whole book, everyone else sees what they are assigned.
+    if request.user.can_view_all_entities:
+        entities = Entity.objects.filter(is_archived=False)
+    else:
+        entities = Entity.objects.filter(
+            assigned_accountant=request.user, is_archived=False,
+        )
+
+    # A blank id must resolve to nothing. Entity.xpm_client_id is blank on
+    # virtually every production row until Subsystem B's back-fill runs, so
+    # filtering on "" would otherwise match the entire book.
+    matches = (
+        list(entities.filter(xpm_client_id=xpm_client_id).order_by("entity_name"))
+        if xpm_client_id else []
+    )
+
+    if len(matches) == 1:
+        return redirect("core:entity_detail", pk=matches[0].pk)
+
+    if not matches:
+        # Subsystem E's future home: "create the entity from JT's client record".
+        return render(request, "core/entity_by_xpm_unlinked.html", {
+            "xpm_client_id": xpm_client_id,
+        })
+
+    return render(request, "core/entity_by_xpm_chooser.html", {
+        "xpm_client_id": xpm_client_id,
+        "entities": matches,
+    })
+
+
 @login_required
 def entity_detail(request, pk):
     entity = get_entity_for_user(request, pk)
