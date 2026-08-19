@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="container py-5" style="max-width: 720px;">
+  <h5 class="mb-1">Which entity?</h5>
+  <p class="text-muted small">
+    This Job Tracker client (<code>{{ xpm_client_id }}</code>) has
+    {{ entities|length }} entities in StatementHub.
+  </p>
+  <div class="list-group">
+    {% for entity in entities %}
+    <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center"
+       href="{% url 'core:entity_detail' entity.pk %}">
+      <span>
+        {{ entity.entity_name }}
+        {% if entity.abn %}<span class="text-muted small">&middot; ABN {{ entity.abn }}</span>{% endif %}
+      </span>
+      <span class="badge bg-secondary">{{ entity.get_entity_type_display }}</span>
+    </a>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}
