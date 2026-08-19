@@ -163,3 +163,40 @@ def search_clients(query, limit=10):
         return _search_failed()
 
     return ClientSearchResult(failed=False, clients=[r for r in rows if isinstance(r, dict)])
+
+
+def build_identity_snapshot(entity):
+    """The identity values a document is being generated with, frozen.
+
+    Reads the entity's cached JT envelope — written by the last successful live
+    fetch on the entity page — and never dials JT itself: this runs inside a
+    model save, and a statement must not depend on a live call at that moment.
+
+    An entity with no JT link falls back to StatementHub's own columns, marked
+    `source: "statementhub"` so a reader can tell the two apart years later.
+    """
+    if entity.jt_identity_cache:
+        return {
+            "source": "job_tracker",
+            "xpm_client_id": entity.xpm_client_id,
+            "read_at": entity.jt_identity_fetched_at.isoformat()
+                       if entity.jt_identity_fetched_at else None,
+            "fields": entity.jt_identity_cache,
+        }
+
+    def held_or_absent(value):
+        value = (value or "").strip() if isinstance(value, str) else value
+        return {"status": "held", "value": value} if value else {"status": "not_held"}
+
+    return {
+        "source": "statementhub",
+        "xpm_client_id": entity.xpm_client_id or "",
+        "read_at": None,
+        "fields": {
+            "legalName": held_or_absent(entity.entity_name),
+            "entityType": held_or_absent(entity.get_entity_type_display()),
+            "abn": held_or_absent(entity.abn),
+            "acn": held_or_absent(entity.acn),
+            "address": held_or_absent(entity.address_line_1),
+        },
+    }

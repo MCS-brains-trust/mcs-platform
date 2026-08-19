@@ -2181,6 +2181,20 @@ class GeneratedDocument(models.Model):
     )
     generated_at = models.DateTimeField(auto_now_add=True)
 
+    # Identity as used at generation time. Reopening a prior-year statement must
+    # show what it said when it was signed, not what Job Tracker says today —
+    # so this is written once, on insert, and never re-derived.
+    identity_snapshot = models.JSONField(default=dict, blank=True)
+
+    def save(self, *args, **kwargs):
+        # One choke point on purpose: GeneratedDocument is constructed at ten
+        # call sites across views.py, views_upgrades.py and views_tax_planning.py.
+        # No network call here — build_identity_snapshot reads the entity's cache.
+        if self._state.adding and not self.identity_snapshot:
+            from core.jt_identity import build_identity_snapshot
+            self.identity_snapshot = build_identity_snapshot(self.financial_year.entity)
+        super().save(*args, **kwargs)
+
     class Meta:
         ordering = ["-generated_at"]
 
