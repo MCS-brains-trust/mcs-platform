@@ -14,6 +14,7 @@ from django.urls import reverse
 from django.utils import timezone
 from core.jt_identity import fetch_identity, search_clients
 from core.jt_prefill import prefill_from_identity
+from core.industry_activities import ACTIVITY_INDEX
 
 logger = logging.getLogger("core.views")
 
@@ -7150,6 +7151,20 @@ def htmx_jt_client_search(request):
         "clients": result.clients,
         "search_failed": result.failed,
     })
+
+
+@login_required
+def industry_activities_api(request):
+    """The ATO BIC activity index, for the industry dropdown's search.
+
+    582 official labels are what the classification calls each industry; the
+    2,740 activity descriptions are what people actually type. Served from a
+    module-level constant (no per-request file read) and cached for a day: the
+    fixture only changes when the ATO publishes a new edition.
+    """
+    response = JsonResponse(ACTIVITY_INDEX)
+    response["Cache-Control"] = "public, max-age=86400"
+    return response
 
 
 @login_required

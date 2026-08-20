@@ -68,29 +68,47 @@
 document.addEventListener('DOMContentLoaded', function() {
     // Initialise Tom Select on the industry dropdown
     const industryEl = document.getElementById('id_industry');
+    // code -> [official ATO activity descriptions]. Populated from
+    // /api/industry-activities/ after init; the dropdown works without it.
+    const activityIndex = {};
     if (industryEl) {
-        new TomSelect(industryEl, {
+        const industrySelect = new TomSelect(industryEl, {
             placeholder: 'Search by code or description…',
             allowEmptyOption: true,
             maxOptions: 600,
             searchField: ['text', 'value', 'searchTokens'],
             render: {
                 option: function(data, escape) {
-                    return `<div>${escape(data.text || '')}</div>`;
+                    // When the hit came from an activity description rather than
+                    // the official label, show which one: 'abattoir' matching
+                    // 'Meat Processing' is otherwise unexplained.
+                    // Reached through the element, not `this`: render runs
+                    // during construction too, hence the optional chaining.
+                    const query = (industryEl.tomselect?.control_input?.value || '')
+                        .trim().toLowerCase();
+                    let matched = '';
+                    if (query.length > 1 && !(data.text || '').toLowerCase().includes(query)) {
+                        const hit = (activityIndex[data.value] || [])
+                            .find((a) => a.toLowerCase().includes(query));
+                        if (hit) {
+                            matched = `<div class="text-muted small ps-3">\u21b3 ${escape(hit)}</div>`;
+                        }
+                    }
+                    return `<div><div>${escape(data.text || '')}</div>${matched}</div>`;
                 },
                 item: function(data, escape) {
                     return `<div>${escape(data.text || '')}</div>`;
                 }
             },
             onInitialize: function() {
+                // Colloquial terms the official wording does not contain. The
+                // activity index covers the ATO's own phrasing; these are the
+                // words clients use for themselves.
                 const aliasMap = {
-                    '94110': 'auto electrician mechanic auto electrical',
-                    '94121': 'windscreen repair mechanic glass',
-                    '94129': 'smash repair panel beater spray painter body repair',
-                    '94191': 'brake clutch mechanic',
-                    '94192': 'radiator cooling system mechanic',
-                    '94193': 'muffler exhaust mechanic',
-                    '94199': 'mechanic car mechanic automotive repair garage general automotive repair engine gearbox transmission truck motorcycle scooter',
+                    '94110': 'auto electrician auto electrical',
+                    '94121': 'windscreen glass',
+                    '94129': 'smash repair panel beater spray painter',
+                    '94199': 'mechanic car mechanic garage gearbox transmission',
                     '39220': 'tyre tire tyres tires wheel alignment'
                 };
                 Object.entries(aliasMap).forEach(([code, aliases]) => {
@@ -101,6 +119,37 @@ document.addEventListener('DOMContentLoaded', function() {
                 this.refreshOptions(false);
             },
         });
+
+        // The subtitle depends on the current query, and TomSelect caches each
+        // option's rendered DOM by value -- so without dropping that cache the
+        // blank version rendered at init is reused for every later search.
+        // Registered as a listener, not as an onType setting: clearing the cache
+        // from inside TomSelect's own type/search cycle leaves it nothing to
+        // render and the dropdown comes up empty.
+        industrySelect.on('type', function () {
+            industrySelect.clearCache();
+            industrySelect.refreshOptions(true);
+        });
+
+        // The official activity index: 2,740 descriptions across all 582 codes,
+        // so 'abattoir' finds Meat Processing and 'bookkeeping' finds Accounting
+        // Services. Fetched once and cached for a day. A failure here leaves the
+        // dropdown searching official labels only, exactly as it did before.
+        fetch('{% url "core:industry_activities" %}')
+            .then((response) => response.ok ? response.json() : Promise.reject(response.status))
+            .then((index) => {
+                Object.entries(index).forEach(([code, activities]) => {
+                    activityIndex[code] = activities;
+                    const option = industrySelect.options[code];
+                    if (option) {
+                        // Keep the colloquial aliases already attached above.
+                        option.searchTokens = [option.searchTokens || '']
+                            .concat(activities).join(' ');
+                    }
+                });
+                industrySelect.refreshOptions(false);
+            })
+            .catch(() => { /* labels-only search, as before */ });
     }
 
     // Show/hide ACN field based on entity type

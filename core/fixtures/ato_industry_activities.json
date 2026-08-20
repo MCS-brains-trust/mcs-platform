@@ -1,0 +1,3906 @@
+{
+ "01110": [
+  "(under cover)",
+  "Horticultural nursery (undercover)",
+  "Ornamental plant growing (under cover)",
+  "Seedling growing nec (under cover)"
+ ],
+ "01120": [
+  "Fruit tree nursery operation (outdoors)",
+  "Ornamental plant growing (outdoors)",
+  "Seedling growing nec (outdoors)",
+  "Vine stock nursery operation (outdoors)"
+ ],
+ "01130": [
+  "Turf growing"
+ ],
+ "01140": [
+  "Flower growing (under cover)",
+  "Seeds, flower, growing (under cover)"
+ ],
+ "01150": [
+  "Flower growing (outdoors)",
+  "Seeds, flower, growing (outdoors)"
+ ],
+ "01210": [
+  "Mushroom growing"
+ ],
+ "01220": [
+  "(under cover)",
+  "Herbs growing (under cover)",
+  "Tomato growing (under cover)",
+  "for fodder) (under cover)"
+ ],
+ "01230": [
+  "Herbs growing (outdoors)",
+  "Melons growing",
+  "Onions growing",
+  "Potato growing",
+  "Sugar beet growing",
+  "Tomato growing (outdoors)",
+  "Vegetable and seed growing (outdoors)",
+  "for fodder) (outdoors)"
+ ],
+ "01310": [
+  "Grapes growing",
+  "Vineyard operation"
+ ],
+ "01320": [
+  "Kiwi fruit growing"
+ ],
+ "01330": [
+  "Berry fruit growing",
+  "Strawberry growing"
+ ],
+ "01340": [
+  "Apple growing",
+  "Pears growing"
+ ],
+ "01350": [
+  "Apricot growing",
+  "Cherry growing",
+  "Peach growing",
+  "Plum or prune growing"
+ ],
+ "01360": [
+  "Citrus fruit growing"
+ ],
+ "01370": [
+  "Olive growing"
+ ],
+ "01390": [
+  "Almond growing",
+  "Avocado growing",
+  "Banana growing",
+  "Coconut growing",
+  "Fig growing",
+  "Macadamia nut growing",
+  "Mango growing",
+  "Passionfruit growing",
+  "Pawpaw growing",
+  "Pecan nut growing",
+  "Pineapple growing",
+  "Walnut growing"
+ ],
+ "01410": [
+  "Agistment service (sheep)",
+  "Sheep farming",
+  "Wool growing"
+ ],
+ "01420": [
+  "Agistment service (cattle)",
+  "Beef cattle farming",
+  "Stud beef cattle breeding or farming"
+ ],
+ "01430": [
+  "Beef cattle feedlots (specialised)"
+ ],
+ "01440": [
+  "Beef cattle and sheep farming",
+  "Sheep and beef cattle farming"
+ ],
+ "01450": [
+  "grain growing",
+  "grains growing"
+ ],
+ "01460": [
+  "Rice growing"
+ ],
+ "01490": [
+  "Cereal grain growing",
+  "Grain, cereal growing",
+  "Maize growing",
+  "Oat growing",
+  "Oilseed growing",
+  "Safflower growing",
+  "Soybean growing",
+  "Sunflower growing",
+  "Wheat growing",
+  "forage sorghum"
+ ],
+ "01510": [
+  "Sugar cane growing"
+ ],
+ "01520": [
+  "Cotton growing"
+ ],
+ "01590": [
+  "Broom millet growing",
+  "Coffee growing",
+  "Drug plants growing",
+  "Fodder growing",
+  "Ginger growing",
+  "Hay growing",
+  "Hops growing",
+  "Lucerne growing",
+  "Peanut growing",
+  "Seed growing nec",
+  "Tobacco farming or growing",
+  "Vegetable growing – for fodder"
+ ],
+ "01600": [
+  "Dairy cattle farming",
+  "Milk production – dairy cattle",
+  "Stud dairy cattle breeding or farming"
+ ],
+ "01710": [
+  "Chicken farming",
+  "Duck farming",
+  "Game bird farming",
+  "Goose farming",
+  "Poultry farming – for meat",
+  "Turkey farming",
+  "meat breeds"
+ ],
+ "01720": [
+  "Egg farm operation",
+  "Poultry farming – for eggs",
+  "egg breeds"
+ ],
+ "01800": [
+  "Deer breeding, farming"
+ ],
+ "01910": [
+  "Agistment service (horse)",
+  "Horse breeding",
+  "Stud farm operation – horses"
+ ],
+ "01920": [
+  "Pig farming"
+ ],
+ "01930": [
+  "Apiarist",
+  "Beekeeping"
+ ],
+ "01990": [
+  "Agistment service (goat)",
+  "Butterfly breeding",
+  "Cat breeding",
+  "Crocodile farming",
+  "Dog breeding",
+  "Fur skin animals farming",
+  "Goat farming",
+  "Livestock raising nec",
+  "Pet breeding",
+  "Rabbit farming",
+  "Snake farming",
+  "except poultry or game birds"
+ ],
+ "02011": [
+  "Oyster farming"
+ ],
+ "02019": [
+  "or oysters"
+ ],
+ "02020": [
+  "Salmon farming (caged)",
+  "Trout farming (caged)"
+ ],
+ "02031": [
+  "Lobster farming",
+  "Saltwater crayfish farming or breeding"
+ ],
+ "02039": [
+  "(except fishing)",
+  "Fish breeding or farming",
+  "Fish hatchery operation",
+  "Salmon farming (pond or tank)",
+  "Trout farming (pond or tank)",
+  "except lobsters",
+  "or breeding"
+ ],
+ "03010": [
+  "Forestry",
+  "Mushroom (non-cultivated) gathering"
+ ],
+ "03020": [
+  "Firewood cutting – forest",
+  "Logging",
+  "Pulpwood cutting – forest",
+  "Timber hewing – forest",
+  "Tree cutting or felling – forest"
+ ],
+ "04111": [
+  "Crayfishing, lobster fishing",
+  "Lobster fishing",
+  "Rock lobster fishing"
+ ],
+ "04112": [
+  "Crab potting"
+ ],
+ "04120": [
+  "Prawn fishing"
+ ],
+ "04130": [
+  "Fishing – line fishing",
+  "Line fishing",
+  "Squid jigging"
+ ],
+ "04140": [
+  "Fishing tracing – fin fish",
+  "Trawling for fin fish"
+ ],
+ "04191": [
+  "Abalone fishing",
+  "Pearl diving"
+ ],
+ "04192": [
+  "Fishing – marine nec",
+  "Marron fishing",
+  "Seaweed – algae harvesting"
+ ],
+ "04199": [
+  "Fishing – freshwater",
+  "Yabby fishing (except farming)"
+ ],
+ "04200": [
+  "Bird trapping",
+  "Buffalo hunting",
+  "Crocodile hunting",
+  "Dingo hunting or trapping",
+  "Fur skin animal hunting or trapping",
+  "Hunting or trapping",
+  "Kangaroo hunting",
+  "Possum hunting and trapping",
+  "Rabbit hunting or trapping",
+  "Snake catching"
+ ],
+ "05100": [
+  "Forest conservation services",
+  "Forest nursery operation or service",
+  "Forest planting",
+  "Reforestation services",
+  "Timber plantation maintenance",
+  "Tree pruning – forest",
+  "Tree thinning – forest",
+  "except aerial or wild animal control"
+ ],
+ "05210": [
+  "Cotton ginning"
+ ],
+ "05220": [
+  "Goat shearing",
+  "Shearing services"
+ ],
+ "05290": [
+  "Aerial crop dusting or spraying",
+  "Aerial fertiliser spreading",
+  "Aerial mustering",
+  "Aerial pest control",
+  "Agricultural services nec",
+  "Artificial insemination service",
+  "Branding services – animal",
+  "Cane cutting service",
+  "Crop dusting service – aerial",
+  "Crop harvesting service",
+  "Dairy herd testing",
+  "Dog training for farm work",
+  "Farm irrigation service",
+  "Farrier service",
+  "Fertiliser spreading – aerial",
+  "Fertiliser spreading – except aerial",
+  "Fruit picking",
+  "Hay cutting, baling or pressing",
+  "Horticultural services nec",
+  "Labouring – farming",
+  "Livestock dipping, drafting or droving",
+  "Mustering – aerial",
+  "Pest control service – aerial",
+  "Seed cleaning or grading",
+  "Wool reclassing or bulk classing",
+  "except aerial or wild animal control",
+  "or bulk classing"
+ ],
+ "06000": [
+  "Coal mining – black coal",
+  "Coal mining – brown coal",
+  "Collieries – black coal",
+  "Collieries – brown coal"
+ ],
+ "07000": [
+  "Coal seam gas extraction",
+  "Gas – natural – extraction",
+  "Liquefied natural gas production",
+  "Oil or gas extraction nec",
+  "Oil or gas mining nec",
+  "Oil shale mining"
+ ],
+ "08010": [
+  "Iron ore mining"
+ ],
+ "08020": [
+  "Aluminium ores mining",
+  "Bauxite mining"
+ ],
+ "08030": [
+  "Copper ore mining"
+ ],
+ "08040": [
+  "Gold mining or dredging"
+ ],
+ "08050": [
+  "Sand mining – mineral"
+ ],
+ "08060": [
+  "Nickel ore mining"
+ ],
+ "08070": [
+  "Lead ore mining",
+  "Silver ore mining",
+  "Silver–lead–zinc ore mining",
+  "Zinc ore mining"
+ ],
+ "08090": [
+  "Iron pyrite mining",
+  "Metallic ores mining nec",
+  "Tin ore mining",
+  "Uranium ore mining"
+ ],
+ "09110": [
+  "Gravel quarrying, washing or screening",
+  "Pebbles quarrying",
+  "Rocks gathering – ornamental",
+  "Sand quarrying, washing or screening"
+ ],
+ "09190": [
+  "Aggregate quarrying",
+  "Clay quarrying",
+  "Granite quarrying",
+  "Limestone quarrying",
+  "Marble quarrying",
+  "Sandstone quarrying",
+  "Slate quarrying",
+  "Stone quarrying",
+  "or screening"
+ ],
+ "09901": [
+  "Diamond mining"
+ ],
+ "09902": [
+  "Opal mining"
+ ],
+ "09903": [
+  "Jade mining",
+  "Kyanite mining",
+  "except opals and diamonds"
+ ],
+ "09909": [
+  "Mining nec",
+  "Quartz quarrying nec",
+  "Salt harvesting"
+ ],
+ "10111": [
+  "Gas – natural – exploration own account",
+  "Petroleum exploration – own account"
+ ],
+ "10112": [
+  "Gas – natural – exploration on contract",
+  "Petroleum exploration on contract"
+ ],
+ "10121": [
+  "Mineral exploration – own account"
+ ],
+ "10122": [
+  "Mineral exploration services"
+ ],
+ "10900": [
+  "Labouring – mining services",
+  "Mining services nec",
+  "Oil and gas field services nec"
+ ],
+ "11110": [
+  "Abattoir operation – except poultry",
+  "Meat packing – except poultry",
+  "or uncanned poultry"
+ ],
+ "11120": [
+  "Abattoir operation – poultry",
+  "Poultry meat mfg",
+  "Poultry packing"
+ ],
+ "11130": [
+  "Ham mfg",
+  "Hamburgers mfg – precooked",
+  "Meat, cooked mfg – except poultry",
+  "Pate mfg – except fish",
+  "Sausages mfg – except canned",
+  "Smallgoods mfg"
+ ],
+ "11200": [
+  "Crustacean – processed mfg",
+  "Fish cleaning or filleting",
+  "Fish mfg – canned",
+  "Fish mfg – dried or smoked",
+  "Oysters mfg – canned",
+  "Seafood processing",
+  "Seafoods mfg – canned",
+  "Seafoods mfg – preserved"
+ ],
+ "11310": [
+  "Milk processing – cream",
+  "depot operation"
+ ],
+ "11320": [
+  "Ice cream mfg"
+ ],
+ "11330": [
+  "Baby foods mfg – milk based",
+  "Butter mfg",
+  "Cheese mfg",
+  "Dairy products mfg nec",
+  "Milk mfg – condensed or evaporated",
+  "Milk powder mfg",
+  "Milk products mfg nec",
+  "Yoghurt mfg"
+ ],
+ "11400": [
+  "Chutneys or relishes mfg",
+  "Fruit canning or bottling",
+  "Fruit drying – except sun drying",
+  "Fruit mfg – frozen",
+  "Fruit pulp mfg – puree or spreads",
+  "Rice preparations mfg – canned",
+  "Sauces mfg",
+  "Soup mfg",
+  "Spaghetti mfg – canned",
+  "Vegetable juices or soups mfg",
+  "Vegetables mfg – preserved",
+  "except milk based",
+  "jellies or fruit spreads",
+  "or concentrated"
+ ],
+ "11500": [
+  "Cooking oil filtration and recycling",
+  "Margarine mfg",
+  "Vegetable oil, meal or cake mfg"
+ ],
+ "11610": [
+  "Flour mfg – wheat – self-raising flour",
+  "Malt extract mfg",
+  "Malt mfg – except malt extract",
+  "Rice mfg",
+  "Self-raising flour mfg",
+  "except self-raising flour"
+ ],
+ "11620": [
+  "Cereal foods mfg",
+  "Oatmeal mfg",
+  "Pasta mfg"
+ ],
+ "11710": [
+  "except those selling direct to public",
+  "except those selling directly to public"
+ ],
+ "11720": [
+  "Doughnuts mfg",
+  "Pastry dough mfg – frozen",
+  "Pastry mfg – except frozen pastry dough",
+  "Pies, pastries, sausage rolls mfg",
+  "Plum pudding mfg",
+  "except those selling direct to public"
+ ],
+ "11730": [
+  "Biscuit mfg",
+  "Ice cream cones or wafers mfg"
+ ],
+ "11740": [
+  "non-factory-based"
+ ],
+ "11810": [
+  "Sugar mfg"
+ ],
+ "11820": [
+  "Chocolate mfg",
+  "Confectionery mfg",
+  "Nuts mfg – candied"
+ ],
+ "11910": [
+  "Potato crisp mfg",
+  "Pre-prepared meals mfg nec"
+ ],
+ "11920": [
+  "Animal food mfg",
+  "Bird feed mfg",
+  "Fodder mfg – prepared",
+  "Pet food mfg – canned",
+  "Poultry feed mfg – prepared"
+ ],
+ "11990": [
+  "Coffee mfg",
+  "Flavourings mfg – food",
+  "Food dressings mfg",
+  "Food mfg nec",
+  "Herb mfg – processed",
+  "Honey mfg – blended",
+  "Raw peanut shelling",
+  "Rice preparations mfg nec",
+  "Salt mfg – cooking or table",
+  "Seasonings mfg – food",
+  "Spices mfg",
+  "Sushi and sashimi mfg",
+  "Tea mfg"
+ ],
+ "12110": [
+  "Cordial mfg",
+  "Ice mfg – except dry ice",
+  "Mineral water mfg",
+  "Soft drinks mfg",
+  "less than single strength",
+  "or vanilla"
+ ],
+ "12120": [
+  "Beer mfg",
+  "Breweries"
+ ],
+ "12130": [
+  "Liqueurs mfg",
+  "Spirits, potable mfg nec",
+  "Spirits-based mixed drinks mfg"
+ ],
+ "12140": [
+  "Sparkling wines mfg",
+  "Wine mfg"
+ ],
+ "12200": [
+  "Cigarettes mfg",
+  "Tobacco mfg"
+ ],
+ "13110": [
+  "Wool mfg – carded or combed"
+ ],
+ "13120": [
+  "Fabrics mfg – cotton",
+  "Fabrics mfg – wool",
+  "Yarns mfg – cotton, flax or silk",
+  "Yarns mfg – woollen"
+ ],
+ "13130": [
+  "Fabrics mfg – synthetic",
+  "Fibreglass fabrics mfg",
+  "Yarns mfg – elastic or elastomeric"
+ ],
+ "13200": [
+  "Bags mfg – leather or leather substitute",
+  "Handbags mfg",
+  "Harness mfg",
+  "Leather mfg",
+  "Saddles mfg",
+  "Suitcases mfg",
+  "goods mfg nec"
+ ],
+ "13310": [
+  "Carpet, rug mfg",
+  "Floor coverings mfg – textile"
+ ],
+ "13320": [
+  "Fish net mfg",
+  "Nets and netting mfg",
+  "Rope mfg",
+  "String mfg"
+ ],
+ "13330": [
+  "Awnings mfg – textile",
+  "Bags or sacks mfg – textile",
+  "Blanket mfg – cotton",
+  "Blanket mfg – synthetic",
+  "Blanket mfg – wool",
+  "Blinds mfg – textile",
+  "Canvas goods mfg",
+  "Curtain making",
+  "Cushions mfg",
+  "Flags or banners mfg",
+  "Motor vehicle covers mfg – textile",
+  "Parachutes mfg",
+  "Pillow or cushion mfg",
+  "Rugs mfg – animal",
+  "Sails mfg",
+  "Seat covers mfg – textile",
+  "Sleeping bags mfg",
+  "Soft furnishings mfg",
+  "Tents mfg"
+ ],
+ "13340": [
+  "Badge mfg – cloth",
+  "Dyeing service",
+  "Fabrics mfg nec",
+  "Fabrics mfg – embroidered",
+  "Textile printing",
+  "Textile products mfg nec",
+  "Underfelt mfg"
+ ],
+ "13400": [
+  "Cardigan and pullover mfg",
+  "Hosiery mfg",
+  "Knitted fabrics mfg",
+  "Pantihose mfg",
+  "Sleepwear mfg – knitted",
+  "Socks mfg",
+  "Stockings mfg",
+  "Tights mfg"
+ ],
+ "13510": [
+  "Clothing accessories mfg nec",
+  "Clothing and footwear mfg",
+  "Clothing mfg nec",
+  "Clothing mfg – knitted fabric",
+  "Clothing mfg – leather",
+  "Clothing mfg – men’s and boys’ wear",
+  "Clothing mfg – waterproof",
+  "Clothing mfg – women’s and girls’ wear",
+  "Dressmaking – custom tailoring",
+  "Dressmaking – customised",
+  "Foundation garments mfg",
+  "Hats mfg",
+  "Helmets mfg",
+  "Infants’ clothing mfg – except knitted",
+  "Jeans mfg – men’s or boys’",
+  "Jeans mfg – women’s or girls’",
+  "Leather clothing mfg",
+  "Lingerie mfg",
+  "Menswear mfg",
+  "Sleepwear mfg – except knitted",
+  "Suits mfg – men’s or boys’",
+  "Suits mfg – women’s or girls’",
+  "Swimwear mfg",
+  "Ties mfg",
+  "Underwear mfg",
+  "Uniforms mfg – men’s or boys’",
+  "Uniforms mfg – women’s or girls’",
+  "Unisex clothing mfg",
+  "Wet suits mfg",
+  "men’s and boys’ wear",
+  "mfg equal amount of each",
+  "underwear and infant clothing",
+  "women’s and girls’ wear"
+ ],
+ "13520": [
+  "Boots mfg",
+  "Footwear mfg",
+  "Orthopaedic footwear mfg",
+  "Sandals mfg",
+  "Shoes mfg",
+  "Thongs mfg – rubber"
+ ],
+ "14110": [
+  "Bark mfg – ground",
+  "Sawmill operation",
+  "Timber mfg – rough sawn"
+ ],
+ "14120": [
+  "Woodchip mfg"
+ ],
+ "14130": [
+  "Building timber, dressed mfg",
+  "manufacturing"
+ ],
+ "14910": [
+  "Bus shelters – prefabricated wood mfg",
+  "Garages – prefabricated wood mfg",
+  "Kit home mfg – wooden",
+  "Prefabricated bus shelter mfg – wooden",
+  "Prefabricated sheds mfg – wooden",
+  "Transportable home mfg (wooden)"
+ ],
+ "14920": [
+  "Doors or windows mfg – wooden",
+  "Roof trusses mfg – wooden",
+  "Structural fitting mfg – wooden",
+  "built-in furniture or other joinery",
+  "furniture or other joinery",
+  "timber display cabinets (factory built)"
+ ],
+ "14930": [
+  "Plywood mfg",
+  "Veneer or veneer sheets mfg – wooden"
+ ],
+ "14940": [
+  "Chipboard mfg",
+  "Hardboard mfg",
+  "Particle board mfg"
+ ],
+ "14990": [
+  "Barrels mfg – wooden",
+  "Frame mfg – wooden picture or mirror",
+  "Wood floor mfg",
+  "Wood products mfg nec"
+ ],
+ "15100": [
+  "Cardboard mfg nec",
+  "Newsprint mfg",
+  "Paper mfg nec",
+  "Paper pulp mfg",
+  "Paperboard mfg nec",
+  "Wood pulp mfg",
+  "of recycled paper"
+ ],
+ "15210": [
+  "Containers mfg – solid paper board",
+  "corrugated paper board"
+ ],
+ "15220": [
+  "Bags mfg – paper"
+ ],
+ "15230": [
+  "Albums mfg",
+  "Greeting cards mfg",
+  "except commission printing"
+ ],
+ "15240": [
+  "Baby napkins mfg – disposable",
+  "Sanitary napkins mfg",
+  "Tampons mfg",
+  "Tissue or sanitary papers mfg",
+  "Toilet paper rolls mfg"
+ ],
+ "15290": [
+  "Paper products mfg nec",
+  "Wallpapers mfg"
+ ],
+ "16110": [
+  "Commercial printing",
+  "Newspapers printing",
+  "Printing",
+  "Screen printing",
+  "Stationery, paper, printing"
+ ],
+ "16120": [
+  "Artwork preparation service",
+  "Bookbinding",
+  "Calligraphy service",
+  "Phototypesetting and layout service",
+  "Platemaking film service",
+  "Printing services",
+  "Screen printing positive mfg",
+  "Typesetting and composing service"
+ ],
+ "16200": [
+  "Compact disc mfg or publishing",
+  "Computer software mfg or publishing",
+  "Recorded media mfg and publishing",
+  "mfg or publishing",
+  "or publishing",
+  "pre-recorded or publishing",
+  "publishing nec",
+  "publishing – pre-recorded"
+ ],
+ "17010": [
+  "Gas or fuel oil mfg",
+  "Gasoline refining or blending",
+  "Kerosene mfg",
+  "Liquefied petroleum gas mfg – refinery",
+  "Petrol mfg"
+ ],
+ "17090": [
+  "Coal product mfg nec",
+  "Paving material mfg – except hot-mix",
+  "Petroleum product mfg nec",
+  "Roofing mfg – bitumen or asphalt",
+  "Tar mfg – refined"
+ ],
+ "18110": [
+  "Acetylene gas mfg",
+  "Ammonia mfg",
+  "Dry ice mfg",
+  "Gases mfg – industrial",
+  "Industrial gas mfg"
+ ],
+ "18120": [
+  "Biodiesel mfg",
+  "Dyes mfg – organic",
+  "Industrial chemical mfg – organic nec",
+  "Organic industrial chemical mfg nec",
+  "Plastic raw material mfg",
+  "Silicone mfg"
+ ],
+ "18130": [
+  "Chlorine mfg",
+  "Dyes mfg – inorganic",
+  "Industrial chemical mfg – inorganic nec",
+  "Zinc oxide mfg",
+  "or table salt"
+ ],
+ "18210": [
+  "Synthetic rubber and resin mfg",
+  "Teflon mfg"
+ ],
+ "18290": [
+  "Other basic polymer mfg"
+ ],
+ "18310": [
+  "Bone calcining",
+  "Fertiliser mfg",
+  "Plant hormone mfg"
+ ],
+ "18320": [
+  "Dip mfg – animal",
+  "Fly spray mfg",
+  "Insecticide mfg",
+  "Pesticide mfg",
+  "Poison mfg",
+  "Weedkiller mfg"
+ ],
+ "18410": [
+  "Contraceptive mfg",
+  "Medical gas mfg nec",
+  "Medicine mfg",
+  "Pharmaceutical preparation mfg",
+  "Vitamin product mfg"
+ ],
+ "18420": [
+  "medicinal product mfg"
+ ],
+ "18510": [
+  "Detergent mfg",
+  "Disinfectant mfg",
+  "Polish mfg",
+  "Soap mfg",
+  "Toothpaste mfg",
+  "Washing powder or liquid mfg"
+ ],
+ "18520": [
+  "Cosmetics mfg",
+  "Deodorant mfg",
+  "Hair care products mfg",
+  "Lipstick mfg",
+  "Nail polish mfg",
+  "Perfume mfg",
+  "Sunscreen preparation mfg"
+ ],
+ "18910": [
+  "Photographic film or plates mfg"
+ ],
+ "18920": [
+  "Explosives mfg",
+  "Firework mfg",
+  "Match mfg",
+  "Pyrotechnic goods mfg nec"
+ ],
+ "18990": [
+  "Chemical products mfg nec",
+  "Coolant mfg"
+ ],
+ "19110": [
+  "Bags mfg – plastic",
+  "Film mfg – plastic",
+  "Garbage bags mfg – plastic",
+  "Garbage bins mfg – plastic"
+ ],
+ "19120": [
+  "Bottles mfg – plastic",
+  "Kitchenware mfg – plastic nec",
+  "Picnicware mfg – plastic",
+  "Pipes mfg – plastic",
+  "Plastic injection moulded product mfg",
+  "Portable toilet building mfg – plastic",
+  "Spa pool and hot tub mfg"
+ ],
+ "19130": [
+  "Plastic foam products mfg"
+ ],
+ "19140": [
+  "Motor vehicle tyres mfg",
+  "Tubes mfg – pneumatic",
+  "Tyre retreading or recapping",
+  "Tyres mfg",
+  "repairing – except retreading"
+ ],
+ "19150": [
+  "Adhesives mfg",
+  "Glue mfg"
+ ],
+ "19160": [
+  "Filler or putty mfg",
+  "Ink mfg",
+  "Lacquer mfg",
+  "Paint mfg – except bituminous",
+  "Paint remover mfg"
+ ],
+ "19190": [
+  "Awnings mfg – fibreglass",
+  "Fibreglass products mfg nec",
+  "Hose mfg – plastic",
+  "Swimming pool shells mfg",
+  "Tanks mfg – fibre-reinforced plastic"
+ ],
+ "19200": [
+  "Floor coverings mfg – rubber",
+  "Hose mfg – rubber",
+  "Rubber products mfg nec",
+  "Tiles mfg – rubber"
+ ],
+ "20100": [
+  "Bottles mfg – glass",
+  "Crystal glass mfg",
+  "Jars mfg – glass",
+  "Kitchenware mfg – glass",
+  "Laminated sheet glass mfg",
+  "Mirrors mfg",
+  "Optical glass mfg",
+  "Plate glass mfg",
+  "Safety glass mfg",
+  "Scientific glassware mfg",
+  "Tubing mfg – glass",
+  "Window glass mfg",
+  "Windscreen glass mfg",
+  "glass wool or glass wool products"
+ ],
+ "20210": [
+  "except refractory bricks"
+ ],
+ "20290": [
+  "Art pottery mfg",
+  "Bathroom fixtures mfg – vitreous china",
+  "Bricks mfg – refractory",
+  "Ceramic product mfg nec",
+  "Ceramic products, industrial mfg",
+  "Ceramic tiles and pipes mfg",
+  "China goods mfg",
+  "Clay roof tiles mfg",
+  "Crockery mfg",
+  "Flower pots mfg – ceramic",
+  "Kitchenware mfg – ceramic",
+  "Pottery goods mfg – ornamental",
+  "Roof tiles mfg – terracotta or clay",
+  "Stoneware mfg – table or kitchen",
+  "Terracotta construction goods mfg",
+  "Terracotta ware mfg nec",
+  "Tiles mfg – ceramic",
+  "Tiles mfg – terracotta",
+  "Vitreous china goods mfg – except tiles",
+  "Wall or floor tiles mfg – ceramic",
+  "china or porcelain",
+  "china or porcelain mfg",
+  "or porcelain",
+  "vitreous china or porcelain"
+ ],
+ "20310": [
+  "Cement mfg"
+ ],
+ "20320": [
+  "Display models mfg – plaster",
+  "Plaster board mfg",
+  "Tiles mfg – acoustic, plaster",
+  "Tiles mfg – plaster",
+  "Wall or ceiling boards mfg – plaster",
+  "dental or medical plasters"
+ ],
+ "20330": [
+  "except dry mix"
+ ],
+ "20340": [
+  "Bricks mfg – concrete",
+  "Concrete products mfg nec",
+  "Floor or wall tiles mfg – concrete",
+  "Flower pots mfg – concrete",
+  "Pipes mfg – concrete",
+  "Posts or poles mfg – concrete",
+  "Railway sleepers mfg – concrete",
+  "Roof components mfg – concrete",
+  "Roof tiles mfg – concrete",
+  "Tanks mfg – concrete",
+  "Tiles mfg – concrete",
+  "concrete"
+ ],
+ "20900": [
+  "Abrasives mfg",
+  "Gemstones mfg – synthetic",
+  "Headstones mfg, installation",
+  "Monuments making",
+  "glass or mineral wool",
+  "mineral wool mfg",
+  "or shaping"
+ ],
+ "21100": [
+  "Iron and steel mfg – basic",
+  "Pig iron mfg",
+  "Roof decking mfg – steel",
+  "Stainless steel mfg",
+  "Steel alloys mfg",
+  "Tinplate sheet or strip mfg"
+ ],
+ "21210": [
+  "Blacksmith service",
+  "Castings mfg – iron or steel"
+ ],
+ "21220": [
+  "Pipes and tubes mfg – steel"
+ ],
+ "21310": [
+  "Alumina mfg"
+ ],
+ "21320": [
+  "Aluminium smelting"
+ ],
+ "21330": [
+  "Copper smelting, refining",
+  "Lead smelting, refining",
+  "Silver smelting, refining",
+  "Silver–lead bullion mfg",
+  "Zinc smelting or refining"
+ ],
+ "21390": [
+  "Gold smelting, refining",
+  "Tin smelting",
+  "Welding rods mfg"
+ ],
+ "21410": [
+  "Castings mfg – non-ferrous metal",
+  "Forgings mfg – non-ferrous metal nec"
+ ],
+ "21420": [
+  "Aluminium rolling, drawing or extruding",
+  "Pipes and tubes mfg – aluminium",
+  "Plate mfg – aluminium",
+  "Sheet mfg – aluminium",
+  "Wire mfg – aluminium"
+ ],
+ "21490": [
+  "aluminium",
+  "except aluminium",
+  "metal – except aluminium"
+ ],
+ "22100": [
+  "Forgings mfg – iron or steel",
+  "Horse shoes mfg"
+ ],
+ "22210": [
+  "Girders mfg – prefabricated steel",
+  "Joists, prefabricated steel mfg",
+  "Roof trusses mfg – prefabricated steel",
+  "Scaffolding mfg – prefabricated steel",
+  "ready-made parts for structures"
+ ],
+ "22220": [
+  "Garages – prefabricated metal mfg",
+  "Prefabricated bus shelter mfg – metal",
+  "Prefabricated garage mfg – metal",
+  "Prefabricated kit home mfg – metal",
+  "Prefabricated shed mfg – metal",
+  "Sheds mfg – prefabricated metal",
+  "home mfg – metal",
+  "prefabricated",
+  "toilet mfg – metal"
+ ],
+ "22230": [
+  "Garage doors mfg – aluminium",
+  "Gates mfg – aluminium",
+  "Roller shutters mfg – aluminium",
+  "Screen doors mfg – aluminium",
+  "Shutters mfg – aluminium",
+  "Skylights mfg – aluminium",
+  "Window screens mfg – aluminium",
+  "aluminium",
+  "aluminium framed",
+  "complete with glass"
+ ],
+ "22240": [
+  "Guttering mfg – sheet metal"
+ ],
+ "22290": [
+  "Security door mfg – metal",
+  "aluminium",
+  "except aluminium",
+  "except aluminium or wire",
+  "metal – except aluminium"
+ ],
+ "22310": [
+  "Boilermaking and installation",
+  "Freight containers mfg – metal",
+  "Gas cylinders mfg",
+  "Storage tanks, metal plate mfg",
+  "Tanks mfg – sheet metal"
+ ],
+ "22390": [
+  "Aerosol containers mfg",
+  "Barrels mfg – metal",
+  "Garbage cans mfg – metal",
+  "Kegs mfg – metal",
+  "Tool boxes mfg – sheet metal"
+ ],
+ "22400": [
+  "Duct work mfg – air conditioning",
+  "Ducts mfg – sheet metal",
+  "Sanitary ware mfg – iron or steel",
+  "Sheet metal products mfg nec",
+  "Tiles mfg – sheet metal",
+  "Ventilators mfg – sheet metal",
+  "except boiler making"
+ ],
+ "22910": [
+  "Nails mfg",
+  "Screening mfg – wire",
+  "Shopping trolleys mfg",
+  "Spring mfg",
+  "Steel wire safety screens mfg",
+  "Wire products mfg nec",
+  "except reinforcing mesh"
+ ],
+ "22920": [
+  "Mild steel anchors mfg",
+  "Nuts or bolts mfg – metal",
+  "Screws mfg – metal"
+ ],
+ "22930": [
+  "Brass finishing or plating",
+  "Cans mfg – metal",
+  "Chromium plating",
+  "Enamelling service",
+  "Gold plating",
+  "Metal polishing or finishing",
+  "Powder coating of metallic products",
+  "Silver plating",
+  "Vitreous enamelling",
+  "except process or photographic",
+  "metal products",
+  "products nec"
+ ],
+ "22990": [
+  "Ammunition mfg",
+  "Aquarium mfg",
+  "Awnings mfg – metal",
+  "Bathroom and toilet fittings mfg – metal",
+  "Blinds mfg – metal",
+  "Clothes hoists mfg",
+  "Cutlery mfg",
+  "Display models mfg – metal",
+  "Fabricated metal products mfg nec",
+  "Fire sprinklers mfg",
+  "Firearms mfg",
+  "Guns or rifles mfg",
+  "Keys mfg",
+  "Lamps or lamps parts mfg",
+  "Locks mfg",
+  "Masts mfg – aluminium",
+  "Pipe fittings mfg – non-ferrous metal",
+  "Platework nec",
+  "Safes or vaults mfg",
+  "Scissors mfg – except electric",
+  "Tubing mfg – flexible metal",
+  "Welding nec",
+  "Window or door fittings mfg – metal",
+  "except power operated",
+  "mfg – metal",
+  "or power operated",
+  "pneumatic or power operated"
+ ],
+ "23110": [
+  "Car mfg",
+  "Motor cars mfg",
+  "Motor vehicle engine mfg"
+ ],
+ "23120": [
+  "Boat trailer mfg",
+  "Bus, coach body mfg",
+  "Campervan and camper trailer mfg",
+  "Caravan and camper trailer mfg",
+  "Horse float mfg",
+  "Motor vehicle conversion",
+  "Trailer mfg",
+  "Truck body mfg"
+ ],
+ "23130": [
+  "Spark plugs mfg",
+  "Starter motors mfg",
+  "and instrument mfg"
+ ],
+ "23190": [
+  "Car accessories mfg",
+  "Child car restraints mfg",
+  "Gearboxes mfg",
+  "Mufflers mfg",
+  "Radiators mfg",
+  "Roof racks mfg",
+  "Seat-belts mfg",
+  "Shock absorbers mfg",
+  "Suspension components mfg",
+  "Transmissions mfg",
+  "Wheel mfg"
+ ],
+ "23910": [
+  "Drydock operation",
+  "Ship repairing",
+  "Ship wrecking",
+  "Shipbuilding",
+  "Ships, boats hull cleaning",
+  "Submarine constructing"
+ ],
+ "23920": [
+  "Boat building or repair",
+  "Sailboat mfg",
+  "Yacht constructing"
+ ],
+ "23930": [
+  "Locomotives mfg and repair",
+  "Railway rolling stock mfg and repair",
+  "Tram mfg"
+ ],
+ "23940": [
+  "Aircraft engine building or repair",
+  "Aircraft mfg, maintenance and repair",
+  "Helicopter mfg or repairing",
+  "reconditioning service"
+ ],
+ "23990": [
+  "Bicycles mfg",
+  "Motor cycles mfg",
+  "Transport equipment mfg nec",
+  "Trotting gigs mfg",
+  "Wheelbarrows mfg",
+  "Wheelchairs mfg"
+ ],
+ "24110": [
+  "Binocular mfg",
+  "Cameras, accessories mfg",
+  "Contact lenses mfg",
+  "Optical instruments or equipment mfg",
+  "Optical lens grinding",
+  "Photographic equipment mfg",
+  "Spectacle frames mfg",
+  "Spectacle lens grinding",
+  "Sunglass mfg",
+  "instruments mfg"
+ ],
+ "24120": [
+  "Artificial limbs, eyes, etc mfg",
+  "Dental amalgams mfg",
+  "Dental instruments or equipment mfg",
+  "Dentures fabrication",
+  "Diagnostic apparatus mfg",
+  "Hearing aids mfg",
+  "Medical equipment mfg",
+  "Orthopaedic extension footwear mfg",
+  "Orthotics – arch supports mfg",
+  "Prosthetic products mfg",
+  "Surgical equipment mfg",
+  "Veterinary instruments mfg"
+ ],
+ "24190": [
+  "Clock mfg",
+  "Electricity meters mfg",
+  "Measuring instruments mfg",
+  "Meteorological instruments mfg nec",
+  "Meters mfg – gas or water",
+  "Nautical instruments mfg",
+  "Navigational equipment mfg",
+  "Optical fibre cable mfg – uninsulated",
+  "Parking meters mfg",
+  "Radar equipment mfg",
+  "Radio remote control equipment mfg",
+  "Signalling equipment, electrical mfg nec",
+  "Surveying instruments mfg",
+  "Taxi meters mfg",
+  "Traffic signals mfg – electrical",
+  "Watches mfg",
+  "X-ray equipment mfg",
+  "equipment mfg nec"
+ ],
+ "24211": [
+  "Computer and related equipment mfg",
+  "Computers mfg",
+  "Game console mfg",
+  "Visual display units mfg"
+ ],
+ "24219": [
+  "Business machine mfg nec",
+  "Business machines, equipment mfg",
+  "Computer and business machine mfg",
+  "Office machines mfg",
+  "Photocopying machines mfg",
+  "attachments mfg"
+ ],
+ "24220": [
+  "Broadcast equipment mfg",
+  "Modem equipment mfg",
+  "Radio broadcast studio equipment mfg",
+  "Radio transceivers mfg – transmitters",
+  "Telecommunications equipment mfg",
+  "Telephone equipment mfg",
+  "Telephone switching equipment mfg",
+  "Television antennae mfg",
+  "Television studio equipment mfg"
+ ],
+ "24290": [
+  "Alarm systems mfg",
+  "Burglar alarms mfg",
+  "Electric gaming machines – poker mfg",
+  "Headphones mfg",
+  "Loudspeakers mfg",
+  "Microchip mfg",
+  "Microphones mfg",
+  "Poker machine – electronic mfg",
+  "Prepaid card mfg",
+  "Printed circuits board mfg",
+  "Radios mfg",
+  "Sound recording equipment mfg",
+  "Sound reproducing equipment mfg",
+  "Tape recorders mfg",
+  "Television receiving sets mfg",
+  "Transistors mfg",
+  "Video recorder mfg",
+  "except pre-recorded"
+ ],
+ "24310": [
+  "Optical fibre cable mfg – insulated",
+  "Telecommunications cable mfg",
+  "Wire or cable mfg – electric"
+ ],
+ "24320": [
+  "Bulbs or tubes, electric light mfg",
+  "Lamps mfg – infrared or ultraviolet",
+  "Neon signs mfg",
+  "Signs mfg – electric"
+ ],
+ "24390": [
+  "Batteries mfg",
+  "Electric motors mfg nec",
+  "Solar cell mfg",
+  "Solar electricity panel mfg",
+  "Transformers mfg",
+  "Welding equipment mfg – electrical",
+  "electricity",
+  "except household",
+  "except space heaters",
+  "machinery mfg nec"
+ ],
+ "24410": [
+  "Barbecues mfg",
+  "Food waste disposal units mfg",
+  "Freezers mfg",
+  "Gas stoves mfg – household",
+  "Ovens mfg – household",
+  "Refrigerators mfg",
+  "Stoves mfg – household",
+  "Washing machines – household – mfg",
+  "commercial or industrial",
+  "household"
+ ],
+ "24490": [
+  "Hair driers mfg – electric – household",
+  "Heaters – household – mfg",
+  "Household appliances mfg",
+  "Kettles or jugs mfg – electric",
+  "Oil heaters mfg – household",
+  "Sewing machines mfg – household",
+  "Space heaters mfg – household",
+  "Vacuum cleaners mfg – household",
+  "Water coolers mfg",
+  "household",
+  "household – mfg"
+ ],
+ "24510": [
+  "Petrol bowsers mfg",
+  "Pumps mfg"
+ ],
+ "24520": [
+  "Air conditioning equipment mfg",
+  "Solar water heating systems mfg",
+  "Vending machines mfg – refrigerated",
+  "commercial or household",
+  "commercial or industrial"
+ ],
+ "24610": [
+  "Lawn mowers mfg",
+  "Windmills mfg",
+  "equipment mfg",
+  "except crawler tractors"
+ ],
+ "24620": [
+  "Drilling machinery mfg nec",
+  "Earthmoving machinery mfg",
+  "Mining machinery mfg",
+  "earthmoving purposes"
+ ],
+ "24630": [
+  "Drills mfg – portable electric",
+  "Forging machinery mfg",
+  "Metalworking machinery mfg nec",
+  "Pneumatic tools mfg nec",
+  "Welding or cutting equipment mfg – gas",
+  "Woodworking machinery mfg nec",
+  "metalworking",
+  "or metalworking",
+  "or power operated"
+ ],
+ "24690": [
+  "Amusement machines mfg",
+  "Bakery machinery mfg",
+  "Bottling machines mfg",
+  "Brewery equipment mfg",
+  "Carnival or fairground equipment mfg",
+  "Distilling and beverage equipment mfg",
+  "Dry cleaning machinery mfg",
+  "Flour milling machinery mfg",
+  "Food packing machinery mfg",
+  "Food processing machinery mfg",
+  "Knitting machines mfg",
+  "Ovens mfg – industrial – except electric",
+  "Poker machines or parts mfg",
+  "Printing machinery or equipment mfg",
+  "Saws mfg – power – food processing",
+  "Sewing machines mfg – industrial",
+  "Textile working machinery mfg",
+  "Vacuum cleaners mfg – commercial",
+  "except household",
+  "laundry mfg – except household",
+  "machinery mfg"
+ ],
+ "24910": [
+  "Elevators or elevator parts mfg",
+  "Escalators or escalator parts mfg",
+  "Forklift trucks mfg",
+  "Tractors mfg nec",
+  "Winches mfg",
+  "except clothes hoists"
+ ],
+ "24990": [
+  "Bearings mfg",
+  "Diesel engines mfg nec",
+  "Engines, internal combustion mfg nec",
+  "Motors mfg – internal combustion nec",
+  "Outboard motors mfg",
+  "Power station turbine mfg",
+  "Saws mfg – power nec",
+  "Sporting machinery mfg nec",
+  "Weighing machinery mfg",
+  "electric furnaces or space heaters",
+  "equipment mfg nec",
+  "except agricultural or motor vehicle",
+  "except household",
+  "except refrigerated"
+ ],
+ "25110": [
+  "Antique wooden furniture mfg",
+  "Beds mfg nec",
+  "Beds mfg – wooden",
+  "Cabinet making, joinery – furniture",
+  "Carpentry, joinery – furniture",
+  "Chair mfg – wooden",
+  "Furniture mfg – wooden",
+  "Kitchen furniture mfg – wooden",
+  "Lounge suite mfg",
+  "Office furniture mfg – wooden",
+  "Outdoor furniture mfg – wooden",
+  "Prefabricated furniture mfg – wooden",
+  "Seats mfg – upholstered",
+  "Tables mfg – wooden",
+  "timber display cabinets (factory built)"
+ ],
+ "25120": [
+  "Furniture fittings mfg – metal",
+  "Furniture mfg – sheet metal",
+  "Office furniture mfg – sheet metal"
+ ],
+ "25130": [
+  "Bed base mfg – upholstered",
+  "Innerspring mattress mfg",
+  "Mattress mfg – except rubber",
+  "Mattress mfg – rubber",
+  "Water mattress mfg"
+ ],
+ "25190": [
+  "Furniture mfg nec",
+  "Furniture part mfg – except sheet metal"
+ ],
+ "25910": [
+  "Badge mfg – metal",
+  "Costume jewellery mfg",
+  "Diamond cutting",
+  "Gem cutting",
+  "Goldsmithing",
+  "Jewellery mfg",
+  "Lapidary work",
+  "Medal mfg",
+  "Silverware mfg"
+ ],
+ "25920": [
+  "Billiard table mfg",
+  "Fishing tackle mfg",
+  "Golf equipment mfg",
+  "Hang glider mfg",
+  "Sailboards mfg",
+  "Skateboards mfg",
+  "Ski equipment mfg",
+  "Skin diving equipment mfg",
+  "Sports goods mfg nec",
+  "Surfboards mfg",
+  "Toys mfg",
+  "Water ski equipment mfg"
+ ],
+ "25990": [
+  "Brooms and brushes mfg",
+  "Candle mfg",
+  "Hair brushes mfg",
+  "Musical instrument mfg",
+  "Paint brushes mfg",
+  "Pencils mfg",
+  "Pens mfg",
+  "Stamp pads mfg",
+  "Toothbrushes mfg",
+  "Umbrellas mfg",
+  "Wigs mfg"
+ ],
+ "26110": [
+  "Fossil fuel electricity generation"
+ ],
+ "26120": [
+  "Hydro-electricity generation"
+ ],
+ "26190": [
+  "Other electricity generation"
+ ],
+ "26200": [
+  "Electricity transmission"
+ ],
+ "26300": [
+  "distribution"
+ ],
+ "26400": [
+  "electricity market operation"
+ ],
+ "27000": [
+  "through mains system"
+ ],
+ "28110": [
+  "Water supply system operation",
+  "water supply"
+ ],
+ "28120": [
+  "Pumping station operation – sewerage",
+  "Sewerage system operation"
+ ],
+ "29110": [
+  "Garbage collection service",
+  "Rubbish and waste removal",
+  "and disposal service"
+ ],
+ "29190": [
+  "Other waste collection services"
+ ],
+ "29210": [
+  "Disposal of waste paper only",
+  "Garbage disposal service",
+  "Rubbish dump or tip operation",
+  "Sanitary disposal service",
+  "Septic tank service",
+  "Waste disposal services"
+ ],
+ "29220": [
+  "Asbestos removal service",
+  "Bottles recycling",
+  "Plastic recycling",
+  "Recycling of glass, plastic bottles, etc",
+  "Rubber recycling",
+  "and scrap",
+  "paper only",
+  "waste and scrap"
+ ],
+ "30110": [
+  "Building, house construction",
+  "erection or installation",
+  "house construction",
+  "renovation or general repair"
+ ],
+ "30190": [
+  "Apartments construction",
+  "Flats construction",
+  "Home units construction",
+  "flats, home units, apartments, etc"
+ ],
+ "30200": [
+  "Hotels construction",
+  "building construction",
+  "commercial buildings, hotels, etc"
+ ],
+ "31010": [
+  "Aerodrome runway construction",
+  "Asphalt surfacing",
+  "Bridge construction or repair",
+  "Paving material – hot-mix bitumen",
+  "Road construction, repair or sealing",
+  "except buildings",
+  "road or bridge construction"
+ ],
+ "31091": [
+  "concrete or fibre glass – below ground"
+ ],
+ "31099": [
+  "Bowling green construction",
+  "Cable laying",
+  "Canal construction",
+  "Dams construction",
+  "Dredging – harbours or rivers",
+  "Golf course construction",
+  "Irrigation systems construction",
+  "Jetties construction",
+  "Lake construction",
+  "Mine site construction nec",
+  "Pipelines construction",
+  "River works construction",
+  "Sports fields construction",
+  "Tunnels construction",
+  "Water filtration plant construction",
+  "construction",
+  "drainage systems construction",
+  "except buildings",
+  "except of structural steel",
+  "installation – on-site assembly",
+  "non-building construction nec",
+  "prefabricated components"
+ ],
+ "32110": [
+  "Land development or subdivision"
+ ],
+ "32120": [
+  "Blasting services",
+  "Earthmoving services",
+  "Excavating service",
+  "Explosives laying",
+  "Labouring – site preparation services",
+  "Land clearing – bush or rural",
+  "Land clearing – except rural",
+  "Mine site preparation",
+  "Trench digging",
+  "other structures"
+ ],
+ "32210": [
+  "Concreting services",
+  "Footpaths construction – concrete",
+  "Foundations construction – concrete",
+  "Labouring – concreting",
+  "concrete",
+  "structures"
+ ],
+ "32220": [
+  "Bricklaying services",
+  "Labouring – bricklaying",
+  "Stonework on construction projects"
+ ],
+ "32230": [
+  "Labouring – roofing services",
+  "Metal roof fixing",
+  "Roof tiling",
+  "Tiling services – roof",
+  "except insulation materials"
+ ],
+ "32240": [
+  "Storage tanks erection – metal",
+  "Structural steel erection",
+  "Trusses or joists erection – steel",
+  "Welding work on construction projects",
+  "erection services"
+ ],
+ "32310": [
+  "Gas plumbing",
+  "Guttering installation or repair – roof",
+  "Hot water systems installation",
+  "Labouring – plumbing services",
+  "Plumbing – except marine",
+  "Septic tank installation",
+  "Solar hot water systems installation",
+  "recycling equipment",
+  "stormwater drains"
+ ],
+ "32320": [
+  "Automatic electrical door maintenance",
+  "Electric rangehood installation",
+  "Electrical services",
+  "Labouring – electrical services",
+  "Pay TV antennae installation",
+  "Television antennae installing",
+  "antennae, decoder"
+ ],
+ "32330": [
+  "Oil heaters installation",
+  "Refrigeration equipment installation",
+  "Ventilation equipment installation nec",
+  "and heating services",
+  "except industrial furnaces",
+  "except motor vehicles"
+ ],
+ "32340": [
+  "Alarm systems installation",
+  "Burglar alarms installation",
+  "Fire sprinklers installation",
+  "Security systems – installation",
+  "Smoke detectors – installation",
+  "Surveillance systems installation",
+  "Video surveillance systems installation"
+ ],
+ "32390": [
+  "Awnings installation or repair",
+  "Blinds installation or repair",
+  "Curtains installing",
+  "Elevator installation, repair",
+  "Escalator installation, repair",
+  "Fireplace construction and installation",
+  "Fireplace restoration services",
+  "Insulation materials installation",
+  "Lifts mfg, installation and repair",
+  "Office installation and fitout services",
+  "Safes or vaults installation",
+  "shutters or blinds"
+ ],
+ "32410": [
+  "Cement rendering of buildings",
+  "Plasterboard fixing or finishing",
+  "Plasterers",
+  "ceiling services"
+ ],
+ "32420": [
+  "(on-site fabrication)",
+  "Flooring fixing – wooden",
+  "Formwork fixing – wooden",
+  "Joinery work on construction projects",
+  "Labouring – carpentry services",
+  "Roof trusses fixing – wooden",
+  "furniture or other joinery",
+  "on construction projects"
+ ],
+ "32430": [
+  "Carpet laying",
+  "Floor coverings laying nec",
+  "Floor sanding",
+  "Linoleum or linotile fixing",
+  "Slate flooring installation",
+  "Tiling services – floor and wall",
+  "Wall tiling",
+  "carpeting services"
+ ],
+ "32440": [
+  "House painting",
+  "Interior decorating service nec",
+  "Painting of buildings or other structures",
+  "Paper hanging",
+  "Wall papering",
+  "decorating services",
+  "other structures"
+ ],
+ "32450": [
+  "Glazing services",
+  "Labouring – glazing services",
+  "Window curtain wall installation",
+  "Window frame installation",
+  "Window installation",
+  "Window insulation fixing"
+ ],
+ "32910": [
+  "Garden drainage systems installation",
+  "Labouring – landscaping services",
+  "Landscape construction",
+  "Lawn construction",
+  "Paving laying",
+  "Rockery work",
+  "except agricultural",
+  "except irrigation systems"
+ ],
+ "32920": [
+  "Earthmoving plant hire – with operators"
+ ],
+ "32990": [
+  "Abrasive blasting",
+  "Bath resurfacing",
+  "Billboard construction/erection",
+  "Clothes hoist installation",
+  "Drilling contractors",
+  "Handyman services",
+  "Home maintenance and repair services",
+  "Labouring – construction services nec",
+  "Petrol bowsers installation",
+  "Scaffolding construction",
+  "Steam-cleaning of building exteriors",
+  "Waterproofing of buildings",
+  "above ground",
+  "elsewhere classified",
+  "of building exteriors",
+  "trade services elsewhere classified"
+ ],
+ "33110": [
+  "Wool wholesaling"
+ ],
+ "33120": [
+  "Cereal grain wholesaling"
+ ],
+ "33190": [
+  "Farm produce or supplies wholesaling",
+  "Feed wholesaling",
+  "Florist operation – wholesale",
+  "Flowers wholesaling",
+  "Hide wholesaling",
+  "Landscaping supplies – wholesaling",
+  "Leather wholesaling",
+  "Livestock wholesaling",
+  "Nursery stock – wholesale",
+  "Nut supplies – wholesaling",
+  "Orchard supplies wholesaling nec",
+  "Seeds wholesaling – farm or garden",
+  "Skins wholesaling",
+  "Sugar wholesaling – raw",
+  "Tobacco leaf wholesaling",
+  "Trees or shrubs, potted – wholesaling"
+ ],
+ "33210": [
+  "Bitumen wholesaling",
+  "Crude oil wholesaling",
+  "Crude petroleum wholesaling",
+  "Diesel oil wholesaling",
+  "Distillate wholesaling",
+  "Fuel oil wholesaling",
+  "Heating oil dealing",
+  "Kerosene wholesaling",
+  "Liquefied petroleum gas – dealing",
+  "Petrol wholesaling",
+  "Petroleum products wholesaling",
+  "industrial or lubricating"
+ ],
+ "33221": [
+  "Metal scrap wholesaling",
+  "Precious metals scrap dealing",
+  "Scrap metal merchants",
+  "sorting, dealing or wholesaling",
+  "sorting, dealing, wholesaling"
+ ],
+ "33229": [
+  "Charcoal suppliers",
+  "Coal wholesaling",
+  "Gold, silver merchants",
+  "Metallic ores wholesaling",
+  "Minerals wholesaling nec"
+ ],
+ "33230": [
+  "Adhesives wholesaling",
+  "Agricultural chemicals wholesaling",
+  "Chemicals wholesaling nec",
+  "Dyes wholesaling",
+  "Fertiliser wholesaling",
+  "Marine oils wholesaling",
+  "Pesticides wholesaling",
+  "chemical-based – wholesaling",
+  "except liquefied petroleum gas",
+  "except liquefied petroleum gas (LPG)"
+ ],
+ "33310": [
+  "Timber dealing – except firewood",
+  "Veneer wood – dealing"
+ ],
+ "33320": [
+  "Hot water systems wholesaling",
+  "Plumbers’ fittings wholesaling",
+  "wholesaling"
+ ],
+ "33390": [
+  "Bricks dealing",
+  "Builders hardware dealing nec",
+  "Building materials dealing nec",
+  "Cement wholesaling",
+  "Ceramic floor or wall tile wholesaling",
+  "Galvanised iron products dealing",
+  "Garden tools wholesaling",
+  "Hardware wholesaling – domestic",
+  "Insulating materials wholesaling",
+  "Locks wholesaling",
+  "Paint wholesaling",
+  "Roofing materials wholesaling",
+  "Sand dealing",
+  "Screens – window – wholesaling",
+  "Spa pool and hot tub wholesaling",
+  "Wall or ceiling boards wholesaling",
+  "Wallpaper wholesaling",
+  "Woodworking tools wholesaling",
+  "fibreglass – below ground",
+  "including power operated",
+  "non-ceramic floor tiles"
+ ],
+ "34110": [
+  "Lawn mowers wholesaling",
+  "wholesaling"
+ ],
+ "34190": [
+  "Distilling equipment wholesaling",
+  "Machine tools wholesaling",
+  "Metalworking machinery wholesaling",
+  "equipment wholesaling",
+  "or equipment wholesaling",
+  "wholesaling",
+  "wholesaling – non-electrical"
+ ],
+ "34910": [
+  "Medical equipment wholesaling nec",
+  "Professional equipment wholesaling",
+  "Scientific equipment wholesaling"
+ ],
+ "34920": [
+  "Laser printer wholesaling",
+  "including peripherals"
+ ],
+ "34930": [
+  "Mobile phone battery wholesaling",
+  "wholesaling"
+ ],
+ "34940": [
+  "Electric fittings dealing nec",
+  "Enlargers wholesaling – photographic",
+  "Household appliances wholesaling",
+  "Light fittings dealing – electrical",
+  "Photocopier wholesaling",
+  "Photocopying machines wholesaling",
+  "Photographic equipment wholesaling",
+  "Radio or television parts wholesaling",
+  "Radios wholesaling",
+  "Television sets wholesaling",
+  "commercial",
+  "electrical",
+  "equipment – industrial – wholesaling",
+  "household",
+  "household electric",
+  "household – wholesaling",
+  "industrial",
+  "instruments wholesaling",
+  "wholesaling",
+  "wholesaling nec"
+ ],
+ "34990": [
+  "Display and notice boards wholesaling",
+  "Film wholesaling – photographic",
+  "Fire protection equipment wholesaling",
+  "Hairdressers’ equipment wholesaling",
+  "Jet ski parts wholesaling",
+  "Jet ski wholesaling",
+  "Weighing machinery wholesaling nec",
+  "equipment or furniture",
+  "except electrical",
+  "wholesaling nec",
+  "wholesaling – except domestic"
+ ],
+ "35010": [
+  "Motor vehicles distributing – new",
+  "Motor vehicles wholesaling"
+ ],
+ "35020": [
+  "Bus, coach dealers",
+  "Commercial vehicles dealing",
+  "Trucks wholesaling"
+ ],
+ "35030": [
+  "wholesaling"
+ ],
+ "35040": [
+  "Batteries wholesaling – motor vehicle",
+  "Motor accessory shops operation",
+  "Motor vehicle paint wholesaling",
+  "Motor vehicle parts dealing – new",
+  "Tyres or tubes wholesaling",
+  "dealing – new",
+  "except motor cycles"
+ ],
+ "35050": [
+  "Auto parts recyclers",
+  "Motor vehicle parts dealing – used",
+  "Motor wreckers",
+  "Recycling – auto parts",
+  "parts dealing"
+ ],
+ "36010": [
+  "General line groceries wholesaling"
+ ],
+ "36020": [
+  "Butchers – wholesale",
+  "Kangaroo meat wholesaling",
+  "Poultry wholesaling",
+  "Rabbit meat wholesaling",
+  "Sausages wholesaling",
+  "Smallgoods wholesaling",
+  "smoked poultry or rabbit meat"
+ ],
+ "36030": [
+  "Dairy products wholesaling",
+  "Ice cream wholesaling",
+  "Milk wholesaling"
+ ],
+ "36040": [
+  "Crustacean wholesaling",
+  "Fish wholesaling",
+  "Seafoods wholesaling – fresh or frozen"
+ ],
+ "36050": [
+  "washing or packing"
+ ],
+ "36061": [
+  "Beer, wine and spirits wholesalers"
+ ],
+ "36062": [
+  "Tobacco products wholesaling"
+ ],
+ "36090": [
+  "Cereal foods wholesaling",
+  "Chinese groceries wholesaling",
+  "Confectionery wholesaling",
+  "Cordials – wholesaling",
+  "Eastern foods wholesaling",
+  "Egg and egg products wholesaling",
+  "Food wholesaling nec",
+  "Groceries wholesaling nec",
+  "Health foods wholesaling",
+  "Honey wholesaling",
+  "Nuts wholesaling",
+  "Potato crisps wholesaling",
+  "Rice wholesaling – milled or polished",
+  "Seafoods wholesaling – canned",
+  "Soft drinks wholesaling",
+  "Tea wholesaling"
+ ],
+ "37110": [
+  "Bags or sacks wholesaling – textile",
+  "Haberdashery wholesaling",
+  "Household linen wholesaling",
+  "Rope wholesaling",
+  "Sail cloth wholesaling",
+  "Soft furnishings wholesaling",
+  "Tents wholesaling",
+  "Textiles wholesaling nec",
+  "Yarns wholesaling"
+ ],
+ "37120": [
+  "Bicycle helmet wholesaling",
+  "Clothing wholesalers",
+  "Footwear wholesaling",
+  "Furriers – wholesale",
+  "Lingerie wholesaling",
+  "Menswear wholesaling",
+  "Millinery wholesaling"
+ ],
+ "37200": [
+  "Cosmetics wholesaling",
+  "Detergents wholesaling",
+  "Drugs wholesaling – except veterinary",
+  "Drugs wholesaling – veterinary",
+  "Perfumes wholesaling",
+  "Soap wholesaling",
+  "Toiletries wholesaling",
+  "except veterinary"
+ ],
+ "37310": [
+  "Beds wholesaling",
+  "Floor coverings wholesaling",
+  "Floor tile wholesaling (except ceramic)",
+  "Furniture wholesaling – except office",
+  "Furniture wholesaling – office",
+  "Mattresses wholesaling"
+ ],
+ "37320": [
+  "Costume jewellery wholesaling",
+  "Gemstones wholesaling",
+  "Jewellery wholesaling",
+  "Precious metals wholesaling",
+  "Watch or clock parts wholesaling",
+  "Watches wholesaling"
+ ],
+ "37330": [
+  "Glassware wholesaling – household",
+  "Kitchenware wholesaling",
+  "Tableware wholesaling",
+  "wholesaling"
+ ],
+ "37340": [
+  "Golf equipment wholesaling",
+  "Gymnasium equipment wholesaling",
+  "Playground equipment wholesaling",
+  "Ski equipment wholesaling",
+  "Skin diving equipment wholesaling",
+  "Toys wholesaling",
+  "Water ski equipment wholesaling",
+  "except clothing or footwear",
+  "except tools"
+ ],
+ "37350": [
+  "Books wholesaling",
+  "Magazine wholesaling",
+  "Newspaper wholesaling",
+  "Periodicals wholesaling"
+ ],
+ "37360": [
+  "Bags wholesaling – paper",
+  "Paper products wholesaling nec",
+  "Paper wholesaling",
+  "Stationery wholesaling"
+ ],
+ "37390": [
+  "Artists’ supplies wholesaling",
+  "Firewood wholesaling",
+  "Luggage wholesaling",
+  "Musical instruments wholesaling",
+  "Pet foods wholesaling",
+  "Pets wholesaling",
+  "Pool cleaning equipment wholesaling",
+  "Second-hand goods wholesaling nec",
+  "Wholesale trade nec",
+  "except clothing or footwear",
+  "issuing to businesses"
+ ],
+ "38000": [
+  "Antiques auctioning service",
+  "Auctioning service electronic",
+  "Auctioning service nec",
+  "Auctioning service – livestock",
+  "Wool broking – wholesaling",
+  "furniture, second-hand goods",
+  "used motor vehicles"
+ ],
+ "39110": [
+  "Car dealer – new and/or used",
+  "Motor vehicles retailing – new",
+  "Motor vehicles retailing – used"
+ ],
+ "39120": [
+  "Go-karts retailing – motorised",
+  "or retailing"
+ ],
+ "39130": [
+  "Caravan dealers",
+  "Horse floats wholesaling or retailing",
+  "Mobile homes dealing",
+  "Trailers dealing – except boat"
+ ],
+ "39211": [
+  "Batteries retail – motor vehicle",
+  "Caravan battery retailing"
+ ],
+ "39219": [
+  "Car accessories dealing"
+ ],
+ "39220": [
+  "retailing"
+ ],
+ "40000": [
+  "Diesel oil retailing",
+  "Distillate retailing",
+  "Engine oils retailing",
+  "Kerosene retailing",
+  "Petrol retailing",
+  "Service station operation",
+  "automotive – retailing"
+ ],
+ "41100": [
+  "General store operation – main grocery",
+  "Groceries retailing",
+  "Grocery supermarket operation"
+ ],
+ "41211": [
+  "Butchers, butcher shops – retail",
+  "Meat retailing – except canned meat"
+ ],
+ "41212": [
+  "Fish retailing – fresh",
+  "Seafoods retailing – fresh"
+ ],
+ "41213": [
+  "Poultry retailing – fresh"
+ ],
+ "41220": [
+  "Fruit retailing – fresh",
+  "Greengrocery operation – retail",
+  "Vegetables fresh – retailing"
+ ],
+ "41230": [
+  "Liquor stores",
+  "Wine and spirit merchants – retail"
+ ],
+ "41290": [
+  "Bakeries and hot bread shops",
+  "Biscuits retailing",
+  "Bread retailing",
+  "Bread vendors",
+  "Cakes retailing",
+  "Confectionery retailing",
+  "Delicatessens",
+  "Eastern foods retailing",
+  "Gourmet shops",
+  "Health foods retailing",
+  "Pastries retailing",
+  "Smallgoods retailing",
+  "Specialised foods retailing nec"
+ ],
+ "42110": [
+  "Antique reproduction furniture retailing",
+  "Awnings retailing",
+  "Beds retailing",
+  "Blinds retailing",
+  "Furniture retailing – household",
+  "Mattresses retailing"
+ ],
+ "42120": [
+  "Carpet retailing",
+  "Cork flooring retailing",
+  "Floor coverings retailing",
+  "Tiles – floor – retailing"
+ ],
+ "42130": [
+  "Crockery retailing",
+  "Glassware retailing",
+  "Kitchenware retailing",
+  "Silverware retailing",
+  "household electric",
+  "retailing"
+ ],
+ "42140": [
+  "Curtains retailing",
+  "Dressmaking supplies retailing",
+  "Fabrics, textile retailing",
+  "Haberdashery retailing",
+  "Household textiles retailing",
+  "Linen retailing – household",
+  "Soft furnishings retailing",
+  "Yarns retailing"
+ ],
+ "42210": [
+  "Air conditioners retailing – household",
+  "Barbecues retail",
+  "Cameras, accessories retailing",
+  "Household appliances retailing",
+  "Household freezer retailing",
+  "Household fridge retailing",
+  "Household internet equipment retailing",
+  "Household microwave oven retailing",
+  "Household whitegoods retailing",
+  "Mobile phone battery retailing",
+  "Mobile phone retailing",
+  "Oil heaters retailing – household",
+  "Photographic equipment retailing",
+  "Pocket calculators retailing – electronic",
+  "Radios retailing – except car radios",
+  "Refrigerators retailing – household",
+  "Stoves – household – retailing",
+  "Television antennae retailing",
+  "Television sets retailing",
+  "Vacuum cleaners retailing",
+  "Video cameras retailing",
+  "and household goods",
+  "household electric",
+  "household electric – retailing",
+  "household – retailing",
+  "mobile phones"
+ ],
+ "42220": [
+  "Computer retailing"
+ ],
+ "42290": [
+  "Dry cell battery retailing",
+  "Solar panel retailing"
+ ],
+ "42310": [
+  "Bathroom and toilet fittings – retailing",
+  "Garden tools retailing",
+  "Hardware retailing – domestic",
+  "Lawn mower retailing",
+  "Paint retailing",
+  "Tools, household, retailing",
+  "Wallpaper retailing"
+ ],
+ "42320": [
+  "Fertiliser retailing",
+  "Garden ornaments retailing",
+  "Garden supplies retailing nec",
+  "Landscaping supplies – retailing",
+  "Nurseries – retail",
+  "Pesticides retailing",
+  "Plants, garden – retailing",
+  "Seedlings retailing",
+  "Seeds retailing – garden",
+  "Shrubs or trees retailing"
+ ],
+ "42410": [
+  "Bicycle parts retailing",
+  "Bicycles and accessories retailing",
+  "Camping equipment retailing",
+  "Firearms retailing",
+  "Fishing tackle retailing",
+  "Golf equipment retailing",
+  "Guns or rifles retailing",
+  "Gymnasium equipment retailing",
+  "Ski equipment retailing",
+  "Skin diving equipment retailing",
+  "Water ski equipment retailing",
+  "except clothing or footwear"
+ ],
+ "42420": [
+  "Phonograph records retailing",
+  "Recorded music retailing",
+  "Video cassette retailing",
+  "and records retailing"
+ ],
+ "42430": [
+  "Dolls retailing",
+  "Games retailing",
+  "Hobby equipment and supplies retailing",
+  "Toys retailing"
+ ],
+ "42441": [
+  "Magazine retailing",
+  "Newsagent operation",
+  "Newspapers retailing",
+  "Periodicals retailing"
+ ],
+ "42442": [
+  "Books retailing"
+ ],
+ "42450": [
+  "Boat dealers",
+  "Boat trailer dealing",
+  "Jet ski parts retailing",
+  "Jet ski retailing",
+  "Marine accessories retailing nec",
+  "Outboard motors retailing",
+  "Sailing or nautical accessories retailing",
+  "Trailers dealing – boat"
+ ],
+ "42510": [
+  "Babies’ wear retailing",
+  "Bicycle clothing/apparel retailing",
+  "Bicycle helmet retailing",
+  "Bridal wear and accessories retailing",
+  "Clothing accessories retailing",
+  "Clothing retailing",
+  "Fashion ware – retailing",
+  "Foundation garments retailing",
+  "Fur clothing retailing",
+  "Furriers – retail",
+  "Ladies wear retailing",
+  "Leather clothing retailer",
+  "Lingerie retailing",
+  "Menswear retailing",
+  "Millinery retailing",
+  "Protective clothing retailing",
+  "Women’s wear retailing",
+  "Work clothing retailing"
+ ],
+ "42520": [
+  "Footwear retailing",
+  "Shoes retailing"
+ ],
+ "42530": [
+  "Watches retailing",
+  "except direct sellers"
+ ],
+ "42590": [
+  "Handbags retailing",
+  "Umbrellas retailing",
+  "Wigs retailing",
+  "except apparel"
+ ],
+ "42600": [
+  "Department store operation"
+ ],
+ "42711": [
+  "Bandages/dressings – medical retailing",
+  "Chemist shop operation – pharmacy",
+  "Drugs retailing",
+  "Medicine retailing",
+  "Pharmacy operation – retail"
+ ],
+ "42712": [
+  "shops, pharmacies and direct sellers"
+ ],
+ "42720": [
+  "Artists’ supplies retailing",
+  "Stationery retailing",
+  "Writing materials retailing"
+ ],
+ "42731": [
+  "Pawnbroking"
+ ],
+ "42732": [
+  "Antiques retailing (except pawnbroking)"
+ ],
+ "42733": [
+  "Coin dealers",
+  "Disposal stores – new goods",
+  "Second-hand books retailing",
+  "Second-hand clothes retailing",
+  "Stamp dealing – except pawnbrokers",
+  "auctioning – except pawnbrokers",
+  "except pawnbrokers",
+  "motor vehicles, pawnbrokers"
+ ],
+ "42740": [
+  "Dried flowers retailing",
+  "Florist operation – retail",
+  "Flowers retailing"
+ ],
+ "42791": [
+  "Spa pool and hot tub retailing",
+  "Swimming pool chemicals retailing",
+  "Swimming pool retailing",
+  "supplies retailing"
+ ],
+ "42792": [
+  "Art dealers",
+  "Art gallery operation – retail"
+ ],
+ "42793": [
+  "Adult shop operation"
+ ],
+ "42794": [
+  "Animals retailing – live",
+  "Pet shops"
+ ],
+ "42799": [
+  "Clocks retailing",
+  "Coal retailing",
+  "Craft materials and supplies retailing",
+  "Craft retailing",
+  "Discount store operation",
+  "Firewood cutting and retailing",
+  "Fireworks retailing",
+  "Gift shops",
+  "Greeting cards retailing",
+  "Ice retailing",
+  "Musical instruments retailing",
+  "Picture framing service",
+  "Postcards retailing",
+  "Religious goods retailing",
+  "Retailing nec",
+  "Souvenirs retailing",
+  "Tobacco products retailing",
+  "Travel goods retailing",
+  "Variety store operation",
+  "other than mainly groceries"
+ ],
+ "43101": [
+  "Cosmetics retailing – catalogue selling",
+  "Cosmetics retailing – direct selling",
+  "Perfumes retailing – direct selling",
+  "Toiletries retailing – direct selling",
+  "perfumes and toiletries"
+ ],
+ "43102": [
+  "Direct selling – jewellery",
+  "Jewellery retailing – direct selling"
+ ],
+ "43109": [
+  "Amway sales",
+  "Book retailing – catalogue selling",
+  "Book retailing – direct selling",
+  "Direct selling nec",
+  "Health foods direct selling",
+  "Milk vendor",
+  "selling (except commission based)",
+  "via internet"
+ ],
+ "43201": [
+  "cosmetics and toiletries",
+  "goods retailing commission based"
+ ],
+ "43202": [
+  "Jewellery retailing commission based",
+  "Network marketing of jewellery"
+ ],
+ "43209": [
+  "Yacht broking",
+  "and/or selling nec",
+  "catalogue selling (commission based)",
+  "cosmetics, toiletries or jewellery)",
+  "direct selling (commission based)",
+  "selling for other businesses"
+ ],
+ "44000": [
+  "Boarding houses",
+  "Camping ground operation",
+  "Caravan parks and camping grounds",
+  "Guest house operation",
+  "Holiday houses and flats operation",
+  "Hotel operation",
+  "Motel operation",
+  "Ski-lodge operation",
+  "Youth hostel operation",
+  "accommodation",
+  "boarding schools"
+ ],
+ "45110": [
+  "Cafe operation",
+  "Coffee shops",
+  "Internet cafe (mainly cafe operation)",
+  "Restaurant operation"
+ ],
+ "45120": [
+  "Fast food retailing",
+  "Fish and chips retailing – take away",
+  "Hamburgers retailing",
+  "Ice cream retailing",
+  "Pizza take away – retailing",
+  "Soft drinks retailing",
+  "Take away foods – retailing",
+  "cooked and ready to eat"
+ ],
+ "45130": [
+  "Airline catering service",
+  "Catering service"
+ ],
+ "45200": [
+  "Bar – licensed",
+  "Hotel operation – mainly drinking place",
+  "Nightclub operation",
+  "Pub operation – mainly drinking place",
+  "Tavern operation – mainly drinking place",
+  "mainly drinking place"
+ ],
+ "45301": [
+  "Clubs – licensed",
+  "Licensed club operation"
+ ],
+ "45302": [
+  "with staff"
+ ],
+ "46100": [
+  "Delivery service – road",
+  "Furniture removal service – road",
+  "Gas hauling – by road",
+  "Log haulage service",
+  "Road freight transport service",
+  "Taxi truck service",
+  "Towing service, motor vehicle",
+  "Truck hire service – with driver",
+  "Waste paper transport – road"
+ ],
+ "46210": [
+  "Bus, coach transport – long distance",
+  "Charter bus service – long distance",
+  "Tourist coach service – long distance"
+ ],
+ "46220": [
+  "Airport bus service",
+  "Bus, coach transport – short distance",
+  "Charter bus service – short distance",
+  "School bus service",
+  "Tramway passenger transport service"
+ ],
+ "46231": [
+  "Taxi cab management service",
+  "Taxi cab service (owner operator)"
+ ],
+ "46239": [
+  "Car hire service – chauffeur driven",
+  "Road passenger transport nec"
+ ],
+ "47100": [
+  "Freight transport service – railway"
+ ],
+ "47200": [
+  "Monorail operation"
+ ],
+ "48100": [
+  "Ferry service",
+  "Ship charter, lease or rental",
+  "coastal sea transport",
+  "in coastal waters",
+  "international sea transport",
+  "river, harbour or lake",
+  "transport",
+  "with crew for freight transport"
+ ],
+ "48200": [
+  "Water taxi service",
+  "between domestic and foreign ports",
+  "between domestic ports",
+  "crew for passenger transport",
+  "in coastal waters"
+ ],
+ "49001": [
+  "Helicopter charter",
+  "non-scheduled air transport",
+  "with crew"
+ ],
+ "49009": [
+  "Airline operation – scheduled domestic",
+  "scheduled domestic air transport",
+  "scheduled international",
+  "scheduled international air transport"
+ ],
+ "50100": [
+  "Cable car operation",
+  "Chair lift operation",
+  "Dive boat tours – coastal waters",
+  "Dive boat tours – inland waters",
+  "Game fishing tours – coastal waters",
+  "Motor cycle tour operation – with driver",
+  "Tourist coach service – short distance",
+  "Whale watching tours – coastal waters",
+  "by four-wheel drive – with driver",
+  "societies or as a tourist attraction",
+  "with driver",
+  "with or without restaurant facilities"
+ ],
+ "50210": [
+  "Pipeline operation"
+ ],
+ "50290": [
+  "Freight transport operation nec",
+  "Ski-tow operation",
+  "Transport operation nec"
+ ],
+ "51010": [
+  "Mail services",
+  "Mailbox rental services",
+  "Post office operation",
+  "Postal agency operation"
+ ],
+ "51020": [
+  "Courier service",
+  "Messenger service"
+ ],
+ "52110": [
+  "Ship loading or unloading service",
+  "Stevedoring"
+ ],
+ "52120": [
+  "Coal loader operation – sea transport",
+  "Grain loader operation – sea transport",
+  "Ship mooring service",
+  "Wharf facility leasing",
+  "Wharf provision",
+  "marine cargo",
+  "sea transport"
+ ],
+ "52190": [
+  "Divers – commercial, salvage",
+  "Harbour services nec",
+  "Navigation service – water transport",
+  "Pilotage service",
+  "Port services nec",
+  "Salvage service – marine",
+  "Ship registration service",
+  "Shipping agency service",
+  "Ships agency service",
+  "Towboat operation",
+  "Tugboat operation"
+ ],
+ "52200": [
+  "Airport operation",
+  "Airport services",
+  "Aviation consultancy service",
+  "Navigation service – air transport"
+ ],
+ "52910": [
+  "Baggage agency service",
+  "Customs agency service",
+  "preparation service"
+ ],
+ "52920": [
+  "Freight forwarding service – road",
+  "except by road"
+ ],
+ "52991": [
+  "(except owner operator)"
+ ],
+ "52999": [
+  "Chauffeur service",
+  "Freight brokerage service",
+  "Railway station operation",
+  "Toll bridge operation",
+  "Toll road operation",
+  "except for taxi trucks",
+  "for road freight",
+  "in inland waters",
+  "or refurbishing"
+ ],
+ "53010": [
+  "Grain elevator operation",
+  "Grain silo operation",
+  "Grain storage",
+  "Storage service – grain"
+ ],
+ "53090": [
+  "Bond store operation",
+  "Cold store operation",
+  "Cool storage of fruit and vegetables",
+  "Furniture storage service",
+  "Storage service nec",
+  "Warehousing nec"
+ ],
+ "54110": [
+  "Newspapers publishing"
+ ],
+ "54120": [
+  "Periodicals publishing"
+ ],
+ "54130": [
+  "Books publishing",
+  "Maps publishing"
+ ],
+ "54140": [
+  "Directory and mailing list publishing"
+ ],
+ "54190": [
+  "Investing in tangible artistic work"
+ ],
+ "54200": [
+  "Computer games software design",
+  "Design software for smartphones",
+  "Software publishing"
+ ],
+ "55110": [
+  "Film and video production",
+  "Motion picture film or tape production",
+  "Newsreel production",
+  "Television film or tape production"
+ ],
+ "55120": [
+  "Film and video distribution",
+  "Motion picture distribution",
+  "Motion picture leasing",
+  "to the public by video hire outlets"
+ ],
+ "55130": [
+  "Cinema operation",
+  "Drive-in theatre operation",
+  "Motion picture screening",
+  "Motion picture theatre operation",
+  "Newsreel theatre operation"
+ ],
+ "55140": [
+  "Motion picture editing"
+ ],
+ "55210": [
+  "Sheet music publishing"
+ ],
+ "55220": [
+  "Sound recording studio operation"
+ ],
+ "56100": [
+  "Radio service",
+  "Radio station operation"
+ ],
+ "56210": [
+  "Television service",
+  "Television station operation"
+ ],
+ "56220": [
+  "Pay TV operation",
+  "Pay TV station operation"
+ ],
+ "57000": [
+  "Internet publishing (periodical)"
+ ],
+ "58010": [
+  "Renting of Installed Fibre Capacity",
+  "Telecommunications service",
+  "Telephone exchange operation",
+  "Telephone service",
+  "Teleprinter service",
+  "Telex service",
+  "except radio and TV broadcasting",
+  "service (wired)"
+ ],
+ "58020": [
+  "Datacasting service provision",
+  "Radio relay station operation",
+  "Radio telephone service",
+  "Satellite communications service",
+  "Television relay station operation",
+  "service (wireless)"
+ ],
+ "58090": [
+  "Other telecommunications services"
+ ],
+ "59100": [
+  "Email services",
+  "Internet service providers",
+  "service operation)"
+ ],
+ "59210": [
+  "Computer time-sharing service",
+  "Data entry service",
+  "Data processing service",
+  "Microfiche production services",
+  "Tabulating service"
+ ],
+ "59220": [
+  "services – except library"
+ ],
+ "60100": [
+  "Archival service",
+  "Film archive service",
+  "Library service",
+  "Photographic archive service",
+  "Sound archive service"
+ ],
+ "60200": [
+  "News collection for radio broadcasting",
+  "broadcasting",
+  "distributing content"
+ ],
+ "62100": [
+  "Central bank operation"
+ ],
+ "62210": [
+  "Bank operation",
+  "Development bank operation",
+  "Savings bank operation",
+  "Trading bank operation"
+ ],
+ "62220": [
+  "Building societies",
+  "Permanent building society operation"
+ ],
+ "62230": [
+  "Credit unions"
+ ],
+ "62290": [
+  "Finance company operation",
+  "Money market dealers"
+ ],
+ "62300": [
+  "Financing nec",
+  "Terminating building society operation"
+ ],
+ "62400": [
+  "Friendly society operation",
+  "Investment association operation",
+  "Investment company operation",
+  "Investment operation – own account",
+  "assessed as companies",
+  "companies",
+  "corporate and public trading trusts",
+  "shares in subsidiary companies"
+ ],
+ "63100": [
+  "Life insurance provision"
+ ],
+ "63210": [
+  "Funeral benefit provision",
+  "Health insurance"
+ ],
+ "63220": [
+  "Accident insurance provision",
+  "Fire insurance provision",
+  "General insurance",
+  "Household insurance",
+  "Motor vehicle insurance",
+  "Third-party insurance",
+  "Travel insurance provision",
+  "Workers compensation insurance",
+  "marine and general"
+ ],
+ "63300": [
+  "operation",
+  "separately constituted"
+ ],
+ "64110": [
+  "Commodity futures broking or dealing",
+  "Financial asset broking service",
+  "Mortgage broking service",
+  "Stockbroking or trading"
+ ],
+ "64190": [
+  "Credit card administration service",
+  "Executor service",
+  "Financial service nec",
+  "Nominee service",
+  "Security valuation service",
+  "Share registry operation",
+  "Trustee service",
+  "commission basis",
+  "management services",
+  "services other nec"
+ ],
+ "64200": [
+  "Actuarial service",
+  "Claim assessment service",
+  "Insurance agency service",
+  "Insurance broking service",
+  "Insurance consultant service",
+  "Investing in patents and copyrights"
+ ],
+ "66110": [
+  "Hire car service without driver",
+  "cars or taxi cabs",
+  "licensed hire cars or taxi cabs"
+ ],
+ "66190": [
+  "Aircraft leasing",
+  "Bus, coach leasing",
+  "Campervan leasing, hiring or renting",
+  "Caravan hiring",
+  "Container hiring",
+  "Horse trailer hiring",
+  "Ship leasing",
+  "Trailer hiring",
+  "Truck leasing, hiring or renting"
+ ],
+ "66200": [
+  "Farm animals and bloodstock leasing"
+ ],
+ "66310": [
+  "Agricultural machinery leasing",
+  "Construction machinery leasing",
+  "Leasing of plant or equipment"
+ ],
+ "66320": [
+  "to general public"
+ ],
+ "66390": [
+  "Bicycles hiring",
+  "Camping equipment hiring",
+  "Costume hiring",
+  "Domestic appliance hiring",
+  "Fishing tackle hiring",
+  "Furniture hiring",
+  "Hobby equipment hiring",
+  "Household goods hiring",
+  "Indoor plant hire",
+  "Office machinery or equipment hiring",
+  "Photographic equipment hiring",
+  "Plant hiring or leasing",
+  "Pram and trolley hire",
+  "Ski equipment hire",
+  "Sporting equipment hiring",
+  "Stoves or heaters hiring",
+  "Television hiring",
+  "Toy library (non-welfare service)",
+  "Video recorder or equipment hiring",
+  "Washing machine hiring",
+  "Water ski equipment hire",
+  "household – hiring",
+  "including peripherals"
+ ],
+ "66400": [
+  "Leasing licences",
+  "Taxi cab plate leasing"
+ ],
+ "67110": [
+  "(except holiday houses and flats)",
+  "leasing – other than holiday"
+ ],
+ "67120": [
+  "Agricultural land renting or leasing",
+  "as owner or leaseholder",
+  "buildings as owner or leaseholder",
+  "owner or leaseholder",
+  "property as owner or leaseholder"
+ ],
+ "67200": [
+  "(on behalf of owner)",
+  "Auctioning service – real estate",
+  "Broking service, real estate",
+  "Property auctions internet",
+  "Real estate agency service",
+  "Real estate auctioning service",
+  "Real estate broking service",
+  "Real estate management service",
+  "Real estate rental agency service",
+  "Valuing service – real estate",
+  "leaseholder)",
+  "legal practitioners",
+  "management service",
+  "property (on behalf of owner)",
+  "service"
+ ],
+ "69100": [
+  "Agricultural research activities",
+  "Engineering research activities",
+  "Medical science research activities",
+  "Technology research activities",
+  "earth sciences research activities",
+  "except university",
+  "operation – except university",
+  "research activities",
+  "– except university"
+ ],
+ "69210": [
+  "Architect",
+  "Architectural services",
+  "Drafting service – architectural",
+  "Landscape architecture service",
+  "Town planning service"
+ ],
+ "69220": [
+  "Aerial photography service",
+  "Aerial surveying service",
+  "Engineering surveying service",
+  "Land surveying service",
+  "Map preparation service",
+  "Mining surveying service",
+  "Oceanographic surveying service",
+  "Seismic surveying service",
+  "Surveying service"
+ ],
+ "69230": [
+  "Boat designing service",
+  "Building consultancy service",
+  "Chemical engineering service",
+  "Civil engineering service",
+  "Drawing office service – engineering",
+  "Engineering consultancy service",
+  "Engineering drafting service",
+  "Marine engineering service",
+  "Mining engineering service",
+  "Naval architecture service",
+  "Pipeline engineering service",
+  "Product design service",
+  "Quantity surveying service",
+  "Sanitary engineering service",
+  "Traffic engineering service",
+  "consulting",
+  "service – fee or contract basis"
+ ],
+ "69240": [
+  "Commercial art service",
+  "Designing prepaid cards and vouchers",
+  "Fashion design service",
+  "Graphic design service – for advertising",
+  "Signwriting",
+  "Ticket writing"
+ ],
+ "69250": [
+  "Assay service",
+  "Chemical analysis service nec",
+  "Laboratory operation",
+  "Metallurgical services",
+  "Pollution monitoring service",
+  "Scientific or technical services nec",
+  "Seismic survey data analysis service",
+  "Testing or assay service",
+  "Thermographic testing services",
+  "Wool testing service",
+  "consultancy service",
+  "other than pathology service"
+ ],
+ "69310": [
+  "Advocate",
+  "Barrister",
+  "Legal aid service",
+  "Notary",
+  "Solicitor",
+  "Title searching service",
+  "by qualified legal practitioners"
+ ],
+ "69320": [
+  "Accountant",
+  "Accounting service",
+  "Auditing service",
+  "Bookkeeping service",
+  "Tax agent"
+ ],
+ "69400": [
+  "Advertising",
+  "Advertising service",
+  "Internet advertising services",
+  "Samples distribution service",
+  "advertising direct mail"
+ ],
+ "69500": [
+  "Market research service",
+  "Public opinion research service"
+ ],
+ "69610": [
+  "services"
+ ],
+ "69621": [
+  "Environmental consultancy services",
+  "assessment",
+  "excluding laboratory service"
+ ],
+ "69622": [
+  "(OH&S) consultancy services"
+ ],
+ "69629": [
+  "Business consultant service",
+  "Business management services nec",
+  "Business services nec",
+  "Lobbyist",
+  "Management consultancy service",
+  "Merchandising consultancy service",
+  "Music group management service",
+  "Operations research service",
+  "Personnel management service",
+  "Public affairs consultant",
+  "Public relations counselling service",
+  "Sales advisory service",
+  "Tariff consultancy service",
+  "consultancy service",
+  "management service"
+ ],
+ "69700": [
+  "Animal clinic or hospital operation",
+  "Spaying service",
+  "Veterinary hospitals",
+  "Veterinary surgeon"
+ ],
+ "69910": [
+  "Commercial photography service",
+  "Portrait photography services",
+  "Street photography service",
+  "Studio photography service",
+  "Video filming",
+  "film processing"
+ ],
+ "69990": [
+  "Interpreting service",
+  "Meteorological services",
+  "Migration consultants and services",
+  "Non-financial asset broking service",
+  "Translation service",
+  "real estate, wool or livestock"
+ ],
+ "70000": [
+  "Computer consultancy services nec",
+  "Computer programming service",
+  "Home page development",
+  "Internet consultancy service",
+  "Internet development services",
+  "Internet software development",
+  "Internet website design services",
+  "Internet website development",
+  "Software development services nec",
+  "Software production service",
+  "Software simulation and testing service",
+  "Systems analysis service",
+  "Website development",
+  "advisory services",
+  "and developing software",
+  "integration service",
+  "service"
+ ],
+ "72110": [
+  "Casting agency service",
+  "Employment agency operation",
+  "Executive search service",
+  "Outplacement service"
+ ],
+ "72120": [
+  "Contract staff service",
+  "Labour hire – temporary",
+  "Model agency",
+  "Temporary labour hire"
+ ],
+ "72200": [
+  "Ticket selling – for non-resident airlines",
+  "Tour guide service",
+  "Tour retailing service",
+  "Travel agency service",
+  "representative office"
+ ],
+ "72910": [
+  "Secretarial service"
+ ],
+ "72920": [
+  "Desktop publishing service",
+  "Typing service",
+  "Word processing service"
+ ],
+ "72930": [
+  "Collection agency service",
+  "Consumer credit reporting service",
+  "Credit bureau or agency service",
+  "Debt collecting service"
+ ],
+ "72940": [
+  "Telephone answering service"
+ ],
+ "72990": [
+  "Events booking agent",
+  "Power tool demonstration",
+  "Promotion/sale of internet coupons",
+  "Shopping trolley collection service",
+  "Sports ticket agency operation",
+  "Supermarket trolley collection service",
+  "Theatre ticket agency operation",
+  "Tourist bureau service",
+  "Tourist information centre operation",
+  "commission or fee basis",
+  "coupons",
+  "for businesses",
+  "service for businesses",
+  "voucher programmes"
+ ],
+ "73110": [
+  "Chimney cleaning service",
+  "Cleaning service",
+  "Crime scene cleaning service",
+  "House cleaning service",
+  "Office cleaning service",
+  "Road sweeping – cleaning services",
+  "Street sweeping – cleaning services",
+  "Swimming pool cleaning service",
+  "Telephone cleaning service",
+  "Window cleaning service",
+  "cleaning services",
+  "curtains or other soft furnishings"
+ ],
+ "73120": [
+  "Pest control service nec",
+  "Weed control service"
+ ],
+ "73130": [
+  "Gardening service nec",
+  "Lawn mowing service",
+  "mowing or slashing service"
+ ],
+ "73200": [
+  "contract basis"
+ ],
+ "75100": [
+  "Central government administration",
+  "Federal government administration",
+  "administration"
+ ],
+ "75200": [
+  "State government administration"
+ ],
+ "75300": [
+  "Local government administration",
+  "Shire administration"
+ ],
+ "75400": [
+  "Commission operation – judicial",
+  "Courts operation – judicial"
+ ],
+ "75510": [
+  "Domestic government representation"
+ ],
+ "75520": [
+  "High Commission operation",
+  "foreign government"
+ ],
+ "76000": [
+  "and administration"
+ ],
+ "77110": [
+  "Police services – government"
+ ],
+ "77120": [
+  "Armoured car service",
+  "Caretaking service",
+  "Detective agency service",
+  "Enquiry agency service",
+  "Locksmith service",
+  "Night watchman service",
+  "Protection service",
+  "Security service"
+ ],
+ "77130": [
+  "Bushfire brigade service",
+  "Fire fighting service – except forest",
+  "Fire fighting service – forest",
+  "Fire prevention service",
+  "defence and police"
+ ],
+ "77140": [
+  "Gaol operation"
+ ],
+ "77190": [
+  "Other public order and safety services"
+ ],
+ "77200": [
+  "Regulatory services"
+ ],
+ "80100": [
+  "except child minding centre"
+ ],
+ "80210": [
+  "School – primary school",
+  "and secondary school",
+  "primary school only"
+ ],
+ "80220": [
+  "Matriculation college operation",
+  "School, high school – secondary",
+  "Secondary school or college operation",
+  "and secondary school",
+  "secondary school only"
+ ],
+ "80230": [
+  "combined primary/secondary school",
+  "operation – combined",
+  "primary/secondary school",
+  "secondary"
+ ],
+ "80240": [
+  "Special school operation"
+ ],
+ "81011": [
+  "Computer training"
+ ],
+ "81019": [
+  "Business college operation",
+  "Industrial equipment operation training",
+  "Management training service",
+  "Modelling school",
+  "Technical college operation",
+  "Workplace training",
+  "college operation",
+  "operation",
+  "operation training"
+ ],
+ "81020": [
+  "Research school operation – university",
+  "University operation"
+ ],
+ "82110": [
+  "Coaching – sports",
+  "Martial arts and self-defence instruction",
+  "Parachuting school operation",
+  "Riding school operation",
+  "Sailing school operation",
+  "Scuba diving school",
+  "Sports coaching service",
+  "Swimming school operation",
+  "Tennis coaching"
+ ],
+ "82120": [
+  "Art school operation",
+  "Ballet teaching",
+  "Drama school operation",
+  "Music school operation nec",
+  "Music teaching",
+  "Nursing college operation",
+  "Teachers college operation nec"
+ ],
+ "82191": [
+  "Flying schools"
+ ],
+ "82199": [
+  "Correspondence school operation nec",
+  "Driver training – automotive",
+  "Education nec",
+  "Educational workshops or seminars",
+  "Elocution school operation",
+  "Truck driver training",
+  "Tutoring service – academic",
+  "motor vehicle"
+ ],
+ "82200": [
+  "advisory services"
+ ],
+ "84010": [
+  "Eye hospitals",
+  "Maternity hospital operation",
+  "Obstetric hospital operation",
+  "Women’s hospital operation",
+  "dental or veterinary hospitals"
+ ],
+ "84020": [
+  "Psychiatric hospital"
+ ],
+ "85110": [
+  "Clinic – medical – general practice",
+  "Flying doctor service",
+  "General practitioner – medical",
+  "Medical service – GP"
+ ],
+ "85121": [
+  "Anaesthetist"
+ ],
+ "85122": [
+  "Specialist medical clinic operation"
+ ],
+ "85123": [
+  "Dermatologist"
+ ],
+ "85124": [
+  "Gynaecologist",
+  "Obstetrician"
+ ],
+ "85125": [
+  "Psychiatrist"
+ ],
+ "85129": [
+  "Allergist",
+  "Consultant physician",
+  "Haematologist services",
+  "Medical service, specialist nec",
+  "Neurologist",
+  "Ophthalmologist",
+  "Orthopaedic specialist",
+  "Otorhinolaryngologist",
+  "Paediatrician",
+  "Plastic surgeon",
+  "Rheumatologist",
+  "Specialist medical practitioner nec",
+  "Surgeon nec – medical",
+  "Thoracic specialist",
+  "Urologist",
+  "practitioner or cosmetic"
+ ],
+ "85201": [
+  "X-ray clinic operation"
+ ],
+ "85202": [
+  "Medical laboratory operation",
+  "Pathologist",
+  "Pathology laboratory operation"
+ ],
+ "85203": [
+  "Radiographer",
+  "Radiologist",
+  "Radiology services"
+ ],
+ "85209": [
+  "Medical imaging clinic"
+ ],
+ "85310": [
+  "Clinic – dental",
+  "Dental hospital operation",
+  "Dental surgeon",
+  "Endodontist",
+  "Oral pathologist",
+  "Orthodontist",
+  "Paedodontist",
+  "Periodontist",
+  "Prosthodontist"
+ ],
+ "85320": [
+  "Contact lenses dispensing",
+  "Eye testing – optometrist",
+  "Optical dispensing",
+  "Optician",
+  "Orthoptist",
+  "Spectacles dispensing"
+ ],
+ "85330": [
+  "Physiotherapy service"
+ ],
+ "85340": [
+  "Chiropractor service",
+  "Osteopath service"
+ ],
+ "85391": [
+  "Acupuncture service",
+  "Clinical massage service",
+  "Herbalist",
+  "Homoeopath",
+  "Hydropath",
+  "Magnetic therapy service",
+  "Massage therapy (medical) service",
+  "Therapeutic massage service"
+ ],
+ "85399": [
+  "Chiropodists",
+  "Dietitian",
+  "Hearing aids dispensing",
+  "Hypnotherapist",
+  "Midwifery services",
+  "Nursing service",
+  "Occupational therapy service",
+  "Paramedical services",
+  "Podiatry service",
+  "Psychologist",
+  "Psychotherapist",
+  "Speech therapy service",
+  "predominantly medical)"
+ ],
+ "85910": [
+  "Aerial ambulance service",
+  "Ambulance service"
+ ],
+ "85990": [
+  "Community health centre operation",
+  "Drug referral centre operation",
+  "Health services nec"
+ ],
+ "86011": [
+  "Convalescent homes",
+  "Nursing home operation",
+  "provided as a major service"
+ ],
+ "86012": [
+  "Residential care for the aged operation",
+  "provided as a major service"
+ ],
+ "86090": [
+  "Children’s homes operation",
+  "Crisis care accommodation operation",
+  "Homeless accommodation",
+  "Hospice operation",
+  "Residential refuge operation",
+  "operation nec"
+ ],
+ "87100": [
+  "Child care service",
+  "Child minding centres"
+ ],
+ "87900": [
+  "Adoption service",
+  "Adult day care centre operation",
+  "Alcohol counselling services",
+  "Charities or charitable organisations",
+  "Drug rehabilitation counselling services",
+  "Emergency housekeeping service",
+  "Marriage guidance service",
+  "Meals on wheels service",
+  "Toy library (welfare service)",
+  "Welfare counselling service",
+  "except accommodation",
+  "of disabled children",
+  "predominantly home support)"
+ ],
+ "89100": [
+  "Historic house operation",
+  "Museum operation"
+ ],
+ "89210": [
+  "Animal parks",
+  "Aquarium operation",
+  "Aviary operation",
+  "Herbarium operation",
+  "Zoological garden operation"
+ ],
+ "89220": [
+  "Parks and gardens operation",
+  "Picnic ground operation",
+  "Tourist caves operation",
+  "Wildlife sanctuary operation",
+  "except sporting"
+ ],
+ "90010": [
+  "Ballet company operation",
+  "Choirs",
+  "Circus operation",
+  "Musical group operation",
+  "Opera company operation",
+  "Orchestra operation",
+  "Puppet show operation",
+  "Theatre restaurant operation",
+  "Theatrical company operation",
+  "Tribute shows"
+ ],
+ "90021": [
+  "Actor",
+  "Entertainers",
+  "Musicians",
+  "Performing artist operation",
+  "live theatrical or musical",
+  "other than theatrical or musical"
+ ],
+ "90029": [
+  "Artist",
+  "Author",
+  "Cartoon character design",
+  "Cartoonists",
+  "Comedians",
+  "Composer – music",
+  "Costume design service",
+  "Creative writers – own account",
+  "Painter – artist",
+  "Playwright",
+  "Poet",
+  "Sculptor",
+  "Services to the arts nec",
+  "Set designing service",
+  "Songwriter",
+  "Stage management operation",
+  "Theatre lighting service",
+  "Writer",
+  "writing content"
+ ],
+ "90030": [
+  "Concert hall operation",
+  "Entertainment centre operation",
+  "Opera house operation",
+  "Playhouse operation",
+  "motion picture theatre",
+  "theatre restaurant operation"
+ ],
+ "91110": [
+  "Fitness centres",
+  "Gymnasium operation"
+ ],
+ "91121": [
+  "Jockeys"
+ ],
+ "91122": [
+  "Basketballer – professional"
+ ],
+ "91123": [
+  "Cricketer – professional"
+ ],
+ "91124": [
+  "Footballer – professional"
+ ],
+ "91125": [
+  "Referee, umpire – professional",
+  "Umpire, referee – professional"
+ ],
+ "91126": [
+  "Sportsperson nec – professional"
+ ],
+ "91129": [
+  "Sport and physical recreation clubs nec"
+ ],
+ "91131": [
+  "Squash court operation",
+  "Tennis court operation"
+ ],
+ "91139": [
+  "(except dog or horse)",
+  "Billiard saloon operation",
+  "Bowling alley operation – tenpin",
+  "Bowling green operation",
+  "Netball court or facility operation",
+  "Skating rink operation",
+  "Speedway operation",
+  "Sports ground operation nec",
+  "Swimming pool operation",
+  "Tenpin bowling centres",
+  "range operation nec"
+ ],
+ "91140": [
+  "Clubs – sporting – except hospitality",
+  "Sports administration service",
+  "except hospitality"
+ ],
+ "91210": [
+  "horse or dog"
+ ],
+ "91291": [
+  "Dog training – for racing",
+  "Greyhound training",
+  "Racing kennels operation"
+ ],
+ "91292": [
+  "Horse training – race horse",
+  "Race horse training",
+  "Racing stables operation"
+ ],
+ "91299": [
+  "Other horse and dog racing activities"
+ ],
+ "91310": [
+  "Amusement centre",
+  "Amusement park operation",
+  "Go-kart track operation",
+  "Merry-go-round operation"
+ ],
+ "91390": [
+  "Dance hall or studio operation",
+  "Hot pool operation",
+  "Marina operation – pleasure craft",
+  "Thermal pool operation",
+  "Youth camp operation",
+  "inland waters"
+ ],
+ "92010": [
+  "Casino operation"
+ ],
+ "92020": [
+  "Lottery agency operation",
+  "Lottery operation"
+ ],
+ "92091": [
+  "Bookmaker operation"
+ ],
+ "92092": [
+  "TAB agency operation",
+  "Totalisator agency operation"
+ ],
+ "92099": [
+  "Bingo operation",
+  "Football pools operation",
+  "Gambling services nec"
+ ],
+ "94110": [
+  "Auto-electrical services",
+  "Automotive mobile phone installation",
+  "Automotive servicing – electrical repairs",
+  "Car servicing – electrical repairs",
+  "Electrical repairing – automotive",
+  "dealing or installation",
+  "electrical repairs"
+ ],
+ "94121": [
+  "Windscreen repairing"
+ ],
+ "94129": [
+  "Automotive crash repairs",
+  "Car wash and cleaning service",
+  "Motor trimming",
+  "Motor vehicle body repairing",
+  "Motor vehicle crash repairs",
+  "Motor vehicle restoration",
+  "Motor vehicle rust proofing",
+  "Motor vehicle smash repairing",
+  "Panel beating",
+  "Rust proofing – automotive",
+  "Smash repairing",
+  "Spray painting – motor body",
+  "cleaning service"
+ ],
+ "94191": [
+  "Brake and clutch service",
+  "Motor vehicle clutch or brake repairing"
+ ],
+ "94192": [
+  "Motor vehicle radiator repairing"
+ ],
+ "94193": [
+  "repairing – automotive"
+ ],
+ "94199": [
+  "Engine reconditioning – customised",
+  "Mechanical services – general",
+  "Motor cycles or scooters repairing",
+  "Towbar fitting services",
+  "general mechanical repairs",
+  "general repairs",
+  "inspection service",
+  "or rebuilding"
+ ],
+ "94210": [
+  "Air conditioners repairing – household",
+  "Gas appliance repair",
+  "Household appliances repairing nec",
+  "Radios repairing – except car radios",
+  "Sewing machines (household) repairing",
+  "Television sets repairing",
+  "appliances",
+  "electric – repairing",
+  "household electric",
+  "household electric – repairing"
+ ],
+ "94220": [
+  "Computer printer repairs",
+  "electronic maintenance",
+  "peripherals"
+ ],
+ "94290": [
+  "Brewery equipment maintenance",
+  "Fire extinguisher servicing",
+  "Sewing machines (industrial) repairing",
+  "and maintenance",
+  "maintenance"
+ ],
+ "94910": [
+  "Footwear repairing"
+ ],
+ "94990": [
+  "Key cutting or duplicating service",
+  "and personal goods nec",
+  "except apparel"
+ ],
+ "95110": [
+  "Barber shop",
+  "Beauty salon operation",
+  "Epilation service",
+  "Hair restoration service – cosmetic",
+  "Hairdressing service",
+  "Manicure service",
+  "Pedicure service",
+  "Solarium – sun tanning operation",
+  "Sun tanning salon operation"
+ ],
+ "95120": [
+  "Weight reducing service"
+ ],
+ "95200": [
+  "Cemetery operation",
+  "Crematorium operation",
+  "Funeral directing",
+  "Undertaking"
+ ],
+ "95310": [
+  "Baby napkins hire service",
+  "Carpet cleaning service",
+  "Clothes ironing service",
+  "Curtain cleaning service",
+  "Dry cleaning service, agency",
+  "Laundry agency operation",
+  "Laundry service",
+  "Linen hire service",
+  "Self-service laundry operation"
+ ],
+ "95320": [
+  "Photographic film processing"
+ ],
+ "95330": [
+  "Car park operation",
+  "Parking station operation"
+ ],
+ "95340": [
+  "Escort agency service",
+  "Massage (adult industry) services nec",
+  "Prostitution service"
+ ],
+ "95391": [
+  "Astrology service",
+  "Clairvoyance service",
+  "Fortune telling service",
+  "Numerology service"
+ ],
+ "95392": [
+  "Introduction agency service"
+ ],
+ "95393": [
+  "Child minding service – in the home"
+ ],
+ "95399": [
+  "Boarding kennels",
+  "Dog obedience training",
+  "Genealogy service",
+  "Marriage celebrant",
+  "Personal services nec",
+  "Pet grooming service",
+  "Racing information service",
+  "Tattooing service",
+  "Turkish bath operation",
+  "on a contract or fee basis"
+ ],
+ "95400": [
+  "Church operation",
+  "are primary to other industries"
+ ],
+ "95510": [
+  "Business associations",
+  "Professional associations",
+  "except trade union"
+ ],
+ "95520": [
+  "Industrial union operation",
+  "Trade union operation"
+ ],
+ "95591": [
+  "Parents and citizens associations"
+ ],
+ "95599": [
+  "Automobile association operation",
+  "Consumers associations operation",
+  "Political party operation",
+  "community or sectional interests nec"
+ ],
+ "96010": [
+  "Private households employing staff"
+ ],
+ "96020": [
+  "for own use"
+ ],
+ "96030": [
+  "for own use"
+ ],
+ "97000": [
+  "PAYG, FBT use only"
+ ],
+ "98000": [
+  "sheet data present"
+ ],
+ "99010": [
+  "Interest on bearer debentures"
+ ],
+ "99020": [
+  "Assessment Act 1936 (ITAA 1936)",
+  "section 129 ITAA 1936"
+ ],
+ "99030": [
+  "derived by non-residents"
+ ],
+ "99040": [
+  "section 143 ITAA 1936"
+ ],
+ "99050": [
+  "148 ITAA 1936"
+ ],
+ "99060": [
+  "Act 1936 (ITAA 1936)",
+  "section 169AA ITAA 1936"
+ ],
+ "99070": [
+  "money – section 255 ITAA 1936",
+  "section 255 ITAA 1936"
+ ]
+}
