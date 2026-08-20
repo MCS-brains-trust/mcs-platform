@@ -1242,7 +1242,7 @@ function _addRowToConfirmedTable(data) {
     const row = `<tr id="confirmed-row-${data.id}">
         <td><input type="checkbox" class="confirmed-checkbox" value="${data.id}" onclick="updateConfirmedSelection()"></td>
         <td>${data.date}</td>
-        <td>${data.description}</td>
+        <td><span class="txn-description">${data.description}</span></td>
         <td class="text-end ${amtClass}">${amtFormatted}</td>
         <td class="text-center">${gstBadge}</td>
         <td class="text-end">${credPctDisplay}</td>
@@ -1291,7 +1291,7 @@ function _addRowToPendingTable(data) {
         data-status="classified" data-is-split="false" data-apportionment-type="" data-apportionment-reason="">
         <td><input type="checkbox" class="row-select" value="${data.id}" onclick="updateBulkSelection()"></td>
         <td>${data.date}</td>
-        <td>${data.description}</td>
+        <td><span class="txn-description">${data.description}</span></td>
         <td class="text-end ${amtClass}">${amtFormatted}</td>
         <td class="text-center gst-treatment-cell" id="gst-treatment-cell-${data.id}">${gstCellHtml}</td>
         <td class="text-end creditable-pct-cell" id="cred-pct-cell-${data.id}">${credPctHtml}</td>
@@ -1997,4 +1997,13 @@ function recalcBankContra() {
         alert('Network error recalculating bank contra entries.');
     });
 }
+
+// Click a clamped description to see the whole thing, click again to close it.
+// Delegated from the document so it covers rows rendered by Django and rows
+// rebuilt here after a confirm or unconfirm, without rebinding.
+document.addEventListener('click', function (event) {
+    const description = event.target.closest('.txn-description');
+    if (!description) return;
+    description.classList.toggle('expanded');
+});
 </script>
