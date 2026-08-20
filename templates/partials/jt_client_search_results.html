@@ -7,8 +7,7 @@
   <div class="list-group">
     {% for c in clients %}
     <button type="button" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center"
-            onclick="document.getElementById('id_xpm_client_id').value='{{ c.xpmId }}';
-                     document.getElementById('jtPicked').textContent='{{ c.displayName|escapejs }}';">
+            onclick="applyJtPrefill('{{ c.xpmId|escapejs }}', '{{ c.displayName|escapejs }}');">
       <span>
         {{ c.displayName }}
         {% if c.abn %}<span class="text-muted small">&middot; ABN {{ c.abn }}</span>{% endif %}
