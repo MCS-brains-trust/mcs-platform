@@ -36,8 +36,14 @@ bank actually blocks, not by how fragile its parser looks.
 
 ## 2. What the evidence actually says
 
-Eleven distinct real statements, surveyed 2026-08-20. This table is the
+Thirteen distinct real statements, surveyed 2026-08-20. This table is the
 baseline every phase is measured against.
+
+ANZ was parked when this document was first written: its only exemplar was
+missing pages, so it could never reconcile whatever the parser did. Two
+complete statements arrived the same day and both reconcile to the cent
+through the existing flat-text parser, which unparks ANZ without any code
+change. They are not consecutive, so no boundary check applies to them.
 
 | File | Bank | Rows | Anchors | Reconciles | Parser actually used | State |
 |---|---|---|---|---|---|---|
@@ -51,6 +57,8 @@ baseline every phase is measured against.
 | `WBC2.pdf` | Westpac | 2 of 3 | 11,259.57 → 14,649.20 | **no** | rejected at parse | loses a wrapped row |
 | `NAB1.pdf` | NAB | 413 | 19,024.84 → 13,349.18 | yes | flat-text | healthy |
 | `NAB2.pdf` | NAB | 370 | 12,624.69 → 19,024.84 | yes | flat-text | healthy |
+| `ANZ1.pdf` | ANZ | 6 | 11,940.79 → 545.75 | yes | flat-text | healthy |
+| `ANZ2.pdf` | ANZ | 9 | 3,045.71 → 5,454.62 | yes | flat-text | healthy |
 | `ING.pdf` | ING | 56 | **0 → 0** (should be 2,156.82 → 3,514.82) | no | flat-text | **gate refuses it** |
 
 ### The strongest signal available
@@ -288,24 +296,30 @@ disordered.
 passes the gate while still refusing genuinely mixed ordering. Note this export
 spans two financial years, so it will exercise the FY-straddle path heavily.
 
-### Phase 5 — NAB onto the shared core
+### Phase 5 — NAB and ANZ onto the shared core
 
-No behaviour change. Migrate NAB onto the profile abstraction and keep
+No behaviour change. Migrate NAB and ANZ onto the profile abstraction and keep
 `verify_nab_columns`.
 
-*Done when:* both NAB statements produce byte-identical results to Phase 0.
+*Done when:* all four NAB and ANZ statements produce byte-identical results to
+Phase 0.
 
 ---
 
 ## 6. Parked banks
 
 Gate-protected, explicitly untrusted, and **not** to be quietly assumed
-working: **ANZ**, **Bank of Melbourne**, **Macquarie**, **Bendigo**, and the
-CBA NetBank **"Transaction Listing"** variant.
+working: **Bank of Melbourne**, **Macquarie**, **Bendigo**, and the CBA NetBank
+**"Transaction Listing"** variant.
 
 What unparks one: two real statements from different periods, each printing an
-opening and closing balance. ANZ has one exemplar and it is missing pages, so
-it can never reconcile — it needs a *replacement*, not an additional file.
+opening and closing balance.
+
+**ANZ is no longer parked.** Two complete statements now reconcile through the
+existing parser, so ANZ needs no repair — it joins NAB as a bank that works and
+is simply waiting to migrate onto the shared core in Phase 5. This is worth
+noting as the cheapest result in the whole survey: the fix was evidence, not
+code.
 
 Until then a statement from these banks either parses and reconciles by luck,
 or is refused by the gate and needs a reasoned override. That is the honest
@@ -332,5 +346,9 @@ state of them, and it is visible rather than assumed.
    where the defects actually are.
 2. Is `CBA_1`'s Transaction History export something the firm uses routinely,
    or was it a one-off? If routine, Phase 4 should move ahead of Phase 3.
-3. A replacement ANZ statement — complete, with both anchors — would unpark
-   ANZ.
+3. ~~A replacement ANZ statement would unpark ANZ.~~ **Answered
+   2026-08-20:** two complete ANZ statements supplied, both reconcile, ANZ
+   unparked with no code change.
+4. Bank of Melbourne, Macquarie, Bendigo and the CBA NetBank "Transaction
+   Listing" still have no exemplars at all. They stay parked until two each
+   arrive.
