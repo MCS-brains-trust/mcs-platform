@@ -327,6 +327,7 @@ urlpatterns = [
     path("htmx/tb-line/<uuid:pk>/update-mapping/", views.htmx_update_tb_mapping, name="htmx_update_tb_mapping"),
 
     # COA Search API (for review tab dropdown)
+    path("api/industry-activities/", views.industry_activities_api, name="industry_activities"),
     path("api/coa-search/", views.coa_search_api, name="coa_search_api"),
     path("years/<uuid:pk>/api/entity-coa-search/", views.entity_coa_search_api, name="entity_coa_search_api"),
 

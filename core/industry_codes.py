@@ -76,50 +76,57 @@ def _division_for_code(code: str) -> str:
 # Same code also appears in its proper ANZSIC division below — intentional,
 # matches Xero's UX. Codes that don't resolve against the loaded fixture are
 # dropped at build time with a logged warning (see _build_choices).
-COMMON_INDUSTRY_CODES = [
+# Quick picks shown as the first optgroup on the entity form.
+#
+# Each code is paired with the official label it is MEANT to be. This is not
+# decoration: the previous list was 35 bare codes, of which 13 were ANZSIC
+# classes rather than ATO BICs (silently dropped with a warning nobody read) and
+# 11 more were valid codes for an unrelated industry -- Police Services standing
+# in for recruitment, Central Government Administration for commercial cleaning.
+# tests_common_industry_group.py asserts every pairing against the fixture, so
+# that drift is now a test failure rather than log noise.
+COMMON_INDUSTRY_CODES: dict[str, str] = {
     # Construction trades
-    "30110",  # House Construction
-    "30220",  # Other Residential Building Construction
-    "32110",  # Plumbing Services
-    "32120",  # Electrical Services -- NOTE: actual code is 32320, verify against fixture
-    "32320",  # Electrical Services
-    "32410",  # Painting and Decorating Services
-    "32420",  # Plastering and Ceiling Services
-    "32510",  # Carpentry Services
-    "32990",  # Other Construction Services n.e.c.
+    "30110": "House Construction",
+    "30190": "Other Residential Building Construction",
+    "32310": "Plumbing Services",
+    "32320": "Electrical Services",
+    "32410": "Plastering and Ceiling Services",
+    "32420": "Carpentry Services",
+    "32440": "Painting and Decorating Services",
+    "32990": "Other Construction Services n.e.c.",
     # Professional services
-    "69110",  # Legal Services
-    "69310",  # Bookkeeping Services
-    "69320",  # Accounting Services
-    "69620",  # Management Advice and Related Consulting Services
+    "69310": "Legal Services",
+    "69320": "Accounting Services",
+    "69629": "Management Advice and Related Consulting Services n.e.c.",
     # Healthcare
-    "85110",  # General Practice Medical Services
-    "85120",  # Specialist Medical Services
-    "85320",  # Dental Services
-    "85390",  # Other Allied Health Services
+    "85110": "General Practice Medical Services",
+    "85129": "Specialist Medical Services n.e.c.",
+    "85310": "Dental Services",
+    "85399": "Other Allied Health Services (Mainstream)",
     # Property
-    "67110",  # Residential Property Operators
-    "67200",  # Non-Residential Property Operators
-    "67300",  # Real Estate Services
-    # Retail / hospitality
-    "41100",  # Supermarket and Grocery Stores
-    "42440",  # Clothing Retailing
-    "45110",  # Cafes and Restaurants
-    "45120",  # Takeaway Food Services
-    "45210",  # Pubs, Taverns and Bars
-    # Transport / automotive
-    "46100",  # Road Freight Transport
-    "46220",  # Taxi and Other Road Transport
-    "94110",  # Automotive Body, Paint and Interior Repair
-    "94120",  # Automotive Electrical Services
-    "94130",  # Automotive Mechanical Services
-    "94140",  # Tyre Retailing
-    # Other common
-    "75100",  # Building and Other Industrial Cleaning Services
-    "77110",  # Employment Placement and Recruitment Services
-    "77120",  # Investigation and Security Services
-    "78400",  # Hairdressing and Beauty Services
-]
+    "67110": "Residential Property Operators",
+    "67120": "Non-Residential Property Operators",
+    "67200": "Real Estate Services",
+    # Retail and hospitality
+    "41100": "Supermarket and Grocery Stores",
+    "42510": "Clothing Retailing",
+    "45110": "Cafes and Restaurants",
+    "45120": "Takeaway Food Services",
+    "45200": "Pubs, Taverns and Bars",
+    # Transport
+    "46100": "Road Freight Transport",
+    "46231": "Taxi Service Operation",
+    # Automotive
+    "39220": "Tyre Retailing",
+    "94110": "Automotive Electrical Services",
+    "94199": "Other Automotive Repair and Maintenance",
+    # Other services
+    "72110": "Employment Placement and Recruitment Services",
+    "73110": "Building and Other Industrial Cleaning Services",
+    "77120": "Investigation and Security Services",
+    "95110": "Hairdressing and Beauty Services",
+}
 COMMON_OPTGROUP_LABEL = "Common"
 
 
@@ -215,11 +222,17 @@ def _build_choices():
     # warning instead of failing the import.
     common_items: list[tuple[str, str]] = []
     missing: list[str] = []
-    for code in COMMON_INDUSTRY_CODES:
+    for code, expected_label in COMMON_INDUSTRY_CODES.items():
         desc = INDUSTRY_CODE_MAP.get(code)
         if desc is None:
             missing.append(code)
             continue
+        if desc != expected_label:
+            # The fixture is the authority; render its label, but say so loudly.
+            logger.warning(
+                "COMMON_INDUSTRY_CODES pairs %s with %r but the fixture says %r",
+                code, expected_label, desc,
+            )
         common_items.append((code, f"{code} – {desc}"))
     if missing:
         logger.warning(
