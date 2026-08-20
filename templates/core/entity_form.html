@@ -42,6 +42,7 @@
                              hx-target="#jtClientResults">
                       <div id="jtClientResults" class="mt-2"></div>
                       <div class="form-text">Linked client: <span id="jtPicked">{{ form.instance.xpm_client_id|default:"none yet" }}</span></div>
+                      <div class="form-text" id="jtPrefillNote" aria-live="polite"></div>
                     </div>
                     {{ form|crispy }}
                     <div class="d-flex gap-2 mt-3">
@@ -148,5 +149,55 @@ document.addEventListener('DOMContentLoaded', function() {
         toggleBasFreq();
     }
 });
+</script>
+
+<script>
+// Fill the create-entity form from Job Tracker, for the client just picked.
+//
+// Only EMPTY fields are written: the same template serves the edit form, and a
+// prefill must never clear something typed by hand. Job Tracker holds no
+// industry, ACN, company size or reporting framework, so those always stay for
+// the operator -- this saves typing, it is not a one-click create.
+window.jtPrefillUrlTemplate = "{% url 'core:htmx_jt_client_prefill' 'XPM_ID' %}";
+
+function applyJtPrefill(xpmId, displayName) {
+    const idField = document.getElementById('id_xpm_client_id');
+    if (idField) idField.value = xpmId;
+    const picked = document.getElementById('jtPicked');
+    if (picked) picked.textContent = displayName;
+
+    const note = document.getElementById('jtPrefillNote');
+    const say = (text) => { if (note) note.textContent = text; };
+    say('Reading details from Job Tracker\u2026');
+
+    fetch(window.jtPrefillUrlTemplate.replace('XPM_ID', encodeURIComponent(xpmId)), {
+        headers: {'X-Requested-With': 'XMLHttpRequest'},
+    })
+    .then((response) => response.ok ? response.json() : Promise.reject(response.status))
+    .then((body) => {
+        if (body.unavailable) {
+            say('Job Tracker is unreachable \u2014 the client is linked, but enter the details by hand.');
+            return;
+        }
+        if (body.not_found) {
+            say('Job Tracker has no client with that XPM id.');
+            return;
+        }
+        const filled = [];
+        Object.entries(body.fields || {}).forEach(([name, value]) => {
+            const el = document.getElementById('id_' + name);
+            if (!el || el.value) return;          // absent, or already has a value
+            el.value = value;
+            if (el.value === String(value)) {     // a <select> rejects an unknown option
+                filled.push(name);
+                el.dispatchEvent(new Event('change', {bubbles: true}));
+            }
+        });
+        say(filled.length
+            ? 'Prefilled ' + filled.length + ' field(s) from Job Tracker. Industry, ACN, company size and reporting framework are not held there.'
+            : 'Nothing to prefill \u2014 Job Tracker holds no further details for this client.');
+    })
+    .catch(() => say('Could not read details from Job Tracker \u2014 enter them by hand.'));
+}
 </script>
 {% endblock %}

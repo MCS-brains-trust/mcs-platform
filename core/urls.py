@@ -311,6 +311,7 @@ urlpatterns = [
     # HTMX partials
     path("htmx/entity-search/", views.htmx_client_search, name="htmx_client_search"),
     path("htmx/jt-client-search/", views.htmx_jt_client_search, name="htmx_jt_client_search"),
+    path("htmx/jt-client-prefill/<str:xpm_client_id>/", views.htmx_jt_client_prefill, name="htmx_jt_client_prefill"),
     path("htmx/tb-line/<uuid:pk>/map/", views.htmx_map_tb_line, name="htmx_map_tb_line"),
 
     # Bulk Actions (entity-level)

@@ -13,6 +13,7 @@ from django.shortcuts import render, redirect, get_object_or_404
 from django.urls import reverse
 from django.utils import timezone
 from core.jt_identity import fetch_identity, search_clients
+from core.jt_prefill import prefill_from_identity
 
 logger = logging.getLogger("core.views")
 
@@ -7143,6 +7144,32 @@ def htmx_jt_client_search(request):
         "query": query,
         "clients": result.clients,
         "search_failed": result.failed,
+    })
+
+
+@login_required
+def htmx_jt_client_prefill(request, xpm_client_id):
+    """Values for the create-entity form, read from JT for the picked client.
+
+    Called once, when the operator picks a client out of the search results. The
+    narrow search endpoint deliberately returns four fields and no PII, so the
+    address and account manager come from the identity fetch instead.
+
+    Always 200, even when JT is unreachable: the form must stay usable by hand,
+    so the caller is told WHICH absence it is and fills nothing. `not_found`
+    means the XPM id is wrong, which is a different problem from JT being down.
+    """
+    result = fetch_identity(xpm_client_id)
+    if not result.ok:
+        return JsonResponse({
+            "fields": {},
+            "unavailable": result.state == "unavailable",
+            "not_found": result.state == "not_found",
+        })
+    return JsonResponse({
+        "fields": prefill_from_identity(result.fields),
+        "unavailable": False,
+        "not_found": False,
     })
 
 
