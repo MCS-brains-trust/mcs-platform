@@ -308,6 +308,21 @@ per-row balance column for chain verification.
 reconciles, and imports without an override. Marked **provisional** in code and
 docs: one exemplar is enough to build against and not enough to trust.
 
+**Completed 2026-08-20.** 56 rows, 2,156.82 → 3,514.82, movements summing to
+1,358.00 exactly, no chain breaks, no dateless rows, and the gate accepts it
+without an override. Every row now carries its printed balance, so the whole
+statement is verifiable line by line rather than only in total.
+
+Both defects turned out to be **one character**: no amount pattern allowed a
+leading minus, and ING prints money out negative. The amount/balance match
+failed on every debit row, the single-amount fallback then read the balance as
+the amount, and the anchor match failed identically on `$-6,050.74`. Where a
+sign is printed it is now believed; where it is not, the running balance still
+decides, as the Macquarie and Westpac paths do.
+
+Still **provisional**: one exemplar. A second ING statement would move it to
+the same footing as CBA, NAB and ANZ.
+
 ### Phase 3 — Westpac + the profile abstraction
 
 Geometry parser for Westpac, accumulating description rows until a movement is

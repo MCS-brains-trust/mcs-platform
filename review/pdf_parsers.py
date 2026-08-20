@@ -1401,8 +1401,15 @@ def parse_ing_statement(pdf_content):
             if name_m:
                 result["account_name"] = name_m.group(0).strip()
             # Balances from summary line
+            # "Opening balance / Total money in / Total money out / Closing
+            # balance", four figures on one line. Money out is printed negative
+            # -- "$-6,050.74" -- and while the minus was disallowed this match
+            # failed on every ING statement, leaving both anchors at 0. With
+            # nothing to reconcile against, the transaction defect below went
+            # unnoticed for exactly as long as this one did.
             bal_m = re.search(
-                r"\$([\d,]+\.\d{2})\s+\$[\d,]+\.\d{2}\s+\$[\d,]+\.\d{2}\s+\$([\d,]+\.\d{2})",
+                r"\$(-?[\d,]+\.\d{2})\s+\$-?[\d,]+\.\d{2}"
+                r"\s+\$-?[\d,]+\.\d{2}\s+\$(-?[\d,]+\.\d{2})",
                 line,
             )
             if bal_m:
@@ -1449,30 +1456,44 @@ def parse_ing_statement(pdf_content):
             parts = date_raw.split("/")
             iso_date = f"{parts[2]}-{parts[1]}-{parts[0]}"
 
-            # Try to find two amounts: money_out/in and balance
-            two_m = re.search(r"(.*?)\s+([\d,]+\.\d{2})\s+([\d,]+\.\d{2})\s*$", rest)
+            # "<description> <amount> <balance>", where ING writes money out
+            # as a negative figure. Requiring a bare digit made this match fail
+            # on every debit row; the single-amount branch below then took the
+            # BALANCE as the amount and left the real figure inside the
+            # description ("Direct Debit - Receipt 104848 -260.00" with
+            # amount=1,896.82). Summed, 56 such rows came to 137,814.07 against
+            # a true movement of 1,358.00.
+            two_m = re.search(
+                r"(.*?)\s+(-?[\d,]+\.\d{2})\s+(-?[\d,]+\.\d{2})\s*$", rest)
             if two_m:
                 desc = two_m.group(1).strip()
-                amount_val = _amt(two_m.group(2))
+                amount_text = two_m.group(2)
+                amount_val = _amt(amount_text)
                 new_balance = _amt(two_m.group(3))
-                # ING doesn't reveal Money out vs Money in from text position,
-                # so infer sign from the running balance (mirrors
-                # Macquarie/Westpac two-number path).
-                if new_balance < prev_balance:
-                    amount = -amount_val
-                else:
+                if amount_text.lstrip().startswith("-"):
+                    # The statement states the sign; believe it.
                     amount = amount_val
+                elif new_balance < prev_balance:
+                    # No sign printed: fall back to the running balance, as the
+                    # Macquarie and Westpac two-number paths do.
+                    amount = -abs(amount_val)
+                else:
+                    amount = abs(amount_val)
                 transactions.append({
                     "date": iso_date,
                     "description": desc,
                     "amount": amount,
+                    # Carried through so the running balance can be checked row
+                    # by row: ING prints a balance on every line, which makes
+                    # the whole statement verifiable rather than only its total.
+                    "balance": new_balance,
                 })
                 prev_balance = new_balance
                 continue
 
             # Single amount — ambiguous (bare amount or running balance).
             # Do not overwrite prev_balance from a lone number.
-            one_m = re.search(r"(.*?)\s+([\d,]+\.\d{2})\s*$", rest)
+            one_m = re.search(r"(.*?)\s+(-?[\d,]+\.\d{2})\s*$", rest)
             if one_m:
                 desc = one_m.group(1).strip()
                 amount_val = _amt(one_m.group(2))

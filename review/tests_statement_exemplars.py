@@ -82,10 +82,13 @@ EXEMPLARS = [
          opening=11940.79, closing=545.75, status="healthy", geometry=False),
     dict(name="ANZ2.pdf", bank="anz", rows=9,
          opening=3045.71, closing=5454.62, status="healthy", geometry=False),
+    # Fixed in Phase 2. ING prints money out as a negative figure, which no
+    # amount pattern allowed: the amount/balance match failed on every debit
+    # row, the fallback then read the BALANCE as the amount, and the anchors
+    # failed the same way on "$-6,050.74" -- so there was nothing to reconcile
+    # against and the two defects hid each other.
     dict(name="ING.pdf", bank="ing", rows=56,
-         opening=2156.82, closing=3514.82, status="gap", geometry=False,
-         gap="extracts no anchors (returns 0/0), so the import gate refuses "
-             "every ING statement"),
+         opening=2156.82, closing=3514.82, status="healthy", geometry=False),
 ]
 
 # One statement's closing balance is the next one's opening balance.
@@ -279,17 +282,25 @@ class GeometryEngineCoverageTests(SimpleTestCase):
 class KnownGapTests(SimpleTestCase):
     """The gaps, asserted as gaps. Each becomes a passing case in its phase."""
 
-    def test_ing_is_refused_by_the_gate_for_want_of_anchors(self):
+    def test_ing_amounts_are_the_movement_not_the_running_balance(self):
+        """The defect Phase 2 fixed: every ING amount was the balance column.
+        Summed, the 56 rows came to 137,814.07 against a true movement of
+        1,358.00 -- and with the anchors reading 0/0 there was nothing to
+        reconcile against, so neither fault was visible."""
         if not available("ING.pdf"):
             self.skipTest("ING.pdf absent")
         result = parse("ING.pdf")
-        self.assertEqual(len(result["transactions"]), BY_NAME["ING.pdf"]["rows"])
-        with self.assertRaises(StatementNotImportable):
-            assert_importable(
-                result["transactions"],
-                result["opening_balance"],
-                result["closing_balance"],
-            )
+        movements = sum(t["amount"] for t in result["transactions"])
+        self.assertAlmostEqual(movements, 1358.00, places=2)
+
+    def test_ing_carries_a_balance_on_every_row(self):
+        """ING prints one on every line, so the chain check can verify the
+        whole statement rather than only its total."""
+        if not available("ING.pdf"):
+            self.skipTest("ING.pdf absent")
+        result = parse("ING.pdf")
+        self.assertTrue(all(t.get("balance") is not None
+                            for t in result["transactions"]))
 
     def test_westpac_wbc2_fails_because_a_wrapped_row_is_lost(self):
         if not available("WBC2.pdf"):
