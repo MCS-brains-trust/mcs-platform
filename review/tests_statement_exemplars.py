@@ -94,6 +94,36 @@ EXEMPLARS = [
     # row, the fallback then read the BALANCE as the amount, and the anchors
     # failed the same way on "$-6,050.74" -- so there was nothing to reconcile
     # against and the two defects hid each other.
+    # Three busier ANZ statements. ANZ1/ANZ2 above have 6 and 9 transactions,
+    # which is the same blind spot that hid Westpac's 93% loss -- too few rows
+    # for a description long enough to wrap. ANZ11 duly fails: its shortfall of
+    # 5,706.00 is exactly page 3's printed credit total, so it is dropping a
+    # credit. ANZ prints "TOTALS AT END OF PERIOD" with independent debit and
+    # credit totals (14,400.93 and 19,086.00), which gives any fix ground truth
+    # from outside the parser.
+    dict(name="ANZ11.pdf", bank="anz", rows=None,
+         opening=1575.49, closing=6260.56, status="gap", geometry=False,
+         gap="drops a 5,706.00 credit, so reconciliation fails by -5,706.00"),
+    dict(name="ANZ12.pdf", bank="anz", rows=39,
+         opening=6260.56, closing=4015.19, status="healthy", geometry=False),
+    dict(name="ANZ13.pdf", bank="anz", rows=33,
+         opening=4015.19, closing=4007.98, status="healthy", geometry=False),
+    # Bendigo, previously parked with no exemplars at all. Two of the four
+    # reconcile and two do not. The text arrives glued
+    # ("Openingbalanceon1Mar2025 $2,772.95") and the table is
+    # Date / Transaction / Withdrawals / Deposits / Balance -- the same shape
+    # Westpac had before Phase 3a.
+    dict(name="Ben1.pdf", bank="bendigo", rows=10,
+         opening=3878.82, closing=6731.16, status="healthy", geometry=False),
+    dict(name="Ben3.pdf", bank="bendigo", rows=12,
+         opening=6731.16, closing=2772.95, status="healthy", geometry=False),
+    dict(name="Ben2.pdf", bank="bendigo", rows=None,
+         opening=2772.95, closing=5107.28, status="gap", geometry=False,
+         gap="reconciliation fails by +2,489.92 against a true movement of "
+             "2,334.33 (deposits 22,010.08 less withdrawals 19,675.75)"),
+    dict(name="Ben4.pdf", bank="bendigo", rows=None,
+         opening=98572.63, closing=91958.46, status="gap", geometry=False,
+         gap="31 pages; reconciliation fails by +42,826.55"),
     dict(name="ING.pdf", bank="ing", rows=56,
          opening=2156.82, closing=3514.82, status="healthy", geometry=False),
     # Two consecutive Orange Everyday statements from 2016, against the 2025
@@ -115,6 +145,12 @@ CHAINS = [
     ("NAB2.pdf", "NAB1.pdf"),
     ("ING19.pdf", "ING20.pdf"),
     ("WBC_2.pdf", "WBC_1.pdf"),
+    ("ANZ11.pdf", "ANZ12.pdf"),
+    ("ANZ12.pdf", "ANZ13.pdf"),
+    # Bendigo's filenames are not in date order: Ben1 precedes Ben3, which
+    # precedes Ben2.
+    ("Ben1.pdf", "Ben3.pdf"),
+    ("Ben3.pdf", "Ben2.pdf"),
 ]
 
 BY_NAME = {e["name"]: e for e in EXEMPLARS}
@@ -332,6 +368,24 @@ class KnownGapTests(SimpleTestCase):
         self.assertEqual(len(result["transactions"]), 3)
         self.assertTrue(any(abs(t["amount"] + 3300.00) < 0.011
                             for t in result["transactions"]))
+
+    def test_anz_drops_a_credit_on_a_busier_statement(self):
+        """ANZ1/ANZ2 have 6 and 9 transactions and reconcile perfectly, which
+        proves very little: with so few rows no description is long enough to
+        wrap. ANZ11 shows the fault, and its shortfall is exactly the credit
+        total printed at the foot of page 3."""
+        if not available("ANZ11.pdf"):
+            self.skipTest("ANZ11.pdf absent")
+        with self.assertRaises(StatementParseError):
+            parse("ANZ11.pdf")
+
+    def test_bendigo_fails_on_two_of_its_four_statements(self):
+        for name in ("Ben2.pdf", "Ben4.pdf"):
+            if not available(name):
+                continue
+            with self.subTest(name):
+                with self.assertRaises(StatementParseError):
+                    parse(name)
 
     def test_the_cba_transaction_history_export_is_not_recognised(self):
         if not available("CBA_1.pdf"):
