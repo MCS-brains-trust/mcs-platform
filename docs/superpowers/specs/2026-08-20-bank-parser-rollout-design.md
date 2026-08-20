@@ -320,8 +320,18 @@ the amount, and the anchor match failed identically on `$-6,050.74`. Where a
 sign is printed it is now believed; where it is not, the running balance still
 decides, as the Macquarie and Westpac paths do.
 
-Still **provisional**: one exemplar. A second ING statement would move it to
-the same footing as CBA, NAB and ANZ.
+**No longer provisional, 2026-08-20.** Two further statements arrived and both
+pass unaided: `ING19` (126 rows, 6,010.45 → 5,388.24, net −622.21) and `ING20`
+(143 rows, 5,388.24 → 23,896.75, net +18,508.51). ING19 closes exactly where
+ING20 opens, so the pair chains.
+
+The three exemplars are stronger evidence than the two-statement bar asks for:
+they span **two account types** (2016 Orange Everyday and 2025 Everyday Family)
+and a nine-year format gap, and the two directions of net movement exercise the
+sign handling both ways. All 325 rows across the three carry a printed balance,
+so every one is verified row by row rather than only on its total.
+
+ING is now on the same footing as CBA, NAB and ANZ.
 
 ### Phase 3 — Westpac + the profile abstraction
 

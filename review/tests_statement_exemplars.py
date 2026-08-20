@@ -89,6 +89,14 @@ EXEMPLARS = [
     # against and the two defects hid each other.
     dict(name="ING.pdf", bank="ing", rows=56,
          opening=2156.82, closing=3514.82, status="healthy", geometry=False),
+    # Two consecutive Orange Everyday statements from 2016, against the 2025
+    # Everyday Family above: two account types and a nine-year format gap.
+    # ING19 runs net negative and ING20 net positive, so the sign handling is
+    # exercised in both directions.
+    dict(name="ING19.pdf", bank="ing", rows=126,
+         opening=6010.45, closing=5388.24, status="healthy", geometry=False),
+    dict(name="ING20.pdf", bank="ing", rows=143,
+         opening=5388.24, closing=23896.75, status="healthy", geometry=False),
 ]
 
 # One statement's closing balance is the next one's opening balance.
@@ -98,6 +106,7 @@ CHAINS = [
     ("CBA1.pdf", "CBA2.pdf"),
     ("WBC2.pdf", "WBC1.pdf"),
     ("NAB2.pdf", "NAB1.pdf"),
+    ("ING19.pdf", "ING20.pdf"),
 ]
 
 BY_NAME = {e["name"]: e for e in EXEMPLARS}
@@ -296,11 +305,14 @@ class KnownGapTests(SimpleTestCase):
     def test_ing_carries_a_balance_on_every_row(self):
         """ING prints one on every line, so the chain check can verify the
         whole statement rather than only its total."""
-        if not available("ING.pdf"):
-            self.skipTest("ING.pdf absent")
-        result = parse("ING.pdf")
-        self.assertTrue(all(t.get("balance") is not None
-                            for t in result["transactions"]))
+        names = ["ING.pdf", "ING19.pdf", "ING20.pdf"]
+        require_any(self, names)
+        for name in names:
+            if not available(name):
+                continue
+            with self.subTest(name):
+                self.assertTrue(all(t.get("balance") is not None
+                                    for t in parse(name)["transactions"]))
 
     def test_westpac_wbc2_fails_because_a_wrapped_row_is_lost(self):
         if not available("WBC2.pdf"):
