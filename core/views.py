@@ -1767,7 +1767,12 @@ def entity_create(request, client_pk=None):
     else:
         form = EntityForm(user=request.user)
     return render(request, "core/entity_form.html", {
-        "form": form, "title": "Create Entity", "is_edit": False
+        "form": form, "title": "Create Entity", "is_edit": False,
+        # The XPM id round-trips as a form field, but a bare uuid on screen reads
+        # as a lost selection. Carry the name the operator actually picked so a
+        # server-side rejection (the ACN check digit, in practice) re-renders the
+        # search box exactly as they left it.
+        "picked_client_name": request.POST.get("jt_client_name", ""),
     })
 
 
