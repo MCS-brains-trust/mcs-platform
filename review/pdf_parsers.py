@@ -1886,24 +1886,35 @@ def extract_transactions_from_pdf_direct(pdf_content, filename=""):
     # text parser needs a date and a figure on one line, and Westpac almost
     # never puts them there. It read 16 transactions from a statement printing
     # 218 dated rows, and got the sign of the net movement wrong on another.
-    if bank == "westpac":
+    # Westpac, ANZ and Bendigo print the same shape -- date, description, two
+    # money columns, running balance -- and all three defeated their per-line
+    # text parsers on it. Westpac lost ~93% of rows because the figure sits on
+    # the row after the date; ANZ dropped a 5,706.00 deposit because it marks
+    # an empty column with the word "blank" and that row had none; Bendigo
+    # failed on two of four statements. One coordinate-reading engine serves
+    # them, with the legacy parser kept as a fallback in each case.
+    if bank in ("westpac", "anz", "bendigo"):
         from .statement_geometry import (
-            parse_westpac_statement_geometry, StatementParseError,
+            parse_column_table_statement, StatementParseError,
         )
+        legacy = {
+            "westpac": parse_westpac_statement,
+            "anz": parse_anz_statement,
+            "bendigo": parse_bendigo_statement,
+        }[bank]
         try:
             return verify_direct_parse(
-                parse_westpac_statement_geometry(pdf_content),
+                parse_column_table_statement(pdf_content, bank),
                 bank, pdf_content, filename,
             )
         except StatementParseError as geom_err:
             logger.warning(
-                f"Westpac geometry parse failed for '{filename}': {geom_err}. "
-                f"Falling back to legacy parse_westpac_statement."
+                f"{bank} geometry parse failed for '{filename}': {geom_err}. "
+                f"Falling back to the legacy text parser."
             )
             try:
                 return verify_direct_parse(
-                    parse_westpac_statement(pdf_content),
-                    bank, pdf_content, filename,
+                    legacy(pdf_content), bank, pdf_content, filename,
                 )
             except Exception:
                 raise geom_err

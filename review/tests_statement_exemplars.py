@@ -101,9 +101,8 @@ EXEMPLARS = [
     # credit. ANZ prints "TOTALS AT END OF PERIOD" with independent debit and
     # credit totals (14,400.93 and 19,086.00), which gives any fix ground truth
     # from outside the parser.
-    dict(name="ANZ11.pdf", bank="anz", rows=None,
-         opening=1575.49, closing=6260.56, status="gap", geometry=False,
-         gap="drops a 5,706.00 credit, so reconciliation fails by -5,706.00"),
+    dict(name="ANZ11.pdf", bank="anz", rows=25,
+         opening=1575.49, closing=6260.56, status="healthy", geometry=False),
     dict(name="ANZ12.pdf", bank="anz", rows=39,
          opening=6260.56, closing=4015.19, status="healthy", geometry=False),
     dict(name="ANZ13.pdf", bank="anz", rows=33,
@@ -117,13 +116,18 @@ EXEMPLARS = [
          opening=3878.82, closing=6731.16, status="healthy", geometry=False),
     dict(name="Ben3.pdf", bank="bendigo", rows=12,
          opening=6731.16, closing=2772.95, status="healthy", geometry=False),
-    dict(name="Ben2.pdf", bank="bendigo", rows=None,
-         opening=2772.95, closing=5107.28, status="gap", geometry=False,
-         gap="reconciliation fails by +2,489.92 against a true movement of "
-             "2,334.33 (deposits 22,010.08 less withdrawals 19,675.75)"),
+    dict(name="Ben2.pdf", bank="bendigo", rows=10,
+         opening=2772.95, closing=5107.28, status="healthy", geometry=False),
+    # 31 pages holding THIRTEEN consecutive monthly statements for one
+    # account. The engine reads all 13 periods, chains them, and lands within
+    # 20.00 over ~1,200 rows: it over-counts a 20.00 debit in period 5 and an
+    # offsetting 3.50 pair in period 12, against figures the statement prints
+    # itself on each period's "Transaction totals" row. Refused by the gate, so
+    # it cannot import wrongly.
     dict(name="Ben4.pdf", bank="bendigo", rows=None,
-         opening=98572.63, closing=91958.46, status="gap", geometry=False,
-         gap="31 pages; reconciliation fails by +42,826.55"),
+         opening=98572.63, closing=114902.08, status="gap", geometry=False,
+         gap="multi-period bundle: over-counts 20.00 against the statement's "
+             "own per-period totals, so reconciliation fails by -20.00"),
     dict(name="ING.pdf", bank="ing", rows=56,
          opening=2156.82, closing=3514.82, status="healthy", geometry=False),
     # Two consecutive Orange Everyday statements from 2016, against the 2025
@@ -369,23 +373,29 @@ class KnownGapTests(SimpleTestCase):
         self.assertTrue(any(abs(t["amount"] + 3300.00) < 0.011
                             for t in result["transactions"]))
 
-    def test_anz_drops_a_credit_on_a_busier_statement(self):
-        """ANZ1/ANZ2 have 6 and 9 transactions and reconcile perfectly, which
-        proves very little: with so few rows no description is long enough to
-        wrap. ANZ11 shows the fault, and its shortfall is exactly the credit
-        total printed at the foot of page 3."""
+    def test_anz_recovers_the_credit_it_used_to_drop(self):
+        """ANZ marks an empty column with the literal word "blank" and uses its
+        position to tell withdrawals from deposits. On one row the placeholder
+        was simply absent, so the text parser could not classify the figure and
+        dropped it -- a 5,706.00 deposit. Reading the column by coordinate makes
+        the placeholder irrelevant. The recovered total matches the statement's
+        own printed TOTALS AT END OF PERIOD exactly."""
         if not available("ANZ11.pdf"):
             self.skipTest("ANZ11.pdf absent")
-        with self.assertRaises(StatementParseError):
-            parse("ANZ11.pdf")
+        result = parse("ANZ11.pdf")
+        movements = sum(t["amount"] for t in result["transactions"])
+        # printed: debits 14,400.93, credits 19,086.00
+        self.assertAlmostEqual(movements, 19086.00 - 14400.93, places=2)
+        self.assertTrue(any(abs(t["amount"] - 5706.00) < 0.011
+                            for t in result["transactions"]))
 
-    def test_bendigo_fails_on_two_of_its_four_statements(self):
-        for name in ("Ben2.pdf", "Ben4.pdf"):
-            if not available(name):
-                continue
-            with self.subTest(name):
-                with self.assertRaises(StatementParseError):
-                    parse(name)
+    def test_the_bendigo_multi_period_bundle_is_still_refused(self):
+        """Thirteen monthly statements in one 31-page file. Within 20.00 over
+        ~1,200 rows, but not exact, so the gate refuses it."""
+        if not available("Ben4.pdf"):
+            self.skipTest("Ben4.pdf absent")
+        with self.assertRaises(StatementParseError):
+            parse("Ben4.pdf")
 
     def test_the_cba_transaction_history_export_is_not_recognised(self):
         if not available("CBA_1.pdf"):
