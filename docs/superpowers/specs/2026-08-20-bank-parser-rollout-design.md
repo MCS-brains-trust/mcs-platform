@@ -333,15 +333,55 @@ so every one is verified row by row rather than only on its total.
 
 ING is now on the same footing as CBA, NAB and ANZ.
 
-### Phase 3 — Westpac + the profile abstraction
+### Phase 3 — Westpac, then the profile abstraction
 
-Geometry parser for Westpac, accumulating description rows until a movement is
-found, which fixes the wrapped-description loss by construction. Extract the
-shared core and profiles per §4.3.
+**Split 2026-08-20, on Elio's call.** Phase 3a builds and validates the Westpac
+geometry parser standalone; Phase 3b extracts the shared core afterwards.
+Refactoring three working banks in the same step that introduces a fourth would
+make any regression ambiguous, and CBA, NAB and ING are all currently green.
 
-*Done when:* `WBC1` gives 2 rows and `WBC2` gives **3**, including the
-3,300.00 Osko payment; both reconcile and chain to each other; the CBA and NAB
-results from Phases 0–2 are unchanged.
+#### Phase 3a — the Westpac parser
+
+Geometry parser accumulating description rows until a figure appears in the
+debit or credit column, which fixes the wrapped-description loss by
+construction.
+
+*Done when:* all four Westpac statements reconcile, chain where consecutive,
+and pass the gate, with the CBA, NAB and ING results unchanged.
+
+**Completed 2026-08-20.** Two further statements arrived and changed the
+picture entirely — the original pair was far too quiet to show the real fault:
+
+| | text parser | geometry | true net (from the statement's own summary) |
+|---|---|---|---|
+| `WBC1` | 2 rows | 2 rows | +6,689.63 |
+| `WBC2` | 2 of 3 | **3 rows** | +3,389.63 |
+| `WBC_1` | **16 of ~218** | **216 rows** | +2,584.82 |
+| `WBC_2` | **14 of ~246** | **244 rows** | −3,842.27 |
+
+The text parser was losing roughly **93%** of transactions on a busy statement,
+and reported `WBC_2`'s net movement as **+7,477.67** against a true −3,842.27 —
+the wrong sign. Every statement failed reconciliation, so nothing imported
+wrongly; Westpac simply could not be imported at all.
+
+The cause is structural rather than a bad pattern. Westpac puts the date and
+the first words of the description on one row and the figure on the *next*,
+alongside the rest of the description. The text parser required a date and an
+amount on the same line, so the two-row shape — which is the normal shape, not
+an exception — defeated it. Reading coordinates makes it a non-issue.
+
+All four now reconcile with anchors matching the printed summary, zero chain
+breaks, zero dateless rows, and `WBC_2 → WBC_1` chains. The movements agree to
+the cent with each statement's independently printed Total Credits less Total
+Debits, which is evidence from outside the parser rather than from it.
+
+`WBC2`'s missing 3,300.00 Osko payment is recovered.
+
+#### Phase 3b — extract the shared core
+
+Still to do: the shared geometry core and per-bank profiles per §4.3, with CBA,
+Westpac, NAB, ANZ and ING migrating onto it. Four parsers now duplicate the
+same machinery, which is what let a defect sit unnoticed in each of them.
 
 ### Phase 4 — CBA Transaction History + reverse ordering
 

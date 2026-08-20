@@ -1882,6 +1882,32 @@ def extract_transactions_from_pdf_direct(pdf_content, filename=""):
             except Exception:
                 raise geom_err
 
+    # Route Westpac through the geometry engine for the same reason as CBA: the
+    # text parser needs a date and a figure on one line, and Westpac almost
+    # never puts them there. It read 16 transactions from a statement printing
+    # 218 dated rows, and got the sign of the net movement wrong on another.
+    if bank == "westpac":
+        from .statement_geometry import (
+            parse_westpac_statement_geometry, StatementParseError,
+        )
+        try:
+            return verify_direct_parse(
+                parse_westpac_statement_geometry(pdf_content),
+                bank, pdf_content, filename,
+            )
+        except StatementParseError as geom_err:
+            logger.warning(
+                f"Westpac geometry parse failed for '{filename}': {geom_err}. "
+                f"Falling back to legacy parse_westpac_statement."
+            )
+            try:
+                return verify_direct_parse(
+                    parse_westpac_statement(pdf_content),
+                    bank, pdf_content, filename,
+                )
+            except Exception:
+                raise geom_err
+
     parsers = {
         # "cba" is handled above by parse_cba_geometry; parse_cba_statement is the legacy fallback.
         "cba": parse_cba_statement,

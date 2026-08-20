@@ -500,6 +500,174 @@ def parse_cba_geometry(pdf_content):
 
 
 # --------------------------------------------------------------------------
+# Westpac
+# --------------------------------------------------------------------------
+
+# Westpac dates its rows "28/02/22".
+WESTPAC_DATE_RE = re.compile(r'^(\d{2})/(\d{2})/(\d{2})$')
+# Debit, credit and balance figures, no currency symbol.
+WESTPAC_MONEY_RE = re.compile(r'^-?\d{1,3}(,\d{3})*\.\d{2}$')
+# How close a figure's right edge must be to a column's to belong to it. The
+# figures right-align on the column, so this only absorbs sub-point drift.
+WESTPAC_COLUMN_TOLERANCE = 4.0
+
+
+def _westpac_columns(rows):
+    """(debit_x1, credit_x1, balance_x1) read off the transaction table header.
+
+    Westpac prints its header in capitals -- DATE, TRANSACTION DESCRIPTION,
+    DEBIT, CREDIT, BALANCE -- and right-aligns every figure on the matching
+    column, so the header states all three positions outright.
+    """
+    for row in rows:
+        by_text = {}
+        for word in row:
+            by_text.setdefault(word['text'].strip().upper(), word)
+        if {'DEBIT', 'CREDIT', 'BALANCE'} <= set(by_text):
+            return (by_text['DEBIT']['x1'],
+                    by_text['CREDIT']['x1'],
+                    by_text['BALANCE']['x1'])
+    return None
+
+
+def _westpac_column_of(word, debit_x, credit_x, balance_x):
+    """Which column a figure sits in, or None."""
+    for name, x in (('debit', debit_x), ('credit', credit_x),
+                    ('balance', balance_x)):
+        if abs(word['x1'] - x) <= WESTPAC_COLUMN_TOLERANCE:
+            return name
+    return None
+
+
+def _westpac_description(row, debit_x, credit_x, balance_x):
+    """Description text from a row: drop the date and the column figures."""
+    keep = []
+    for word in row:
+        text = word['text']
+        if WESTPAC_DATE_RE.match(text):
+            continue
+        if (WESTPAC_MONEY_RE.match(text)
+                and _westpac_column_of(word, debit_x, credit_x, balance_x)):
+            continue
+        keep.append(text)
+    return ' '.join(keep)
+
+
+def parse_westpac_statement_geometry(pdf_content):
+    """Parse a Westpac statement using word coordinates.
+
+    The text-based parser this replaces required a date and an amount on the
+    same line. On a Westpac statement they are almost never on the same line:
+    the date and the first words of the description occupy one row, and the
+    figure lands on the next, alongside the rest of the description. So it
+    extracted 16 transactions from a statement printing 218 dated rows, and 14
+    from one printing 246 -- losing about 93% of them, and getting the sign of
+    the net movement wrong into the bargain. Both statements failed
+    reconciliation, so nothing was imported wrongly, but neither could be
+    imported at all.
+
+    Reading coordinates makes the two-row shape a non-issue: description rows
+    accumulate until a figure appears in the debit or credit column, and that
+    figure closes the transaction.
+
+    Raises StatementParseError if the columns, the anchors or the
+    reconciliation fail -- never returns a partial result silently.
+    """
+    with pdfplumber.open(io.BytesIO(pdf_content)) as pdf:
+        rows = _rows(pdf)
+
+    cols = _westpac_columns(rows)
+    if not cols:
+        raise StatementParseError(
+            "Could not find Westpac's DEBIT/CREDIT/BALANCE column header")
+    debit_x, credit_x, balance_x = cols
+
+    def balance_figure(row):
+        for word in row:
+            if (WESTPAC_MONEY_RE.match(word['text'])
+                    and abs(word['x1'] - balance_x)
+                    <= WESTPAC_COLUMN_TOLERANCE):
+                return _f(word['text'])
+        return None
+
+    opening = None
+    closing = None
+    txns = []
+    desc = []
+    date = None
+
+    for row in rows:
+        flat = ''.join(w['text'] for w in row).upper()
+
+        # The in-table anchor rows carry their figure in the balance column
+        # rather than as a CR/DR-suffixed token, so they are read positionally
+        # like everything else.
+        if 'OPENINGBALANCE' in flat:
+            if opening is None:
+                opening = balance_figure(row)
+            desc = []
+            date = None
+            continue
+        if 'CLOSINGBALANCE' in flat:
+            found = balance_figure(row)
+            if found is not None:
+                closing = found
+            desc = []
+            date = None
+            continue
+
+        if _is_furniture(flat):
+            continue
+
+        if row and date is None and WESTPAC_DATE_RE.match(row[0]['text']):
+            day, month, year = WESTPAC_DATE_RE.match(row[0]['text']).groups()
+            date = f"20{year}-{month}-{day}"
+
+        movement = None
+        balance = None
+        for word in row:
+            if not WESTPAC_MONEY_RE.match(word['text']):
+                continue
+            column = _westpac_column_of(word, debit_x, credit_x, balance_x)
+            if column == 'debit':
+                movement = -abs(_f(word['text']))
+            elif column == 'credit':
+                movement = abs(_f(word['text']))
+            elif column == 'balance':
+                balance = _f(word['text'])
+
+        desc.append(_westpac_description(row, debit_x, credit_x, balance_x))
+
+        if movement is not None:
+            txns.append({
+                'date': date,
+                'description': _truncate(
+                    ' '.join(d for d in desc if d).strip(), 200),
+                'amount': movement,
+                'balance': balance,
+            })
+            desc = []
+            date = None
+
+    if opening is None or closing is None:
+        raise StatementParseError(
+            "Could not read Westpac's opening and closing balance rows")
+
+    _reconcile(txns, opening, closing)
+
+    return {
+        'opening_balance': opening,
+        'closing_balance': closing,
+        'account_name': '',
+        'bsb': '',
+        'account_number': '',
+        'period_start': '',
+        'period_end': '',
+        'transactions': txns,
+    }
+
+
+# --------------------------------------------------------------------------
 # Direct-parse verification
 # --------------------------------------------------------------------------
 

@@ -66,9 +66,16 @@ EXEMPLARS = [
     dict(name="WBC1.pdf", bank="westpac", rows=2,
          opening=14649.20, closing=21338.83, status="healthy", geometry=False),
     dict(name="WBC2.pdf", bank="westpac", rows=3,
-         opening=11259.57, closing=14649.20, status="gap", geometry=False,
-         gap="loses the 3,300.00 Osko payment whose description wraps to a "
-             "second line, so the statement fails reconciliation"),
+         opening=11259.57, closing=14649.20, status="healthy", geometry=False),
+    # Two consecutive busy statements. The text parser read 16 rows from
+    # WBC_1's 218 dated lines and 14 from WBC_2's 246, and got the sign of
+    # WBC_2's net movement wrong; the small pair above was far too quiet to
+    # show any of that. Each statement's own summary gives the true net
+    # movement independently: +2,584.82 and -3,842.27.
+    dict(name="WBC_1.pdf", bank="westpac", rows=216,
+         opening=5237.73, closing=7822.55, status="healthy", geometry=False),
+    dict(name="WBC_2.pdf", bank="westpac", rows=244,
+         opening=9080.00, closing=5237.73, status="healthy", geometry=False),
     dict(name="NAB1.pdf", bank="nab", rows=413,
          opening=19024.84, closing=13349.18, status="healthy", geometry=False),
     dict(name="NAB2.pdf", bank="nab", rows=370,
@@ -107,6 +114,7 @@ CHAINS = [
     ("WBC2.pdf", "WBC1.pdf"),
     ("NAB2.pdf", "NAB1.pdf"),
     ("ING19.pdf", "ING20.pdf"),
+    ("WBC_2.pdf", "WBC_1.pdf"),
 ]
 
 BY_NAME = {e["name"]: e for e in EXEMPLARS}
@@ -314,11 +322,16 @@ class KnownGapTests(SimpleTestCase):
                 self.assertTrue(all(t.get("balance") is not None
                                     for t in parse(name)["transactions"]))
 
-    def test_westpac_wbc2_fails_because_a_wrapped_row_is_lost(self):
+    def test_westpac_recovers_the_wrapped_row_it_used_to_lose(self):
+        """WBC2's 3,300.00 Osko payment has a description that wraps to a
+        second line, which put the figure on a different line from the date.
+        The text parser needed both on one line and dropped the transaction."""
         if not available("WBC2.pdf"):
             self.skipTest("WBC2.pdf absent")
-        with self.assertRaises(StatementParseError):
-            parse("WBC2.pdf")
+        result = parse("WBC2.pdf")
+        self.assertEqual(len(result["transactions"]), 3)
+        self.assertTrue(any(abs(t["amount"] + 3300.00) < 0.011
+                            for t in result["transactions"]))
 
     def test_the_cba_transaction_history_export_is_not_recognised(self):
         if not available("CBA_1.pdf"):
