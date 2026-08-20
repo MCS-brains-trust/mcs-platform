@@ -583,9 +583,30 @@
                     date: t.date,
                     description: t.description,
                     amount: parseFloat(t.amount) || 0,
+                    // The statement's own running balance. Sent so the server
+                    // can check that each row follows from the one before it:
+                    // totals can foot over a dropped row if another was
+                    // duplicated, and only the chain catches that.
+                    balance: (t.balance === undefined || t.balance === null)
+                        ? null : parseFloat(t.balance),
                 })),
             })),
         };
+
+        submitImport(payload, null);
+    });
+
+    // The server refuses a statement whose own balances do not agree with the
+    // rows being imported. That refusal is not dismissible: clearing it means
+    // saying why, and the reason is stored against the job. Anything less is
+    // the warning-nobody-reads that let a statement reach the ledger with a
+    // closing balance 8,197.45 out.
+    function submitImport(payload, overrideReason) {
+        const body = Object.assign({}, payload);
+        if (overrideReason) {
+            body.acknowledge_unverified = true;
+            body.unverified_reason = overrideReason;
+        }
 
         fetch('/confirm-import/', {
             method: 'POST',
@@ -594,7 +615,7 @@
                 'X-CSRFToken': csrfToken,
                 'X-Requested-With': 'XMLHttpRequest',
             },
-            body: JSON.stringify(payload),
+            body: JSON.stringify(body),
         })
         .then(resp => resp.json())
         .then(data => {
@@ -609,17 +630,32 @@
                 setTimeout(() => {
                     window.location.href = data.redirect || '/';
                 }, 1000);
-            } else {
-                document.getElementById('importOverlay').style.display = 'none';
-                alert('Import error: ' + (data.message || 'Unknown error'));
+                return;
             }
+
+            document.getElementById('importOverlay').style.display = 'none';
+
+            if (data.can_override && !overrideReason) {
+                const reason = prompt(
+                    (data.message || 'This statement did not pass its balance check.')
+                    + '\n\nIf you still want to import it, type why. '
+                    + 'This is recorded against the job and shown on the '
+                    + 'review page.\n\nLeave blank to cancel.', '');
+                if (reason && reason.trim()) {
+                    document.getElementById('importOverlay').style.display = 'flex';
+                    submitImport(payload, reason.trim());
+                }
+                return;
+            }
+
+            alert('Import error: ' + (data.message || 'Unknown error'));
         })
         .catch(err => {
             document.getElementById('importOverlay').style.display = 'none';
             console.error('Import error:', err);
             alert('Import failed. Please try again.');
         });
-    });
+    }
 
     // =====================================================================
     // Utility

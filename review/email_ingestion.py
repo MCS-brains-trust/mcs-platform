@@ -16,6 +16,8 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 from decimal import Decimal
 
+import pdfplumber
+
 from django.conf import settings
 
 from .models import PendingTransaction, ReviewActivity, ReviewJob, TransactionPattern
@@ -101,12 +103,100 @@ _VISION_SYSTEM_PROMPT = (
     "balance copied from the statement's running-balance column for that row "
     "(null only if the statement prints no balance for it). "
     "Copy the balance exactly as printed — do not compute or infer it. "
+    "Transaction rows usually print only a day and month ('10Jun'); the year "
+    "appears once, in the statement header. Take the year from the statement "
+    "period you are given and never guess it. If applying that year would put "
+    "a row outside the stated period, you have the wrong year — a slice of "
+    "pages from the middle of a statement still belongs to that statement's "
+    "period. "
     "Report opening_balance only if these pages actually show the statement's "
     "opening balance, and closing_balance only if they show the closing balance; "
     "otherwise use null. Never carry a running balance into either field. "
     "Leave account_name, bsb, account_number, period_start and period_end as empty "
     "strings unless these pages show them."
 )
+
+
+# 'Period 1May2026-30Jul2026' — extract_text() collapses the spaces, so the
+# separators are optional throughout.
+_PERIOD_RE = re.compile(
+    r'Period\s*(\d{1,2}\s*[A-Za-z]{3}\s*\d{4})\s*-\s*'
+    r'(\d{1,2}\s*[A-Za-z]{3}\s*\d{4})',
+    re.IGNORECASE,
+)
+_YEAR_TOKEN_RE = re.compile(r'\b(20\d{2})\b')
+
+
+def _statement_date_context(pdf_bytes):
+    """One line telling a chunk which dates its statement covers.
+
+    Vision reads each chunk on its own, and a CBA statement prints the year
+    only in its header and on its anchor rows — transaction rows carry a bare
+    '10Jun'. On a real 12-page statement, pages 5-6 contained no year token at
+    all, so the model had nothing to work from and dated all 53 of those rows a
+    year early. The balance column still chained perfectly, so no check
+    downstream could see it; the rows were then silently dropped by the
+    financial-year filter as out of period, taking 22,399.41 of real movement
+    with them. Handing every chunk the statement's own period removes the
+    guess.
+
+    Returns '' when the statement states no period and no year, in which case
+    the model is no worse off than before.
+    """
+    try:
+        with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+            text = ' '.join((page.extract_text() or '') for page in pdf.pages[:2])
+    except Exception as exc:
+        logger.warning(
+            f"Could not read a statement period for the Vision prompt: {exc}")
+        return ''
+
+    match = _PERIOD_RE.search(text)
+    if match:
+        return (f"This statement's header says it covers the period "
+                f"{match.group(1)} to {match.group(2)}.")
+
+    years = sorted(set(_YEAR_TOKEN_RE.findall(text)))
+    if len(years) == 1:
+        return f"The only year printed on this statement is {years[0]}."
+    if years:
+        return ("The years printed on this statement are "
+                + ", ".join(years) + ".")
+    return ''
+
+
+def _date_anomalies(txns):
+    """Rows whose date contradicts the statement's own ordering.
+
+    A bank statement runs forward in time, so a date that goes backwards means
+    a date was misread — most often a whole chunk given the wrong year, which
+    the balance chain cannot detect because only the dates are wrong. Returns a
+    list of (index, previous_date, this_date).
+    """
+    out = []
+    previous = None
+    for i, t in enumerate(txns):
+        parsed = _parse_ddmmyyyy(t.get("date"))
+        if parsed is None:
+            continue
+        if previous is not None and parsed < previous:
+            out.append((i, previous.strftime("%d/%m/%Y"),
+                        parsed.strftime("%d/%m/%Y")))
+        previous = parsed
+    return out
+
+
+def _parse_ddmmyyyy(value):
+    from datetime import datetime
+
+    if not value:
+        return None
+    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d/%m/%y"):
+        try:
+            return datetime.strptime(str(value).strip(), fmt).date()
+        except ValueError:
+            continue
+    return None
 
 
 def _page_count(pdf_bytes):
@@ -134,7 +224,7 @@ def _split_pdf_pages(pdf_bytes, pages_per_chunk):
     return chunks
 
 
-def _call_vision(client, chunk_bytes, filename, label):
+def _call_vision(client, chunk_bytes, filename, label, date_context=''):
     """One Vision call for one chunk. Returns ``(payload, truncated)``.
 
     Streamed because _VISION_MAX_TOKENS is large enough that a non-streaming
@@ -164,6 +254,7 @@ def _call_vision(client, chunk_bytes, filename, label):
                         "text": (
                             f"Extract every transaction on {label} of "
                             f"{filename}."
+                            + (f" {date_context}" if date_context else "")
                         ),
                     },
                 ],
@@ -179,7 +270,7 @@ def _call_vision(client, chunk_bytes, filename, label):
     return json.loads(text), False
 
 
-def _extract_chunk(client, chunk_bytes, filename, first_page):
+def _extract_chunk(client, chunk_bytes, filename, first_page, date_context=''):
     """Extract one chunk, halving and retrying until the pages fit.
 
     Splitting recurses rather than stopping after one attempt: a scanned page
@@ -196,7 +287,8 @@ def _extract_chunk(client, chunk_bytes, filename, first_page):
         else f"pages {first_page + 1}-{last_page + 1}"
     )
 
-    payload, truncated = _call_vision(client, chunk_bytes, filename, label)
+    payload, truncated = _call_vision(
+        client, chunk_bytes, filename, label, date_context)
     if not truncated:
         # A chunk whose own balance column does not chain has misread its
         # pages. One re-read is worth the call: it is the difference between
@@ -207,7 +299,7 @@ def _extract_chunk(client, chunk_bytes, filename, first_page):
                 f"re-extracting once."
             )
             retry, retry_truncated = _call_vision(
-                client, chunk_bytes, filename, label)
+                client, chunk_bytes, filename, label, date_context)
             if not retry_truncated and not _chain_breaks(
                     retry.get("transactions") or []):
                 return [retry]
@@ -227,7 +319,8 @@ def _extract_chunk(client, chunk_bytes, filename, first_page):
     payloads = []
     offset = first_page
     for sub_chunk in _split_pdf_pages(chunk_bytes, half):
-        payloads.extend(_extract_chunk(client, sub_chunk, filename, offset))
+        payloads.extend(
+            _extract_chunk(client, sub_chunk, filename, offset, date_context))
         offset += _page_count(sub_chunk)
     return payloads
 
@@ -280,6 +373,90 @@ def _describe_chain_gaps(txns, breaks):
             f"and {row.get('date')}"
         )
     return "; ".join(parts)
+
+
+def rebase_anchors_for_kept_rows(kept, opening, closing,
+                                 excluded_count, excluded_from=None,
+                                 excluded_to=None,
+                                 leading_excluded_total=0.0):
+    """Recompute the balance anchors after out-of-period rows are dropped.
+
+    A statement that straddles a financial-year end is filtered down to the
+    rows inside the year, but its opening and closing balances describe the
+    *whole* statement. Left alone, the two can never agree: one real import
+    kept 110 of 240 rows and still reported the statement's own 26,420.53 ->
+    14,001.89, while the rows it kept summed to +1,783.32. Reconciliation ran
+    before the filter, so it passed and told nobody.
+
+    Where the rows carry their own printed balances, the surviving subset has
+    its own true anchors: the balance before the first kept row and the balance
+    after the last. The geometry parser emits no per-row balance, so for that
+    input the opening is instead the statement's opening plus
+    ``leading_excluded_total`` — the movement on the excluded rows that came
+    *before* the first kept row — and the closing follows from the kept
+    movements. Both routes are exact; the printed balances are preferred
+    because they also catch a misread figure.
+
+    Returns a dict with opening_balance, closing_balance, warning and
+    chain_broken. When nothing was excluded the anchors come back untouched.
+    """
+    result = {
+        "opening_balance": opening,
+        "closing_balance": closing,
+        "warning": "",
+        "chain_broken": False,
+    }
+    if not kept or not excluded_count:
+        return result
+
+    first_with_balance = next(
+        (t for t in kept if t.get("balance") is not None), None)
+    if (first_with_balance is not None
+            and first_with_balance.get("amount") is not None):
+        result["opening_balance"] = round(
+            float(first_with_balance["balance"])
+            - float(first_with_balance["amount"]), 2)
+    elif opening is not None:
+        result["opening_balance"] = round(
+            float(opening) + float(leading_excluded_total or 0.0), 2)
+    last_with_balance = next(
+        (t for t in reversed(kept) if t.get("balance") is not None), None)
+    if last_with_balance is not None:
+        result["closing_balance"] = round(float(last_with_balance["balance"]), 2)
+    elif result["opening_balance"] is not None:
+        movements = sum(float(t.get("amount") or 0) for t in kept)
+        result["closing_balance"] = round(
+            float(result["opening_balance"]) + movements, 2)
+
+    breaks = _chain_breaks(kept, result["opening_balance"])
+    result["chain_broken"] = bool(breaks)
+
+    window = ""
+    if excluded_from and excluded_to:
+        window = (f" dated {excluded_from}"
+                  if excluded_from == excluded_to
+                  else f" dated between {excluded_from} and {excluded_to}")
+    parts = [
+        f"{excluded_count} transaction(s){window} fall outside the selected "
+        f"period and were left out of this import."
+    ]
+    if opening is not None and closing is not None:
+        parts.append(
+            f"The statement's own figures ({float(opening):,.2f} to "
+            f"{float(closing):,.2f}) cover all of its rows, so the opening and "
+            f"closing balances have been recomputed from the "
+            f"{len(kept)} row(s) kept: "
+            f"{float(result['opening_balance']):,.2f} to "
+            f"{float(result['closing_balance']):,.2f}."
+        )
+    if breaks:
+        parts.append(
+            f"The kept rows' running balance does not follow row to row at "
+            f"{len(breaks)} point(s) — {_describe_chain_gaps(kept, breaks)}. "
+            f"Check the statement covers every page before importing."
+        )
+    result["warning"] = " ".join(parts)
+    return result
 
 
 def _drop_join_overlap(kept, incoming):
@@ -351,9 +528,28 @@ def _merge_chunk_results(payloads):
             f"merging: {gap_detail}"
         )
 
+    # Dates are checked separately from balances because the two fail
+    # independently: a chunk handed the wrong year keeps a perfect balance
+    # chain, so the check above sees nothing while every date in that chunk is
+    # twelve months out.
+    date_jumps = _date_anomalies(transactions)
+    date_detail = ""
+    if date_jumps:
+        first = date_jumps[0]
+        date_detail = (
+            f"the dates go backwards {len(date_jumps)} time(s), first from "
+            f"{first[1]} to {first[2]}"
+        )
+        logger.warning(
+            f"Vision OCR dates are not in statement order after merging: "
+            f"{date_detail}"
+        )
+
     return {
         "chain_broken": bool(breaks),
         "chain_gap_detail": gap_detail,
+        "dates_out_of_order": bool(date_jumps),
+        "date_gap_detail": date_detail,
         "opening_balance": opening,
         "closing_balance": closing,
         "account_name": _first_present(payloads, "account_name") or "",
@@ -391,9 +587,12 @@ def extract_transactions_from_pdf(pdf_b64, filename="statement.pdf"):
         raise VisionExtractionError(f"{filename} contains no pages.")
 
     client = _get_anthropic_client()
+    date_context = _statement_date_context(pdf_bytes)
     logger.info(
         f"Vision OCR extracting {filename} as {len(chunks)} chunk(s) of up to "
         f"{_VISION_PAGES_PER_CHUNK} page(s)."
+        + (f" Date context: {date_context}" if date_context
+           else " No statement period found — chunks must infer the year.")
     )
 
     offsets = [i * _VISION_PAGES_PER_CHUNK for i in range(len(chunks))]
@@ -402,7 +601,8 @@ def extract_transactions_from_pdf(pdf_b64, filename="statement.pdf"):
             # map preserves submission order, so chunks merge front-to-back
             # regardless of which call finishes first.
             per_chunk = list(pool.map(
-                lambda pair: _extract_chunk(client, pair[0], filename, pair[1]),
+                lambda pair: _extract_chunk(
+                    client, pair[0], filename, pair[1], date_context),
                 zip(chunks, offsets),
             ))
     except VisionExtractionError:
