@@ -50,8 +50,8 @@ change. They are not consecutive, so no boundary check applies to them.
 | `cba_stmt9.pdf` | CBA | 174 | 27,440.30 → 8,826.22 | yes | geometry | healthy |
 | `cba_stmt10.pdf` | CBA | 188 | 8,826.22 → 26,420.53 | yes | geometry | healthy |
 | `July.pdf` | CBA | 240 | 26,420.53 → 14,001.89 | yes | geometry | fixed in PR #60 |
-| `CBA1.pdf` | CBA | 108 | 16,759.60 → 6,218.20 | yes | **legacy fallback** | engine cannot detect columns |
-| `CBA2.pdf` | CBA | 120 | 6,218.20 → 10,950.76 | yes | **legacy fallback** | engine cannot find closing anchor |
+| `CBA1.pdf` | CBA | 108 | 16,759.60 → 6,218.20 | yes | geometry *(Phase 1)* | was on the legacy fallback |
+| `CBA2.pdf` | CBA | 120 | 6,218.20 → 10,950.76 | yes | geometry *(Phase 1)* | was on the legacy fallback |
 | `CBA_1.pdf` | *unknown* | — | 805.27 → 7,988.66 | — | none | unsupported format |
 | `WBC1.pdf` | Westpac | 2 | 14,649.20 → 21,338.83 | yes | flat-text | correct (genuinely 2 rows) |
 | `WBC2.pdf` | Westpac | 2 of 3 | 11,259.57 → 14,649.20 | **no** | rejected at parse | loses a wrapped row |
@@ -265,6 +265,39 @@ outranks an outright block on a bank used rarely.
 to the cent, chain to their neighbours, pass the gate, and no description
 carries page furniture. Legacy `parse_cba_statement` remains only as a
 fallback, and a test asserts geometry — not legacy — handled each one.
+
+**Completed 2026-08-20.** All five parse via geometry, reconcile to the cent,
+chain, pass the gate, and carry no furniture. The engine reproduced the legacy
+parser's 108 and 120 row counts exactly, which is independent corroboration
+that those counts were right.
+
+Two defects beyond the two predicted were found only by running the files:
+
+3. **The date was never read on the older layout.** It is printed as two
+   separate tokens (`'01'`, `'Jul'`) and `DATE_RE` matches only the glued form,
+   so every transaction was built with `date=None` — 108 of 108 on CBA1. Not
+   cosmetic: `confirm_import` drops a dateless row, which breaks reconciliation
+   and gets the whole statement refused by the gate.
+4. **A stray margin token can precede the date** — a codeline fragment
+   (`5.2.62173.78031`), a barcode tail (`3R852ZZ`), or an asterisk. Requiring
+   the date at position 0 left those rows dateless too, including one on
+   `cba_stmt9` that had been wrong since the engine was written. One leading
+   token is now tolerated; more would be guessing.
+
+**Row-grouping decision, item 4: declined, on evidence.** Across all five CBA
+statements, the number of transaction amounts orphaned into their own row by
+`round(top)` is **zero**. The quantisation only ever splits the anchor rows,
+which are typeset differently from the transaction table, and the targeted
+anchor recovery already handles those. Reworking row grouping would risk five
+working statements to fix a problem that does not occur in them.
+
+**One near-miss worth recording.** Widening the shared `MOVE_RE` to tolerate a
+`$` broke both NAB statements, because `_nab_column_signs` shares that pattern
+and does its own `float()` without stripping the symbol. Every bank here prints
+some `$`-prefixed figures — 34 per NAB statement — so the widening was not the
+inert change it looked like. The tolerance now lives in a separate
+`CBA_MOVE_RE` used only by the CBA engine. Phase 0 caught this within one run;
+without it, NAB would have broken silently in a phase that never mentions NAB.
 
 ### Phase 2 — ING anchors *(the only fully blocked bank)*
 

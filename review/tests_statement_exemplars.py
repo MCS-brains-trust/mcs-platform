@@ -51,16 +51,14 @@ EXEMPLARS = [
          opening=8826.22, closing=26420.53, status="healthy", geometry=True),
     dict(name="July.pdf", bank="cba", rows=240,
          opening=26420.53, closing=14001.89, status="healthy", geometry=True),
-    # Row counts for the two below come from the legacy parser and are
-    # provisional: the geometry engine may group rows differently. Phase 1
-    # confirms them.
+    # Older CBA layout: unglued words, $-prefixed figures, date as two
+    # separate tokens. Both rode the legacy text parser until Phase 1; the
+    # geometry engine now produces the same row counts the legacy parser did,
+    # which is independent corroboration that 108 and 120 are right.
     dict(name="CBA1.pdf", bank="cba", rows=108,
-         opening=16759.60, closing=6218.20, status="legacy", geometry=False,
-         gap="geometry: could not detect debit/credit columns "
-             "(3 debits vs a min_count of 5)"),
+         opening=16759.60, closing=6218.20, status="healthy", geometry=True),
     dict(name="CBA2.pdf", bank="cba", rows=120,
-         opening=6218.20, closing=10950.76, status="legacy", geometry=False,
-         gap="geometry: missing closing anchor ($-prefixed amount)"),
+         opening=6218.20, closing=10950.76, status="healthy", geometry=True),
     dict(name="CBA_1.pdf", bank="unknown", rows=None,
          opening=805.27, closing=7988.66, status="gap", geometry=False,
          gap="Transaction History export: unsupported format, and reverse "
@@ -261,16 +259,21 @@ class GeometryEngineCoverageTests(SimpleTestCase):
                 result = parse_cba_geometry(read(entry["name"]))
                 self.assertEqual(len(result["transactions"]), entry["rows"])
 
-    def test_the_engine_still_rejects_the_statements_phase_1_will_fix(self):
-        """Records the current failure so Phase 1 has to update this test
-        deliberately rather than silently changing behaviour."""
-        require_any(self, ["CBA1.pdf", "CBA2.pdf"])
-        for name in ("CBA1.pdf", "CBA2.pdf"):
+    def test_no_cba_statement_carries_a_dateless_transaction(self):
+        """A transaction with no date is dropped by confirm_import, which
+        breaks reconciliation and gets the whole statement refused. The older
+        layout printed its date as two tokens, so every row on those
+        statements was dateless until Phase 1 -- 108 of 108 on CBA1."""
+        names = [e["name"] for e in EXEMPLARS
+                 if e["bank"] == "cba" and e.get("geometry")]
+        require_any(self, names)
+        for name in names:
             if not available(name):
                 continue
             with self.subTest(name):
-                with self.assertRaises(StatementParseError):
-                    parse_cba_geometry(read(name))
+                dateless = [t for t in parse_cba_geometry(read(name))["transactions"]
+                            if not t.get("date")]
+                self.assertEqual(dateless, [])
 
 
 class KnownGapTests(SimpleTestCase):

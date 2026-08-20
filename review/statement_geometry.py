@@ -27,6 +27,17 @@ class StatementParseError(Exception):
 
 # Bare monetary amount — no currency symbol, no CR/DR: "1,234.56"
 MOVE_RE = re.compile(r'^\d{1,3}(,\d{3})*\.\d{2}$')
+# The same, tolerating a leading '$'. Older CBA statements print the symbol on
+# some columns and not others, and while it was not tolerated every $-prefixed
+# figure was invisible: on one real statement the whole credit column carried a
+# $, so column detection saw only debits, found fewer than two columns, and
+# rejected a statement whose 108 transactions were perfectly legible.
+#
+# Deliberately NOT used by the NAB path below. Every bank here prints some
+# $-prefixed figures (34 of them on each NAB statement), so widening the shared
+# pattern would change which figures NAB reads as column entries — a change
+# with no evidence behind it and no place in CBA work.
+CBA_MOVE_RE = re.compile(r'^\$?\d{1,3}(,\d{3})*\.\d{2}$')
 # Running-balance token: "1,234.56 CR" or "1,234.56 DR"
 BAL_RE = re.compile(r'(\d{1,3}(?:,\d{3})*\.\d{2})\s*(CR|DR)')
 # Glued CBA date token: "31Oct" or "31Oct2025"
@@ -43,6 +54,16 @@ _FURNITURE_COL_HEADER = 'TransactionDebitCreditBalance'
 _FURNITURE_ACCOUNT_KW = 'AccountNumber'
 # 4-digit year in the 2000s
 YEAR_RE = re.compile(r'(20\d{2})')
+
+# The date as two adjacent words -- '01' then 'Jul' -- which is how the older
+# CBA layout prints it. DATE_RE only matches the glued form ('01Jul'), so on
+# those statements no row ever started a transaction and every transaction was
+# built with date=None: 108 of 108 on one real statement. A dateless
+# transaction cannot be filtered to a financial year or checked for statement
+# order, so this is not cosmetic.
+DAY_RE = re.compile(r'^(\d{1,2})$')
+MONTH_WORD_RE = re.compile(
+    r'^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)$', re.IGNORECASE)
 
 MONTH_MAP = {
     'Jan': '01', 'Feb': '02', 'Mar': '03', 'Apr': '04',
@@ -63,8 +84,8 @@ CBA_PROFILE = dict(
 
 
 def _f(s):
-    """'1,853.60' -> 1853.60"""
-    return float(s.replace(',', ''))
+    """'1,853.60' or '$1,853.60' -> 1853.60"""
+    return float(s.replace(',', '').replace('$', ''))
 
 
 def _truncate(text, max_len):
@@ -110,6 +131,56 @@ def _rows(pdf):
     return out
 
 
+def _header_money_columns(rows):
+    """Right edges of the debit and credit columns, read off the table header.
+
+    Preferred over clustering the figures, because population cannot tell a
+    sparse real column from noise. One real CBA statement carried 95 debits and
+    6 credits; the population floor in ``_money_columns`` discarded the credit
+    column, leaving a single cluster and no way to tell debits from credits.
+    The header states both positions outright and does not care how many
+    entries each column happens to have.
+
+    Only fires on statements whose header words are separately extractable. On
+    the modern CBA layout the whole header collapses into one glued token
+    ('DateTransactionDebitCreditBalance'), so those statements fall through to
+    clustering, which already handles them.
+
+    Returns (debit_x1, credit_x1) or None.
+    """
+    for row in rows:
+        by_text = {}
+        for word in row:
+            by_text.setdefault(word['text'].strip().rstrip(':'), word)
+        for debit_label, credit_label in (('Debit', 'Credit'),
+                                          ('Debits', 'Credits')):
+            if {debit_label, credit_label} <= set(by_text):
+                return (by_text[debit_label]['x1'],
+                        by_text[credit_label]['x1'])
+    return None
+
+
+def _figures_in_columns(rows, debit_x, credit_x, tolerance=12.0):
+    """How many figures actually land in the columns a header claims.
+
+    A header label's x-position is a hypothesis about where its column is, not
+    a fact. A statement can print the header as a run of running text whose
+    labels sit nowhere above the figures, and trusting it then yields column
+    positions no figure matches -- every movement missed and the statement
+    rejected for having no movements at all. Verify the hypothesis against the
+    figures before acting on it.
+    """
+    hits = 0
+    for row in rows:
+        for word in row:
+            if not CBA_MOVE_RE.match(word['text']):
+                continue
+            if (abs(word['x1'] - debit_x) <= tolerance
+                    or abs(word['x1'] - credit_x) <= tolerance):
+                hits += 1
+    return hits
+
+
 def _money_columns(rows, min_count=None, gap=12.0):
     """
     Auto-detect debit/credit column x1 centres by clustering bare-amount right-edges.
@@ -120,7 +191,8 @@ def _money_columns(rows, min_count=None, gap=12.0):
     low-activity statements (only a handful of transactions) are not rejected,
     while a fixed high threshold no longer over-filters them.
     """
-    xs = sorted(w['x1'] for row in rows for w in row if MOVE_RE.match(w['text']))
+    xs = sorted(
+        w['x1'] for row in rows for w in row if CBA_MOVE_RE.match(w['text']))
     if len(xs) < 2:
         return None
     if min_count is None:
@@ -139,15 +211,69 @@ def _money_columns(rows, min_count=None, gap=12.0):
     return money[0][0], money[1][0]
 
 
+# A single stray token may sit to the left of the date, in the margin: a
+# codeline fragment ('5.2.62173.78031'), a barcode tail ('3R852ZZ') or a
+# continuation asterisk. Those rows do start a transaction, and requiring the
+# date at position 0 meant they silently produced one with no date at all --
+# which confirm_import then drops, breaking reconciliation and getting the
+# whole statement refused. One leading token is tolerated; more than one would
+# start guessing.
+_MAX_DATE_OFFSET = 1
+
+
+def _row_date_parts(row):
+    """(day, month, start, end) when a row begins with a date, else None.
+
+    ``start`` is the index of the first date token and ``end`` the index after
+    the last, so a caller can tell the two forms apart: the glued form
+    ('01May...') occupies one token and may carry description text behind the
+    date, while the spaced form ('01', 'Jul') occupies two and carries none.
+
+    The date is looked for at the start of the row or immediately after one
+    stray margin token.
+    """
+    if not row:
+        return None
+    for offset in range(min(_MAX_DATE_OFFSET, len(row) - 1) + 1):
+        text = row[offset]['text']
+        glued = DATE_RE.match(text)
+        if glued:
+            return (glued.group(1),
+                    glued.group(2).capitalize()[:3],
+                    offset, offset + 1)
+        if (DAY_RE.match(text) and len(row) > offset + 1
+                and MONTH_WORD_RE.match(row[offset + 1]['text'])):
+            return (text,
+                    row[offset + 1]['text'].capitalize()[:3],
+                    offset, offset + 2)
+    return None
+
+
 def _text_only(row):
     """
     Description text from a row: drop pure-amount, CR/DR, and date tokens.
     Date tokens (e.g. '31Oct') are excluded so they don't contaminate descriptions.
     """
     keep = []
-    for w in row:
+    # Drop whatever sits to the LEFT of the date -- the stray margin token that
+    # otherwise prefixed the description ('5.2.62173.78031 27 Jul JOHN ...').
+    #
+    # Where the date is spaced ('01', 'Jul') its own tokens go too, since they
+    # carry nothing else. Where it is glued the token is left in place for the
+    # loop below, whose DATE_RE branch keeps the description behind the date --
+    # '01MayDirectCredit...' must still yield 'DirectCredit...'.
+    parts = _row_date_parts(row)
+    if parts:
+        _, _, date_start, date_end = parts
+        body = row[date_end if date_end - date_start == 2 else date_start:]
+    else:
+        body = row
+    for w in body:
         t = w['text']
-        if MOVE_RE.match(t):
+        if CBA_MOVE_RE.match(t):
+            continue
+        # A lone '$' is a column decoration, not description text.
+        if t == '$':
             continue
         if t in ('CR', 'DR'):
             continue
@@ -192,9 +318,9 @@ def _orphaned_anchor_amount(rows, idx):
         texts = [w['text'] for w in rows[j]]
         if not texts:
             continue
-        if not all(MOVE_RE.match(t) or t in ('CR', 'DR') for t in texts):
+        if not all(CBA_MOVE_RE.match(t) or t in ('CR', 'DR') for t in texts):
             continue
-        amounts = [t for t in texts if MOVE_RE.match(t)]
+        amounts = [t for t in texts if CBA_MOVE_RE.match(t)]
         if len(amounts) != 1:
             continue
         negative = 'DR' in label_texts or 'DR' in texts
@@ -249,7 +375,13 @@ def parse_cba_geometry(pdf_content):
     with pdfplumber.open(io.BytesIO(pdf_content)) as pdf:
         rows = _rows(pdf)
 
-    cols = _money_columns(rows)
+    # Header first, data second: the header states the columns while the data
+    # only implies them -- but only once the figures agree that the header's
+    # labels really do sit above its columns.
+    cols = _header_money_columns(rows)
+    if cols and _figures_in_columns(rows, *cols) < 2:
+        cols = None
+    cols = cols or _money_columns(rows)
     if not cols:
         raise StatementParseError("Could not detect debit/credit columns")
     debit_x, credit_x = cols
@@ -320,10 +452,11 @@ def parse_cba_geometry(pdf_content):
 
         # New transaction row starts when the first word is a date token
         # and we are not already mid-transaction (date is None).
-        if row and date is None and DATE_RE.match(row[0]['text']):
-            dm = DATE_RE.match(row[0]['text'])
-            day = dm.group(1).zfill(2)
-            month_str = dm.group(2).capitalize()[:3]
+        parts = _row_date_parts(row) if date is None else None
+        if parts:
+            day = parts[0].zfill(2)
+            month_str = parts[1]
+            del parts
             month_num = int(MONTH_MAP[month_str])
             # Dec→Jan year rollover (9a92915 logic)
             if prev_month is not None and prev_month == 12 and month_num == 1:
@@ -334,7 +467,7 @@ def parse_cba_geometry(pdf_content):
         # Identify whether this row carries a movement amount and in which column.
         movement = None
         for w in row:
-            if MOVE_RE.match(w['text']):
+            if CBA_MOVE_RE.match(w['text']):
                 if abs(w['x1'] - debit_x) <= 12.0:
                     movement = ('debit', _f(w['text']))
                 elif abs(w['x1'] - credit_x) <= 12.0:
