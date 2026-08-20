@@ -1196,6 +1196,10 @@ def upload_bank_statement(request):
     period_end_str = request.POST.get("period_end", "")
     user_opening_balance_str = request.POST.get("opening_balance", "")
     financial_year_id = request.POST.get("financial_year_id", "")
+    # Importing a statement whose figures do not check out takes a deliberate
+    # acknowledgement and a stated reason, both recorded on the job.
+    acknowledged = request.POST.get("acknowledge_unverified") in ("1", "true", "on")
+    override_reason = (request.POST.get("unverified_reason") or "").strip()
 
     if not uploaded_files:
         return JsonResponse({"status": "error", "message": "No files uploaded"}, status=400)
@@ -1288,6 +1292,8 @@ def upload_bank_statement(request):
 
         transactions = extracted["transactions"]
 
+        excluded_dates = []
+        leading_excluded_total = 0.0
         # Filter transactions by period if dates were provided
         if period_start_date or period_end_date:
             filtered = []
@@ -1323,11 +1329,14 @@ def upload_bank_statement(request):
                             continue
 
                 if txn_date:
-                    if period_start_date and txn_date < period_start_date:
+                    if ((period_start_date and txn_date < period_start_date)
+                            or (period_end_date
+                                and txn_date > period_end_date)):
                         excluded_count += 1
-                        continue
-                    if period_end_date and txn_date > period_end_date:
-                        excluded_count += 1
+                        excluded_dates.append(txn_date)
+                        if not filtered:
+                            leading_excluded_total += float(
+                                txn.get("amount") or 0)
                         continue
 
                 filtered.append(txn)
@@ -1341,6 +1350,59 @@ def upload_bank_statement(request):
         if not transactions:
             errors.append(f"{filename}: No transactions within the selected period")
             continue
+
+        # The statement's own anchors describe every row it contains, so once
+        # the period filter has dropped some they no longer describe what is
+        # being imported. Recompute them from the rows that survived and carry
+        # the difference through to the user.
+        from .email_ingestion import rebase_anchors_for_kept_rows
+        period_warning = ""
+        excluded_dates.sort()
+        if excluded_dates:
+            rebased = rebase_anchors_for_kept_rows(
+                transactions,
+                extracted.get("opening_balance"),
+                extracted.get("closing_balance"),
+                len(excluded_dates),
+                excluded_dates[0].strftime("%d/%m/%Y"),
+                excluded_dates[-1].strftime("%d/%m/%Y"),
+                leading_excluded_total,
+            )
+            if rebased["warning"]:
+                period_warning = rebased["warning"]
+                logger.warning(
+                    f"[upload-statement] Period filter on {filename}: "
+                    f"{period_warning}"
+                )
+                extracted["opening_balance"] = rebased["opening_balance"]
+                extracted["closing_balance"] = rebased["closing_balance"]
+
+        # The gate. This path creates jobs with no preview step at all, so it
+        # is the only thing between a misread statement and the review queue.
+        from .statement_geometry import (
+            StatementNotImportable, assert_importable,
+        )
+        verification_status = ReviewJob.VERIFICATION_VERIFIED
+        verification_detail = ""
+        try:
+            assert_importable(
+                transactions,
+                float(extracted.get("opening_balance") or 0),
+                float(extracted.get("closing_balance") or 0),
+            )
+        except StatementNotImportable as gate_err:
+            verification_detail = gate_err.reason
+            if not (acknowledged and override_reason):
+                logger.warning(
+                    f"[upload-statement] Refused {filename}: {gate_err.reason}")
+                errors.append(f"{filename}: {gate_err.reason}")
+                continue
+            verification_status = ReviewJob.VERIFICATION_OVERRIDDEN
+            logger.warning(
+                f"[upload-statement] {filename} imported over a failed check "
+                f"by {request.user.get_username()}: {gate_err.reason} — "
+                f"reason given: {override_reason}"
+            )
 
         # Save transactions WITHOUT classification (fast)
         # Classification happens asynchronously on the review page
@@ -1376,7 +1438,25 @@ def upload_bank_statement(request):
             period_end=period_end_str or extracted.get("period_end", ""),
             opening_balance=user_opening_balance,
             closing_balance=Decimal(str(extracted.get("closing_balance", 0))),
+            verification_status=verification_status,
+            verification_detail=verification_detail,
+            override_reason=(
+                override_reason
+                if verification_status == ReviewJob.VERIFICATION_OVERRIDDEN
+                else ""
+            ),
+            override_by=(
+                request.user.get_full_name() or request.user.get_username()
+                if verification_status == ReviewJob.VERIFICATION_OVERRIDDEN
+                else ""
+            ),
+            override_at=(
+                timezone.now()
+                if verification_status == ReviewJob.VERIFICATION_OVERRIDDEN
+                else None
+            ),
         )
+        job._period_warning = period_warning
 
         # Create PendingTransactions - unclassified (bulk for speed)
         pending_objs = []
@@ -1529,6 +1609,8 @@ def upload_bank_statement(request):
     for j in created_jobs:
         if hasattr(j, '_balance_warning') and j._balance_warning:
             all_balance_warnings.append(j._balance_warning)
+        if getattr(j, '_period_warning', ''):
+            all_balance_warnings.append(f"{j.file_name}: {j._period_warning}")
 
     if financial_year_id:
         redirect_url = reverse("core:financial_year_detail", kwargs={"pk": financial_year_id}) + "#tab-review"
@@ -2255,6 +2337,11 @@ def parse_statement(request):
     total_before_filter = len(transactions)
 
     # Filter by period
+    excluded_dates = []
+    # Movement on rows dropped before the first kept row: without it the kept
+    # subset's opening balance cannot be derived when the parser emits no
+    # per-row balance column.
+    leading_excluded_total = 0.0
     if period_start_date or period_end_date:
         filtered = []
         for txn in transactions:
@@ -2285,15 +2372,42 @@ def parse_statement(request):
                     except (ValueError, AttributeError):
                         continue
             if txn_date:
-                if period_start_date and txn_date < period_start_date:
-                    continue
-                if period_end_date and txn_date > period_end_date:
+                if ((period_start_date and txn_date < period_start_date)
+                        or (period_end_date and txn_date > period_end_date)):
+                    excluded_dates.append(txn_date)
+                    if not filtered:
+                        leading_excluded_total += float(txn.get('amount') or 0)
                     continue
             filtered.append(txn)
         transactions = filtered
 
     if not transactions:
         return JsonResponse({'status': 'error', 'message': f'{filename}: No transactions within the selected period'}, status=400)
+
+    # The anchors read off the statement describe all of its rows. Once the
+    # period filter has dropped some, they no longer describe what is being
+    # imported, so they are recomputed from the rows that survived and the
+    # difference is reported rather than left for someone to notice.
+    from .email_ingestion import rebase_anchors_for_kept_rows
+    excluded_dates.sort()
+    rebased = rebase_anchors_for_kept_rows(
+        transactions,
+        extracted.get('opening_balance'),
+        extracted.get('closing_balance'),
+        len(excluded_dates),
+        excluded_dates[0].strftime('%d/%m/%Y') if excluded_dates else None,
+        excluded_dates[-1].strftime('%d/%m/%Y') if excluded_dates else None,
+        leading_excluded_total,
+    )
+    if rebased['warning']:
+        logger.warning(
+            f'[parse-statement] Period filter on {filename}: '
+            f'{rebased["warning"]}')
+        extracted['opening_balance'] = rebased['opening_balance']
+        extracted['closing_balance'] = rebased['closing_balance']
+        extracted['period_filter_warning'] = rebased['warning']
+        if rebased['chain_broken']:
+            extracted['unverified'] = True
 
     # Normalize transaction amounts and compute running balance
     txn_list = []
@@ -2365,6 +2479,7 @@ def parse_statement(request):
         'used_vision_ocr': used_vision,
         'unverified': extracted.get('unverified', False),
         'reconciliation_warning': extracted.get('reconciliation_warning', ''),
+        'period_filter_warning': extracted.get('period_filter_warning', ''),
     }
 
     # Store parsed data in Django session (reliable fallback for sessionStorage)
@@ -2509,6 +2624,15 @@ def confirm_import(request):
     total_imported = 0
     job_ids = []
     validation_warnings = []
+    refusals = []
+    # An override has to be deliberate and say why: a statement whose figures
+    # could not be checked once reached the trial balance behind nothing but a
+    # dismissible banner.
+    # This endpoint takes a JSON body, so the acknowledgement travels in the
+    # payload rather than as form data.
+    acknowledged = data.get('acknowledge_unverified') in (
+        True, 1, '1', 'true', 'True', 'on')
+    override_reason = (data.get('unverified_reason') or '').strip()
 
     for stmt in statements:
         filename = stmt.get('filename', 'Unknown')
@@ -2518,6 +2642,8 @@ def confirm_import(request):
 
         # Validate individual transactions
         valid_txns = []
+        excluded_dates = []
+        leading_excluded_total = 0.0
         for txn in transactions:
             # Must have date and description
             txn_date = (txn.get('date') or '').strip()
@@ -2567,6 +2693,9 @@ def confirm_import(request):
                         f'{filename}: Transaction on {txn_date} excluded — outside financial year period '
                         f'({fy.start_date.strftime("%d/%m/%Y")} to {fy.end_date.strftime("%d/%m/%Y")})'
                     )
+                    excluded_dates.append(parsed_date)
+                    if not valid_txns:
+                        leading_excluded_total += float(txn_amount or 0)
                     continue  # Skip this transaction
 
             # Validate amount is not absurdly large (data integrity)
@@ -2577,6 +2706,9 @@ def confirm_import(request):
                 'date': txn_date,
                 'description': txn_desc,
                 'amount': txn_amount,
+                # Carried through purely so assert_importable can still check
+                # the running balance row to row; the import itself ignores it.
+                'balance': txn.get('balance'),
             })
 
         transactions = valid_txns
@@ -2589,6 +2721,51 @@ def confirm_import(request):
         except Exception:
             opening_balance = Decimal('0')
             closing_balance = Decimal('0')
+
+        # This view runs its own financial-year filter above, so the anchors
+        # carried in the payload may describe more rows than are being
+        # imported. Rebase before the gate: the gate objects to figures that
+        # disagree, not to filtering.
+        from .email_ingestion import rebase_anchors_for_kept_rows
+        excluded_dates.sort()
+        if excluded_dates:
+            rebased = rebase_anchors_for_kept_rows(
+                transactions, float(opening_balance), float(closing_balance),
+                len(excluded_dates),
+                excluded_dates[0].strftime('%d/%m/%Y'),
+                excluded_dates[-1].strftime('%d/%m/%Y'),
+                leading_excluded_total,
+            )
+            if rebased['warning']:
+                opening_balance = Decimal(str(rebased['opening_balance']))
+                closing_balance = Decimal(str(rebased['closing_balance']))
+                validation_warnings.append(f'{filename}: {rebased["warning"]}')
+
+        # The gate. Nothing whose own figures contradict it becomes a job
+        # without someone deciding, in writing, to let it.
+        from .statement_geometry import (
+            StatementNotImportable, assert_importable,
+        )
+        verification_status = ReviewJob.VERIFICATION_VERIFIED
+        verification_detail = ''
+        try:
+            assert_importable(
+                transactions, float(opening_balance), float(closing_balance))
+        except StatementNotImportable as gate_err:
+            verification_detail = gate_err.reason
+            if not (acknowledged and override_reason):
+                logger.warning(
+                    f'[confirm-import] Refused {filename}: {gate_err.reason}')
+                refusals.append({'filename': filename,
+                                 'reason': gate_err.reason})
+                continue
+            verification_status = ReviewJob.VERIFICATION_OVERRIDDEN
+            logger.warning(
+                f'[confirm-import] {filename} imported over a failed check by '
+                f'{request.user.get_username()}: {gate_err.reason} — reason '
+                f'given: {override_reason}'
+            )
+
         bsb = stmt.get('bsb', '')
         account_number = stmt.get('account_number', '')
         account_name = stmt.get('account_name', '')
@@ -2637,6 +2814,23 @@ def confirm_import(request):
             period_end=stmt.get('period_end', ''),
             opening_balance=opening_balance,
             closing_balance=closing_balance,
+            verification_status=verification_status,
+            verification_detail=verification_detail,
+            override_reason=(
+                override_reason
+                if verification_status == ReviewJob.VERIFICATION_OVERRIDDEN
+                else ''
+            ),
+            override_by=(
+                request.user.get_full_name() or request.user.get_username()
+                if verification_status == ReviewJob.VERIFICATION_OVERRIDDEN
+                else ''
+            ),
+            override_at=(
+                timezone.now()
+                if verification_status == ReviewJob.VERIFICATION_OVERRIDDEN
+                else None
+            ),
         )
         job_ids.append(str(job.pk))
 
@@ -2703,11 +2897,28 @@ def confirm_import(request):
         except Exception:
             redirect_url = f'/years/{financial_year_id}/?tab=review'
 
-    # Clear session data now that import is complete
-    request.session.pop('mcs_parsed_statements', None)
-    request.session.modified = True
+    # Anything refused stays in the session so it can be looked at, fixed and
+    # re-submitted -- or consciously overridden -- rather than being lost.
+    if not refusals:
+        request.session.pop('mcs_parsed_statements', None)
+        request.session.modified = True
 
-    logger.info(f'[confirm-import] {len(statements)} statements, {total_imported} transactions imported')
+    logger.info(
+        f'[confirm-import] {len(statements)} statements, {total_imported} '
+        f'transactions imported, {len(refusals)} refused'
+    )
+
+    if refusals and not job_ids:
+        return JsonResponse({
+            'status': 'error',
+            'refused': refusals,
+            'can_override': True,
+            'message': (
+                'This statement was not imported because its own balances do '
+                'not agree with its transactions: '
+                + ' '.join(r['reason'] for r in refusals)
+            ),
+        }, status=400)
 
     return JsonResponse({
         'status': 'success',
@@ -2716,6 +2927,7 @@ def confirm_import(request):
         'job_ids': job_ids,
         'redirect': redirect_url,
         'validation_warnings': validation_warnings,
+        'refused': refusals,
     })
 
 

@@ -34,7 +34,12 @@ DATE_RE = re.compile(r'^(\d{1,2})(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|De
 # Per-page furniture patterns — matched against space-stripped flat row text
 _FURNITURE_PAGE_RE = re.compile(r'Page\d+of\d+')
 _FURNITURE_BATCH_RE = re.compile(r'^\d{5}\.\d{5}')
-_FURNITURE_COL_HEADER = 'DateTransactionDebitCreditBalance'
+# Column header, matched WITHOUT its leading 'Date'. The header's own cells are
+# split across two word-rows on most pages -- the 'Date' cell is typeset a
+# fraction of a point off the others, so round(top) puts it in a row of its
+# own -- and requiring the glued 'Date...' prefix missed the header on 10 pages
+# out of 12 on a real statement.
+_FURNITURE_COL_HEADER = 'TransactionDebitCreditBalance'
 _FURNITURE_ACCOUNT_KW = 'AccountNumber'
 # 4-digit year in the 2000s
 YEAR_RE = re.compile(r'(20\d{2})')
@@ -146,15 +151,64 @@ def _text_only(row):
             continue
         if t in ('CR', 'DR'):
             continue
-        if DATE_RE.match(t):
+        m = DATE_RE.match(t)
+        if m:
+            # The date cell is often set tight enough to glue onto the
+            # description, so the row arrives as one word
+            # ('01MayDirectCredit002221MCAREBENEFITS'). Dropping the whole
+            # token as "a date" threw away the transaction's primary
+            # description line -- 152 of 240 rows on one real statement --
+            # leaving only its continuation line ('MCBBS706460616AW') to be
+            # coded from. Keep whatever follows the date token.
+            rest = t[m.end():]
+            if rest:
+                keep.append(rest)
             continue
         keep.append(t)
     return ' '.join(keep)
 
 
+def _orphaned_anchor_amount(rows, idx):
+    """Recover an anchor amount that row grouping split onto its own row.
+
+    ``_rows`` groups words by ``round(top)``, so a figure typeset a fraction of
+    a point off its own label lands in a neighbouring row. On a real CBA
+    statement the closing figure sat 0.675pt above 'CLOSINGBALANCE' and rounded
+    away from it (155.199 -> 155 against 155.874 -> 156), leaving the keyword
+    row with no amount at all. That rejected a statement whose 240
+    transactions were otherwise extracted perfectly, and dropped the upload
+    into the Vision OCR fallback.
+
+    Only a neighbouring row carrying nothing but one amount (and optionally
+    CR/DR) is accepted, so a transaction's own figure can never be mistaken for
+    the anchor. The sign is read from the label row first, because the CR/DR
+    marker normally stays with the keyword while only the figure drifts.
+    ``_reconcile`` still has to agree with whatever is recovered here.
+    """
+    label_texts = [w['text'] for w in rows[idx]]
+    for j in (idx - 1, idx + 1):
+        if not 0 <= j < len(rows):
+            continue
+        texts = [w['text'] for w in rows[j]]
+        if not texts:
+            continue
+        if not all(MOVE_RE.match(t) or t in ('CR', 'DR') for t in texts):
+            continue
+        amounts = [t for t in texts if MOVE_RE.match(t)]
+        if len(amounts) != 1:
+            continue
+        negative = 'DR' in label_texts or 'DR' in texts
+        return _f(amounts[0]) * (-1 if negative else 1)
+    return None
+
+
 def _is_furniture(flat):
     """Return True if the space-stripped row text is page furniture, not transaction data."""
     if _FURNITURE_PAGE_RE.search(flat):
+        return True
+    # The 'Date' column header cell, orphaned into a row of its own by the same
+    # sub-point offset that splits the rest of the header.
+    if flat == 'Date':
         return True
     if _FURNITURE_COL_HEADER in flat:
         return True
@@ -204,11 +258,13 @@ def parse_cba_geometry(pdf_content):
     # The year is embedded in that row (e.g. "31Oct 2025OPENINGBALANCE").
     opening = None
     base_year = None
-    for row in rows:
+    for i, row in enumerate(rows):
         flat = ''.join(w['text'] for w in row)
         if 'OPENINGBALANCE' in flat:
             joined = ' '.join(w['text'] for w in row)
             opening = _signed_balance(joined)
+            if opening is None:
+                opening = _orphaned_anchor_amount(rows, i)
             for w in row:
                 m = YEAR_RE.search(w['text'])
                 if m:
@@ -232,19 +288,34 @@ def parse_cba_geometry(pdf_content):
     cur_year = base_year
     closing = None
 
-    for row in rows:
+    for i, row in enumerate(rows):
         flat = ''.join(w['text'] for w in row)
         joined = ' '.join(w['text'] for w in row)
 
         if 'OPENINGBALANCE' in flat:
+            desc = []
             continue
         if 'CLOSINGBALANCE' in flat:
             closing = _signed_balance(joined)
+            if closing is None:
+                closing = _orphaned_anchor_amount(rows, i)
+            desc = []
             continue
 
         # Skip per-page furniture: page numbers, column headers, account labels, batch codes.
         # Must come before date/amount/desc logic so furniture never starts a transaction.
         if _is_furniture(flat):
+            # The column header also marks where a page's real rows begin, so
+            # anything still buffered when we reach it is preamble or page
+            # furniture that escaped the patterns above -- the bare
+            # 'Statement11' title, a lone account number, the address block.
+            # Left in place it is prefixed onto this page's first description,
+            # which is how 'Your Statement 06269281523335 031 1301011...' ended
+            # up as the description of a real transaction on an imported
+            # statement. Enumerating every stray title is a losing game; the
+            # header is the reliable boundary.
+            if _FURNITURE_COL_HEADER in flat:
+                desc = []
             continue
 
         # New transaction row starts when the first word is a date token
@@ -415,6 +486,138 @@ def verify_nab_columns(pdf_content, transactions):
         )
 
     return None
+
+
+class StatementNotImportable(Exception):
+    """Raised when a statement must not become an import without a decision.
+
+    Carries ``reason`` -- the text shown to whoever has to decide.
+    """
+
+    def __init__(self, reason):
+        super().__init__(reason)
+        self.reason = reason
+
+
+def _chain_break_indexes(rows, opening, tolerance=0.01):
+    """Indexes where a row's balance does not follow from the row before it.
+
+    Rows printing no balance are skipped rather than counted as breaks: not
+    every parser emits a balance column, and the absence of one is not a fault.
+    """
+    breaks = []
+    previous = opening
+    for i, row in enumerate(rows):
+        balance = row.get('balance')
+        if balance is None:
+            continue
+        amount = row.get('amount')
+        if previous is not None and amount is not None:
+            if abs((float(previous) + float(amount)) - float(balance)) > tolerance:
+                breaks.append(i)
+        previous = balance
+    return breaks
+
+
+def _date_order_breaks(rows):
+    """Indexes where the statement's dates run backwards.
+
+    Checked separately from the balances because the two fail independently: a
+    page read with the wrong year keeps a perfect balance chain while every date
+    on it is twelve months out. That is exactly how 53 rows worth 22,399.41
+    were dropped from an import with every balance check passing.
+    """
+    from datetime import datetime
+
+    def parsed(value):
+        if not value:
+            return None
+        for fmt in ('%Y-%m-%d', '%d/%m/%Y', '%d/%m/%y'):
+            try:
+                return datetime.strptime(str(value).strip(), fmt).date()
+            except ValueError:
+                continue
+        return None
+
+    breaks = []
+    previous = None
+    for i, row in enumerate(rows):
+        this = parsed(row.get('date'))
+        if this is None:
+            continue
+        if previous is not None and this < previous:
+            breaks.append(i)
+        previous = this
+    return breaks
+
+
+def assert_importable(rows, opening, closing, tolerance=0.01):
+    """Refuse a statement whose own figures say the parse is wrong.
+
+    This is the last check before rows become a ReviewJob, and it is
+    deliberately recomputed from the rows being imported rather than trusting a
+    flag set further upstream: the figures are what matter, and a flag can be
+    lost in a session round-trip or edited by a client.
+
+    ``verify_direct_parse`` already rejects a bad *parse*, but it runs before
+    the period filter and it treats a statement with no anchors as merely
+    unverified. Both gaps were load-bearing in a real incident: a statement
+    reconciled cleanly across all 240 of its rows, then had 130 of them removed
+    by the financial-year filter, and the 110 that were imported carried the
+    whole statement's opening and closing balances. Reconciliation had already
+    passed, so nothing objected.
+
+    Raises StatementNotImportable. Callers turn that into a refusal that the
+    user can consciously override, never into a silent warning.
+    """
+    if not rows:
+        return True
+
+    has_opening = opening not in (None, '', 0, 0.0)
+    has_closing = closing not in (None, '', 0, 0.0)
+    if not has_opening and not has_closing:
+        raise StatementNotImportable(
+            "No opening or closing balance could be read from this statement, "
+            "so its transactions cannot be checked against it. On the formats "
+            "we parse, a missing balance normally means the statement was read "
+            "incorrectly rather than that it prints no balance."
+        )
+
+    movements = sum(float(r.get('amount') or 0) for r in rows)
+    derived = round(float(opening or 0) + movements, 2)
+    if abs(derived - float(closing or 0)) > tolerance:
+        raise StatementNotImportable(
+            f"These {len(rows)} transactions do not add up to the statement's "
+            f"own balances: opening {float(opening or 0):,.2f} plus movements "
+            f"{movements:,.2f} comes to {derived:,.2f}, but the closing balance "
+            f"is {float(closing or 0):,.2f} "
+            f"(out by {derived - float(closing or 0):+,.2f}). "
+            f"Either a transaction is missing, duplicated or the wrong way "
+            f"round, or the balances belong to a wider period than the rows."
+        )
+
+    chain = _chain_break_indexes(rows, opening, tolerance)
+    if chain:
+        first = rows[chain[0]]
+        raise StatementNotImportable(
+            f"The running balance does not follow row to row at "
+            f"{len(chain)} point(s) — the first is {first.get('date')} "
+            f"'{str(first.get('description'))[:40]}'. That means rows are "
+            f"missing or duplicated, most often because a page is absent from "
+            f"the file. Check the statement covers every page."
+        )
+
+    disorder = _date_order_breaks(rows)
+    if disorder:
+        row = rows[disorder[0]]
+        raise StatementNotImportable(
+            f"The dates run backwards at {len(disorder)} point(s) — the first "
+            f"is {row.get('date')}. A bank statement runs forward in time, so "
+            f"a date going back means a date was misread; a page given the "
+            f"wrong year leaves the balances looking perfectly correct."
+        )
+
+    return True
 
 
 def verify_direct_parse(result, bank, pdf_content=None, filename=""):

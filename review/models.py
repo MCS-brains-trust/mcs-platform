@@ -81,11 +81,49 @@ class ReviewJob(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
+    # ── Import verification ────────────────────────────────────────────────
+    # A statement that contradicts its own printed balances, loses rows from
+    # its balance chain, or carries dates out of order is refused at import.
+    # It can still be brought in, but only deliberately and on the record:
+    # a statement whose figures could not be checked once reached the trial
+    # balance carrying a closing balance 8,197.45 away from the truth, and a
+    # dismissible warning was all that stood in the way.
+    VERIFICATION_VERIFIED = "verified"
+    VERIFICATION_OVERRIDDEN = "overridden"
+    VERIFICATION_CHOICES = [
+        (VERIFICATION_VERIFIED, "Verified against its own balances"),
+        (VERIFICATION_OVERRIDDEN, "Imported over a failed verification"),
+    ]
+    verification_status = models.CharField(
+        max_length=20,
+        choices=VERIFICATION_CHOICES,
+        default=VERIFICATION_VERIFIED,
+        help_text="Whether this statement passed the import balance checks",
+    )
+    verification_detail = models.TextField(
+        blank=True, default="",
+        help_text="What the import check objected to, if anything",
+    )
+    override_reason = models.TextField(
+        blank=True, default="",
+        help_text="Why this statement was imported despite failing the check",
+    )
+    override_by = models.CharField(
+        max_length=255, blank=True, default="",
+        help_text="Who imported it over the failed check",
+    )
+    override_at = models.DateTimeField(blank=True, null=True)
+
     class Meta:
         ordering = ["-received_at"]
 
     def __str__(self):
         return f"{self.client_name} — {self.file_name}"
+
+    @property
+    def was_overridden(self):
+        """True when this statement was imported over a failed balance check."""
+        return self.verification_status == self.VERIFICATION_OVERRIDDEN
 
     @property
     def progress_percent(self):

@@ -347,7 +347,32 @@
                 <i class="bi bi-person"></i> {{ job.submitted_by }}
                 {% endif %}
             </div>
+            {% if job.was_overridden %}
+            {# This statement's own balances did not agree with its rows. It was
+               imported anyway, on a stated reason -- say so plainly wherever it
+               is worked on, because every figure below inherits the doubt. #}
+            <div class="alert alert-warning d-flex align-items-start gap-2 py-2 px-3 mb-2"
+                 style="font-size: 0.85rem;">
+                <i class="bi bi-exclamation-triangle-fill mt-1"></i>
+                <div>
+                    <strong>Imported without passing its balance check.</strong>
+                    {{ job.verification_detail }}
+                    <div class="mt-1">
+                        Reason given: &ldquo;{{ job.override_reason }}&rdquo;
+                        {% if job.override_by %}
+                        &mdash; {{ job.override_by }}{% endif %}
+                        {% if job.override_at %}
+                        on {{ job.override_at|date:"d/m/Y H:i" }}{% endif %}
+                    </div>
+                </div>
+            </div>
+            {% endif %}
             <div class="d-flex flex-wrap gap-2 mt-1">
+                {% if job.was_overridden %}
+                <span class="gst-badge" style="background:#fff3cd;color:#664d03;">
+                    <i class="bi bi-exclamation-triangle-fill"></i> Unverified import
+                </span>
+                {% endif %}
                 {% if job.is_gst_registered %}
                 <span class="gst-badge gst-registered"><i class="bi bi-check-circle-fill"></i> GST Registered</span>
                 {% else %}
