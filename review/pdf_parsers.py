@@ -1786,6 +1786,30 @@ def parse_bendigo_statement(pdf_content):
 # Bank Detection & Main Entry Point
 # ---------------------------------------------------------------------------
 
+# What to call each detected format on screen. The preview badge is the only
+# place whoever accepts an import can see which parser claimed the file, and
+# misdetection is a real failure mode -- Bank of Melbourne is a Westpac
+# subsidiary and the checks below are ordered deliberately because of it.
+BANK_LABELS = {
+    "cba": "Commonwealth Bank",
+    "cba_txn_listing": "CBA NetBank Transaction Listing",
+    "cba_txn_history": "CBA NetBank Transaction History",
+    "anz": "ANZ",
+    "westpac": "Westpac",
+    "bankofmelb": "Bank of Melbourne",
+    "nab": "NAB",
+    "ing": "ING",
+    "macquarie": "Macquarie",
+    "bendigo": "Bendigo Bank",
+    "unknown": "Unrecognised format",
+}
+
+
+def bank_label(bank):
+    """A human name for a detected format, falling back to the key itself."""
+    return BANK_LABELS.get(bank, bank or "Unrecognised format")
+
+
 def detect_bank(pdf_content):
     """Detect which bank a PDF statement is from."""
     with pdfplumber.open(io.BytesIO(pdf_content)) as pdf:

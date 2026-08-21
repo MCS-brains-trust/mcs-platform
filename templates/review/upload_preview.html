@@ -261,7 +261,7 @@
         const expectedDR = expectedClose < -0.005;
         const expectedDisplay = '$' + Math.abs(expectedClose).toFixed(2) + (expectedDR ? ' DR' : '');
 
-        const bankLabel = stmt.bank || 'Unknown Bank';
+        const bankLabel = stmt.bank_label || stmt.bank || 'Unknown Bank';
         const accountLabel = stmt.account_name || '';
         const bsbLabel = stmt.bsb ? `BSB ${stmt.bsb}` : '';
         const accNumLabel = stmt.account_number ? `Acc ${stmt.account_number}` : '';

@@ -2959,7 +2959,10 @@ function openEditAssetModal(pk, name, category, purchaseDate, totalCost, opening
 
         // All files processed
         if (parsedStatements.length === 0) {
-            overallStatus.innerHTML = '<span class="text-danger"><i class="bi bi-exclamation-triangle"></i> No statements could be parsed. ' + errors.join('; ') + '</span>';
+            // Not "could not be parsed": a dormant statement is read
+            // perfectly and still has nothing to import, and saying otherwise
+            // contradicts the per-file message printed right above this.
+            overallStatus.innerHTML = '<span class="text-danger"><i class="bi bi-exclamation-triangle"></i> Nothing to import. ' + errors.join('; ') + '</span>';
             submitBtn.disabled = false;
             submitBtn.innerHTML = '<i class="bi bi-cloud-upload"></i> Parse &amp; Preview';
             return;

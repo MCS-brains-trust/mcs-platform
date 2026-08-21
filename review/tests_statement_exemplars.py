@@ -338,6 +338,25 @@ class HealthyExemplarTests(SimpleTestCase):
                     result["closing_balance"],
                 )
 
+    def test_each_carries_the_format_it_was_detected_as(self):
+        """The preview badge is the only place whoever accepts an import can
+        see which parser claimed the file, and it read "Unknown Bank" for
+        every statement of every bank: no parser ever set it. Misdetection is
+        a real failure mode -- Bank of Melbourne is a Westpac subsidiary and
+        detect_bank orders those two checks deliberately -- so a wrong badge
+        is worth more than a missing one."""
+        from .pdf_parsers import bank_label
+        for entry in self._healthy():
+            if not available(entry["name"]):
+                continue
+            with self.subTest(entry["name"]):
+                result = parse(entry["name"])
+                self.assertEqual(result.get("bank"), entry["bank"])
+                self.assertEqual(result.get("bank_label"),
+                                 bank_label(entry["bank"]))
+                self.assertNotIn(result["bank_label"],
+                                 ("", None, "Unrecognised format"))
+
     def test_no_description_carries_page_furniture(self):
         for entry in self._healthy():
             if not available(entry["name"]):

@@ -1331,6 +1331,14 @@ def verify_direct_parse(result, bank, pdf_content=None, filename=""):
     there is nothing to check it against, and refusing it would punish the
     absence of evidence rather than a fault.
     """
+    # Stamp the detected format before anything returns early: no parser sets
+    # it, so the preview badge read "Unknown Bank" for every statement of every
+    # bank. It is the one place the operator can see what claimed the file.
+    if isinstance(result, dict):
+        from .pdf_parsers import bank_label
+        result.setdefault('bank', bank)
+        result.setdefault('bank_label', bank_label(bank))
+
     if not result or not result.get('transactions'):
         return result
 

@@ -1152,6 +1152,12 @@ def _try_vision_fallback(content, filename, direct_error=None, log_prefix='[uplo
         # 'get'", which reads to the user as a bank-detection problem.
         if not vision_result:
             raise _VisionError(f'no statement data was returned for {filename}')
+        # A Vision extraction never went through verify_direct_parse, so it
+        # carries no format either. A scan is worth naming as one.
+        from .pdf_parsers import bank_label as _bank_label
+        vision_result.setdefault('bank', bank_name)
+        vision_result.setdefault(
+            'bank_label', f'{_bank_label(bank_name)} (scanned, read by OCR)')
         # Soft reconciliation: flag as unverified rather than discarding if balances
         # are missing or the totals don't foot — Vision output has API cost and latency.
         # A broken running-balance chain means rows are missing, duplicated or
@@ -2369,7 +2375,9 @@ def parse_statement(request):
         if is_dormant_statement(extracted):
             return JsonResponse({
                 'status': 'error',
-                'message': f'{filename}: {_empty_statement_message(extracted)}',
+                # No filename prefix: this endpoint is called per file and the
+                # caller labels each result with its own name already.
+                'message': _empty_statement_message(extracted),
                 'dormant': True,
             }, status=400)
         return JsonResponse({
@@ -2506,7 +2514,8 @@ def parse_statement(request):
     response_data = {
         'status': 'success',
         'filename': filename,
-        'bank': extracted.get('bank', 'Unknown'),
+        'bank': extracted.get('bank', 'unknown'),
+        'bank_label': extracted.get('bank_label', 'Unrecognised format'),
         'account_name': extracted.get('account_name', ''),
         'bsb': bsb,
         'account_number': account_number,
