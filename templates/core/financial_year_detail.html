@@ -3044,6 +3044,13 @@ function openEditAssetModal(pk, name, category, purchaseDate, totalCost, opening
 
         try {
             sessionStorage.setItem('mcs_preview_statements', JSON.stringify(parsedStatements));
+            // Carry the files that produced nothing across with the ones that
+            // did. Until this existed they were shown only when EVERY file
+            // failed: upload five statements, have two skipped, and you were
+            // taken to a preview of three with no mention of the other two.
+            // Written unconditionally so a previous upload's list cannot
+            // linger on this one.
+            sessionStorage.setItem('mcs_preview_skipped', JSON.stringify(errors));
         } catch(e) {
             console.error('sessionStorage error:', e);
             alert('Too much data for browser storage. Please upload fewer files at a time.');
