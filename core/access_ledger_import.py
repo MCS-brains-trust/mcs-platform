@@ -1221,25 +1221,66 @@ def import_access_ledger_zip(zip_file, client=None, entity=None, replace_existin
     logger.info(f"Processing entity (type={entity_info['entity_type']})")
 
     # --- Step 2: Create or find Entity ---
+    # Whether the CALLER named the entity, or we matched one by name, decides
+    # what "already exists" is allowed to mean. Importing from an entity's own
+    # page passes it in deliberately, so refusing because that entity exists
+    # refuses the very thing asked for -- which made HandiLedger import from an
+    # entity page impossible unless "replace existing" was ticked, on a brand
+    # new entity with nothing whatever to replace.
+    entity_was_given = entity is not None
     if entity is None:
         entity = Entity.objects.filter(entity_name__iexact=entity_name).first()
+
+    # What genuinely cannot be allowed is importing a year the entity already
+    # holds: the TB and depreciation bulk_create calls below are not gated on
+    # replace_existing, so an overlapping year would have its balances and its
+    # assets duplicated. That is a question about YEARS, not about the entity.
+    clashing_years = []
     if entity and not replace_existing:
-        result["warnings"].append(
-            f"Entity '{entity_name}' already exists. "
-            f"Use replace_existing=True to overwrite."
+        clashing_years = sorted(
+            entity.financial_years.filter(
+                year_label__in=[str(y) for y in reader.years]
+            ).values_list("year_label", flat=True)
         )
+
+    refuse = False
+    if entity and not replace_existing:
+        if not entity_was_given:
+            # Matched by name rather than asked for: importing into an entity
+            # the caller never named is the surprise worth preventing.
+            result["warnings"].append(
+                f"Entity '{entity_name}' already exists. "
+                f"Use replace_existing=True to overwrite."
+            )
+            refuse = True
+        elif clashing_years:
+            result["warnings"].append(
+                f"{entity_name} already has imported data for "
+                f"{', '.join(clashing_years)}. Tick 'Replace existing "
+                f"financial year data' to overwrite those years, or delete "
+                f"them first — importing again would double their balances."
+            )
+            refuse = True
+
+    if refuse:
         result["entity"] = entity
-        # Do NOT continue importing — the TB/depreciation bulk_create calls
-        # below are not gated on replace_existing, so falling through here
-        # would duplicate every overlapping year's balances and assets.
         reader.close()
         return result
-    elif entity and replace_existing:
+
+    if entity and replace_existing:
         # Delete existing financial years (cascades to TB lines, dep assets)
         deleted_fy = entity.financial_years.all().delete()
         entity.officers.all().delete()
         logger.info(f"Cleared existing data for {entity_name}")
         result["entity"] = entity
+    elif entity:
+        # Named by the caller, and none of the ZIP's years are already here, so
+        # there is nothing to overwrite and nothing that could be duplicated.
+        result["entity"] = entity
+        logger.info(
+            f"Importing into the entity supplied by the caller: "
+            f"{entity_name} (pk={entity.pk}); years in ZIP {reader.years}"
+        )
     else:
         # Auto-create a Client if none provided
         from .models import Client
