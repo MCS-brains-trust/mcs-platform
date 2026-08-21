@@ -12042,6 +12042,16 @@ def entity_import_handiledger(request, pk):
                         request,
                         f"Import completed with {len(result['errors'])} error(s)."
                     )
+                elif not result["years_imported"]:
+                    # Nothing imported is not a success, and reporting it as one
+                    # is how a skipped import went unnoticed: the page said
+                    # "Successfully imported: 0 years, 0 TB lines" in green and
+                    # the actual reason sat in an info message below it.
+                    messages.warning(
+                        request,
+                        "Nothing was imported — no financial years were taken "
+                        "from this file. The reason is shown below."
+                    )
                 else:
                     status_note = " (all years finalised — ready to roll over)" if import_finalised else ""
                     messages.success(
@@ -12062,8 +12072,22 @@ def entity_import_handiledger(request, pk):
                     f"{' (import as finalised)' if import_finalised else ''}",
                     entity,
                 )
-            except Exception as e:
-                messages.error(request, "Import failed. Please check the file format and try again.")
+            except Exception:
+                # This used to bind the exception and throw it away, so an
+                # import failure left NOTHING behind: no traceback in the log
+                # and a message telling the operator to check a file format
+                # that was often perfectly fine. Whatever went wrong, it is
+                # now recorded where it can be read.
+                logger.exception(
+                    "HandiLedger import failed for entity %s (%s), file %r",
+                    entity.pk, entity.entity_name, getattr(zip_file, "name", "?"),
+                )
+                messages.error(
+                    request,
+                    "Import failed — the error has been logged. If the file "
+                    "came from HandiLedger unchanged, send it to support "
+                    "rather than editing it."
+                )
 
     return render(request, "core/entity_import_handiledger.html", {
         "entity": entity,
