@@ -106,8 +106,8 @@ EXEMPLARS = [
          opening=6260.56, closing=4015.19, status="healthy", geometry=False),
     dict(name="ANZ13.pdf", bank="anz", rows=33,
          opening=4015.19, closing=4007.98, status="healthy", geometry=False),
-    # Bendigo, previously parked with no exemplars at all. Two of the four
-    # reconcile and two do not. The text arrives glued
+    # Bendigo, previously parked with no exemplars at all. All four reconcile
+    # as of 2026-08-21; Ben4 took two fixes of its own. The text arrives glued
     # ("Openingbalanceon1Mar2025 $2,772.95") and the table is
     # Date / Transaction / Withdrawals / Deposits / Balance -- the same shape
     # Westpac had before Phase 3a.
@@ -134,6 +134,42 @@ EXEMPLARS = [
          opening=6010.45, closing=5388.24, status="healthy", geometry=False),
     dict(name="ING20.pdf", bank="ing", rows=143,
          opening=5388.24, closing=23896.75, status="healthy", geometry=False),
+    # Bank of Melbourne. Its text parser read 0 transactions from both of
+    # these: the text arrives glued ("20MAYOPENINGBALANCE1,365.48"), the
+    # dates carry no year at all, and the column header reads "Balance$".
+    # BOM3 is three consecutive six-month periods in one 12-page file, and
+    # each period prints its own summary -- opening, total credits, total
+    # debits, closing -- which gives ground truth from outside the parser.
+    dict(name="BOM3.pdf", bank="bankofmelb", rows=59,
+         opening=1365.48, closing=7585.83, status="healthy", geometry=False),
+    # A dormant account: three periods, 0.01 throughout, not one transaction.
+    # The correct read of it is zero rows, which is also what a failed parse
+    # looks like from outside -- so it is pinned deliberately.
+    dict(name="BOM4.pdf", bank="bankofmelb", rows=0,
+         opening=0.01, closing=0.01, status="healthy", geometry=False),
+    # These two are SCANNED IMAGES: one image per page and no text layer at
+    # all, so there is nothing for any text parser to read and no anchors to
+    # record. They belong to the Claude Vision OCR path, not to a parser.
+    dict(name="BOM1.pdf", bank="bankofmelb", rows=None,
+         opening=None, closing=None, status="gap", geometry=False,
+         gap="scanned image: the pages carry no text layer (0 words), so it "
+             "cannot be read by any text parser -- needs the Vision OCR path"),
+    dict(name="BOM2.pdf", bank="bankofmelb", rows=None,
+         opening=None, closing=None, status="gap", geometry=False,
+         gap="scanned image: the pages carry no text layer (0 words), so it "
+             "cannot be read by any text parser -- needs the Vision OCR path"),
+    # Macquarie, never before pinned. It parses correctly and always did --
+    # what was missing was evidence. M1 and M2 are two copies of the same
+    # statement no. 25, from different downloads; M3 is the period after it.
+    # Its rows carry no balance, so the gate's row-to-row chain check cannot
+    # see them; the test below chains them against the figures printed on the
+    # page instead, which is what proves no row is missing or mis-signed.
+    dict(name="M1.pdf", bank="macquarie", rows=20,
+         opening=12102.76, closing=11666.92, status="healthy", geometry=False),
+    dict(name="M2.pdf", bank="macquarie", rows=20,
+         opening=12102.76, closing=11666.92, status="healthy", geometry=False),
+    dict(name="M3.pdf", bank="macquarie", rows=19,
+         opening=11666.92, closing=4132.77, status="healthy", geometry=False),
 ]
 
 # One statement's closing balance is the next one's opening balance.
@@ -151,6 +187,8 @@ CHAINS = [
     # precedes Ben2.
     ("Ben1.pdf", "Ben3.pdf"),
     ("Ben3.pdf", "Ben2.pdf"),
+    # M1 and M2 are the same statement, so M2 -> M3 would assert nothing new.
+    ("M1.pdf", "M3.pdf"),
 ]
 
 BY_NAME = {e["name"]: e for e in EXEMPLARS}
@@ -292,8 +330,14 @@ class HealthyExemplarTests(SimpleTestCase):
                 continue
             with self.subTest(entry["name"]):
                 for txn in parse(entry["name"])["transactions"]:
+                    # CARRIEDFORWARD and the bank's own footer are page
+                    # furniture: Bank of Melbourne prints a carried-forward
+                    # subtotal and then its ABN at every page break, either
+                    # side of the boundary, and both landed in the
+                    # description of the transaction next to them.
                     for junk in ("YourStatement", "Your Statement",
-                                 "TransactionDebitCredit"):
+                                 "TransactionDebitCredit", "CARRIEDFORWARD",
+                                 "ADivisionofWestpac"):
                         self.assertNotIn(junk, txn["description"])
 
 
@@ -431,6 +475,144 @@ class KnownGapTests(SimpleTestCase):
             self.assertEqual(
                 [t["description"] for t in txns if junk in t["description"]],
                 [], f"{junk} is a summary line, not a transaction")
+
+    def test_bank_of_melbourne_matches_the_totals_it_prints_itself(self):
+        """Ground truth from outside the parser.
+
+        BOM3 holds three six-month periods, and each one prints its own
+        summary: opening, total credits, total debits, closing. Added up they
+        come to 24,983.84 in and 18,763.49 out, a net of 6,220.35, which
+        carries 1,365.48 to 7,585.83. Matching on BOTH sides is much stronger
+        than reconciling: a debit read as a credit reconciles wrongly by
+        double, but it cannot leave both totals right.
+        """
+        if not available("BOM3.pdf"):
+            self.skipTest("BOM3.pdf absent")
+        txns = parse("BOM3.pdf")["transactions"]
+        credits = sum(t["amount"] for t in txns if t["amount"] > 0)
+        debits = sum(t["amount"] for t in txns if t["amount"] < 0)
+        # printed: 5,593.16 + 8,395.60 + 10,995.08 in
+        self.assertAlmostEqual(credits, 24983.84, places=2)
+        # printed: 4,309.18 + 6,917.57 + 7,536.74 out
+        self.assertAlmostEqual(debits, -18763.49, places=2)
+
+    def test_bank_of_melbourne_dates_the_period_that_crosses_a_new_year(self):
+        """Its rows carry no year -- "20MAY" -- so the year comes from the
+        statement period, and BOM3's second period runs 20/11/2022 to
+        19/05/2023. Taking the period's first year for every row would date
+        January to May twelve months early, and reconciliation would never
+        notice: it does not look at dates at all."""
+        if not available("BOM3.pdf"):
+            self.skipTest("BOM3.pdf absent")
+        txns = parse("BOM3.pdf")["transactions"]
+        self.assertEqual([t for t in txns if not t["date"]], [])
+        dates = [t["date"] for t in txns]
+        self.assertEqual(dates, sorted(dates), "a statement runs forwards")
+        second_period = [d for d in dates if "2022-11-20" <= d <= "2023-05-19"]
+        self.assertTrue(any(d < "2023-01-01" for d in second_period))
+        self.assertTrue(any(d >= "2023-01-01" for d in second_period))
+
+    def test_bank_of_melbourne_keeps_a_continuation_with_its_own_row(self):
+        """BOM prints a wrapped description BELOW the figures it explains --
+        "Transfer to CBA account" sits under the withdrawal it describes,
+        where Westpac and ANZ wrap above. Accumulating forward filed every
+        continuation against the FOLLOWING transaction: each description one
+        row late, and one payment's reference against the next payment."""
+        if not available("BOM3.pdf"):
+            self.skipTest("BOM3.pdf absent")
+        txns = parse("BOM3.pdf")["transactions"]
+        june = {t["date"]: t["description"] for t in txns
+                if t["date"] in ("2022-06-25", "2022-06-30")}
+        self.assertIn("TransfertoCBAaccount", june["2022-06-25"])
+        self.assertNotIn("TransfertoCBAaccount", june["2022-06-30"])
+
+    def test_a_dormant_statement_reads_as_zero_rows_not_as_a_failure(self):
+        """BOM4 is three periods of an account holding 0.01 and nothing
+        happening. Zero transactions is the correct answer, and it is
+        indistinguishable from a failed parse at the parser boundary -- the
+        anchors are what tell them apart, so they are asserted here."""
+        if not available("BOM4.pdf"):
+            self.skipTest("BOM4.pdf absent")
+        result = parse("BOM4.pdf")
+        self.assertEqual(result["transactions"], [])
+        self.assertAlmostEqual(float(result["opening_balance"]), 0.01, places=2)
+        self.assertAlmostEqual(float(result["closing_balance"]), 0.01, places=2)
+
+    def test_the_scanned_bank_of_melbourne_files_carry_no_text_at_all(self):
+        """Why BOM1 and BOM2 are gaps rather than parser bugs: they are
+        photographs of a statement. One image per page and not a single word,
+        so there is nothing for any parser to read -- the failure is at the
+        wrong layer to fix here, and the Vision OCR path is where they belong.
+        """
+        import io
+        import pdfplumber
+        names = ["BOM1.pdf", "BOM2.pdf"]
+        require_any(self, names)
+        for name in names:
+            if not available(name):
+                continue
+            with self.subTest(name):
+                with pdfplumber.open(io.BytesIO(read(name))) as pdf:
+                    page = pdf.pages[0]
+                    self.assertEqual(page.extract_words(), [])
+                    self.assertTrue(page.images)
+
+    def test_macquarie_chains_against_every_balance_printed_on_the_page(self):
+        """The strongest check available on a parser that emits no balances.
+
+        Macquarie prints a running balance beside every transaction, but its
+        figures sit a fraction of a point above their own line, so row
+        grouping files each one with the row above and the parser reports
+        balance=None. That leaves the import gate's row-to-row chain check
+        with nothing to work on, and reconciliation alone cannot tell a
+        missing row from a pair of offsetting errors.
+
+        So the balances are read straight off the page here and compared with
+        the running total the parse implies. Agreement on every figure, in
+        order, means no row is missing, duplicated or the wrong way round.
+        """
+        import io
+        import pdfplumber
+        from .statement_geometry import (
+            _column_of, _row_money, _rows, _table_columns,
+        )
+        names = ["M1.pdf", "M2.pdf", "M3.pdf"]
+        require_any(self, names)
+        for name in names:
+            if not available(name):
+                continue
+            with self.subTest(name):
+                with pdfplumber.open(io.BytesIO(read(name))) as pdf:
+                    rows = _rows(pdf)
+                columns = _table_columns(rows, ("DEBITS", "CREDITS", "BALANCE"))
+                self.assertIsNotNone(columns)
+                printed = [value for row in rows
+                           for word, value in _row_money(row)
+                           if _column_of(word, columns) == "balance"]
+                result = parse(name)
+                running = float(result["opening_balance"])
+                implied = []
+                for txn in result["transactions"]:
+                    running = round(running + txn["amount"], 2)
+                    implied.append(running)
+                # printed[0] is the headline balance on page 1 and printed[1]
+                # is the opening balance; the rest are the transaction rows.
+                self.assertEqual(printed[2:2 + len(implied)], implied)
+
+    def test_the_two_copies_of_one_macquarie_statement_agree(self):
+        """M1 and M2 are the same statement no. 25 downloaded twice -- the
+        files differ byte for byte. Two renderings of one document must not
+        parse to two different answers."""
+        names = ["M1.pdf", "M2.pdf"]
+        for name in names:
+            if not available(name):
+                self.skipTest(f"{name} absent")
+        self.assertNotEqual(read("M1.pdf"), read("M2.pdf"))
+        first, second = parse("M1.pdf"), parse("M2.pdf")
+        self.assertEqual(
+            [(t["date"], t["amount"], t["description"]) for t in first["transactions"]],
+            [(t["date"], t["amount"], t["description"]) for t in second["transactions"]],
+        )
 
     def test_the_cba_transaction_history_export_is_not_recognised(self):
         if not available("CBA_1.pdf"):

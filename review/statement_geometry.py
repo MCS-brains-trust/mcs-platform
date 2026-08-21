@@ -584,6 +584,57 @@ def _date_ddmonyy(row, year_hint):
     return None
 
 
+# "StatementPeriod" "20/05/2022to19/11/2022" -- Bank of Melbourne glues the two
+# dates into one token, and its transaction rows carry no year at all.
+_PERIOD_RE = re.compile(
+    r'^(\d{2})/(\d{2})/(\d{4})to(\d{2})/(\d{2})/(\d{4})$')
+
+
+def _year_only_hint(row):
+    """ANZ prints the year on a row of its own ahead of the months it covers."""
+    if row and _YEAR_ONLY_RE.match(row[0]['text']):
+        return row[0]['text']
+    return None
+
+
+def _statement_period_hint(row):
+    """The statement period, as ((y, m, d), (y, m, d)), or None.
+
+    Bank of Melbourne dates its transactions "20MAY" with no year anywhere on
+    the row, so the year has to come from the period this table belongs to --
+    and a period can straddle a new year (20/11/2022 to 19/05/2023). Each
+    period restates its own StatementPeriod line ahead of its table, which is
+    what makes a multi-period bundle readable at all.
+    """
+    for word in row:
+        m = _PERIOD_RE.match(word['text'])
+        if m:
+            d1, m1, y1, d2, m2, y2 = (int(g) for g in m.groups())
+            return ((y1, m1, d1), (y2, m2, d2))
+    return None
+
+
+def _date_ddmon_in_period(row, hint):
+    """Bank of Melbourne: '20MAY', with the year taken from the period.
+
+    The year is whichever of the period's two years places the date inside the
+    period. A statement running Nov to May holds both, and guessing the first
+    would date January's rows twelve months early -- which reconciles
+    perfectly, because reconciliation never looks at dates.
+    """
+    if not hint:
+        return None
+    match = _DDMON_RE.match(row[0]['text'])
+    if not match:
+        return None
+    day, month = int(match.group(1)), int(MONTH_MAP[match.group(2).capitalize()[:3]])
+    (start, end) = hint
+    for year in (start[0], end[0]):
+        if start <= (year, month, day) <= end:
+            return f"{year:04d}-{month:02d}-{day:02d}"
+    return None
+
+
 def _row_money(row):
     """(word, value) for every figure in the row, in reading order."""
     out = []
@@ -704,6 +755,37 @@ COLUMN_TABLE_PROFILES = {
         closing_keys=('CLOSINGBALANCEON', 'CLOSINGBALANCE'),
         anchor=_anchor_last_figure,
     ),
+    'bankofmelb': dict(
+        # The header reads "Balance$", and the figures align to the "$".
+        labels=('DEBIT', 'CREDIT', 'BALANCE$'),
+        date=_date_ddmon_in_period,
+        hint=_statement_period_hint,
+        opening_keys=('OPENINGBALANCE',),
+        closing_keys=('CLOSINGBALANCE',),
+        # The account summary above each table prints all four of opening,
+        # credits, debits and closing on one line, in its own band well clear
+        # of the transaction columns. Reading the balance column only ignores
+        # it; taking the last figure on the row would read the summary's
+        # CLOSING balance as the opening one.
+        anchor=_anchor_in_balance_column,
+        skip_block=('OPENINGBALANCETOTALCREDITS', 'TRANSACTIONDETAILS'),
+        continuation='trailing',
+        # The last transaction on a page is followed by a carried-forward
+        # subtotal and then a footer -- the bank's ABN, the account number,
+        # the statement period. With continuations attaching backwards, that
+        # footer would land in the description of the row above it, 195
+        # characters of it. The subtotal closes the page's table; the column
+        # header on the next page reopens it. The matching "carried forward
+        # FROM previous page" line sits AFTER that header, so the marker has
+        # to name the direction or page 2 onwards would collect nothing.
+        page_end=('CARRIEDFORWARDTONEXTPAGE',),
+        # And its mirror on the next page restates the same figure. That one
+        # sits inside the table, after the header, so it cannot close
+        # anything -- it is simply not a transaction and not a description
+        # either: attaching it backwards put it in the last row of the
+        # PREVIOUS page.
+        skip_rows=('CARRIEDFORWARDFROMPREVIOUSPAGE',),
+    ),
 }
 
 
@@ -748,10 +830,29 @@ def parse_column_table_statement(pdf_content, bank):
     for index, row in enumerate(rows):
         flat = ''.join(w['text'] for w in row).upper()
 
-        # ANZ prints the year on a row of its own ahead of the months it
-        # applies to, so a bare year is context rather than content.
-        if len(row) >= 1 and _YEAR_ONLY_RE.match(row[0]['text']):
-            year_hint = row[0]['text']
+        # Where a bank states the year its rows belong to differs: ANZ gives a
+        # bare year on a row of its own, Bank of Melbourne only the statement
+        # period. Either way it is context, not content.
+        found_hint = profile.get('hint', _year_only_hint)(row)
+        if found_hint is not None:
+            year_hint = found_hint
+
+        # A summary block printed inside or above the table: everything from
+        # its opening marker to its closing marker is furniture, inclusive.
+        # This is tested BEFORE the anchors, because Bank of Melbourne's
+        # account summary names an opening and a closing balance on the one
+        # line and would otherwise be read as an anchor row.
+        block = profile.get('skip_block')
+        if block:
+            if in_block:
+                if block[1] in flat:
+                    in_block = False
+                desc, date = [], None
+                continue
+            if block[0] in flat:
+                in_block = True
+                desc, date = [], None
+                continue
 
         if any(key in flat for key in profile['opening_keys']):
             if opening is None:
@@ -781,20 +882,14 @@ def parse_column_table_statement(pdf_content, bank):
         if 'TOTALSATENDOFPAGE' in flat:
             desc, date = [], None
             continue
+        if any(key in flat for key in profile.get('page_end', ())):
+            desc, date = [], None
+            in_table = False
+            continue
+        if any(key in flat for key in profile.get('skip_rows', ())):
+            desc, date = [], None
+            continue
 
-        # A summary block printed inside the table: everything from its
-        # opening marker to its closing marker is furniture, inclusive.
-        block = profile.get('skip_block')
-        if block:
-            if in_block:
-                if block[1] in flat:
-                    in_block = False
-                desc, date = [], None
-                continue
-            if block[0] in flat:
-                in_block = True
-                desc, date = [], None
-                continue
         if _is_furniture(flat):
             continue
 
@@ -828,7 +923,24 @@ def parse_column_table_statement(pdf_content, bank):
             if TABLE_MONEY_RE.match(text) and _column_of(word, columns):
                 continue
             keep.append(text)
-        desc.append(' '.join(keep))
+        line = ' '.join(keep)
+
+        # Where a wrapped description sits relative to its figures is the one
+        # thing these statements do not agree on. Westpac and ANZ wrap BEFORE
+        # the figures, so lines accumulate until a figure closes them. Bank of
+        # Melbourne wraps AFTER: "Transfer to CBA account" is printed on the
+        # line below the withdrawal it explains. Accumulating those forward
+        # attached every continuation to the FOLLOWING transaction -- each
+        # description one row late, and the reference line of one payment
+        # filed against the next.
+        if (profile.get('continuation') == 'trailing'
+                and movement is None and date is None
+                and in_table and txns and line):
+            txns[-1]['description'] = _truncate(
+                f"{txns[-1]['description']} {line}".strip(), 200)
+            continue
+
+        desc.append(line)
 
         if movement is not None and in_table:
             txns.append({
