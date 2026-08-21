@@ -114,6 +114,12 @@ def _rows(pdf):
     month 1 reconciles internally, so the truncation goes unnoticed). We
     accumulate rows across all sub-periods and trim only the trailing furniture
     after the final CLOSINGBALANCE.
+
+    NOTE: this test is deliberately CASE SENSITIVE and must stay that way.
+    CBA's NetBank Transaction History export states its closing balance in the
+    HEADER, above the table, as "Closing balance" -- matching it case
+    insensitively would trim that document to its first five rows and lose all
+    35 transactions.
     """
     out = []
     last_closing_idx = None
@@ -549,6 +555,8 @@ _YEAR_ONLY_RE = re.compile(r'^(20\d{2})$')
 _DDMONYY_RE = re.compile(r'^(\d{1,2})' + _MONTH_ABBR + r'(\d{2})$', re.IGNORECASE)
 # "1Mar" with the year in the next token.
 _DDMON_RE = re.compile(r'^(\d{1,2})' + _MONTH_ABBR + r'$', re.IGNORECASE)
+# "15/06/2026" -- the NetBank export writes the century out.
+_DDMMYYYY_RE = re.compile(r'^(\d{2})/(\d{2})/(\d{4})$')
 
 
 def _date_ddmmyy(row, year_hint):
@@ -612,6 +620,15 @@ def _statement_period_hint(row):
             d1, m1, y1, d2, m2, y2 = (int(g) for g in m.groups())
             return ((y1, m1, d1), (y2, m2, d2))
     return None
+
+
+def _date_ddmmyyyy(row, hint):
+    """CBA's NetBank Transaction History export: '15/06/2026', full year."""
+    m = _DDMMYYYY_RE.match(row[0]['text'])
+    if not m:
+        return None
+    day, month, year = m.groups()
+    return f"{year}-{month}-{day}"
 
 
 def _date_ddmon_in_period(row, hint):
@@ -786,7 +803,42 @@ COLUMN_TABLE_PROFILES = {
         # PREVIOUS page.
         skip_rows=('CARRIEDFORWARDFROMPREVIOUSPAGE',),
     ),
+    'cba_txn_history': dict(
+        # NetBank's "Transaction History" export, which is not a statement:
+        # no branding, a different header, and its rows run BACKWARDS.
+        labels=('DEBIT', 'CREDIT', 'BALANCE'),
+        date=_date_ddmmyyyy,
+        # "Report from 11/07/2024  Opening balance  $805.27" -- the label and
+        # the figure land in separate rows, so both anchors arrive through
+        # neighbour recovery, which accepts only a lone figure in the balance
+        # column and so cannot pick up a transaction by mistake.
+        opening_keys=('OPENINGBALANCE',),
+        closing_keys=('CLOSINGBALANCE',),
+        anchor=_anchor_in_balance_column,
+        # Its descriptions wrap below their figures, as Bank of Melbourne's do.
+        continuation='trailing',
+        # Each page ends with a report footer, and the last page adds a totals
+        # block. Both would otherwise be read as a continuation of the
+        # transaction above them. The header on the next page reopens the
+        # table.
+        page_end=('PAGENUMBER', 'NO.OFTRANSACTIONS'),
+        # This export is the only one that runs newest-first.
+        allow_reverse=True,
+    ),
 }
+
+
+def _is_descending(txns):
+    """True when every dated row is older than the one before it.
+
+    Requires at least two dates to say anything, and one date going the other
+    way is enough to answer no -- a document half in order is not a document
+    in reverse, and must not be quietly rearranged.
+    """
+    dates = [t['date'] for t in txns if t.get('date')]
+    if len(dates) < 2:
+        return False
+    return all(a >= b for a, b in zip(dates, dates[1:]))
 
 
 def parse_column_table_statement(pdf_content, bank):
@@ -956,6 +1008,16 @@ def parse_column_table_statement(pdf_content, bank):
         raise StatementParseError(
             f"Could not read the opening and closing balance for this "
             f"{bank} statement")
+
+    if profile.get('allow_reverse') and _is_descending(txns):
+        # Read newest-first, the rows contradict every downstream assumption:
+        # the running balance does not follow row to row, the dates run
+        # backwards, and the import gate refuses both -- correctly, because it
+        # cannot tell a document in reverse from a document with rows out of
+        # order. Turning it round here means one canonical direction
+        # afterwards. Only a document descending the WHOLE way is turned; a
+        # genuinely mixed one is left as it is, and still refused.
+        txns.reverse()
 
     _reconcile(txns, opening, closing)
 

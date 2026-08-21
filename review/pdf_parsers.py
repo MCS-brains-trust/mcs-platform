@@ -1802,6 +1802,17 @@ def detect_bank(pdf_content):
         # vs the standard statement header:
         #   "Date Transaction Debit Credit Balance"
         is_cba = "commonwealth bank" in text_lower or "commbank" in text_lower
+        # NetBank's "Transaction History" export carries no bank name at all,
+        # which is why it detected as "unknown" and could not be parsed. Its
+        # header is "Date Transaction Detail Debit Credit Balance" -- singular
+        # "Detail", against the standard statement's "Transaction Debit Credit
+        # Balance" and the Transaction Listing's "details Amount Balance", so
+        # the three cannot be confused. Checked before the branding test
+        # because a future export may well carry branding too.
+        if ("transaction history" in text_lower and re.search(
+                r"date\s+transaction\s+detail\s+debit\s+credit\s+balance",
+                text_lower)):
+            return "cba_txn_history"
         has_txn_listing_header = bool(
             re.search(r"date\s+transaction\s+details\s+amount\s+balance", text_lower)
         )
@@ -1897,7 +1908,9 @@ def extract_transactions_from_pdf_direct(pdf_content, filename=""):
     # Description / Debit / Credit / Balance$ -- and its text parser read 0
     # transactions from both statements we hold, because the text arrives
     # glued ("20MAYOPENINGBALANCE1,365.48") and the dates carry no year.
-    if bank in ("westpac", "anz", "bendigo", "bankofmelb"):
+    # cba_txn_history has no legacy parser at all -- it was unreadable until
+    # the engine took it -- so for it there is nothing to fall back to.
+    if bank in ("westpac", "anz", "bendigo", "bankofmelb", "cba_txn_history"):
         from .statement_geometry import (
             parse_column_table_statement, StatementParseError,
         )
@@ -1906,13 +1919,15 @@ def extract_transactions_from_pdf_direct(pdf_content, filename=""):
             "anz": parse_anz_statement,
             "bendigo": parse_bendigo_statement,
             "bankofmelb": parse_bankofmelb_statement,
-        }[bank]
+        }.get(bank)
         try:
             return verify_direct_parse(
                 parse_column_table_statement(pdf_content, bank),
                 bank, pdf_content, filename,
             )
         except StatementParseError as geom_err:
+            if legacy is None:
+                raise
             logger.warning(
                 f"{bank} geometry parse failed for '{filename}': {geom_err}. "
                 f"Falling back to the legacy text parser."
