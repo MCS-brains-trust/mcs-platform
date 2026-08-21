@@ -542,7 +542,8 @@ def _apply_bs_movement_differencing(entity, raw_lines):
     source='rollover' row, never folded into the tb_import row.
 
     Behaviour:
-      - For BS accounts (classified via _is_balance_sheet_account):
+      - For BS accounts (classified from the provider's own account class
+        where it supplies one, otherwise via _is_balance_sheet_account):
         compute true period movement = (closing position at to_date) -
         (closing position at from_date-1) from the provider's period +
         opening figures. Normalise to a single debit or credit side.
@@ -573,7 +574,19 @@ def _apply_bs_movement_differencing(entity, raw_lines):
         opening_debit = Decimal(str(entry.get("opening_debit") or "0"))
         opening_credit = Decimal(str(entry.get("opening_credit") or "0"))
 
-        is_bs = _is_balance_sheet_account(code, None, coa_sections)
+        # The provider's own classification wins where it has one. Every
+        # tier of _is_balance_sheet_account reasons from the account CODE,
+        # and a code only means something within the chart it came from:
+        # Xero returned MYOB-style codes for this client (1-6100 Land) that
+        # match no range at all, and Xero defaults (820 GST, 960 Retained
+        # Earnings) that fall in the range read as income. Before this,
+        # every line came back P&L and every balance-sheet account imported
+        # at its full position instead of its movement for the year.
+        provider_section = entry.get("provider_section")
+        if provider_section:
+            is_bs = provider_section == "balance_sheet"
+        else:
+            is_bs = _is_balance_sheet_account(code, None, coa_sections)
 
         if is_bs:
             opening_pos = opening_debit - opening_credit

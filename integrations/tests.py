@@ -25,6 +25,27 @@ def _mock_response(payload, status_code=200):
     return response
 
 
+def _url_routed_get(report_responses, accounts_payload=None):
+    """A requests.get side effect that answers by URL, not by call order.
+
+    fetch_trial_balance reads the tenant's chart from /Accounts as well as the
+    report, so a positional list of responses breaks the moment the number of
+    calls changes. Routing on the URL says what each response IS.
+
+    With no accounts_payload the chart comes back empty, which is the older
+    behaviour: the account code is then recovered from the report's account
+    name ("Sales (200)" -> "200") and no section is supplied.
+    """
+    reports = list(report_responses)
+
+    def _get(url, *args, **kwargs):
+        if url.endswith("/Accounts"):
+            return _mock_response(accounts_payload or {"Accounts": []})
+        return reports.pop(0)
+
+    return _get
+
+
 def _xero_row(account_label, account_code, *amounts):
     """Build a Xero TrialBalance account Row with the given amount cells."""
     cells = [
@@ -127,10 +148,10 @@ class XeroProviderPeriodMovementTests(TestCase):
 
     @patch("integrations.providers.requests.get")
     def test_fetch_period_movement_merges_period_and_opening_reports(self, mock_get):
-        mock_get.side_effect = [
+        mock_get.side_effect = _url_routed_get([
             _mock_response(self.PERIOD_REPORT),
             _mock_response(self.OPENING_REPORT),
-        ]
+        ])
 
         lines = self.provider.fetch_period_movement(
             "token",
@@ -139,14 +160,22 @@ class XeroProviderPeriodMovementTests(TestCase):
             date(2025, 6, 30),
         )
 
-        # Two TrialBalance calls: period (with fromDate) then opening
-        # (as at the day before from_date, without fromDate).
-        self.assertEqual(mock_get.call_count, 2)
-        period_params = mock_get.call_args_list[0].kwargs["params"]
+        # Two TrialBalance calls: period (with fromDate) then opening (as at
+        # the day before from_date, without fromDate) -- and ONE /Accounts
+        # call, cached across both, which is where the real account code and
+        # the account class come from. Selected by URL rather than by
+        # position, so adding a call cannot silently shift what is asserted.
+        report_calls = [c for c in mock_get.call_args_list
+                        if "TrialBalance" in c.args[0]]
+        chart_calls = [c for c in mock_get.call_args_list
+                       if c.args[0].endswith("/Accounts")]
+        self.assertEqual(len(report_calls), 2)
+        self.assertEqual(len(chart_calls), 1)
+        period_params = report_calls[0].kwargs["params"]
         self.assertEqual(period_params["date"], "2025-06-30")
         self.assertEqual(period_params["fromDate"], "2024-07-01")
         self.assertEqual(period_params["paymentsOnly"], "false")
-        opening_params = mock_get.call_args_list[1].kwargs["params"]
+        opening_params = report_calls[1].kwargs["params"]
         self.assertEqual(opening_params["date"], "2024-06-30")
         self.assertNotIn("fromDate", opening_params)
 
@@ -155,7 +184,10 @@ class XeroProviderPeriodMovementTests(TestCase):
 
         # P&L account present only in the period report.
         sales = by_code["200"]
-        self.assertEqual(sales["account_name"], "Sales (200)")
+        # The name no longer repeats the code: the code is carried in
+        # account_code now, where it belongs, so "Sales (200)" reads as
+        # "Sales" with account_code "200".
+        self.assertEqual(sales["account_name"], "Sales")
         self.assertEqual(sales["period_debit"], Decimal("0"))
         # YTD Credit (1250.00), NOT the final-month Credit column (99.00).
         self.assertEqual(sales["period_credit"], Decimal("1250.00"))
@@ -171,7 +203,8 @@ class XeroProviderPeriodMovementTests(TestCase):
 
         # Account present only in the opening report keeps zero period figures.
         bank = by_code["090"]
-        self.assertEqual(bank["account_name"], "Business Bank Account (090)")
+        # Same as "Sales" above: the code lives in account_code now, not in the name.
+        self.assertEqual(bank["account_name"], "Business Bank Account")
         self.assertEqual(bank["opening_debit"], Decimal("500.00"))
         self.assertEqual(bank["opening_credit"], Decimal("0"))
         self.assertEqual(bank["period_debit"], Decimal("0"))
@@ -188,10 +221,10 @@ class XeroProviderPeriodMovementTests(TestCase):
                 }
             ]
         }
-        mock_get.side_effect = [
+        mock_get.side_effect = _url_routed_get([
             _mock_response(empty_report),
             _mock_response(empty_report),
-        ]
+        ])
 
         lines = self.provider.fetch_period_movement(
             "token",

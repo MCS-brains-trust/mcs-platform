@@ -5,6 +5,7 @@ Each provider defines its OAuth2 endpoints, scopes, and the logic
 to parse a trial balance response into a normalised list of dicts.
 """
 import logging
+import re
 from decimal import Decimal, InvalidOperation
 
 import requests
@@ -157,15 +158,111 @@ class XeroProvider(BaseProvider):
             for t in data
         ]
 
+    # Xero's account Class, mapped to which financial statement the account
+    # belongs to. This is the authoritative answer and it comes from Xero
+    # itself, which is the point: no chart of accounts can be classified from
+    # its code numbers once the codes are somebody else's. The client that
+    # exposed this runs MYOB-style codes in Xero (1-6100 Land, 2-2200 Bank
+    # Loans, 3-4000 Retained Earnings) alongside Xero defaults (820 GST, 960
+    # Retained Earnings) -- under code-range rules the first are unreadable
+    # and the second read as income.
+    XERO_CLASS_SECTIONS = {
+        "ASSET": "balance_sheet",
+        "LIABILITY": "balance_sheet",
+        "EQUITY": "balance_sheet",
+        "REVENUE": "profit_and_loss",
+        "EXPENSE": "profit_and_loss",
+    }
+
+    # "Rental Income (4-1900)" -- the TrialBalance report puts the code in the
+    # name when the account has one. Used only when the catalogue cannot be
+    # reached, so a report can still be read with the API call unavailable.
+    _NAME_CODE_RE = re.compile(r"^(?P<name>.*?)\s*\((?P<code>[^()]+)\)\s*$")
+
+    def fetch_accounts(self, access_token, tenant_id):
+        """The tenant's chart, keyed by Xero AccountID.
+
+        The TrialBalance report identifies each row by AccountID (a GUID) and
+        nothing else -- see _extract_xero_account_id. Everything useful about
+        the account, its Code and its Class, lives here.
+
+        Returns {account_id: {"code", "name", "section"}}. Failures return {}
+        rather than raising: a missing catalogue degrades the import to the
+        older name-parsing behaviour instead of failing it outright.
+        """
+        url = "https://api.xero.com/api.xro/2.0/Accounts"
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Xero-tenant-id": tenant_id,
+            "Accept": "application/json",
+        }
+        try:
+            resp = requests.get(url, headers=headers, timeout=30)
+            if resp.status_code in (401, 403):
+                logger.warning(
+                    "Xero /Accounts returned %s — falling back to reading "
+                    "account codes out of report names. The connection may "
+                    "predate the accounting.settings.read scope.",
+                    resp.status_code,
+                )
+                return {}
+            resp.raise_for_status()
+            accounts = resp.json().get("Accounts") or []
+        except Exception as exc:
+            logger.warning("Could not read the Xero chart of accounts: %s", exc)
+            return {}
+
+        catalogue = {}
+        for acc in accounts:
+            account_id = acc.get("AccountID")
+            if not account_id:
+                continue
+            catalogue[account_id] = {
+                "code": (acc.get("Code") or "").strip(),
+                "name": (acc.get("Name") or "").strip(),
+                "section": self.XERO_CLASS_SECTIONS.get(
+                    (acc.get("Class") or "").upper()),
+            }
+        return catalogue
+
+    def _account_catalogue(self, access_token, tenant_id):
+        """fetch_accounts, once per tenant per provider instance.
+
+        A period-movement import calls fetch_trial_balance twice, and the
+        chart does not change between the two.
+        """
+        if not hasattr(self, "_catalogue_cache"):
+            self._catalogue_cache = {}
+        if tenant_id not in self._catalogue_cache:
+            self._catalogue_cache[tenant_id] = self.fetch_accounts(
+                access_token, tenant_id)
+        return self._catalogue_cache[tenant_id]
+
     @staticmethod
-    def _extract_xero_account_code(cells_0):
-        """Extract account code from a Xero row's first cell Attributes."""
+    def _extract_xero_account_id(cells_0):
+        """The AccountID (a GUID) Xero identifies a report row by.
+
+        Named for what it actually is. It was called
+        _extract_xero_account_code and its value was used as the account
+        code, which is why every balance-sheet account imported at its full
+        position: a GUID matches no chart and no code range, so nothing could
+        be recognised as a balance-sheet account and the balance-sheet
+        differencing never ran on anything.
+        """
         for attr in (cells_0.get("Attributes") or []):
             if attr.get("Id") == "account":
                 return attr.get("Value", "")
         # Fallback: first attribute's Value
         attrs = cells_0.get("Attributes") or []
         return attrs[0].get("Value", "") if attrs else ""
+
+    @classmethod
+    def _split_name_and_code(cls, account_name):
+        """('Rental Income (4-1900)') -> ('Rental Income', '4-1900')."""
+        match = cls._NAME_CODE_RE.match(account_name or "")
+        if not match:
+            return account_name, ""
+        return match.group("name").strip(), match.group("code").strip()
 
     def _resolve_xero_tb_columns(self, rows):
         """Pick the debit/credit column indices from the report's Header row.
@@ -203,22 +300,35 @@ class XeroProvider(BaseProvider):
         )
         return 1, 2
 
-    def _process_xero_tb_row(self, row, lines, debit_idx=1, credit_idx=2):
+    def _process_xero_tb_row(self, row, lines, debit_idx=1, credit_idx=2,
+                             catalogue=None):
         """Process a single Xero TrialBalance Row into the lines list."""
         cells = row.get("Cells", [])
         if len(cells) <= max(debit_idx, credit_idx):
             return
-        account_name = (cells[0].get("Value") or "").strip()
-        if not account_name:
+        reported_name = (cells[0].get("Value") or "").strip()
+        if not reported_name:
             return
-        code = self._extract_xero_account_code(cells[0])
+        account_id = self._extract_xero_account_id(cells[0])
         debit = _to_decimal(cells[debit_idx].get("Value"))
         credit = _to_decimal(cells[credit_idx].get("Value"))
         if debit == 0 and credit == 0:
             return
+
+        # Prefer the chart: it holds the real code and Xero's own Class. The
+        # report gives neither -- only a GUID and a display name.
+        entry = (catalogue or {}).get(account_id) or {}
+        name_without_code, code_from_name = self._split_name_and_code(reported_name)
+        code = entry.get("code") or code_from_name or account_id
+        name = entry.get("name") or name_without_code or reported_name
+
         lines.append({
             "account_code": code,
-            "account_name": account_name,
+            "account_name": name,
+            "provider_account_id": account_id,
+            # None when the catalogue was unavailable; the caller then falls
+            # back to classifying by code as it always did.
+            "provider_section": entry.get("section"),
             "opening_balance": Decimal("0"),
             "debit": debit,
             "credit": credit,
@@ -252,15 +362,18 @@ class XeroProvider(BaseProvider):
         report = (resp.json().get("Reports") or [{}])[0]
         rows = report.get("Rows", [])
         debit_idx, credit_idx = self._resolve_xero_tb_columns(rows)
+        catalogue = self._account_catalogue(access_token, tenant_id)
         lines = []
         for row in rows:
             row_type = row.get("RowType")
             if row_type == "Section":
                 for child in row.get("Rows", []):
                     if child.get("RowType") == "Row":
-                        self._process_xero_tb_row(child, lines, debit_idx, credit_idx)
+                        self._process_xero_tb_row(
+                            child, lines, debit_idx, credit_idx, catalogue)
             elif row_type == "Row":
-                self._process_xero_tb_row(row, lines, debit_idx, credit_idx)
+                self._process_xero_tb_row(
+                    row, lines, debit_idx, credit_idx, catalogue)
         return lines
 
     def fetch_period_movement(self, access_token, tenant_id, from_date, to_date):
@@ -311,6 +424,11 @@ class XeroProvider(BaseProvider):
             entry = by_code.setdefault(code, {
                 "account_code": code,
                 "account_name": line.get("account_name", ""),
+                # Carried through the merge deliberately: this is the shape the
+                # view classifies from, and period_movement is the mode the UI
+                # uses, so dropping these here would leave the fix inert.
+                "provider_account_id": line.get("provider_account_id", ""),
+                "provider_section": line.get("provider_section"),
                 "period_debit": Decimal("0"),
                 "period_credit": Decimal("0"),
                 "opening_debit": Decimal("0"),
@@ -320,12 +438,16 @@ class XeroProvider(BaseProvider):
             entry["period_credit"] = line.get("credit") or Decimal("0")
             if not entry["account_name"]:
                 entry["account_name"] = line.get("account_name", "")
+            if not entry.get("provider_section"):
+                entry["provider_section"] = line.get("provider_section")
 
         for line in opening_lines:
             code = line.get("account_code") or ""
             entry = by_code.setdefault(code, {
                 "account_code": code,
                 "account_name": line.get("account_name", ""),
+                "provider_account_id": line.get("provider_account_id", ""),
+                "provider_section": line.get("provider_section"),
                 "period_debit": Decimal("0"),
                 "period_credit": Decimal("0"),
                 "opening_debit": Decimal("0"),
@@ -335,6 +457,8 @@ class XeroProvider(BaseProvider):
             entry["opening_credit"] = line.get("credit") or Decimal("0")
             if not entry["account_name"]:
                 entry["account_name"] = line.get("account_name", "")
+            if not entry.get("provider_section"):
+                entry["provider_section"] = line.get("provider_section")
 
         return list(by_code.values())
 
