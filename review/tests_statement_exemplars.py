@@ -28,7 +28,6 @@ from django.test import SimpleTestCase
 from .pdf_parsers import detect_bank, extract_transactions_from_pdf_direct
 from .statement_geometry import (
     StatementNotImportable,
-    StatementParseError,
     assert_importable,
     parse_cba_geometry,
 )
@@ -94,6 +93,37 @@ EXEMPLARS = [
     # row, the fallback then read the BALANCE as the amount, and the anchors
     # failed the same way on "$-6,050.74" -- so there was nothing to reconcile
     # against and the two defects hid each other.
+    # Three busier ANZ statements. ANZ1/ANZ2 above have 6 and 9 transactions,
+    # which is the same blind spot that hid Westpac's 93% loss -- too few rows
+    # for a description long enough to wrap. ANZ11 duly fails: its shortfall of
+    # 5,706.00 is exactly page 3's printed credit total, so it is dropping a
+    # credit. ANZ prints "TOTALS AT END OF PERIOD" with independent debit and
+    # credit totals (14,400.93 and 19,086.00), which gives any fix ground truth
+    # from outside the parser.
+    dict(name="ANZ11.pdf", bank="anz", rows=25,
+         opening=1575.49, closing=6260.56, status="healthy", geometry=False),
+    dict(name="ANZ12.pdf", bank="anz", rows=39,
+         opening=6260.56, closing=4015.19, status="healthy", geometry=False),
+    dict(name="ANZ13.pdf", bank="anz", rows=33,
+         opening=4015.19, closing=4007.98, status="healthy", geometry=False),
+    # Bendigo, previously parked with no exemplars at all. Two of the four
+    # reconcile and two do not. The text arrives glued
+    # ("Openingbalanceon1Mar2025 $2,772.95") and the table is
+    # Date / Transaction / Withdrawals / Deposits / Balance -- the same shape
+    # Westpac had before Phase 3a.
+    dict(name="Ben1.pdf", bank="bendigo", rows=10,
+         opening=3878.82, closing=6731.16, status="healthy", geometry=False),
+    dict(name="Ben3.pdf", bank="bendigo", rows=12,
+         opening=6731.16, closing=2772.95, status="healthy", geometry=False),
+    dict(name="Ben2.pdf", bank="bendigo", rows=10,
+         opening=2772.95, closing=5107.28, status="healthy", geometry=False),
+    # 31 pages holding THIRTEEN consecutive monthly statements for one
+    # account, 198 transactions from Jun 2023 to Jun 2024. It was refused by
+    # 20.00 until two faults were found in it, both of them things no
+    # single-period statement contains: a signed figure in the withdrawals
+    # column, and a fee summary printed inside the following month's table.
+    dict(name="Ben4.pdf", bank="bendigo", rows=198,
+         opening=98572.63, closing=114902.08, status="healthy", geometry=False),
     dict(name="ING.pdf", bank="ing", rows=56,
          opening=2156.82, closing=3514.82, status="healthy", geometry=False),
     # Two consecutive Orange Everyday statements from 2016, against the 2025
@@ -115,6 +145,12 @@ CHAINS = [
     ("NAB2.pdf", "NAB1.pdf"),
     ("ING19.pdf", "ING20.pdf"),
     ("WBC_2.pdf", "WBC_1.pdf"),
+    ("ANZ11.pdf", "ANZ12.pdf"),
+    ("ANZ12.pdf", "ANZ13.pdf"),
+    # Bendigo's filenames are not in date order: Ben1 precedes Ben3, which
+    # precedes Ben2.
+    ("Ben1.pdf", "Ben3.pdf"),
+    ("Ben3.pdf", "Ben2.pdf"),
 ]
 
 BY_NAME = {e["name"]: e for e in EXEMPLARS}
@@ -332,6 +368,69 @@ class KnownGapTests(SimpleTestCase):
         self.assertEqual(len(result["transactions"]), 3)
         self.assertTrue(any(abs(t["amount"] + 3300.00) < 0.011
                             for t in result["transactions"]))
+
+    def test_anz_recovers_the_credit_it_used_to_drop(self):
+        """ANZ marks an empty column with the literal word "blank" and uses its
+        position to tell withdrawals from deposits. On one row the placeholder
+        was simply absent, so the text parser could not classify the figure and
+        dropped it -- a 5,706.00 deposit. Reading the column by coordinate makes
+        the placeholder irrelevant. The recovered total matches the statement's
+        own printed TOTALS AT END OF PERIOD exactly."""
+        if not available("ANZ11.pdf"):
+            self.skipTest("ANZ11.pdf absent")
+        result = parse("ANZ11.pdf")
+        movements = sum(t["amount"] for t in result["transactions"])
+        # printed: debits 14,400.93, credits 19,086.00
+        self.assertAlmostEqual(movements, 19086.00 - 14400.93, places=2)
+        self.assertTrue(any(abs(t["amount"] - 5706.00) < 0.011
+                            for t in result["transactions"]))
+
+    def test_the_bendigo_multi_period_bundle_reads_a_reversal_as_money_in(self):
+        """Thirteen monthly statements in one 31-page file, and the whole
+        bundle turned on one row.
+
+        On 24 Oct 2023 the withdrawals column holds "-10.00" -- a reversed
+        OSKO payment -- and the balance beside it RISES, 323,190.14 to
+        323,200.14. Forcing every withdrawal negative booked that as a 10.00
+        debit, so the bundle came out 20.00 light over ~1,200 rows and the
+        gate refused all 31 pages. It is the only signed figure in any
+        statement we hold, which is why no other exemplar ever showed it.
+        """
+        if not available("Ben4.pdf"):
+            self.skipTest("Ben4.pdf absent")
+        result = parse("Ben4.pdf")
+        reversal = [t for t in result["transactions"]
+                    if t["date"] == "2023-10-24"
+                    and abs(t["amount"] - 10.00) < 0.011]
+        self.assertEqual(len(reversal), 1,
+                         "the reversed OSKO payment should be money in")
+        self.assertAlmostEqual(reversal[0]["balance"], 323200.14, places=2)
+        # And with it the bundle reconciles end to end, across all thirteen
+        # periods: the first period's opening to the last period's closing.
+        movements = sum(t["amount"] for t in result["transactions"])
+        self.assertAlmostEqual(98572.63 + movements, 114902.08, places=2)
+
+    def test_bendigos_in_table_fee_summary_is_not_collected(self):
+        """April's fee summary is printed inside May's transaction table.
+
+        Five figures in the transaction columns -- in-branch fees 1.75, an
+        account rebate 1.75, a total for each, and a net of 0.00 -- with the
+        balance the same on both sides of the block, so no money moved. They
+        net to zero, which is exactly why reconciliation cannot catch them:
+        they would have imported as four phantom 1.75 entries and a 0.00,
+        four of the five with no date at all. A month whose rebate did not
+        cover its fee would not net, and would refuse all 31 pages.
+        """
+        if not available("Ben4.pdf"):
+            self.skipTest("Ben4.pdf absent")
+        txns = parse("Ben4.pdf")["transactions"]
+        self.assertEqual([t for t in txns if not t["date"]], [],
+                         "every imported row must carry a date")
+        for junk in ("TotalTransactionFees", "TotalRebates",
+                     "MonthlyTransactionSummary", "NetTransactionFees"):
+            self.assertEqual(
+                [t["description"] for t in txns if junk in t["description"]],
+                [], f"{junk} is a summary line, not a transaction")
 
     def test_the_cba_transaction_history_export_is_not_recognised(self):
         if not available("CBA_1.pdf"):

@@ -504,141 +504,333 @@ def parse_cba_geometry(pdf_content):
 # --------------------------------------------------------------------------
 
 # Westpac dates its rows "28/02/22".
-WESTPAC_DATE_RE = re.compile(r'^(\d{2})/(\d{2})/(\d{2})$')
 # Debit, credit and balance figures, no currency symbol.
-WESTPAC_MONEY_RE = re.compile(r'^-?\d{1,3}(,\d{3})*\.\d{2}$')
 # How close a figure's right edge must be to a column's to belong to it. The
 # figures right-align on the column, so this only absorbs sub-point drift.
 WESTPAC_COLUMN_TOLERANCE = 4.0
 
 
-def _westpac_columns(rows):
-    """(debit_x1, credit_x1, balance_x1) read off the transaction table header.
 
-    Westpac prints its header in capitals -- DATE, TRANSACTION DESCRIPTION,
-    DEBIT, CREDIT, BALANCE -- and right-aligns every figure on the matching
-    column, so the header states all three positions outright.
+
+
+def parse_westpac_statement_geometry(pdf_content):
+    """Parse a Westpac statement. Kept as a name of its own because
+    pdf_parsers routes on it; the work is done by the shared column-table
+    engine below, which Westpac, ANZ and Bendigo all use.
     """
-    for row in rows:
-        by_text = {}
-        for word in row:
-            by_text.setdefault(word['text'].strip().upper(), word)
-        if {'DEBIT', 'CREDIT', 'BALANCE'} <= set(by_text):
-            return (by_text['DEBIT']['x1'],
-                    by_text['CREDIT']['x1'],
-                    by_text['BALANCE']['x1'])
+    return parse_column_table_statement(pdf_content, 'westpac')
+
+# --------------------------------------------------------------------------
+# Shared column-table engine: Westpac, ANZ, Bendigo
+# --------------------------------------------------------------------------
+#
+# These three banks print the same shape -- a date, a description, two money
+# columns (out and in), and a running balance -- and differ only in what they
+# call the columns, how they write the date, and where they state their
+# anchors. The per-line text parsers each failed on that shape in their own
+# way: Westpac lost ~93% of rows because the figure sits on the row after the
+# date, and ANZ dropped a 5,706.00 deposit because it marks an empty column
+# with the literal word "blank" and that row simply had none. Reading
+# coordinates makes both non-issues, so the engine is shared and only the
+# differences are declared.
+
+# Figures in these columns, optionally $-prefixed (ANZ prints "$14,400.93" on
+# its totals row). Confined to this engine: the NAB path deliberately keeps the
+# strict MOVE_RE, since widening a shared pattern broke it once already.
+TABLE_MONEY_RE = re.compile(r'^-?\$?\d{1,3}(,\d{3})*\.\d{2}$')
+TABLE_COLUMN_TOLERANCE = 4.0
+
+_MONTH_ABBR = r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)'
+_DDMMYY_RE = re.compile(r'^(\d{2})/(\d{2})/(\d{2})$')
+_DD_RE = re.compile(r'^(\d{1,2})$')
+_MON_RE = re.compile(r'^' + _MONTH_ABBR + r'$', re.IGNORECASE)
+_YEAR_ONLY_RE = re.compile(r'^(20\d{2})$')
+# "12Mar25", "1Jun23" -- Bendigo glues day, month and a 2-digit year.
+_DDMONYY_RE = re.compile(r'^(\d{1,2})' + _MONTH_ABBR + r'(\d{2})$', re.IGNORECASE)
+# "1Mar" with the year in the next token.
+_DDMON_RE = re.compile(r'^(\d{1,2})' + _MONTH_ABBR + r'$', re.IGNORECASE)
+
+
+def _date_ddmmyy(row, year_hint):
+    """Westpac: '28/02/22' in the first token."""
+    m = _DDMMYY_RE.match(row[0]['text'])
+    if not m:
+        return None
+    day, month, year = m.groups()
+    return f"20{year}-{month}-{day}"
+
+
+def _date_dd_mon(row, year_hint):
+    """ANZ: '08' 'NOV' as two tokens, the year stated on its own row earlier."""
+    if len(row) < 2 or not year_hint:
+        return None
+    if not (_DD_RE.match(row[0]['text']) and _MON_RE.match(row[1]['text'])):
+        return None
+    month = MONTH_MAP[row[1]['text'].capitalize()[:3]]
+    return f"{year_hint}-{month}-{row[0]['text'].zfill(2)}"
+
+
+def _date_ddmonyy(row, year_hint):
+    """Bendigo: '12Mar25' glued, or '1Mar' with '25' in the next token."""
+    glued = _DDMONYY_RE.match(row[0]['text'])
+    if glued:
+        day, month, year = glued.groups()
+        return (f"20{year}-{MONTH_MAP[month.capitalize()[:3]]}-{day.zfill(2)}")
+    split = _DDMON_RE.match(row[0]['text'])
+    if split and len(row) > 1 and re.match(r'^\d{2}$', row[1]['text']):
+        day, month = split.groups()
+        return (f"20{row[1]['text']}-{MONTH_MAP[month.capitalize()[:3]]}"
+                f"-{day.zfill(2)}")
     return None
 
 
-def _westpac_column_of(word, debit_x, credit_x, balance_x):
-    """Which column a figure sits in, or None."""
-    for name, x in (('debit', debit_x), ('credit', credit_x),
-                    ('balance', balance_x)):
-        if abs(word['x1'] - x) <= WESTPAC_COLUMN_TOLERANCE:
+def _row_money(row):
+    """(word, value) for every figure in the row, in reading order."""
+    out = []
+    for word in row:
+        if TABLE_MONEY_RE.match(word['text']):
+            out.append((word, _f(word['text'])))
+    return out
+
+
+def _table_columns(rows, labels):
+    """Right edges of the out, in and balance columns from the table header.
+
+    A label may be followed by a unit token -- ANZ writes "Withdrawals ($)" --
+    and the figures align with the unit, not the word, so the rightmost token of
+    the label group is what anchors the column.
+    """
+    out_label, in_label, balance_label = labels
+    for row in rows:
+        by_text = {}
+        for index, word in enumerate(row):
+            by_text.setdefault(word['text'].strip().upper(), index)
+        if not {out_label, in_label, balance_label} <= set(by_text):
+            continue
+
+        def edge(label):
+            index = by_text[label]
+            right = row[index]['x1']
+            following = row[index + 1] if index + 1 < len(row) else None
+            if following is not None and following['text'].strip() in (
+                    '($)', '$', '(AUD)'):
+                right = following['x1']
+            return right
+
+        return edge(out_label), edge(in_label), edge(balance_label)
+    return None
+
+
+def _column_of(word, columns):
+    for name, x in zip(('out', 'in', 'balance'), columns):
+        if abs(word['x1'] - x) <= TABLE_COLUMN_TOLERANCE:
             return name
     return None
 
 
-def _westpac_description(row, debit_x, credit_x, balance_x):
-    """Description text from a row: drop the date and the column figures."""
-    keep = []
-    for word in row:
-        text = word['text']
-        if WESTPAC_DATE_RE.match(text):
+def _anchor_in_balance_column(row, columns):
+    for word, value in _row_money(row):
+        if _column_of(word, columns) == 'balance':
+            return value
+    return None
+
+
+def _anchor_last_figure(row, columns):
+    money = _row_money(row)
+    return money[-1][1] if money else None
+
+
+def _anchor_from_neighbour(rows, index, columns):
+    """Recover an anchor figure that row grouping split off its own label row.
+
+    ``_rows`` groups by ``round(top)``, so a figure typeset a fraction of a
+    point off its label lands in the next row. ANZ's "TOTALS AT END OF PERIOD"
+    row keeps its two totals but loses the closing balance that way, which
+    rejected five otherwise clean statements.
+
+    Only a neighbour whose sole column figure is in the balance column is
+    accepted, so a transaction row -- which always carries an out or in figure
+    too -- can never be mistaken for the anchor. ``_reconcile`` still has to
+    agree with whatever is recovered.
+    """
+    for offset in (1, -1):
+        neighbour = index + offset
+        if not 0 <= neighbour < len(rows):
             continue
-        if (WESTPAC_MONEY_RE.match(text)
-                and _westpac_column_of(word, debit_x, credit_x, balance_x)):
-            continue
-        keep.append(text)
-    return ' '.join(keep)
+        found = None
+        for word, value in _row_money(rows[neighbour]):
+            column = _column_of(word, columns)
+            if column in ('out', 'in'):
+                found = None
+                break
+            if column == 'balance':
+                found = value
+        if found is not None:
+            return found
+    return None
 
 
-def parse_westpac_statement_geometry(pdf_content):
-    """Parse a Westpac statement using word coordinates.
+COLUMN_TABLE_PROFILES = {
+    'westpac': dict(
+        labels=('DEBIT', 'CREDIT', 'BALANCE'),
+        date=_date_ddmmyy,
+        opening_keys=('OPENINGBALANCE',),
+        closing_keys=('CLOSINGBALANCE',),
+        anchor=_anchor_in_balance_column,
+    ),
+    'anz': dict(
+        labels=('WITHDRAWALS', 'DEPOSITS', 'BALANCE'),
+        date=_date_dd_mon,
+        opening_keys=('OPENINGBALANCE',),
+        # ANZ states its closing figure on the totals row rather than labelling
+        # a closing-balance line.
+        closing_keys=('TOTALSATENDOFPERIOD',),
+        anchor=_anchor_in_balance_column,
+    ),
+    'bendigo': dict(
+        labels=('WITHDRAWALS', 'DEPOSITS', 'BALANCE'),
+        date=_date_ddmonyy,
+        # Bendigo prints last month's fee summary INSIDE this month's table,
+        # between two real transactions, in the same columns: fees, rebate,
+        # their totals and a net line. Five figures, no money moved -- the
+        # balance is the same before and after. They happen to net to zero
+        # here, so reconciliation cannot see them, but they would import as
+        # four phantom 1.75 entries and a 0.00, and any month whose rebate
+        # did not exactly cover its fee would refuse the whole bundle.
+        skip_block=('MONTHLYTRANSACTIONSUMMARY', 'NETTRANSACTIONFEES'),
+        # Bendigo states both in its account summary, with the text glued:
+        # "Openingbalanceon1Mar2025 $2,772.95".
+        opening_keys=('OPENINGBALANCEON', 'OPENINGBALANCE'),
+        closing_keys=('CLOSINGBALANCEON', 'CLOSINGBALANCE'),
+        anchor=_anchor_last_figure,
+    ),
+}
 
-    The text-based parser this replaces required a date and an amount on the
-    same line. On a Westpac statement they are almost never on the same line:
-    the date and the first words of the description occupy one row, and the
-    figure lands on the next, alongside the rest of the description. So it
-    extracted 16 transactions from a statement printing 218 dated rows, and 14
-    from one printing 246 -- losing about 93% of them, and getting the sign of
-    the net movement wrong into the bargain. Both statements failed
-    reconciliation, so nothing was imported wrongly, but neither could be
-    imported at all.
 
-    Reading coordinates makes the two-row shape a non-issue: description rows
-    accumulate until a figure appears in the debit or credit column, and that
-    figure closes the transaction.
+def parse_column_table_statement(pdf_content, bank):
+    """Parse a date/description/out/in/balance statement by coordinates.
+
+    Description rows accumulate until a figure lands in the out or in column,
+    and that figure closes the transaction -- so a description spanning two
+    rows, or an absent empty-column placeholder, changes nothing.
 
     Raises StatementParseError if the columns, the anchors or the
-    reconciliation fail -- never returns a partial result silently.
+    reconciliation fail. Never returns a partial result silently.
     """
+    profile = COLUMN_TABLE_PROFILES[bank]
     with pdfplumber.open(io.BytesIO(pdf_content)) as pdf:
         rows = _rows(pdf)
 
-    cols = _westpac_columns(rows)
-    if not cols:
+    columns = _table_columns(rows, profile['labels'])
+    if not columns:
         raise StatementParseError(
-            "Could not find Westpac's DEBIT/CREDIT/BALANCE column header")
-    debit_x, credit_x, balance_x = cols
-
-    def balance_figure(row):
-        for word in row:
-            if (WESTPAC_MONEY_RE.match(word['text'])
-                    and abs(word['x1'] - balance_x)
-                    <= WESTPAC_COLUMN_TOLERANCE):
-                return _f(word['text'])
-        return None
+            f"Could not find the {'/'.join(profile['labels'])} column header")
 
     opening = None
     closing = None
     txns = []
     desc = []
     date = None
+    year_hint = None
+    # A statement prints more figures than it has transactions, and some land
+    # in the same columns: Bendigo follows each period's totals with a
+    # fees-and-charges summary, ANZ with a fee summary. Counting those added a
+    # 20.00 debit and an offsetting 3.50 pair to one 13-period bundle -- small,
+    # but enough to fail reconciliation and have the document refused.
+    #
+    # The transaction table is bounded by its own header and its totals row, so
+    # only rows between the two are transactions. It starts open so a statement
+    # whose header this engine cannot see behaves as it did before rather than
+    # silently losing every row.
+    in_table = True
+    in_block = False
 
-    for row in rows:
+    for index, row in enumerate(rows):
         flat = ''.join(w['text'] for w in row).upper()
 
-        # The in-table anchor rows carry their figure in the balance column
-        # rather than as a CR/DR-suffixed token, so they are read positionally
-        # like everything else.
-        if 'OPENINGBALANCE' in flat:
+        # ANZ prints the year on a row of its own ahead of the months it
+        # applies to, so a bare year is context rather than content.
+        if len(row) >= 1 and _YEAR_ONLY_RE.match(row[0]['text']):
+            year_hint = row[0]['text']
+
+        if any(key in flat for key in profile['opening_keys']):
             if opening is None:
-                opening = balance_figure(row)
-            desc = []
-            date = None
+                opening = (profile['anchor'](row, columns)
+                           or _anchor_from_neighbour(rows, index, columns))
+            desc, date = [], None
+            in_table, in_block = True, False
             continue
-        if 'CLOSINGBALANCE' in flat:
-            found = balance_figure(row)
+        if any(key in flat for key in profile['closing_keys']):
+            found = (profile['anchor'](row, columns)
+                     or _anchor_from_neighbour(rows, index, columns))
             if found is not None:
                 closing = found
-            desc = []
-            date = None
+            desc, date = [], None
+            in_table = False
             continue
 
+        # The column header reopens the table: on every page, and on every
+        # period of a multi-period bundle.
+        if all(label in flat for label in profile['labels']):
+            desc, date = [], None
+            # A summary block cannot span into the next table, so an unclosed
+            # one ends here rather than swallowing every later row.
+            in_table, in_block = True, False
+            continue
+        # Per-page subtotals restate figures already counted.
+        if 'TOTALSATENDOFPAGE' in flat:
+            desc, date = [], None
+            continue
+
+        # A summary block printed inside the table: everything from its
+        # opening marker to its closing marker is furniture, inclusive.
+        block = profile.get('skip_block')
+        if block:
+            if in_block:
+                if block[1] in flat:
+                    in_block = False
+                desc, date = [], None
+                continue
+            if block[0] in flat:
+                in_block = True
+                desc, date = [], None
+                continue
         if _is_furniture(flat):
             continue
 
-        if row and date is None and WESTPAC_DATE_RE.match(row[0]['text']):
-            day, month, year = WESTPAC_DATE_RE.match(row[0]['text']).groups()
-            date = f"20{year}-{month}-{day}"
+        if date is None:
+            found_date = profile['date'](row, year_hint)
+            if found_date:
+                date = found_date
 
         movement = None
         balance = None
-        for word in row:
-            if not WESTPAC_MONEY_RE.match(word['text']):
-                continue
-            column = _westpac_column_of(word, debit_x, credit_x, balance_x)
-            if column == 'debit':
-                movement = -abs(_f(word['text']))
-            elif column == 'credit':
-                movement = abs(_f(word['text']))
+        for word, value in _row_money(row):
+            column = _column_of(word, columns)
+            # The column says which direction the money moved; the figure's
+            # own sign says whether this row REVERSES that direction. Bendigo
+            # prints a reversed OSKO payment as "-10.00" under Withdrawals,
+            # with the balance beside it rising 10.00. Forcing the sign from
+            # the column alone booked that as a debit and left a 31-page,
+            # thirteen-period bundle 20.00 short, so the gate refused all of
+            # it. Negating rather than taking abs() reads both cases from the
+            # one rule, and the reconciliation gate remains the arbiter.
+            if column == 'out':
+                movement = -value
+            elif column == 'in':
+                movement = value
             elif column == 'balance':
-                balance = _f(word['text'])
+                balance = value
 
-        desc.append(_westpac_description(row, debit_x, credit_x, balance_x))
+        keep = []
+        for word in row:
+            text = word['text']
+            if TABLE_MONEY_RE.match(text) and _column_of(word, columns):
+                continue
+            keep.append(text)
+        desc.append(' '.join(keep))
 
-        if movement is not None:
+        if movement is not None and in_table:
             txns.append({
                 'date': date,
                 'description': _truncate(
@@ -646,12 +838,12 @@ def parse_westpac_statement_geometry(pdf_content):
                 'amount': movement,
                 'balance': balance,
             })
-            desc = []
-            date = None
+            desc, date = [], None
 
     if opening is None or closing is None:
         raise StatementParseError(
-            "Could not read Westpac's opening and closing balance rows")
+            f"Could not read the opening and closing balance for this "
+            f"{bank} statement")
 
     _reconcile(txns, opening, closing)
 
