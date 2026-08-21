@@ -2683,9 +2683,44 @@ def financial_year_detail(request, pk):
     context["fy_start_iso"] = fy.start_date.isoformat()
     context["fy_end_iso"] = fy.end_date.isoformat()
 
+    # --- "Import from software" ---
+    # The cloud import flow (integrations.select_provider_import and the
+    # provider views behind it) has been implemented and reachable by URL for
+    # some time, but nothing linked to it: the button on this page was a
+    # hard-coded disabled placeholder titled "Software integration coming
+    # soon", so linking an entity to Xero appeared to do nothing at all.
+    #
+    # The condition mirrors select_provider_import's own: an ACTIVE global
+    # connection with a tenant linked to THIS entity. Anything less and the
+    # provider page would offer nothing, so the button says what is missing
+    # instead of leading somewhere empty.
+    context["cloud_import_providers"] = _linked_cloud_providers(fy.entity)
+
     # RDTI Drafter — pass application to template for tab badge
     context["rdti_application"] = getattr(fy, "rdti_application", None)
     return render(request, "core/financial_year_detail.html", context)
+
+
+def _linked_cloud_providers(entity):
+    """Names of accounting platforms this entity could import from right now.
+
+    Only a platform whose global connection is active AND which has a tenant
+    linked to this entity counts: an authorised connection with no tenant
+    mapped to the entity cannot import anything.
+    """
+    from integrations.models import (
+        QBGlobalConnection, QBTenant, XeroGlobalConnection, XeroTenant,
+    )
+    providers = []
+    if (XeroGlobalConnection.objects.filter(status="active").exists()
+            and XeroTenant.objects.filter(
+                entity=entity, connection__status="active").exists()):
+        providers.append("Xero")
+    if (QBGlobalConnection.objects.filter(status="active").exists()
+            and QBTenant.objects.filter(
+                entity=entity, connection__status="active").exists()):
+        providers.append("QuickBooks Online")
+    return providers
 
 
 @login_required
