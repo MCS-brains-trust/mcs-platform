@@ -338,6 +338,25 @@ class HealthyExemplarTests(SimpleTestCase):
                     result["closing_balance"],
                 )
 
+    def test_each_carries_the_format_it_was_detected_as(self):
+        """The preview badge is the only place whoever accepts an import can
+        see which parser claimed the file, and it read "Unknown Bank" for
+        every statement of every bank: no parser ever set it. Misdetection is
+        a real failure mode -- Bank of Melbourne is a Westpac subsidiary and
+        detect_bank orders those two checks deliberately -- so a wrong badge
+        is worth more than a missing one."""
+        from .pdf_parsers import bank_label
+        for entry in self._healthy():
+            if not available(entry["name"]):
+                continue
+            with self.subTest(entry["name"]):
+                result = parse(entry["name"])
+                self.assertEqual(result.get("bank"), entry["bank"])
+                self.assertEqual(result.get("bank_label"),
+                                 bank_label(entry["bank"]))
+                self.assertNotIn(result["bank_label"],
+                                 ("", None, "Unrecognised format"))
+
     def test_no_description_carries_page_furniture(self):
         for entry in self._healthy():
             if not available(entry["name"]):
@@ -836,4 +855,78 @@ class ScannedStatementTests(SimpleTestCase):
                 self.assertFalse(result.get("dates_out_of_order"))
                 for txn in txns:
                     self.assertNotIn("BALANCE", txn["description"].upper())
+
+
+class DormantStatementTests(SimpleTestCase):
+    """An account with nothing in it is not an unreadable file.
+
+    BOM4 is the case: three periods of an account holding 0.01, not one
+    transaction. It parses perfectly and produces an empty list, and both
+    upload paths used to read that as failure and send the file to Claude
+    Vision -- an API call and half a minute to re-read a statement already
+    read correctly, and a model asked to find transactions in a document that
+    has none, which is how one gets invented.
+    """
+
+    def test_a_dormant_statement_is_recognised_from_its_own_balances(self):
+        from .statement_geometry import is_dormant_statement
+        if not available("BOM4.pdf"):
+            self.skipTest("BOM4.pdf absent")
+        self.assertTrue(is_dormant_statement(parse("BOM4.pdf")))
+
+    def test_a_statement_with_transactions_is_never_dormant(self):
+        from .statement_geometry import is_dormant_statement
+        if not available("BOM3.pdf"):
+            self.skipTest("BOM3.pdf absent")
+        self.assertFalse(is_dormant_statement(parse("BOM3.pdf")))
+
+    def test_an_empty_parse_without_agreeing_balances_is_still_a_failure(self):
+        """The balances are the whole evidence. Absent or contradictory, an
+        empty result means the file was not read, and Vision should see it."""
+        from .statement_geometry import is_dormant_statement
+        self.assertFalse(is_dormant_statement(
+            {"transactions": [], "opening_balance": 0.01,
+             "closing_balance": 900.00}))
+        self.assertFalse(is_dormant_statement(
+            {"transactions": [], "opening_balance": None,
+             "closing_balance": None}))
+        self.assertFalse(is_dormant_statement({"transactions": []}))
+        self.assertFalse(is_dormant_statement(None))
+        self.assertFalse(is_dormant_statement(
+            {"transactions": [], "opening_balance": "x",
+             "closing_balance": "y"}))
+
+    def test_a_dormant_statement_is_not_sent_to_vision(self):
+        """The defect itself: BOM4 must not reach the API."""
+        from .views import _should_try_vision
+        if not available("BOM4.pdf"):
+            self.skipTest("BOM4.pdf absent")
+        self.assertFalse(
+            _should_try_vision("BOM4.pdf", parse("BOM4.pdf"), None))
+
+    def test_everything_that_did_reach_vision_still_does(self):
+        """The guard must not close the door on real failures: a scan, a parse
+        error, and an empty result with no balances to vouch for it."""
+        from .views import _should_try_vision
+        self.assertTrue(_should_try_vision("BOM1.pdf", None, ValueError("x")))
+        self.assertTrue(_should_try_vision("x.pdf", {"transactions": []}, None))
+        self.assertTrue(_should_try_vision(
+            "x.pdf", {"transactions": [], "opening_balance": 1.0,
+                      "closing_balance": 99.0}, None))
+        # Not a PDF: there is nothing for Vision to read.
+        self.assertFalse(_should_try_vision("x.xlsx", None, ValueError("x")))
+
+    def test_the_message_says_it_was_read_not_that_it_failed(self):
+        """"No transactions could be extracted" sends someone looking for a
+        fault in a file that is perfectly fine."""
+        from .views import _empty_statement_message
+        if not available("BOM4.pdf"):
+            self.skipTest("BOM4.pdf absent")
+        message = _empty_statement_message(parse("BOM4.pdf"))
+        self.assertIn("read in full", message)
+        self.assertIn("0.01", message)
+        self.assertNotIn("could not", message.lower())
+        # A real failure keeps the old wording.
+        self.assertEqual(_empty_statement_message({"transactions": []}),
+                         "No transactions could be extracted")
 

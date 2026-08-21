@@ -2959,7 +2959,10 @@ function openEditAssetModal(pk, name, category, purchaseDate, totalCost, opening
 
         // All files processed
         if (parsedStatements.length === 0) {
-            overallStatus.innerHTML = '<span class="text-danger"><i class="bi bi-exclamation-triangle"></i> No statements could be parsed. ' + errors.join('; ') + '</span>';
+            // Not "could not be parsed": a dormant statement is read
+            // perfectly and still has nothing to import, and saying otherwise
+            // contradicts the per-file message printed right above this.
+            overallStatus.innerHTML = '<span class="text-danger"><i class="bi bi-exclamation-triangle"></i> Nothing to import. ' + errors.join('; ') + '</span>';
             submitBtn.disabled = false;
             submitBtn.innerHTML = '<i class="bi bi-cloud-upload"></i> Parse &amp; Preview';
             return;
@@ -3041,6 +3044,13 @@ function openEditAssetModal(pk, name, category, purchaseDate, totalCost, opening
 
         try {
             sessionStorage.setItem('mcs_preview_statements', JSON.stringify(parsedStatements));
+            // Carry the files that produced nothing across with the ones that
+            // did. Until this existed they were shown only when EVERY file
+            // failed: upload five statements, have two skipped, and you were
+            // taken to a preview of three with no mention of the other two.
+            // Written unconditionally so a previous upload's list cannot
+            // linger on this one.
+            sessionStorage.setItem('mcs_preview_skipped', JSON.stringify(errors));
         } catch(e) {
             console.error('sessionStorage error:', e);
             alert('Too much data for browser storage. Please upload fewer files at a time.');

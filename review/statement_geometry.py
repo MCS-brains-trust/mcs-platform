@@ -1287,6 +1287,33 @@ def assert_importable(rows, opening, closing, tolerance=0.01):
     return True
 
 
+def is_dormant_statement(result, tolerance=0.01):
+    """True when no transactions is the statement's own answer, not a failure.
+
+    An account can go a whole period without a single transaction -- a dormant
+    SMSF cash account holding 0.01 is the exemplar -- and its statement then
+    prints an opening balance, a closing balance equal to it, and an empty
+    table. That parses to an empty list, which is indistinguishable from
+    "could not read this file" unless the balances are consulted: they agree,
+    and between them they account for every cent of the period.
+
+    Both upload paths treated an empty parse as a failed one and sent the file
+    to Vision OCR. That costs an API call and half a minute to re-read a
+    statement already read correctly, and it asks a model to find transactions
+    in a document that has none -- which is how a transaction gets invented.
+    """
+    if not result or result.get('transactions'):
+        return False
+    opening = result.get('opening_balance')
+    closing = result.get('closing_balance')
+    if opening is None or closing is None:
+        return False
+    try:
+        return abs(float(closing) - float(opening)) <= tolerance
+    except (TypeError, ValueError):
+        return False
+
+
 def verify_direct_parse(result, bank, pdf_content=None, filename=""):
     """Check a direct parse before it is allowed to become an import.
 
@@ -1304,6 +1331,14 @@ def verify_direct_parse(result, bank, pdf_content=None, filename=""):
     there is nothing to check it against, and refusing it would punish the
     absence of evidence rather than a fault.
     """
+    # Stamp the detected format before anything returns early: no parser sets
+    # it, so the preview badge read "Unknown Bank" for every statement of every
+    # bank. It is the one place the operator can see what claimed the file.
+    if isinstance(result, dict):
+        from .pdf_parsers import bank_label
+        result.setdefault('bank', bank)
+        result.setdefault('bank_label', bank_label(bank))
+
     if not result or not result.get('transactions'):
         return result
 

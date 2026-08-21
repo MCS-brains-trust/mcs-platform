@@ -1077,6 +1077,47 @@ def bulk_approve_group(request, pk):
 # Bank Statement Upload (manual PDF/Excel upload)
 # ---------------------------------------------------------------------------
 
+def _empty_statement_message(extracted):
+    """What to tell someone whose upload produced no transactions.
+
+    A statement that was read correctly and holds nothing is not a statement
+    we failed to read, and saying so sends people looking for a fault in the
+    file. Its own balances are the evidence, so they are quoted back.
+    """
+    from .statement_geometry import is_dormant_statement
+    if is_dormant_statement(extracted):
+        balance = extracted.get('opening_balance')
+        return (
+            f'this statement was read in full and contains no transactions — '
+            f'its opening and closing balances are both {float(balance):,.2f}. '
+            f'Nothing to import.'
+        )
+    return 'No transactions could be extracted'
+
+
+def _should_try_vision(filename, extracted, direct_error):
+    """Whether this file is a candidate for the Vision OCR fallback.
+
+    One predicate for both upload paths, for the same reason
+    ``_try_vision_fallback`` is shared: the trigger condition was written out
+    twice and could drift.
+
+    A PDF qualifies when the direct parser raised, or when it returned nothing
+    -- EXCEPT when returning nothing was the right answer. A dormant account's
+    statement has no transactions to find, and sending it to Vision spent an
+    API call and half a minute re-reading a statement that was already read
+    correctly. See ``is_dormant_statement``.
+    """
+    if not str(filename).lower().endswith('.pdf'):
+        return False
+    from .statement_geometry import is_dormant_statement
+    if is_dormant_statement(extracted):
+        return False
+    if direct_error is not None:
+        return True
+    return not (extracted and extracted.get('transactions'))
+
+
 def _try_vision_fallback(content, filename, direct_error=None, log_prefix='[upload-statement]'):
     """Claude Vision OCR fallback for a PDF whose direct parse failed or
     returned zero transactions. Shared by the single-file parse_statement
@@ -1111,6 +1152,12 @@ def _try_vision_fallback(content, filename, direct_error=None, log_prefix='[uplo
         # 'get'", which reads to the user as a bank-detection problem.
         if not vision_result:
             raise _VisionError(f'no statement data was returned for {filename}')
+        # A Vision extraction never went through verify_direct_parse, so it
+        # carries no format either. A scan is worth naming as one.
+        from .pdf_parsers import bank_label as _bank_label
+        vision_result.setdefault('bank', bank_name)
+        vision_result.setdefault(
+            'bank_label', f'{_bank_label(bank_name)} (scanned, read by OCR)')
         # Soft reconciliation: flag as unverified rather than discarding if balances
         # are missing or the totals don't foot — Vision output has API cost and latency.
         # A broken running-balance chain means rows are missing, duplicated or
@@ -1263,7 +1310,7 @@ def upload_bank_statement(request):
                 extracted = _parse_excel_bank_statement(content, filename)
         except Exception as exc:
             logger.error(f"Extraction exception (entity_id={entity_id}): {exc}", exc_info=True)
-            if filename.lower().endswith(".pdf"):
+            if _should_try_vision(filename, None, exc):
                 # Vision OCR fallback — same net as the single-file
                 # parse_statement path.
                 extracted, vision_msg = _try_vision_fallback(
@@ -1280,14 +1327,14 @@ def upload_bank_statement(request):
         logger.info(f"Extraction result (entity_id={entity_id}): txn_count={len(extracted.get('transactions', [])) if isinstance(extracted, dict) else 0}")
 
         if not extracted or not extracted.get("transactions"):
-            if filename.lower().endswith(".pdf") and not used_vision:
+            if not used_vision and _should_try_vision(filename, extracted, None):
                 # Direct parse succeeded but found nothing — try Vision OCR.
                 extracted, vision_msg = _try_vision_fallback(content, filename)
                 if extracted is None:
                     errors.append(f"{filename}: {vision_msg}")
                     continue
             if not extracted or not extracted.get("transactions"):
-                errors.append(f"{filename}: No transactions could be extracted")
+                errors.append(f"{filename}: {_empty_statement_message(extracted)}")
                 continue
 
         transactions = extracted["transactions"]
@@ -2307,11 +2354,7 @@ def parse_statement(request):
 
     # Vision fallback — PDF only, triggered by parse error OR zero transactions.
     # Shared implementation with the bulk upload path (_try_vision_fallback).
-    if filename.lower().endswith('.pdf') and (
-        direct_error is not None
-        or not extracted
-        or not extracted.get('transactions')
-    ):
+    if _should_try_vision(filename, extracted, direct_error):
         vision_result, vision_msg = _try_vision_fallback(
             content, filename, direct_error=direct_error,
             log_prefix='[parse-statement]',
@@ -2328,6 +2371,15 @@ def parse_statement(request):
             hint = (' Please download the StatementHub bank statement template '
                     'and re-upload your data in the required format. '
                     'The template requires columns: Date, Description, Amount, Balance (optional).')
+        from .statement_geometry import is_dormant_statement
+        if is_dormant_statement(extracted):
+            return JsonResponse({
+                'status': 'error',
+                # No filename prefix: this endpoint is called per file and the
+                # caller labels each result with its own name already.
+                'message': _empty_statement_message(extracted),
+                'dormant': True,
+            }, status=400)
         return JsonResponse({
             'status': 'error',
             'message': f'No transactions could be extracted from {filename}.{hint}'
@@ -2462,7 +2514,8 @@ def parse_statement(request):
     response_data = {
         'status': 'success',
         'filename': filename,
-        'bank': extracted.get('bank', 'Unknown'),
+        'bank': extracted.get('bank', 'unknown'),
+        'bank_label': extracted.get('bank_label', 'Unrecognised format'),
         'account_name': extracted.get('account_name', ''),
         'bsb': bsb,
         'account_number': account_number,

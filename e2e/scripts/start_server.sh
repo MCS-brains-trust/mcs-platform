@@ -29,6 +29,36 @@ set -a; source "${E2E_DIR}/db.env"; set +a
 export PGPASSWORD="${E2E_DB_PASSWORD}"
 PSQL="psql -h ${E2E_DB_HOST} -p ${E2E_DB_PORT} -U ${E2E_DB_USER} -v ON_ERROR_STOP=1"
 
+# Every branch inherits the template's schema, so a template one migration
+# behind breaks every test that touches the changed table -- and it silently
+# has, twice: four migrations behind on 2026-08-20, and review.0014 on
+# 2026-08-21, which 500'd the whole financial-year page and looked like a
+# product bug. Nothing kept it current, so it is checked and repaired here,
+# where every instance boots, rather than left to be rediscovered.
+#
+# Under flock because Tier 2 boots an instance per test file: concurrent
+# migrations of one database would race, and CREATE DATABASE ... TEMPLATE
+# below needs the template free of other connections anyway.
+#
+# Note --check is run UNPIPED and its status read directly. Piping it into
+# anything reports the pipe's exit status instead, which is how the stale
+# template went unnoticed the second time.
+(
+  flock 9
+  cd "${REPO_DIR}"
+  if env DJANGO_SETTINGS_MODULE=config.settings_e2e \
+         E2E_DB_NAME="${E2E_TEMPLATE_DB}" \
+         "${RUNTIME_DIR}/venv/bin/python" manage.py migrate --check >/dev/null 2>&1
+  then
+    :
+  else
+    echo "[start_server] ${E2E_TEMPLATE_DB} is behind — migrating the template"
+    env DJANGO_SETTINGS_MODULE=config.settings_e2e \
+        E2E_DB_NAME="${E2E_TEMPLATE_DB}" \
+        "${RUNTIME_DIR}/venv/bin/python" manage.py migrate --noinput
+  fi
+) 9>"${E2E_DIR}/template-migrate.lock"
+
 echo "[start_server] branching ${DB_NAME} from ${E2E_TEMPLATE_DB}"
 
 # A previous run killed mid-test can leave both the branch and open connections to

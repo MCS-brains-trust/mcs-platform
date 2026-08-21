@@ -122,6 +122,13 @@
 </div>
 
 <!-- Statement Cards Container -->
+<div id="skippedFiles" class="alert alert-warning d-none" role="alert">
+    <div class="fw-semibold mb-1">
+        <i class="bi bi-exclamation-triangle me-1"></i>
+        <span id="skippedFilesHeading"></span>
+    </div>
+    <ul class="mb-0 ps-3" id="skippedFilesList" style="font-size:0.9rem;"></ul>
+</div>
 <div id="statementsContainer"></div>
 
 <!-- Loading Overlay -->
@@ -144,6 +151,40 @@
     const csrfToken = '{{ csrf_token }}';
 
     // =====================================================================
+    // Files that produced no transactions
+    // =====================================================================
+    // A file can be read perfectly and still hold nothing to import -- a
+    // dormant account's statement, or one whose every row falls outside the
+    // financial year. Those are reported per file, and they used to be
+    // discarded the moment anything else parsed, so a skipped statement
+    // vanished silently and the operator's only clue was a count they had no
+    // reason to be counting.
+    function renderSkippedFiles() {
+        let skipped = [];
+        try {
+            skipped = JSON.parse(sessionStorage.getItem('mcs_preview_skipped') || '[]');
+        } catch(e) {
+            skipped = [];
+        }
+        if (!Array.isArray(skipped) || skipped.length === 0) {
+            return;
+        }
+        const box = document.getElementById('skippedFiles');
+        const heading = document.getElementById('skippedFilesHeading');
+        const list = document.getElementById('skippedFilesList');
+        heading.textContent = skipped.length === 1
+            ? '1 file was not imported'
+            : `${skipped.length} files were not imported`;
+        list.innerHTML = '';
+        skipped.forEach(function(message) {
+            const li = document.createElement('li');
+            li.textContent = message;
+            list.appendChild(li);
+        });
+        box.classList.remove('d-none');
+    }
+
+    // =====================================================================
     // Init: Load data — use whichever source has the most statements
     // =====================================================================
     function init() {
@@ -154,6 +195,8 @@
         if (raw) {
             try { browserData = JSON.parse(raw); } catch(e) { browserData = null; }
         }
+
+        renderSkippedFiles();
 
         // Source 2: server-side session data (embedded by Django view)
         const serverData = {{ parsed_data_json|safe }};
@@ -261,7 +304,7 @@
         const expectedDR = expectedClose < -0.005;
         const expectedDisplay = '$' + Math.abs(expectedClose).toFixed(2) + (expectedDR ? ' DR' : '');
 
-        const bankLabel = stmt.bank || 'Unknown Bank';
+        const bankLabel = stmt.bank_label || stmt.bank || 'Unknown Bank';
         const accountLabel = stmt.account_name || '';
         const bsbLabel = stmt.bsb ? `BSB ${stmt.bsb}` : '';
         const accNumLabel = stmt.account_number ? `Acc ${stmt.account_number}` : '';
@@ -622,6 +665,7 @@
             if (data.status === 'success') {
                 // Clear sessionStorage
                 sessionStorage.removeItem('mcs_preview_statements');
+                sessionStorage.removeItem('mcs_preview_skipped');
 
                 document.getElementById('importProgress').innerHTML =
                     `<span class="text-success"><i class="bi bi-check-circle"></i> ${data.total_transactions} transactions imported successfully!</span>`;
