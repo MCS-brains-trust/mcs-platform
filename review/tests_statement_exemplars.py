@@ -18,6 +18,7 @@ Two kinds of assertion run here:
   reconciliation alone: a parse can be internally consistent and still wrong,
   but two independent documents cannot agree by accident.
 """
+import hashlib
 import os
 import unittest
 from functools import lru_cache
@@ -43,6 +44,8 @@ FIXTURE_DIR = os.environ.get(
 #   legacy   -- parses, but via the legacy text parser because the geometry
 #               engine rejected it (Phase 1 turns these into 'healthy')
 #   gap      -- does not parse or does not pass the gate; `gap` names why
+#   vision   -- no text layer at all, so it is read by Claude Vision OCR
+#               rather than by any parser; `gap` names why
 EXEMPLARS = [
     dict(name="cba_stmt9.pdf", bank="cba", rows=174,
          opening=27440.30, closing=8826.22, status="healthy", geometry=True),
@@ -58,10 +61,16 @@ EXEMPLARS = [
          opening=16759.60, closing=6218.20, status="healthy", geometry=True),
     dict(name="CBA2.pdf", bank="cba", rows=120,
          opening=6218.20, closing=10950.76, status="healthy", geometry=True),
-    dict(name="CBA_1.pdf", bank="unknown", rows=None,
-         opening=805.27, closing=7988.66, status="gap", geometry=False,
-         gap="Transaction History export: unsupported format, and reverse "
-             "chronological so the gate's date-order check would refuse it"),
+    # NetBank's "Transaction History" export -- not a statement. It carries no
+    # bank name anywhere, which is why it detected as "unknown" and could not
+    # be read at all, and its rows run NEWEST FIRST.
+    # Its footer says "No. of transactions 278" while the file holds 35 rows.
+    # Do not chase that number: the same footer prints total debits 8,177.61
+    # and total credits 15,361.00, whose difference is exactly this file's
+    # movement and exactly its closing less its opening, so the 35 rows are
+    # complete and the 278 counts something else.
+    dict(name="CBA_1.pdf", bank="cba_txn_history", rows=35,
+         opening=805.27, closing=7988.66, status="healthy", geometry=False),
     dict(name="WBC1.pdf", bank="westpac", rows=2,
          opening=14649.20, closing=21338.83, status="healthy", geometry=False),
     dict(name="WBC2.pdf", bank="westpac", rows=3,
@@ -148,16 +157,21 @@ EXEMPLARS = [
     dict(name="BOM4.pdf", bank="bankofmelb", rows=0,
          opening=0.01, closing=0.01, status="healthy", geometry=False),
     # These two are SCANNED IMAGES: one image per page and no text layer at
-    # all, so there is nothing for any text parser to read and no anchors to
-    # record. They belong to the Claude Vision OCR path, not to a parser.
-    dict(name="BOM1.pdf", bank="bankofmelb", rows=None,
-         opening=None, closing=None, status="gap", geometry=False,
+    # all, so no text parser can touch them. They are read by Claude Vision
+    # instead, and the figures below were measured through it on 2026-08-21
+    # and corroborated against every period summary printed in the scans,
+    # read page by page in separate calls: BOM1's three periods print credits
+    # of 445,070.25 and debits of 34,659.40, BOM2's 44,255.41 and 42,384.80,
+    # which are exactly what the extractions produce. Status "vision" so the
+    # direct-parse tests skip them; the live test below re-measures on demand.
+    dict(name="BOM1.pdf", bank="bankofmelb", rows=55,
+         opening=100513.01, closing=510923.86, status="vision", geometry=False,
          gap="scanned image: the pages carry no text layer (0 words), so it "
-             "cannot be read by any text parser -- needs the Vision OCR path"),
-    dict(name="BOM2.pdf", bank="bankofmelb", rows=None,
-         opening=None, closing=None, status="gap", geometry=False,
+             "cannot be read by any text parser -- read by Vision OCR"),
+    dict(name="BOM2.pdf", bank="bankofmelb", rows=98,
+         opening=394.38, closing=2264.99, status="vision", geometry=False,
          gap="scanned image: the pages carry no text layer (0 words), so it "
-             "cannot be read by any text parser -- needs the Vision OCR path"),
+             "cannot be read by any text parser -- read by Vision OCR"),
     # Macquarie, never before pinned. It parses correctly and always did --
     # what was missing was evidence. M1 and M2 are two copies of the same
     # statement no. 25, from different downloads; M3 is the period after it.
@@ -240,7 +254,7 @@ class ExemplarInventoryTests(SimpleTestCase):
 
     def test_every_gap_says_why(self):
         for entry in EXEMPLARS:
-            if entry["status"] in ("gap", "legacy"):
+            if entry["status"] in ("gap", "legacy", "vision"):
                 self.assertTrue(
                     entry.get("gap"),
                     f"{entry['name']} is marked {entry['status']} with no reason",
@@ -607,17 +621,107 @@ class KnownGapTests(SimpleTestCase):
         for name in names:
             if not available(name):
                 self.skipTest(f"{name} absent")
-        self.assertNotEqual(read("M1.pdf"), read("M2.pdf"))
+        self.assertNotEqual(hashlib.sha256(read("M1.pdf")).hexdigest(),
+                            hashlib.sha256(read("M2.pdf")).hexdigest())
         first, second = parse("M1.pdf"), parse("M2.pdf")
         self.assertEqual(
             [(t["date"], t["amount"], t["description"]) for t in first["transactions"]],
             [(t["date"], t["amount"], t["description"]) for t in second["transactions"]],
         )
 
-    def test_the_cba_transaction_history_export_is_not_recognised(self):
+    def test_the_netbank_export_matches_the_totals_it_prints(self):
+        """Ground truth from outside the parser, on both sides.
+
+        The export footers its own totals: debits 8,177.61 and credits
+        15,361.00. Their difference is 7,183.39, which is also 7,988.66 less
+        805.27 -- so the anchors and the totals corroborate each other, and a
+        parse matching both sides cannot have a debit read as a credit.
+        """
         if not available("CBA_1.pdf"):
             self.skipTest("CBA_1.pdf absent")
-        self.assertEqual(detect_bank(read("CBA_1.pdf")), "unknown")
+        txns = parse("CBA_1.pdf")["transactions"]
+        self.assertAlmostEqual(
+            sum(t["amount"] for t in txns if t["amount"] > 0), 15361.00, places=2)
+        self.assertAlmostEqual(
+            sum(t["amount"] for t in txns if t["amount"] < 0), -8177.61, places=2)
+
+    def test_the_netbank_export_is_turned_the_right_way_round(self):
+        """It prints newest first. Left that way the running balance never
+        follows row to row and the dates run backwards, so the import gate
+        refuses it -- correctly, because it cannot tell a document in reverse
+        from one with its rows out of order. The parser turns it, so
+        everything downstream sees one direction."""
+        if not available("CBA_1.pdf"):
+            self.skipTest("CBA_1.pdf absent")
+        txns = parse("CBA_1.pdf")["transactions"]
+        dates = [t["date"] for t in txns]
+        self.assertEqual(dates, sorted(dates))
+        # The row printed first in the document is the last one chronologically,
+        # and it is the row that lands on the closing balance.
+        self.assertEqual(dates[-1], "2026-06-15")
+        self.assertEqual(dates[0], "2024-08-16")
+        self.assertAlmostEqual(txns[-1]["balance"], 7988.66, places=2)
+
+    def test_a_document_only_half_in_order_is_not_turned_round(self):
+        """Reversing is for a document that descends the whole way. Rows that
+        are merely out of order somewhere in the middle are a fault, and
+        rearranging them would hide exactly what the gate exists to catch."""
+        from .statement_geometry import _is_descending
+        descending = [{"date": "2026-06-15"}, {"date": "2026-05-13"},
+                      {"date": "2026-04-13"}]
+        self.assertTrue(_is_descending(descending))
+        self.assertFalse(_is_descending([{"date": "2024-01-01"},
+                                         {"date": "2024-02-01"}]))
+        # one row the wrong way is enough to refuse to touch it
+        self.assertFalse(_is_descending([{"date": "2026-06-15"},
+                                         {"date": "2026-04-13"},
+                                         {"date": "2026-05-13"}]))
+        # and nothing to go on is not a direction
+        self.assertFalse(_is_descending([{"date": "2026-06-15"}]))
+        self.assertFalse(_is_descending([]))
+
+    def test_the_netbank_export_takes_direction_from_the_column(self):
+        """Ten of its 35 rows are labelled "Direct Credit" and are money OUT.
+
+        The label describes the counterparty's instruction, not the direction
+        on this account: 16/08/2024 reads "Direct Credit 301500 ALIC" and
+        takes the balance from 805.27 to 629.27. Any parser keying on the
+        words would get all ten backwards -- and by exactly double, which is
+        what makes the printed totals above worth asserting.
+        """
+        if not available("CBA_1.pdf"):
+            self.skipTest("CBA_1.pdf absent")
+        txns = parse("CBA_1.pdf")["transactions"]
+        first = txns[0]
+        self.assertIn("Direct Credit", first["description"])
+        self.assertAlmostEqual(first["amount"], -176.00, places=2)
+        self.assertAlmostEqual(first["balance"], 629.27, places=2)
+
+    def test_the_netbank_report_footer_is_not_read_as_a_description(self):
+        """Every page ends with a report footer and the last adds a totals
+        block -- report ID, page number, "No. of transactions". With
+        descriptions wrapping below their figures, all of it would have
+        attached to the transaction above it."""
+        if not available("CBA_1.pdf"):
+            self.skipTest("CBA_1.pdf absent")
+        for txn in parse("CBA_1.pdf")["transactions"]:
+            for junk in ("ReportID", "Pagenumber", "No.oftransactions",
+                         "Totaldebits", "Totalcredits", "Accountnumber"):
+                self.assertNotIn(junk, txn["description"].replace(" ", ""))
+
+    def test_cba_2_and_cba_3_are_copies_and_not_extra_coverage(self):
+        """CBA_2 and CBA_3 are byte-for-byte copies of CBA1 and CBA2, so they
+        are deliberately NOT pinned as exemplars of their own: they would cost
+        four parses per test method and assert nothing new. If either is ever
+        replaced by a genuinely different statement, this fails and it should
+        then be pinned properly."""
+        for original, copy in (("CBA1.pdf", "CBA_2.pdf"),
+                               ("CBA2.pdf", "CBA_3.pdf")):
+            if not (available(original) and available(copy)):
+                self.skipTest(f"{original} or {copy} absent")
+            with self.subTest(copy):
+                self.assertEqual(hashlib.sha256(read(original)).hexdigest(),
+                                 hashlib.sha256(read(copy)).hexdigest())
 
 
 class CrossStatementChainTests(SimpleTestCase):
@@ -654,3 +758,82 @@ class CrossStatementChainTests(SimpleTestCase):
                 checked += 1
         if not checked:
             self.skipTest("no consecutive pair had both statements present")
+
+
+class ScannedStatementTests(SimpleTestCase):
+    """The two statements that no parser can read.
+
+    BOM1 and BOM2 are photographs: one image per page, not a single word of
+    text. They go to Claude Vision, and the first test here proves the routing
+    without spending anything. The second re-measures against the real API and
+    is opt-in, because a test suite must not bill an account or depend on a
+    non-deterministic service to pass.
+    """
+
+    def test_the_scans_reach_vision_because_no_parser_can_claim_them(self):
+        """Two halves of the routing: the direct parser must refuse them, and
+        the fallback must then produce a statement. A scan detects as
+        "unknown" -- there is no text to find a bank name in -- so the
+        ValueError is what hands it to Vision."""
+        from unittest.mock import patch
+        from .pdf_parsers import extract_transactions_from_pdf_direct
+        from .views import _try_vision_fallback
+        names = ["BOM1.pdf", "BOM2.pdf"]
+        require_any(self, names)
+        for name in names:
+            if not available(name):
+                continue
+            with self.subTest(name):
+                with self.assertRaises(ValueError):
+                    extract_transactions_from_pdf_direct(read(name), name)
+                canned = {
+                    "opening_balance": 100.00, "closing_balance": 150.00,
+                    "transactions": [{"date": "01/05/2024", "amount": 50.00,
+                                      "balance": 150.00, "description": "X"}],
+                }
+                with patch("review.email_ingestion."
+                           "extract_transactions_from_pdf",
+                           return_value=canned) as vision:
+                    extracted, error = _try_vision_fallback(
+                        read(name), name, direct_error="unsupported")
+                self.assertIsNone(error)
+                self.assertEqual(vision.call_count, 1)
+                self.assertEqual(len(extracted["transactions"]), 1)
+                # It reconciles, so it must not be flagged for a human.
+                self.assertIsNone(extracted.get("unverified"))
+
+    @unittest.skipUnless(os.environ.get("STATEMENT_VISION_LIVE"),
+                         "set STATEMENT_VISION_LIVE=1 to spend API budget "
+                         "re-measuring the scanned statements")
+    def test_live_vision_extraction_matches_the_recorded_figures(self):
+        """Opt-in: the real thing, against the figures in the table above.
+
+        Row counts are asserted because dropping the statements' own balance
+        lines made the extraction deterministic -- three consecutive runs of
+        BOM1 returned byte-identical rows. Before that it alternated between
+        57 and 55. If this starts failing on the count alone, check whether
+        those marker rows are back before changing the number.
+        """
+        import base64
+        from .email_ingestion import extract_transactions_from_pdf
+        for name in ("BOM1.pdf", "BOM2.pdf"):
+            if not available(name):
+                self.skipTest(f"{name} absent")
+            entry = BY_NAME[name]
+            with self.subTest(name):
+                result = extract_transactions_from_pdf(
+                    base64.b64encode(read(name)).decode(), name)
+                txns = result["transactions"]
+                self.assertEqual(len(txns), entry["rows"])
+                self.assertAlmostEqual(
+                    float(result["opening_balance"]), entry["opening"], places=2)
+                self.assertAlmostEqual(
+                    float(result["closing_balance"]), entry["closing"], places=2)
+                movements = sum(t["amount"] for t in txns)
+                self.assertAlmostEqual(
+                    entry["opening"] + movements, entry["closing"], places=2)
+                self.assertFalse(result.get("chain_broken"))
+                self.assertFalse(result.get("dates_out_of_order"))
+                for txn in txns:
+                    self.assertNotIn("BALANCE", txn["description"].upper())
+
