@@ -142,6 +142,17 @@ def _statement_date_context(pdf_bytes):
 
     Returns '' when the statement states no period and no year, in which case
     the model is no worse off than before.
+
+    LIMITATION, measured on the two scanned Bank of Melbourne statements: a
+    scan has no text layer at all, so this always returns '' for one and every
+    chunk must read the year off the image itself. Those two come out right
+    because Bank of Melbourne reprints its statement period on every page. A
+    scanned statement that prints its period only once would not, and the
+    failure would look exactly like the one described above -- a whole chunk a
+    year out, the balance chain perfect, the rows dropped as out of period.
+    Reading page 1 with Vision and passing that down was tried and dropped: on
+    a multi-period bundle it hands every chunk the FIRST period's dates, which
+    is worse than no hint at all.
     """
     try:
         with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
@@ -487,6 +498,36 @@ def _first_present(payloads, key):
     return None
 
 
+_BALANCE_MARKER_RE = re.compile(r'\b(opening|closing)\s*balance\b',
+                                re.IGNORECASE)
+
+
+def _is_balance_marker(txn):
+    """A statement's own opening or closing balance line, not a transaction.
+
+    A multi-period scan prints one at every period boundary, and Vision emits
+    them as zero-amount rows -- sometimes. Three consecutive runs over one
+    12-page bundle returned 57, 55 and 55 rows, and the entire difference was
+    two of these markers; every real transaction was identical in all three.
+
+    Nothing downstream can reject them: they move no money, so they reconcile
+    and they chain. But they are not transactions, and they would reach the
+    review queue as rows for someone to code. Dropping them makes the
+    extraction deterministic as well as correct.
+
+    A row named like a marker but carrying a real amount is left alone -- the
+    name is not evidence enough to discard money.
+    """
+    amount = txn.get("amount")
+    if amount is not None:
+        try:
+            if round(float(amount), 2) != 0.0:
+                return False
+        except (TypeError, ValueError):
+            return False
+    return bool(_BALANCE_MARKER_RE.search(str(txn.get("description") or "")))
+
+
 def _merge_chunk_results(payloads):
     """Merge per-chunk extractions back into one statement, in page order.
 
@@ -498,6 +539,11 @@ def _merge_chunk_results(payloads):
     for payload in payloads:
         incoming = payload.get("transactions") or []
         transactions.extend(_drop_join_overlap(transactions, incoming))
+
+    # Before the anchors are derived below: dropping the statement's own
+    # balance lines does not disturb them, because the opening is worked back
+    # from the first real row's own balance and amount.
+    transactions = [t for t in transactions if not _is_balance_marker(t)]
 
     opening = next(
         (p["opening_balance"] for p in payloads

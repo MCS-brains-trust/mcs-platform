@@ -23,6 +23,7 @@ from pypdf import PdfReader, PdfWriter
 
 from .email_ingestion import (
     VisionExtractionError,
+    _is_balance_marker,
     _merge_chunk_results,
     _split_pdf_pages,
     extract_transactions_from_pdf,
@@ -437,3 +438,75 @@ class VisionFallbackGuardTests(TestCase):
 
         self.assertIsNone(extracted)
         self.assertIn("truncated on page 7", message)
+
+
+class BalanceMarkerRowTests(TestCase):
+    """A statement's own opening/closing balance line is not a transaction.
+
+    Measured on the two scanned Bank of Melbourne statements, which are
+    multi-period bundles: Vision emits a zero-amount row at each period
+    boundary -- sometimes. Three consecutive runs over the same 12-page file
+    returned 57, 55 and 55 rows, and the whole difference was two of these
+    markers; every real transaction was identical in all three. They move no
+    money, so they reconcile and they chain, and nothing downstream could
+    reject them -- they would simply arrive in the review queue as rows to
+    code. With them dropped the same file returns 55 rows byte-identically on
+    every run.
+    """
+
+    def test_a_zero_amount_balance_line_is_a_marker(self):
+        self.assertTrue(_is_balance_marker(
+            {"date": "02/11/2024", "amount": 0.0, "balance": 101156.04,
+             "description": "OPENING BALANCE"}))
+        self.assertTrue(_is_balance_marker(
+            {"date": "01/05/2025", "amount": 0, "balance": 509142.83,
+             "description": "Closing Balance"}))
+
+    def test_a_balance_line_carrying_money_is_left_alone(self):
+        """The name is not evidence enough to discard an amount."""
+        self.assertFalse(_is_balance_marker(
+            {"amount": -25.00, "description": "OPENING BALANCE ADJUSTMENT"}))
+
+    def test_a_genuine_zero_amount_transaction_is_kept(self):
+        """Bendigo prints a 0.00 net-fee line; it is not a balance marker."""
+        self.assertFalse(_is_balance_marker(
+            {"amount": 0.0, "description": "Net Transaction Fees for April24"}))
+
+    def test_an_unreadable_amount_is_not_discarded(self):
+        self.assertFalse(_is_balance_marker(
+            {"amount": "n/a", "description": "OPENING BALANCE"}))
+
+    def test_markers_are_dropped_when_chunks_are_merged(self):
+        merged = _merge_chunk_results([
+            {"transactions": [
+                {"date": "04/05/2024", "amount": -1000.0, "balance": 99513.01,
+                 "description": "INTERNET WITHDRAWAL"},
+            ]},
+            {"transactions": [
+                {"date": "02/11/2024", "amount": 0.0, "balance": 99513.01,
+                 "description": "CLOSING BALANCE"},
+                {"date": "02/11/2024", "amount": 0.0, "balance": 99513.01,
+                 "description": "OPENING BALANCE"},
+                {"date": "03/11/2024", "amount": 500.0, "balance": 100013.01,
+                 "description": "INTERNET DEPOSIT"},
+            ]},
+        ])
+        self.assertEqual(
+            [t["description"] for t in merged["transactions"]],
+            ["INTERNET WITHDRAWAL", "INTERNET DEPOSIT"])
+
+    def test_dropping_a_leading_marker_leaves_the_opening_balance_right(self):
+        """The opening is worked back from the first real row's own balance and
+        amount, so removing the marker above it changes nothing."""
+        rows = [
+            {"date": "04/05/2024", "amount": -1000.0, "balance": 99513.01,
+             "description": "INTERNET WITHDRAWAL"},
+        ]
+        with_marker = _merge_chunk_results([{"transactions": [
+            {"date": "02/05/2024", "amount": 0.0, "balance": 100513.01,
+             "description": "OPENING BALANCE"}] + rows}])
+        without = _merge_chunk_results([{"transactions": list(rows)}])
+        self.assertAlmostEqual(with_marker["opening_balance"], 100513.01, places=2)
+        self.assertAlmostEqual(without["opening_balance"], 100513.01, places=2)
+        self.assertFalse(with_marker["chain_broken"])
+

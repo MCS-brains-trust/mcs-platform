@@ -44,6 +44,8 @@ FIXTURE_DIR = os.environ.get(
 #   legacy   -- parses, but via the legacy text parser because the geometry
 #               engine rejected it (Phase 1 turns these into 'healthy')
 #   gap      -- does not parse or does not pass the gate; `gap` names why
+#   vision   -- no text layer at all, so it is read by Claude Vision OCR
+#               rather than by any parser; `gap` names why
 EXEMPLARS = [
     dict(name="cba_stmt9.pdf", bank="cba", rows=174,
          opening=27440.30, closing=8826.22, status="healthy", geometry=True),
@@ -155,16 +157,21 @@ EXEMPLARS = [
     dict(name="BOM4.pdf", bank="bankofmelb", rows=0,
          opening=0.01, closing=0.01, status="healthy", geometry=False),
     # These two are SCANNED IMAGES: one image per page and no text layer at
-    # all, so there is nothing for any text parser to read and no anchors to
-    # record. They belong to the Claude Vision OCR path, not to a parser.
-    dict(name="BOM1.pdf", bank="bankofmelb", rows=None,
-         opening=None, closing=None, status="gap", geometry=False,
+    # all, so no text parser can touch them. They are read by Claude Vision
+    # instead, and the figures below were measured through it on 2026-08-21
+    # and corroborated against every period summary printed in the scans,
+    # read page by page in separate calls: BOM1's three periods print credits
+    # of 445,070.25 and debits of 34,659.40, BOM2's 44,255.41 and 42,384.80,
+    # which are exactly what the extractions produce. Status "vision" so the
+    # direct-parse tests skip them; the live test below re-measures on demand.
+    dict(name="BOM1.pdf", bank="bankofmelb", rows=55,
+         opening=100513.01, closing=510923.86, status="vision", geometry=False,
          gap="scanned image: the pages carry no text layer (0 words), so it "
-             "cannot be read by any text parser -- needs the Vision OCR path"),
-    dict(name="BOM2.pdf", bank="bankofmelb", rows=None,
-         opening=None, closing=None, status="gap", geometry=False,
+             "cannot be read by any text parser -- read by Vision OCR"),
+    dict(name="BOM2.pdf", bank="bankofmelb", rows=98,
+         opening=394.38, closing=2264.99, status="vision", geometry=False,
          gap="scanned image: the pages carry no text layer (0 words), so it "
-             "cannot be read by any text parser -- needs the Vision OCR path"),
+             "cannot be read by any text parser -- read by Vision OCR"),
     # Macquarie, never before pinned. It parses correctly and always did --
     # what was missing was evidence. M1 and M2 are two copies of the same
     # statement no. 25, from different downloads; M3 is the period after it.
@@ -247,7 +254,7 @@ class ExemplarInventoryTests(SimpleTestCase):
 
     def test_every_gap_says_why(self):
         for entry in EXEMPLARS:
-            if entry["status"] in ("gap", "legacy"):
+            if entry["status"] in ("gap", "legacy", "vision"):
                 self.assertTrue(
                     entry.get("gap"),
                     f"{entry['name']} is marked {entry['status']} with no reason",
@@ -751,3 +758,82 @@ class CrossStatementChainTests(SimpleTestCase):
                 checked += 1
         if not checked:
             self.skipTest("no consecutive pair had both statements present")
+
+
+class ScannedStatementTests(SimpleTestCase):
+    """The two statements that no parser can read.
+
+    BOM1 and BOM2 are photographs: one image per page, not a single word of
+    text. They go to Claude Vision, and the first test here proves the routing
+    without spending anything. The second re-measures against the real API and
+    is opt-in, because a test suite must not bill an account or depend on a
+    non-deterministic service to pass.
+    """
+
+    def test_the_scans_reach_vision_because_no_parser_can_claim_them(self):
+        """Two halves of the routing: the direct parser must refuse them, and
+        the fallback must then produce a statement. A scan detects as
+        "unknown" -- there is no text to find a bank name in -- so the
+        ValueError is what hands it to Vision."""
+        from unittest.mock import patch
+        from .pdf_parsers import extract_transactions_from_pdf_direct
+        from .views import _try_vision_fallback
+        names = ["BOM1.pdf", "BOM2.pdf"]
+        require_any(self, names)
+        for name in names:
+            if not available(name):
+                continue
+            with self.subTest(name):
+                with self.assertRaises(ValueError):
+                    extract_transactions_from_pdf_direct(read(name), name)
+                canned = {
+                    "opening_balance": 100.00, "closing_balance": 150.00,
+                    "transactions": [{"date": "01/05/2024", "amount": 50.00,
+                                      "balance": 150.00, "description": "X"}],
+                }
+                with patch("review.email_ingestion."
+                           "extract_transactions_from_pdf",
+                           return_value=canned) as vision:
+                    extracted, error = _try_vision_fallback(
+                        read(name), name, direct_error="unsupported")
+                self.assertIsNone(error)
+                self.assertEqual(vision.call_count, 1)
+                self.assertEqual(len(extracted["transactions"]), 1)
+                # It reconciles, so it must not be flagged for a human.
+                self.assertIsNone(extracted.get("unverified"))
+
+    @unittest.skipUnless(os.environ.get("STATEMENT_VISION_LIVE"),
+                         "set STATEMENT_VISION_LIVE=1 to spend API budget "
+                         "re-measuring the scanned statements")
+    def test_live_vision_extraction_matches_the_recorded_figures(self):
+        """Opt-in: the real thing, against the figures in the table above.
+
+        Row counts are asserted because dropping the statements' own balance
+        lines made the extraction deterministic -- three consecutive runs of
+        BOM1 returned byte-identical rows. Before that it alternated between
+        57 and 55. If this starts failing on the count alone, check whether
+        those marker rows are back before changing the number.
+        """
+        import base64
+        from .email_ingestion import extract_transactions_from_pdf
+        for name in ("BOM1.pdf", "BOM2.pdf"):
+            if not available(name):
+                self.skipTest(f"{name} absent")
+            entry = BY_NAME[name]
+            with self.subTest(name):
+                result = extract_transactions_from_pdf(
+                    base64.b64encode(read(name)).decode(), name)
+                txns = result["transactions"]
+                self.assertEqual(len(txns), entry["rows"])
+                self.assertAlmostEqual(
+                    float(result["opening_balance"]), entry["opening"], places=2)
+                self.assertAlmostEqual(
+                    float(result["closing_balance"]), entry["closing"], places=2)
+                movements = sum(t["amount"] for t in txns)
+                self.assertAlmostEqual(
+                    entry["opening"] + movements, entry["closing"], places=2)
+                self.assertFalse(result.get("chain_broken"))
+                self.assertFalse(result.get("dates_out_of_order"))
+                for txn in txns:
+                    self.assertNotIn("BALANCE", txn["description"].upper())
+
