@@ -28,7 +28,6 @@ from django.test import SimpleTestCase
 from .pdf_parsers import detect_bank, extract_transactions_from_pdf_direct
 from .statement_geometry import (
     StatementNotImportable,
-    StatementParseError,
     assert_importable,
     parse_cba_geometry,
 )
@@ -119,15 +118,12 @@ EXEMPLARS = [
     dict(name="Ben2.pdf", bank="bendigo", rows=10,
          opening=2772.95, closing=5107.28, status="healthy", geometry=False),
     # 31 pages holding THIRTEEN consecutive monthly statements for one
-    # account. The engine reads all 13 periods, chains them, and lands within
-    # 20.00 over ~1,200 rows: it over-counts a 20.00 debit in period 5 and an
-    # offsetting 3.50 pair in period 12, against figures the statement prints
-    # itself on each period's "Transaction totals" row. Refused by the gate, so
-    # it cannot import wrongly.
-    dict(name="Ben4.pdf", bank="bendigo", rows=None,
-         opening=98572.63, closing=114902.08, status="gap", geometry=False,
-         gap="multi-period bundle: over-counts 20.00 against the statement's "
-             "own per-period totals, so reconciliation fails by -20.00"),
+    # account, 198 transactions from Jun 2023 to Jun 2024. It was refused by
+    # 20.00 until two faults were found in it, both of them things no
+    # single-period statement contains: a signed figure in the withdrawals
+    # column, and a fee summary printed inside the following month's table.
+    dict(name="Ben4.pdf", bank="bendigo", rows=198,
+         opening=98572.63, closing=114902.08, status="healthy", geometry=False),
     dict(name="ING.pdf", bank="ing", rows=56,
          opening=2156.82, closing=3514.82, status="healthy", geometry=False),
     # Two consecutive Orange Everyday statements from 2016, against the 2025
@@ -389,13 +385,52 @@ class KnownGapTests(SimpleTestCase):
         self.assertTrue(any(abs(t["amount"] - 5706.00) < 0.011
                             for t in result["transactions"]))
 
-    def test_the_bendigo_multi_period_bundle_is_still_refused(self):
-        """Thirteen monthly statements in one 31-page file. Within 20.00 over
-        ~1,200 rows, but not exact, so the gate refuses it."""
+    def test_the_bendigo_multi_period_bundle_reads_a_reversal_as_money_in(self):
+        """Thirteen monthly statements in one 31-page file, and the whole
+        bundle turned on one row.
+
+        On 24 Oct 2023 the withdrawals column holds "-10.00" -- a reversed
+        OSKO payment -- and the balance beside it RISES, 323,190.14 to
+        323,200.14. Forcing every withdrawal negative booked that as a 10.00
+        debit, so the bundle came out 20.00 light over ~1,200 rows and the
+        gate refused all 31 pages. It is the only signed figure in any
+        statement we hold, which is why no other exemplar ever showed it.
+        """
         if not available("Ben4.pdf"):
             self.skipTest("Ben4.pdf absent")
-        with self.assertRaises(StatementParseError):
-            parse("Ben4.pdf")
+        result = parse("Ben4.pdf")
+        reversal = [t for t in result["transactions"]
+                    if t["date"] == "2023-10-24"
+                    and abs(t["amount"] - 10.00) < 0.011]
+        self.assertEqual(len(reversal), 1,
+                         "the reversed OSKO payment should be money in")
+        self.assertAlmostEqual(reversal[0]["balance"], 323200.14, places=2)
+        # And with it the bundle reconciles end to end, across all thirteen
+        # periods: the first period's opening to the last period's closing.
+        movements = sum(t["amount"] for t in result["transactions"])
+        self.assertAlmostEqual(98572.63 + movements, 114902.08, places=2)
+
+    def test_bendigos_in_table_fee_summary_is_not_collected(self):
+        """April's fee summary is printed inside May's transaction table.
+
+        Five figures in the transaction columns -- in-branch fees 1.75, an
+        account rebate 1.75, a total for each, and a net of 0.00 -- with the
+        balance the same on both sides of the block, so no money moved. They
+        net to zero, which is exactly why reconciliation cannot catch them:
+        they would have imported as four phantom 1.75 entries and a 0.00,
+        four of the five with no date at all. A month whose rebate did not
+        cover its fee would not net, and would refuse all 31 pages.
+        """
+        if not available("Ben4.pdf"):
+            self.skipTest("Ben4.pdf absent")
+        txns = parse("Ben4.pdf")["transactions"]
+        self.assertEqual([t for t in txns if not t["date"]], [],
+                         "every imported row must carry a date")
+        for junk in ("TotalTransactionFees", "TotalRebates",
+                     "MonthlyTransactionSummary", "NetTransactionFees"):
+            self.assertEqual(
+                [t["description"] for t in txns if junk in t["description"]],
+                [], f"{junk} is a summary line, not a transaction")
 
     def test_the_cba_transaction_history_export_is_not_recognised(self):
         if not available("CBA_1.pdf"):

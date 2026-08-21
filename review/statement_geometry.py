@@ -690,6 +690,14 @@ COLUMN_TABLE_PROFILES = {
     'bendigo': dict(
         labels=('WITHDRAWALS', 'DEPOSITS', 'BALANCE'),
         date=_date_ddmonyy,
+        # Bendigo prints last month's fee summary INSIDE this month's table,
+        # between two real transactions, in the same columns: fees, rebate,
+        # their totals and a net line. Five figures, no money moved -- the
+        # balance is the same before and after. They happen to net to zero
+        # here, so reconciliation cannot see them, but they would import as
+        # four phantom 1.75 entries and a 0.00, and any month whose rebate
+        # did not exactly cover its fee would refuse the whole bundle.
+        skip_block=('MONTHLYTRANSACTIONSUMMARY', 'NETTRANSACTIONFEES'),
         # Bendigo states both in its account summary, with the text glued:
         # "Openingbalanceon1Mar2025 $2,772.95".
         opening_keys=('OPENINGBALANCEON', 'OPENINGBALANCE'),
@@ -735,6 +743,7 @@ def parse_column_table_statement(pdf_content, bank):
     # whose header this engine cannot see behaves as it did before rather than
     # silently losing every row.
     in_table = True
+    in_block = False
 
     for index, row in enumerate(rows):
         flat = ''.join(w['text'] for w in row).upper()
@@ -749,7 +758,7 @@ def parse_column_table_statement(pdf_content, bank):
                 opening = (profile['anchor'](row, columns)
                            or _anchor_from_neighbour(rows, index, columns))
             desc, date = [], None
-            in_table = True
+            in_table, in_block = True, False
             continue
         if any(key in flat for key in profile['closing_keys']):
             found = (profile['anchor'](row, columns)
@@ -764,12 +773,28 @@ def parse_column_table_statement(pdf_content, bank):
         # period of a multi-period bundle.
         if all(label in flat for label in profile['labels']):
             desc, date = [], None
-            in_table = True
+            # A summary block cannot span into the next table, so an unclosed
+            # one ends here rather than swallowing every later row.
+            in_table, in_block = True, False
             continue
         # Per-page subtotals restate figures already counted.
         if 'TOTALSATENDOFPAGE' in flat:
             desc, date = [], None
             continue
+
+        # A summary block printed inside the table: everything from its
+        # opening marker to its closing marker is furniture, inclusive.
+        block = profile.get('skip_block')
+        if block:
+            if in_block:
+                if block[1] in flat:
+                    in_block = False
+                desc, date = [], None
+                continue
+            if block[0] in flat:
+                in_block = True
+                desc, date = [], None
+                continue
         if _is_furniture(flat):
             continue
 
@@ -782,10 +807,18 @@ def parse_column_table_statement(pdf_content, bank):
         balance = None
         for word, value in _row_money(row):
             column = _column_of(word, columns)
+            # The column says which direction the money moved; the figure's
+            # own sign says whether this row REVERSES that direction. Bendigo
+            # prints a reversed OSKO payment as "-10.00" under Withdrawals,
+            # with the balance beside it rising 10.00. Forcing the sign from
+            # the column alone booked that as a debit and left a 31-page,
+            # thirteen-period bundle 20.00 short, so the gate refused all of
+            # it. Negating rather than taking abs() reads both cases from the
+            # one rule, and the reconciliation gate remains the arbiter.
             if column == 'out':
-                movement = -abs(value)
+                movement = -value
             elif column == 'in':
-                movement = abs(value)
+                movement = value
             elif column == 'balance':
                 balance = value
 
