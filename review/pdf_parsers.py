@@ -1893,7 +1893,11 @@ def extract_transactions_from_pdf_direct(pdf_content, filename=""):
     # an empty column with the word "blank" and that row had none; Bendigo
     # failed on two of four statements. One coordinate-reading engine serves
     # them, with the legacy parser kept as a fallback in each case.
-    if bank in ("westpac", "anz", "bendigo"):
+    # Bank of Melbourne prints the same shape again -- Date / Transaction
+    # Description / Debit / Credit / Balance$ -- and its text parser read 0
+    # transactions from both statements we hold, because the text arrives
+    # glued ("20MAYOPENINGBALANCE1,365.48") and the dates carry no year.
+    if bank in ("westpac", "anz", "bendigo", "bankofmelb"):
         from .statement_geometry import (
             parse_column_table_statement, StatementParseError,
         )
@@ -1901,6 +1905,7 @@ def extract_transactions_from_pdf_direct(pdf_content, filename=""):
             "westpac": parse_westpac_statement,
             "anz": parse_anz_statement,
             "bendigo": parse_bendigo_statement,
+            "bankofmelb": parse_bankofmelb_statement,
         }[bank]
         try:
             return verify_direct_parse(
