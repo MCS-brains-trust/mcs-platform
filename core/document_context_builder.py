@@ -983,6 +983,26 @@ class DocumentContextBuilder:
         net_assets = total_assets - total_liabilities
         net_assets_py = total_assets_py - total_liabilities_py
 
+        # StatementHub keeps an UNCLOSED trial balance: the year's result stays
+        # in the P&L accounts until roll-forward transfers it into retained
+        # earnings. The equity accounts therefore carry the OPENING position,
+        # and closing equity is that plus the year's after-tax result.
+        # fs_template_service injects a "Current year profit / (loss)" equity
+        # line for exactly this reason before rendering, which is why the
+        # generated statements reconcile. Without the same adjustment here the
+        # check below reported an imbalance of precisely the profit on every
+        # company year — DJLH Properties FY2025 "out" by 113,621.77 against a
+        # balance sheet that was correct — and total_equity, which
+        # debt_to_equity_ratio divides by, was short by the same amount.
+        #
+        # Deliberately ADDS the result rather than assigning net_assets: a
+        # trial balance that genuinely does not balance must still be caught,
+        # and assigning would turn the check into a mute button.
+        if (self.entity.entity_type != "trust"
+                and abs(net_assets - total_equity) > Decimal("1")):
+            total_equity += net_profit
+            total_equity_py += net_profit_py
+
         # For trust entities, beneficiary loans are in liabilities not equity.
         # Override total_equity so the balance check passes.
         if self.entity.entity_type == "trust":

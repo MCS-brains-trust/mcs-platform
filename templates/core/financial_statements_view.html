@@ -35,16 +35,15 @@
                 </tr>
             </thead>
             <tbody>
-                {% regroup income_statement by section as sections %}
-                {% for section in sections %}
+                {% for section in is_sections %}
                 <tr class="table-light">
-                    <td colspan="{% if has_prior %}3{% else %}2{% endif %}" class="fw-bold">{{ section.grouper }}</td>
+                    <td colspan="{% if has_prior %}3{% else %}2{% endif %}" class="fw-bold">{{ section.name }}</td>
                 </tr>
-                {% for item in section.list %}
+                {% for item in section.items %}
                 <tr>
                     <td class="ps-4">{{ item.label }}</td>
                     <td class="text-end">
-                        {% if item.current and item.current != 0 %}
+                        {% if item.code != 'NET_PROFIT' and item.current and item.current != 0 %}
                         <a href="{% url 'core:line_item_breakdown' pk=fy.pk standard_code=item.code %}" target="_blank" class="text-decoration-none" title="View breakdown of {{ item.label }}">{{ item.current|floatformat:2|intcomma }}</a>
                         {% else %}
                         {{ item.current|floatformat:2|intcomma }}
@@ -55,8 +54,24 @@
                     {% endif %}
                 </tr>
                 {% endfor %}
+                <tr>
+                    <td class="ps-4 fw-semibold border-top">Total {{ section.name }}</td>
+                    <td class="text-end fw-semibold border-top">{{ section.total|floatformat:2|intcomma }}</td>
+                    {% if has_prior %}
+                    <td class="text-end text-muted border-top">{{ section.total_prior|floatformat:2|intcomma }}</td>
+                    {% endif %}
+                </tr>
                 {% endfor %}
             </tbody>
+            <tfoot class="table-light fw-bold">
+                <tr>
+                    <td>Net Profit / (Loss)</td>
+                    <td class="text-end">{{ net_profit|floatformat:2|intcomma }}</td>
+                    {% if has_prior %}
+                    <td class="text-end">{{ net_profit_prior|floatformat:2|intcomma }}</td>
+                    {% endif %}
+                </tr>
+            </tfoot>
         </table>
     </div>
 </div>
@@ -78,16 +93,15 @@
                 </tr>
             </thead>
             <tbody>
-                {% regroup balance_sheet by section as sections %}
-                {% for section in sections %}
+                {% for section in bs_sections %}
                 <tr class="table-light">
-                    <td colspan="{% if has_prior %}3{% else %}2{% endif %}" class="fw-bold">{{ section.grouper }}</td>
+                    <td colspan="{% if has_prior %}3{% else %}2{% endif %}" class="fw-bold">{{ section.name }}</td>
                 </tr>
-                {% for item in section.list %}
+                {% for item in section.items %}
                 <tr>
                     <td class="ps-4">{{ item.label }}</td>
                     <td class="text-end">
-                        {% if item.current and item.current != 0 %}
+                        {% if item.code != 'NET_PROFIT' and item.current and item.current != 0 %}
                         <a href="{% url 'core:line_item_breakdown' pk=fy.pk standard_code=item.code %}" target="_blank" class="text-decoration-none" title="View breakdown of {{ item.label }}">{{ item.current|floatformat:2|intcomma }}</a>
                         {% else %}
                         {{ item.current|floatformat:2|intcomma }}
@@ -98,8 +112,32 @@
                     {% endif %}
                 </tr>
                 {% endfor %}
+                <tr>
+                    <td class="ps-4 fw-semibold border-top">Total {{ section.name }}</td>
+                    <td class="text-end fw-semibold border-top">{{ section.total|floatformat:2|intcomma }}</td>
+                    {% if has_prior %}
+                    <td class="text-end text-muted border-top">{{ section.total_prior|floatformat:2|intcomma }}</td>
+                    {% endif %}
+                </tr>
                 {% endfor %}
             </tbody>
+            <tfoot class="table-light fw-bold">
+                <tr>
+                    <td>Total Assets</td>
+                    <td class="text-end">{{ total_assets|floatformat:2|intcomma }}</td>
+                    {% if has_prior %}<td></td>{% endif %}
+                </tr>
+                <tr>
+                    <td>Total Liabilities</td>
+                    <td class="text-end">{{ total_liabilities|floatformat:2|intcomma }}</td>
+                    {% if has_prior %}<td></td>{% endif %}
+                </tr>
+                <tr class="table-secondary" title="Net Assets and Total Equity are mirror images in the trial balance convention used here, so they sum to nil.">
+                    <td>Net Assets</td>
+                    <td class="text-end">{{ net_assets|floatformat:2|intcomma }}</td>
+                    {% if has_prior %}<td></td>{% endif %}
+                </tr>
+            </tfoot>
         </table>
     </div>
 </div>

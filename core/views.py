@@ -6731,6 +6731,69 @@ def financial_statements_view(request, pk):
         elif item["mapped_line_item__financial_statement"] == "balance_sheet":
             balance_sheet.append(entry)
 
+    # StatementHub keeps an unclosed trial balance: the year's result stays in
+    # the P&L accounts until roll-forward moves it into retained earnings, so
+    # the equity rows above carry only the opening position.
+    # fs_template_service injects a "Current year profit / (loss)" line for
+    # exactly this reason before rendering the statements. Without the same
+    # line here the preview disagreed with the PDF of the same year — the
+    # balance sheet rows summed to the profit instead of nil.
+    #
+    # Injected only when the rows do not already balance, and always at the
+    # year's result rather than at the gap, so a trial balance that is
+    # genuinely out still fails to sum to nil on screen.
+    net_profit = -sum((e["current"] or Decimal("0")) for e in income_statement)
+    net_profit_prior = -sum((e["prior"] or Decimal("0")) for e in income_statement)
+    _bs_out = sum((e["current"] or Decimal("0")) for e in balance_sheet)
+    if abs(_bs_out) > Decimal("0.005") and (net_profit or net_profit_prior):
+        balance_sheet.append({
+            "code": "NET_PROFIT",
+            "label": "Current year profit / (loss)",
+            "section": "Equity",
+            "current": -net_profit,
+            "prior": -net_profit_prior,
+        })
+
+    def _grouped(entries, order):
+        """Entries grouped into statement sections, each with its subtotal.
+
+        The page carried no subtotals at all, so nothing on it revealed that
+        the balance sheet did not add up.
+        """
+        buckets = {}
+        for entry in entries:
+            buckets.setdefault(entry["section"] or "Other", []).append(entry)
+        names = [n for n in order if n in buckets]
+        names += [n for n in buckets if n not in order]
+        return [{
+            "name": name,
+            "items": buckets[name],
+            "total": sum((i["current"] or Decimal("0")) for i in buckets[name]),
+            "total_prior": sum((i["prior"] or Decimal("0")) for i in buckets[name]),
+        } for name in names]
+
+    is_sections = _grouped(
+        income_statement, ["Revenue", "Cost of Sales", "Expenses"])
+    bs_sections = _grouped(balance_sheet, [
+        "Current Assets", "Non-Current Assets",
+        "Current Liabilities", "Non-Current Liabilities", "Equity",
+    ])
+
+    def _total(sections, names):
+        return sum(s["total"] for s in sections if s["name"] in names)
+
+    # Every row on this page shows the raw trial-balance sign (liabilities and
+    # equity credit-normal, so negative), and the section subtotals sum those
+    # rows. The footer stays in the same convention or it contradicts them —
+    # a display-normalised "Total Equity" sat directly under a raw one and the
+    # two disagreed in sign on the same table.
+    # In this convention the balance identity is net_assets + total_equity = 0.
+    total_assets = _total(bs_sections, {"Current Assets", "Non-Current Assets"})
+    total_liabilities = _total(
+        bs_sections, {"Current Liabilities", "Non-Current Liabilities"})
+    total_equity = _total(bs_sections, {"Equity"})
+    net_assets = total_assets + total_liabilities
+
     has_prior = bool(
         fy.entity.include_comparative_figures
         and fy.prior_year
@@ -6741,6 +6804,14 @@ def financial_statements_view(request, pk):
         "entity": fy.entity,
         "income_statement": income_statement,
         "balance_sheet": balance_sheet,
+        "is_sections": is_sections,
+        "bs_sections": bs_sections,
+        "net_profit": net_profit,
+        "net_profit_prior": net_profit_prior,
+        "total_assets": total_assets,
+        "total_liabilities": total_liabilities,
+        "total_equity": total_equity,
+        "net_assets": net_assets,
         "has_prior": has_prior,
     }
     return render(request, "core/financial_statements_view.html", context)
