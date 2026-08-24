@@ -1,0 +1,1072 @@
+[
+  {
+    "entity_type": "company",
+    "account_code": "0500",
+    "account_name": "Sales",
+    "section": "revenue",
+    "classification": "Other sales revenue",
+    "tax_code": "GST",
+    "display_order": 2,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0510",
+    "account_name": "Sales",
+    "section": "revenue",
+    "classification": "Other sales revenue",
+    "tax_code": "GST",
+    "display_order": 3,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0519",
+    "account_name": "Sales",
+    "section": "revenue",
+    "classification": "Other sales revenue",
+    "tax_code": "GST",
+    "display_order": 4,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0520",
+    "account_name": "Bad debts recovered",
+    "section": "revenue",
+    "classification": "Other",
+    "tax_code": "ADS",
+    "display_order": 5,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0525",
+    "account_name": "Assessable government industry payments",
+    "section": "revenue",
+    "classification": "Assessable government industry payments - NP",
+    "tax_code": "",
+    "display_order": 6,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0530",
+    "account_name": "Commissions received",
+    "section": "revenue",
+    "classification": "Other",
+    "tax_code": "GST",
+    "display_order": 7,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0540",
+    "account_name": "Discounts received",
+    "section": "revenue",
+    "classification": "Other",
+    "tax_code": "GST",
+    "display_order": 8,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0550",
+    "account_name": "Dividends - Franked",
+    "section": "revenue",
+    "classification": "Dividends - Franked",
+    "tax_code": "",
+    "display_order": 9,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0551",
+    "account_name": "Dividends - Unfranked",
+    "section": "revenue",
+    "classification": "Dividends - Unfranked",
+    "tax_code": "",
+    "display_order": 10,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0558",
+    "account_name": "Income where ABN not quoted",
+    "section": "revenue",
+    "classification": "Gross payments where ABN not quoted NPP",
+    "tax_code": "",
+    "display_order": 11,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0559",
+    "account_name": "Income under voluntary agreements",
+    "section": "revenue",
+    "classification": "Gross payments - Voluntary agreement NPP",
+    "tax_code": "GST",
+    "display_order": 12,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0560",
+    "account_name": "Gross receipts",
+    "section": "revenue",
+    "classification": "Other",
+    "tax_code": "GST",
+    "display_order": 13,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0561",
+    "account_name": "Income from labour hire",
+    "section": "revenue",
+    "classification": "Gross payments - Labour hire or other payments NPP",
+    "tax_code": "GST",
+    "display_order": 14,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0562",
+    "account_name": "Hire income",
+    "section": "revenue",
+    "classification": "Hire income",
+    "tax_code": "GST",
+    "display_order": 15,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0565",
+    "account_name": "Distribution from partnerships",
+    "section": "revenue",
+    "classification": "Distributions from partnerships",
+    "tax_code": "",
+    "display_order": 16,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0567",
+    "account_name": "Distribution from trusts",
+    "section": "revenue",
+    "classification": "Distributions from trusts",
+    "tax_code": "",
+    "display_order": 17,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0570",
+    "account_name": "Insurance recoveries",
+    "section": "revenue",
+    "classification": "Other",
+    "tax_code": "GST",
+    "display_order": 18,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0575",
+    "account_name": "Interest received",
+    "section": "revenue",
+    "classification": "Interest",
+    "tax_code": "",
+    "display_order": 19,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0578",
+    "account_name": "Net foreign income",
+    "section": "revenue",
+    "classification": "Net foreign income",
+    "tax_code": "",
+    "display_order": 20,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0579",
+    "account_name": "Attributed foreign income",
+    "section": "revenue",
+    "classification": "Other",
+    "tax_code": "",
+    "display_order": 21,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0580",
+    "account_name": "Foreign exchange profit",
+    "section": "revenue",
+    "classification": "Foreign exchange profit",
+    "tax_code": "",
+    "display_order": 22,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0584",
+    "account_name": "Other income",
+    "section": "revenue",
+    "classification": "Other",
+    "tax_code": "GST",
+    "display_order": 23,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0585",
+    "account_name": "Lease income",
+    "section": "revenue",
+    "classification": "Lease income",
+    "tax_code": "GST",
+    "display_order": 24,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0590",
+    "account_name": "Professional fees",
+    "section": "revenue",
+    "classification": "Other",
+    "tax_code": "GST",
+    "display_order": 25,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0597",
+    "account_name": "Profit on sale of receivables",
+    "section": "revenue",
+    "classification": "Profit on sale of receivables",
+    "tax_code": "",
+    "display_order": 26,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0598",
+    "account_name": "Profit on sale of investments",
+    "section": "revenue",
+    "classification": "Profit on sale of investments",
+    "tax_code": "",
+    "display_order": 27,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0599",
+    "account_name": "Profit on sale of intangible assets",
+    "section": "revenue",
+    "classification": "Profit on sale of intangibles",
+    "tax_code": "",
+    "display_order": 28,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0600",
+    "account_name": "Profit on sale of PPE",
+    "section": "revenue",
+    "classification": "Profit on sale of property, plant & equipment",
+    "tax_code": "",
+    "display_order": 29,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0601",
+    "account_name": "Capital gains",
+    "section": "revenue",
+    "classification": "Capital gains on sale of asset",
+    "tax_code": "",
+    "display_order": 30,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0602",
+    "account_name": "Other non-operating revenue",
+    "section": "revenue",
+    "classification": "Non-operating revenue",
+    "tax_code": "",
+    "display_order": 31,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0610",
+    "account_name": "Rebates & refunds",
+    "section": "revenue",
+    "classification": "Other",
+    "tax_code": "GST",
+    "display_order": 32,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0620",
+    "account_name": "Rents received",
+    "section": "revenue",
+    "classification": "Rental income",
+    "tax_code": "ITS",
+    "display_order": 33,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0625",
+    "account_name": "Royalties received",
+    "section": "revenue",
+    "classification": "Royalty income",
+    "tax_code": "GST",
+    "display_order": 34,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0630",
+    "account_name": "Sales",
+    "section": "revenue",
+    "classification": "Other",
+    "tax_code": "GST",
+    "display_order": 35,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0640",
+    "account_name": "Subsidies received",
+    "section": "revenue",
+    "classification": "Government subsidies received",
+    "tax_code": "GST",
+    "display_order": 36,
+    "is_active": true
+  },
+  {
+    "entity_type": "company",
+    "account_code": "0700",
+    "account_name": "Rent received",
+    "section": "revenue",
+    "classification": "Rent received",
+    "tax_code": "ITS",
+    "display_order": 37,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0105",
+    "account_name": "Sales",
+    "section": "revenue",
+    "classification": "Trading income",
+    "tax_code": "GST",
+    "display_order": 2,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0510",
+    "account_name": "Sales",
+    "section": "revenue",
+    "classification": "Other sales revenue",
+    "tax_code": "GST",
+    "display_order": 3,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0520",
+    "account_name": "Bad debts recovered",
+    "section": "revenue",
+    "classification": "Other",
+    "tax_code": "ADS",
+    "display_order": 4,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0525",
+    "account_name": "Assessable government industry payments",
+    "section": "revenue",
+    "classification": "Assessable government industry payments - NP",
+    "tax_code": "",
+    "display_order": 5,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0530",
+    "account_name": "Commissions received",
+    "section": "revenue",
+    "classification": "Other",
+    "tax_code": "GST",
+    "display_order": 6,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0540",
+    "account_name": "Discounts received",
+    "section": "revenue",
+    "classification": "Other",
+    "tax_code": "GST",
+    "display_order": 7,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0550",
+    "account_name": "Dividends - Franked",
+    "section": "revenue",
+    "classification": "Dividends - Franked",
+    "tax_code": "",
+    "display_order": 8,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0551",
+    "account_name": "Dividends - Unfranked",
+    "section": "revenue",
+    "classification": "Dividends - Unfranked",
+    "tax_code": "",
+    "display_order": 9,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0558",
+    "account_name": "Income where ABN not quoted",
+    "section": "revenue",
+    "classification": "Gross payments where ABN not quoted NPP",
+    "tax_code": "",
+    "display_order": 10,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0559",
+    "account_name": "Income under voluntary agreements",
+    "section": "revenue",
+    "classification": "Gross payments - Voluntary agreement NPP",
+    "tax_code": "GST",
+    "display_order": 11,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0560",
+    "account_name": "Gross receipts",
+    "section": "revenue",
+    "classification": "Other",
+    "tax_code": "GST",
+    "display_order": 12,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0561",
+    "account_name": "Income from labour hire",
+    "section": "revenue",
+    "classification": "Gross payments - Labour hire or other payments NPP",
+    "tax_code": "GST",
+    "display_order": 13,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0562",
+    "account_name": "Hire income",
+    "section": "revenue",
+    "classification": "Hire income",
+    "tax_code": "GST",
+    "display_order": 14,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0565",
+    "account_name": "Distribution from partnerships",
+    "section": "revenue",
+    "classification": "Distributions from partnerships",
+    "tax_code": "",
+    "display_order": 15,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0567",
+    "account_name": "Distribution from trusts",
+    "section": "revenue",
+    "classification": "Distributions from trusts",
+    "tax_code": "",
+    "display_order": 16,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0570",
+    "account_name": "Insurance recoveries",
+    "section": "revenue",
+    "classification": "Other",
+    "tax_code": "GST",
+    "display_order": 17,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0575",
+    "account_name": "Interest received",
+    "section": "revenue",
+    "classification": "Interest",
+    "tax_code": "",
+    "display_order": 18,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0578",
+    "account_name": "Net foreign income",
+    "section": "revenue",
+    "classification": "Net foreign income",
+    "tax_code": "",
+    "display_order": 19,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0579",
+    "account_name": "Attributed foreign income",
+    "section": "revenue",
+    "classification": "Other",
+    "tax_code": "",
+    "display_order": 20,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0580",
+    "account_name": "Foreign exchange profit",
+    "section": "revenue",
+    "classification": "Foreign exchange profit",
+    "tax_code": "",
+    "display_order": 21,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0584",
+    "account_name": "Other income",
+    "section": "revenue",
+    "classification": "Other",
+    "tax_code": "GST",
+    "display_order": 22,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0585",
+    "account_name": "Lease income",
+    "section": "revenue",
+    "classification": "Lease income",
+    "tax_code": "GST",
+    "display_order": 23,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0590",
+    "account_name": "Professional fees",
+    "section": "revenue",
+    "classification": "Other",
+    "tax_code": "GST",
+    "display_order": 24,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0597",
+    "account_name": "Profit on sale of receivables",
+    "section": "revenue",
+    "classification": "Profit on sale of receivables",
+    "tax_code": "",
+    "display_order": 25,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0598",
+    "account_name": "Profit on sale of investments",
+    "section": "revenue",
+    "classification": "Profit on sale of investments",
+    "tax_code": "",
+    "display_order": 26,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0599",
+    "account_name": "Profit on sale of intangible assets",
+    "section": "revenue",
+    "classification": "Profit on sale of intangibles",
+    "tax_code": "",
+    "display_order": 27,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0600",
+    "account_name": "Profit on sale of PPE",
+    "section": "revenue",
+    "classification": "Profit on sale of property, plant & equipment",
+    "tax_code": "",
+    "display_order": 28,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0601",
+    "account_name": "Capital gains",
+    "section": "revenue",
+    "classification": "Capital gains on sale of asset",
+    "tax_code": "",
+    "display_order": 29,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0602",
+    "account_name": "Other non-operating revenue",
+    "section": "revenue",
+    "classification": "Non-operating revenue",
+    "tax_code": "",
+    "display_order": 30,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0610",
+    "account_name": "Rebates & refunds",
+    "section": "revenue",
+    "classification": "Other",
+    "tax_code": "GST",
+    "display_order": 31,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0620",
+    "account_name": "Rents received",
+    "section": "revenue",
+    "classification": "Rental income",
+    "tax_code": "ITS",
+    "display_order": 32,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0625",
+    "account_name": "Royalties received",
+    "section": "revenue",
+    "classification": "Royalty income",
+    "tax_code": "GST",
+    "display_order": 33,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0630",
+    "account_name": "Sales",
+    "section": "revenue",
+    "classification": "Other",
+    "tax_code": "GST",
+    "display_order": 34,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0640",
+    "account_name": "Subsidies received",
+    "section": "revenue",
+    "classification": "Government subsidies received",
+    "tax_code": "GST",
+    "display_order": 35,
+    "is_active": true
+  },
+  {
+    "entity_type": "partnership",
+    "account_code": "0700",
+    "account_name": "Rent received",
+    "section": "revenue",
+    "classification": "Rent received",
+    "tax_code": "ITS",
+    "display_order": 36,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0105",
+    "account_name": "Sales",
+    "section": "revenue",
+    "classification": "Trading income",
+    "tax_code": "GST",
+    "display_order": 2,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0510",
+    "account_name": "Sales",
+    "section": "revenue",
+    "classification": "Other sales revenue",
+    "tax_code": "GST",
+    "display_order": 3,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0520",
+    "account_name": "Bad debts recovered",
+    "section": "revenue",
+    "classification": "Other",
+    "tax_code": "ADS",
+    "display_order": 4,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0525",
+    "account_name": "Assessable government industry payments",
+    "section": "revenue",
+    "classification": "Assessable government industry payments - NP",
+    "tax_code": "",
+    "display_order": 5,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0530",
+    "account_name": "Commissions received",
+    "section": "revenue",
+    "classification": "Other",
+    "tax_code": "GST",
+    "display_order": 6,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0540",
+    "account_name": "Discounts received",
+    "section": "revenue",
+    "classification": "Other",
+    "tax_code": "GST",
+    "display_order": 7,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0550",
+    "account_name": "Dividends - Franked",
+    "section": "revenue",
+    "classification": "Dividends - Franked",
+    "tax_code": "",
+    "display_order": 8,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0551",
+    "account_name": "Dividends - Unfranked",
+    "section": "revenue",
+    "classification": "Dividends - Unfranked",
+    "tax_code": "",
+    "display_order": 9,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0558",
+    "account_name": "Income where ABN not quoted",
+    "section": "revenue",
+    "classification": "Gross payments where ABN not quoted NPP",
+    "tax_code": "",
+    "display_order": 10,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0559",
+    "account_name": "Income under voluntary agreements",
+    "section": "revenue",
+    "classification": "Gross payments - Voluntary agreement NPP",
+    "tax_code": "GST",
+    "display_order": 11,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0560",
+    "account_name": "Gross receipts",
+    "section": "revenue",
+    "classification": "Other",
+    "tax_code": "GST",
+    "display_order": 12,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0561",
+    "account_name": "Income from labour hire",
+    "section": "revenue",
+    "classification": "Gross payments - Labour hire or other payments NPP",
+    "tax_code": "GST",
+    "display_order": 13,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0562",
+    "account_name": "Hire income",
+    "section": "revenue",
+    "classification": "Hire income",
+    "tax_code": "GST",
+    "display_order": 14,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0565",
+    "account_name": "Distribution from partnerships",
+    "section": "revenue",
+    "classification": "Distributions from partnerships",
+    "tax_code": "",
+    "display_order": 15,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0567",
+    "account_name": "Distribution from trusts",
+    "section": "revenue",
+    "classification": "Distributions from trusts",
+    "tax_code": "",
+    "display_order": 16,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0570",
+    "account_name": "Insurance recoveries",
+    "section": "revenue",
+    "classification": "Other",
+    "tax_code": "GST",
+    "display_order": 17,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0575",
+    "account_name": "Interest received",
+    "section": "revenue",
+    "classification": "Interest",
+    "tax_code": "",
+    "display_order": 18,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0578",
+    "account_name": "Net foreign income",
+    "section": "revenue",
+    "classification": "Net foreign income",
+    "tax_code": "",
+    "display_order": 19,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0579",
+    "account_name": "Attributed foreign income",
+    "section": "revenue",
+    "classification": "Other",
+    "tax_code": "",
+    "display_order": 20,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0580",
+    "account_name": "Foreign exchange profit",
+    "section": "revenue",
+    "classification": "Foreign exchange profit",
+    "tax_code": "",
+    "display_order": 21,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0584",
+    "account_name": "Other income",
+    "section": "revenue",
+    "classification": "Other",
+    "tax_code": "GST",
+    "display_order": 22,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0585",
+    "account_name": "Lease income",
+    "section": "revenue",
+    "classification": "Lease income",
+    "tax_code": "GST",
+    "display_order": 23,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0590",
+    "account_name": "Professional fees",
+    "section": "revenue",
+    "classification": "Other",
+    "tax_code": "GST",
+    "display_order": 24,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0591",
+    "account_name": "Jobkeeper Payments",
+    "section": "revenue",
+    "classification": "Other",
+    "tax_code": "",
+    "display_order": 25,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0597",
+    "account_name": "Profit on sale of receivables",
+    "section": "revenue",
+    "classification": "Profit on sale of receivables",
+    "tax_code": "",
+    "display_order": 26,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0598",
+    "account_name": "Profit on sale of investments",
+    "section": "revenue",
+    "classification": "Profit on sale of investments",
+    "tax_code": "",
+    "display_order": 27,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0599",
+    "account_name": "Profit on sale of intangibles assets",
+    "section": "revenue",
+    "classification": "Profit on sale of intangibles",
+    "tax_code": "",
+    "display_order": 28,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0600",
+    "account_name": "Profit on sale of property, plant, equip",
+    "section": "revenue",
+    "classification": "Profit on sale of property, plant & equipment",
+    "tax_code": "",
+    "display_order": 29,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0601",
+    "account_name": "Capital gains",
+    "section": "revenue",
+    "classification": "Capital gains on sale of asset",
+    "tax_code": "",
+    "display_order": 30,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0602",
+    "account_name": "Other non-operating revenue",
+    "section": "revenue",
+    "classification": "Non-operating revenue",
+    "tax_code": "",
+    "display_order": 31,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0610",
+    "account_name": "Rebates & refunds",
+    "section": "revenue",
+    "classification": "Other",
+    "tax_code": "GST",
+    "display_order": 32,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0620",
+    "account_name": "Rents received",
+    "section": "revenue",
+    "classification": "Rental income",
+    "tax_code": "ITS",
+    "display_order": 33,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0625",
+    "account_name": "Royalties received",
+    "section": "revenue",
+    "classification": "Royalty income",
+    "tax_code": "GST",
+    "display_order": 34,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0630",
+    "account_name": "Sales",
+    "section": "revenue",
+    "classification": "Other",
+    "tax_code": "GST",
+    "display_order": 35,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0640",
+    "account_name": "Subsidies received",
+    "section": "revenue",
+    "classification": "Government subsidies received",
+    "tax_code": "GST",
+    "display_order": 36,
+    "is_active": true
+  },
+  {
+    "entity_type": "sole_trader",
+    "account_code": "0700",
+    "account_name": "Rent received",
+    "section": "revenue",
+    "classification": "Rent received",
+    "tax_code": "ITS",
+    "display_order": 37,
+    "is_active": true
+  }
+]
