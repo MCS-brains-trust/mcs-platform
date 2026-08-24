@@ -533,6 +533,52 @@ def _provider_dashboard_url(provider):
     return "integrations:connections_hub"
 
 
+def _drop_xero_equity_roll_rows(raw_lines):
+    """Split Xero's year-end equity roll out of a period-movement fetch.
+
+    Returns ``(kept, notes)``. ``notes`` are accountant-facing strings naming
+    every dropped row and its amount — the roll is never dropped silently,
+    because an account can also carry a genuine manual journal that this
+    removes along with it.
+
+    Why it has to go: Xero moves the prior-year result onto Retained
+    Earnings on the first day of the new year and resets the P&L accounts to
+    zero at the same instant. The differencing below computes a true movement
+    for balance-sheet accounts but passes P&L accounts through at their YTD
+    period figures, so the P&L half of that roll is invisible and the
+    retained-earnings half arrives with no contra — on its own it is the
+    entire Dr/Cr imbalance of the import. StatementHub already performs this
+    roll in the FY rollover, so importing Xero's copy counts the prior-year
+    result a second time.
+    """
+    from integrations.providers import XERO_EQUITY_ROLL_SYSTEM_ACCOUNTS
+
+    kept, notes = [], []
+    for entry in raw_lines:
+        system_account = (
+            entry.get("provider_system_account") or "").strip().upper()
+        if system_account not in XERO_EQUITY_ROLL_SYSTEM_ACCOUNTS:
+            kept.append(entry)
+            continue
+        movement = (
+            (Decimal(str(entry.get("period_debit") or "0"))
+             - Decimal(str(entry.get("period_credit") or "0")))
+            - (Decimal(str(entry.get("opening_debit") or "0"))
+               - Decimal(str(entry.get("opening_credit") or "0")))
+        )
+        side = "Dr" if movement >= 0 else "Cr"
+        notes.append(
+            f"Excluded {entry.get('account_code') or '(no code)'} "
+            f"{entry.get('account_name') or system_account} "
+            f"({side} ${abs(movement):,.2f}) — this is Xero's year-end roll "
+            f"of the prior-year result, which the financial-year rollover "
+            f"already posts to retained earnings. Importing it as well would "
+            f"count that result twice. Post any genuine movement on this "
+            f"account as an adjusting journal."
+        )
+    return kept, notes
+
+
 def _apply_bs_movement_differencing(entity, raw_lines):
     """Convert a provider's two-call (period + opening) figure set into
     Model A staged lines: ``account_code``, ``account_name``, ``debit``,
@@ -638,6 +684,7 @@ def _do_cloud_import(
     """Execute a cloud import and redirect to the review page."""
     try:
         as_at_date = fy.end_date
+        equity_roll_notes = []
         if import_mode == "period_movement":
             raw_lines = provider.fetch_period_movement(access_token, tenant_id, from_date, to_date)
             # Some providers (currently Xero) return a two-call shape with
@@ -648,6 +695,8 @@ def _do_cloud_import(
             # BS/P&L split here; other providers (e.g. QuickBooks) already
             # return correct opening_balance + movement and pass through.
             if raw_lines and "period_debit" in raw_lines[0]:
+                raw_lines, equity_roll_notes = _drop_xero_equity_roll_rows(
+                    raw_lines)
                 raw_lines = _apply_bs_movement_differencing(entity, raw_lines)
         else:
             raw_lines = provider.fetch_trial_balance(access_token, tenant_id, as_at_date, start_date=fy.start_date)
@@ -673,6 +722,7 @@ def _do_cloud_import(
         # Merge duplicate account codes before mapping
         from core.tb_dedup import merge_duplicate_accounts
         raw_lines, merge_warnings = merge_duplicate_accounts(raw_lines)
+        merge_warnings = equity_roll_notes + merge_warnings
         for w in merge_warnings:
             messages.warning(request, w)
         _sync_source_accounts_to_entity_coa(entity, raw_lines)

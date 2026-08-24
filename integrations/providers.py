@@ -94,6 +94,23 @@ class BaseProvider:
         return bool(self.get_client_id() and self.get_client_secret())
 
 
+# Xero rolls the prior-year result into Retained Earnings on the first day
+# of the new financial year, and rolls every P&L account back to zero at the
+# same instant. Neither side of that roll is a journal the API will show.
+# StatementHub performs the same roll itself in the FY rollover, so a
+# period-movement import that carries Xero's roll as well posts the
+# prior-year result twice -- and because the P&L half of the roll is
+# invisible to the differencing, the retained-earnings movement arrives with
+# no contra and is the whole of the Dr/Cr imbalance. Identified by Xero's own
+# SystemAccount field, not by code or name: 960 is only the default code, and
+# a chart that already has a Retained Earnings account gets the Xero one
+# renamed ("Retained Earnings9").
+XERO_EQUITY_ROLL_SYSTEM_ACCOUNTS = frozenset({
+    "RETAINEDEARNINGS",
+    "CURRENTYEAREARNINGS",
+})
+
+
 @register_provider("xero")
 class XeroProvider(BaseProvider):
     name = "xero"
@@ -186,9 +203,10 @@ class XeroProvider(BaseProvider):
         nothing else -- see _extract_xero_account_id. Everything useful about
         the account, its Code and its Class, lives here.
 
-        Returns {account_id: {"code", "name", "section"}}. Failures return {}
-        rather than raising: a missing catalogue degrades the import to the
-        older name-parsing behaviour instead of failing it outright.
+        Returns {account_id: {"code", "name", "section", "system_account"}}.
+        Failures return {} rather than raising: a missing catalogue degrades
+        the import to the older name-parsing behaviour instead of failing it
+        outright.
         """
         url = "https://api.xero.com/api.xro/2.0/Accounts"
         headers = {
@@ -222,6 +240,10 @@ class XeroProvider(BaseProvider):
                 "name": (acc.get("Name") or "").strip(),
                 "section": self.XERO_CLASS_SECTIONS.get(
                     (acc.get("Class") or "").upper()),
+                # "RETAINEDEARNINGS", "CURRENTYEAREARNINGS", "GST", ... —
+                # empty for ordinary user-created accounts.
+                "system_account": (
+                    acc.get("SystemAccount") or "").strip().upper(),
             }
         return catalogue
 
@@ -329,6 +351,7 @@ class XeroProvider(BaseProvider):
             # None when the catalogue was unavailable; the caller then falls
             # back to classifying by code as it always did.
             "provider_section": entry.get("section"),
+            "provider_system_account": entry.get("system_account") or "",
             "opening_balance": Decimal("0"),
             "debit": debit,
             "credit": credit,
@@ -402,6 +425,7 @@ class XeroProvider(BaseProvider):
             account_code, account_name,
             period_debit,  period_credit,   (0 if not in A)
             opening_debit, opening_credit,  (0 if not in B)
+            provider_account_id, provider_section, provider_system_account
         """
         from datetime import timedelta
 
@@ -429,6 +453,8 @@ class XeroProvider(BaseProvider):
                 # uses, so dropping these here would leave the fix inert.
                 "provider_account_id": line.get("provider_account_id", ""),
                 "provider_section": line.get("provider_section"),
+                "provider_system_account": line.get(
+                    "provider_system_account", ""),
                 "period_debit": Decimal("0"),
                 "period_credit": Decimal("0"),
                 "opening_debit": Decimal("0"),
@@ -440,6 +466,9 @@ class XeroProvider(BaseProvider):
                 entry["account_name"] = line.get("account_name", "")
             if not entry.get("provider_section"):
                 entry["provider_section"] = line.get("provider_section")
+            if not entry.get("provider_system_account"):
+                entry["provider_system_account"] = line.get(
+                    "provider_system_account", "")
 
         for line in opening_lines:
             code = line.get("account_code") or ""
@@ -448,6 +477,8 @@ class XeroProvider(BaseProvider):
                 "account_name": line.get("account_name", ""),
                 "provider_account_id": line.get("provider_account_id", ""),
                 "provider_section": line.get("provider_section"),
+                "provider_system_account": line.get(
+                    "provider_system_account", ""),
                 "period_debit": Decimal("0"),
                 "period_credit": Decimal("0"),
                 "opening_debit": Decimal("0"),
@@ -459,6 +490,9 @@ class XeroProvider(BaseProvider):
                 entry["account_name"] = line.get("account_name", "")
             if not entry.get("provider_section"):
                 entry["provider_section"] = line.get("provider_section")
+            if not entry.get("provider_system_account"):
+                entry["provider_system_account"] = line.get(
+                    "provider_system_account", "")
 
         return list(by_code.values())
 
