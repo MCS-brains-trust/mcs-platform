@@ -2,9 +2,9 @@
 Tests for the tax journal posting with accountant-supplied inputs.
 
 The Calculate & Post Tax Journal button no longer posts blind from the trial
-balance: the modal asks for the taxable profit (prefilled with the TB
-accounting profit) and whether the company is a base rate entity, and the
-view computes the journal from those answers.
+balance: the modal asks for the accounting profit (prefilled from the TB)
+and whether the company is a base rate entity, and the view computes the
+journal from those answers.
 """
 
 from datetime import date
@@ -103,7 +103,7 @@ class TaxJournalInputsTestCase(TestCase):
     # --- Posting from the supplied inputs ---
 
     def test_posts_from_supplied_profit_at_base_rate(self):
-        response = self._post(tax_profit="100000", is_base_rate_entity="true")
+        response = self._post(accounting_profit="100000", is_base_rate_entity="true")
         self.assertEqual(response.status_code, 302)
         journal = self._tax_journals().get()
         self.assertEqual(journal.total_debit, Decimal("25000"))
@@ -113,52 +113,52 @@ class TaxJournalInputsTestCase(TestCase):
         self.assertEqual(lines["3325"].credit, Decimal("25000"))
 
     def test_posts_from_supplied_profit_at_standard_rate(self):
-        self._post(tax_profit="100000", is_base_rate_entity="false")
+        self._post(accounting_profit="100000", is_base_rate_entity="false")
         journal = self._tax_journals().get()
         self.assertEqual(journal.total_debit, Decimal("30000"))
 
     def test_supplied_profit_overrides_the_trial_balance(self):
-        """TB profit is 40,000 but the accountant enters taxable income 55,000."""
-        self._post(tax_profit="55000", is_base_rate_entity="true")
+        """TB profit is 40,000 but the accountant enters an adjusted profit of 55,000."""
+        self._post(accounting_profit="55000", is_base_rate_entity="true")
         journal = self._tax_journals().get()
         self.assertEqual(journal.total_debit, Decimal("13750"))
 
     def test_tax_rounds_up_to_the_next_dollar(self):
-        self._post(tax_profit="55000.50", is_base_rate_entity="true")
+        self._post(accounting_profit="55000.50", is_base_rate_entity="true")
         journal = self._tax_journals().get()
         # 55000.50 * 0.25 = 13750.125 -> 13751
         self.assertEqual(journal.total_debit, Decimal("13751"))
 
     def test_profit_accepts_currency_formatting(self):
-        self._post(tax_profit="$55,000.00", is_base_rate_entity="true")
+        self._post(accounting_profit="$55,000.00", is_base_rate_entity="true")
         journal = self._tax_journals().get()
         self.assertEqual(journal.total_debit, Decimal("13750"))
 
     def test_base_rate_answer_is_saved_on_the_entity(self):
         self.assertIsNone(self.entity.is_base_rate_entity)
-        self._post(tax_profit="100000", is_base_rate_entity="true")
+        self._post(accounting_profit="100000", is_base_rate_entity="true")
         self.entity.refresh_from_db()
         self.assertIs(self.entity.is_base_rate_entity, True)
 
     def test_standard_rate_answer_is_saved_on_the_entity(self):
-        self._post(tax_profit="100000", is_base_rate_entity="false")
+        self._post(accounting_profit="100000", is_base_rate_entity="false")
         self.entity.refresh_from_db()
         self.assertIs(self.entity.is_base_rate_entity, False)
 
     def test_unset_base_rate_flag_no_longer_blocks_posting(self):
         """The modal supplies the answer, so a blank entity flag can't block."""
-        self._post(tax_profit="100000", is_base_rate_entity="true")
+        self._post(accounting_profit="100000", is_base_rate_entity="true")
         self.assertEqual(self._tax_journals().count(), 1)
 
-    def test_journal_description_records_the_taxable_profit(self):
-        self._post(tax_profit="55000", is_base_rate_entity="true")
+    def test_journal_description_records_the_accounting_profit(self):
+        self._post(accounting_profit="55000", is_base_rate_entity="true")
         journal = self._tax_journals().get()
         self.assertIn("Income tax", journal.description)
-        self.assertIn("taxable profit $55,000.00", journal.description)
+        self.assertIn("accounting profit $55,000.00", journal.description)
         self.assertIn("25% (Base Rate Entity)", journal.description)
 
     def test_journal_posts_to_the_trial_balance(self):
-        self._post(tax_profit="100000", is_base_rate_entity="true")
+        self._post(accounting_profit="100000", is_base_rate_entity="true")
         journal = self._tax_journals().get()
         tb = TrialBalanceLine.objects.filter(
             financial_year=self.fy, source_journal=journal,
@@ -172,24 +172,24 @@ class TaxJournalInputsTestCase(TestCase):
         self.assertFalse(self._tax_journals().exists())
 
     def test_invalid_profit_posts_nothing(self):
-        self._post(tax_profit="not-a-number", is_base_rate_entity="true")
+        self._post(accounting_profit="not-a-number", is_base_rate_entity="true")
         self.assertFalse(self._tax_journals().exists())
 
     def test_missing_base_rate_answer_posts_nothing(self):
-        self._post(tax_profit="100000")
+        self._post(accounting_profit="100000")
         self.assertFalse(self._tax_journals().exists())
         # And the entity flag stays untouched
         self.entity.refresh_from_db()
         self.assertIsNone(self.entity.is_base_rate_entity)
 
     def test_zero_or_loss_profit_posts_nothing(self):
-        self._post(tax_profit="0", is_base_rate_entity="true")
-        self._post(tax_profit="-5000", is_base_rate_entity="true")
+        self._post(accounting_profit="0", is_base_rate_entity="true")
+        self._post(accounting_profit="-5000", is_base_rate_entity="true")
         self.assertFalse(self._tax_journals().exists())
 
     def test_duplicate_income_tax_journal_is_refused(self):
-        self._post(tax_profit="100000", is_base_rate_entity="true")
-        self._post(tax_profit="100000", is_base_rate_entity="true")
+        self._post(accounting_profit="100000", is_base_rate_entity="true")
+        self._post(accounting_profit="100000", is_base_rate_entity="true")
         self.assertEqual(self._tax_journals().count(), 1)
 
     def test_unfinalised_year_is_refused(self):
@@ -201,7 +201,7 @@ class TaxJournalInputsTestCase(TestCase):
             status="in_review",
         )
         url = reverse("core:calculate_tax_journal", args=[fy.pk])
-        self.client.post(url, {"tax_profit": "100000", "is_base_rate_entity": "true"}, secure=True)
+        self.client.post(url, {"accounting_profit": "100000", "is_base_rate_entity": "true"}, secure=True)
         self.assertFalse(
             AdjustingJournal.objects.filter(financial_year=fy, journal_type="tax").exists()
         )
@@ -223,7 +223,7 @@ class TaxJournalInputsTestCase(TestCase):
         self.assertContains(response, 'id="taxJournalModal"')
 
     def test_detail_page_hides_the_modal_once_posted(self):
-        self._post(tax_profit="100000", is_base_rate_entity="true")
+        self._post(accounting_profit="100000", is_base_rate_entity="true")
         response = self.client.get(
             reverse("core:financial_year_detail", args=[self.fy.pk]), secure=True,
         )

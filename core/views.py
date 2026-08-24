@@ -2669,7 +2669,7 @@ def financial_year_detail(request, pk):
             context["tax_journal"] = tax_jnl
         else:
             # Prefill for the tax journal modal: the accounting profit on the
-            # TB is the starting point the accountant adjusts to taxable income.
+            # TB, which the accountant confirms or overrides before posting.
             context["tax_journal_default_profit"] = _calculate_net_profit(fy).quantize(Decimal("0.01"))
 
     # --- Management Accounts context ---
@@ -5999,10 +5999,9 @@ def journal_post(request, pk):
 def calculate_tax_journal(request, pk):
     """Calculate and post an income tax journal for company entities.
 
-    The taxable profit and base-rate-entity status come from the form: the
-    accounting profit on the trial balance is only the starting point, so the
-    accountant confirms or overrides it with the actual taxable income before
-    the journal posts.
+    The accounting profit and base-rate-entity status come from the form: the
+    trial balance figure only prefills the modal, so the accountant confirms
+    or overrides the profit before the journal posts.
     """
     import math as _math
 
@@ -6028,11 +6027,11 @@ def calculate_tax_journal(request, pk):
         messages.warning(request, "An income tax journal already exists for this financial year.")
         return redirect("core:financial_year_detail", pk=fy.pk)
 
-    raw_profit = (request.POST.get("tax_profit") or "").replace(",", "").replace("$", "").strip()
+    raw_profit = (request.POST.get("accounting_profit") or "").replace(",", "").replace("$", "").strip()
     try:
-        tax_profit = Decimal(raw_profit)
+        accounting_profit = Decimal(raw_profit)
     except InvalidOperation:
-        messages.error(request, "Please enter a valid taxable profit amount.")
+        messages.error(request, "Please enter a valid accounting profit amount.")
         return redirect("core:financial_year_detail", pk=fy.pk)
 
     bre_raw = request.POST.get("is_base_rate_entity")
@@ -6047,8 +6046,8 @@ def calculate_tax_journal(request, pk):
         entity.is_base_rate_entity = is_base_rate
         entity.save(update_fields=["is_base_rate_entity"])
 
-    if tax_profit <= 0:
-        messages.info(request, "No tax payable — taxable profit is nil or a loss.")
+    if accounting_profit <= 0:
+        messages.info(request, "No tax payable — accounting profit is nil or a loss.")
         return redirect("core:financial_year_detail", pk=fy.pk)
 
     # Determine tax rate
@@ -6059,7 +6058,7 @@ def calculate_tax_journal(request, pk):
         tax_rate = Decimal("0.30")
         rate_label = "30% (Standard Rate)"
 
-    tax_amount = Decimal(_math.ceil(tax_profit * tax_rate))
+    tax_amount = Decimal(_math.ceil(accounting_profit * tax_rate))
 
     # Ensure account codes 4110 and 3325 exist in entity CoA
     tax_accounts = [
@@ -6080,7 +6079,7 @@ def calculate_tax_journal(request, pk):
     # Create and post the journal
     description = (
         f"Income tax on profit for year ended {fy.end_date.strftime('%d %B %Y')}"
-        f" — taxable profit ${tax_profit:,.2f} at {rate_label}"
+        f" — accounting profit ${accounting_profit:,.2f} at {rate_label}"
     )
     with db_transaction.atomic():
         journal = AdjustingJournal.objects.create(
@@ -6113,8 +6112,8 @@ def calculate_tax_journal(request, pk):
         )
         _post_journal_to_tb(journal, fy)
 
-    _log_action(request, "adjustment", f"Posted tax journal {journal.reference_number} — ${tax_amount:,.0f} at {rate_label} on taxable profit ${tax_profit:,.2f}", journal)
-    messages.success(request, f"Tax journal posted — ${tax_amount:,.0f} at {rate_label} on taxable profit ${tax_profit:,.2f}")
+    _log_action(request, "adjustment", f"Posted tax journal {journal.reference_number} — ${tax_amount:,.0f} at {rate_label} on accounting profit ${accounting_profit:,.2f}", journal)
+    messages.success(request, f"Tax journal posted — ${tax_amount:,.0f} at {rate_label} on accounting profit ${accounting_profit:,.2f}")
     return redirect("core:financial_year_detail", pk=fy.pk)
 
 

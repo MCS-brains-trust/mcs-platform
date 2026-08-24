@@ -280,17 +280,17 @@
                 {% csrf_token %}
                 <div class="modal-body">
                     <div class="mb-3">
-                        <label for="taxJournalProfit" class="form-label">Taxable profit</label>
+                        <label for="taxJournalProfit" class="form-label">Accounting profit</label>
                         <div class="input-group">
                             <span class="input-group-text">$</span>
                             <input type="number" step="0.01" class="form-control" id="taxJournalProfit"
-                                   name="tax_profit" required
+                                   name="accounting_profit" required
                                    value="{{ tax_journal_default_profit|stringformat:'0.2f' }}">
                         </div>
                         <div class="form-text">
-                            Prefilled with the accounting profit on the trial balance
-                            (${{ tax_journal_default_profit|floatformat:2 }}) — adjust it to the
-                            taxable income after add-backs and deductions.
+                            Prefilled with the profit on the trial balance
+                            (${{ tax_journal_default_profit|floatformat:2 }}) — confirm or
+                            adjust it before the journal posts.
                         </div>
                     </div>
                     <div class="mb-3">
