@@ -5179,18 +5179,13 @@ def commit_tb_import(request, pk):
             # (preserve section, maps_to, tax_code, and other metadata).
             # If it doesn't exist yet, create a minimal entry so it appears
             # in the CoA tab and the journal account picker.
-            _section_for_code = _hl_section_for_code(account_code)
-            _section_map = {
-                'Income': EntityChartOfAccount.StatementSection.REVENUE,
-                'Cost of Sales': EntityChartOfAccount.StatementSection.COST_OF_SALES,
-                'Expenses': EntityChartOfAccount.StatementSection.EXPENSES,
-                'Current Assets': EntityChartOfAccount.StatementSection.ASSETS,
-                'Non-Current Assets': EntityChartOfAccount.StatementSection.ASSETS,
-                'Current Liabilities': EntityChartOfAccount.StatementSection.LIABILITIES,
-                'Non-Current Liabilities': EntityChartOfAccount.StatementSection.LIABILITIES,
-                'Equity': EntityChartOfAccount.StatementSection.EQUITY,
-            }
-            default_section = _section_map.get(_section_for_code, EntityChartOfAccount.StatementSection.SUSPENSE)
+            # One implementation, in core/coa_sync.py. The copy that lived
+            # here keyed "Non-Current Assets" and "Non-Current Liabilities"
+            # with a hyphen, but _HL_RANGE_SECTION emits them without one, so
+            # neither ever matched and every non-current account this created
+            # fell through to SUSPENSE.
+            from core.coa_sync import section_for_code
+            default_section = section_for_code(account_code)
             existing_coa = EntityChartOfAccount.objects.filter(
                 entity=entity, account_code=account_code
             ).first()

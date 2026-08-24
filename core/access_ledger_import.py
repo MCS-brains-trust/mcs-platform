@@ -1450,6 +1450,15 @@ def import_access_ledger_zip(zip_file, client=None, entity=None, replace_existin
 
         if tb_objects:
             TrialBalanceLine.objects.bulk_create(tb_objects)
+            # bulk_create does not send post_save, so the receiver that
+            # normally guarantees a chart row (core/signals.py) never fires
+            # for these. Ask for the sync explicitly — otherwise every code
+            # this import introduces is invisible to the allocation picker,
+            # which is how Berwick ended up with 16 unallocatable codes.
+            from core.coa_sync import ensure_chart_account
+            for obj in tb_objects:
+                ensure_chart_account(fy.entity, obj.account_code,
+                                     obj.account_name, obj.mapped_line_item)
             result["total_tb_lines"] += len(tb_objects)
             logger.info(f"  Year {year}: {len(tb_objects)} TB lines imported ({mapped_in_year} mapped via ChartOfAccount)")
 
