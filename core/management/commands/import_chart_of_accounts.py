@@ -30,6 +30,40 @@ SECTION_MAP = {
 }
 
 
+def canonical_template_code(entity_type, account_code, account_name):
+    """The code this template row belongs under.
+
+    data/ChartofAccounts*.xlsx carries only the four-digit HandiLedger form,
+    so a re-import kept recreating "0620 Rents received" beside the "620
+    Rents received" StatementHub actually uses -- the same account offered
+    twice in every picker. A padded code therefore collapses onto an
+    identically-named unpadded twin.
+
+    Deliberately a de-duplication and NOT a renumbering. A padded code with
+    no such twin is a distinct account -- the trust template's
+    0200 Sales - Livestock, 0401 Proceeds - Hay -- and live trial balances
+    already post to padded revenue codes, so those keep their code. So does
+    0000, which strips to nothing. A twin under a different name is left
+    alone too: same number, different account, and merging would quietly
+    overwrite one with the other.
+    """
+    code = str(account_code or "").strip()
+    base = code.split(".", 1)[0]
+    if not (base.startswith("0") and base.isdigit()):
+        return code
+    stripped = base.lstrip("0")
+    if not stripped:
+        return code
+    candidate = stripped + code[len(base):]
+    twin = ChartOfAccount.objects.filter(
+        entity_type=entity_type, account_code=candidate,
+    ).first()
+    if twin and (twin.account_name or "").strip().lower() == \
+            str(account_name or "").strip().lower():
+        return candidate
+    return code
+
+
 def parse_excel(filepath, entity_type, has_tax_col=True):
     """Parse a chart of accounts Excel file and return a list of account dicts."""
     import openpyxl
@@ -172,7 +206,8 @@ class Command(BaseCommand):
                 section_key = SECTION_MAP.get(acct["section"], "expenses")
                 _, was_created = ChartOfAccount.objects.update_or_create(
                     entity_type=entity_type,
-                    account_code=acct["account_code"],
+                    account_code=canonical_template_code(
+                        entity_type, acct["account_code"], acct["account_name"]),
                     defaults={
                         "account_name": acct["account_name"],
                         "classification": acct.get("classification", ""),
@@ -213,7 +248,8 @@ class Command(BaseCommand):
                 section_key = SECTION_MAP.get(acct["section"], "expenses")
                 _, was_created = ChartOfAccount.objects.update_or_create(
                     entity_type=entity_type,
-                    account_code=acct["account_code"],
+                    account_code=canonical_template_code(
+                        entity_type, acct["account_code"], acct["account_name"]),
                     defaults={
                         "account_name": acct["account_name"],
                         "classification": acct.get("classification", ""),
