@@ -283,9 +283,16 @@ def run_preflight_checks(financial_year):
     })
 
     # Check 3: No unmapped accounts
+    # Adjustment rows are counted too. They used to be excluded, which made
+    # this blind to exactly the balances it exists to catch: DJLH Properties
+    # FY2025 reached the finalisation gate with two unmapped journal lines
+    # worth 880,548.32, and this check reported "All accounts are mapped".
+    # An unmapped line is dropped from the statements whichever way it was
+    # created -- _calculate_net_profit and fs_template_service both key on
+    # mapped_line_item -- so how the row was made cannot decide whether the
+    # missing mapping is worth reporting.
     unmapped = fy.trial_balance_lines.filter(
         mapped_line_item__isnull=True,
-        is_adjustment=False,
     ).count()
     checks.append({
         "name": "All accounts mapped",
