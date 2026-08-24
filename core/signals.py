@@ -266,6 +266,32 @@ def on_tb_line_saved(sender, instance, created, **kwargs):
         trigger_risk_recalc(fy, "tb_line_edit" if not created else "tb_line_created")
 
 
+@receiver(post_save, sender="core.TrialBalanceLine")
+def ensure_chart_account_for_tb_line(sender, instance, created, **kwargs):
+    """Keep the entity chart in step with the trial balance.
+
+    Without this a code can reach the TB and never appear in the allocation
+    picker — see core/coa_sync.py. Deliberately non-fatal: a chart-row
+    problem must never roll back a posting to the trial balance, so it is
+    logged loudly and the write stands.
+    """
+    if not created:
+        return
+    try:
+        from core.coa_sync import ensure_chart_account
+        ensure_chart_account(
+            instance.financial_year.entity,
+            instance.account_code,
+            instance.account_name,
+            instance.mapped_line_item,
+        )
+    except Exception:
+        logger.exception(
+            "Could not ensure a chart account for TB line %s (code %s)",
+            instance.pk, instance.account_code,
+        )
+
+
 @receiver(post_delete, sender="core.TrialBalanceLine")
 def on_tb_line_deleted(sender, instance, **kwargs):
     """Trigger risk recalc when a trial balance line is deleted."""
