@@ -38,8 +38,14 @@ var ImportWizard = (function() {
         bindAutoMatchAll();
         bindCountUpdates();
         bindFormSubmit();
-        // Run unmapped check first — it calls checkBalance() internally
-        // when all lines are mapped, so we avoid a redundant double-run.
+        // Render the totals before the mapping guard runs. checkUnmapped()
+        // only reaches checkBalance() on its all-mapped branch, so any
+        // import arriving with unmapped rows left the footer showing the
+        // template's literal 0.00 while the staged figures were real —
+        // and an out-of-balance import looked like an empty one.
+        // checkUnmapped() still runs last, so the mapping guard keeps the
+        // final say over the commit button.
+        checkBalance();
         checkUnmapped();
     }
 
