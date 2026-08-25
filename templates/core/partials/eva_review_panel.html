@@ -263,6 +263,15 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
     }
 
     // ── Show Findings ──
+    // A finding is unresolved whether it is newly raised or has come back.
+    // Six separate places tested for 'open' alone, which left a reopened
+    // finding with no resolution form, a permanently disabled button, no
+    // clarification question, and uncounted in the open tally — the "0 open"
+    // shown beside two visible findings came from here.
+    function isUnresolved(f) {
+        return f.status === 'open' || f.status === 'reopened';
+    }
+
     function showFindings(data) {
         var progressDiv = document.getElementById('eva-review-progress');
         if (progressDiv) progressDiv.style.display = 'none';
@@ -306,7 +315,11 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
                 resolvedInfo = '<div class="mt-2 p-2 bg-light rounded"><small class="text-muted"><i class="bi bi-check-circle text-success"></i> Addressed by ' + f.resolved_by + ' on ' + new Date(f.resolved_at).toLocaleDateString() + '</small><p class="mb-0 mt-1 small">' + f.resolution_note + '</p></div>';
             }
 
-            var resolutionForm = f.status === 'open'
+            // A reopened finding is exactly the one an accountant needs to
+            // resolve — it came back. Rendering the form only for 'open' left
+            // it permanently unresolvable, so the Eva gate could never clear.
+            // The resolve endpoint itself has never gated on status.
+            var resolutionForm = isUnresolved(f)
                 ? '<div class="mt-3 border-top pt-3"><label class="form-label fw-semibold small">Resolution Note <span class="text-danger">*</span></label><textarea class="form-control form-control-sm" id="resolution-' + f.id + '" rows="2" placeholder="Document how this finding was addressed..."></textarea><button type="button" class="btn btn-sm btn-success mt-2" onclick="resolveEvaFinding(\'' + f.id + '\')" id="resolve-btn-' + f.id + '" disabled><i class="bi bi-check-circle me-1"></i> Mark as Addressed</button></div>'
                 : '';
 
@@ -347,7 +360,7 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
 
             // Action buttons — contextual actions based on check type
             var actionButtonsHtml = '';
-            if (f.check_name === 'div7a' && f.status === 'open') {
+            if (f.check_name === 'div7a' && isUnresolved(f)) {
                 actionButtonsHtml = '<div class="mt-3 mb-2 p-2 border rounded bg-white">'
                     + '<div class="d-flex align-items-center gap-2">'
                     + '<i class="bi bi-file-earmark-text text-primary" style="font-size: 1.2rem;"></i>'
@@ -360,7 +373,7 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
                     + '</div></div>';
             }
 
-            if (f.check_name === 'related_party' && f.status === 'open') {
+            if (f.check_name === 'related_party' && isUnresolved(f)) {
                 actionButtonsHtml += '<div class="mt-3 mb-2 p-2 border rounded bg-white">'
                     + '<div class="d-flex align-items-center gap-2">'
                     + '<i class="bi bi-journal-text text-info" style="font-size: 1.2rem;"></i>'
@@ -376,7 +389,7 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
             // Clarification panel — shown for open findings that have a clarification question
             var clarificationHtml = '';
             var CLARIFIABLE_CHECKS = ['div7a', 'related_party', 'super_guarantee', 'trust_distribution'];
-            if (f.status === 'open' && CLARIFIABLE_CHECKS.indexOf(f.check_name) !== -1) {
+            if (isUnresolved(f) && CLARIFIABLE_CHECKS.indexOf(f.check_name) !== -1) {
                 // Show existing clarifications if any
                 var existingClarHtml = '';
                 if (f.clarifications && f.clarifications.length > 0) {
@@ -417,7 +430,7 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
             list.appendChild(card);
 
             // Enable resolve button when text is entered
-            if (f.status === 'open') {
+            if (isUnresolved(f)) {
                 var textarea = document.getElementById('resolution-' + f.id);
                 var resolveBtn = document.getElementById('resolve-btn-' + f.id);
                 textarea.addEventListener('input', function() {
@@ -427,7 +440,7 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
 
             // Load clarification question for clarifiable open findings
             var CLARIFIABLE_CHECKS = ['div7a', 'related_party', 'super_guarantee', 'trust_distribution'];
-            if (f.status === 'open' && CLARIFIABLE_CHECKS.indexOf(f.check_name) !== -1) {
+            if (isUnresolved(f) && CLARIFIABLE_CHECKS.indexOf(f.check_name) !== -1) {
                 loadClarificationQuestion(f.id);
             }
         });
@@ -814,7 +827,7 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
     .then(function(data) {
         if (data.status === 'findings_raised' && data.findings && data.findings.length > 0) {
             // Transform flat API response into the shape showFindings expects
-            var openCount = data.findings.filter(function(f) { return f.status === 'open'; }).length;
+            var openCount = data.findings.filter(function(f) { return f.status === 'open' || f.status === 'reopened'; }).length;
             var transformed = {
                 review: {
                     status: data.status,
