@@ -1750,6 +1750,7 @@ class AdjustingJournal(models.Model):
         DEPRECIATION = "depreciation", "Depreciation Entry"
         DEPRECIATION_REVERSAL = "dep_reversal", "Depreciation Reversal"
         TAX = "tax", "Tax Adjustment"
+        TAX_REVERSAL = "tax_reversal", "Tax Reversal"
         TAX_PROVISION = "tax_provision", "Tax Provision"
 
     class JournalStatus(models.TextChoices):

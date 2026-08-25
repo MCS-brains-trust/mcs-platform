@@ -2657,15 +2657,16 @@ def financial_year_detail(request, pk):
 
     # --- Tax Journal context (companies only) ---
     if fy.entity.entity_type == "company" and fy.status == FinancialYear.Status.FINALISED:
-        has_tax_journal = AdjustingJournal.objects.filter(
-            financial_year=fy, description__icontains="Income tax",
-        ).exists()
+        has_tax_journal = _posted_tax_journals(fy).exists()
         context["show_tax_journal_btn"] = not has_tax_journal
         context["has_tax_journal"] = has_tax_journal
+        # Prefills for the tax dialog. The accounting profit is a starting
+        # point for the taxable profit, never the tax base itself, and the
+        # entity flag seeds the base-rate question rather than answering it.
+        context["tax_suggested_profit"] = _calculate_net_profit(fy)
+        context["tax_is_base_rate_entity"] = fy.entity.is_base_rate_entity
         if has_tax_journal:
-            tax_jnl = AdjustingJournal.objects.filter(
-                financial_year=fy, description__icontains="Income tax",
-            ).first()
+            tax_jnl = _posted_tax_journals(fy).order_by("created_at").first()
             context["tax_journal"] = tax_jnl
 
     # --- Management Accounts context ---
@@ -5990,6 +5991,52 @@ def journal_post(request, pk):
     return redirect("core:financial_year_detail", pk=fy.pk)
 
 
+TAX_RATE_BASE_RATE = Decimal("0.25")
+TAX_RATE_STANDARD = Decimal("0.30")
+
+
+class TaxInputError(ValueError):
+    """A taxable profit or base-rate answer that cannot be posted from."""
+
+
+def _tax_inputs_from_request(request):
+    """The figures the accountant supplied, never the ones we could guess.
+
+    Returns ``(taxable_profit, tax_rate, rate_label)``.
+
+    Both tax routes used to derive the base from the trial balance and the
+    rate from the entity's base-rate flag, then post in one click. Accounting
+    profit is not taxable income — add-backs, non-deductibles and prior-year
+    losses all sit between them — so the amount posted was wrong except by
+    coincidence.
+
+    The base-rate answer is prefilled from the entity's setup in the form, but
+    the submitted value governs this journal and the entity flag is
+    deliberately left untouched: posting a journal should not quietly edit
+    entity data. The journal records the rate actually used instead.
+    """
+    raw = (request.POST.get("taxable_profit") or "").strip()
+    raw = raw.replace(",", "").replace("$", "").strip()
+    if not raw:
+        raise TaxInputError(
+            "Enter the taxable profit before posting the tax journal.")
+    try:
+        taxable_profit = Decimal(raw)
+    except (InvalidOperation, ArithmeticError):
+        raise TaxInputError(f"'{raw}' is not a valid taxable profit figure.")
+    if taxable_profit <= 0:
+        raise TaxInputError(
+            "No tax payable — the taxable profit must be greater than nil.")
+
+    answer = (request.POST.get("is_base_rate_entity") or "").strip().lower()
+    if answer in ("true", "1", "yes"):
+        return taxable_profit, TAX_RATE_BASE_RATE, "25% (Base Rate Entity)"
+    if answer in ("false", "0", "no"):
+        return taxable_profit, TAX_RATE_STANDARD, "30% (Standard Rate)"
+    raise TaxInputError(
+        "Answer whether this is a base rate entity before posting.")
+
+
 @login_required
 @require_POST
 def calculate_tax_journal(request, pk):
@@ -6010,46 +6057,19 @@ def calculate_tax_journal(request, pk):
         messages.error(request, "Financial year must be finalised before calculating tax.")
         return redirect("core:financial_year_detail", pk=fy.pk)
 
-    if entity.is_base_rate_entity is None:
-        messages.error(request, "Please set the Base Rate Entity flag on the entity before calculating tax.")
-        return redirect("core:financial_year_detail", pk=fy.pk)
-
     # Check for existing tax journal
-    existing = AdjustingJournal.objects.filter(
-        financial_year=fy, description__icontains="Income tax",
-    ).exists()
+    existing = _posted_tax_journals(fy).exists()
     if existing:
         messages.warning(request, "An income tax journal already exists for this financial year.")
         return redirect("core:financial_year_detail", pk=fy.pk)
 
-    # Calculate net profit from TB — aggregate all lines by P&L sections
-    # statement_section values "Revenue" and "Income" both map to P&L
-    pl_sections = {"Income", "Revenue", "Cost of Sales", "Expenses"}
-    all_tb = TrialBalanceLine.objects.filter(
-        financial_year=fy,
-    ).select_related("mapped_line_item")
-    pl_dr = Decimal("0")
-    pl_cr = Decimal("0")
-    for line in all_tb:
-        mapping = line.mapped_line_item
-        if mapping and mapping.statement_section in pl_sections:
-            pl_dr += line.debit or Decimal("0")
-            pl_cr += line.credit or Decimal("0")
-    net_profit = pl_cr - pl_dr
-
-    if net_profit <= 0:
-        messages.info(request, "No tax payable — entity is in a loss position.")
+    try:
+        taxable_profit, tax_rate, rate_label = _tax_inputs_from_request(request)
+    except TaxInputError as exc:
+        messages.error(request, str(exc))
         return redirect("core:financial_year_detail", pk=fy.pk)
 
-    # Determine tax rate
-    if entity.is_base_rate_entity:
-        tax_rate = Decimal("0.25")
-        rate_label = "25% (Base Rate Entity)"
-    else:
-        tax_rate = Decimal("0.30")
-        rate_label = "30% (Standard Rate)"
-
-    tax_amount = Decimal(_math.ceil(net_profit * tax_rate))
+    tax_amount = Decimal(_math.ceil(taxable_profit * tax_rate))
 
     # Ensure account codes 4110 and 3325 exist in entity CoA
     tax_accounts = [
@@ -6068,7 +6088,14 @@ def calculate_tax_journal(request, pk):
         )
 
     # Create and post the journal
-    description = f"Income tax on profit for year ended {fy.end_date.strftime('%d %B %Y')}"
+    # The taxable profit and the rate are both answers the accountant gave,
+    # so they belong on the journal. The badge on the year page used to claim
+    # a rate read from the entity flag, which can now differ from the one
+    # actually applied.
+    description = (
+        f"Income tax on ${taxable_profit:,.0f} taxable profit at {rate_label} "
+        f"for year ended {fy.end_date.strftime('%d %B %Y')}"
+    )
     with db_transaction.atomic():
         journal = AdjustingJournal.objects.create(
             financial_year=fy,
@@ -6102,6 +6129,118 @@ def calculate_tax_journal(request, pk):
 
     _log_action(request, "adjustment", f"Posted tax journal {journal.reference_number} — ${tax_amount:,.0f} at {rate_label}", journal)
     messages.success(request, f"Tax journal posted — ${tax_amount:,.0f} at {rate_label}")
+    return redirect("core:financial_year_detail", pk=fy.pk)
+
+
+def _posted_tax_journals(fy):
+    """Income tax journals that are currently posted and not reversals.
+
+    Three call sites used to ask this question with
+    ``description__icontains="Income tax"`` and no status filter. That match
+    is wrong twice over: a reversal journal's own description contains the
+    phrase, so reversing left the year looking permanently taxed, and a voided
+    journal still counted as posted.
+
+    The lookup is structural — journal type plus posted status — with the old
+    description match kept as an OR branch so tax journals written before
+    ``journal_type`` was set are still recognised. Reversals are excluded by
+    type, which is why they need a type of their own.
+    """
+    return AdjustingJournal.objects.filter(
+        Q(journal_type=AdjustingJournal.JournalType.TAX)
+        | Q(description__icontains="Income tax"),
+        financial_year=fy,
+        status=AdjustingJournal.JournalStatus.POSTED,
+    ).exclude(journal_type=AdjustingJournal.JournalType.TAX_REVERSAL)
+
+
+@login_required
+@require_POST
+def reverse_tax_journal(request, pk):
+    """Reverse a posted income tax journal.
+
+    The tax journal only ever exists in a finalised year — ``calculate_tax_journal``
+    refuses to post before finalisation, and ``journal_delete`` refuses to touch
+    journals in a finalised year. That left it as the one journal that could be
+    created but never undone without reopening a signed-off set of financials.
+
+    In a locked year an equal-and-opposite journal backs the amounts out and
+    both entries stay on file, which is what an audit trail wants. In an open
+    year there is nothing to preserve, so the trial balance lines are simply
+    removed. Either way the original is marked voided, which frees the post
+    button to run again with corrected figures.
+
+    Mirrors the un-post flow for trust distributions in views_trust.py.
+    """
+    fy = get_financial_year_for_user(request, pk)
+    if not request.user.can_do_accounting:
+        messages.error(request, "You do not have permission.")
+        return redirect("core:financial_year_detail", pk=fy.pk)
+
+    if fy.entity.entity_type != "company":
+        messages.error(request, "Tax journal reversal is only available for company entities.")
+        return redirect("core:financial_year_detail", pk=fy.pk)
+
+    journal = _posted_tax_journals(fy).order_by("created_at").first()
+    if journal is None:
+        messages.warning(request, "There is no posted tax journal to reverse.")
+        return redirect("core:financial_year_detail", pk=fy.pk)
+
+    orig_ref = journal.reference_number
+
+    with db_transaction.atomic():
+        if fy.is_locked:
+            reversal = AdjustingJournal.objects.create(
+                financial_year=fy,
+                journal_type=AdjustingJournal.JournalType.TAX_REVERSAL,
+                status=AdjustingJournal.JournalStatus.POSTED,
+                journal_date=fy.end_date,
+                description=f"Reversal of {orig_ref} — income tax journal",
+                narration=(
+                    f"System-generated reversal of tax journal {orig_ref} in a "
+                    f"finalised/locked year."
+                ),
+                created_by=request.user,
+                posted_by=request.user,
+                posted_at=timezone.now(),
+                total_debit=journal.total_credit,
+                total_credit=journal.total_debit,
+            )
+            line_num = 1
+            for src in journal.lines.order_by("line_number", "id"):
+                JournalLine.objects.create(
+                    journal=reversal,
+                    line_number=line_num,
+                    account_code=src.account_code,
+                    account_name=src.account_name,
+                    description=f"Reversal: {src.description}",
+                    debit=src.credit,
+                    credit=src.debit,
+                )
+                line_num += 1
+            _post_journal_to_tb(reversal, fy)
+            ref = reversal.reference_number
+            message = (
+                f"Tax journal {orig_ref} reversed by system entry {ref} "
+                f"(year is finalised)."
+            )
+        else:
+            _reverse_journal_tb_lines(journal)
+            _delete_orphaned_tb_lines_for_journal(journal)
+            ref = orig_ref
+            message = f"Tax journal {orig_ref} reversed and its trial balance lines removed."
+
+        journal.status = AdjustingJournal.JournalStatus.VOIDED
+        journal.save(update_fields=["status"])
+        _verify_tb_balance(fy)
+
+    _log_action(request, "adjustment", f"Reversed tax journal {orig_ref}", journal)
+    try:
+        from core.signals import trigger_risk_recalc
+        trigger_risk_recalc(fy, "tax_journal_reversed")
+    except Exception:
+        logger.exception("Risk recalc failed after reversing tax journal %s", orig_ref)
+    messages.success(request, message)
     return redirect("core:financial_year_detail", pk=fy.pk)
 
 
@@ -6214,13 +6353,6 @@ def tax_provision_status(request, pk):
             "reason": "Financial year is locked.",
         })
 
-    # Base rate entity flag must be set
-    if entity.is_base_rate_entity is None:
-        return JsonResponse({
-            "eligible": False,
-            "reason": "Please set the Base Rate Entity flag on the entity before calculating tax provision.",
-        })
-
     # Check for existing tax provision journal
     existing_provision_journal = AdjustingJournal.objects.filter(
         financial_year=fy, journal_type="tax_provision",
@@ -6246,12 +6378,13 @@ def tax_provision_status(request, pk):
             "net_profit": str(net_profit),
         })
 
-    # Determine tax rate
+    # The indicative rate for the dialog only. What is actually posted uses
+    # the answer the accountant gives, which the form prefills from this flag.
     if entity.is_base_rate_entity:
-        tax_rate = Decimal("0.25")
+        tax_rate = TAX_RATE_BASE_RATE
         rate_label = "25% (Base Rate Entity)"
     else:
-        tax_rate = Decimal("0.30")
+        tax_rate = TAX_RATE_STANDARD
         rate_label = "30% (Standard Rate)"
 
     calculated_tax = Decimal(_math.ceil(net_profit * tax_rate))
@@ -6264,6 +6397,11 @@ def tax_provision_status(request, pk):
 
     return JsonResponse({
         "eligible": True,
+        # Prefills for the dialog. The accounting profit is a starting point
+        # for the taxable profit, never the tax base itself, and the flag
+        # seeds the base-rate question rather than answering it.
+        "suggested_taxable_profit": str(net_profit),
+        "is_base_rate_entity": entity.is_base_rate_entity,
         "net_profit": str(net_profit),
         "tax_rate": str(tax_rate),
         "rate_label": rate_label,
@@ -6293,9 +6431,6 @@ def auto_tax_provision(request, pk):
     if fy.is_locked:
         return JsonResponse({"error": "Financial year is locked."}, status=400)
 
-    if entity.is_base_rate_entity is None:
-        return JsonResponse({"error": "Please set the Base Rate Entity flag on the entity."}, status=400)
-
     # Check for existing tax provision journal
     if AdjustingJournal.objects.filter(financial_year=fy, journal_type="tax_provision").exists():
         return JsonResponse({"error": "A tax provision journal already exists."}, status=400)
@@ -6303,20 +6438,12 @@ def auto_tax_provision(request, pk):
     # Resolve accounts
     expense_code, expense_name, provision_code, provision_name = _resolve_tax_accounts(entity)
 
-    # Calculate net profit
-    net_profit = _calculate_net_profit(fy)
-    if net_profit <= 0:
-        return JsonResponse({"error": "No tax provision required — entity is in a loss position."}, status=400)
+    try:
+        taxable_profit, tax_rate, rate_label = _tax_inputs_from_request(request)
+    except TaxInputError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
 
-    # Tax rate
-    if entity.is_base_rate_entity:
-        tax_rate = Decimal("0.25")
-        rate_label = "25% (Base Rate Entity)"
-    else:
-        tax_rate = Decimal("0.30")
-        rate_label = "30% (Standard Rate)"
-
-    calculated_tax = Decimal(_math.ceil(net_profit * tax_rate))
+    calculated_tax = Decimal(_math.ceil(taxable_profit * tax_rate))
     existing_provision = _calculate_existing_provision(fy, provision_code)
     adjustment_required = calculated_tax - existing_provision
 
