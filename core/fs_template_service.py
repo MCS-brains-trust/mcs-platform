@@ -144,6 +144,30 @@ def _get_tb_sections(fy):
         for code, rows in income_rows_by_code.items()
     }
 
+    # Pass 1b: choose the one row per account code that supplies the prior-year
+    # figure. The comparative used to be read only from rollover rows, so a
+    # trial balance import — which writes source="tb_import" and carries the
+    # comparatives on those rows — lost every one of them. DJLH Properties
+    # FY2025 issued statements showing 2024 expenses of 20,474 against
+    # HandiLedger's 119,880 for that reason.
+    #
+    # The rollover check was guarding a real hazard: the section aggregation
+    # sums py_amount across every row for an account, and account 1670 carries
+    # both a tb_import row (2025) and a rollover row (2024). Reading the prior
+    # figure from both reports it twice. So exactly one row contributes, the
+    # rollover row where one exists, since that is the settled year-end
+    # position rather than a restatement.
+    prior_row_by_code = {}
+    for line in lines:
+        if (line.prior_debit or Decimal("0")) - (line.prior_credit or Decimal("0")) == Decimal("0"):
+            continue
+        held = prior_row_by_code.get(line.account_code)
+        if held is None:
+            prior_row_by_code[line.account_code] = line
+        elif (getattr(line, "source", "") == "rollover"
+              and getattr(held, "source", "") != "rollover"):
+            prior_row_by_code[line.account_code] = line
+
     for line in lines:
         try:
             code_num = int(line.account_code.split(".")[0])
@@ -158,7 +182,8 @@ def _get_tb_sections(fy):
         # CY = opening + movement = full year-end closing for every account type.
         # This mirrors the roll-forward reader at core/views.py:3301.
         cy = line.closing_balance
-        if getattr(line, "source", "") == "rollover":
+        _prior_row = prior_row_by_code.get(line.account_code)
+        if _prior_row is not None and _prior_row.pk == line.pk:
             py = line.prior_debit - line.prior_credit
         else:
             py = Decimal("0")
@@ -2711,12 +2736,19 @@ def render_template(template_db_record, context):
     # Inject InlineImage logo if context carries a builder reference
     # (new-style callers via DocumentContextBuilder)
     builder = context.pop("__builder__", None)
+    logo_temp_files = []
     if builder is not None:
         builder.tpl = tpl
         # Re-resolve logo now that tpl is available
         from core.models import FirmSettings
         firm = FirmSettings.get()
         context["practice_logo"] = builder._resolve_logo_for_docx(firm)
+    elif not context.get("practice_logo"):
+        # FS templates carry a {{ practice_logo }} merge field rather than an
+        # embedded picture, so the logo currently in Firm Settings is resolved
+        # here on every render.
+        from core.document_context_builder import resolve_firm_logo_inline_image
+        context["practice_logo"], logo_temp_files = resolve_firm_logo_inline_image(tpl)
 
     # Use the StatementHub Jinja2 environment with all custom filters
     from core.document_context_builder import get_jinja_env
@@ -2731,6 +2763,11 @@ def render_template(template_db_record, context):
     # Cleanup temp logo files if builder was used
     if builder is not None:
         builder.cleanup()
+    for temp_file in logo_temp_files:
+        try:
+            os.remove(temp_file)
+        except OSError:
+            pass
 
     return buffer
 
