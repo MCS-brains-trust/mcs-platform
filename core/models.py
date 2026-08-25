@@ -4194,6 +4194,15 @@ class EvaFindingSuppression(models.Model):
             "compliance run."
         ),
     )
+    amount_at_suppression = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True,
+        help_text=(
+            "Balance behind the finding when it was accepted. The suppression "
+            "lapses once the balance moves materially, so accepting an "
+            "exposure at one figure does not silence it at another. Null on "
+            "rows created before this was recorded — those keep suppressing."
+        ),
+    )
 
     class Meta:
         unique_together = ('financial_year', 'fingerprint')

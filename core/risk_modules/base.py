@@ -174,6 +174,32 @@ class BaseDetectionModule:
             )
             finding_key = check_name  # last-resort guard
 
+        # Modules run at step 1 of a review, ahead of the guarded LLM loop, so
+        # without these checks they re-raise work the accountant has already
+        # dealt with — and writing status unconditionally reset it to open on
+        # every run. A Division 7A exposure covered by a s.109N agreement, or a
+        # related party balance documented at arm's length off-platform, is
+        # dealt with; re-raising it sends the accountant round in circles.
+        from core.eva_engine import _is_finding_addressed, _is_finding_suppressed
+
+        if _is_finding_suppressed(self.fy, finding_key):
+            logger.info(
+                "Suppressed finding for %s [%s] (key=%s) — not writing card",
+                self.entity.entity_name, check_name, finding_key,
+            )
+            return None
+
+        status = "open" if self.overall_severity != "CLEAR" else "closed"
+        if _is_finding_addressed(self.fy, finding_key):
+            # Keep writing the card so the current position stays visible on
+            # the review, but carry the accountant's decision forward instead
+            # of reopening it.
+            status = "addressed"
+            logger.info(
+                "Addressed finding for %s [%s] (key=%s) — card kept, not reopened",
+                self.entity.entity_name, check_name, finding_key,
+            )
+
         # Upsert finding by eva_review + check_name
         finding, created = EvaFinding.objects.update_or_create(
             eva_review=review,
@@ -186,7 +212,7 @@ class BaseDetectionModule:
                 "recommendation": card.get("recommended_action", "") or "",
                 "legislation_reference": (card.get("legislation_ref", "") or "")[:255],
                 "confidence": "high",
-                "status": "open" if self.overall_severity != "CLEAR" else "closed",
+                "status": status,
                 "finding_key": finding_key,
             },
         )

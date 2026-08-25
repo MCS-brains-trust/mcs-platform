@@ -760,11 +760,19 @@ Displayed in the workspace toolbar area when an Eva review exists or can be trig
         })
         .then(function(r) { return r.json(); })
         .then(function(data) {
-            if (data.status === 'accepted') {
+            // The endpoint answers "running" both when it has just started a
+            // review and when one was already in flight. It never answers
+            // "accepted", so checking for that reported every successful
+            // re-run as a failure — the review started each time and the
+            // alert sent people back to click again.
+            if (data.status === 'running' || data.status === 'accepted') {
                 location.reload();
             } else {
                 alert(data.error || 'Failed to re-run review');
             }
+        })
+        .catch(function() {
+            alert('Connection error. Please try again.');
         });
     };
 
