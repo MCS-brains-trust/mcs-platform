@@ -2668,6 +2668,10 @@ def financial_year_detail(request, pk):
         if has_tax_journal:
             tax_jnl = _posted_tax_journals(fy).order_by("created_at").first()
             context["tax_journal"] = tax_jnl
+        else:
+            # Prefill for the tax journal modal: the accounting profit on the
+            # TB, which the accountant confirms or overrides before posting.
+            context["tax_journal_default_profit"] = _calculate_net_profit(fy).quantize(Decimal("0.01"))
 
     # --- Management Accounts context ---
     from .mgmt_accounts import detect_tb_source
@@ -6040,7 +6044,12 @@ def _tax_inputs_from_request(request):
 @login_required
 @require_POST
 def calculate_tax_journal(request, pk):
-    """Calculate and post an income tax journal for company entities."""
+    """Calculate and post an income tax journal for company entities.
+
+    The accounting profit and base-rate-entity status come from the form: the
+    trial balance figure only prefills the modal, so the accountant confirms
+    or overrides the profit before the journal posts.
+    """
     import math as _math
 
     fy = get_financial_year_for_user(request, pk)
@@ -6063,13 +6072,38 @@ def calculate_tax_journal(request, pk):
         messages.warning(request, "An income tax journal already exists for this financial year.")
         return redirect("core:financial_year_detail", pk=fy.pk)
 
+    raw_profit = (request.POST.get("accounting_profit") or "").replace(",", "").replace("$", "").strip()
     try:
-        taxable_profit, tax_rate, rate_label = _tax_inputs_from_request(request)
-    except TaxInputError as exc:
-        messages.error(request, str(exc))
+        accounting_profit = Decimal(raw_profit)
+    except InvalidOperation:
+        messages.error(request, "Please enter a valid accounting profit amount.")
         return redirect("core:financial_year_detail", pk=fy.pk)
 
-    tax_amount = Decimal(_math.ceil(taxable_profit * tax_rate))
+    bre_raw = request.POST.get("is_base_rate_entity")
+    if bre_raw not in ("true", "false"):
+        messages.error(request, "Please choose whether the entity is a base rate entity.")
+        return redirect("core:financial_year_detail", pk=fy.pk)
+    is_base_rate = bre_raw == "true"
+
+    # The answer is the current source of truth — record it on the entity so
+    # the posted-journal badge and the tax provision flow agree with it.
+    if entity.is_base_rate_entity != is_base_rate:
+        entity.is_base_rate_entity = is_base_rate
+        entity.save(update_fields=["is_base_rate_entity"])
+
+    if accounting_profit <= 0:
+        messages.info(request, "No tax payable — accounting profit is nil or a loss.")
+        return redirect("core:financial_year_detail", pk=fy.pk)
+
+    # Determine tax rate
+    if is_base_rate:
+        tax_rate = Decimal("0.25")
+        rate_label = "25% (Base Rate Entity)"
+    else:
+        tax_rate = Decimal("0.30")
+        rate_label = "30% (Standard Rate)"
+
+    tax_amount = Decimal(_math.ceil(accounting_profit * tax_rate))
 
     # Ensure account codes 4110 and 3325 exist in entity CoA
     tax_accounts = [
@@ -6088,13 +6122,9 @@ def calculate_tax_journal(request, pk):
         )
 
     # Create and post the journal
-    # The taxable profit and the rate are both answers the accountant gave,
-    # so they belong on the journal. The badge on the year page used to claim
-    # a rate read from the entity flag, which can now differ from the one
-    # actually applied.
     description = (
-        f"Income tax on ${taxable_profit:,.0f} taxable profit at {rate_label} "
-        f"for year ended {fy.end_date.strftime('%d %B %Y')}"
+        f"Income tax on profit for year ended {fy.end_date.strftime('%d %B %Y')}"
+        f" — accounting profit ${accounting_profit:,.2f} at {rate_label}"
     )
     with db_transaction.atomic():
         journal = AdjustingJournal.objects.create(
@@ -6127,8 +6157,8 @@ def calculate_tax_journal(request, pk):
         )
         _post_journal_to_tb(journal, fy)
 
-    _log_action(request, "adjustment", f"Posted tax journal {journal.reference_number} — ${tax_amount:,.0f} at {rate_label}", journal)
-    messages.success(request, f"Tax journal posted — ${tax_amount:,.0f} at {rate_label}")
+    _log_action(request, "adjustment", f"Posted tax journal {journal.reference_number} — ${tax_amount:,.0f} at {rate_label} on accounting profit ${accounting_profit:,.2f}", journal)
+    messages.success(request, f"Tax journal posted — ${tax_amount:,.0f} at {rate_label} on accounting profit ${accounting_profit:,.2f}")
     return redirect("core:financial_year_detail", pk=fy.pk)
 
 

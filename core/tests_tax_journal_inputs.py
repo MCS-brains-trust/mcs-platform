@@ -1,342 +1,231 @@
-"""Posting a tax journal asks for the figures instead of assuming them.
-
-Both tax routes derived everything: the tax base was the accounting profit
-straight off the trial balance, and the rate came from the entity's base-rate
-flag. One click posted the result. Accounting profit is not taxable income —
-add-backs, non-deductibles and prior-year losses all sit between them — so
-the amount posted was wrong except by coincidence.
-
-The taxable profit is now entered, and the base-rate answer is prefilled from
-the entity's setup but confirmed at posting time. The entity flag is
-deliberately NOT written back: posting a journal should not quietly edit
-entity data, so the journal records the rate actually used.
 """
+Tests for the tax journal posting with accountant-supplied inputs.
+
+The Calculate & Post Tax Journal button no longer posts blind from the trial
+balance: the modal asks for the accounting profit (prefilled from the TB)
+and whether the company is a base rate entity, and the view computes the
+journal from those answers.
+"""
+
 from datetime import date
 from decimal import Decimal
 
-from django.test import TestCase, override_settings
+from django.test import TestCase, Client as TestClient, override_settings
 from django.urls import reverse
 
 from accounts.models import User
 from core.models import (
-    AccountMapping,
-    AdjustingJournal,
-    Client as ClientModel,
-    Entity,
-    FinancialYear,
-    TrialBalanceLine,
+    Client, Entity, FinancialYear, TrialBalanceLine, AccountMapping,
+    AdjustingJournal, JournalLine,
 )
-from core.tests_fs_company_generation import STORAGES_OVERRIDE
+
+STORAGES_OVERRIDE = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+}
 
 
 @override_settings(STORAGES=STORAGES_OVERRIDE)
-class TaxJournalAsksForItsFiguresTests(TestCase):
-    @classmethod
-    def setUpTestData(cls):
-        cls.user = User.objects.create_user(
-            username="tax_journal_admin", password="testpass123",
-            role=User.Role.ADMIN,
-            totp_secret="dummy-secret-tax-journal", totp_confirmed=True,
-        )
-        cls.client_obj = ClientModel.objects.create(name="Tax Journal Client")
-
-    def setUp(self):
-        self.client.force_login(self.user)
-        s = self.client.session
-        s["2fa_verified"] = True
-        s.save()
-
-    def _fy(self, *, base_rate=False, name="Taxwell Pty Ltd"):
-        entity = Entity.objects.create(
-            entity_name=name, entity_type="company",
-            client=self.client_obj, is_base_rate_entity=base_rate)
-        fy = FinancialYear.objects.create(
-            entity=entity, year_label="2025",
-            start_date=date(2024, 7, 1), end_date=date(2025, 6, 30),
-            status=FinancialYear.Status.FINALISED)
-        # A real accounting profit of 400,000 sits in the trial balance, and
-        # it must never be what gets taxed. Without it the "posts nothing"
-        # tests below would pass merely because an empty TB reads as a loss.
-        revenue = AccountMapping.objects.get_or_create(
-            standard_code="IS-REV-TAX", defaults={
-                "line_item_label": "Revenue",
-                "financial_statement": "income_statement",
-                "statement_section": "Revenue"})[0]
-        expenses = AccountMapping.objects.get_or_create(
-            standard_code="IS-EXP-TAX", defaults={
-                "line_item_label": "Other expenses",
-                "financial_statement": "income_statement",
-                "statement_section": "Expenses"})[0]
-        TrialBalanceLine.objects.create(
-            financial_year=fy, account_code="620", account_name="Sales",
-            mapped_line_item=revenue, credit=Decimal("500000"),
-            debit=Decimal("0"), closing_balance=Decimal("-500000"))
-        TrialBalanceLine.objects.create(
-            financial_year=fy, account_code="1510", account_name="Accountancy",
-            mapped_line_item=expenses, debit=Decimal("100000"),
-            credit=Decimal("0"), closing_balance=Decimal("100000"))
-        return fy
-
-    def test_the_fixture_really_has_an_accounting_profit(self):
-        """Otherwise every assertion below is testing an empty trial balance."""
-        from core.views import _calculate_net_profit
-        fy = self._fy(name="Fixture Sanity Co")
-        self.assertEqual(_calculate_net_profit(fy), Decimal("400000"))
-
-    def _post(self, fy, **data):
-        return self.client.post(
-            reverse("core:calculate_tax_journal", kwargs={"pk": fy.pk}),
-            data, secure=True, follow=True)
-
-    def _journal(self, fy):
-        return AdjustingJournal.objects.filter(
-            financial_year=fy, journal_type="tax").first()
-
-    def test_the_entered_profit_is_what_gets_taxed(self):
-        """Nothing in the trial balance decides the amount any more."""
-        fy = self._fy(name="Entered Profit Co")
-        self._post(fy, taxable_profit="200000", is_base_rate_entity="false")
-        journal = self._journal(fy)
-        self.assertIsNotNone(journal)
-        self.assertEqual(journal.total_debit, Decimal("60000"))
-
-    def test_the_submitted_answer_sets_the_rate_not_the_entity_flag(self):
-        """Entity is flagged standard rate; the form says base rate. The form
-        wins, because it is the answer given for this year."""
-        fy = self._fy(base_rate=False, name="Form Wins Co")
-        self._post(fy, taxable_profit="200000", is_base_rate_entity="true")
-        self.assertEqual(self._journal(fy).total_debit, Decimal("50000"))
-
-    def test_the_entity_flag_is_left_alone(self):
-        fy = self._fy(base_rate=False, name="Flag Untouched Co")
-        self._post(fy, taxable_profit="200000", is_base_rate_entity="true")
-        fy.entity.refresh_from_db()
-        self.assertFalse(fy.entity.is_base_rate_entity)
-
-    def test_the_tax_is_rounded_up(self):
-        """Unchanged behaviour: ceil, as the old derivation did."""
-        fy = self._fy(name="Rounding Co")
-        self._post(fy, taxable_profit="1001", is_base_rate_entity="false")
-        self.assertEqual(self._journal(fy).total_debit, Decimal("301"))
-
-    def test_an_entity_with_no_base_rate_flag_can_still_post(self):
-        """The old blocker refused outright; the question is now asked."""
-        fy = self._fy(name="Unset Flag Co")
-        fy.entity.is_base_rate_entity = None
-        fy.entity.save()
-        self._post(fy, taxable_profit="200000", is_base_rate_entity="true")
-        self.assertIsNotNone(self._journal(fy))
-
-    def test_a_blank_profit_does_not_fall_back_to_accounting_profit(self):
-        fy = self._fy(name="Blank Profit Co")
-        self._post(fy, taxable_profit="", is_base_rate_entity="false")
-        self.assertIsNone(self._journal(fy))
-
-    def test_a_non_numeric_profit_posts_nothing(self):
-        fy = self._fy(name="Rubbish Profit Co")
-        self._post(fy, taxable_profit="abc", is_base_rate_entity="false")
-        self.assertIsNone(self._journal(fy))
-
-    def test_a_nil_or_negative_profit_posts_nothing(self):
-        fy = self._fy(name="Loss Co")
-        self._post(fy, taxable_profit="0", is_base_rate_entity="false")
-        self.assertIsNone(self._journal(fy))
-        self._post(fy, taxable_profit="-5000", is_base_rate_entity="false")
-        self.assertIsNone(self._journal(fy))
-
-    def test_an_unanswered_base_rate_question_posts_nothing(self):
-        fy = self._fy(name="No Answer Co")
-        self._post(fy, taxable_profit="200000")
-        self.assertIsNone(self._journal(fy))
-
-    def test_a_thousands_separator_is_accepted(self):
-        """Accountants paste figures with commas and dollar signs."""
-        fy = self._fy(name="Formatted Figure Co")
-        self._post(fy, taxable_profit="$200,000", is_base_rate_entity="false")
-        self.assertEqual(self._journal(fy).total_debit, Decimal("60000"))
-
-    def test_a_second_journal_is_still_refused(self):
-        fy = self._fy(name="Duplicate Guard Co")
-        self._post(fy, taxable_profit="200000", is_base_rate_entity="false")
-        self._post(fy, taxable_profit="999999", is_base_rate_entity="false")
-        self.assertEqual(AdjustingJournal.objects.filter(
-            financial_year=fy, journal_type="tax").count(), 1)
-
-    def test_a_draft_year_is_still_refused(self):
-        fy = self._fy(name="Draft Year Co")
-        fy.status = FinancialYear.Status.DRAFT
-        fy.save()
-        self._post(fy, taxable_profit="200000", is_base_rate_entity="false")
-        self.assertIsNone(self._journal(fy))
-
-
-@override_settings(STORAGES=STORAGES_OVERRIDE)
-class TaxProvisionAsksForItsFiguresTests(TestCase):
-    """The provision route is the other door onto the same posting.
-
-    Fixing only the red button would have left the automatic behaviour intact
-    here: one click, accounting profit times a rate read off the entity.
-
-    Note this route refuses a LOCKED year, the opposite preconditionrom
-    calculate_tax_journal, so its fixture is a draft year. That asymmetry is
-    pre-existing and deliberately left alone.
-    """
+class TaxJournalInputsTestCase(TestCase):
+    """The tax journal posts from the form's profit and base-rate answers."""
 
     @classmethod
     def setUpTestData(cls):
-        cls.user = User.objects.create_user(
-            username="tax_provision_admin", password="testpass123",
-            role=User.Role.ADMIN,
-            totp_secret="dummy-secret-tax-prov", totp_confirmed=True,
+        two_fa_kwargs = {"totp_secret": "TESTSECRET", "totp_confirmed": True}
+        cls.accountant = User.objects.create_user(
+            username="tj_accountant", password="testpass123",
+            role=User.Role.ACCOUNTANT, first_name="Tax", last_name="Acct",
+            **two_fa_kwargs,
         )
-        cls.client_obj = ClientModel.objects.create(name="Tax Provision Client")
+        cls.client_obj = Client.objects.create(name="TJ Test Client")
+        cls.entity = Entity.objects.create(
+            entity_name="TJ Company",
+            entity_type="company",
+            client=cls.client_obj,
+            assigned_accountant=cls.accountant,
+            is_base_rate_entity=None,
+        )
+        cls.fy = FinancialYear.objects.create(
+            entity=cls.entity,
+            year_label="FY2025",
+            start_date=date(2024, 7, 1),
+            end_date=date(2025, 6, 30),
+            status="finalised",
+        )
+        cls.revenue_mapping = AccountMapping.objects.create(
+            standard_code="REV001",
+            line_item_label="Sales Revenue",
+            financial_statement="income_statement",
+            statement_section="Revenue",
+            display_order=100,
+        )
+        cls.expense_mapping = AccountMapping.objects.create(
+            standard_code="EXP001",
+            line_item_label="Operating Expenses",
+            financial_statement="income_statement",
+            statement_section="Expenses",
+            display_order=200,
+        )
+        # TB accounting profit = 40,000 (only the modal prefill, not the post)
+        TrialBalanceLine.objects.create(
+            financial_year=cls.fy,
+            account_code="1000",
+            account_name="Sales Revenue",
+            debit=Decimal("0"),
+            credit=Decimal("100000"),
+            mapped_line_item=cls.revenue_mapping,
+        )
+        TrialBalanceLine.objects.create(
+            financial_year=cls.fy,
+            account_code="5000",
+            account_name="Operating Expenses",
+            debit=Decimal("60000"),
+            credit=Decimal("0"),
+            mapped_line_item=cls.expense_mapping,
+        )
 
     def setUp(self):
-        self.client.force_login(self.user)
-        s = self.client.session
-        s["2fa_verified"] = True
-        s.save()
+        self.client = TestClient()
+        self.client.force_login(self.accountant)
+        session = self.client.session
+        session["2fa_verified"] = True
+        session.save()
+        self.url = reverse("core:calculate_tax_journal", args=[self.fy.pk])
 
-    def _fy(self, *, base_rate=False, name="Provisionwell Pty Ltd"):
-        entity = Entity.objects.create(
-            entity_name=name, entity_type="company",
-            client=self.client_obj, is_base_rate_entity=base_rate)
-        fy = FinancialYear.objects.create(
-            entity=entity, year_label="2025",
-            start_date=date(2024, 7, 1), end_date=date(2025, 6, 30),
-            status=FinancialYear.Status.DRAFT)
-        revenue = AccountMapping.objects.get_or_create(
-            standard_code="IS-REV-TAX", defaults={
-                "line_item_label": "Revenue",
-                "financial_statement": "income_statement",
-                "statement_section": "Revenue"})[0]
-        TrialBalanceLine.objects.create(
-            financial_year=fy, account_code="620", account_name="Sales",
-            mapped_line_item=revenue, credit=Decimal("400000"),
-            debit=Decimal("0"), closing_balance=Decimal("-400000"))
-        return fy
+    def _post(self, **data):
+        return self.client.post(self.url, data, secure=True)
 
-    def _post(self, fy, **data):
-        return self.client.post(
-            reverse("core:auto_tax_provision", kwargs={"pk": fy.pk}),
-            data, secure=True)
-
-    def _journal(self, fy):
+    def _tax_journals(self):
         return AdjustingJournal.objects.filter(
-            financial_year=fy, journal_type="tax_provision").first()
+            financial_year=self.fy, journal_type="tax",
+        )
 
-    def test_the_entered_profit_is_what_gets_provisioned(self):
-        fy = self._fy(name="Provision Entered Co")
-        self._post(fy, taxable_profit="100000", is_base_rate_entity="false")
-        journal = self._journal(fy)
-        self.assertIsNotNone(journal)
+    # --- Posting from the supplied inputs ---
+
+    def test_posts_from_supplied_profit_at_base_rate(self):
+        response = self._post(accounting_profit="100000", is_base_rate_entity="true")
+        self.assertEqual(response.status_code, 302)
+        journal = self._tax_journals().get()
+        self.assertEqual(journal.total_debit, Decimal("25000"))
+        self.assertEqual(journal.total_credit, Decimal("25000"))
+        lines = {l.account_code: l for l in journal.lines.all()}
+        self.assertEqual(lines["4110"].debit, Decimal("25000"))
+        self.assertEqual(lines["3325"].credit, Decimal("25000"))
+
+    def test_posts_from_supplied_profit_at_standard_rate(self):
+        self._post(accounting_profit="100000", is_base_rate_entity="false")
+        journal = self._tax_journals().get()
         self.assertEqual(journal.total_debit, Decimal("30000"))
 
-    def test_the_submitted_answer_sets_the_rate(self):
-        fy = self._fy(base_rate=False, name="Provision Rate Co")
-        self._post(fy, taxable_profit="100000", is_base_rate_entity="true")
-        self.assertEqual(self._journal(fy).total_debit, Decimal("25000"))
+    def test_supplied_profit_overrides_the_trial_balance(self):
+        """TB profit is 40,000 but the accountant enters an adjusted profit of 55,000."""
+        self._post(accounting_profit="55000", is_base_rate_entity="true")
+        journal = self._tax_journals().get()
+        self.assertEqual(journal.total_debit, Decimal("13750"))
 
-    def test_a_blank_profit_posts_nothing(self):
-        fy = self._fy(name="Provision Blank Co")
-        response = self._post(fy, is_base_rate_entity="false")
-        self.assertEqual(response.status_code, 400)
-        self.assertIsNone(self._journal(fy))
+    def test_tax_rounds_up_to_the_next_dollar(self):
+        self._post(accounting_profit="55000.50", is_base_rate_entity="true")
+        journal = self._tax_journals().get()
+        # 55000.50 * 0.25 = 13750.125 -> 13751
+        self.assertEqual(journal.total_debit, Decimal("13751"))
 
-    def test_an_unanswered_base_rate_question_posts_nothing(self):
-        fy = self._fy(name="Provision No Answer Co")
-        response = self._post(fy, taxable_profit="100000")
-        self.assertEqual(response.status_code, 400)
-        self.assertIsNone(self._journal(fy))
+    def test_profit_accepts_currency_formatting(self):
+        self._post(accounting_profit="$55,000.00", is_base_rate_entity="true")
+        journal = self._tax_journals().get()
+        self.assertEqual(journal.total_debit, Decimal("13750"))
 
-    def test_an_entity_with_no_base_rate_flag_can_still_post(self):
-        fy = self._fy(name="Provision Unset Flag Co")
-        fy.entity.is_base_rate_entity = None
-        fy.entity.save()
-        self._post(fy, taxable_profit="100000", is_base_rate_entity="true")
-        self.assertIsNotNone(self._journal(fy))
+    def test_base_rate_answer_is_saved_on_the_entity(self):
+        self.assertIsNone(self.entity.is_base_rate_entity)
+        self._post(accounting_profit="100000", is_base_rate_entity="true")
+        self.entity.refresh_from_db()
+        self.assertIs(self.entity.is_base_rate_entity, True)
 
-    def test_the_status_endpoint_offers_the_prefills(self):
-        """The dialog needs a starting figure and the entity's own answer."""
-        fy = self._fy(base_rate=True, name="Provision Prefill Co")
-        response = self.client.get(
-            reverse("core:tax_provision_status", kwargs={"pk": fy.pk}),
-            secure=True)
-        data = response.json()
-        self.assertTrue(data["eligible"], data)
-        self.assertEqual(Decimal(str(data["suggested_taxable_profit"])),
-                         Decimal("400000"))
-        self.assertTrue(data["is_base_rate_entity"])
+    def test_standard_rate_answer_is_saved_on_the_entity(self):
+        self._post(accounting_profit="100000", is_base_rate_entity="false")
+        self.entity.refresh_from_db()
+        self.assertIs(self.entity.is_base_rate_entity, False)
 
-    def test_the_status_endpoint_is_eligible_without_the_flag(self):
-        fy = self._fy(name="Provision Status Unset Co")
-        fy.entity.is_base_rate_entity = None
-        fy.entity.save()
-        response = self.client.get(
-            reverse("core:tax_provision_status", kwargs={"pk": fy.pk}),
-            secure=True)
-        data = response.json()
-        self.assertTrue(data["eligible"], data)
-        self.assertIsNone(data["is_base_rate_entity"])
+    def test_unset_base_rate_flag_no_longer_blocks_posting(self):
+        """The modal supplies the answer, so a blank entity flag can't block."""
+        self._post(accounting_profit="100000", is_base_rate_entity="true")
+        self.assertEqual(self._tax_journals().count(), 1)
 
+    def test_journal_description_records_the_accounting_profit(self):
+        self._post(accounting_profit="55000", is_base_rate_entity="true")
+        journal = self._tax_journals().get()
+        self.assertIn("Income tax", journal.description)
+        self.assertIn("accounting profit $55,000.00", journal.description)
+        self.assertIn("25% (Base Rate Entity)", journal.description)
 
-@override_settings(STORAGES=STORAGES_OVERRIDE)
-class TheTaxDialogRendersTests(TestCase):
-    """The button must open a dialog, not post on a bare confirm()."""
-
-    @classmethod
-    def setUpTestData(cls):
-        cls.user = User.objects.create_user(
-            username="tax_dialog_admin", password="testpass123",
-            role=User.Role.ADMIN,
-            totp_secret="dummy-secret-tax-dialog", totp_confirmed=True,
+    def test_journal_posts_to_the_trial_balance(self):
+        self._post(accounting_profit="100000", is_base_rate_entity="true")
+        journal = self._tax_journals().get()
+        tb = TrialBalanceLine.objects.filter(
+            financial_year=self.fy, source_journal=journal,
         )
-        cls.client_obj = ClientModel.objects.create(name="Tax Dialog Client")
+        self.assertEqual(tb.count(), 2)
 
-    def setUp(self):
-        self.client.force_login(self.user)
-        s = self.client.session
-        s["2fa_verified"] = True
-        s.save()
-        entity = Entity.objects.create(
-            entity_name="Dialogwell Pty Ltd", entity_type="company",
-            client=self.client_obj, is_base_rate_entity=True)
-        self.fy = FinancialYear.objects.create(
-            entity=entity, year_label="2025",
-            start_date=date(2024, 7, 1), end_date=date(2025, 6, 30),
-            status=FinancialYear.Status.FINALISED)
-        revenue = AccountMapping.objects.get_or_create(
-            standard_code="IS-REV-TAX", defaults={
-                "line_item_label": "Revenue",
-                "financial_statement": "income_statement",
-                "statement_section": "Revenue"})[0]
-        TrialBalanceLine.objects.create(
-            financial_year=self.fy, account_code="620", account_name="Sales",
-            mapped_line_item=revenue, credit=Decimal("400000"),
-            debit=Decimal("0"), closing_balance=Decimal("-400000"))
+    # --- Validation ---
 
-    def _html(self):
+    def test_missing_profit_posts_nothing(self):
+        self._post(is_base_rate_entity="true")
+        self.assertFalse(self._tax_journals().exists())
+
+    def test_invalid_profit_posts_nothing(self):
+        self._post(accounting_profit="not-a-number", is_base_rate_entity="true")
+        self.assertFalse(self._tax_journals().exists())
+
+    def test_missing_base_rate_answer_posts_nothing(self):
+        self._post(accounting_profit="100000")
+        self.assertFalse(self._tax_journals().exists())
+        # And the entity flag stays untouched
+        self.entity.refresh_from_db()
+        self.assertIsNone(self.entity.is_base_rate_entity)
+
+    def test_zero_or_loss_profit_posts_nothing(self):
+        self._post(accounting_profit="0", is_base_rate_entity="true")
+        self._post(accounting_profit="-5000", is_base_rate_entity="true")
+        self.assertFalse(self._tax_journals().exists())
+
+    def test_duplicate_income_tax_journal_is_refused(self):
+        self._post(accounting_profit="100000", is_base_rate_entity="true")
+        self._post(accounting_profit="100000", is_base_rate_entity="true")
+        self.assertEqual(self._tax_journals().count(), 1)
+
+    def test_unfinalised_year_is_refused(self):
+        fy = FinancialYear.objects.create(
+            entity=self.entity,
+            year_label="FY2026",
+            start_date=date(2025, 7, 1),
+            end_date=date(2026, 6, 30),
+            status="in_review",
+        )
+        url = reverse("core:calculate_tax_journal", args=[fy.pk])
+        self.client.post(url, {"accounting_profit": "100000", "is_base_rate_entity": "true"}, secure=True)
+        self.assertFalse(
+            AdjustingJournal.objects.filter(financial_year=fy, journal_type="tax").exists()
+        )
+
+    def test_get_is_not_allowed(self):
+        response = self.client.get(self.url, secure=True)
+        self.assertEqual(response.status_code, 405)
+
+    # --- Modal prefill on the detail page ---
+
+    def test_detail_page_prefills_the_tb_accounting_profit(self):
         response = self.client.get(
-            reverse("core:financial_year_detail", kwargs={"pk": self.fy.pk}),
-            secure=True)
+            reverse("core:financial_year_detail", args=[self.fy.pk]), secure=True,
+        )
         self.assertEqual(response.status_code, 200)
-        return response.content.decode()
+        self.assertEqual(
+            response.context["tax_journal_default_profit"], Decimal("40000.00"),
+        )
+        self.assertContains(response, 'id="taxJournalModal"')
 
-    def test_the_dialog_and_its_two_inputs_render(self):
-        html = self._html()
-        self.assertIn('id="taxJournalModal"', html)
-        self.assertIn('name="taxable_profit"', html)
-        self.assertIn('name="is_base_rate_entity"', html)
-
-    def test_the_taxable_profit_is_prefilled_with_the_accounting_profit(self):
-        self.assertIn('value="400000"', self._html())
-
-    def test_the_base_rate_question_is_prefilled_from_the_entity(self):
-        html = self._html()
-        self.assertIn('<option value="true" selected>', html)
-
-    def test_the_button_no_longer_posts_on_a_bare_confirm(self):
-        """It opens the dialog instead."""
-        html = self._html()
-        self.assertIn('data-bs-target="#taxJournalModal"', html)
-        self.assertNotIn("confirm('Calculate and post income tax journal?')", html)
+    def test_detail_page_hides_the_modal_once_posted(self):
+        self._post(accounting_profit="100000", is_base_rate_entity="true")
+        response = self.client.get(
+            reverse("core:financial_year_detail", args=[self.fy.pk]), secure=True,
+        )
+        self.assertNotContains(response, 'id="taxJournalModal"')
+        self.assertNotIn("tax_journal_default_profit", response.context)

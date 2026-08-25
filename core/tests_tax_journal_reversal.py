@@ -92,7 +92,7 @@ class ReverseTaxJournalTests(TestCase):
     def _post_tax(self, fy, profit="200000", base_rate="false"):
         return self.client.post(
             reverse("core:calculate_tax_journal", kwargs={"pk": fy.pk}),
-            {"taxable_profit": profit, "is_base_rate_entity": base_rate},
+            {"accounting_profit": profit, "is_base_rate_entity": base_rate},
             secure=True, follow=True)
 
     def _reverse(self, fy):
