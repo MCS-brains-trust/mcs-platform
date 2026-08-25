@@ -3619,7 +3619,7 @@ def reroll_forward(request, pk):
                 purchase_date=pa.purchase_date,
                 total_cost=pa.total_cost,
                 private_use_pct=pa.private_use_pct,
-                opening_wdv=pa.closing_wdv,  # Prior closing becomes new opening
+                opening_wdv=_rolled_forward_opening_wdv(pa),  # never negative
                 method=pa.method,
                 rate=pa.rate,
                 display_order=pa.display_order,
@@ -3629,7 +3629,10 @@ def reroll_forward(request, pk):
                 accum_dep_name=pa.accum_dep_name,
                 dep_expense_code=pa.dep_expense_code,
                 dep_expense_name=pa.dep_expense_name,
-                notes=f"Rolled forward from FY{current_fy.year_label}",
+                notes=" ".join(filter(None, [
+                    f"Rolled forward from FY{current_fy.year_label}",
+                    _rollforward_wdv_note(pa),
+                ])),
             )
             _calc_depreciation(new_asset, force_ato_rate=True)
             new_asset.save()
@@ -4141,7 +4144,7 @@ def _populate_rolled_forward_fy(current_fy, new_fy):
             purchase_date=pa.purchase_date,
             total_cost=pa.total_cost,
             private_use_pct=pa.private_use_pct,
-            opening_wdv=pa.closing_wdv,
+            opening_wdv=_rolled_forward_opening_wdv(pa),
             method=pa.method,
             rate=pa.rate,
             display_order=pa.display_order,
@@ -4151,7 +4154,10 @@ def _populate_rolled_forward_fy(current_fy, new_fy):
             accum_dep_name=pa.accum_dep_name,
             dep_expense_code=pa.dep_expense_code,
             dep_expense_name=pa.dep_expense_name,
-            notes=f"Rolled forward from FY{current_fy.year_label}",
+            notes=" ".join(filter(None, [
+                f"Rolled forward from FY{current_fy.year_label}",
+                _rollforward_wdv_note(pa),
+            ])),
         )
         _calc_depreciation(new_asset, force_ato_rate=True)
         new_asset.save()
@@ -9596,6 +9602,40 @@ def depreciation_roll_forward(request, pk):
     _log_action(request, "roll_forward", f"Rolled forward {count} depreciation assets to {fy}", fy)
     messages.success(request, f"Rolled forward {count} depreciation assets from prior year.")
     return redirect(reverse("core:financial_year_detail", args=[pk]) + "?tab=depreciation")
+
+
+def _rolled_forward_opening_wdv(prior_asset):
+    """Opening written-down value for the next year's copy of an asset.
+
+    An asset cannot be worth less than nothing, so a negative closing value is
+    carried as nil. Dr Services Family Trust FY2026 opened a vehicle at
+    -34,136.00 because the prior year had charged a full year of depreciation
+    against an opening of zero; 25% diminishing value on that base produced
+    negative depreciation, which reads as income.
+
+    The HandiLedger import already clamps this (access_ledger_import.py); the
+    roll-forward paths did not, and that asymmetry is what let it through.
+    """
+    closing = prior_asset.closing_wdv or Decimal("0")
+    return closing if closing > Decimal("0") else Decimal("0.00")
+
+
+def _rollforward_wdv_note(prior_asset):
+    """Note recording a clamped opening value, or None when nothing was wrong.
+
+    Zeroing quietly is what allowed seven years of negative written-down values
+    to go unnoticed on another entity, so the correction is written onto the
+    asset where the accountant will see it.
+    """
+    closing = prior_asset.closing_wdv or Decimal("0")
+    if closing >= Decimal("0"):
+        return None
+    return (
+        f"Opening WDV set to nil on roll-forward: prior year closed at "
+        f"${closing:,.2f}, which is not a valid written-down value. The prior "
+        f"year's depreciation schedule needs checking — an asset cannot be "
+        f"worth less than nothing."
+    )
 
 
 def _calc_depreciation(asset, force_ato_rate=False):
