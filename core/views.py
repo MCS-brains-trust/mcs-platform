@@ -9925,8 +9925,13 @@ def _resolve_depreciation_account_groups(fy, assets, write_back=False):
     fallback_accum_dep_code = ""
     fallback_accum_dep_name = ""
 
+    # A depreciation charge is an expense. Matching on the name alone picked
+    # Dr Services Family Trust's account 1045 "Depreciation - Plant", which
+    # sits in that chart's ASSETS section, so the charge never reached the
+    # profit and loss — profit was overstated by the full amount and the
+    # balance sheet carried a meaningless debit.
     dep_coa = EntityChartOfAccount.objects.filter(
-        entity=fy.entity, is_active=True,
+        entity=fy.entity, is_active=True, section="expenses",
         account_name__icontains="depreciation"
     ).exclude(account_name__icontains="accumulated").exclude(
         account_name__icontains="accum"
@@ -9954,6 +9959,16 @@ def _resolve_depreciation_account_groups(fy, assets, write_back=False):
             if dep_tb:
                 fallback_dep_expense_code = dep_tb.account_code
                 fallback_dep_expense_name = dep_tb.account_name
+
+    # Whichever tier answered, refuse a code the chart classifies as anything
+    # other than an expense. Posting outside the P&L silently is worse than
+    # reporting that no account could be found.
+    if fallback_dep_expense_code:
+        if EntityChartOfAccount.objects.filter(
+            entity=fy.entity, account_code=fallback_dep_expense_code,
+        ).exclude(section="expenses").exists():
+            fallback_dep_expense_code = ""
+            fallback_dep_expense_name = ""
 
     accum_coa = EntityChartOfAccount.objects.filter(
         entity=fy.entity, is_active=True,
