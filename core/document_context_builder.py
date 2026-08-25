@@ -233,6 +233,96 @@ def safe_logo(value):
     return value
 
 
+# Financial-statement cover logo width (cm). Legal documents use 4.0 cm via
+# DocumentContextBuilder; FS covers have always used a wider 6 cm logo.
+FS_LOGO_WIDTH_CM = 6.0
+
+
+def resolve_firm_logo_inline_image(tpl, width_cm=FS_LOGO_WIDTH_CM):
+    """
+    Resolve the *current* firm logo as a docxtpl InlineImage for ``tpl``.
+
+    Used by templates that carry a ``{{ practice_logo }}`` merge field rather
+    than an embedded picture, so an upload in Firm Settings reaches the next
+    render with no template regeneration.
+
+    Falls back to the bundled static logo when Firm Settings has no upload,
+    so covers are never logo-less.
+
+    Returns ``(inline_image_or_empty_string, temp_files)``; the caller must
+    delete ``temp_files`` after rendering.
+    """
+    from django.conf import settings as django_settings
+    from docxtpl import InlineImage
+    from docx.shared import Cm
+
+    if tpl is None:
+        return "", []
+
+    temp_files = []
+    logo_path = None
+
+    try:
+        from core.models import FirmSettings
+        firm = FirmSettings.get()
+    except Exception as exc:
+        logger.error("Could not load FirmSettings for logo resolution: %s", exc)
+        firm = None
+
+    if firm is not None and firm.logo:
+        try:
+            candidate = firm.logo.path
+            if os.path.exists(candidate):
+                logo_path = candidate
+            else:
+                logger.warning(
+                    "FirmSettings logo file missing from disk at %s. Falling back "
+                    "to the static logo. Re-upload in Firm Settings.",
+                    candidate,
+                )
+        except NotImplementedError:
+            # Object storage backend (no local .path) — download to a temp file
+            try:
+                import requests
+                response = requests.get(firm.logo.url, timeout=10)
+                response.raise_for_status()
+                suffix = os.path.splitext(firm.logo.name)[1] or ".png"
+                with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                    tmp.write(response.content)
+                    logo_path = tmp.name
+                temp_files.append(logo_path)
+            except Exception as exc:
+                logger.error(
+                    "Logo download from object storage failed: %s. Falling back "
+                    "to the static logo.",
+                    exc,
+                )
+        except Exception as exc:
+            logger.error("Unexpected error resolving firm logo: %s", exc)
+
+    if not logo_path:
+        for candidate in (
+            os.path.join(django_settings.BASE_DIR, "static", "img", "mcs_logo.png"),
+            os.path.join(django_settings.BASE_DIR, "static", "MCSlogo.png"),
+        ):
+            if os.path.isfile(candidate):
+                logo_path = candidate
+                break
+
+    if not logo_path:
+        return "", temp_files
+
+    try:
+        return InlineImage(tpl, logo_path, width=Cm(width_cm)), temp_files
+    except Exception as exc:
+        logger.error(
+            "Could not build InlineImage for logo %s: %s. Document will render "
+            "without a logo.",
+            logo_path, exc,
+        )
+        return "", temp_files
+
+
 def get_jinja_env():
     """
     Return a Jinja2 Environment with all StatementHub custom filters registered.
