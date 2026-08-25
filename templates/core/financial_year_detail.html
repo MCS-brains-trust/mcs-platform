@@ -255,8 +255,15 @@
                     {% elif has_tax_journal %}
                     <span class="badge bg-success fs-6 py-2 px-3" title="{{ tax_journal.description }}">
                         <i class="bi bi-check-circle-fill"></i> Tax journal posted — ${{ tax_journal.total_debit|floatformat:0 }}
-                        {% if entity.is_base_rate_entity %}at 25% (Base Rate Entity){% else %}at 30% (Standard Rate){% endif %}
+
                     </span>
+                    {% if user.can_do_accounting %}
+                    <button type="button" class="btn btn-sm btn-outline-secondary"
+                            data-bs-toggle="modal" data-bs-target="#reverseTaxJournalModal"
+                            title="Reverse this tax journal">
+                        <i class="bi bi-arrow-counterclockwise"></i> Reverse
+                    </button>
+                    {% endif %}
                     {% endif %}
                     {% endif %}
                 </div>
@@ -360,6 +367,47 @@
     document.getElementById("taxJournalModal").addEventListener("shown.bs.modal", updatePreview);
 })();
 </script>
+{% endif %}
+
+<!-- Reverse Tax Journal Modal -->
+{% if has_tax_journal and user.can_do_accounting %}
+<div class="modal fade" id="reverseTaxJournalModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-warning">
+                <h5 class="modal-title"><i class="bi bi-arrow-counterclockwise"></i> Reverse Tax Journal</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <form method="post" action="{% url 'core:reverse_tax_journal' pk=fy.pk %}">
+                {% csrf_token %}
+                <div class="modal-body">
+                    <p class="mb-2">
+                        Reverse <strong>{{ tax_journal.reference_number }}</strong> —
+                        ${{ tax_journal.total_debit|floatformat:0 }}?
+                    </p>
+                    <div class="alert alert-secondary py-2 small mb-0">
+                        {% if fy.is_locked %}
+                        <i class="bi bi-info-circle"></i>
+                        The year stays finalised. An equal and opposite journal is posted to
+                        back the tax out of the trial balance, and both entries remain on
+                        file for the audit trail. You can then post a corrected tax journal.
+                        {% else %}
+                        <i class="bi bi-info-circle"></i>
+                        The year is open, so the journal is voided and its trial balance
+                        lines are removed outright.
+                        {% endif %}
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                    <button type="submit" class="btn btn-warning">
+                        <i class="bi bi-arrow-counterclockwise"></i> Reverse Tax Journal
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
 {% endif %}
 
 <!-- Reopen Financial Year Modal -->
@@ -4454,7 +4502,7 @@ function overrideSuppression(suppressionId, btn) {
 }
 </script>
 
-<!-- ===== TAX PROVISION MODAL ===== -->
+
 {% if entity.entity_type == 'company' and not fy.is_locked %}
 <div class="modal fade" id="taxProvisionModal" tabindex="-1" aria-labelledby="taxProvisionModalLabel" aria-hidden="true">
     <div class="modal-dialog">
@@ -4526,25 +4574,53 @@ function overrideSuppression(suppressionId, btn) {
             const adjReq = Number(data.adjustment_required);
             const fmt = v => '$' + Math.abs(v).toLocaleString('en-AU', {minimumFractionDigits: 0, maximumFractionDigits: 0});
 
-            let html = '<table class="table table-sm mb-3">';
-            html += '<tr><td>Net Profit</td><td class="text-end fw-bold">' + fmt(netProfit) + '</td></tr>';
-            html += '<tr><td>Tax Rate</td><td class="text-end">' + escapeHtml(data.rate_label) + '</td></tr>';
-            html += '<tr><td>Calculated Tax</td><td class="text-end fw-bold">' + fmt(calcTax) + '</td></tr>';
+            // Asked for, not assumed. Accounting profit is not taxable income,
+            // so it only prefills the field the accountant then corrects.
+            const suggested = Number(data.suggested_taxable_profit);
+            const bre = data.is_base_rate_entity;
+            let html = '<p class="small text-muted">Taxable profit is not the accounting profit. ' +
+                'Enter the figure after add-backs, non-deductible items and any prior-year losses.</p>';
+            html += '<div class="mb-3"><label class="form-label" for="provTaxableProfit">Taxable profit</label>' +
+                '<div class="input-group"><span class="input-group-text">$</span>' +
+                '<input type="text" class="form-control" id="provTaxableProfit" inputmode="decimal" value="' +
+                (isFinite(suggested) ? Math.round(suggested) : '') + '"></div>' +
+                '<div class="form-text">Accounting profit for the year is ' + fmt(netProfit) + '.</div></div>';
+            html += '<div class="mb-3"><label class="form-label" for="provBaseRate">Base rate entity?</label>' +
+                '<select class="form-select" id="provBaseRate">' +
+                '<option value=""' + (bre === null ? ' selected' : '') + ' disabled>Select&hellip;</option>' +
+                '<option value="true"' + (bre === true ? ' selected' : '') + '>Yes &mdash; 25%</option>' +
+                '<option value="false"' + (bre === false ? ' selected' : '') + '>No &mdash; 30%</option>' +
+                '</select><div class="form-text">' +
+                (bre === null ? 'Not set on this entity &mdash; please answer.'
+                              : 'Prefilled from the entity&rsquo;s setup. Changing it here applies to this journal only.') +
+                '</div></div>';
+            html += '<table class="table table-sm mb-3">';
+            html += '<tr><td>Tax on the figure entered</td><td class="text-end fw-bold" id="provTaxPreview">&mdash;</td></tr>';
             html += '<tr><td>Existing Provision</td><td class="text-end">' + fmt(existProv) + '</td></tr>';
             html += '<tr class="table-info"><td class="fw-bold">Adjustment Required</td><td class="text-end fw-bold">' + fmt(adjReq) + '</td></tr>';
             html += '</table>';
             html += '<p class="small text-muted mb-1">Expense: ' + escapeHtml(data.expense_account.code) + ' — ' + escapeHtml(data.expense_account.name) + '</p>';
             html += '<p class="small text-muted mb-0">Provision: ' + escapeHtml(data.provision_account.code) + ' — ' + escapeHtml(data.provision_account.name) + '</p>';
 
-            if (adjReq <= 0) {
-                html += '<div class="alert alert-success mt-3 mb-0"><i class="bi bi-check-circle-fill"></i> No additional provision required.</div>';
-            }
-
             content.innerHTML = html;
 
-            if (adjReq > 0) {
-                document.getElementById('btnPostTaxProvision').classList.remove('d-none');
+            // The adjustment depends on the figure the accountant enters, so
+            // it cannot be gated on one derived here. The server refuses when
+            // no adjustment is required.
+            const provProfit = document.getElementById('provTaxableProfit');
+            const provRate = document.getElementById('provBaseRate');
+            const provOut = document.getElementById('provTaxPreview');
+            function provPreview() {
+                const p = parseFloat((provProfit.value || '').replace(/[$,\s]/g, ''));
+                if (!isFinite(p) || p <= 0 || !provRate.value) { provOut.textContent = '\u2014'; return; }
+                const r = provRate.value === 'true' ? 0.25 : 0.30;
+                provOut.textContent = '$' + Math.ceil(p * r).toLocaleString('en-AU');
             }
+            provProfit.addEventListener('input', provPreview);
+            provRate.addEventListener('change', provPreview);
+            provPreview();
+
+            document.getElementById('btnPostTaxProvision').classList.remove('d-none');
         })
         .catch(err => {
             document.getElementById('taxProvisionLoading').classList.add('d-none');
@@ -4559,12 +4635,20 @@ function overrideSuppression(suppressionId, btn) {
         btn.disabled = true;
         btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Posting...';
 
+        const body = new URLSearchParams();
+        const pp = document.getElementById('provTaxableProfit');
+        const pr = document.getElementById('provBaseRate');
+        body.append('taxable_profit', pp ? pp.value : '');
+        body.append('is_base_rate_entity', pr ? pr.value : '');
+
         fetch(postUrl, {
             method: 'POST',
             headers: {
                 'X-CSRFToken': csrfToken,
                 'X-Requested-With': 'XMLHttpRequest',
+                'Content-Type': 'application/x-www-form-urlencoded',
             },
+            body: body.toString(),
         })
         .then(r => r.json().then(data => ({ ok: r.ok, data })))
         .then(({ ok, data }) => {

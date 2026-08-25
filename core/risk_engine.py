@@ -559,6 +559,25 @@ def _check_div7a_loans(tb_data, entity_context):
         name_lower = (line.account_name or "").lower()
         code = line.account_code or ""
 
+        # Division 7A is about money lent BY the company TO a shareholder or
+        # associate. An account owed to an institutional lender cannot qualify
+        # however it is named, and "Bank Loans" matches the loan keywords below
+        # on the word "loan". DJLH FY2025 raised a CRITICAL Div 7A finding on
+        # account 3625 Bank Loans for a $12,656.77 debit that was simply the
+        # year's repayments.
+        _mapped_label = ""
+        if line.mapped_line_item:
+            _mapped_label = (
+                getattr(line.mapped_line_item, "line_item_label", "") or ""
+            ).lower()
+        is_bank_borrowing = (
+            "bank" in name_lower
+            or "overdraft" in name_lower
+            or "borrowing" in _mapped_label
+        )
+        if is_bank_borrowing:
+            continue
+
         # Determine if this looks like a loan account
         is_loan = False
 

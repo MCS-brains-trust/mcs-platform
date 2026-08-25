@@ -1750,6 +1750,7 @@ class AdjustingJournal(models.Model):
         DEPRECIATION = "depreciation", "Depreciation Entry"
         DEPRECIATION_REVERSAL = "dep_reversal", "Depreciation Reversal"
         TAX = "tax", "Tax Adjustment"
+        TAX_REVERSAL = "tax_reversal", "Tax Reversal"
         TAX_PROVISION = "tax_provision", "Tax Provision"
 
     class JournalStatus(models.TextChoices):
@@ -4191,6 +4192,15 @@ class EvaFindingSuppression(models.Model):
             "True if this suppression predates the fingerprint v2 composition "
             "and must be re-confirmed by a partner before it applies to a new "
             "compliance run."
+        ),
+    )
+    amount_at_suppression = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True,
+        help_text=(
+            "Balance behind the finding when it was accepted. The suppression "
+            "lapses once the balance moves materially, so accepting an "
+            "exposure at one figure does not silence it at another. Null on "
+            "rows created before this was recorded — those keep suppressing."
         ),
     )
 

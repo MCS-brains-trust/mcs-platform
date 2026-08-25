@@ -37,12 +37,68 @@ logger = logging.getLogger(__name__)
 ZERO = Decimal("0")
 
 
-def _is_finding_suppressed(financial_year, finding_key):
+# A suppression lapses once the balance behind it moves by more than the
+# greater of these two. The percentage keeps large balances honest; the dollar
+# floor stops small accounts re-raising on rounding-scale drift.
+SUPPRESSION_MATERIAL_PCT = Decimal("0.05")
+SUPPRESSION_MATERIAL_FLOOR = Decimal("10000")
+
+
+def _stable_account_codes(check_id, check_flags, llm_codes=None):
+    """Return the deterministic account codes identifying a finding.
+
+    The account codes used to come from the LLM's own ``affected_account_codes``
+    list, which varies between runs over the same books. Because finding_key is
+    built from them, and both the suppression fingerprint and the addressed
+    lookup are built from finding_key, an addressed finding came back under a
+    new key on the next review. One Div 7A exposure on DJLH FY2025 was recorded
+    under five keys that way.
+
+    The risk engine runs before the LLM checks and flags the same accounts
+    deterministically, so its flags are the stable identity. ``llm_codes`` is
+    accepted and deliberately ignored — it is kept in the signature so call
+    sites read as a substitution rather than a deletion.
+
+    Falls back to an empty list when a check raised no risk flags, which keys
+    the finding on the bare check id: coarser, but stable, and a finding that
+    cannot be identified consistently cannot be dismissed at all.
+    """
+    flags = (check_flags or {}).get(check_id) or []
+    codes = set()
+    for flag in flags:
+        for entry in (getattr(flag, "affected_accounts", None) or []):
+            # Written as bare strings in some places and as
+            # {"account_code": ...} dicts in others.
+            code = entry.get("account_code") if isinstance(entry, dict) else entry
+            if code:
+                codes.add(str(code))
+    return sorted(codes)
+
+
+def _suppression_has_lapsed(suppression, current_amount):
+    """True when the balance behind a suppression has moved materially."""
+    if current_amount is None or suppression.amount_at_suppression is None:
+        return False
+    before = Decimal(suppression.amount_at_suppression)
+    now = Decimal(current_amount)
+    threshold = max(abs(before) * SUPPRESSION_MATERIAL_PCT,
+                    SUPPRESSION_MATERIAL_FLOOR)
+    return abs(now - before) > threshold
+
+
+def _is_finding_suppressed(financial_year, finding_key, current_amount=None):
     """Check if a finding with this fingerprint has been suppressed.
 
     Only v2 suppressions (fingerprint_version=2) that do NOT require
     re-confirmation are honoured.  Legacy v1 suppressions are ignored so
     previously-suppressed findings resurface for partner review.
+
+    Accepting a finding is a judgement about the numbers as they stood. When
+    ``current_amount`` is given and the balance has since moved materially the
+    suppression lapses and the finding is raised again — a Div 7A exposure that
+    was accepted at one balance is a different question at another. Rows with
+    no recorded amount keep suppressing, so existing suppressions do not start
+    re-raising when this ships.
     """
     from core.models import EvaFindingSuppression
     fingerprint = EvaFindingSuppression.generate_fingerprint(
@@ -50,12 +106,15 @@ def _is_finding_suppressed(financial_year, finding_key):
         str(financial_year.pk),
         finding_key,
     )
-    return EvaFindingSuppression.objects.filter(
+    suppression = EvaFindingSuppression.objects.filter(
         financial_year=financial_year,
         fingerprint=fingerprint,
         fingerprint_version=2,
         requires_review=False,
-    ).exists()
+    ).first()
+    if suppression is None:
+        return False
+    return not _suppression_has_lapsed(suppression, current_amount)
 
 
 def _is_finding_addressed(financial_year, finding_key):
@@ -496,6 +555,27 @@ def _collect_module_flags(financial_year):
     return flags
 
 
+def _bucket_flag_for_div7a(flag):
+    """True when a risk flag genuinely concerns Division 7A.
+
+    The bucket used to take any flag whose title contained "loan", "director",
+    "shareholder" or "advance". That swept in variance flags — DJLH FY2025 had
+    "Significant variance: Loan - ALIC" and two siblings land here — and once
+    the finding key was built from the union of the bucket, the Div 7A finding
+    claimed four accounts where only one carried a Div 7A flag, pointing the
+    accountant at accounts the finding was not about.
+    """
+    rule_id = (getattr(flag, "rule_id", "") or "").lower()
+    title = (getattr(flag, "title", "") or "").lower()
+    description = (getattr(flag, "description", "") or "").lower()
+    return (
+        "div7a" in rule_id
+        or "div 7a" in title
+        or "division 7a" in title
+        or "division 7a" in description
+    )
+
+
 def _run_risk_engine_precheck(financial_year):
     """
     Run the risk engine's deterministic Tier 1 + Tier 2 checks BEFORE
@@ -544,9 +624,7 @@ def _run_risk_engine_precheck(financial_year):
         desc_lower = (flag.description or "").lower()
 
         # Division 7A flags
-        if "div7a" in rule_id.lower() or "division 7a" in title_lower or "division 7a" in desc_lower:
-            check_flags["div7a"].append(flag)
-        elif any(kw in title_lower for kw in ("loan", "director", "shareholder", "advance")):
+        if _bucket_flag_for_div7a(flag):
             check_flags["div7a"].append(flag)
 
         # GST flags
@@ -1685,7 +1763,12 @@ def _run_eva_review_background(fy_pk, user_pk):
                             pass
 
                 # Build finding_key first (needed for both suppression check and dedup)
-                _account_refs = result.get("affected_account_codes", []) or []
+                # Identity comes from the risk engine's deterministic flags,
+                # not from the account list the LLM happened to cite.
+                _account_refs = _stable_account_codes(
+                    check_def["id"], check_flags,
+                    llm_codes=result.get("affected_account_codes", []) or [],
+                )
                 _finding_key = EvaFinding.build_finding_key(
                     check_def["id"], account_codes=_account_refs,
                 )
@@ -1757,10 +1840,12 @@ def _run_eva_review_background(fy_pk, user_pk):
                     if flag_severity not in ("critical", "advisory"):
                         flag_severity = "advisory"
                     # Extract account codes and build finding_key first
-                    flag_codes = [
-                        a["account_code"] for a in (flag.affected_accounts or [])
-                        if isinstance(a, dict) and a.get("account_code")
-                    ]
+                    # Same identity rule as the main path above. Keying off
+                    # this single flag would give the issue a different key
+                    # depending on whether the LLM answered or fell back.
+                    flag_codes = _stable_account_codes(
+                        check_def["id"], check_flags,
+                    )
                     _fb_finding_key = EvaFinding.build_finding_key(
                         check_def["id"], account_codes=flag_codes,
                     )
@@ -2066,12 +2151,31 @@ def eva_review_status(request, pk):
 
     GET /api/financial-years/<pk>/eva-review-status/
     """
+    from core.models import EvaReview, FinancialYear
+
+    # The in-process cache is keyed on the financial year alone, entries are
+    # not cleared when a review finishes, and each gunicorn worker holds its
+    # own copy. Returning it unconditionally meant a poll could be answered
+    # with a previous run's terminal state while a new review was still going:
+    # the panel stopped polling and reported the old result, or rendered the
+    # old error as a failure. Trust the entry only when it names the review
+    # that is actually current.
     task_key = str(pk)
-    if task_key in _eva_review_tasks:
-        return JsonResponse(_eva_review_tasks[task_key])
+    cached = _eva_review_tasks.get(task_key)
+    if cached is not None:
+        latest_pk = (
+            EvaReview.objects.filter(financial_year_id=pk)
+            .order_by("-triggered_at")
+            .values_list("pk", flat=True)
+            .first()
+        )
+        if latest_pk is not None and str(cached.get("review_id") or "") == str(latest_pk):
+            return JsonResponse(cached)
+        # Stale, or from a build that recorded no review_id — fall through to
+        # the database, which is shared across workers and always current.
+        _eva_review_tasks.pop(task_key, None)
 
     # Check database for latest review
-    from core.models import EvaReview, FinancialYear
 
     try:
         fy = FinancialYear.objects.get(pk=pk)
