@@ -15,6 +15,7 @@ from datetime import date, timedelta
 from django.test import TestCase, Client as TestClient, override_settings
 from django.urls import reverse
 from accounts.models import User
+from core.test_support import Require2FAMixin, TwoFAClient
 from core.models import (
     Client, Entity, FinancialYear, EntityOfficer, DepreciationAsset,
     StockItem, MeetingNote, ActivityLog, TrialBalanceLine, AccountMapping,
@@ -31,7 +32,7 @@ STORAGES_OVERRIDE = {
 
 
 @override_settings(STORAGES=STORAGES_OVERRIDE)
-class SecurityTestBase(TestCase):
+class SecurityTestBase(Require2FAMixin, TestCase):
     """Base class with shared setup for security tests."""
 
     @classmethod
@@ -113,14 +114,6 @@ class SecurityTestBase(TestCase):
             start_date=date(2024, 7, 1),
             end_date=date(2025, 6, 30),
         )
-
-    def setUp(self):
-        self.client = TestClient()
-
-    def login_as(self, user):
-        # Skip 2FA check for tests
-        self.client.force_login(user)
-
 
 class IDORProtectionTests(SecurityTestBase):
     """Test that users cannot access entities they are not assigned to."""
@@ -523,7 +516,7 @@ class MassAssignmentProtectionTests(SecurityTestBase):
 # Auto Tax Provision Tests
 # ---------------------------------------------------------------------------
 @override_settings(STORAGES=STORAGES_OVERRIDE)
-class TaxProvisionTestCase(TestCase):
+class TaxProvisionTestCase(Require2FAMixin, TestCase):
     """Tests for the auto tax provision status and post views."""
 
     @classmethod
@@ -592,12 +585,6 @@ class TaxProvisionTestCase(TestCase):
             display_order=200,
         )
 
-    def setUp(self):
-        self.client = TestClient()
-
-    def login_as(self, user):
-        self.client.force_login(user)
-
     def _create_tb_lines(self, fy, revenue=Decimal("100000"), expenses=Decimal("60000")):
         """Create trial balance lines producing net_profit = revenue - expenses."""
         TrialBalanceLine.objects.filter(financial_year=fy).delete()
@@ -630,9 +617,27 @@ class TaxProvisionTestCase(TestCase):
         self.assertFalse(data["eligible"])
         self.assertIn("company", data["reason"])
 
-    def test_status_base_rate_not_set(self):
-        """Entity with is_base_rate_entity=None should be ineligible."""
+    def test_status_reports_the_base_rate_flag_as_a_prefill(self):
+        """The entity's base-rate flag only seeds the dialog's question.
+
+        It used to make an unset ``is_base_rate_entity`` ineligible. That
+        guard was replaced by asking for the answer at posting time (see
+        ``test_post_without_base_rate_answer_is_refused``), so the status
+        payload now carries the flag through as a prefill — including the
+        unanswered ``None`` — and stays eligible either way.
+        """
         self.login_as(self.admin)
+        self._create_tb_lines(self.fy, revenue=Decimal("100000"), expenses=Decimal("60000"))
+        url = reverse("core:tax_provision_status", args=[self.fy.pk])
+        data = self.client.get(url).json()
+        self.assertTrue(data["eligible"])
+        self.assertIs(data["is_base_rate_entity"], True)
+        # The accounting profit is offered as a starting point for the
+        # taxable profit, never as the tax base itself.
+        self.assertEqual(
+            Decimal(data["suggested_taxable_profit"]), Decimal("40000"),
+        )
+
         entity = Entity.objects.create(
             entity_name="No BRE",
             entity_type="company",
@@ -645,11 +650,11 @@ class TaxProvisionTestCase(TestCase):
             start_date=date(2024, 7, 1),
             end_date=date(2025, 6, 30),
         )
-        url = reverse("core:tax_provision_status", args=[fy.pk])
-        response = self.client.get(url)
-        data = response.json()
-        self.assertFalse(data["eligible"])
-        self.assertIn("Base Rate Entity", data["reason"])
+        self._create_tb_lines(fy, revenue=Decimal("100000"), expenses=Decimal("60000"))
+        unset_url = reverse("core:tax_provision_status", args=[fy.pk])
+        unset_data = self.client.get(unset_url).json()
+        self.assertTrue(unset_data["eligible"])
+        self.assertIsNone(unset_data["is_base_rate_entity"])
 
     def test_status_loss_position(self):
         """Entity in a loss position should show not eligible."""
@@ -745,11 +750,18 @@ class TaxProvisionTestCase(TestCase):
     # --- Post endpoint tests ---
 
     def test_post_creates_journal(self):
-        """POST should create a tax_provision journal and TB lines."""
+        """POST should create a tax_provision journal and TB lines.
+
+        The taxable profit and the base-rate answer are supplied by the
+        accountant; the trial balance's 40,000 accounting profit only
+        prefills them.
+        """
         self.login_as(self.accountant)
         self._create_tb_lines(self.fy, revenue=Decimal("100000"), expenses=Decimal("60000"))
         url = reverse("core:auto_tax_provision", args=[self.fy.pk])
-        response = self.client.post(url)
+        response = self.client.post(
+            url, {"taxable_profit": "40000", "is_base_rate_entity": "true"},
+        )
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertTrue(data["success"])
@@ -792,14 +804,63 @@ class TaxProvisionTestCase(TestCase):
         response = self.client.get(url)
         self.assertEqual(response.status_code, 405)
 
+    def test_post_without_taxable_profit_is_refused(self):
+        """The tax base has to be entered, never derived from the TB.
+
+        Accounting profit is not taxable income — add-backs, non-deductibles
+        and prior-year losses sit between them — so the view refuses to guess
+        it even though the trial balance carries a 40,000 profit.
+        """
+        self.login_as(self.accountant)
+        self._create_tb_lines(self.fy, revenue=Decimal("100000"), expenses=Decimal("60000"))
+        url = reverse("core:auto_tax_provision", args=[self.fy.pk])
+        response = self.client.post(url, {"is_base_rate_entity": "true"})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.json()["error"],
+            "Enter the taxable profit before posting the tax journal.",
+        )
+        self.assertFalse(
+            AdjustingJournal.objects.filter(
+                financial_year=self.fy, journal_type="tax_provision",
+            ).exists()
+        )
+
+    def test_post_without_base_rate_answer_is_refused(self):
+        """The base-rate answer is confirmed at posting time.
+
+        This is the guard that replaced the old status-endpoint check on an
+        unset ``entity.is_base_rate_entity``: the entity flag now only
+        prefills the question, so the answer must be submitted even when the
+        entity carries one (this entity's flag is ``True``), and a refused
+        post leaves the entity record untouched.
+        """
+        self.login_as(self.accountant)
+        self._create_tb_lines(self.fy, revenue=Decimal("100000"), expenses=Decimal("60000"))
+        url = reverse("core:auto_tax_provision", args=[self.fy.pk])
+        response = self.client.post(url, {"taxable_profit": "40000"})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(
+            response.json()["error"],
+            "Answer whether this is a base rate entity before posting.",
+        )
+        self.assertFalse(
+            AdjustingJournal.objects.filter(
+                financial_year=self.fy, journal_type="tax_provision",
+            ).exists()
+        )
+        self.entity.refresh_from_db()
+        self.assertIs(self.entity.is_base_rate_entity, True)
+
     def test_post_duplicate_prevented(self):
         """Second POST should fail if journal already exists."""
         self.login_as(self.accountant)
         self._create_tb_lines(self.fy, revenue=Decimal("100000"), expenses=Decimal("60000"))
         url = reverse("core:auto_tax_provision", args=[self.fy.pk])
-        response1 = self.client.post(url)
+        inputs = {"taxable_profit": "40000", "is_base_rate_entity": "true"}
+        response1 = self.client.post(url, inputs)
         self.assertEqual(response1.status_code, 200)
-        response2 = self.client.post(url)
+        response2 = self.client.post(url, inputs)
         self.assertEqual(response2.status_code, 400)
         data = response2.json()
         self.assertIn("already exists", data["error"])
@@ -816,7 +877,11 @@ class TaxProvisionTestCase(TestCase):
             credit=Decimal("3000"),
         )
         url = reverse("core:auto_tax_provision", args=[self.fy.pk])
-        response = self.client.post(url)
+        # 40,000 taxable profit at 25% = 10,000 calculated tax, of which
+        # 3,000 is already provided for, so only 7,000 may be posted.
+        response = self.client.post(
+            url, {"taxable_profit": "40000", "is_base_rate_entity": "true"},
+        )
         data = response.json()
         self.assertTrue(data["success"])
         self.assertEqual(data["adjustment_amount"], "7000")
@@ -836,10 +901,12 @@ class TaxProvisionTestCase(TestCase):
     def test_post_rounding_up(self):
         """Tax amount should be rounded up (ceiling)."""
         self.login_as(self.accountant)
-        # net_profit = 100001 - 60000 = 40001, tax = 40001 * 0.25 = 10000.25, ceil = 10001
+        # taxable_profit = 40001, tax = 40001 * 0.25 = 10000.25, ceil = 10001
         self._create_tb_lines(self.fy, revenue=Decimal("100001"), expenses=Decimal("60000"))
         url = reverse("core:auto_tax_provision", args=[self.fy.pk])
-        response = self.client.post(url)
+        response = self.client.post(
+            url, {"taxable_profit": "40001", "is_base_rate_entity": "true"},
+        )
         data = response.json()
         self.assertTrue(data["success"])
         self.assertEqual(data["adjustment_amount"], "10001")
@@ -857,7 +924,9 @@ class TaxProvisionTestCase(TestCase):
             credit=Decimal("10000"),
         )
         url = reverse("core:auto_tax_provision", args=[self.fy.pk])
-        response = self.client.post(url)
+        response = self.client.post(
+            url, {"taxable_profit": "40000", "is_base_rate_entity": "true"},
+        )
         self.assertEqual(response.status_code, 400)
         data = response.json()
         self.assertIn("No adjustment required", data["error"])
@@ -881,7 +950,9 @@ class TaxProvisionTestCase(TestCase):
             mapped_line_item=tax_expense_map,
         )
         url = reverse("core:auto_tax_provision", args=[self.fy.pk])
-        response = self.client.post(url)
+        response = self.client.post(
+            url, {"taxable_profit": "40000", "is_base_rate_entity": "true"},
+        )
         data = response.json()
         self.assertTrue(data["success"])
 
@@ -1585,8 +1656,11 @@ class FrankingAccountTests(TestCase):
         )
 
     def setUp(self):
-        self.test_client = TestClient()
+        self.test_client = TwoFAClient()
         self.test_client.force_login(self.admin)
+        session = self.test_client.session
+        session["2fa_verified"] = True
+        session.save()
 
     def test_running_balance_calculates_correctly(self):
         """3 credit entries, 1 debit — assert each row balance is correct."""
@@ -1931,7 +2005,7 @@ class SuppressionFingerprintV2Tests(TestCase):
 # Sprint 1b — R&DTI smoke tests
 # ---------------------------------------------------------------------------
 @override_settings(STORAGES=STORAGES_OVERRIDE)
-class RdtiSmokeTests(TestCase):
+class RdtiSmokeTests(Require2FAMixin, TestCase):
     """Smoke tests for Sprint 1b R&DTI additions."""
 
     # Expected FIELD_PROMPTS keys — guards against accidental deletion.
@@ -1999,14 +2073,11 @@ class RdtiSmokeTests(TestCase):
             end_date=date(2025, 6, 30),
         )
 
-    def setUp(self):
-        self.client = TestClient()
-
     def _login_admin(self):
-        self.client.force_login(self.admin_user)
+        self.login_as(self.admin_user)
 
     def _login_non_admin(self):
-        self.client.force_login(self.non_admin)
+        self.login_as(self.non_admin)
 
     # -- Test 1: FIELD_PROMPTS completeness --------------------------------
     def test_field_prompts_cover_all_narrative_fields(self):
