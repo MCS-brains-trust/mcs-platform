@@ -223,16 +223,119 @@ class GhostCleanupTests(BeneficiaryAccountTestBase):
             credit=Decimal("0"),
             closing_balance=Decimal("100"),
         )
-        EntityOfficer.objects.create(
+        ghost = EntityChartOfAccount.objects.get(
+            entity=self.trust, account_code="4053.01",
+        )
+        officer = EntityOfficer.objects.create(
             entity=self.trust, full_name="Posting Bene",
             role=EntityOfficer.OfficerRole.BENEFICIARY,
             beneficiary_type="adult",
         )
-        # Ghost survives because it has a posting
-        self.assertTrue(EntityChartOfAccount.objects.filter(
-            entity=self.trust, account_code="4053.01",
-            beneficiary_officer__isnull=True,
-        ).exists())
+        # Ghost survives (same row, not deleted and recreated) because it has
+        # a posting, and the posting is untouched.
+        ghost.refresh_from_db()
+        self.assertEqual(
+            EntityChartOfAccount.objects.filter(
+                entity=self.trust, account_code="4053.01",
+            ).count(), 1,
+        )
+        self.assertEqual(
+            TrialBalanceLine.objects.filter(
+                financial_year=fy, account_code="4053.01",
+            ).count(), 1,
+        )
+        # Surviving row is adopted by the officer rather than left orphaned —
+        # an unlinked row is invisible to the trust distribution post gate.
+        self.assertEqual(ghost.beneficiary_officer_id, officer.pk)
+
+
+class EscalatedRowAdoptionTests(BeneficiaryAccountTestBase):
+    """A pre-existing unlinked .NN row that survives ghost cleanup (because it
+    carries postings) must still be adopted by the officer being provisioned.
+
+    Otherwise get_or_create matches it, silently discards the defaults, and the
+    officer ends up with no beneficiary_officer link on that code — which is
+    invisible in the chart but breaks the trust distribution post gate
+    (core/views_trust.py resolves the credit account by beneficiary_officer).
+    """
+
+    def _seed_posted_row(self, code):
+        fy = FinancialYear.objects.create(
+            entity=self.trust, year_label="FY2026",
+            start_date=date(2025, 7, 1), end_date=date(2026, 6, 30),
+        )
+        EntityChartOfAccount.objects.create(
+            entity=self.trust, account_code=code,
+            account_name="Funds loaned to trust",
+            section="capital_accounts",
+            is_active=True, is_custom=False, auto_provisioned=False,
+            beneficiary_officer=None,
+        )
+        TrialBalanceLine.objects.create(
+            financial_year=fy, account_code=code,
+            account_name="Funds loaned to trust",
+            opening_balance=Decimal("0"), debit=Decimal("0"),
+            credit=Decimal("500"), closing_balance=Decimal("-500"),
+        )
+
+    def test_posted_row_is_adopted_by_new_officer(self):
+        """The distribution post gate must find an officer-linked 4004.NN."""
+        self._seed_posted_row("4004.01")
+        officer = EntityOfficer.objects.create(
+            entity=self.trust, full_name="Imported Chart Bene",
+            role=EntityOfficer.OfficerRole.BENEFICIARY,
+            beneficiary_type="adult",
+        )
+        gate_match = EntityChartOfAccount.objects.filter(
+            entity=self.trust,
+            beneficiary_officer=officer,
+            account_code__startswith="4004",
+            is_active=True,
+        )
+        self.assertTrue(
+            gate_match.exists(),
+            "officer has no linked 4004.NN — trust distribution post will fail",
+        )
+
+    def test_adopted_row_is_renamed_after_the_officer(self):
+        self._seed_posted_row("4004.01")
+        officer = EntityOfficer.objects.create(
+            entity=self.trust, full_name="Imported Chart Bene",
+            role=EntityOfficer.OfficerRole.BENEFICIARY,
+            beneficiary_type="adult",
+        )
+        row = EntityChartOfAccount.objects.get(
+            entity=self.trust, account_code="4004.01",
+        )
+        self.assertEqual(row.beneficiary_officer_id, officer.pk)
+        self.assertTrue(
+            row.account_name.endswith("Imported Chart Bene"),
+            f"got '{row.account_name}'",
+        )
+
+    def test_adoption_never_steals_another_officers_account(self):
+        """A row already linked to officer A must not be re-pointed at B."""
+        first = EntityOfficer.objects.create(
+            entity=self.trust, full_name="First Bene",
+            role=EntityOfficer.OfficerRole.BENEFICIARY,
+            beneficiary_type="adult",
+        )
+        owned = EntityChartOfAccount.objects.filter(
+            entity=self.trust, beneficiary_officer=first,
+            account_code__startswith="4004",
+        ).first()
+        self.assertIsNotNone(owned)
+        second = EntityOfficer.objects.create(
+            entity=self.trust, full_name="Second Bene",
+            role=EntityOfficer.OfficerRole.BENEFICIARY,
+            beneficiary_type="adult",
+        )
+        owned.refresh_from_db()
+        self.assertEqual(
+            owned.beneficiary_officer_id, first.pk,
+            "provisioning a second officer stole the first officer's account",
+        )
+        self.assertNotEqual(second.pk, first.pk)
 
 
 class NameSyncTests(BeneficiaryAccountTestBase):

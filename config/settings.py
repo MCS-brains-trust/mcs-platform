@@ -2,6 +2,8 @@
 MCS Financial Statement Platform - Django Settings
 """
 import os
+import sys
+import tempfile
 from pathlib import Path
 import environ
 from celery.schedules import crontab
@@ -175,6 +177,15 @@ STORAGES = {
 # Media files (uploads, generated documents)
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
+
+# Data migrations 0103/0106/0107 rebuild the FS .docx templates into
+# MEDIA_ROOT. Under `manage.py test` that wrote over the live client-facing
+# templates using an empty test-database FirmSettings (i.e. no uploaded logo),
+# so keep test runs out of the live media directory entirely.
+TESTING = "test" in sys.argv[:2] or "PYTEST_CURRENT_TEST" in os.environ
+if TESTING:
+    MEDIA_ROOT = Path(tempfile.gettempdir()) / "statementhub_test_media"
+    os.makedirs(MEDIA_ROOT, exist_ok=True)
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

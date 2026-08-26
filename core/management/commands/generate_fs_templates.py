@@ -708,30 +708,16 @@ def _build_cover(entity_type):
     header.is_linked_to_previous = False
     p = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
     p.text = ""
-    # --- Logo at top: prefer FirmSettings upload, fall back to static files ---
-    import os as _os
-    logo_path = None
-    try:
-        from core.models import FirmSettings
-        logo_path = FirmSettings.get().logo_path
-    except Exception:
-        pass
-    if not logo_path:
-        logo_candidates = [
-            _os.path.join(settings.BASE_DIR, "static", "img", "mcs_logo.png"),
-            _os.path.join(settings.BASE_DIR, "static", "MCSlogo.png"),
-        ]
-        for candidate in logo_candidates:
-            if _os.path.isfile(candidate):
-                logo_path = candidate
-                break
-
+    # --- Logo at top: injected at render time from Firm Settings ---
+    # Deliberately a merge field, not an embedded picture: resolving the logo
+    # here would freeze whichever logo happened to be current when this
+    # template was generated, so a later upload in Firm Settings would never
+    # reach client financial statements. fs_template_service.render_template
+    # fills {{ practice_logo }} with an InlineImage on every render.
     _add_para(doc, "", size=Pt(12))  # small top spacer
-    if logo_path:
-        p_logo = doc.add_paragraph()
-        p_logo.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run_logo = p_logo.add_run()
-        run_logo.add_picture(logo_path, width=Cm(6))
+    p_logo = _add_para(doc, "{{ practice_logo }}",
+                       alignment=WD_ALIGN_PARAGRAPH.CENTER)
+    p_logo.paragraph_format.space_after = Pt(0)
 
     # --- Entity details (NO ACN on cover — only ABN) ---
     _add_para(doc, "", size=Pt(16))  # spacer after logo
