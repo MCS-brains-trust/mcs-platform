@@ -1383,65 +1383,61 @@ def build_company_context(financial_year, include_watermark=True):
             "py_amount": -net_profit_py,
         })
 
-    # Trust only: suppress "Current year profit / (loss)" from equity.
-    # For trusts with beneficiary loan netting, the profit is already
-    # absorbed into the beneficiary loan balances in current liabilities.
-    # The line was injected above to pass the pre-check; now remove it
-    # before rendering. Skip the post-injection integrity check for trusts
-    # because the suppression intentionally creates an equity/NA mismatch
-    # that is correct (profit lives in beneficiary loans, not equity).
-    if entity.entity_type == "trust":
-        sections["equity"] = [
-            item for item in sections["equity"]
-            if "current year profit" not in item.get("account_name", "").lower()
-        ]
-    else:
-        # Post-injection balance sheet integrity check (non-trust entities).
-        _final_equity = -_sum_section(sections["equity"])
-        _final_net_assets = _test_net_assets
-        if abs(_final_net_assets - _final_equity) > Decimal("1"):
-            logger.warning(
-                "Balance Sheet integrity failure for %s FY %s: "
-                "Net Assets=%s, Total Equity=%s, diff=%s",
-                entity.entity_name, fy.pk,
-                _final_net_assets, _final_equity,
-                _final_net_assets - _final_equity,
-            )
-            # Surface as a CRITICAL Eva finding
-            try:
-                from core.models import EvaReview, EvaFinding
-                _active_review = EvaReview.objects.filter(
-                    financial_year=fy,
-                ).order_by("-created_at").first()
-                if _active_review:
-                    import hashlib, json as _json
-                    _fp = hashlib.sha256(_json.dumps({
-                        "entity_id": str(entity.pk),
-                        "financial_year_id": str(fy.pk),
-                        "rule_category": "balance_sheet_integrity",
-                    }, sort_keys=True).encode()).hexdigest()
-                    EvaFinding.objects.update_or_create(
-                        eva_review=_active_review,
-                        check_name="balance_sheet_integrity",
-                        defaults={
-                            "severity": "critical",
-                            "title": "Balance Sheet does not reconcile",
-                            "plain_english_explanation": (
-                                f"Net Assets ({format_amount(_final_net_assets)}) does not equal "
-                                f"Total Equity ({format_amount(_final_equity)}). "
-                                f"Difference: {format_amount(_final_net_assets - _final_equity)}."
-                            ),
-                            "recommendation": (
-                                "Investigate equity section for missing components such as "
-                                "unitholders' capital, retained earnings, or current year profit. "
-                                "The financial statements cannot be finalised until this is resolved."
-                            ),
-                            "source": "risk_engine",
-                            "fingerprint": _fp,
-                        },
-                    )
-            except Exception as _e:
-                logger.error("Could not create balance_sheet_integrity finding: %s", _e)
+    # Trusts keep the "Current year profit / (loss)" row injected above.
+    # The distribution journal debits 4199 (equity, "Undistributed income" —
+    # already stripped from equity a few lines up in this function) and
+    # credits the beneficiary's 4110.NN loan account (liabilities). That
+    # moves the *distributed* portion out of equity into a liability, but it
+    # does not change the fact that the year's profit, before distribution,
+    # belongs in equity: net assets is short by exactly the year's profit
+    # whenever this row is missing, whether or not a distribution was
+    # posted. There is no trust-specific exemption from the post-injection
+    # integrity check below.
+    _final_equity = -_sum_section(sections["equity"])
+    _final_net_assets = _test_net_assets
+    if abs(_final_net_assets - _final_equity) > Decimal("1"):
+        logger.warning(
+            "Balance Sheet integrity failure for %s FY %s: "
+            "Net Assets=%s, Total Equity=%s, diff=%s",
+            entity.entity_name, fy.pk,
+            _final_net_assets, _final_equity,
+            _final_net_assets - _final_equity,
+        )
+        # Surface as a CRITICAL Eva finding
+        try:
+            from core.models import EvaReview, EvaFinding
+            _active_review = EvaReview.objects.filter(
+                financial_year=fy,
+            ).order_by("-created_at").first()
+            if _active_review:
+                import hashlib, json as _json
+                _fp = hashlib.sha256(_json.dumps({
+                    "entity_id": str(entity.pk),
+                    "financial_year_id": str(fy.pk),
+                    "rule_category": "balance_sheet_integrity",
+                }, sort_keys=True).encode()).hexdigest()
+                EvaFinding.objects.update_or_create(
+                    eva_review=_active_review,
+                    check_name="balance_sheet_integrity",
+                    defaults={
+                        "severity": "critical",
+                        "title": "Balance Sheet does not reconcile",
+                        "plain_english_explanation": (
+                            f"Net Assets ({format_amount(_final_net_assets)}) does not equal "
+                            f"Total Equity ({format_amount(_final_equity)}). "
+                            f"Difference: {format_amount(_final_net_assets - _final_equity)}."
+                        ),
+                        "recommendation": (
+                            "Investigate equity section for missing components such as "
+                            "unitholders' capital, retained earnings, or current year profit. "
+                            "The financial statements cannot be finalised until this is resolved."
+                        ),
+                        "source": "risk_engine",
+                        "fingerprint": _fp,
+                    },
+                )
+        except Exception as _e:
+            logger.error("Could not create balance_sheet_integrity finding: %s", _e)
 
     # Compute note_map and assign note_ref to items for the Note column
     note_map, note_lookup = _compute_note_map(sections, entity_type, has_income_tax)
@@ -1540,11 +1536,14 @@ def build_company_context(financial_year, include_watermark=True):
     total_equity_cy = -_sum_section(sections["equity"])
     total_equity_py = -_sum_section(sections["equity"], "py_amount")
 
-    # For trust entities, equity = net assets (beneficiary loans absorbed into liabilities)
-    # Override total_equity for context validation only — rendered equity remains unchanged
-    if entity.entity_type == "trust":
-        total_equity_cy = net_assets_cy
-        total_equity_py = net_assets_py
+    # total_equity_cy/py above are computed directly from sections["equity"]
+    # for every entity type, including trusts. There used to be a trust-only
+    # override that force-set these to net_assets_cy/py "for context
+    # validation only" — that masked exactly the imbalance the (now-removed)
+    # profit-row suppression created, rather than exposing it. With the
+    # profit row staying in equity, total_equity_cy equals net_assets_cy
+    # naturally; forcing it was redundant and would have hidden any future
+    # genuine imbalance instead of surfacing it via the integrity check above.
 
     # Officers
     directors = EntityOfficer.objects.filter(
