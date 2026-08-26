@@ -1066,18 +1066,28 @@ class DocumentContextBuilder:
         total_liabilities = total_current_liabilities + total_non_current_liabilities
         total_liabilities_py = total_current_liabilities_py + total_non_current_liabilities_py
 
+        # StatementHub uses an UNCLOSED trial balance convention: current-year
+        # profit/loss remains in the P&L accounts and has not been
+        # transferred into equity. If equity (as it stands) would not
+        # balance against net assets, inject the current year profit/(loss)
+        # row -- mirroring the pattern in build_company_context
+        # (core/fs_template_service.py, ~line 1370). This applies to every
+        # entity type, including trusts: a trust's distribution journal
+        # debits 4199 (equity, "Undistributed income") and credits the
+        # beneficiary's 4110.NN loan account (current liabilities), which
+        # moves the *distributed* portion out of equity into a liability,
+        # but does not change the fact that the year's profit, before
+        # distribution, belongs in equity.
+        self._inject_profit_into_equity(
+            sections, net_profit, net_profit_py, total_assets, total_liabilities,
+        )
+
         # Equity accounts are credit-normal (negative closing_balance = positive equity).
         # Negate the sum so that total_equity is a positive number representing net equity.
         total_equity = -self._sum_section(sections["equity"])
         total_equity_py = -self._sum_section(sections["equity"], field="py")
         net_assets = total_assets - total_liabilities
         net_assets_py = total_assets_py - total_liabilities_py
-
-        # For trust entities, beneficiary loans are in liabilities not equity.
-        # Override total_equity so the balance check passes.
-        if self.entity.entity_type == "trust":
-            total_equity = net_assets
-            total_equity_py = net_assets_py
 
         # Ratios (total_current_liabilities is already abs'd above)
         current_ratio = (
@@ -2603,6 +2613,34 @@ class DocumentContextBuilder:
                 sections["equity"].append(entry)
             elif code_num < 6000:
                 sections["cogs"].append(entry)
+        return sections
+
+    def _inject_profit_into_equity(
+        self, sections, net_profit, net_profit_py, total_assets, total_liabilities,
+    ):
+        """
+        StatementHub uses an UNCLOSED trial balance convention: current-year
+        profit/loss remains in the P&L accounts and has not been
+        transferred into equity. If equity (as it stands) would not
+        balance against net assets, inject a "Current year profit / (loss)"
+        row into ``sections["equity"]`` -- mirroring the pattern in
+        build_company_context (core/fs_template_service.py, ~line 1370).
+        This applies to every entity type, including trusts.
+
+        Mutates ``sections`` in place and returns it. Extracted from
+        ``_financial_data_context`` so it can be exercised directly by
+        tests without needing the classified sections exposed on the
+        built context.
+        """
+        _test_equity = -self._sum_section(sections["equity"])
+        _test_net_assets = total_assets - total_liabilities
+        if abs(_test_net_assets - _test_equity) > 1:
+            sections["equity"].append({
+                "account_code": "NET_PROFIT",
+                "account_name": "Current year profit / (loss)",
+                "cy": -net_profit,   # credit-normal convention
+                "py": -net_profit_py,
+            })
         return sections
 
     @staticmethod

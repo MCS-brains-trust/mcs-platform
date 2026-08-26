@@ -1067,7 +1067,7 @@ def trust_post_distribution(request, pk):
     POST /api/years/<pk>/trust-workspace/post-distribution/
     Creates and posts journal entries from the selected TaxPlanningScenario.
 
-    DR  Profit Distribution — Appropriation (4199)
+    DR  Undistributed income (4199)
     CR  Beneficiary 4004.NN loan account per beneficiary (officer-linked
         EntityChartOfAccount, "Funds loaned to trust").
 
@@ -1197,12 +1197,22 @@ def trust_post_distribution(request, pk):
             )
 
             line_num = 1
-            # DR side: Retained Profits / P&L appropriation
+            # DR side: 4199. The name comes from the entity's own chart, which
+            # HandiLedger seeds as "Undistributed income" for trusts. Hardcoding
+            # a name here overwrote it on the trial balance line, and because the
+            # statement builder aggregates by account code, that invented label
+            # then won the equity row shown to the client.
+            _appropriation = EntityChartOfAccount.objects.filter(
+                entity=fy.entity, account_code="4199",
+            ).first()
             JournalLine.objects.create(
                 journal=journal,
                 line_number=line_num,
                 account_code="4199",
-                account_name="Profit Distribution — Appropriation",
+                account_name=(
+                    _appropriation.account_name if _appropriation
+                    else "Undistributed income"
+                ),
                 description=f"Trust distribution for year ended 30 June {fy_year}",
                 debit=total_distributed,
                 credit=Decimal("0"),
