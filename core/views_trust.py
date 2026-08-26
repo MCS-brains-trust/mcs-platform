@@ -1067,12 +1067,12 @@ def trust_post_distribution(request, pk):
     POST /api/years/<pk>/trust-workspace/post-distribution/
     Creates and posts journal entries from the selected TaxPlanningScenario.
 
-    DR  Profit Distribution — Appropriation (4199)
-    CR  Beneficiary 4004.NN loan account per beneficiary (officer-linked
-        EntityChartOfAccount, "Funds loaned to trust").
+    DR  Undistributed income (4199)
+    CR  Beneficiary 4110.NN loan account per beneficiary (officer-linked
+        EntityChartOfAccount, "Funds loaned to trust" — liabilities section).
 
     Refuses to post if any beneficiary with a positive distribution has no
-    4004.NN loan account — there is no silent fallback to 3100.
+    4110.NN loan account — there is no silent fallback to 3100.
 
     Journal is created as POSTED and written to TB via _post_journal_to_tb.
     """
@@ -1110,20 +1110,21 @@ def trust_post_distribution(request, pk):
     }
 
     # Build a lookup: {officer_pk_str: (account_code, account_name)} for the
-    # beneficiary's 4004.NN loan account ("Funds loaned to trust"), resolved
-    # from the officer-linked EntityChartOfAccount materialised by the
-    # 4000-family provisioning (core/beneficiary_account_service.py). The
-    # distribution credits this account.
+    # beneficiary's 4110.NN loan account ("Funds loaned to trust" — a
+    # liability, the beneficiary's current loan account), resolved from the
+    # officer-linked EntityChartOfAccount materialised by the 4000-family
+    # provisioning (core/beneficiary_account_service.py). The distribution
+    # credits this account.
     #
-    # There is NO 3100 / 9003 / lowest-code fallback: a missing 4004.NN
+    # There is NO 3100 / 9003 / lowest-code fallback: a missing 4110.NN
     # account is a hard error (the gate below refuses to post) rather than a
-    # silent mis-post. The lowest 4004.NN per officer wins if duplicates exist.
+    # silent mis-post. The lowest 4110.NN per officer wins if duplicates exist.
     ben_loan_accounts = {}
     for eca in (
         EntityChartOfAccount.objects.filter(
             entity=fy.entity,
             beneficiary_officer__isnull=False,
-            account_code__startswith="4004",
+            account_code__startswith="4110",
             is_active=True,
         )
         .select_related("beneficiary_officer")
@@ -1135,7 +1136,7 @@ def trust_post_distribution(request, pk):
         )
 
     rows = []
-    missing = []  # beneficiaries with a positive distribution but no 4004.NN
+    missing = []  # beneficiaries with a positive distribution but no 4110.NN
     total_distributed = Decimal("0")
     for entry in (scenario.distributions or []):
         amount = Decimal(str(entry.get("proposed_distribution", 0)))
@@ -1143,7 +1144,7 @@ def trust_post_distribution(request, pk):
             continue
         ben_id = str(entry.get("beneficiary_id", ""))
         ben_name = officer_map.get(ben_id, f"Beneficiary {ben_id[:8]}")
-        # Resolve the beneficiary's 4004.NN loan account. No fallback — a
+        # Resolve the beneficiary's 4110.NN loan account. No fallback — a
         # missing account is collected and reported as a hard error below.
         loan_acct = ben_loan_accounts.get(ben_id)
         if loan_acct is None:
@@ -1161,9 +1162,9 @@ def trust_post_distribution(request, pk):
         names = ", ".join(missing)
         return JsonResponse(
             {"error": (
-                f"Cannot post distribution: no 4004 (Funds loaned to trust) "
-                f"loan account exists for: {names}. Create each beneficiary's "
-                f"4004.NN account before posting."
+                f"Cannot post distribution: no 4110 (beneficiary loan) "
+                f"account exists for: {names}. Create each beneficiary's "
+                f"4110.NN account before posting."
             )},
             status=400,
         )
@@ -1197,19 +1198,27 @@ def trust_post_distribution(request, pk):
             )
 
             line_num = 1
-            # DR side: Retained Profits / P&L appropriation
+            # DR side: Undistributed income (4199) — name comes from the
+            # entity's chart, not a hardcoded label, so the chart stays the
+            # single source of truth for the account's display name.
+            _appropriation = EntityChartOfAccount.objects.filter(
+                entity=fy.entity, account_code="4199",
+            ).first()
             JournalLine.objects.create(
                 journal=journal,
                 line_number=line_num,
                 account_code="4199",
-                account_name="Profit Distribution — Appropriation",
+                account_name=(
+                    _appropriation.account_name if _appropriation
+                    else "Undistributed income"
+                ),
                 description=f"Trust distribution for year ended 30 June {fy_year}",
                 debit=total_distributed,
                 credit=Decimal("0"),
             )
             line_num += 1
 
-            # CR side: one line per beneficiary — posts to their 4004.NN
+            # CR side: one line per beneficiary — posts to their 4110.NN
             # loan account (guaranteed present; the gate above refused to
             # post if any beneficiary lacked one).
             for row in rows:
