@@ -10,6 +10,7 @@ import re
 import uuid
 from decimal import Decimal
 from django.conf import settings
+from django.core.exceptions import ValidationError
 from django.db import models, transaction
 from django.urls import reverse
 
@@ -1176,6 +1177,20 @@ class EntityChartOfAccount(models.Model):
 
     def __str__(self):
         return f"{self.account_code} — {self.account_name} ({self.entity.entity_name})"
+
+    def clean(self):
+        super().clean()
+        if self.maps_to_id and self.entity_id:
+            applicable = self.maps_to.applicable_entities or []
+            if applicable and self.entity.entity_type not in applicable:
+                raise ValidationError({
+                    "maps_to": (
+                        f"{self.maps_to.standard_code} "
+                        f"({self.maps_to.line_item_label}) applies to "
+                        f"{', '.join(applicable)} entities, not "
+                        f"{self.entity.entity_type}."
+                    )
+                })
 
     @classmethod
     def seed_from_template(cls, entity):
