@@ -15,6 +15,7 @@ from datetime import date, timedelta
 from django.test import TestCase, Client as TestClient, override_settings
 from django.urls import reverse
 from accounts.models import User
+from core.test_support import Require2FAMixin, TwoFAClient
 from core.models import (
     Client, Entity, FinancialYear, EntityOfficer, DepreciationAsset,
     StockItem, MeetingNote, ActivityLog, TrialBalanceLine, AccountMapping,
@@ -31,7 +32,7 @@ STORAGES_OVERRIDE = {
 
 
 @override_settings(STORAGES=STORAGES_OVERRIDE)
-class SecurityTestBase(TestCase):
+class SecurityTestBase(Require2FAMixin, TestCase):
     """Base class with shared setup for security tests."""
 
     @classmethod
@@ -113,14 +114,6 @@ class SecurityTestBase(TestCase):
             start_date=date(2024, 7, 1),
             end_date=date(2025, 6, 30),
         )
-
-    def setUp(self):
-        self.client = TestClient()
-
-    def login_as(self, user):
-        # Skip 2FA check for tests
-        self.client.force_login(user)
-
 
 class IDORProtectionTests(SecurityTestBase):
     """Test that users cannot access entities they are not assigned to."""
@@ -523,7 +516,7 @@ class MassAssignmentProtectionTests(SecurityTestBase):
 # Auto Tax Provision Tests
 # ---------------------------------------------------------------------------
 @override_settings(STORAGES=STORAGES_OVERRIDE)
-class TaxProvisionTestCase(TestCase):
+class TaxProvisionTestCase(Require2FAMixin, TestCase):
     """Tests for the auto tax provision status and post views."""
 
     @classmethod
@@ -591,12 +584,6 @@ class TaxProvisionTestCase(TestCase):
             statement_section="Expenses",
             display_order=200,
         )
-
-    def setUp(self):
-        self.client = TestClient()
-
-    def login_as(self, user):
-        self.client.force_login(user)
 
     def _create_tb_lines(self, fy, revenue=Decimal("100000"), expenses=Decimal("60000")):
         """Create trial balance lines producing net_profit = revenue - expenses."""
@@ -1585,8 +1572,11 @@ class FrankingAccountTests(TestCase):
         )
 
     def setUp(self):
-        self.test_client = TestClient()
+        self.test_client = TwoFAClient()
         self.test_client.force_login(self.admin)
+        session = self.test_client.session
+        session["2fa_verified"] = True
+        session.save()
 
     def test_running_balance_calculates_correctly(self):
         """3 credit entries, 1 debit — assert each row balance is correct."""
@@ -1931,7 +1921,7 @@ class SuppressionFingerprintV2Tests(TestCase):
 # Sprint 1b — R&DTI smoke tests
 # ---------------------------------------------------------------------------
 @override_settings(STORAGES=STORAGES_OVERRIDE)
-class RdtiSmokeTests(TestCase):
+class RdtiSmokeTests(Require2FAMixin, TestCase):
     """Smoke tests for Sprint 1b R&DTI additions."""
 
     # Expected FIELD_PROMPTS keys — guards against accidental deletion.
@@ -1999,14 +1989,11 @@ class RdtiSmokeTests(TestCase):
             end_date=date(2025, 6, 30),
         )
 
-    def setUp(self):
-        self.client = TestClient()
-
     def _login_admin(self):
-        self.client.force_login(self.admin_user)
+        self.login_as(self.admin_user)
 
     def _login_non_admin(self):
-        self.client.force_login(self.non_admin)
+        self.login_as(self.non_admin)
 
     # -- Test 1: FIELD_PROMPTS completeness --------------------------------
     def test_field_prompts_cover_all_narrative_fields(self):
