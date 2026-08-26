@@ -11,13 +11,20 @@ shows net assets exceeding total equity by exactly its net profit for the
 year (see the task brief's Dr Services / Chiaravalle measurements).
 
 This test builds a trust financial year with revenue, expenses, one asset
-account, one liability account, one equity (corpus) account, and a posted
-distribution appropriation debit (4199, "Undistributed income") with its
-credit leg modeled as a beneficiary loan liability (4110.01). A separate
-fix (see core/tests_trust_4199_carried_forward.py) keeps 4199 itself in
-equity rather than stripping it out; this test's TB must therefore be
-genuinely balanced -- both legs of the distribution present -- rather than
-relying on 4199 as a free-floating, uncountered debit.
+account, one liability account, one equity (corpus) account, one
+beneficiary (so account-code suffix ".01" resolves to a real officer), and
+a posted distribution appropriation debit (4199, "Undistributed income")
+with its credit leg modeled as the real production convention: 4004.01
+"Funds loaned to trust" -- a beneficiary loan account that
+``_net_beneficiary_accounts`` nets out of equity into current liabilities
+(NOT 4110, which HandiLedger keeps in equity along with the rest of
+4000-4999, and which no trust in production has ever posted to -- an
+earlier attempt to route beneficiary loans through 4110 was reverted, see
+commits dab084a and 69050f9). A separate fix (see
+core/tests_trust_4199_carried_forward.py) keeps 4199 itself in equity
+rather than stripping it out; this test's TB must therefore be genuinely
+balanced -- both legs of the distribution present -- rather than relying
+on 4199 as a free-floating, uncountered debit.
 
 The test calls ``build_trust_context``, the entry point the .docx renderer
 actually uses for trusts (NOT ``_get_tb_sections``, which returns the raw
@@ -30,7 +37,9 @@ from unittest.mock import patch
 from django.test import override_settings
 
 from core.fs_template_service import build_trust_context
-from core.models import EntityChartOfAccount, FinancialYear, TrialBalanceLine
+from core.models import (
+    EntityChartOfAccount, EntityOfficer, FinancialYear, TrialBalanceLine,
+)
 from core.tests_beneficiary_accounts import BeneficiaryAccountTestBase
 
 STORAGES_OVERRIDE = {
@@ -52,20 +61,30 @@ def _sqlite_json_contains_as_sql(self, compiler, connection):
     the same limitation with a substitute Q for a different query; this
     does the equivalent for a query built inline inside
     build_trust_context, where there is no module-level Q to substitute.
-    This fixture has no EntityOfficer rows at all, so the correct answer is
-    always "no match" -- a constant-false SQL fragment reproduces that
-    without needing real JSON support.
+    This fixture's one EntityOfficer has role="beneficiary", which the
+    ``role=`` half of each Q already excludes/includes correctly on its
+    own; the ``roles__contains`` half exists only to match a *secondary*
+    role stored in the JSON ``roles`` list, and this fixture never sets
+    one, so "no match" is always the right answer for that half -- a
+    constant-false SQL fragment reproduces that without needing real JSON
+    support.
     """
     return "0", ()
 
 # (account_code, account_name, cy_amount) -- debit-positive, credit-negative,
 # matching what _get_tb_sections reads. Net profit = 150,000 - 60,000 =
-# 90,000. 4199 is the distribution's debit leg (90,000); "4110.01" is its
-# credit leg, the beneficiary loan liability the distribution moves the
-# profit into. 4199 now stays in equity (see core/fs_template_service.py),
-# so this TB must be genuinely balanced -- all rows sum to zero
-# (-150000 + 60000 + 200000 - 20000 - 90000 + 90000 - 90000 = 0) -- rather
-# than relying on 4199 being a free-floating, uncountered debit.
+# 90,000. 4199 is the distribution's debit leg (90,000); "4004.01" is its
+# credit leg -- "Funds loaned to trust", the real production account code
+# for a beneficiary loan (matched in core/fs_template_service.py by suffix
+# ".01" to the first officer by display_order, i.e. the one beneficiary
+# created in setUp below). _net_beneficiary_accounts nets 4004.01 out of
+# sections["equity"] and into sections["current_liabilities"] before this
+# test's assertions run, so this exercises the real netting code path, not
+# just a code-range placement. 4199 now stays in equity (see
+# core/fs_template_service.py), so this TB must be genuinely balanced --
+# all rows sum to zero (-150000 + 60000 + 200000 - 20000 - 90000 + 90000
+# - 90000 = 0) -- rather than relying on 4199 being a free-floating,
+# uncountered debit.
 TRUST_TB_ROWS = [
     ("0500", "Consulting fees", Decimal("-150000")),
     ("1500", "Rent expense", Decimal("60000")),
@@ -73,7 +92,7 @@ TRUST_TB_ROWS = [
     ("3000", "Trade creditors", Decimal("-20000")),
     ("4200", "Trust corpus", Decimal("-90000")),
     ("4199", "Undistributed income", Decimal("90000")),
-    ("4110.01", "Loan - Beneficiary A", Decimal("-90000")),
+    ("4004.01", "Funds loaned to trust - Beneficiary A", Decimal("-90000")),
 ]
 
 
@@ -88,6 +107,16 @@ class TrustBalanceSheetBalancesTests(BeneficiaryAccountTestBase):
             start_date=date(2025, 7, 1),
             end_date=date(2026, 6, 30),
             status=FinancialYear.Status.DRAFT,
+        )
+        # One beneficiary so account-code suffix ".01" resolves to a real
+        # officer -- required for _net_beneficiary_accounts to net 4004.01
+        # into current_liabilities rather than silently stripping it as an
+        # unmatched suffix.
+        EntityOfficer.objects.create(
+            entity=self.trust,
+            full_name="Beneficiary A",
+            role=EntityOfficer.OfficerRole.BENEFICIARY,
+            display_order=0,
         )
         for code, name, cy in TRUST_TB_ROWS:
             EntityChartOfAccount.objects.get_or_create(
