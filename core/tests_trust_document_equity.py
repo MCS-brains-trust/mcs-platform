@@ -19,9 +19,32 @@ The test calls ``DocumentContextBuilder._financial_data_context()`` directly
 (this method does not touch EntityOfficer/JSONField queries, so no sqlite
 JSONField ``contains`` workaround is needed here, unlike the balance-sheet
 builder test).
+
+NOTE: the classified TB sections are NOT exposed on the returned context
+(no ``ctx["_sections"]`` here -- unlike core/fs_template_service.py's
+``_sections``, this builder's sections have no production consumer, and
+returning them would serialise the entire classified trial balance --
+income, expenses, assets, liabilities, equity -- into every legal
+document's audit trail via ``_write_audit_trail``). Instead, these tests
+spy on ``DocumentContextBuilder._inject_profit_into_equity`` (the small,
+already-private method that mutates ``sections["equity"]`` in place) to
+observe the *actual* equity rows used by the real build, without adding
+any new exposure to the built context itself.
+
+A plain ``total_equity == net_assets`` assertion is NOT a sufficient
+regression guard here: for any balanced trial balance,
+``net_assets == -sum(equity rows without profit) + net_profit`` is an
+accounting identity that holds regardless of *how* total_equity was
+computed. The pre-fix code's unconditional
+``total_equity = net_assets`` override for trusts therefore reproduces
+that same number exactly -- a naive equality check would pass against
+both the fixed code and the pre-fix bug. The only observable difference
+is structural: whether "Current year profit / (loss)" actually landed in
+``sections["equity"]``, which is what the spy below inspects directly.
 """
 from datetime import date
 from decimal import Decimal
+from unittest.mock import patch
 
 from django.test import TestCase, override_settings
 
@@ -88,17 +111,49 @@ class TrustDocumentEquityTests(BeneficiaryAccountTestBase):
                 is_adjustment=False,
             )
 
+    def _build_ctx_and_capture_equity_rows(self, builder):
+        """Build the real context, spying on
+        ``DocumentContextBuilder._inject_profit_into_equity`` to capture
+        the *actual* ``sections["equity"]`` list it mutated inside the
+        real ``_financial_data_context()`` call.
+
+        This calls straight through to the real implementation (the spy
+        does not change behaviour), so it observes exactly what the
+        production build path does -- unlike recomputing the equity
+        composition independently in the test, which would keep passing
+        even if the real pipeline stopped calling the injection method at
+        all (see module docstring for why a numeric-only check can't
+        catch that).
+        """
+        captured = {}
+        original = DocumentContextBuilder._inject_profit_into_equity
+
+        def spy(self_, sections, *args, **kwargs):
+            result = original(self_, sections, *args, **kwargs)
+            captured["equity_rows"] = result["equity"]
+            return result
+
+        with patch.object(DocumentContextBuilder, "_inject_profit_into_equity", spy):
+            ctx = builder._financial_data_context()
+
+        self.assertIn(
+            "equity_rows", captured,
+            "DocumentContextBuilder._inject_profit_into_equity was never "
+            "called by _financial_data_context()",
+        )
+        return ctx, captured["equity_rows"]
+
     def test_equity_section_contains_current_year_profit_row(self):
-        """The equity rows themselves must carry the year's profit -- not
-        just the printed total_equity figure via an override.
+        """The equity rows actually used by the real build must carry the
+        year's profit -- not just the printed total_equity figure via an
+        override.
 
         Before the fix: no "Current year profit / (loss)" row is ever
         injected into sections["equity"] for this builder, so this fails
         outright regardless of the override.
         """
         builder = DocumentContextBuilder(entity=self.trust, financial_year=self.fy)
-        ctx = builder._financial_data_context()
-        equity_rows = ctx["_sections"]["equity"]
+        _, equity_rows = self._build_ctx_and_capture_equity_rows(builder)
 
         profit_rows = [
             item for item in equity_rows
@@ -111,16 +166,18 @@ class TrustDocumentEquityTests(BeneficiaryAccountTestBase):
         )
 
     def test_total_equity_equals_sum_of_equity_rows_not_an_override(self):
-        """total_equity must equal net assets *because the equity rows sum
-        that way*, not because a trust-only override forces it.
+        """total_equity must equal net assets *because the real equity rows
+        sum that way*, not because a trust-only override forces it.
 
-        Before the fix, this assertion is only true by virtue of the
-        override at document_context_builder.py:1076-1080; the previous
-        test proves the rows alone don't actually sum to it.
+        Before the fix, total_equity == net_assets held anyway (via the
+        override at document_context_builder.py:1076-1080) even though the
+        equity rows themselves never carried the profit -- so this test
+        cross-checks total_equity against the *actual* rows the real build
+        produced, not against net_assets directly, and the previous test
+        proves those rows don't contain the profit pre-fix.
         """
         builder = DocumentContextBuilder(entity=self.trust, financial_year=self.fy)
-        ctx = builder._financial_data_context()
-        equity_rows = ctx["_sections"]["equity"]
+        ctx, equity_rows = self._build_ctx_and_capture_equity_rows(builder)
 
         equity_from_rows = -sum(
             (item.get("cy") or Decimal("0")) for item in equity_rows
