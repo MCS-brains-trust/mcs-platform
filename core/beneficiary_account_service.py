@@ -409,6 +409,7 @@ def provision_beneficiary_accounts(officer_id):
     is_company = (officer.beneficiary_type == "company")
 
     created = 0
+    adopted = 0
     skipped = 0
     with transaction.atomic():
         for idx, entry in enumerate(parent_codes):
@@ -424,7 +425,7 @@ def provision_beneficiary_accounts(officer_id):
             ).first()
             maps_to = parent_eca.maps_to if parent_eca else None
 
-            _, was_created = EntityChartOfAccount.objects.get_or_create(
+            eca, was_created = EntityChartOfAccount.objects.get_or_create(
                 entity=entity,
                 account_code=account_code,
                 defaults={
@@ -441,14 +442,31 @@ def provision_beneficiary_accounts(officer_id):
             )
             if was_created:
                 created += 1
+            elif eca.beneficiary_officer_id is None:
+                # An unlinked row already held this code — an imported chart
+                # placeholder that _cleanup_ghost_rows refused to delete
+                # because it carries postings. get_or_create matched it and
+                # silently dropped the defaults, leaving no officer link: the
+                # account looks right in the chart but the trust distribution
+                # post gate (core/views_trust.py) cannot see it. Adopt it.
+                #
+                # Guarded on beneficiary_officer_id IS NULL so a row already
+                # owned by another officer is never re-pointed.
+                eca.beneficiary_officer = officer
+                eca.account_name = account_name
+                eca.auto_provisioned = True
+                eca.save(update_fields=[
+                    "beneficiary_officer", "account_name", "auto_provisioned",
+                ])
+                adopted += 1
 
-    if created:
+    if created or adopted:
         logger.info(
             "Provisioned %d beneficiary accounts for officer %s on entity %s "
-            "(skipped %d due to F/G gating)",
-            created, officer.full_name, entity.entity_name, skipped,
+            "(adopted %d pre-existing unlinked rows, skipped %d due to F/G gating)",
+            created, officer.full_name, entity.entity_name, adopted, skipped,
         )
-    return created
+    return created + adopted
 
 
 def sync_officer_account_names(officer_id):
