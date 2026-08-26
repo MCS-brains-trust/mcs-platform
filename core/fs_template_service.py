@@ -101,82 +101,6 @@ def aggregate_tb_lines(queryset):
 
 
 # ---------------------------------------------------------------------------
-# Chart-declared section -> builder section key
-# ---------------------------------------------------------------------------
-# EntityChartOfAccount.section (core/models.py, StatementSection choices) uses
-# a different, coarser vocabulary than this builder's `sections` dict below.
-# Only chart sections with ONE unambiguous builder target are listed here;
-# anything absent is deliberately NOT "recognised" for this purpose, so a
-# line with that chart section falls back to the numeric-range classifier —
-# identical to a code with no chart row at all.
-#
-#   - "liabilities" and "assets" are the chart's generic catch-alls with no
-#     current/non-current split of their own. Per the task-8 brief, resolved
-#     to current_liabilities / current_assets (the common case; a chart row
-#     that actually means non-current should be coded non_current_liabilities
-#     / non_current_assets instead, which map exactly).
-#   - "capital_accounts" and "pl_appropriation" turned out NOT to have their
-#     own key in this builder's `sections` dict (verified: neither string
-#     appears anywhere in this file or in document_context_builder.py) —
-#     contrary to the brief's assumption. Both map to "equity", which is
-#     also where the numeric-range fallback already sends every 4000-4999
-#     and 9000-9999 code today, so this is a no-op for the common case.
-#   - "revenue" is deliberately NOT mapped: for codes < 1000 this builder
-#     splits income into "trading_income" vs "income" by an account-name /
-#     AccountMapping keyword heuristic (see the code_to_section pass below)
-#     that the chart's single "revenue" value cannot express. Mapping it to
-#     either builder key would silently collapse that split for every
-#     entity, which is out of scope for this task.
-#   - "suspense" is deliberately NOT mapped: no statement section applies.
-CHART_SECTION_TO_BUILDER_SECTION = {
-    "cost_of_sales": "cogs",
-    "expenses": "expenses",
-    "current_assets": "current_assets",
-    "non_current_assets": "noncurrent_assets",
-    "assets": "current_assets",
-    "current_liabilities": "current_liabilities",
-    "non_current_liabilities": "noncurrent_liabilities",
-    "liabilities": "current_liabilities",
-    "equity": "equity",
-    "capital_accounts": "equity",
-    "pl_appropriation": "equity",
-}
-
-
-def _chart_section_lookup(entity_id):
-    """account_code -> recognised builder section, for one entity. ONE query.
-
-    Only rows whose chart section maps to a recognised builder section (see
-    CHART_SECTION_TO_BUILDER_SECTION) are included, so a missing dict lookup
-    at the call site means "not recognised" — the caller falls back to the
-    numeric range, the same as if there were no chart row at all.
-    """
-    from core.models import EntityChartOfAccount
-
-    lookup = {}
-    for code, section in (
-        EntityChartOfAccount.objects
-        .filter(entity_id=entity_id)
-        .values_list("account_code", "section")
-    ):
-        builder_section = CHART_SECTION_TO_BUILDER_SECTION.get(section)
-        if builder_section:
-            lookup[code] = builder_section
-    return lookup
-
-
-def _resolve_chart_section(chart_lookup, account_code):
-    """Full account_code match first, then the parent before the dot
-    (so ``4110.01`` inherits ``4110``'s section), else None to fall back."""
-    if account_code in chart_lookup:
-        return chart_lookup[account_code]
-    parent = account_code.split(".")[0]
-    if parent != account_code and parent in chart_lookup:
-        return chart_lookup[parent]
-    return None
-
-
-# ---------------------------------------------------------------------------
 # helpers — TB section extraction (mirrors docgen._get_tb_sections logic)
 # ---------------------------------------------------------------------------
 def _get_tb_sections(fy):
@@ -244,11 +168,6 @@ def _get_tb_sections(fy):
               and getattr(held, "source", "") != "rollover"):
             prior_row_by_code[line.account_code] = line
 
-    # Chart-declared section lookup — ONE query for the whole entity, built
-    # once here and consulted per line below, so this stays O(1) queries
-    # regardless of TB line count. See CHART_SECTION_TO_BUILDER_SECTION.
-    chart_lookup = _chart_section_lookup(fy.entity_id)
-
     for line in lines:
         try:
             code_num = int(line.account_code.split(".")[0])
@@ -285,14 +204,6 @@ def _get_tb_sections(fy):
             # weight.
             "created_at": line.created_at,
         }
-
-        # Chart wins when it has a usable, recognised answer for this code
-        # (full code, else parent-before-the-dot); otherwise fall through to
-        # the numeric-range classification below, unchanged.
-        chart_section = _resolve_chart_section(chart_lookup, line.account_code)
-        if chart_section is not None:
-            sections[chart_section].append(entry)
-            continue
 
         name_lower = line.account_name.lower()
         is_cogs = any(kw in name_lower for kw in [

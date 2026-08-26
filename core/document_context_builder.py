@@ -2559,18 +2559,8 @@ class DocumentContextBuilder:
     # ------------------------------------------------------------------
 
     def _classify_tb_lines(self, lines):
-        """Classify trial balance lines into financial statement sections.
-
-        Chart-first, numeric-range fallback — reuses fs_template_service's
-        lookup/resolver (rather than a second hand-copy of the mapping) so
-        this builder's legal documents cannot disagree with the .docx
-        financial statements about which section a line belongs to. See
-        core/fs_template_service.py's CHART_SECTION_TO_BUILDER_SECTION for
-        the chart-section -> builder-section correspondence and why some
-        chart sections are deliberately not recognised.
-        """
+        """Classify trial balance lines into financial statement sections."""
         from collections import OrderedDict
-        from core.fs_template_service import _chart_section_lookup, _resolve_chart_section
         sections = {
             "trading_income": [],
             "income": [],
@@ -2582,8 +2572,6 @@ class DocumentContextBuilder:
             "noncurrent_liabilities": [],
             "equity": [],
         }
-        # ONE query for the whole entity, built once here — not per line.
-        chart_lookup = _chart_section_lookup(self.entity.id)
         for line in lines:
             try:
                 code_num = int(str(line.account_code).split(".")[0])
@@ -2605,15 +2593,6 @@ class DocumentContextBuilder:
                 "cy": cy,
                 "py": py,
             }
-
-            # Chart wins when it has a usable, recognised answer for this
-            # code (full code, else parent-before-the-dot); otherwise fall
-            # through to the numeric-range classification below, unchanged.
-            chart_section = _resolve_chart_section(chart_lookup, line.account_code)
-            if chart_section is not None:
-                sections[chart_section].append(entry)
-                continue
-
             name_lower = line.account_name.lower()
             is_cogs = any(kw in name_lower for kw in [
                 "cost of", "opening stock", "closing stock", "purchases", "stock on hand",
