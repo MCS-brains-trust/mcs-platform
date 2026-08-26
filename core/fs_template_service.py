@@ -1248,19 +1248,14 @@ def build_company_context(financial_year, include_watermark=True):
     # Trust only: net beneficiary capital accounts into assets/liabilities
     if entity.entity_type == "trust":
         _net_beneficiary_accounts(fy, sections)
-        # Remove Profit Distribution — Appropriation (4199*) from equity.
-        # This journal entry moves profit to beneficiary loans and should
-        # not appear as a separate equity line item.
-        # Uses startswith to catch sub-accounts (4199.01, 4199.02 etc.)
-        # and name substring checks as fallback.
-        sections["equity"] = [
-            item for item in sections["equity"]
-            if not (
-                item.get("account_code", "").startswith("4199")
-                or "appropriation" in item.get("account_name", "").lower()
-                or "profit distribution" in item.get("account_name", "").lower()
-            )
-        ]
+        # 4199 ("Undistributed income") is a real balance-sheet equity
+        # account, not a P&L account — its closing balance is the current
+        # year's appropriation (debiting it to move this year's profit to
+        # a beneficiary loan, offset by the "Current year profit / (loss)"
+        # row restored into equity below) PLUS any genuine brought-forward
+        # undistributed income or deficit carried from prior years. It
+        # must stay in equity: stripping it discards that carried-forward
+        # balance and the balance sheet no longer balances.
 
     # Reclassify accounts whose balance has flipped sign:
     # bank overdrafts → current liabilities, GST/tax refunds → current assets, etc.
@@ -1385,14 +1380,13 @@ def build_company_context(financial_year, include_watermark=True):
 
     # Trusts keep the "Current year profit / (loss)" row injected above.
     # The distribution journal debits 4199 (equity, "Undistributed income" —
-    # already stripped from equity a few lines up in this function) and
-    # credits the beneficiary's 4110.NN loan account (liabilities). That
-    # moves the *distributed* portion out of equity into a liability, but it
-    # does not change the fact that the year's profit, before distribution,
-    # belongs in equity: net assets is short by exactly the year's profit
-    # whenever this row is missing, whether or not a distribution was
-    # posted. There is no trust-specific exemption from the post-injection
-    # integrity check below.
+    # kept in equity, see above) and credits the beneficiary's 4110.NN loan
+    # account (liabilities). That moves the *distributed* portion out of
+    # equity into a liability, but it does not change the fact that the
+    # year's profit, before distribution, belongs in equity: net assets is
+    # short by exactly the year's profit whenever this row is missing,
+    # whether or not a distribution was posted. There is no trust-specific
+    # exemption from the post-injection integrity check below.
     _final_equity = -_sum_section(sections["equity"])
     _final_net_assets = _test_net_assets
     if abs(_final_net_assets - _final_equity) > Decimal("1"):

@@ -12,13 +12,12 @@ year (see the task brief's Dr Services / Chiaravalle measurements).
 
 This test builds a trust financial year with revenue, expenses, one asset
 account, one liability account, one equity (corpus) account, and a posted
-distribution appropriation debit (4199, "Undistributed income"). The
-credit leg of that distribution is deliberately not modeled: the profit
-belongs in equity regardless of which account carries the distribution's
-credit (current liabilities, per the beneficiary loan convention, or
-elsewhere), so this test must not depend on it -- only the debit leg
-matters here, because it is what the suppression this task removes was
-reacting to.
+distribution appropriation debit (4199, "Undistributed income") with its
+credit leg modeled as a beneficiary loan liability (4110.01). A separate
+fix (see core/tests_trust_4199_carried_forward.py) keeps 4199 itself in
+equity rather than stripping it out; this test's TB must therefore be
+genuinely balanced -- both legs of the distribution present -- rather than
+relying on 4199 as a free-floating, uncountered debit.
 
 The test calls ``build_trust_context``, the entry point the .docx renderer
 actually uses for trusts (NOT ``_get_tb_sections``, which returns the raw
@@ -61,9 +60,12 @@ def _sqlite_json_contains_as_sql(self, compiler, connection):
 
 # (account_code, account_name, cy_amount) -- debit-positive, credit-negative,
 # matching what _get_tb_sections reads. Net profit = 150,000 - 60,000 =
-# 90,000. TB rows other than 4199 sum to zero on their own (-150000 + 60000
-# + 200000 - 20000 - 90000 = 0); 4199 is the distribution's debit leg with
-# no counterpart modeled here (see module docstring).
+# 90,000. 4199 is the distribution's debit leg (90,000); "4110.01" is its
+# credit leg, the beneficiary loan liability the distribution moves the
+# profit into. 4199 now stays in equity (see core/fs_template_service.py),
+# so this TB must be genuinely balanced -- all rows sum to zero
+# (-150000 + 60000 + 200000 - 20000 - 90000 + 90000 - 90000 = 0) -- rather
+# than relying on 4199 being a free-floating, uncountered debit.
 TRUST_TB_ROWS = [
     ("0500", "Consulting fees", Decimal("-150000")),
     ("1500", "Rent expense", Decimal("60000")),
@@ -71,6 +73,7 @@ TRUST_TB_ROWS = [
     ("3000", "Trade creditors", Decimal("-20000")),
     ("4200", "Trust corpus", Decimal("-90000")),
     ("4199", "Undistributed income", Decimal("90000")),
+    ("4110.01", "Loan - Beneficiary A", Decimal("-90000")),
 ]
 
 
@@ -106,11 +109,11 @@ class TrustBalanceSheetBalancesTests(BeneficiaryAccountTestBase):
         """Net assets must equal total equity in the context the .docx
         renderer uses -- both the summed equity rows and the printed total.
 
-        Before the fix: net assets = 200,000 - 20,000 = 180,000, but equity
-        is stripped down to the 90,000 corpus row only (the injected
-        90,000 profit row is removed by the trust-only suppression, and
-        4199 is always excluded from equity separately). The 90,000 gap is
-        exactly the year's net profit (150,000 - 60,000).
+        Before the e137e58 fix: net assets = 200,000 - (20,000 + 90,000) =
+        90,000, but equity was stripped down to the 90,000 corpus row only
+        (the injected 90,000 profit row was removed by the trust-only
+        suppression that fix removed). The 90,000 gap was exactly the
+        year's net profit (150,000 - 60,000).
         """
         with patch(
             "django.db.models.fields.json.DataContains.as_sql",
