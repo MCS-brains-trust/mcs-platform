@@ -8,7 +8,7 @@ import sys
 import django
 
 from django.core.management.base import BaseCommand
-from core.models import ChartOfAccount, AccountMapping
+from core.models import ChartOfAccount, AccountMapping, template_entity_type
 
 
 # ---------------------------------------------------------------------------
@@ -275,7 +275,7 @@ def match_account(account_name, section, entity_type):
     elif section == "liabilities":
         return "BS-CL-005"  # Other current liabilities
     elif section == "equity":
-        if entity_type == "trust":
+        if template_entity_type(entity_type) == "trust":
             return "BS-EQ-005"
         elif entity_type == "partnership":
             return "BS-EQ-007"
@@ -323,7 +323,7 @@ class Command(BaseCommand):
                 applicable = mapping.applicable_entities or []
                 if applicable and acc.entity_type not in applicable:
                     # Try fallback for entity-specific equity
-                    if acc.entity_type == "trust":
+                    if template_entity_type(acc.entity_type) == "trust":
                         fallback = "BS-EQ-005"
                     elif acc.entity_type == "partnership":
                         fallback = "BS-EQ-007"

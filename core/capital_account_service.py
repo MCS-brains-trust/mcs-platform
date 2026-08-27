@@ -22,7 +22,7 @@ def provision_capital_accounts(officer_id):
     """
     from core.models import (
         EntityOfficer, EntityChartOfAccount, CapitalAccountTemplate,
-        ClientAccountMapping,
+        ClientAccountMapping, template_entity_type,
     )
 
     try:
@@ -42,7 +42,7 @@ def provision_capital_accounts(officer_id):
         return
 
     templates = CapitalAccountTemplate.objects.filter(
-        entity_type=entity.entity_type,
+        entity_type=template_entity_type(entity.entity_type),
         is_active=True,
     ).order_by("sort_order")
 

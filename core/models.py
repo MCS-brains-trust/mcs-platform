@@ -141,6 +141,19 @@ class Client(models.Model):
 TRUST_LIKE_TYPES = ("trust", "trust_unit")
 
 
+def template_entity_type(entity_type):
+    """Entity type to use when looking up type-keyed template data.
+
+    A unit trust has no templates of its own by design: it uses the trust
+    chart, the trust capital accounts and the trust mapping hints. Resolving
+    here keeps one source of truth — cloned template rows would drift from the
+    xlsx source the moment either was edited.
+    """
+    if entity_type == Entity.EntityType.UNIT_TRUST:
+        return Entity.EntityType.TRUST
+    return entity_type
+
+
 class Entity(models.Model):
     """
     A legal entity belonging to a client.
@@ -661,6 +674,7 @@ class CapitalAccountTemplate(models.Model):
     """Template line items for trust beneficiary/unit holder capital accounts."""
     TRUST_ENTITY_TYPES = [
         ("trust", "Trust"),
+        ("trust_unit", "Unit Trust"),
     ]
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     entity_type = models.CharField(
@@ -1226,7 +1240,7 @@ class EntityChartOfAccount(models.Model):
             cls.objects.filter(entity=entity).values_list("account_code", flat=True)
         )
         template_accounts = ChartOfAccount.objects.filter(
-            entity_type=entity.entity_type, is_active=True
+            entity_type=template_entity_type(entity.entity_type), is_active=True
         )
         created = []
         skipped = []
@@ -6781,6 +6795,7 @@ class GlobalAccountMappingHint(models.Model):
             been confirmed more times, update the hint.
         If no hint exists, create one with confidence=1.
         """
+        entity_type = template_entity_type(entity_type)
         # get_or_create relies on the (entity_type, account_code) unique_together
         # to close the check-then-create race between concurrent callers.
         existing, created = cls.objects.get_or_create(
