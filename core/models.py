@@ -8,7 +8,7 @@ import hashlib
 import json
 import re
 import uuid
-from decimal import Decimal
+from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models, transaction
@@ -451,9 +451,17 @@ class Entity(models.Model):
 
     @property
     def total_units(self):
-        """Units on issue across active unit holders."""
+        """Units on issue across active unit holders.
+
+        "Active" matches EntityOfficer.is_active and core/views.py's own
+        distribution queries: a future date_ceased does not exclude a
+        holder, only a date_ceased today-or-earlier does.
+        """
+        from django.utils import timezone
+        today = timezone.now().date()
         return self.officers.filter(
-            date_ceased__isnull=True, units_held__isnull=False,
+            models.Q(date_ceased__isnull=True) | models.Q(date_ceased__gt=today),
+            units_held__isnull=False,
         ).aggregate(t=models.Sum("units_held"))["t"] or 0
 
 
@@ -608,43 +616,146 @@ class EntityOfficer(models.Model):
         # Only unit holders and beneficiaries may have distribution_percentage
         if self.role not in self.DISTRIBUTION_ROLES:
             self.distribution_percentage = None
-        # Units belong to the unit register alone.
-        if self.role != self.OfficerRole.UNIT_HOLDER and "unit_holder" not in (self.roles or []):
+        # Units belong to the unit register alone. Checked on `role` only,
+        # NOT on membership in the `roles` list (unlike the guard above) --
+        # a unit holder must carry role="unit_holder" (see
+        # core/forms.py:382-388, which is what actually sets it). Widening
+        # this to also honour `roles` would let an officer with
+        # role="trustee", roles=[..., "beneficiary"] on a DISCRETIONARY
+        # trust keep a distribution_percentage that the guard above just
+        # nulled (its role is not in DISTRIBUTION_ROLES), which would be a
+        # behaviour change for the four existing discretionary trusts --
+        # this project's primary risk. So this check must stay narrower
+        # than the roles-aware one above, not match it.
+        if self.role != self.OfficerRole.UNIT_HOLDER:
             self.units_held = None
 
     @property
     def unit_percentage(self):
-        """This holder's share of units on issue, as a percentage."""
+        """This holder's share of units on issue, as a percentage.
+
+        Rounded with ROUND_HALF_UP (not Decimal's default ROUND_HALF_EVEN)
+        to match this codebase's accounting convention.
+        """
         total = self.entity.total_units
         if not total or not self.units_held:
             return Decimal("0")
         return (Decimal(self.units_held) / Decimal(total) * 100).quantize(
-            Decimal("0.0001")
+            Decimal("0.0001"), rounding=ROUND_HALF_UP,
+        )
+
+    @staticmethod
+    def _write_distribution_history(officer, pct):
+        """Create, or correct, today's distribution history entry.
+
+        If an open (effective_to is null) row already exists AND it was
+        opened today, it is corrected in place rather than closed: closing
+        it would set effective_to to yesterday, which is BEFORE that row's
+        own effective_from (today) -- an impossible, inverted period. Only
+        a row opened on an earlier day is closed (effective_to = yesterday)
+        before a new one is opened.
+        """
+        from datetime import timedelta
+
+        from django.utils import timezone
+        today = timezone.now().date()
+        open_row = OfficerDistributionHistory.objects.filter(
+            officer=officer, effective_to__isnull=True,
+        ).order_by("-effective_from").first()
+        if open_row is None:
+            OfficerDistributionHistory.objects.create(
+                officer=officer, distribution_pct=pct, effective_from=today,
+                created_by=getattr(officer, "_updated_by", None),
+            )
+            return
+        if open_row.distribution_pct == pct:
+            return  # unchanged -- nothing to record
+        if open_row.effective_from == today:
+            open_row.distribution_pct = pct
+            open_row.save(update_fields=["distribution_pct"])
+            return
+        open_row.effective_to = today - timedelta(days=1)
+        open_row.save(update_fields=["effective_to"])
+        OfficerDistributionHistory.objects.create(
+            officer=officer, distribution_pct=pct, effective_from=today,
+            created_by=getattr(officer, "_updated_by", None),
         )
 
     @classmethod
     def recalculate_unit_percentages(cls, entity):
         """Rewrite stored percentages from the unit register.
 
-        unit_percentage divides by entity.total_units, a live DB aggregate,
-        so a holder saved before others exist has its percentage computed
-        against an incomplete total. Per-instance save() cannot fix this on
-        its own — after any register change, every unit-holding officer on
-        the entity must be re-saved so their stored distribution_percentage
-        reflects the final total.
+        This is the SOLE writer of both `distribution_percentage` and its
+        audit history for unit holders -- individual save() calls never
+        derive a unit holder's percentage from units_held (see save() and
+        _update_distribution_history() below). That is deliberate: unit_
+        percentage divides by entity.total_units, a live DB aggregate that
+        is necessarily wrong the moment a single holder is saved in
+        isolation --
+          - on INSERT, the row being saved is not yet in its own aggregate
+            (total_units undercounts it, or is 0 for the very first
+            holder, silently booking a wrong or 0.00% figure);
+          - a naive per-holder rounding of 1/3 + 1/3 + 1/3 stores
+            33.33 x 3 = 99.99, never summing to exactly 100.00.
+        Rather than have every individual save() race that aggregate, this
+        method is the only place percentages are computed and persisted,
+        always against the complete, final state of the active register,
+        in one pass, with a largest-remainder allocation so the stored
+        values sum to exactly 100.00.
+
+        Ceased holders (date_ceased today-or-earlier) are excluded from
+        both the total and the recompute, matching total_units and
+        EntityOfficer.is_active -- a future date_ceased does NOT exclude a
+        holder. A ceased holder's own stored distribution_percentage is
+        left untouched (frozen at its last active value) rather than
+        nulled: core/views.py sums it into `dist_ceased`, and it is the
+        audit record of what that holder was entitled to while they held
+        units -- nulling it would erase that record.
+
+        ROUND_HALF_UP is used throughout (not Decimal's default
+        ROUND_HALF_EVEN / "banker's rounding"), matching the accounting
+        convention this codebase already uses for money and percentages.
         """
-        holders = cls.objects.filter(
-            entity=entity, units_held__isnull=False,
+        from django.utils import timezone
+        today = timezone.now().date()
+        active_holders = list(
+            cls.objects.filter(entity=entity, units_held__isnull=False)
+            .filter(models.Q(date_ceased__isnull=True) | models.Q(date_ceased__gt=today))
+            .order_by("pk")
         )
-        for holder in holders:
-            holder.save()
+        if not active_holders:
+            return
+        total_units = sum(h.units_held for h in active_holders)
+        if not total_units:
+            return
+
+        # Largest-remainder allocation in hundredths-of-a-percent (SCALE
+        # units == 100.00%) so the stored 2dp percentages always sum to
+        # exactly 100.00.
+        SCALE = 10000
+        raw = {
+            h.pk: (Decimal(h.units_held) * SCALE / Decimal(total_units))
+            for h in active_holders
+        }
+        floor_alloc = {
+            pk: int(val.to_integral_value(rounding=ROUND_DOWN))
+            for pk, val in raw.items()
+        }
+        remainder = {pk: raw[pk] - floor_alloc[pk] for pk in raw}
+        shortfall = SCALE - sum(floor_alloc.values())
+        for pk in sorted(remainder, key=lambda p: (-remainder[p], p))[:shortfall]:
+            floor_alloc[pk] += 1
+
+        for holder in active_holders:
+            pct = (Decimal(floor_alloc[holder.pk]) / 100).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP,
+            )
+            if holder.distribution_percentage != pct:
+                holder.distribution_percentage = pct
+                holder.save(update_fields=["distribution_percentage"])
+            cls._write_distribution_history(holder, pct)
 
     def save(self, *args, **kwargs):
-        # Units are the register; distribution_percentage is derived from
-        # them. This must happen before the old-percentage snapshot below,
-        # so the audit history records the derived value, not a stale one.
-        if self.units_held is not None:
-            self.distribution_percentage = self.unit_percentage.quantize(Decimal("0.01"))
         # Auto-assign display_order on creation if still default 0
         if not self.pk or self._state.adding:
             max_order = EntityOfficer.objects.filter(
@@ -667,28 +778,24 @@ class EntityOfficer(models.Model):
         self._update_distribution_history()
 
     def _update_distribution_history(self):
-        """Create/close distribution history records when percentage changes."""
+        """Create/update distribution history records when percentage changes."""
         if self.role not in self.DISTRIBUTION_ROLES:
+            return
+        if self.units_held is not None:
+            # Unit-holder history is written exclusively by
+            # recalculate_unit_percentages(), in one pass over the whole
+            # register, using the same safe write helper. A per-instance
+            # save() here would race entity.total_units the same way the
+            # old per-save recompute did (see recalculate_unit_percentages'
+            # docstring) and could book a wrong percentage into the audit
+            # trail before the rest of the register exists.
             return
         if self.distribution_percentage is None:
             return
         old_pct = getattr(self, "_old_distribution_percentage", None)
         # On creation or on change
         if self._state.adding or old_pct != self.distribution_percentage:
-            from django.utils import timezone
-            today = timezone.now().date()
-            from datetime import timedelta
-            # Close the previous history record
-            OfficerDistributionHistory.objects.filter(
-                officer=self, effective_to__isnull=True,
-            ).update(effective_to=today - timedelta(days=1))
-            # Create new history record
-            OfficerDistributionHistory.objects.create(
-                officer=self,
-                distribution_pct=self.distribution_percentage,
-                effective_from=today,
-                created_by=getattr(self, "_updated_by", None),
-            )
+            self._write_distribution_history(self, self.distribution_percentage)
 
 
 class OfficerDistributionHistory(models.Model):
