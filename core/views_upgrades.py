@@ -407,15 +407,30 @@ def trust_distribution(request, pk):
     # submit button, and Task 8's save_allocations wiring below (which calls
     # allocate_unit_trust_distribution) was unreachable dead code.
     #
-    # Same role predicate as views_tax_planning._sync_beneficiary_rows, and
-    # the same canonical active_register_q. Note the predicate is applied in
-    # Python: `roles` is a JSONField and its `contains` lookup raises
-    # NotSupportedError on SQLite outright (see that function's docstring),
-    # which is what the previous filter did on the test backend.
+    # Same role predicate as views_tax_planning._sync_beneficiary_rows. Note
+    # the predicate is applied in Python: `roles` is a JSONField and its
+    # `contains` lookup raises NotSupportedError on SQLite outright (see that
+    # function's docstring), which is what the previous filter did on the
+    # test backend.
+    #
+    # active_register_q applies to a UNIT TRUST ONLY, where it matches
+    # allocate_unit_trust_distribution's own active set. It must NOT apply to
+    # a discretionary trust: a beneficiary who ceased mid-year is still
+    # entitled to a share of THAT year's income, and filtering them out here
+    # dropped their row and its pct_<pk> input from the allocations page
+    # while the badge, the footer total and the is_fully_allocated gate all
+    # still counted their existing BeneficiaryAllocation -- so the visible
+    # rows no longer summed to the displayed total, and the 100% gate could
+    # be satisfied or blocked by a row nobody could see. active_register_q
+    # also compares to TODAY rather than to the year being distributed, so a
+    # cessation after year end hid them too. A discretionary trust therefore
+    # keeps exactly the list it had before this branch, ceased beneficiaries
+    # included.
+    candidates = EntityOfficer.objects.filter(entity=entity)
+    if entity.is_unit_trust:
+        candidates = candidates.filter(EntityOfficer.active_register_q())
     beneficiaries = [
-        officer for officer in EntityOfficer.objects.filter(entity=entity).filter(
-            EntityOfficer.active_register_q()
-        ).order_by("display_order", "full_name")
+        officer for officer in candidates.order_by("display_order", "full_name")
         if officer.role in ("beneficiary", "unit_holder")
         or "beneficiary" in (officer.roles or [])
         or "unit_holder" in (officer.roles or [])

@@ -606,12 +606,16 @@ def allocate_unit_trust_distribution(distribution):
     ``allocate_by_units`` would blow up inside its ``sum()`` with an
     unhelpful ``TypeError`` rather than a clear error.
 
-    Holdings are keyed on ``(display_order, full_name)`` rather than the
-    officer's pk: still unique per active row, but it makes the tie-break
-    in ``allocate_by_units`` (which breaks ties on ``str(key)``)
-    deterministic against register order rather than an arbitrary UUID --
-    the odd cent goes to the first-listed holder, not whoever happens to
-    sort first by primary key.
+    Holdings are keyed on ``(display_order, full_name, pk)`` rather than on
+    the officer's pk alone. ``allocate_by_units`` breaks ties on the KEY
+    ITSELF (not ``str(key)``), and ``EntityOfficer.
+    recalculate_unit_percentages`` sorts its own largest-remainder tie-break
+    on the same tuple, so the odd cent goes to the same holder the stored
+    percentage shows as the larger one -- register order, not an arbitrary
+    UUID. The pk rides along last purely so two holders sharing a
+    display_order AND a name cannot collide into ``allocate_by_units``'
+    duplicate-key ValueError; it never reorders two holders a user can tell
+    apart.
 
     A holder who drops out of the active set since the last run (units
     zeroed/nulled, or ceased) keeps their ``BeneficiaryAllocation`` row --

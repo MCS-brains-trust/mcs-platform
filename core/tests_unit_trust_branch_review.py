@@ -275,6 +275,68 @@ class UnitTrustDistributionFormRendersTests(TestCase):
         self.assertContains(response, f'name="pct_{officer.pk}"')
         self.assertContains(response, "Beneficiary Allocations")
 
+    def test_a_ceased_beneficiary_still_renders_on_a_discretionary_trust(self):
+        """Re-review FIX 1: including unit holders in this list must not
+        drag EntityOfficer.active_register_q() onto a DISCRETIONARY trust.
+        A beneficiary who ceased mid-year is still entitled to a share of
+        THAT year's income; hiding their row (and its pct_<pk> input) while
+        the badge, the footer total and the is_fully_allocated gate kept
+        counting their existing allocation meant the visible rows no longer
+        summed to the displayed total. active_register_q also compares to
+        TODAY, not to the year being distributed."""
+        entity = Entity.objects.create(
+            entity_name="Vincent Family Trust", entity_type="trust",
+            assigned_accountant=self.user,
+        )
+        fy = _fy(entity)
+        active = EntityOfficer.objects.create(
+            entity=entity, full_name="Active Ben", role="beneficiary",
+            roles=["beneficiary"], distribution_percentage=Decimal("60.00"),
+            display_order=1,
+        )
+        ceased = EntityOfficer.objects.create(
+            entity=entity, full_name="Ceased Ben", role="beneficiary",
+            roles=["beneficiary"], distribution_percentage=Decimal("40.00"),
+            display_order=2, date_ceased=date.today() - timedelta(days=30),
+        )
+        # A "trustee who is also a beneficiary" was in the pre-branch list
+        # too, via the roles JSON list rather than the role field.
+        hybrid = EntityOfficer.objects.create(
+            entity=entity, full_name="Trustee Also Ben", role="trustee",
+            roles=["trustee", "beneficiary"], display_order=3,
+        )
+
+        response = self.client.get(
+            reverse("core:trust_distribution", kwargs={"pk": fy.pk}), secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        for officer in (active, ceased, hybrid):
+            self.assertContains(response, officer.full_name)
+            self.assertContains(response, f'name="pct_{officer.pk}"')
+
+    def test_a_unit_trusts_list_is_still_active_filtered(self):
+        """The other side of the same fix: on a unit trust the active
+        filter stays, matching allocate_unit_trust_distribution's own
+        active set -- a ceased holder holds no units in the denominator,
+        so offering them a row would misrepresent the register."""
+        entity = Entity.objects.create(
+            entity_name="Minli Enterprise Unit Trust", entity_type="trust_unit",
+            assigned_accountant=self.user,
+        )
+        fy = _fy(entity)
+        gone = _holder(entity, "Gone Holder", 50, display_order=1)
+        gone.date_ceased = date.today() - timedelta(days=30)
+        gone.save()
+        _holder(entity, "Staying Holder", 50, display_order=2)
+        EntityOfficer.recalculate_unit_percentages(entity)
+
+        response = self.client.get(
+            reverse("core:trust_distribution", kwargs={"pk": fy.pk}), secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Staying Holder")
+        self.assertNotContains(response, "Gone Holder")
+
     def test_the_rendered_form_actually_posts_a_unit_trust_allocation(self):
         """End to end: render the form, then POST exactly what it
         contains (the action alone -- a unit trust posts no percentages)
