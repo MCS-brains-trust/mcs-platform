@@ -15,7 +15,7 @@
         {% endif %}
     </td>
     <td>
-        <span class="badge bg-{% if entity.entity_type == 'company' %}primary{% elif entity.entity_type == 'trust' %}info{% elif entity.entity_type == 'smsf' %}success{% elif entity.entity_type == 'partnership' %}warning text-dark{% elif entity.entity_type == 'sole_trader' %}secondary{% else %}light text-dark{% endif %}">
+        <span class="badge bg-{% if entity.entity_type == 'company' %}primary{% elif entity.entity_type == 'trust' %}info{% elif entity.entity_type == 'trust_unit' %}info-subtle text-info-emphasis{% elif entity.entity_type == 'smsf' %}success{% elif entity.entity_type == 'partnership' %}warning text-dark{% elif entity.entity_type == 'sole_trader' %}secondary{% else %}light text-dark{% endif %}">
             {{ entity.get_entity_type_display }}
         </span>
         {% if entity.entity_type == 'company' %}

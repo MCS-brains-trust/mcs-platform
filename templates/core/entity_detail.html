@@ -13,7 +13,7 @@
     <div>
         <h4 class="mb-1">{{ entity.entity_name }}</h4>
         <p class="text-muted mb-0">
-            <span class="badge bg-{% if entity.entity_type == 'company' %}primary{% elif entity.entity_type == 'trust' %}info{% elif entity.entity_type == 'smsf' %}success{% elif entity.entity_type == 'partnership' %}warning text-dark{% else %}secondary{% endif %}">{{ entity.get_entity_type_display }}</span>
+            <span class="badge bg-{% if entity.entity_type == 'company' %}primary{% elif entity.entity_type == 'trust' %}info{% elif entity.entity_type == 'trust_unit' %}info-subtle text-info-emphasis{% elif entity.entity_type == 'smsf' %}success{% elif entity.entity_type == 'partnership' %}warning text-dark{% else %}secondary{% endif %}">{{ entity.get_entity_type_display }}</span>
             {% if entity.abn %} &middot; ABN: {{ entity.abn }}{% endif %}
             {% if entity.acn %} &middot; ACN: {{ entity.acn }}{% endif %}
             {% if entity.assigned_accountant %} &middot; <i class="bi bi-person"></i> {{ entity.assigned_accountant.get_full_name }}{% endif %}
@@ -446,7 +446,7 @@
         <div class="d-flex justify-content-between align-items-center mb-3">
             <h5 class="mb-0">
                 {% if entity.entity_type == 'company' %}Directors/Trustees/Beneficiaries
-                {% elif entity.entity_type == 'trust' %}Directors/Trustees/Beneficiaries
+                {% elif entity.is_trust_like %}Directors/Trustees/Beneficiaries
                 {% elif entity.entity_type == 'partnership' %}Partners
                 {% elif entity.entity_type == 'sole_trader' %}Proprietor
                 {% else %}Officers{% endif %}
