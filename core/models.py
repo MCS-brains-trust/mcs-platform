@@ -648,34 +648,49 @@ class EntityOfficer(models.Model):
     def _write_distribution_history(officer, pct):
         """Create, or correct, today's distribution history entry.
 
-        If an open (effective_to is null) row already exists AND it was
-        opened today, it is corrected in place rather than closed: closing
-        it would set effective_to to yesterday, which is BEFORE that row's
-        own effective_from (today) -- an impossible, inverted period. Only
-        a row opened on an earlier day is closed (effective_to = yesterday)
-        before a new one is opened.
+        If the newest open (effective_to is null) row already exists AND it
+        was opened today, it is corrected in place rather than closed:
+        closing it would set effective_to to yesterday, which is BEFORE
+        that row's own effective_from (today) -- an impossible, inverted
+        period. Only a row opened on an earlier day is closed
+        (effective_to = yesterday) before a new one is opened.
+
+        Any OTHER open row (there should never be more than one, but a
+        prior bug or manual data fix could leave one behind) is closed
+        alongside the newest, using the same never-invert rule, so an
+        orphaned open row can never linger forever.
         """
         from datetime import timedelta
 
         from django.utils import timezone
         today = timezone.now().date()
-        open_row = OfficerDistributionHistory.objects.filter(
-            officer=officer, effective_to__isnull=True,
-        ).order_by("-effective_from").first()
-        if open_row is None:
+        # created_at as a secondary sort key makes the "newest" pick
+        # deterministic when two rows share the same effective_from.
+        open_rows = list(
+            OfficerDistributionHistory.objects.filter(
+                officer=officer, effective_to__isnull=True,
+            ).order_by("-effective_from", "-created_at")
+        )
+        if not open_rows:
             OfficerDistributionHistory.objects.create(
                 officer=officer, distribution_pct=pct, effective_from=today,
                 created_by=getattr(officer, "_updated_by", None),
             )
             return
-        if open_row.distribution_pct == pct:
+
+        newest, *stray = open_rows
+        for row in stray:
+            row.effective_to = max(today - timedelta(days=1), row.effective_from)
+            row.save(update_fields=["effective_to"])
+
+        if newest.distribution_pct == pct:
             return  # unchanged -- nothing to record
-        if open_row.effective_from == today:
-            open_row.distribution_pct = pct
-            open_row.save(update_fields=["distribution_pct"])
+        if newest.effective_from == today:
+            newest.distribution_pct = pct
+            newest.save(update_fields=["distribution_pct"])
             return
-        open_row.effective_to = today - timedelta(days=1)
-        open_row.save(update_fields=["effective_to"])
+        newest.effective_to = today - timedelta(days=1)
+        newest.save(update_fields=["effective_to"])
         OfficerDistributionHistory.objects.create(
             officer=officer, distribution_pct=pct, effective_from=today,
             created_by=getattr(officer, "_updated_by", None),
@@ -715,11 +730,31 @@ class EntityOfficer(models.Model):
         ROUND_HALF_UP is used throughout (not Decimal's default
         ROUND_HALF_EVEN / "banker's rounding"), matching the accounting
         convention this codebase already uses for money and percentages.
+
+        WARNING for callers (Task 6 and beyond): this MUST be the LAST
+        write in a request/transaction that touches the register. It
+        writes distribution_percentage with
+        save(update_fields=["distribution_percentage"]), so any
+        EntityOfficer instance already loaded into memory before this
+        runs is now stale on that one field. A later full-row .save() of
+        that stale instance will silently overwrite the column back to
+        whatever it held before -- there is no re-derivation on save()
+        (see save() below) to self-heal it, unlike the old per-save
+        recompute this replaced. Re-fetch (or refresh_from_db()) any
+        officer instance you need after calling this.
         """
         from django.utils import timezone
         today = timezone.now().date()
+        # role=UNIT_HOLDER is included alongside units_held__isnull=False
+        # so that a role="beneficiary" officer who somehow has units_held
+        # set (bypassing clean(), e.g. via a direct ORM write) can never be
+        # pulled into a unit trust's register recompute -- consistent with
+        # _update_distribution_history()'s guard being keyed on role too.
         active_holders = list(
-            cls.objects.filter(entity=entity, units_held__isnull=False)
+            cls.objects.filter(
+                entity=entity, units_held__isnull=False,
+                role=cls.OfficerRole.UNIT_HOLDER,
+            )
             .filter(models.Q(date_ceased__isnull=True) | models.Q(date_ceased__gt=today))
             .order_by("pk")
         )
@@ -781,7 +816,7 @@ class EntityOfficer(models.Model):
         """Create/update distribution history records when percentage changes."""
         if self.role not in self.DISTRIBUTION_ROLES:
             return
-        if self.units_held is not None:
+        if self.role == self.OfficerRole.UNIT_HOLDER:
             # Unit-holder history is written exclusively by
             # recalculate_unit_percentages(), in one pass over the whole
             # register, using the same safe write helper. A per-instance
@@ -789,6 +824,12 @@ class EntityOfficer(models.Model):
             # old per-save recompute did (see recalculate_unit_percentages'
             # docstring) and could book a wrong percentage into the audit
             # trail before the rest of the register exists.
+            #
+            # Keyed on `role`, not `units_held`: a role="beneficiary"
+            # officer that somehow has units_held set (e.g. forced through
+            # the ORM, bypassing clean()) must still get its history
+            # written here -- units_held is not what makes something a
+            # unit holder, role="unit_holder" is (see clean()).
             return
         if self.distribution_percentage is None:
             return

@@ -7555,10 +7555,21 @@ def _handle_ceased_redistribution(request, officer):
         return
     if count == 1:
         sole = remaining.first()
-        with transaction.atomic():
-            sole.distribution_percentage = Decimal("100.00")
-            sole._updated_by = getattr(request, "user", None)
-            sole.save()
+        if entity.is_unit_trust:
+            # The register decides the percentage, not this view: for a
+            # unit trust, hand-setting 100.00 here would write the field
+            # without writing matching audit history (EntityOfficer.save()
+            # no longer derives a unit holder's percentage from units_held
+            # at all -- see recalculate_unit_percentages()'s docstring).
+            # Recomputing from the register keeps the stored field and its
+            # OfficerDistributionHistory row in agreement.
+            EntityOfficer.recalculate_unit_percentages(entity)
+            sole.refresh_from_db()
+        else:
+            with transaction.atomic():
+                sole.distribution_percentage = Decimal("100.00")
+                sole._updated_by = getattr(request, "user", None)
+                sole.save()
         messages.info(
             request,
             f"{sole.full_name} is now the sole active unit holder and has been "

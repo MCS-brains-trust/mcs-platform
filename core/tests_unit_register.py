@@ -128,6 +128,16 @@ class UnitRegisterFixRoundTests(TestCase):
         officer.distribution_percentage = Decimal("50.00")
         officer.clean()
         self.assertIsNone(officer.distribution_percentage)
+        # Pin the FIX 5 (round 1) resurrection bug: clean() having just
+        # nulled the percentage must not be undone by save(). Before that
+        # fix, save()'s old per-instance recompute put it back from units
+        # whenever units_held survived clean() (it no longer does here,
+        # but this asserts the actual persisted outcome, not just the
+        # in-memory state clean() leaves behind).
+        officer.save()
+        officer.refresh_from_db()
+        self.assertIsNone(officer.distribution_percentage)
+        self.assertIsNone(officer.units_held)
 
     def test_clean_nulls_units_for_plain_trustee(self):
         # roles=["trustee"] alone (no "unit_holder" anywhere): still
@@ -218,3 +228,95 @@ class UnitRegisterFixRoundTests(TestCase):
             Decimal("0"),
         )
         self.assertEqual(total, Decimal("100.00"))
+
+
+class BeneficiaryDistributionHistoryTests(TestCase):
+    """FIX 4 (round 2): _write_distribution_history's behaviour change for
+    BENEFICIARIES -- the primary risk path, with four discretionary trusts
+    in production -- was previously untested."""
+
+    def setUp(self):
+        self.entity = Entity.objects.create(
+            entity_name="Ordinary Family Trust", entity_type="trust",
+        )
+
+    def _all_rows_never_invert(self, officer):
+        for row in OfficerDistributionHistory.objects.filter(officer=officer):
+            if row.effective_to is not None:
+                self.assertGreaterEqual(
+                    row.effective_to, row.effective_from,
+                    f"row {row.pk} has effective_to before effective_from",
+                )
+
+    def test_same_day_edits_collapse_into_one_open_row(self):
+        beneficiary = EntityOfficer.objects.create(
+            entity=self.entity, full_name="Jane Beneficiary",
+            role="beneficiary", roles=["beneficiary"],
+            distribution_percentage=Decimal("40.00"),
+        )
+        beneficiary.distribution_percentage = Decimal("60.00")
+        beneficiary.save()
+        beneficiary.distribution_percentage = Decimal("70.00")
+        beneficiary.save()
+
+        rows = list(OfficerDistributionHistory.objects.filter(officer=beneficiary))
+        open_rows = [r for r in rows if r.effective_to is None]
+        # Exactly one open row survives three same-day writes, not three
+        # rows or an inverted-date row per edit.
+        self.assertEqual(len(open_rows), 1)
+        self.assertEqual(open_rows[0].distribution_pct, Decimal("70.00"))
+        self._all_rows_never_invert(beneficiary)
+
+    def test_multi_day_edit_still_produces_two_row_shape(self):
+        beneficiary = EntityOfficer.objects.create(
+            entity=self.entity, full_name="Jane Beneficiary",
+            role="beneficiary", roles=["beneficiary"],
+            distribution_percentage=Decimal("40.00"),
+        )
+        today = timezone.now().date()
+        yesterday = today - timedelta(days=1)
+        # Simulate the existing open row having been opened on an earlier
+        # day (as if the officer had been created yesterday).
+        OfficerDistributionHistory.objects.filter(officer=beneficiary).update(
+            effective_from=yesterday,
+        )
+
+        beneficiary.distribution_percentage = Decimal("55.00")
+        beneficiary.save()
+
+        rows = list(
+            OfficerDistributionHistory.objects.filter(officer=beneficiary).order_by("effective_from")
+        )
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0].effective_from, yesterday)
+        self.assertEqual(rows[0].effective_to, yesterday)
+        self.assertEqual(rows[0].distribution_pct, Decimal("40.00"))
+        self.assertEqual(rows[1].effective_from, today)
+        self.assertIsNone(rows[1].effective_to)
+        self.assertEqual(rows[1].distribution_pct, Decimal("55.00"))
+        self._all_rows_never_invert(beneficiary)
+
+    def test_stray_second_open_row_is_closed_alongside_the_newest(self):
+        # FIX 2 (round 2): a second open row (a data anomaly that should
+        # never occur going forward, but could pre-exist) must not be left
+        # open forever once a save() writes a new history entry.
+        beneficiary = EntityOfficer.objects.create(
+            entity=self.entity, full_name="Jane Beneficiary",
+            role="beneficiary", roles=["beneficiary"],
+            distribution_percentage=Decimal("40.00"),
+        )
+        stray = OfficerDistributionHistory.objects.create(
+            officer=beneficiary, distribution_pct=Decimal("40.00"),
+            effective_from=timezone.now().date() - timedelta(days=5),
+        )
+        beneficiary.distribution_percentage = Decimal("60.00")
+        beneficiary.save()
+
+        stray.refresh_from_db()
+        self.assertIsNotNone(stray.effective_to)
+        open_rows = OfficerDistributionHistory.objects.filter(
+            officer=beneficiary, effective_to__isnull=True,
+        )
+        self.assertEqual(open_rows.count(), 1)
+        self.assertEqual(open_rows.first().distribution_pct, Decimal("60.00"))
+        self._all_rows_never_invert(beneficiary)
