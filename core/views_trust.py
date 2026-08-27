@@ -598,11 +598,38 @@ def allocate_unit_trust_distribution(distribution):
     function instead uses Task 7's ``allocate_by_units``, which splits by
     largest-remainder so the parts sum EXACTLY to the whole.
 
-    Holdings are keyed on the officer's pk (unique per row, as
-    ``allocate_by_units`` requires) and ``units_held is None`` rows are
-    excluded before calling in -- ``units_held`` is nullable, and a bare
-    ``None`` reaching ``allocate_by_units`` would blow up inside its
-    ``sum()`` with an unhelpful ``TypeError`` rather than a clear error.
+    "Active" holder matches ``EntityOfficer.active_register_q`` (shared with
+    ``Entity.total_units`` and ``recalculate_unit_percentages``): a future
+    ``date_ceased`` does NOT exclude a holder, only a today-or-earlier one
+    does. ``units_held is None`` rows are excluded before calling in --
+    ``units_held`` is nullable, and a bare ``None`` reaching
+    ``allocate_by_units`` would blow up inside its ``sum()`` with an
+    unhelpful ``TypeError`` rather than a clear error.
+
+    Holdings are keyed on ``(display_order, full_name)`` rather than the
+    officer's pk: still unique per active row, but it makes the tie-break
+    in ``allocate_by_units`` (which breaks ties on ``str(key)``)
+    deterministic against register order rather than an arbitrary UUID --
+    the odd cent goes to the first-listed holder, not whoever happens to
+    sort first by primary key.
+
+    A holder who drops out of the active set since the last run (units
+    zeroed/nulled, or ceased) keeps their ``BeneficiaryAllocation`` row --
+    it is never deleted, since that would discard ``section_100a_flag`` /
+    ``section_100a_notes`` for a holder who ceased mid-year, the same
+    reason ``recalculate_unit_percentages`` freezes rather than nulls a
+    ceased holder's stored percentage. Instead every stream, the
+    percentage, and total_distribution on that stale row are zeroed, so a
+    stale row can never silently keep contributing money and the
+    allocations for this distribution still sum to exactly the whole.
+
+    ``percentage`` is written from the STORED, largest-remainder
+    ``distribution_percentage`` (written by ``recalculate_unit_percentages``),
+    not the live ``unit_percentage`` property, which quantizes each row
+    independently and does not sum to exactly 100.00. ``is_fully_allocated``
+    is set True unconditionally: for a unit trust there is no partial
+    allocation, by construction the active register's stored percentages
+    already sum to 100.00.
 
     Raises ValueError (propagated from ``allocate_by_units``) when the
     active register is empty or has no units on issue -- allocating a
@@ -613,10 +640,15 @@ def allocate_unit_trust_distribution(distribution):
     entity = distribution.financial_year.entity
     holders = list(
         EntityOfficer.objects.filter(
-            entity=entity, date_ceased__isnull=True, units_held__isnull=False,
+            EntityOfficer.active_register_q(),
+            entity=entity, units_held__isnull=False,
         ).order_by("display_order", "full_name")
     )
-    holdings = [(holder.pk, holder.units_held) for holder in holders]
+
+    def key_for(holder):
+        return (holder.display_order, holder.full_name)
+
+    holdings = [(key_for(holder), holder.units_held) for holder in holders]
 
     streams = {
         "allocated_capital_gains": distribution.capital_gains,
@@ -630,19 +662,41 @@ def allocate_unit_trust_distribution(distribution):
     }
     entitlement = allocate_by_units(distribution.distributable_income, holdings)
 
-    rows = []
-    for holder in holders:
-        row, _ = BeneficiaryAllocation.objects.update_or_create(
+    with transaction.atomic():
+        # Zero (never delete) any existing row for a holder who is no
+        # longer in the active set -- see docstring. This must run inside
+        # the same transaction as the writes below so a mid-sequence
+        # failure cannot leave rows zeroed without being rewritten.
+        active_ids = [holder.pk for holder in holders]
+        BeneficiaryAllocation.objects.filter(
             distribution=distribution,
-            beneficiary=holder,
-            defaults={
-                "percentage": holder.unit_percentage,
-                "fixed_amount": None,
-                "total_distribution": entitlement[holder.pk],
-                **{field: values[holder.pk] for field, values in split.items()},
-            },
+        ).exclude(beneficiary_id__in=active_ids).update(
+            percentage=Decimal("0"),
+            allocated_capital_gains=Decimal("0"),
+            allocated_franked_dividends=Decimal("0"),
+            allocated_foreign_income=Decimal("0"),
+            allocated_other_income=Decimal("0"),
+            total_distribution=Decimal("0"),
         )
-        rows.append(row)
+
+        rows = []
+        for holder in holders:
+            key = key_for(holder)
+            row, _ = BeneficiaryAllocation.objects.update_or_create(
+                distribution=distribution,
+                beneficiary=holder,
+                defaults={
+                    "percentage": holder.distribution_percentage or Decimal("0"),
+                    "fixed_amount": None,
+                    "total_distribution": entitlement[key],
+                    **{field: values[key] for field, values in split.items()},
+                },
+            )
+            rows.append(row)
+
+        distribution.is_fully_allocated = True
+        distribution.save(update_fields=["is_fully_allocated"])
+
     return rows
 
 

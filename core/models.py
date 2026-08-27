@@ -457,10 +457,8 @@ class Entity(models.Model):
         distribution queries: a future date_ceased does not exclude a
         holder, only a date_ceased today-or-earlier does.
         """
-        from django.utils import timezone
-        today = timezone.now().date()
         return self.officers.filter(
-            models.Q(date_ceased__isnull=True) | models.Q(date_ceased__gt=today),
+            EntityOfficer.active_register_q(),
             units_held__isnull=False,
         ).aggregate(t=models.Sum("units_held"))["t"] or 0
 
@@ -611,6 +609,24 @@ class EntityOfficer(models.Model):
         from django.utils import timezone
         return self.date_ceased > timezone.now().date()
 
+    @classmethod
+    def active_register_q(cls, today=None):
+        """Q object matching officers whose ``date_ceased`` has not yet arrived.
+
+        A null ``date_ceased``, or one dated in the future, counts as active
+        -- matching ``is_active``, ``Entity.total_units`` and
+        ``recalculate_unit_percentages``. Extracted here as the single
+        canonical copy of this predicate: it had already drifted once, when
+        core/views_trust.py's unit-trust allocation used a plain
+        ``date_ceased__isnull=True`` filter and silently dropped a
+        future-ceased holder from a split while ``Entity.total_units`` (this
+        same rule) still counted their units in the register's denominator.
+        """
+        from django.utils import timezone
+        if today is None:
+            today = timezone.now().date()
+        return models.Q(date_ceased__isnull=True) | models.Q(date_ceased__gt=today)
+
     def clean(self):
         super().clean()
         # Only unit holders and beneficiaries may have distribution_percentage
@@ -755,7 +771,7 @@ class EntityOfficer(models.Model):
                 entity=entity, units_held__isnull=False,
                 role=cls.OfficerRole.UNIT_HOLDER,
             )
-            .filter(models.Q(date_ceased__isnull=True) | models.Q(date_ceased__gt=today))
+            .filter(cls.active_register_q(today))
             .order_by("pk")
         )
         if not active_holders:

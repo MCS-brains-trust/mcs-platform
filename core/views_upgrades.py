@@ -436,33 +436,42 @@ def trust_distribution(request, pk):
 
         elif action == "save_allocations":
             try:
-                with transaction.atomic():
-                    for ben in beneficiaries:
-                        pct_key = f"pct_{ben.pk}"
-                        flag_key = f"s100a_{ben.pk}"
-                        notes_key = f"s100a_notes_{ben.pk}"
+                if entity.entity_type == "trust_unit":
+                    # A unit trust has no streaming choice: every stream
+                    # follows the register, not the per-officer pct_<pk>
+                    # form fields below (which this branch never reads).
+                    # See core/views_trust.allocate_unit_trust_distribution
+                    # -- it wraps its own writes in transaction.atomic().
+                    from core.views_trust import allocate_unit_trust_distribution
+                    allocate_unit_trust_distribution(dist)
+                else:
+                    with transaction.atomic():
+                        for ben in beneficiaries:
+                            pct_key = f"pct_{ben.pk}"
+                            flag_key = f"s100a_{ben.pk}"
+                            notes_key = f"s100a_notes_{ben.pk}"
 
-                        pct = Decimal(request.POST.get(pct_key, "0") or "0")
+                            pct = Decimal(request.POST.get(pct_key, "0") or "0")
 
-                        alloc, _ = BeneficiaryAllocation.objects.update_or_create(
-                            distribution=dist,
-                            beneficiary=ben,
-                            defaults={
-                                "percentage": pct,
-                                "section_100a_flag": flag_key in request.POST,
-                                "section_100a_notes": request.POST.get(notes_key, ""),
-                            },
-                        )
-                        alloc.calculate_allocation()
-                        alloc.save()
+                            alloc, _ = BeneficiaryAllocation.objects.update_or_create(
+                                distribution=dist,
+                                beneficiary=ben,
+                                defaults={
+                                    "percentage": pct,
+                                    "section_100a_flag": flag_key in request.POST,
+                                    "section_100a_notes": request.POST.get(notes_key, ""),
+                                },
+                            )
+                            alloc.calculate_allocation()
+                            alloc.save()
 
-                    # Check if fully allocated
-                    total_pct = dist.allocations.aggregate(t=Sum("percentage"))["t"] or Decimal("0")
-                    dist.is_fully_allocated = (total_pct == Decimal("100"))
-                    dist.save(update_fields=["is_fully_allocated"])
+                        # Check if fully allocated
+                        total_pct = dist.allocations.aggregate(t=Sum("percentage"))["t"] or Decimal("0")
+                        dist.is_fully_allocated = (total_pct == Decimal("100"))
+                        dist.save(update_fields=["is_fully_allocated"])
 
                 messages.success(request, "Beneficiary allocations saved.")
-            except (InvalidOperation, TypeError) as e:
+            except (InvalidOperation, TypeError, ValueError) as e:
                 messages.error(request, f"Invalid allocation value: {e}")
             # Refresh data
             allocations = dist.allocations.select_related("beneficiary").all()
