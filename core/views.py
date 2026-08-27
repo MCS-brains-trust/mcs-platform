@@ -70,24 +70,32 @@ def _compute_amber_indicators(fy):
 def _resolve_account_name(entity, account_code, raw_name):
     """Resolve a human-readable account name, falling back through multiple sources.
 
-    When a trial balance is imported from certain accounting packages, the
-    account-name column is sometimes blank or contains a copy of the account
-    code.  This helper detects that situation and attempts to find the real
-    name from:
-      1. EntityChartOfAccount (entity-specific)
-      2. ChartOfAccount (master template for the entity type)
-    If no match is found the original raw_name is returned unchanged.
-    """
-    # If the raw name is non-empty and clearly different from the code, keep it
-    if raw_name and raw_name.strip() != account_code.strip():
-        return raw_name
+    The entity's chart of accounts owns the account name. An import supplies a
+    name too, and where the two disagree the chart wins — otherwise importing a
+    file renames the account, which is what happened to Minli Enterprise Unit
+    Trust FY2026 through the cloud path (620 arrived as "Rental Income" against
+    a chart that calls it "Rents received"). Order of precedence:
 
-    # Attempt 1: entity-level chart of accounts
+      1. EntityChartOfAccount (entity-specific) — always wins
+      2. the imported raw_name, where the entity has no chart entry for the
+         code. A generic template is not this entity's chart and must not
+         rename an account they never set up.
+      3. ChartOfAccount (master template for the entity type) — only rescues a
+         blank or code-shaped name, which is the case this helper was written
+         for: some packages export the name column empty or as a copy of the
+         code.
+    """
+    # Attempt 1: entity-level chart of accounts. Authoritative, so it is
+    # consulted before the imported name rather than after it.
     ecoa = EntityChartOfAccount.objects.filter(
         entity=entity, account_code=account_code, is_active=True
     ).first()
     if ecoa and ecoa.account_name:
         return ecoa.account_name
+
+    # No entity chart entry: keep a real imported name.
+    if raw_name and raw_name.strip() != account_code.strip():
+        return raw_name
 
     # Attempt 2: master chart of accounts template
     coa = ChartOfAccount.objects.filter(
@@ -5240,7 +5248,11 @@ def commit_tb_import(request, pk):
         TrialBalanceLine.objects.create(
             financial_year=fy,
             account_code=code,
-            account_name=comp.get("account_name", ""),
+            # The snapshot may hold a name an earlier import supplied; copying
+            # it here is how a file's name reaches the years after it.
+            account_name=_resolve_account_name(
+                entity, code, comp.get("account_name", ""),
+            ),
             opening_balance=Decimal("0"),
             debit=Decimal("0"),
             credit=Decimal("0"),
