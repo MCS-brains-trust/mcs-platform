@@ -25,7 +25,7 @@ from .models import (
     ClientAssociate, AccountingSoftware, MeetingNote,
     DepreciationAsset, RiskFlag, StockItem, ActivityLog, EntityChartOfAccount,
     BulkJournalUpload, BASPeriod, BankAccountMapping, BASPeriodCommentary,
-    EvaReview,
+    EvaReview, template_entity_type,
 )
 from .forms import (
     ClientForm, EntityForm, FinancialYearForm,
@@ -99,7 +99,7 @@ def _resolve_account_name(entity, account_code, raw_name):
 
     # Attempt 2: master chart of accounts template
     coa = ChartOfAccount.objects.filter(
-        entity_type=entity.entity_type, account_code=account_code, is_active=True
+        entity_type=template_entity_type(entity.entity_type), account_code=account_code, is_active=True
     ).first()
     if coa and coa.account_name:
         return coa.account_name
@@ -234,7 +234,7 @@ def _coa_sections_for_entity(entity):
     """
     sections = dict(
         ChartOfAccount.objects.filter(
-            entity_type=entity.entity_type, is_active=True
+            entity_type=template_entity_type(entity.entity_type), is_active=True
         ).values_list("account_code", "section")
     )
     sections.update(
@@ -463,7 +463,7 @@ def _build_coa_section_lookup(entity):
 
     # Priority 2 first (lower priority — will be overwritten by Priority 1)
     for code, section in ChartOfAccount.objects.filter(
-        entity_type=entity.entity_type, is_active=True,
+        entity_type=template_entity_type(entity.entity_type), is_active=True,
     ).values_list('account_code', 'section'):
         ds = _COA_SECTION_TO_DISPLAY.get(section, 'Unmapped')
         if ds != 'Unmapped':
@@ -499,7 +499,7 @@ def _infer_section_for_unmapped(entity, account_code):
 
     # Priority 2: master chart of accounts template
     coa = ChartOfAccount.objects.filter(
-        entity_type=entity.entity_type, account_code=account_code, is_active=True,
+        entity_type=template_entity_type(entity.entity_type), account_code=account_code, is_active=True,
     ).first()
     if coa and coa.section:
         return _COA_SECTION_TO_DISPLAY.get(coa.section, 'Unmapped')
@@ -4625,7 +4625,7 @@ def _process_trial_balance_upload(fy, file):
         coa_match = None
         if not mapped_item:
             coa_match = ChartOfAccount.objects.filter(
-                entity_type=entity.entity_type,
+                entity_type=template_entity_type(entity.entity_type),
                 account_code=account_code,
                 is_active=True,
             ).first()
@@ -4635,7 +4635,7 @@ def _process_trial_balance_upload(fy, file):
         if not mapped_item:
             from core.models import GlobalAccountMappingHint
             hint = GlobalAccountMappingHint.objects.filter(
-                entity_type=entity.entity_type,
+                entity_type=template_entity_type(entity.entity_type),
                 account_code=account_code,
             ).select_related('mapped_line_item').first()
             if hint:
@@ -5878,7 +5878,7 @@ def adjustment_create(request, pk):
         ]
     # Always merge with the entity's Chart of Accounts so that accounts
     # which exist in the CoA but have no TB line yet are still selectable.
-    entity_type = fy.entity.entity_type
+    entity_type = template_entity_type(fy.entity.entity_type)
     coa_accounts = (
         EntityChartOfAccount.objects.filter(entity=fy.entity, is_active=True)
         .order_by("account_code")
@@ -6672,7 +6672,7 @@ def journal_edit(request, pk):
     ]
     coa_qs = EntityChartOfAccount.objects.filter(entity=entity, is_active=True).order_by("account_code").values("account_code", "account_name")
     if not coa_qs.exists():
-        coa_qs = ChartOfAccount.objects.filter(entity_type=entity.entity_type, is_active=True).order_by("account_code").values("account_code", "account_name")
+        coa_qs = ChartOfAccount.objects.filter(entity_type=template_entity_type(entity.entity_type), is_active=True).order_by("account_code").values("account_code", "account_name")
     merged = {}
     for a in coa_qs:
         merged[a["account_code"]] = {"client_account_code": a["account_code"], "client_account_name": a["account_name"]}
@@ -8696,7 +8696,7 @@ def gst_activity_statement(request, pk):
         pk=pk,
     )
     entity = fy.entity
-    entity_type = entity.entity_type  # company, trust, partnership, sole_trader
+    entity_type = template_entity_type(entity.entity_type)  # company, trust, partnership, sole_trader
 
     # Build a lookup: account_code -> ChartOfAccount for this entity type
     # First load template COA, then overlay with entity-specific COA
@@ -8956,7 +8956,7 @@ def gst_activity_statement_download(request, pk):
         pk=pk,
     )
     entity = fy.entity
-    entity_type = entity.entity_type
+    entity_type = template_entity_type(entity.entity_type)
 
     # Re-run the calculation (same logic as the view)
     coa_lookup = {}
@@ -12414,7 +12414,7 @@ def htmx_update_tb_mapping(request, pk):
                 pass
 
     # Return the updated row
-    entity_type = line.financial_year.entity.entity_type
+    entity_type = template_entity_type(line.financial_year.entity.entity_type)
     coa_items = ChartOfAccount.objects.filter(
         entity_type=entity_type, is_active=True
     ).select_related("maps_to").order_by("section", "account_code")
@@ -12432,7 +12432,7 @@ def htmx_update_tb_mapping(request, pk):
 @login_required
 def coa_search_api(request):
     """JSON API for searching chart of accounts — used by the review tab dropdown."""
-    entity_type = request.GET.get("entity_type", "company")
+    entity_type = template_entity_type(request.GET.get("entity_type", "company"))
     q = request.GET.get("q", "")
 
     qs = ChartOfAccount.objects.filter(

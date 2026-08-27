@@ -4249,7 +4249,7 @@ def generate_financial_statements(financial_year_id, include_watermark=True):
 
     Returns dict of document_type → BytesIO.
     """
-    from core.models import FinancialStatementTemplate, FinancialYear
+    from core.models import FinancialStatementTemplate, FinancialYear, template_entity_type
 
     fy = FinancialYear.objects.select_related(
         "entity", "entity__client", "prior_year",
@@ -4299,7 +4299,7 @@ def generate_financial_statements(financial_year_id, include_watermark=True):
 
     # Get active templates for this entity type
     templates = FinancialStatementTemplate.objects.filter(
-        entity_type=entity_type,
+        entity_type=template_entity_type(entity_type),
         is_active=True,
     )
 

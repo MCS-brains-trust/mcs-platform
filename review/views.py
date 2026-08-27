@@ -525,9 +525,9 @@ def review_detail(request, pk):
     transactions = job.transactions.all().order_by("date", "description")
 
     # Get entity-type-specific chart of accounts for the picker
-    from core.models import ChartOfAccount, TrialBalanceLine, FinancialYear
+    from core.models import ChartOfAccount, TrialBalanceLine, FinancialYear, template_entity_type
     from decimal import Decimal
-    entity_type = job.entity.entity_type if job.entity else "company"
+    entity_type = template_entity_type(job.entity.entity_type) if job.entity else "company"
     coa_qs = ChartOfAccount.objects.filter(
         entity_type=entity_type, is_active=True
     ).order_by("section", "display_order")

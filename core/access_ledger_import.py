@@ -40,7 +40,7 @@ from django.db import transaction
 from .models import (
     Entity, EntityOfficer, FinancialYear, TrialBalanceLine,
     DepreciationAsset, ClientAccountMapping, AccountMapping,
-    ChartOfAccount,
+    ChartOfAccount, template_entity_type,
 )
 
 logger = logging.getLogger(__name__)
@@ -1337,7 +1337,7 @@ def import_access_ledger_zip(zip_file, client=None, entity=None, replace_existin
     # Pre-build ChartOfAccount mapping cache for this entity type
     # This maps account_code -> AccountMapping for instant lookup during import
     coa_mapping_cache = {}
-    entity_type = entity_info["entity_type"]
+    entity_type = template_entity_type(entity_info["entity_type"])
     for coa in ChartOfAccount.objects.filter(
         entity_type=entity_type, maps_to__isnull=False, is_active=True
     ).select_related("maps_to"):

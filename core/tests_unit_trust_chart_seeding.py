@@ -53,3 +53,38 @@ class UnitTrustChartSeedingTests(TestCase):
             .values_list("account_code", flat=True)
         )
         self.assertEqual(codes, self.expected_codes)
+
+
+class UnitTrustImportMappingResolvesFromTrustTemplateTests(TestCase):
+    """End-to-end proof for the import-mapping path (core/views.py), not just
+    chart seeding: a unit trust importing a statement must still find its
+    account names/mappings against the trust master template.
+
+    This is the fixture that gave _resolve_account_name its docstring example
+    (Minli Enterprise Unit Trust) — reused here as a real regression guard for
+    the entity_type-keyed lookups fixed in core/views.py by this task.
+    """
+
+    def setUp(self):
+        ChartOfAccount.objects.create(
+            entity_type="trust", account_code="620",
+            account_name="Rents received", section="revenue",
+        )
+
+    def test_unit_trust_resolves_account_name_from_trust_template(self):
+        from core.views import _resolve_account_name
+
+        entity = Entity.objects.create(
+            entity_name="Minli Enterprise Unit Trust", entity_type="trust_unit",
+        )
+        # No EntityChartOfAccount row yet, and the imported name is blank/
+        # code-shaped — this is exactly the case that falls through to the
+        # master ChartOfAccount template (Attempt 2 in the docstring).
+        resolved_name = _resolve_account_name(entity, "620", "620")
+
+        self.assertEqual(
+            resolved_name, "Rents received",
+            "a trust_unit entity failed to resolve its account name against "
+            "the trust master template — the import-mapping path is dead for "
+            "unit trusts",
+        )

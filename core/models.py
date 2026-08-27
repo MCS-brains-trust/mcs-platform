@@ -2117,6 +2117,7 @@ class DocumentTemplate(models.Model):
         Return the active template for a given category and entity type.
         Falls back to a template with blank entity_type if no exact match.
         """
+        entity_type = template_entity_type(entity_type)
         # Try exact match first
         tpl = cls.objects.filter(
             document_category=document_category,
