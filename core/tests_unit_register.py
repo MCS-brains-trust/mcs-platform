@@ -2,10 +2,26 @@
 from datetime import date, timedelta
 from decimal import Decimal
 
-from django.test import TestCase
+from django.contrib.auth import get_user_model
+from django.contrib.messages.storage.fallback import FallbackStorage
+from django.contrib.sessions.middleware import SessionMiddleware
+from django.test import RequestFactory, TestCase
 from django.utils import timezone
 
 from core.models import Entity, EntityOfficer, OfficerDistributionHistory
+from core.views import _handle_ceased_redistribution
+
+
+def _prepare_request(request, user):
+    """Same pattern as integrations/tests_import_wizard_bugs.py: a view
+    helper that calls django.contrib.messages needs a request with a real
+    session and message storage attached, or messages.info()/warning()
+    raise MessageFailure."""
+    request.user = user
+    SessionMiddleware(lambda req: None).process_request(request)
+    request.session.save()
+    request._messages = FallbackStorage(request)
+    return request
 
 
 class UnitRegisterTests(TestCase):
@@ -320,3 +336,134 @@ class BeneficiaryDistributionHistoryTests(TestCase):
         self.assertEqual(open_rows.count(), 1)
         self.assertEqual(open_rows.first().distribution_pct, Decimal("60.00"))
         self._all_rows_never_invert(beneficiary)
+
+
+class CeasedRedistributionTests(TestCase):
+    """FIX 1 (round 3, the important one): the unit-trust branch of
+    core/views.py's _handle_ceased_redistribution has no committed test.
+    Its evidence in fix round 2 was a one-off `manage.py shell` probe, not
+    part of the suite -- and that exact regression (a hand-set stored
+    field with no matching history row) was introduced once already
+    inside this task. This pins it so a future edit to that branch cannot
+    silently reintroduce it with the suite still green.
+
+    _handle_ceased_redistribution is called directly rather than driven
+    through the view: it needs no entity/session state beyond a request
+    that can carry django.contrib.messages, and driving the full
+    entity_officer_edit view would require IDOR-check scaffolding
+    (get_entity_for_user), a bound ModelForm, and login_required/2FA
+    middleware unrelated to what this is testing.
+    """
+
+    def setUp(self):
+        self.factory = RequestFactory()
+        self.user = get_user_model().objects.create_user(
+            username="redistrib", email="redistrib@example.com", password="secret123",
+        )
+
+    def _request(self):
+        return _prepare_request(self.factory.post("/fake-officer-edit/"), self.user)
+
+    def _all_rows_never_invert(self, officer):
+        for row in OfficerDistributionHistory.objects.filter(officer=officer):
+            if row.effective_to is not None:
+                self.assertGreaterEqual(
+                    row.effective_to, row.effective_from,
+                    f"row {row.pk} has effective_to before effective_from",
+                )
+
+    def test_unit_trust_survivor_stored_field_and_open_history_agree(self):
+        entity = Entity.objects.create(
+            entity_name="Redistribution Unit Trust", entity_type="trust_unit",
+        )
+        a = EntityOfficer.objects.create(
+            entity=entity, full_name="A", role="unit_holder", roles=["unit_holder"],
+            units_held=50,
+        )
+        b = EntityOfficer.objects.create(
+            entity=entity, full_name="B", role="unit_holder", roles=["unit_holder"],
+            units_held=50,
+        )
+        EntityOfficer.recalculate_unit_percentages(entity)
+        a.refresh_from_db()
+        b.refresh_from_db()
+        self.assertEqual(a.distribution_percentage, Decimal("50.00"))
+        self.assertEqual(b.distribution_percentage, Decimal("50.00"))
+
+        # Cease B through the same path entity_officer_edit takes: set
+        # date_ceased, save, then call the redistribution handler.
+        b.date_ceased = timezone.now().date()
+        b.save()
+        _handle_ceased_redistribution(self._request(), b)
+
+        a.refresh_from_db()
+        self.assertEqual(a.distribution_percentage, Decimal("100.00"))
+        open_row = OfficerDistributionHistory.objects.filter(
+            officer=a, effective_to__isnull=True,
+        ).first()
+        self.assertIsNotNone(open_row)
+        # This is the assertion that fails if the round-2 regression
+        # returns: a hand-set stored field with no matching history write.
+        self.assertEqual(open_row.distribution_pct, Decimal("100.00"))
+        self._all_rows_never_invert(a)
+        self._all_rows_never_invert(b)
+
+    def test_discretionary_survivor_stored_field_and_open_history_agree(self):
+        entity = Entity.objects.create(
+            entity_name="Redistribution Family Trust", entity_type="trust",
+        )
+        a = EntityOfficer.objects.create(
+            entity=entity, full_name="A", role="beneficiary", roles=["beneficiary"],
+            distribution_percentage=Decimal("50.00"),
+        )
+        b = EntityOfficer.objects.create(
+            entity=entity, full_name="B", role="beneficiary", roles=["beneficiary"],
+            distribution_percentage=Decimal("50.00"),
+        )
+        b.date_ceased = timezone.now().date()
+        b.save()
+        _handle_ceased_redistribution(self._request(), b)
+
+        a.refresh_from_db()
+        self.assertEqual(a.distribution_percentage, Decimal("100.00"))
+        open_row = OfficerDistributionHistory.objects.filter(
+            officer=a, effective_to__isnull=True,
+        ).first()
+        self.assertIsNotNone(open_row)
+        self.assertEqual(open_row.distribution_pct, Decimal("100.00"))
+        self._all_rows_never_invert(a)
+        self._all_rows_never_invert(b)
+
+
+class UnitHolderRoleGuardTests(TestCase):
+    """FIX 3 (round 3): fix 3's own bug scenario -- a role="beneficiary"
+    officer with units_held forced through direct ORM previously got NO
+    history at all -- was itself untested."""
+
+    def test_beneficiary_with_units_held_forced_via_orm_still_gets_history(self):
+        entity = Entity.objects.create(
+            entity_name="Ordinary Family Trust", entity_type="trust",
+        )
+        beneficiary = EntityOfficer.objects.create(
+            entity=entity, full_name="Jane Beneficiary",
+            role="beneficiary", roles=["beneficiary"],
+            distribution_percentage=Decimal("40.00"),
+        )
+        # Force units_held directly through the ORM, bypassing clean()
+        # (which would otherwise null it for a non-unit-holder role).
+        EntityOfficer.objects.filter(pk=beneficiary.pk).update(units_held=10)
+        beneficiary.refresh_from_db()
+        self.assertEqual(beneficiary.units_held, 10)
+
+        beneficiary.distribution_percentage = Decimal("55.00")
+        beneficiary.save()
+
+        open_row = OfficerDistributionHistory.objects.filter(
+            officer=beneficiary, effective_to__isnull=True,
+        ).first()
+        # Under the old units_held-keyed guard, this would be None: the
+        # save() above would have been silently dropped from the audit
+        # trail entirely (neither the unit-holder path nor the
+        # beneficiary path would write it).
+        self.assertIsNotNone(open_row)
+        self.assertEqual(open_row.distribution_pct, Decimal("55.00"))
