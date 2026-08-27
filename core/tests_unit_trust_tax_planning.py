@@ -138,6 +138,49 @@ class UnitTrustTaxPlanningTests(TestCase):
         # trust's allocation -- it is still accepted (Ruling 4).
         self.assertEqual(row.outside_income, Decimal("5000.00"))
 
+    def test_a_fabricated_beneficiary_id_is_also_neutralised(self):
+        # Fix round 1/5: the guard must be keyed on entity.is_unit_trust
+        # alone, not on "a TaxPlanningBeneficiaryRow exists for this id" --
+        # Ruling 4 says do not lean on the DoesNotExist swallow. A
+        # beneficiary_id that matches no row on this worksheet must not
+        # sail its posted proposed_distribution through into the
+        # calculated tax figures returned in the JSON response, even
+        # though nothing about it can ever be persisted.
+        self.client.get(
+            reverse("core:tax_planning_tab", kwargs={"pk": self.fy.pk}), secure=True,
+        )
+        fabricated_id = "00000000-0000-0000-0000-000000000000"
+        self.assertFalse(
+            TaxPlanningBeneficiaryRow.objects.filter(beneficiary_id=fabricated_id).exists()
+        )
+
+        response = self.client.post(
+            reverse("core:tax_planning_save", kwargs={"pk": self.fy.pk}),
+            data={
+                "beneficiary_rows": [{
+                    "beneficiary_id": fabricated_id,
+                    "outside_income": "0",
+                    "proposed_distribution": "999999.00",
+                    "beneficiary_type": "individual",
+                }],
+            },
+            content_type="application/json",
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+
+        payload = response.json()
+        fabricated_row = next(
+            r for r in payload["rows"] if r["beneficiary_id"] == fabricated_id
+        )
+        # The posted $999,999.00 must not have reached the tax calculation.
+        self.assertNotEqual(Decimal(fabricated_row["total_taxable_income"]), Decimal("999999.00"))
+        self.assertEqual(Decimal(fabricated_row["total_taxable_income"]), Decimal("0.00"))
+        # And, as before, nothing is persisted for an id with no row.
+        self.assertFalse(
+            TaxPlanningBeneficiaryRow.objects.filter(beneficiary_id=fabricated_id).exists()
+        )
+
     def test_null_units_held_does_not_crash_the_split(self):
         # A unit_holder row with units_held left blank must not blow up
         # allocate_by_units with a bare TypeError (units_held is nullable).
@@ -265,3 +308,63 @@ class DiscretionaryTrustTaxPlanningUnchangedTests(TestCase):
         # real decision and must persist exactly as posted.
         self.assertEqual(row.proposed_distribution, Decimal("75000.00"))
         self.assertEqual(row.outside_income, Decimal("12000.00"))
+
+
+class OddSplitThroughTheViewTests(TestCase):
+    """Fix round 1/5: the glue -- wiring TaxPlanningBeneficiaryRow pks into
+    allocate_by_units and persisting the result -- has never been tested
+    where rounding actually bites. allocate_by_units is proven correct in
+    isolation (core/tests for that module); this exercises the real view
+    with three equal-unit holders splitting an amount that does not divide
+    evenly by three, so the largest-remainder tie-break is actually live.
+    """
+
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="tp4", email="tp4@example.com", password="secret123",
+            totp_secret="dummy-secret-for-test", totp_confirmed=True,
+        )
+        self.client.force_login(self.user)
+        session = self.client.session
+        session["2fa_verified"] = True
+        session.save()
+
+        self.entity = Entity.objects.create(
+            entity_name="Threeway Unit Trust", entity_type="trust_unit",
+            assigned_accountant=self.user,
+        )
+        self.fy = FinancialYear.objects.create(
+            entity=self.entity, year_label="FY2026",
+            start_date=date(2025, 7, 1), end_date=date(2026, 6, 30),
+        )
+        _give_distributable_income(self.fy, Decimal("100000.00"))
+        for name in ["Holder One", "Holder Two", "Holder Three"]:
+            EntityOfficer.objects.create(
+                entity=self.entity, full_name=name,
+                role=EntityOfficer.OfficerRole.UNIT_HOLDER,
+                roles=["unit_holder"], units_held=1,
+            )
+
+    def test_three_equal_holders_split_an_odd_amount_exactly(self):
+        response = self.client.get(
+            reverse("core:tax_planning_tab", kwargs={"pk": self.fy.pk}),
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+
+        worksheet = TaxPlanningWorksheet.objects.get(financial_year=self.fy)
+        self.assertEqual(worksheet.beneficiary_rows.count(), 3)
+        self.assertEqual(worksheet.distributable_income, Decimal("100000.00"))
+
+        amounts = sorted(
+            worksheet.beneficiary_rows.values_list("proposed_distribution", flat=True)
+        )
+        # $100,000 / 3 is not exact -- largest-remainder puts the odd cent
+        # on exactly one holder, and the three parts still sum to the whole.
+        self.assertEqual(
+            amounts, [Decimal("33333.33"), Decimal("33333.33"), Decimal("33333.34")]
+        )
+        self.assertEqual(sum(amounts), Decimal("100000.00"))
+        # The odd cent (33333.34, one more than the other two) appears
+        # exactly once, not on two holders and not on none.
+        self.assertEqual(amounts.count(Decimal("33333.34")), 1)

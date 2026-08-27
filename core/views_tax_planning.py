@@ -372,6 +372,13 @@ def tax_planning_save(request, pk):
     beneficiary_rows_data = body.get("beneficiary_rows", [])
 
     if is_unit_trust:
+        # Neutralise unconditionally -- keyed on entity.is_unit_trust alone,
+        # not on "does a row exist for this id" (Ruling 4: do not lean on
+        # the DoesNotExist swallow below). A fabricated beneficiary_id that
+        # matches no TaxPlanningBeneficiaryRow must not sail through with
+        # its posted amount intact and leak into calculate_all_beneficiaries'
+        # returned tax figures -- it gets $0, the same as any other id this
+        # worksheet does not recognise.
         current_amounts = {
             str(beneficiary_id): amount
             for beneficiary_id, amount in TaxPlanningBeneficiaryRow.objects.filter(
@@ -380,8 +387,7 @@ def tax_planning_save(request, pk):
         }
         for bd in beneficiary_rows_data:
             ben_id = str(bd.get("beneficiary_id", ""))
-            if ben_id in current_amounts:
-                bd["proposed_distribution"] = str(current_amounts[ben_id])
+            bd["proposed_distribution"] = str(current_amounts.get(ben_id, Decimal("0")))
 
     # Calculate
     calc_result = calculate_all_beneficiaries(worksheet, beneficiary_rows_data, rates)
