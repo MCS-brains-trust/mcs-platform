@@ -976,7 +976,11 @@ def validate_fixed_unit_trust(entity, params):
         if uh_entity_id:
             try:
                 uh_entity = Entity.objects.get(pk=uh_entity_id)
-                if uh_entity.entity_type in ("company", "trust"):
+                # Must match the is_trust / execution-block test in
+                # build_fixed_unit_trust_context: a corporate or trust unit
+                # holder that gets an execution block must also be validated
+                # for having directors to sign it.
+                if uh_entity.entity_type in ("company",) + TRUST_LIKE_TYPES:
                     uh_directors = _get_directors_for_entity(uh_entity)
                     if not uh_directors:
                         errors.append(

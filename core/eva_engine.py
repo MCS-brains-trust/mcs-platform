@@ -216,20 +216,35 @@ def untag_tb_lines_for_finding(financial_year, check_name):
 # ---------------------------------------------------------------------------
 # Each check has: id, name, description, entity_types (which types it applies to),
 # and the function that performs the analysis.
+#
+# NOTE on the trust entity types below. These lists name
+# "trust_discretionary" and "trust_hybrid", neither of which has ever existed
+# in Entity.EntityType — and they deliberately do NOT name "trust_unit" or
+# "trust". The consequence is that no trust of any kind matches a check, so
+# these LLM checks have never run for any trust on the platform. That is
+# preserved on purpose: "trust_unit" (added to EntityType by the unit-trust
+# work) was REMOVED from these lists because leaving it would have switched
+# nine never-run LLM checks on for a single live client entity while the
+# discretionary trusts still had none, and adding "trust" would switch them on
+# for the discretionary trusts. Neither activation was asked for, and neither
+# has ever been exercised. Keeping the lists as they are preserves the status
+# quo for every entity and is reversible. Whether Eva compliance checks should
+# run for trusts at all is an open product question — not a sweep's decision.
+# Pinned by core/tests_trust_sweep_regression.py.
 
 COMPLIANCE_CHECKS = [
     {
         "id": "div7a",
         "name": "Division 7A Loan Compliance",
         "description": "Check for potential Division 7A exposure from loans to shareholders/associates",
-        "entity_types": ["company", "trust_discretionary", "trust_unit", "trust_hybrid"],
+        "entity_types": ["company", "trust_discretionary", "trust_hybrid"],
         "severity_default": "CRITICAL",
     },
     {
         "id": "gst_reconciliation",
         "name": "GST Reconciliation",
         "description": "Verify GST collected/paid reconciles with BAS lodgement figures",
-        "entity_types": ["company", "trust_discretionary", "trust_unit", "trust_hybrid",
+        "entity_types": ["company", "trust_discretionary", "trust_hybrid",
                          "sole_trader", "partnership", "smsf"],
         "severity_default": "ADVISORY",
     },
@@ -237,7 +252,7 @@ COMPLIANCE_CHECKS = [
         "id": "related_party",
         "name": "Related Party Transactions",
         "description": "Identify and review related party transactions for arm's length pricing",
-        "entity_types": ["company", "trust_discretionary", "trust_unit", "trust_hybrid", "partnership"],
+        "entity_types": ["company", "trust_discretionary", "trust_hybrid", "partnership"],
         "severity_default": "ADVISORY",
     },
     {
@@ -251,14 +266,14 @@ COMPLIANCE_CHECKS = [
         "id": "trust_distribution",
         "name": "Trust Distribution Resolution",
         "description": "Verify trust distribution resolutions are in place before year end",
-        "entity_types": ["trust_discretionary", "trust_unit", "trust_hybrid"],
+        "entity_types": ["trust_discretionary", "trust_hybrid"],
         "severity_default": "CRITICAL",
     },
     {
         "id": "depreciation_review",
         "name": "Depreciation Schedule Review",
         "description": "Review depreciation calculations and asset register for accuracy",
-        "entity_types": ["company", "trust_discretionary", "trust_unit", "trust_hybrid",
+        "entity_types": ["company", "trust_discretionary", "trust_hybrid",
                          "sole_trader", "partnership", "smsf"],
         "severity_default": "ADVISORY",
     },
@@ -266,7 +281,7 @@ COMPLIANCE_CHECKS = [
         "id": "tb_integrity",
         "name": "Trial Balance Integrity",
         "description": "Verify TB is balanced, no orphan accounts, all accounts mapped",
-        "entity_types": ["company", "trust_discretionary", "trust_unit", "trust_hybrid",
+        "entity_types": ["company", "trust_discretionary", "trust_hybrid",
                          "sole_trader", "partnership", "smsf", "individual"],
         "severity_default": "CRITICAL",
     },
@@ -276,7 +291,7 @@ COMPLIANCE_CHECKS = [
         "id": "super_guarantee",
         "name": "Superannuation Guarantee Compliance",
         "description": "Verify super guarantee obligations are met — correct rate applied, paid on time, all eligible employees covered",
-        "entity_types": ["company", "trust_discretionary", "trust_unit", "trust_hybrid",
+        "entity_types": ["company", "trust_discretionary", "trust_hybrid",
                          "sole_trader", "partnership"],
         "severity_default": "CRITICAL",
     },
@@ -284,7 +299,7 @@ COMPLIANCE_CHECKS = [
         "id": "ato_benchmarks",
         "name": "ATO Industry Benchmarks",
         "description": "Compare key financial ratios against ATO small business benchmarks for the entity's industry",
-        "entity_types": ["company", "trust_discretionary", "trust_unit", "trust_hybrid",
+        "entity_types": ["company", "trust_discretionary", "trust_hybrid",
                          "sole_trader", "partnership"],
         "severity_default": "ADVISORY",
     },
@@ -294,7 +309,7 @@ COMPLIANCE_CHECKS = [
         "id": "tpar",
         "name": "Taxable Payments Annual Report (TPAR)",
         "description": "Check if entity is required to lodge TPAR and whether contractor payments are properly recorded",
-        "entity_types": ["company", "trust_discretionary", "trust_unit", "trust_hybrid",
+        "entity_types": ["company", "trust_discretionary", "trust_hybrid",
                          "sole_trader", "partnership"],
         "severity_default": "ADVISORY",
     },

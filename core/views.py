@@ -1885,16 +1885,21 @@ def entity_detail(request, pk):
     # Surface a one-time prompt after entity creation for companies/trusts
     # so the user can consciously initiate the establishment package.
     legal_doc_prompt = None
-    if not entity.legal_doc_prompt_dismissed and entity.entity_type in ("company",) + TRUST_LIKE_TYPES:
+    # The dict IS the gate. Keying the membership test off it means the two
+    # cannot drift: a future entity type — a third TRUST_LIKE_TYPES member
+    # included — is simply not prompted until it is given its own entry here,
+    # rather than passing a widened gate and then raising KeyError on the
+    # subscript below.
+    doc_type_map = {
+        "company": ("company_establishment", "Company Establishment Package"),
+        "trust": ("discretionary_trust_deed", "Discretionary Trust Deed"),
+        # A unit trust is established by a fixed unit trust deed, never a
+        # discretionary one — see core/views_office_admin.py's
+        # DOC_TYPE_ENTITY_MAP, which already routes "unit_trust_deed" here.
+        "trust_unit": ("unit_trust_deed", "Fixed Unit Trust Deed"),
+    }
+    if not entity.legal_doc_prompt_dismissed and entity.entity_type in doc_type_map:
         from core.models import LegalDocument
-        doc_type_map = {
-            "company": ("company_establishment", "Company Establishment Package"),
-            "trust": ("discretionary_trust_deed", "Discretionary Trust Deed"),
-            # A unit trust is established by a fixed unit trust deed, never a
-            # discretionary one — see core/views_office_admin.py's
-            # DOC_TYPE_ENTITY_MAP, which already routes "unit_trust_deed" here.
-            "trust_unit": ("unit_trust_deed", "Fixed Unit Trust Deed"),
-        }
         doc_type_key, doc_type_label = doc_type_map[entity.entity_type]
         # Only show if no document of this type has been generated yet
         already_generated = LegalDocument.objects.filter(
