@@ -1,13 +1,26 @@
 """A unit trust seeds its chart from the trust template, not from nothing."""
-from django.test import TestCase
+from datetime import date
+from decimal import Decimal
 
+from django.test import Client as HttpClient, TestCase, override_settings
+from django.urls import reverse
+
+from accounts.models import User
 from core.models import (
     AccountMapping,
     ChartOfAccount,
+    Client as ClientModel,
     Entity,
     EntityChartOfAccount,
+    FinancialYear,
+    TrialBalanceLine,
     template_entity_type,
 )
+
+STORAGES_OVERRIDE = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+}
 
 
 class TemplateEntityTypeTests(TestCase):
@@ -174,4 +187,200 @@ class UnitTrustClosesProfitToUndistributedIncomeTests(TestCase):
             "a trust_unit account in the 4000-4199 equity range failed to "
             "resolve BS-EQ-005 (Undistributed income) via the trust "
             "equity_map -- it would fall through unmapped",
+        )
+
+
+class UnitTrustRetainedProfitsAccountRecognitionTests(TestCase):
+    """_is_retained_profits_account is the third of the three equity dicts and
+    the only reader of _RETAINED_PROFITS_STANDARD_CODES. Its ``code_prefix ==
+    "4199"`` short-circuit masks the common case, so these exercise the
+    standard-code branch on a chart that does not carry 4199 -- the
+    MYOB/Xero shape the helper's own docstring was written for.
+    """
+
+    def _mapping(self, standard_code, label):
+        # Migrations already seed some of these standard codes on a fresh test
+        # database; get_or_create reuses the row rather than colliding on the
+        # unique standard_code.
+        mapping, _ = AccountMapping.objects.get_or_create(
+            standard_code=standard_code,
+            defaults={
+                "line_item_label": label,
+                "financial_statement": "balance_sheet",
+                "statement_section": "Equity",
+                "display_order": 510,
+                "applicable_entities": ["trust"],
+            },
+        )
+        return mapping
+
+    def test_unit_trust_recognises_its_undistributed_income_account(self):
+        from core.views import _is_retained_profits_account
+
+        mapping = self._mapping("BS-EQ-005", "Undistributed income")
+
+        # Deliberately not "4199" (that code short-circuits before the dict is
+        # read) and deliberately named without any retained-profits keyword,
+        # so the standard-code branch is the only thing that can match.
+        rank = _is_retained_profits_account(
+            "3-1000", "Unitholder entitlements", mapping, "trust_unit",
+        )
+
+        self.assertEqual(
+            rank, 1,
+            "a trust_unit's BS-EQ-005 equity account was not recognised as its "
+            "retained-profits account -- the year's result would be closed into "
+            "a synthesised second equity line instead",
+        )
+
+    def test_discretionary_trust_recognition_is_unchanged(self):
+        from core.views import _is_retained_profits_account
+
+        mapping = self._mapping("BS-EQ-005", "Undistributed income")
+
+        self.assertEqual(
+            _is_retained_profits_account(
+                "3-1000", "Unitholder entitlements", mapping, "trust",
+            ),
+            1,
+        )
+
+    def test_company_still_keys_off_its_own_standard_code(self):
+        from core.views import _is_retained_profits_account
+
+        company_mapping = self._mapping("BS-EQ-002", "Retained profits")
+        trust_mapping = self._mapping("BS-EQ-005", "Undistributed income")
+
+        self.assertEqual(
+            _is_retained_profits_account(
+                "3-1000", "Shareholder funds", company_mapping, "company",
+            ),
+            1,
+        )
+        # Resolution is not a blanket pass: a trust-only standard code is still
+        # not a company's retained-profits account.
+        self.assertEqual(
+            _is_retained_profits_account(
+                "3-1000", "Shareholder funds", trust_mapping, "company",
+            ),
+            0,
+        )
+
+
+@override_settings(STORAGES=STORAGES_OVERRIDE)
+class RerollForwardNamesTheUnitTrustClosingLineTests(TestCase):
+    """reroll_forward hand-inlined its own copy of "which equity account does
+    the year's result close into", and that copy still answered "Retained
+    profits" for a unit trust while _populate_rolled_forward_fy and
+    _expected_next_year_openings both answered "Undistributed income". Roll and
+    re-roll disagreeing about that name is the same divergence
+    _default_retained_profits_account's docstring records happening once
+    already, so reroll_forward now asks the one helper too.
+    """
+
+    # No 4199 and no equity account at all, so the roll has to synthesise the
+    # closing line -- which is the branch that names it.
+    CHART = [
+        ("1-1000", "Cash at Bank", "current_assets"),
+        ("4-1000", "Rents received", "revenue"),
+        ("6-1000", "Administration", "expenses"),
+    ]
+    FIGURES = [
+        ("1-1000", "Cash at Bank", Decimal("20000.00")),
+        ("4-1000", "Rents received", Decimal("-30000.00")),
+        ("6-1000", "Administration", Decimal("10000.00")),
+    ]
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user(
+            username="reroll_unit_trust",
+            password="testpass123",
+            role=User.Role.ADMIN,
+            totp_secret="dummy-secret-reroll-unit-trust",
+            totp_confirmed=True,
+        )
+        cls.client_obj = ClientModel.objects.create(name="Reroll Unit Trust Client")
+
+    def setUp(self):
+        self.http = HttpClient()
+        self.http.force_login(self.user)
+        # Require2FAMiddleware wants TOTP completed for the session; force_login
+        # skips that flow, so mark the session as 2FA-verified.
+        session = self.http.session
+        session["2fa_verified"] = True
+        session.save()
+
+    def _reroll(self, entity_type):
+        entity = Entity.objects.create(
+            entity_name=f"Reroll {entity_type}",
+            entity_type=entity_type,
+            client=self.client_obj,
+            primary_accountant=self.user,
+        )
+        for code, name, section in self.CHART:
+            EntityChartOfAccount.objects.create(
+                entity=entity, account_code=code, account_name=name,
+                section=section, is_active=True,
+            )
+        prior_fy = FinancialYear.objects.create(
+            entity=entity,
+            year_label="FY2025",
+            start_date=date(2024, 7, 1),
+            end_date=date(2025, 6, 30),
+            status=FinancialYear.Status.FINALISED,
+        )
+        next_fy = FinancialYear.objects.create(
+            entity=entity,
+            year_label="FY2026",
+            start_date=date(2025, 7, 1),
+            end_date=date(2026, 6, 30),
+            status=FinancialYear.Status.DRAFT,
+            prior_year=prior_fy,
+        )
+        for code, name, closing in self.FIGURES:
+            TrialBalanceLine.objects.create(
+                financial_year=prior_fy,
+                account_code=code,
+                account_name=name,
+                closing_balance=closing,
+                debit=closing if closing > 0 else Decimal("0"),
+                credit=-closing if closing < 0 else Decimal("0"),
+                source="tb_import",
+            )
+
+        response = self.http.post(
+            reverse("core:reroll_forward", args=[prior_fy.pk]), secure=True
+        )
+        self.assertEqual(response.status_code, 302)
+
+        return {
+            line.account_code: line.account_name
+            for line in TrialBalanceLine.objects.filter(financial_year=next_fy)
+        }
+
+    def test_a_unit_trust_closes_into_undistributed_income(self):
+        rolled = self._reroll("trust_unit")
+
+        self.assertEqual(
+            rolled.get("4199"), "Undistributed income",
+            "re-rolling a unit trust named its closing equity line "
+            f"{rolled.get('4199')!r} -- the roll forward calls it "
+            "'Undistributed income', so roll and re-roll disagree",
+        )
+
+    def test_a_discretionary_trust_is_unchanged(self):
+        self.assertEqual(self._reroll("trust").get("4199"), "Undistributed income")
+
+    def test_a_company_is_unchanged(self):
+        self.assertEqual(self._reroll("company").get("4199"), "Retained profits")
+
+    def test_a_partnership_is_unchanged(self):
+        self.assertEqual(
+            self._reroll("partnership").get("4199"), "Partners' current accounts",
+        )
+
+    def test_a_sole_trader_is_unchanged(self):
+        self.assertEqual(
+            self._reroll("sole_trader").get("4199"), "Proprietor's funds",
         )

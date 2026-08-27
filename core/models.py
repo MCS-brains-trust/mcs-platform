@@ -674,7 +674,6 @@ class CapitalAccountTemplate(models.Model):
     """Template line items for trust beneficiary/unit holder capital accounts."""
     TRUST_ENTITY_TYPES = [
         ("trust", "Trust"),
-        ("trust_unit", "Unit Trust"),
     ]
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     entity_type = models.CharField(

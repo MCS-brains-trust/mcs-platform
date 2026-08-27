@@ -3466,15 +3466,7 @@ def reroll_forward(request, pk):
 
         tax_amount = income_tax_line.closing_balance if income_tax_line else Decimal("0")
         if retained_profits_line is None and (net_pl_result != 0 or tax_amount != 0):
-            etype = entity.entity_type
-            if etype == "trust":
-                rp_name, rp_code = "Undistributed income", "4199"
-            elif etype == "partnership":
-                rp_name, rp_code = "Partners' current accounts", "4199"
-            elif etype == "sole_trader":
-                rp_name, rp_code = "Proprietor's funds", "4199"
-            else:
-                rp_name, rp_code = "Retained profits", "4199"
+            rp_name, rp_code = _default_retained_profits_account(entity.entity_type)
 
             rp_opening = net_pl_result + tax_amount
             TrialBalanceLine.objects.create(
@@ -11131,7 +11123,8 @@ def review_bank_account_mapping(request, pk):
     else:
         # Try master CoA
         coa = ChartOfAccount.objects.filter(
-            entity_type=fy.entity.entity_type, account_code=tb_account_code, is_active=True,
+            entity_type=template_entity_type(fy.entity.entity_type),
+            account_code=tb_account_code, is_active=True,
         ).select_related('maps_to').first()
         if coa and coa.maps_to:
             mapped_item = coa.maps_to
