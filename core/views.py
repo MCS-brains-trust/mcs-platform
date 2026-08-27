@@ -7565,16 +7565,28 @@ def _handle_ceased_redistribution(request, officer):
             # OfficerDistributionHistory row in agreement.
             EntityOfficer.recalculate_unit_percentages(entity)
             sole.refresh_from_db()
+            # recalculate_unit_percentages() only rewrites unit_holder
+            # rows, and early-returns entirely if there is no active
+            # unit_holder left (e.g. the sole survivor is a beneficiary,
+            # not a unit holder). Guard the message on the actual outcome
+            # rather than assuming the recompute wrote 100.00 -- fix
+            # round 1 reviewer finding: without this, ceasing the only
+            # unit holder on a unit trust that also carries a beneficiary
+            # produced a false "set to 100.00% distribution" message when
+            # nothing was written at all.
+            wrote_100 = sole.distribution_percentage == Decimal("100.00")
         else:
             with transaction.atomic():
                 sole.distribution_percentage = Decimal("100.00")
                 sole._updated_by = getattr(request, "user", None)
                 sole.save()
-        messages.info(
-            request,
-            f"{sole.full_name} is now the sole active unit holder and has been "
-            f"set to 100.00% distribution."
-        )
+            wrote_100 = True
+        if wrote_100:
+            messages.info(
+                request,
+                f"{sole.full_name} is now the sole active unit holder and has been "
+                f"set to 100.00% distribution."
+            )
     else:
         active_total = remaining.filter(
             distribution_percentage__isnull=False,

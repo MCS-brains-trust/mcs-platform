@@ -406,12 +406,17 @@ class EntityOfficerForm(forms.ModelForm):
             # exact entity_type string, so a unit trust fell through to
             # the `else` branch, which hands `.choices` (plain tuples) to
             # code that calls `.value`/`.label` on enum members and
-            # crashes outright. Same role list as "trust" -- a unit
-            # trust's officer form still needs trustees/directors, not
-            # only unit holders.
+            # crashes outright. Deliberately NOT the same list as "trust":
+            # a unit trust's whole model is that income follows units, not
+            # discretion, so BENEFICIARY is not offered here (fix round 1
+            # reviewer finding -- offering it made a false "set to 100.00%
+            # distribution" message reachable via
+            # _handle_ceased_redistribution when the sole survivor was a
+            # beneficiary and recalculate_unit_percentages() correctly
+            # no-opped for want of any active unit holder). A unit trust
+            # still needs a trustee, often corporate -- hence director too.
             "trust_unit": [
                 EntityOfficer.OfficerRole.TRUSTEE,
-                EntityOfficer.OfficerRole.BENEFICIARY,
                 EntityOfficer.OfficerRole.UNIT_HOLDER,
                 EntityOfficer.OfficerRole.DIRECTOR,
             ],
@@ -455,13 +460,24 @@ class EntityOfficerForm(forms.ModelForm):
             self.fields["distribution_percentage"].widget = forms.HiddenInput()
         elif is_unit_trust:
             self.fields["distribution_percentage"].disabled = True
-            self.fields["distribution_percentage"].help_text = "Derived from units held."
+            # No field.help_text here (fix round 1, FIX 5): the template
+            # (entity_officer_form.html) hard-codes its own "Derived from
+            # units held." <small> block for this case and never renders
+            # form.distribution_percentage.help_text, so setting it here
+            # was dead code no page ever showed.
 
         # units_held belongs to the unit register alone -- only relevant
         # (and only ever non-null; see EntityOfficer.clean()) on a unit
-        # trust.
+        # trust. Disabled (not just hidden) for anything else: role
+        # "unit_holder" IS an offered choice on a plain "trust" too (see
+        # role_map above), so a crafted POST could otherwise set
+        # units_held on a discretionary trust's officer via the hidden
+        # input -- no recompute reads it there today, but it would
+        # silently carry stray data. Same tamper-proofing as
+        # distribution_percentage gets above.
         if not is_unit_trust:
             self.fields["units_held"].widget = forms.HiddenInput()
+            self.fields["units_held"].disabled = True
 
         self._entity_type = entity_type
 

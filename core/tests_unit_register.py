@@ -1,6 +1,7 @@
 """Units are the register; the percentage is derived from them."""
 from datetime import date, timedelta
 from decimal import Decimal
+from unittest.mock import patch
 
 from django import forms
 from django.contrib.auth import get_user_model
@@ -709,3 +710,121 @@ class DiscretionaryTrustOfficerSaveRegressionTests(TestCase):
         self.assertEqual(response.status_code, 302)
         beneficiary.refresh_from_db()
         self.assertEqual(beneficiary.distribution_percentage, Decimal("65.00"))
+
+    def test_recompute_is_not_called_at_all_for_a_discretionary_trust_create(self):
+        # Fix round 1, FIX 2: the two tests above only assert the OUTCOME
+        # (typed value persists), and recalculate_unit_percentages()
+        # early-returns on a register with no unit_holder rows regardless
+        # of whether it is called -- so deleting the `if
+        # entity.is_unit_trust:` guard from the view left both of those
+        # tests green. Assert the guard itself: the recompute must never
+        # even be invoked for a discretionary trust.
+        with patch.object(EntityOfficer, "recalculate_unit_percentages") as mock_recalc:
+            response = self.client.post(
+                reverse("core:entity_officer_create", args=[self.entity.pk]),
+                data={
+                    "full_name": "Jane Beneficiary",
+                    "roles_multi": ["beneficiary"],
+                    "title": "",
+                    "date_appointed": "",
+                    "date_ceased": "",
+                    "display_order": "1",
+                    "profit_share_percentage": "",
+                    "distribution_percentage": "40.00",
+                    "units_held": "",
+                },
+                secure=True,
+            )
+        self.assertEqual(response.status_code, 302)
+        mock_recalc.assert_not_called()
+
+    def test_recompute_is_not_called_at_all_for_a_discretionary_trust_edit(self):
+        beneficiary = EntityOfficer.objects.create(
+            entity=self.entity, full_name="Jane Beneficiary",
+            role="beneficiary", roles=["beneficiary"],
+            distribution_percentage=Decimal("40.00"),
+        )
+        with patch.object(EntityOfficer, "recalculate_unit_percentages") as mock_recalc:
+            response = self.client.post(
+                reverse("core:entity_officer_edit", args=[beneficiary.pk]),
+                data={
+                    "full_name": "Jane Beneficiary",
+                    "roles_multi": ["beneficiary"],
+                    "title": "",
+                    "date_appointed": "",
+                    "date_ceased": "",
+                    "display_order": "1",
+                    "profit_share_percentage": "",
+                    "distribution_percentage": "65.00",
+                    "units_held": "",
+                },
+                secure=True,
+            )
+        self.assertEqual(response.status_code, 302)
+        mock_recalc.assert_not_called()
+
+
+class OfficersListAndFormRenderingTests(TestCase):
+    """Fix round 1, FIX 4: the Units column, its colspan bump, and the
+    unit-trust-only "Derived from units held." helper text had no
+    rendering test at all -- coverage stopped at the form-field level.
+    """
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="listrender", email="listrender@example.com", password="secret123",
+            role=User.Role.ADMIN,
+            totp_secret="dummy-secret-listrender", totp_confirmed=True,
+        )
+        self.client.force_login(self.user)
+        session = self.client.session
+        session["2fa_verified"] = True
+        session.save()
+
+    def test_unit_trust_officers_list_shows_units_column_and_wider_colspan(self):
+        entity = Entity.objects.create(entity_name="Minli", entity_type="trust_unit")
+        EntityOfficer.objects.create(
+            entity=entity, full_name="A", role="unit_holder",
+            roles=["unit_holder"], units_held=100,
+        )
+        response = self.client.get(
+            reverse("core:entity_officers", args=[entity.pk]), secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "<th>Units</th>", html=True)
+        self.assertContains(response, 'colspan="9"')
+
+    def test_discretionary_trust_officers_list_hides_units_column_and_colspan_unchanged(self):
+        entity = Entity.objects.create(entity_name="Ordinary Family Trust", entity_type="trust")
+        EntityOfficer.objects.create(
+            entity=entity, full_name="Jane", role="beneficiary",
+            roles=["beneficiary"], distribution_percentage=Decimal("100.00"),
+        )
+        response = self.client.get(
+            reverse("core:entity_officers", args=[entity.pk]), secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "<th>Units</th>", html=True)
+        self.assertContains(response, 'colspan="8"')
+        self.assertNotContains(response, 'colspan="9"')
+
+    def test_unit_trust_officer_form_shows_derived_helper_text(self):
+        entity = Entity.objects.create(entity_name="Minli", entity_type="trust_unit")
+        response = self.client.get(
+            reverse("core:entity_officer_create", args=[entity.pk]), secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Derived from units held.")
+
+    def test_discretionary_trust_officer_form_shows_original_helper_text(self):
+        entity = Entity.objects.create(entity_name="Ordinary Family Trust", entity_type="trust")
+        response = self.client.get(
+            reverse("core:entity_officer_create", args=[entity.pk]), secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response,
+            "Percentage of trust distribution allocated to this beneficiary/unit holder",
+        )
+        self.assertNotContains(response, "Derived from units held.")
