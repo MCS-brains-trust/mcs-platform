@@ -308,6 +308,9 @@
                         <tr>
                             <th>Beneficiary</th>
                             <th style="width: 120px;">Type</th>
+                            {% if entity.is_unit_trust %}
+                            <th class="text-end" style="width: 100px;">Units</th>
+                            {% endif %}
                             <th class="text-end" style="width: 130px;">Outside Income</th>
                             <th class="text-end" style="width: 140px;">Proposed Distribution</th>
                             <th class="text-end" style="width: 90px;">Franking Cr.</th>
@@ -350,6 +353,12 @@
                                     <option value="trust" {% if row.beneficiary_type == 'trust' %}selected{% endif %}>Trust</option>
                                 </select>
                             </td>
+                            {% if entity.is_unit_trust %}
+                            <td class="text-end">
+                                {{ row.beneficiary.units_held|default:0 }}
+                                <br><small class="text-muted">{{ row.beneficiary.unit_percentage }}%</small>
+                            </td>
+                            {% endif %}
                             <td class="text-end">
                                 {% if row.beneficiary_type != 'company' %}
                                 <input type="number" class="form-control form-control-sm beneficiary-input outside-income"
@@ -360,9 +369,14 @@
                                 {% endif %}
                             </td>
                             <td class="text-end">
+                                {% if entity.is_unit_trust %}
+                                <span class="fw-semibold">${{ row.proposed_distribution|floatformat:2|intcomma }}</span>
+                                <input type="hidden" class="proposed-dist" value="{{ row.proposed_distribution|floatformat:2 }}">
+                                {% else %}
                                 <input type="number" class="form-control form-control-sm beneficiary-input proposed-dist"
                                        value="{{ row.proposed_distribution|floatformat:2 }}" step="0.01" min="0"
                                        {% if is_finalised %}disabled{% endif %}>
+                                {% endif %}
                             </td>
                             <!-- Calculated columns — filled by JS after calculate -->
                             <td class="text-end res-fc">—</td>
@@ -379,7 +393,7 @@
                     </tbody>
                     <tfoot class="table-light fw-bold">
                         <tr>
-                            <td colspan="3" class="text-end">TOTAL:</td>
+                            <td colspan="{% if entity.is_unit_trust %}4{% else %}3{% endif %}" class="text-end">TOTAL:</td>
                             <td class="text-end" id="totalDistributed">$0.00</td>
                             <td class="text-end" id="resTotalFc">—</td>
                             <td class="text-end" id="resTotalTaxable">—</td>
@@ -455,7 +469,11 @@
     </div>
 </div>
 
-<!-- ===== SECTION 4: SCENARIO MODELLING ===== -->
+{% if not entity.is_unit_trust %}
+<!-- ===== SECTION 4: SCENARIO MODELLING =====
+     Not applicable to a unit trust: there is no discretion to model,
+     so save/apply/delete scenario controls (and the section itself)
+     are hidden entirely rather than shown disabled. -->
 <div class="section-card">
     <div class="section-header d-flex justify-content-between align-items-center" data-bs-toggle="collapse" data-bs-target="#section4Body">
         <span><i class="bi bi-4-circle-fill text-primary me-2"></i> Scenario Modelling (Save up to 3)</span>
@@ -529,6 +547,7 @@
         </div>
     </div>
 </div>
+{% endif %}
 
 <!-- ===== SECTION 5: RECOMMENDATION & NOTES (rich text per spec) ===== -->
 <div class="section-card">

@@ -33,6 +33,7 @@ from core.tax_engine import (
     calculate_section1_from_tb,
     get_tax_rates,
 )
+from core.unit_allocation import allocate_by_units
 from core.views import _log_action, get_financial_year_for_user
 
 
@@ -49,14 +50,35 @@ def _get_or_create_worksheet(fy, user):
 
 def _sync_beneficiary_rows(worksheet):
     """
-    Ensure one TaxPlanningBeneficiaryRow per active beneficiary.
-    Adds missing rows, does NOT delete removed beneficiaries (preserves data).
+    Ensure one TaxPlanningBeneficiaryRow per active beneficiary or unit
+    holder. Adds missing rows, does NOT delete removed beneficiaries
+    (preserves data). A unit trust's holders are its "beneficiaries" for tax
+    planning purposes (Task 9) -- tax is still computed per holder even
+    though the register, not this row, decides the distribution amount.
+
+    Matching is done in Python rather than with a
+    ``roles__contains=...`` queryset filter: ``roles`` is a JSONField, and
+    the ``contains`` lookup it would need is not supported on SQLite (the
+    backend the test suite runs against), so that filter raised
+    ``NotSupportedError`` outright -- not a silent no-op, a hard crash on
+    every call, for both "beneficiary" and "unit_holder". A dead code path
+    with zero test coverage until now.
+
+    "Active" matches ``EntityOfficer.active_register_q()`` -- the single
+    canonical predicate (see its docstring) -- rather than a bare
+    ``date_ceased__isnull=True``, so a future-dated ceased holder still
+    gets a row, consistent with every other active-register site.
     """
     entity = worksheet.financial_year.entity
-    # Get all officers who have 'beneficiary' in their roles list or role field
-    beneficiaries = EntityOfficer.objects.filter(entity=entity).filter(
-        models_Q(role="beneficiary") | models_Q(roles__contains="beneficiary")
-    ).filter(date_ceased__isnull=True)
+    candidates = EntityOfficer.objects.filter(entity=entity).filter(
+        EntityOfficer.active_register_q()
+    )
+    beneficiaries = [
+        officer for officer in candidates
+        if officer.role in ("beneficiary", "unit_holder")
+        or "beneficiary" in (officer.roles or [])
+        or "unit_holder" in (officer.roles or [])
+    ]
 
     existing_ids = set(
         worksheet.beneficiary_rows.values_list("beneficiary_id", flat=True)
@@ -73,6 +95,82 @@ def _sync_beneficiary_rows(worksheet):
             )
 
 
+def _apply_unit_distributions(worksheet):
+    """A unit trust's proposed distribution comes from the register, not a
+    proposal. No-op for a discretionary trust (returns None immediately).
+
+    Called from ``tax_planning_tab`` right after ``_sync_beneficiary_rows``
+    (so a freshly-created row already carries an amount) and again after
+    the Section 1 recalculation, since that is what changes
+    ``distributable_income`` on every page load.
+
+    Holdings are keyed on the ``TaxPlanningBeneficiaryRow``'s own pk --
+    always unique (``unique_together = ["worksheet", "beneficiary"]``), so
+    ``allocate_by_units``'s duplicate-key guard can never fire here.
+
+    "Active" matches ``EntityOfficer.active_register_q()`` -- the single
+    canonical predicate shared with ``Entity.total_units`` and
+    ``allocate_unit_trust_distribution`` (core/views_trust.py). A ``None``
+    in ``units_held`` is excluded via ``units_held__isnull=False`` before
+    the row ever reaches ``allocate_by_units``, which would otherwise raise
+    a bare ``TypeError`` on it (see that module's own caveat).
+
+    A holder who has dropped off the active register (ceased, or a unit
+    holder whose units were zeroed/nulled) keeps their row, but it is
+    zeroed to $0 -- mirroring ``allocate_unit_trust_distribution`` -- so a
+    stale row can never silently keep showing money it no longer
+    represents.
+
+    Returns a warning string, and leaves every row at $0, when the
+    register cannot be allocated at all (no active holder carries units on
+    issue). This is a deliberate choice: ``allocate_by_units`` raises
+    ValueError in that situation, and letting that exception reach the view
+    would 500 the tab. Rendering zero-value rows with a visible warning
+    (surfaced by the caller via ``messages.warning``) is safer for a real
+    user mid-setup than either a crash or silently fabricating a split
+    against no units. Returns None when the register allocates cleanly.
+    """
+    entity = worksheet.financial_year.entity
+    if not entity.is_unit_trust:
+        return None
+
+    rows = list(worksheet.beneficiary_rows.select_related("beneficiary"))
+
+    active_holdings = dict(
+        EntityOfficer.objects.filter(
+            EntityOfficer.active_register_q(),
+            entity=entity,
+            units_held__isnull=False,
+        ).values_list("pk", "units_held")
+    )
+
+    holdings = [
+        (row.pk, active_holdings[row.beneficiary_id])
+        for row in rows
+        if row.beneficiary_id in active_holdings
+    ]
+
+    if not holdings or not any(units for _, units in holdings):
+        for row in rows:
+            if row.proposed_distribution != Decimal("0"):
+                row.proposed_distribution = Decimal("0")
+                row.save(update_fields=["proposed_distribution"])
+        return (
+            "No active unit holder carries units on issue — the "
+            "distribution cannot be derived from the register. Set units "
+            "held on this entity's officers before finalising."
+        )
+
+    split = allocate_by_units(worksheet.distributable_income, holdings)
+
+    for row in rows:
+        new_value = split.get(row.pk, Decimal("0"))
+        if row.proposed_distribution != new_value:
+            row.proposed_distribution = new_value
+            row.save(update_fields=["proposed_distribution"])
+    return None
+
+
 def _infer_beneficiary_type(officer):
     """Infer whether a beneficiary is Individual, Company, or Trust."""
     name_lower = officer.full_name.lower()
@@ -83,16 +181,10 @@ def _infer_beneficiary_type(officer):
     return "individual"
 
 
-def models_Q(*args, **kwargs):
-    """Shortcut for django.db.models.Q."""
-    from django.db.models import Q
-    return Q(*args, **kwargs)
-
-
 @login_required
 def tax_planning_tab(request, pk):
     """
-    Main Tax Planning tab view. Trust entities only.
+    Main Tax Planning tab view. Trust entities only (discretionary or unit).
     """
     fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
@@ -113,8 +205,12 @@ def tax_planning_tab(request, pk):
 
     worksheet = _get_or_create_worksheet(fy, request.user)
 
-    # Sync beneficiary rows (picks up new beneficiaries added to entity)
+    # Sync beneficiary rows (picks up new beneficiaries/unit holders added
+    # to the entity), then -- for a unit trust only -- derive each row's
+    # proposed_distribution from the register so a freshly-synced row does
+    # not sit at the TaxPlanningBeneficiaryRow default of $0.
     _sync_beneficiary_rows(worksheet)
+    _apply_unit_distributions(worksheet)
 
     # Calculate Section 1 from TB (always fresh)
     section1 = calculate_section1_from_tb(fy)
@@ -128,6 +224,13 @@ def tax_planning_tab(request, pk):
         "net_profit_before_distributions", "capital_gains", "franked_dividends",
         "franking_credits", "last_updated_at", "last_updated_by",
     ])
+
+    # Re-derive the unit-trust split: distributable_income just changed
+    # above, so the first _apply_unit_distributions call (before Section 1
+    # was recalculated) may already be stale.
+    register_warning = _apply_unit_distributions(worksheet)
+    if register_warning:
+        messages.warning(request, register_warning)
 
     # Get beneficiary rows
     rows = worksheet.beneficiary_rows.select_related("beneficiary").order_by(
@@ -233,12 +336,26 @@ def tax_planning_save(request, pk):
     """
     POST /years/<pk>/tax-planning/save/
     Persists the current beneficiary row values and recalculates.
+
+    For a unit trust, there is no planning: the register decides the
+    distribution, not whatever the client posted. Any posted
+    proposed_distribution is ignored -- overwritten below with what is
+    already persisted (itself set from the register by
+    _apply_unit_distributions on the last tab load) before it even reaches
+    calculate_all_beneficiaries, so a rejected override cannot leak into the
+    calculated tax fields (gross tax, Medicare, LITO, franking offset, net
+    tax, effective rate) that DO get saved from this call. outside_income
+    is still accepted -- it describes the holder's own tax position, not
+    the trust's allocation. The persist loop below skips writing
+    proposed_distribution for a unit trust as a second, independent
+    safeguard, so this is never relied on alone.
     """
     fy = get_financial_year_for_user(request, pk)
+    entity = fy.entity
+    is_unit_trust = entity.is_unit_trust
 
     # Staff Accountant: own entities only
     if request.user.role == "accountant":
-        entity = fy.entity
         if entity.primary_accountant != request.user and entity.assigned_accountant != request.user:
             return JsonResponse({"error": "Access denied — not your entity."}, status=403)
     worksheet = _get_or_create_worksheet(fy, request.user)
@@ -254,6 +371,18 @@ def tax_planning_save(request, pk):
     rates = get_tax_rates(fy.year_label)
     beneficiary_rows_data = body.get("beneficiary_rows", [])
 
+    if is_unit_trust:
+        current_amounts = {
+            str(beneficiary_id): amount
+            for beneficiary_id, amount in TaxPlanningBeneficiaryRow.objects.filter(
+                worksheet=worksheet
+            ).values_list("beneficiary_id", "proposed_distribution")
+        }
+        for bd in beneficiary_rows_data:
+            ben_id = str(bd.get("beneficiary_id", ""))
+            if ben_id in current_amounts:
+                bd["proposed_distribution"] = str(current_amounts[ben_id])
+
     # Calculate
     calc_result = calculate_all_beneficiaries(worksheet, beneficiary_rows_data, rates)
     calc_by_id = {r["beneficiary_id"]: r for r in calc_result["rows"]}
@@ -268,7 +397,8 @@ def tax_planning_save(request, pk):
                 beneficiary_id=ben_id,
             )
             row.outside_income = Decimal(str(bd.get("outside_income", 0)))
-            row.proposed_distribution = Decimal(str(bd.get("proposed_distribution", 0)))
+            if not is_unit_trust:
+                row.proposed_distribution = Decimal(str(bd.get("proposed_distribution", 0)))
             row.beneficiary_type = bd.get("beneficiary_type", row.beneficiary_type)
             if bd.get("company_tax_rate_override"):
                 row.company_tax_rate_override = Decimal(str(bd["company_tax_rate_override"]))
