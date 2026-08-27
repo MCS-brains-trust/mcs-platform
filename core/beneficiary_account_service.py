@@ -74,6 +74,32 @@ SLOT_CODES_TO_REMOVE = [
     "4121", "4122", "4123",  # Interest on loan - Beneficiary 2/3/4
 ]
 
+# Codes eligible for the unit-trust "Beneficiary" -> "Unit Holder" chart
+# terminology overlay (Task 11, controller ruling on fix round 1). Scoped
+# to the officer-facing capital account codes the client actually named —
+# beneficiary balance, loans-to-trust, physical distribution, and current
+# account (Groups A-E, i.e. everything except the requires_company_
+# beneficiary groups) — plus their superseded .NN slot placeholders.
+#
+# Deliberately EXCLUDES the Division 7A corporate-beneficiary families:
+# Group F (4400 series, UPE) and Group G (4500 series, sub-trust), and the
+# unrelated ChartOfAccount template codes 4300/4301 ("Opening balance -
+# Corporate beneficiary - UPE/Sub-trust"). Sub-trust elections and unpaid
+# present entitlements (UPEs) are Division 7A mechanisms that arise from a
+# DISCRETIONARY trust's present entitlement to a corporate beneficiary —
+# there is no unit-trust equivalent, so "Corporate unit holder - UPE" would
+# invent an accounting concept that doesn't exist. It would also
+# contradict the untouched 4400/4500 series, which use the abbreviation
+# "Corp benef'y" for the same underlying idea and are never touched by
+# this overlay (their names never contain the literal word anyway).
+# HandiLedger is the specification on this platform; we do not invent
+# accounting design here — see the platform's HandiLedger-is-the-
+# specification convention.
+UNIT_HOLDER_TERMINOLOGY_CODES = frozenset(
+    entry["code"] for entry in BENEFICIARY_PARENT_CODES
+    if not entry["requires_company_beneficiary"]
+) | frozenset(SLOT_CODES_TO_REMOVE)
+
 
 # ---------------------------------------------------------------------------
 # Partnership equivalent — the five equity parents that carry a balance per
@@ -160,7 +186,10 @@ def _build_account_name(entry, officer):
     On a unit trust, BENEFICIARY_PARENT_CODES' own wording ("Opening
     balance - Beneficiary", "Beneficiary current account") is overlaid with
     "Unit Holder" — the same substitution seed_from_template applies to the
-    template rows — while the officer-name suffix is untouched.
+    template rows — while the officer-name suffix is untouched. Scoped to
+    UNIT_HOLDER_TERMINOLOGY_CODES: the Division 7A corporate-beneficiary
+    groups (F/G) are excluded on principle, though in practice their
+    wording never contains the literal word "Beneficiary" either way.
     """
     from core.models import EntityOfficer
     if (
@@ -169,7 +198,7 @@ def _build_account_name(entry, officer):
     ):
         return f"Unitholders' funds introduced — {officer.full_name}"
     name = entry["name"]
-    if officer.entity.is_unit_trust:
+    if officer.entity.is_unit_trust and entry["code"] in UNIT_HOLDER_TERMINOLOGY_CODES:
         name = name.replace("Beneficiary", "Unit Holder").replace(
             "beneficiary", "unit holder"
         )

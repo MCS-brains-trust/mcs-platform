@@ -31,12 +31,29 @@ from core.models import (
 
 
 class UnitTrustChartTermsTests(TestCase):
-    """Source 1: ChartOfAccount template rows via seed_from_template."""
+    """Source 1: ChartOfAccount template rows via seed_from_template.
+
+    4300/4301 are real live ChartOfAccount rows on the "trust" template
+    (also present on Minli's chart) for the Division 7A corporate-
+    beneficiary UPE/sub-trust mechanisms. They must survive a unit trust
+    seeding UNCHANGED — see UNIT_HOLDER_TERMINOLOGY_CODES in
+    core/beneficiary_account_service.py for why.
+    """
 
     def setUp(self):
         ChartOfAccount.objects.create(
             entity_type="trust", account_code="4000",
             account_name="Opening balance - Beneficiary", section="equity",
+        )
+        ChartOfAccount.objects.create(
+            entity_type="trust", account_code="4300",
+            account_name="Opening balance - Corporate beneficiary - UPE",
+            section="equity",
+        )
+        ChartOfAccount.objects.create(
+            entity_type="trust", account_code="4301",
+            account_name="Opening balance - Corporate beneficiary - Sub-trust",
+            section="equity",
         )
 
     def test_seeding_a_unit_trust_renames_the_term(self):
@@ -50,6 +67,25 @@ class UnitTrustChartTermsTests(TestCase):
         EntityChartOfAccount.seed_from_template(entity)
         account = EntityChartOfAccount.objects.get(entity=entity, account_code="4000")
         self.assertEqual(account.account_name, "Opening balance - Beneficiary")
+
+    def test_seeding_a_unit_trust_leaves_division_7a_codes_unchanged(self):
+        """4300/4301 (UPE / sub-trust) are Division 7A mechanisms that only
+        arise from a discretionary trust's present entitlement to a
+        corporate beneficiary — no unit-trust equivalent exists, so these
+        must NOT be renamed even though their template wording contains
+        the word "beneficiary"."""
+        entity = Entity.objects.create(entity_name="Minli", entity_type="trust_unit")
+        EntityChartOfAccount.seed_from_template(entity)
+
+        upe = EntityChartOfAccount.objects.get(entity=entity, account_code="4300")
+        subtrust = EntityChartOfAccount.objects.get(entity=entity, account_code="4301")
+        self.assertEqual(
+            upe.account_name, "Opening balance - Corporate beneficiary - UPE"
+        )
+        self.assertEqual(
+            subtrust.account_name,
+            "Opening balance - Corporate beneficiary - Sub-trust",
+        )
 
 
 class UnitTrustSubAccountTermsTests(TestCase):
@@ -204,6 +240,36 @@ class RenameUnitTrustChartTermsCommandTests(TestCase):
         self.assertEqual(
             child.account_name,
             "Opening balance - Unit Holder — Double Water International Pty Ltd",
+        )
+
+    def test_out_of_scope_division_7a_codes_are_never_renamed(self):
+        """4300/4301 (UPE / sub-trust) are Division 7A mechanisms that only
+        arise from a discretionary trust's present entitlement to a
+        corporate beneficiary — no unit-trust equivalent exists. --apply
+        (even with --include-finalised) must leave them exactly as they
+        are, on the unit trust itself, not just on a discretionary trust."""
+        upe = self._eca(
+            self.unit_trust, "4300",
+            "Opening balance - Corporate beneficiary - UPE",
+        )
+        subtrust = self._eca(
+            self.unit_trust, "4301",
+            "Opening balance - Corporate beneficiary - Sub-trust",
+        )
+        fy = self._fy(self.unit_trust, 2025, status="finalised")
+        upe_line = self._line(fy, "4300", "Opening balance - Corporate beneficiary - UPE")
+
+        self._run("--apply", "--include-finalised")
+
+        upe.refresh_from_db()
+        subtrust.refresh_from_db()
+        upe_line.refresh_from_db()
+        self.assertEqual(upe.account_name, "Opening balance - Corporate beneficiary - UPE")
+        self.assertEqual(
+            subtrust.account_name, "Opening balance - Corporate beneficiary - Sub-trust"
+        )
+        self.assertEqual(
+            upe_line.account_name, "Opening balance - Corporate beneficiary - UPE"
         )
 
     def test_finalised_years_are_skipped_by_default(self):

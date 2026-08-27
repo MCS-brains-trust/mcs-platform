@@ -1448,6 +1448,14 @@ class EntityChartOfAccount(models.Model):
         edit re-introducing client/firm-specific data of the kind that caused
         the 2026-04-28 trust template incident.
         """
+        from core.beneficiary_account_service import UNIT_HOLDER_TERMINOLOGY_CODES
+
+        def _is_unit_holder_terminology_code(account_code):
+            # Match on the pre-dot prefix so a future .NN template row
+            # (there are none today — sub-accounts are materialised
+            # per-officer, not templated) would still be scoped correctly.
+            return (account_code or "").split(".")[0] in UNIT_HOLDER_TERMINOLOGY_CODES
+
         existing_codes = set(
             cls.objects.filter(entity=entity).values_list("account_code", flat=True)
         )
@@ -1463,12 +1471,27 @@ class EntityChartOfAccount(models.Model):
             if tpl.account_code in existing_codes:
                 continue
             account_name = tpl.account_name
-            if entity.is_unit_trust:
+            if entity.is_unit_trust and _is_unit_holder_terminology_code(
+                tpl.account_code
+            ):
                 # The shared "trust" template's own wording says
-                # "Beneficiary" (e.g. 4000 "Opening balance - Beneficiary").
-                # A unit trust's income recipients are unit holders — apply
-                # the same substitution as core.entity_terminology as an
+                # "Beneficiary" on the officer-facing capital account codes
+                # (e.g. 4000 "Opening balance - Beneficiary"). A unit
+                # trust's income recipients are unit holders — apply the
+                # same substitution as core.entity_terminology as an
                 # overlay on the copy, not a second template.
+                #
+                # Scoped to UNIT_HOLDER_TERMINOLOGY_CODES deliberately: a
+                # blanket replace on every template row also caught 4300/
+                # 4301 ("Opening balance - Corporate beneficiary - UPE/
+                # Sub-trust"), Division 7A mechanisms that exist only for a
+                # DISCRETIONARY trust's present entitlement to a corporate
+                # beneficiary. "Corporate unit holder - UPE" would invent
+                # an accounting concept that doesn't exist and would
+                # contradict the untouched 4400/4500 "Corp benef'y" series
+                # (see core/beneficiary_account_service.py). HandiLedger is
+                # the specification on this platform; we do not invent
+                # accounting design.
                 account_name = account_name.replace(
                     "Beneficiary", "Unit Holder"
                 ).replace("beneficiary", "unit holder")

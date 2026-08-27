@@ -29,6 +29,17 @@ trust (entity_type="trust") is never touched by this command, even if asked
 to via --entity or --include-finalised: its chart is expected to say
 "Beneficiary" and must keep saying so.
 
+Scoped to core.beneficiary_account_service.UNIT_HOLDER_TERMINOLOGY_CODES —
+the officer-facing capital account codes (4000/4053/4100/4110 families and
+their .NN sub-accounts), not every code containing the word "Beneficiary".
+Deliberately EXCLUDES 4300/4301 and the Division 7A corporate-beneficiary
+groups 4400/4500: "sub-trust election" and "unpaid present entitlement"
+are discretionary-trust mechanisms with no unit-trust equivalent, so
+"Corporate unit holder - UPE" would invent an accounting concept that
+doesn't exist and would contradict the untouched 4400/4500 "Corp benef'y"
+series. HandiLedger is the specification on this platform; we do not
+invent accounting design.
+
 Usage:
     python3 manage.py rename_unit_trust_chart_terms                 # dry run (default)
     python3 manage.py rename_unit_trust_chart_terms --apply
@@ -40,9 +51,18 @@ import re
 from django.core.management.base import BaseCommand
 from django.db import transaction
 
+from core.beneficiary_account_service import UNIT_HOLDER_TERMINOLOGY_CODES
 from core.models import Entity, EntityChartOfAccount, TrialBalanceLine
 
 _TERM_RE = re.compile(r"beneficiary", re.IGNORECASE)
+
+
+def _in_scope(account_code):
+    """True only for the officer-facing capital account codes this command
+    is allowed to touch — see UNIT_HOLDER_TERMINOLOGY_CODES and the module
+    docstring. Matches on the pre-dot prefix so officer-suffixed
+    sub-accounts (4000.01) are in scope via their parent code (4000)."""
+    return (account_code or "").split(".")[0] in UNIT_HOLDER_TERMINOLOGY_CODES
 
 
 def _renamed(name):
@@ -120,6 +140,8 @@ class Command(BaseCommand):
             for eca in EntityChartOfAccount.objects.filter(
                 entity=entity, account_name__icontains="beneficiary"
             ):
+                if not _in_scope(eca.account_code):
+                    continue
                 new_name = _renamed(eca.account_name)
                 if new_name != eca.account_name:
                     eca_pending.append((eca, new_name))
@@ -134,6 +156,8 @@ class Command(BaseCommand):
                 .order_by("financial_year__end_date", "account_code")
             )
             for line in tb_lines:
+                if not _in_scope(line.account_code):
+                    continue
                 new_name = _renamed(line.account_name)
                 if new_name == line.account_name:
                     continue
