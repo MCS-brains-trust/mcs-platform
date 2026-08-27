@@ -7605,6 +7605,15 @@ def entity_officer_create(request, entity_pk):
             officer.roles = form.cleaned_data["roles_multi"]
             officer._updated_by = request.user
             officer.save()
+            if entity.is_unit_trust:
+                # Adding a holder changes every other holder's share too.
+                # This MUST be the last write touching the register in
+                # this request -- see recalculate_unit_percentages'
+                # docstring (core/models.py). Nothing below re-saves
+                # `officer` as a full row, so its stale in-memory
+                # distribution_percentage can't get written back over the
+                # fresh value this just persisted.
+                EntityOfficer.recalculate_unit_percentages(entity)
             _log_action(request, "user_change",
                         f"Added officer {officer.full_name} to {entity.entity_name}",
                         officer)
@@ -7641,6 +7650,16 @@ def entity_officer_edit(request, pk):
             obj.roles = form.cleaned_data["roles_multi"]
             obj._updated_by = request.user
             obj.save()
+            if entity.is_unit_trust:
+                # Editing a holder (units_held, or ceasing them) changes
+                # every other holder's share too. Last write touching the
+                # register in this request -- see recalculate_unit_
+                # percentages' docstring (core/models.py).
+                EntityOfficer.recalculate_unit_percentages(entity)
+                # `obj` may now be stale on distribution_percentage (the
+                # recompute re-fetched and re-saved its own row): refresh
+                # before anything below reads it.
+                obj.refresh_from_db()
             _log_action(request, "user_change",
                         f"Updated officer {officer.full_name} for {entity.entity_name}",
                         officer)
@@ -7678,6 +7697,12 @@ def entity_officer_delete(request, pk):
             beneficiary_officer=officer, auto_provisioned=True,
         ).delete()
         officer.delete()
+        if entity.is_unit_trust:
+            # Removing a holder changes every remaining holder's share.
+            # Last write in this transaction -- see recalculate_unit_
+            # percentages' docstring (core/models.py). `officer` is
+            # already deleted, so there is nothing left to go stale.
+            EntityOfficer.recalculate_unit_percentages(entity)
     messages.success(request, f"Removed {name}.")
     return redirect("core:entity_officers", pk=entity.pk)
 

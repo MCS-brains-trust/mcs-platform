@@ -362,7 +362,7 @@ class EntityOfficerForm(forms.ModelForm):
         fields = (
             "full_name", "role", "title", "date_appointed", "date_ceased",
             "is_signatory", "is_chairperson", "display_order", "profit_share_percentage",
-            "distribution_percentage",
+            "distribution_percentage", "units_held",
         )
         widgets = {
             "date_appointed": forms.DateInput(attrs={"type": "date"}, format="%Y-%m-%d"),
@@ -400,6 +400,21 @@ class EntityOfficerForm(forms.ModelForm):
                 EntityOfficer.OfficerRole.UNIT_HOLDER,
                 EntityOfficer.OfficerRole.DIRECTOR,  # directors of trustee company
             ],
+            # trust_unit was missing here entirely: TRUST_LIKE_TYPES is
+            # ("trust", "trust_unit") and the "trust" list above already
+            # carries UNIT_HOLDER, but the lookup below is keyed on the
+            # exact entity_type string, so a unit trust fell through to
+            # the `else` branch, which hands `.choices` (plain tuples) to
+            # code that calls `.value`/`.label` on enum members and
+            # crashes outright. Same role list as "trust" -- a unit
+            # trust's officer form still needs trustees/directors, not
+            # only unit holders.
+            "trust_unit": [
+                EntityOfficer.OfficerRole.TRUSTEE,
+                EntityOfficer.OfficerRole.BENEFICIARY,
+                EntityOfficer.OfficerRole.UNIT_HOLDER,
+                EntityOfficer.OfficerRole.DIRECTOR,
+            ],
             "partnership": [
                 EntityOfficer.OfficerRole.PARTNER,
             ],
@@ -425,8 +440,28 @@ class EntityOfficerForm(forms.ModelForm):
         # Show/hide partnership and trust specific fields
         if entity_type != "partnership":
             self.fields["profit_share_percentage"].widget = forms.HiddenInput()
-        if entity_type != "trust":
+
+        # A unit trust must not have distribution_percentage hidden like a
+        # discretionary trust does -- it must show it, but read-only: the
+        # unit register is authoritative and
+        # EntityOfficer.recalculate_unit_percentages() is the sole writer
+        # of this field for a unit holder (core/models.py). `disabled`
+        # (not just a `readonly` widget attr) is used so a tampered POST
+        # can never overwrite it either -- Django ignores submitted data
+        # for a disabled field and falls back to the bound instance's
+        # current value.
+        is_unit_trust = entity_type == Entity.EntityType.UNIT_TRUST
+        if entity_type != "trust" and not is_unit_trust:
             self.fields["distribution_percentage"].widget = forms.HiddenInput()
+        elif is_unit_trust:
+            self.fields["distribution_percentage"].disabled = True
+            self.fields["distribution_percentage"].help_text = "Derived from units held."
+
+        # units_held belongs to the unit register alone -- only relevant
+        # (and only ever non-null; see EntityOfficer.clean()) on a unit
+        # trust.
+        if not is_unit_trust:
+            self.fields["units_held"].widget = forms.HiddenInput()
 
         self._entity_type = entity_type
 

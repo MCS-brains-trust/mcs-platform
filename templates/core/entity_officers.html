@@ -44,6 +44,9 @@
                     {% if entity.entity_type == 'partnership' %}
                     <th>Profit Share %</th>
                     {% endif %}
+                    {% if entity.is_unit_trust %}
+                    <th>Units</th>
+                    {% endif %}
                     {% if entity.is_trust_like %}
                     <th>Distribution %</th>
                     {% endif %}
@@ -73,6 +76,15 @@
                     </td>
                     {% if entity.entity_type == 'partnership' %}
                     <td>{{ officer.profit_share_percentage|default:"-" }}{% if officer.profit_share_percentage %}%{% endif %}</td>
+                    {% endif %}
+                    {% if entity.is_unit_trust %}
+                    <td>
+                        {% if officer.role == 'unit_holder' %}
+                            {{ officer.units_held|default:"-" }}
+                        {% else %}
+                            <span class="text-muted">—</span>
+                        {% endif %}
+                    </td>
                     {% endif %}
                     {% if entity.is_trust_like %}
                     <td>
@@ -109,19 +121,19 @@
             {% if entity.is_trust_like %}
             <tfoot>
                 <tr>
-                    <td colspan="8" class="text-end">Active:</td>
+                    <td colspan="{% if entity.is_unit_trust %}9{% else %}8{% endif %}" class="text-end">Active:</td>
                     <td>{{ dist_active }}%</td>
                     <td colspan="2"></td>
                 </tr>
                 {% if dist_ceased %}
                 <tr>
-                    <td colspan="8" class="text-end text-muted">Ceased:</td>
+                    <td colspan="{% if entity.is_unit_trust %}9{% else %}8{% endif %}" class="text-end text-muted">Ceased:</td>
                     <td class="text-muted">{{ dist_ceased }}%</td>
                     <td colspan="2"></td>
                 </tr>
                 {% endif %}
                 <tr class="fw-bold" style="border-top: 2px solid #dee2e6;">
-                    <td colspan="8" class="text-end">Total:</td>
+                    <td colspan="{% if entity.is_unit_trust %}9{% else %}8{% endif %}" class="text-end">Total:</td>
                     <td>
                         <span class="{% if dist_total == 100 %}text-success{% else %}text-danger{% endif %}">
                             {{ dist_total }}%{% if dist_total == 100 %} &#10003;{% endif %}

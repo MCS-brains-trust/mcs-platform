@@ -2,12 +2,15 @@
 from datetime import date, timedelta
 from decimal import Decimal
 
+from django import forms
 from django.contrib.auth import get_user_model
 from django.contrib.messages.storage.fallback import FallbackStorage
 from django.contrib.sessions.middleware import SessionMiddleware
 from django.test import RequestFactory, TestCase
+from django.urls import reverse
 from django.utils import timezone
 
+from core.forms import EntityOfficerForm
 from core.models import Entity, EntityOfficer, OfficerDistributionHistory
 from core.views import _handle_ceased_redistribution
 
@@ -467,3 +470,242 @@ class UnitHolderRoleGuardTests(TestCase):
         # beneficiary path would write it).
         self.assertIsNotNone(open_row)
         self.assertEqual(open_row.distribution_pct, Decimal("55.00"))
+
+
+class UnitRegisterFormTests(TestCase):
+    """Task 6 brief's own test, plus form-level assertions for the
+    units_held / distribution_percentage show-hide-readonly wiring."""
+
+    def test_saving_a_holder_recalculates_every_percentage(self):
+        entity = Entity.objects.create(entity_name="Minli", entity_type="trust_unit")
+        a = EntityOfficer.objects.create(
+            entity=entity, full_name="A", role="unit_holder",
+            roles=["unit_holder"], units_held=50,
+        )
+        EntityOfficer.objects.create(
+            entity=entity, full_name="B", role="unit_holder",
+            roles=["unit_holder"], units_held=50,
+        )
+        EntityOfficer.recalculate_unit_percentages(entity)
+
+        a.refresh_from_db()
+        self.assertEqual(a.distribution_percentage, Decimal("50.00"))
+
+    def test_form_shows_units_held_for_unit_trust(self):
+        form = EntityOfficerForm(entity_type="trust_unit")
+        self.assertNotIsInstance(form.fields["units_held"].widget, forms.HiddenInput)
+        # distribution_percentage must be visible (not hidden) and disabled
+        # (read-only, immune to a tampered POST) for a unit trust.
+        self.assertNotIsInstance(
+            form.fields["distribution_percentage"].widget, forms.HiddenInput
+        )
+        self.assertTrue(form.fields["distribution_percentage"].disabled)
+
+    def test_form_hides_units_held_for_discretionary_trust(self):
+        form = EntityOfficerForm(entity_type="trust")
+        self.assertIsInstance(form.fields["units_held"].widget, forms.HiddenInput)
+        # A discretionary trust's distribution_percentage stays exactly as
+        # Task 4 left it: visible and freely typed, not disabled.
+        self.assertNotIsInstance(
+            form.fields["distribution_percentage"].widget, forms.HiddenInput
+        )
+        self.assertFalse(form.fields["distribution_percentage"].disabled)
+
+    def test_form_hides_distribution_percentage_for_company(self):
+        # Unrelated entity types must be completely unaffected.
+        form = EntityOfficerForm(entity_type="company")
+        self.assertIsInstance(
+            form.fields["distribution_percentage"].widget, forms.HiddenInput
+        )
+        self.assertIsInstance(form.fields["units_held"].widget, forms.HiddenInput)
+
+
+class UnitRegisterViewWiringTests(TestCase):
+    """Proves recalculate_unit_percentages is actually wired into the
+    officer views -- create, edit and delete -- not just callable from a
+    test that invokes it directly. These fail today: nothing outside the
+    tests calls it, so a unit holder saved through the view ends with
+    distribution_percentage = None forever.
+    """
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="unitreg", email="unitreg@example.com", password="secret123",
+            role=User.Role.ADMIN,
+            totp_secret="dummy-secret-unitreg", totp_confirmed=True,
+        )
+        self.client.force_login(self.user)
+        session = self.client.session
+        session["2fa_verified"] = True
+        session.save()
+        self.entity = Entity.objects.create(
+            entity_name="Minli Enterprise Unit Trust", entity_type="trust_unit",
+        )
+
+    def _create(self, full_name, units_held, display_order=1):
+        return self.client.post(
+            reverse("core:entity_officer_create", args=[self.entity.pk]),
+            data={
+                "full_name": full_name,
+                "roles_multi": ["unit_holder"],
+                "title": "",
+                "date_appointed": "",
+                "date_ceased": "",
+                "display_order": str(display_order),
+                "profit_share_percentage": "",
+                "distribution_percentage": "",
+                "units_held": str(units_held),
+            },
+            secure=True,
+        )
+
+    def test_creating_a_holder_through_the_view_leaves_correct_stored_percentage(self):
+        response = self._create("A", 50)
+        self.assertEqual(response.status_code, 302)
+        a = EntityOfficer.objects.get(entity=self.entity, full_name="A")
+        # Sole holder: recalculate_unit_percentages must have run, storing
+        # 100.00%, not leaving distribution_percentage as None (what
+        # happens today with no view wiring at all).
+        self.assertEqual(a.distribution_percentage, Decimal("100.00"))
+
+    def test_creating_a_second_holder_corrects_the_first_one_too(self):
+        self._create("A", 50, display_order=1)
+        a = EntityOfficer.objects.get(entity=self.entity, full_name="A")
+        self.assertEqual(a.distribution_percentage, Decimal("100.00"))
+
+        response = self._create("B", 50, display_order=2)
+        self.assertEqual(response.status_code, 302)
+
+        a.refresh_from_db()
+        b = EntityOfficer.objects.get(entity=self.entity, full_name="B")
+        self.assertEqual(a.distribution_percentage, Decimal("50.00"))
+        self.assertEqual(b.distribution_percentage, Decimal("50.00"))
+
+    def test_deleting_a_holder_recomputes_the_remainder(self):
+        self._create("A", 50, display_order=1)
+        self._create("B", 25, display_order=2)
+        c_resp = self._create("C", 25, display_order=3)
+        self.assertEqual(c_resp.status_code, 302)
+
+        a = EntityOfficer.objects.get(entity=self.entity, full_name="A")
+        b = EntityOfficer.objects.get(entity=self.entity, full_name="B")
+        c = EntityOfficer.objects.get(entity=self.entity, full_name="C")
+        self.assertEqual(a.distribution_percentage, Decimal("50.00"))
+
+        response = self.client.post(
+            reverse("core:entity_officer_delete", args=[c.pk]), secure=True,
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(EntityOfficer.objects.filter(pk=c.pk).exists())
+
+        a.refresh_from_db()
+        b.refresh_from_db()
+        # Units were 50/25 out of 100 before C left; with C gone, the
+        # remaining 50/25 units are the whole 75 -- recompute must sum to
+        # exactly 100.00 over the two survivors.
+        total = a.distribution_percentage + b.distribution_percentage
+        self.assertEqual(total, Decimal("100.00"))
+        self.assertEqual(a.distribution_percentage, Decimal("66.67"))
+        self.assertEqual(b.distribution_percentage, Decimal("33.33"))
+
+    def test_editing_a_holders_units_recomputes_every_holder(self):
+        self._create("A", 50, display_order=1)
+        self._create("B", 50, display_order=2)
+        a = EntityOfficer.objects.get(entity=self.entity, full_name="A")
+        b = EntityOfficer.objects.get(entity=self.entity, full_name="B")
+        self.assertEqual(a.distribution_percentage, Decimal("50.00"))
+
+        response = self.client.post(
+            reverse("core:entity_officer_edit", args=[a.pk]),
+            data={
+                "full_name": "A",
+                "roles_multi": ["unit_holder"],
+                "title": "",
+                "date_appointed": "",
+                "date_ceased": "",
+                "display_order": "1",
+                "profit_share_percentage": "",
+                "distribution_percentage": "",
+                "units_held": "150",
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 302)
+
+        a.refresh_from_db()
+        b.refresh_from_db()
+        self.assertEqual(a.distribution_percentage, Decimal("75.00"))
+        self.assertEqual(b.distribution_percentage, Decimal("25.00"))
+
+
+class DiscretionaryTrustOfficerSaveRegressionTests(TestCase):
+    """PRIMARY RISK guard: four discretionary trusts exist in production.
+    A discretionary trust's officer form must be completely unchanged by
+    any of this task's wiring -- distribution_percentage still freely
+    typed, no units field, no recompute call on its save path.
+    """
+
+    def setUp(self):
+        User = get_user_model()
+        self.user = User.objects.create_user(
+            username="discreg", email="discreg@example.com", password="secret123",
+            role=User.Role.ADMIN,
+            totp_secret="dummy-secret-discreg", totp_confirmed=True,
+        )
+        self.client.force_login(self.user)
+        session = self.client.session
+        session["2fa_verified"] = True
+        session.save()
+        self.entity = Entity.objects.create(
+            entity_name="Ordinary Family Trust", entity_type="trust",
+        )
+
+    def test_discretionary_trust_officer_save_still_persists_typed_percentage(self):
+        response = self.client.post(
+            reverse("core:entity_officer_create", args=[self.entity.pk]),
+            data={
+                "full_name": "Jane Beneficiary",
+                "roles_multi": ["beneficiary"],
+                "title": "",
+                "date_appointed": "",
+                "date_ceased": "",
+                "display_order": "1",
+                "profit_share_percentage": "",
+                "distribution_percentage": "40.00",
+                "units_held": "",
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 302)
+        jane = EntityOfficer.objects.get(entity=self.entity, full_name="Jane Beneficiary")
+        # The hand-typed value survives exactly -- no units-derived
+        # recompute has touched it, because this entity is not a unit
+        # trust.
+        self.assertEqual(jane.distribution_percentage, Decimal("40.00"))
+        self.assertIsNone(jane.units_held)
+
+    def test_editing_a_typed_percentage_on_a_discretionary_trust_still_works(self):
+        beneficiary = EntityOfficer.objects.create(
+            entity=self.entity, full_name="Jane Beneficiary",
+            role="beneficiary", roles=["beneficiary"],
+            distribution_percentage=Decimal("40.00"),
+        )
+        response = self.client.post(
+            reverse("core:entity_officer_edit", args=[beneficiary.pk]),
+            data={
+                "full_name": "Jane Beneficiary",
+                "roles_multi": ["beneficiary"],
+                "title": "",
+                "date_appointed": "",
+                "date_ceased": "",
+                "display_order": "1",
+                "profit_share_percentage": "",
+                "distribution_percentage": "65.00",
+                "units_held": "",
+            },
+            secure=True,
+        )
+        self.assertEqual(response.status_code, 302)
+        beneficiary.refresh_from_db()
+        self.assertEqual(beneficiary.distribution_percentage, Decimal("65.00"))
