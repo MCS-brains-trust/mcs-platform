@@ -7482,9 +7482,11 @@ def entity_officers(request, pk):
     entity = get_entity_for_user(request, pk)
     officers = entity.officers.all()
 
+    from core.entity_terminology import beneficiary_noun
     officer_label_map = {
         "company": "Director / Officer",
-        "trust": "Trustee / Beneficiary",
+        "trust": f"Trustee / {beneficiary_noun(entity)}",
+        "trust_unit": f"Trustee / {beneficiary_noun(entity)}",
         "partnership": "Partner",
         "sole_trader": "Proprietor",
         "smsf": "Trustee / Director",

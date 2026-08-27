@@ -1122,7 +1122,10 @@ def _ai_classify_batch(transactions, is_gst_registered=True, batch_size=15, enti
                 "All tax types should be 'BAS Excluded'."
             )
 
-        entity_label = (entity_type or "company").replace("_", " ").title()
+        from core.models import Entity
+        entity_label = dict(Entity.EntityType.choices).get(
+            entity_type, (entity_type or "company").replace("_", " ").title()
+        )
         prompt = (
             f"Classify these Australian bank transactions for a {entity_label} entity:\n\n"
             f"{chart_prompt}{gst_context}\n\n"

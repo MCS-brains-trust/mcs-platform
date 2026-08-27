@@ -1,12 +1,13 @@
 {% extends "base.html" %}
 {% load mcs_filters %}
+{% load entity_terminology %}
 
-{% block title %}{% if entity.entity_type == 'sole_trader' %}Proprietor{% else %}Directors/Trustees/Beneficiaries{% endif %} - {{ entity.entity_name }} | StatementHub{% endblock %}
+{% block title %}{% if entity.entity_type == 'sole_trader' %}Proprietor{% else %}Directors/Trustees/{{ entity|beneficiary_noun:True }}{% endif %} - {{ entity.entity_name }} | StatementHub{% endblock %}
 
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
     <div>
-        <h2>{% if entity.entity_type == 'sole_trader' %}Proprietor{% elif entity.entity_type == 'partnership' %}Partners{% else %}Directors/Trustees/Beneficiaries{% endif %}</h2>
+        <h2>{% if entity.entity_type == 'sole_trader' %}Proprietor{% elif entity.entity_type == 'partnership' %}Partners{% else %}Directors/Trustees/{{ entity|beneficiary_noun:True }}{% endif %}</h2>
         <p class="text-muted mb-0">
             <a href="{% url 'core:entity_detail' pk=entity.pk %}">{{ entity.entity_name }}</a>
             &raquo;
@@ -24,7 +25,7 @@
     <div class="card-header">
         <h5 class="mb-0">
             {% if entity.entity_type == 'company' %}Directors & Officers
-            {% elif entity.is_trust_like %}Trustees & Beneficiaries
+            {% elif entity.is_trust_like %}Trustees & {{ entity|beneficiary_noun:True }}
             {% elif entity.entity_type == 'partnership' %}Partners
             {% elif entity.entity_type == 'sole_trader' %}Proprietor
             {% else %}Officers{% endif %}
@@ -156,7 +157,7 @@
             Add the directors who will sign the Director's Declaration on the financial statements.
         {% elif entity.is_trust_like %}
             Add the trustees (or directors of the corporate trustee) who will sign the Trustee's Declaration,
-            and the beneficiaries for the distribution statement.
+            and the {{ entity|beneficiary_noun:True|lower }} for the distribution statement.
         {% elif entity.entity_type == 'partnership' %}
             Add all partners with their profit share percentages. Partners will appear on the Partner's Declaration
             and the Partners' Distribution Statement.

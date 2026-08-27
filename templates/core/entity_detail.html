@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load entity_terminology %}
 {% block title %}{{ entity.entity_name }} — StatementHub{% endblock %}
 
 {% block content %}
@@ -46,7 +47,7 @@
     </li>
     <li class="nav-item" role="presentation">
         <button class="nav-link" id="officers-tab" data-bs-toggle="tab" data-bs-target="#officers" type="button" role="tab">
-            <i class="bi bi-person-badge"></i> Directors/Trustees/Beneficiaries
+            <i class="bi bi-person-badge"></i> Directors/Trustees/{{ entity|beneficiary_noun:True }}
             {% if officers %}
             <span class="badge bg-secondary">{{ officers|length }}</span>
             {% endif %}
@@ -445,8 +446,8 @@
     <div class="tab-pane fade" id="officers" role="tabpanel">
         <div class="d-flex justify-content-between align-items-center mb-3">
             <h5 class="mb-0">
-                {% if entity.entity_type == 'company' %}Directors/Trustees/Beneficiaries
-                {% elif entity.is_trust_like %}Directors/Trustees/Beneficiaries
+                {% if entity.entity_type == 'company' %}Directors/Trustees/{{ entity|beneficiary_noun:True }}
+                {% elif entity.is_trust_like %}Directors/Trustees/{{ entity|beneficiary_noun:True }}
                 {% elif entity.entity_type == 'partnership' %}Partners
                 {% elif entity.entity_type == 'sole_trader' %}Proprietor
                 {% else %}Officers{% endif %}

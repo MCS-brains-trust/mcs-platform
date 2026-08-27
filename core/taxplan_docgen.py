@@ -31,6 +31,8 @@ from docx.enum.table import WD_TABLE_ALIGNMENT
 from docx.oxml.ns import qn, nsdecls
 from docx.oxml import parse_xml
 
+from core.entity_terminology import beneficiary_noun
+
 
 # =============================================================================
 # Constants
@@ -227,7 +229,7 @@ def generate_trust_election(financial_year_id):
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
 
     # Header row
-    headers = ["Beneficiary", "Type", "Amount", "% Share"]
+    headers = [beneficiary_noun(ctx["entity"]), "Type", "Amount", "% Share"]
     for i, header in enumerate(headers):
         cell = table.rows[0].cells[i]
         cell.text = header
@@ -430,7 +432,7 @@ def generate_tax_planning_summary(financial_year_id):
     table.style = "Table Grid"
     table.alignment = WD_TABLE_ALIGNMENT.CENTER
 
-    headers = ["Beneficiary", "Type", "Distribution", "Est. Tax", "Eff. Rate", "Notes"]
+    headers = [beneficiary_noun(ctx["entity"]), "Type", "Distribution", "Est. Tax", "Eff. Rate", "Notes"]
     for i, header in enumerate(headers):
         cell = table.rows[0].cells[i]
         cell.text = header
