@@ -2643,7 +2643,7 @@ def financial_year_detail(request, pk):
             entity=fy.entity, is_active=True
         ).count(),
         "account_mappings": AccountMapping.objects.filter(
-            applicable_entities__contains=fy.entity.entity_type
+            applicable_entities__contains=template_entity_type(fy.entity.entity_type)
         ).order_by('financial_statement', 'line_item_label'),
         # General Pool
         "general_pool": getattr(fy, "general_pool", None),
@@ -13980,7 +13980,7 @@ def entity_coa_add(request, pk):
     section_choices = EntityChartOfAccount.StatementSection.choices
     tax_code_choices = ['GST', 'ADS', 'ITS', 'FRE', 'CAP', 'INP', 'GNR', 'N-T']
     mapping_options = AccountMapping.objects.filter(
-        applicable_entities__contains=entity.entity_type
+        applicable_entities__contains=template_entity_type(entity.entity_type)
     ).order_by('financial_statement', 'line_item_label')
 
     if request.method == 'POST':
@@ -14089,7 +14089,7 @@ def entity_coa_edit(request, pk):
     section_choices = EntityChartOfAccount.StatementSection.choices
     tax_code_choices = ['GST', 'ADS', 'ITS', 'FRE', 'CAP', 'INP', 'GNR', 'N-T']
     mapping_options = AccountMapping.objects.filter(
-        applicable_entities__contains=entity.entity_type
+        applicable_entities__contains=template_entity_type(entity.entity_type)
     ).order_by('financial_statement', 'line_item_label')
 
     if request.method == 'POST':

@@ -1213,7 +1213,7 @@ class EntityChartOfAccount(models.Model):
         super().clean()
         if self.maps_to_id and self.entity_id:
             applicable = self.maps_to.applicable_entities or []
-            if applicable and self.entity.entity_type not in applicable:
+            if applicable and template_entity_type(self.entity.entity_type) not in applicable:
                 raise ValidationError({
                     "maps_to": (
                         f"{self.maps_to.standard_code} "

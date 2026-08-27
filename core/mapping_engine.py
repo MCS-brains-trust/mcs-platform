@@ -7,7 +7,7 @@ financial statement line items (AccountMapping records).
 The Classification column in the COA is the primary key for auto-mapping.
 This module provides rules-based mapping that can be overridden manually.
 """
-from .models import AccountMapping
+from .models import AccountMapping, template_entity_type
 
 
 # Classification keyword → standard_code mapping rules
@@ -136,7 +136,7 @@ def auto_map_account(classification: str, account_code: str, account_name: str, 
                 try:
                     mapping = AccountMapping.objects.get(standard_code=standard_code)
                     # Check entity applicability
-                    if entity_type in mapping.applicable_entities or not mapping.applicable_entities:
+                    if template_entity_type(entity_type) in mapping.applicable_entities or not mapping.applicable_entities:
                         return mapping
                 except AccountMapping.DoesNotExist:
                     continue
@@ -147,7 +147,7 @@ def auto_map_account(classification: str, account_code: str, account_name: str, 
             if keyword.lower() in account_name_lower:
                 try:
                     mapping = AccountMapping.objects.get(standard_code=standard_code)
-                    if entity_type in mapping.applicable_entities or not mapping.applicable_entities:
+                    if template_entity_type(entity_type) in mapping.applicable_entities or not mapping.applicable_entities:
                         return mapping
                 except AccountMapping.DoesNotExist:
                     continue

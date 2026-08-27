@@ -321,7 +321,7 @@ class Command(BaseCommand):
                 mapping = mappings[code]
                 # Check entity type is applicable
                 applicable = mapping.applicable_entities or []
-                if applicable and acc.entity_type not in applicable:
+                if applicable and template_entity_type(acc.entity_type) not in applicable:
                     # Try fallback for entity-specific equity
                     if template_entity_type(acc.entity_type) == "trust":
                         fallback = "BS-EQ-005"

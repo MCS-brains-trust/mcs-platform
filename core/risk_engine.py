@@ -92,7 +92,7 @@ def run_risk_engine(financial_year, tiers=None):
     Returns:
         dict with 'run_id', 'flags_created', 'flags_auto_resolved', 'errors'
     """
-    from core.models import RiskFlag, RiskRule, RiskReferenceData
+    from core.models import RiskFlag, RiskRule, RiskReferenceData, template_entity_type
 
     if tiers is None:
         tiers = [1, 2]
@@ -182,7 +182,7 @@ def run_risk_engine(financial_year, tiers=None):
             if is_covered_by_module(rule.rule_id):
                 continue
             # Check if rule applies to this entity type
-            if rule.applicable_entities and entity.entity_type not in rule.applicable_entities:
+            if rule.applicable_entities and template_entity_type(entity.entity_type) not in rule.applicable_entities:
                 continue
             try:
                 flag_data = _evaluate_tier2_rule(
