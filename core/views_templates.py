@@ -44,6 +44,10 @@ def template_list(request):
     ENTITY_TYPE_LABELS = {
         "company": "Company",
         "trust": "Trust",
+        # A unit trust owns no FinancialStatementTemplate rows of its own (it
+        # reads the trust rows); the label is here only so any stray row is
+        # named properly rather than title-cased to "Trust Unit".
+        "trust_unit": "Unit Trust",
         "sole_trader": "Sole Trader",
         "partnership": "Partnership",
         "smsf": "SMSF",

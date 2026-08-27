@@ -521,7 +521,8 @@ def _run_tier1_variance(financial_year, tb_data, ref_data, entity_context, run_i
     # Division 7A detection: flag loan accounts with DEBIT closing balances
     # (i.e. money owed BY a shareholder/director TO the company).
     # This applies to companies and trusts.
-    if entity_context.get("entity_type") in ("company", "trust", ""):
+    from core.models import TRUST_LIKE_TYPES
+    if entity_context.get("entity_type") in ("company", "") + TRUST_LIKE_TYPES:
         flags.extend(_check_div7a_loans(tb_data, entity_context))
 
     return flags
@@ -1168,7 +1169,8 @@ def _eval_superannuation(rule, fy, tb, ref, ctx, config):
 
 def _eval_trust_distribution(rule, fy, tb, ref, ctx, config):
     """Check trust-specific compliance."""
-    if ctx.get("entity_type") != "trust":
+    from core.models import TRUST_LIKE_TYPES
+    if ctx.get("entity_type") not in TRUST_LIKE_TYPES:
         return None
 
     check_type = config.get("check_type", "undistributed")

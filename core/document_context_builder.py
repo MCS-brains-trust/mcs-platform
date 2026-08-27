@@ -48,6 +48,8 @@ from decimal import Decimal, ROUND_HALF_UP, DivisionByZero, InvalidOperation
 
 from django.utils import timezone
 
+from core.models import TRUST_LIKE_TYPES
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -591,6 +593,12 @@ def _get_service_description(service_id, entity_type):
     desc = _SERVICE_DESCRIPTIONS.get(key)
     if desc:
         return desc
+    # A unit trust reads the trust's wording. Without this it would fall
+    # straight through to the company variant below.
+    if entity_type in TRUST_LIKE_TYPES:
+        desc = _SERVICE_DESCRIPTIONS.get((service_id, "trust"))
+        if desc:
+            return desc
     # Fall back to company variant, then default
     desc = _SERVICE_DESCRIPTIONS.get((service_id, "company"))
     if desc:
@@ -763,7 +771,7 @@ class DocumentContextBuilder:
             "entity_industry": e.get_industry_display() if hasattr(e, "get_industry_display") else "",
             # Entity type booleans
             "is_company": entity_type == "company",
-            "is_trust": entity_type == "trust",
+            "is_trust": entity_type in TRUST_LIKE_TYPES,
             "is_partnership": entity_type == "partnership",
             "is_sole_trader": entity_type == "sole_trader",
             "is_smsf": entity_type == "smsf",
@@ -777,7 +785,7 @@ class DocumentContextBuilder:
             "is_base_rate_entity": getattr(e, "is_base_rate_entity", None),
             "total_shares_on_issue": getattr(e, "total_shares_on_issue", None) or 0,
             # Trust-specific
-            "trust_name": e.entity_name if entity_type == "trust" else "",
+            "trust_name": e.entity_name if entity_type in TRUST_LIKE_TYPES else "",
             "trustee_name": getattr(e, "trustee_name", ""),
             "trustee_acn": format_acn(e.trustee_acn) if getattr(e, "trustee_acn", None) else "",
             "trust_vesting_date": format_date_long(e.vesting_date) if getattr(e, "vesting_date", None) else "",
@@ -1535,7 +1543,7 @@ class DocumentContextBuilder:
             salutation = "Dear Directors" if len(directors) > 1 else (
                 f"Dear {directors[0]['first_name']}" if directors else "Dear Director"
             )
-        elif entity_type == "trust":
+        elif entity_type in TRUST_LIKE_TYPES:
             if trustees:
                 salutation = f"Dear {trustees[0]['first_name']}"
             else:
@@ -1622,7 +1630,7 @@ class DocumentContextBuilder:
         # Addressee
         if entity_type == "company":
             addressee = f"To the Directors of {entity_name}"
-        elif entity_type == "trust":
+        elif entity_type in TRUST_LIKE_TYPES:
             addressee = f"To the Trustee of {trust_name or entity_name}"
         elif entity_type == "partnership":
             addressee = f"To the Partners of {entity_name}"
@@ -2058,7 +2066,7 @@ class DocumentContextBuilder:
 
         if entity_type == "company":
             signatory_capacity = "Directors"
-        elif entity_type == "trust":
+        elif entity_type in TRUST_LIKE_TYPES:
             signatory_capacity = "Trustee"
         else:
             signatory_capacity = "Partners"

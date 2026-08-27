@@ -25,7 +25,7 @@ from .models import (
     ClientAssociate, AccountingSoftware, MeetingNote,
     DepreciationAsset, RiskFlag, StockItem, ActivityLog, EntityChartOfAccount,
     BulkJournalUpload, BASPeriod, BankAccountMapping, BASPeriodCommentary,
-    EvaReview, template_entity_type,
+    EvaReview, template_entity_type, TRUST_LIKE_TYPES,
 )
 from .forms import (
     ClientForm, EntityForm, FinancialYearForm,
@@ -1885,11 +1885,15 @@ def entity_detail(request, pk):
     # Surface a one-time prompt after entity creation for companies/trusts
     # so the user can consciously initiate the establishment package.
     legal_doc_prompt = None
-    if not entity.legal_doc_prompt_dismissed and entity.entity_type in ("company", "trust"):
+    if not entity.legal_doc_prompt_dismissed and entity.entity_type in ("company",) + TRUST_LIKE_TYPES:
         from core.models import LegalDocument
         doc_type_map = {
             "company": ("company_establishment", "Company Establishment Package"),
             "trust": ("discretionary_trust_deed", "Discretionary Trust Deed"),
+            # A unit trust is established by a fixed unit trust deed, never a
+            # discretionary one — see core/views_office_admin.py's
+            # DOC_TYPE_ENTITY_MAP, which already routes "unit_trust_deed" here.
+            "trust_unit": ("unit_trust_deed", "Fixed Unit Trust Deed"),
         }
         doc_type_key, doc_type_label = doc_type_map[entity.entity_type]
         # Only show if no document of this type has been generated yet
@@ -2758,7 +2762,7 @@ def financial_year_finalise_full(request, pk):
         return redirect("core:financial_year_detail", pk=pk)
 
     # ── Pre-check: Trust distribution must be complete ───────────────
-    if fy.entity.entity_type == "trust":
+    if fy.entity.entity_type in TRUST_LIKE_TYPES:
         trust_ws = getattr(fy, "trust_workspace", None)
         if not trust_ws or not trust_ws.all_stages_completed():
             messages.warning(
@@ -2785,7 +2789,7 @@ def financial_year_finalise_full(request, pk):
             )
 
     # ── Step 2: Block finalisation if trust balance sheet doesn't reconcile
-    if fy.entity.entity_type == "trust":
+    if fy.entity.entity_type in TRUST_LIKE_TYPES:
         try:
             from core.fs_template_service import _get_tb_sections, _sum_section
             from decimal import Decimal
@@ -2948,7 +2952,7 @@ def financial_year_status(request, pk):
         return redirect("core:financial_year_detail", pk=pk)
 
     # Block finalisation if trust balance sheet does not reconcile
-    if new_status == "finalised" and fy.entity.entity_type == "trust":
+    if new_status == "finalised" and fy.entity.entity_type in TRUST_LIKE_TYPES:
         try:
             from core.fs_template_service import _get_tb_sections, _sum_section
             from decimal import Decimal
@@ -4964,7 +4968,7 @@ def review_tb_import(request, pk):
     # Beneficiary officers for the Beneficiary column (trust entities only)
     from django.db import models as _m
     beneficiary_officers = []
-    if entity.entity_type == "trust":
+    if entity.entity_type in TRUST_LIKE_TYPES:
         beneficiary_officers = list(
             EntityOfficer.objects.filter(
                 entity=entity,
@@ -5000,7 +5004,7 @@ def review_tb_import(request, pk):
         "balance_blocked": balance_blocked,
         "balance_warning": balance_warning,
         "beneficiary_officers": beneficiary_officers,
-        "is_trust": entity.entity_type == "trust",
+        "is_trust": entity.entity_type in TRUST_LIKE_TYPES,
     }
     return render(request, "core/review_tb_import.html", context)
 
@@ -7057,7 +7061,7 @@ def generate_document(request, pk):
     # Also create/update a LegalDocument record so the package assembly
     # checklist can detect that distribution minutes have been generated.
     entity = fy.entity
-    if entity.entity_type == "trust":
+    if entity.entity_type in TRUST_LIKE_TYPES:
         from core.models import LegalDocument
         from core.views_compliance_docs import _sanitise_context_for_storage
         try:
@@ -7486,7 +7490,7 @@ def entity_officers(request, pk):
     dist_active = 0
     dist_ceased = 0
     dist_total = 0
-    if entity.entity_type == "trust":
+    if entity.entity_type in TRUST_LIKE_TYPES:
         from decimal import Decimal
         from django.db.models import Q, Sum
         from django.utils import timezone
@@ -7672,7 +7676,7 @@ def auto_map_capital_accounts(request, entity_pk):
     entity = get_object_or_404(Entity, pk=entity_pk)
     get_entity_for_user(request, entity.pk)  # IDOR check
 
-    if entity.entity_type != "trust":
+    if entity.entity_type not in TRUST_LIKE_TYPES:
         return JsonResponse(
             {"status": "error", "message": "Only available for trust entities."},
             status=400,

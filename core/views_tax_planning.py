@@ -26,6 +26,7 @@ from core.models import (
     TaxPlanningBeneficiaryRow,
     TaxPlanningScenario,
     TaxPlanningWorksheet,
+    TRUST_LIKE_TYPES,
 )
 from core.tax_engine import (
     calculate_all_beneficiaries,
@@ -96,7 +97,7 @@ def tax_planning_tab(request, pk):
     fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
-    if entity.entity_type != "trust":
+    if entity.entity_type not in TRUST_LIKE_TYPES:
         messages.error(request, "Tax Planning is only available for Trust entities.")
         return redirect("core:financial_year_detail", pk=pk)
 
@@ -525,7 +526,7 @@ def generate_trust_election_view(request, pk):
         messages.error(request, "You do not have permission to generate documents.")
         return redirect("core:tax_planning_tab", pk=pk)
 
-    if entity.entity_type != "trust":
+    if entity.entity_type not in TRUST_LIKE_TYPES:
         messages.error(request, "Trust elections are only applicable to trust entities.")
         return redirect("core:financial_year_detail", pk=pk)
 
@@ -619,7 +620,7 @@ def generate_tax_planning_summary_view(request, pk):
         messages.error(request, "You do not have permission to generate documents.")
         return redirect("core:tax_planning_tab", pk=pk)
 
-    if entity.entity_type != "trust":
+    if entity.entity_type not in TRUST_LIKE_TYPES:
         messages.error(request, "Tax Planning Summary is only applicable to trust entities.")
         return redirect("core:financial_year_detail", pk=pk)
 

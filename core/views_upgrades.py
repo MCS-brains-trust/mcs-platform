@@ -31,7 +31,7 @@ from .models import (
     GeneratedDocument, AuditLog, EntityOfficer,
     TrustDistribution, BeneficiaryAllocation,
     PartnershipAllocation, PartnerShare, PartnerCapitalAccount,
-    WorkpaperNote, EntityImportJob,
+    WorkpaperNote, EntityImportJob, TRUST_LIKE_TYPES,
 )
 from config.authorization import get_financial_year_for_user
 
@@ -383,7 +383,7 @@ def trust_distribution(request, pk):
     fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
-    if entity.entity_type != "trust":
+    if entity.entity_type not in TRUST_LIKE_TYPES:
         messages.error(request, "Distribution workspace is only available for trusts.")
         return redirect("core:financial_year_detail", pk=pk)
 

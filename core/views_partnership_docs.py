@@ -19,6 +19,7 @@ from core.models import (
     FinancialYear,
     LegalDocument,
     LegalDocumentTemplate,
+    TRUST_LIKE_TYPES,
 )
 
 logger = logging.getLogger(__name__)
@@ -697,7 +698,7 @@ def _get_service_options(entity_type):
             ("dividend_management", "Dividend Management"),
             ("directors_report", "Director's Report"),
         ])
-    elif entity_type == "trust":
+    elif entity_type in TRUST_LIKE_TYPES:
         base_services.extend([
             ("trust_distribution", "Trust Distribution Planning"),
             ("trust_deed_review", "Trust Deed Review"),

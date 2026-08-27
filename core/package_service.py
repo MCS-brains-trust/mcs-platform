@@ -82,6 +82,11 @@ PACKAGE_CONTENTS = {
     ],
 }
 
+# A unit trust receives exactly the trust package: financial statements plus
+# distribution minutes. Aliased rather than copied so the two never drift.
+# Without this the .get() below falls back to "individual" (cover letter only).
+PACKAGE_CONTENTS["trust_unit"] = PACKAGE_CONTENTS["trust"]
+
 # Document order for the combined PDF
 DOCUMENT_ORDER = [
     "financial_statements",
@@ -419,7 +424,7 @@ def _invoke_compliance_generator(doc_type, fy, entity, user=None):
 
 def _build_compliance_context(doc_type, fy, entity):
     """Build the context dict for a compliance document."""
-    from core.models import EntityOfficer
+    from core.models import EntityOfficer, TRUST_LIKE_TYPES
     from django.db import models as _m
 
     directors = EntityOfficer.objects.filter(
@@ -459,7 +464,7 @@ def _build_compliance_context(doc_type, fy, entity):
 
     # Trust corporate-trustee structure: build declaration_signatories
     # so the HTML template renders one block per individual director-signatory
-    if entity.entity_type == "trust":
+    if entity.entity_type in TRUST_LIKE_TYPES:
         trustee_officer = EntityOfficer.objects.filter(
             entity=entity, date_ceased__isnull=True,
         ).filter(

@@ -133,10 +133,10 @@ def _profile_for(officer):
     director on a partnership. This pairing is the only thing keeping the
     trust and partnership schemes apart, so it is checked in one place.
     """
-    from core.models import EntityOfficer
+    from core.models import EntityOfficer, TRUST_LIKE_TYPES
 
     entity_type = officer.entity.entity_type
-    if entity_type == "trust":
+    if entity_type in TRUST_LIKE_TYPES:
         if officer.role not in EntityOfficer.DISTRIBUTION_ROLES:
             return None
         return {"codes": BENEFICIARY_PARENT_CODES, "slots": SLOT_CODES_TO_REMOVE}
