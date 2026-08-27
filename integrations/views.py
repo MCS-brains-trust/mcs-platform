@@ -1292,6 +1292,19 @@ def commit_import(request, fy_pk):
         prior_data[code]["prior_credit"] += line_obj.prior_credit or Decimal("0")
         prior_data[code]["prior_closing_balance"] += line_obj.prior_closing_balance or Decimal("0")
 
+    # The entity chart owns the account name. Every TrialBalanceLine below
+    # is keyed on a StatementHub chart code, so its name must come from the
+    # chart and never from the source system — otherwise a Xero import
+    # renames the account (Minli FY2026: 620 arrived as "Rental Income"
+    # against a chart that calls it "Rents received", and the bank account
+    # arrived named after the unit holder). Looked up once for the whole
+    # commit rather than per row.
+    chart_names = dict(
+        EntityChartOfAccount.objects
+        .filter(entity=entity)
+        .values_list("account_code", "account_name")
+    )
+
     # Wrap delete + create in a transaction so a failure midway
     # does not leave the entity's TB in a corrupt state.
     from django.db import transaction
@@ -1379,10 +1392,16 @@ def commit_import(request, fy_pk):
                         f"net movement {movement_amount}"
                     )
 
+                # The chart's name for acct_code wins. The source name is
+                # only a fallback for the legacy path that bypasses the
+                # wizard gate and writes a source code we have no chart
+                # entry for; there is nothing better to call those rows.
+                acct_name = chart_names.get(acct_code) or line["account_name"]
+
                 TrialBalanceLine.objects.create(
                     financial_year=fy,
                     account_code=acct_code,
-                    account_name=line["account_name"],
+                    account_name=acct_name,
                     opening_balance=opening,
                     debit=debit,
                     credit=credit,
@@ -1461,7 +1480,10 @@ def commit_import(request, fy_pk):
             TrialBalanceLine.objects.create(
                 financial_year=fy,
                 account_code=code,
-                account_name=comp.get("account_name", ""),
+                # Chart name, not the snapshot's — the snapshot may itself
+                # hold a source name written by an earlier import, and
+                # copying it here is how the wrong name reached later years.
+                account_name=chart_names.get(code) or comp.get("account_name", ""),
                 opening_balance=opening,
                 debit=Decimal("0"),
                 credit=Decimal("0"),
@@ -1506,7 +1528,7 @@ def commit_import(request, fy_pk):
             TrialBalanceLine.objects.create(
                 financial_year=fy,
                 account_code=code,
-                account_name=comp.get("account_name", ""),
+                account_name=chart_names.get(code) or comp.get("account_name", ""),
                 opening_balance=comp.get("opening_balance", Decimal("0")),
                 debit=Decimal("0"),
                 credit=Decimal("0"),
