@@ -449,6 +449,13 @@ class Entity(models.Model):
         """True only where income must follow the unit register."""
         return self.entity_type == self.EntityType.UNIT_TRUST
 
+    @property
+    def total_units(self):
+        """Units on issue across active unit holders."""
+        return self.officers.filter(
+            date_ceased__isnull=True, units_held__isnull=False,
+        ).aggregate(t=models.Sum("units_held"))["t"] or 0
+
 
 # ---------------------------------------------------------------------------
 # Entity Officer / Signatory
@@ -513,6 +520,13 @@ class EntityOfficer(models.Model):
     shares_held = models.PositiveIntegerField(
         null=True, blank=True,
         help_text="Number of shares held (shareholders/directors of companies only). Used for dividend calculations.",
+    )
+    units_held = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text=(
+            "Units held in a unit trust. The register is authoritative: "
+            "distribution_percentage is derived from this, not typed."
+        ),
     )
     email = models.EmailField(
         blank=True, default="",
@@ -594,8 +608,43 @@ class EntityOfficer(models.Model):
         # Only unit holders and beneficiaries may have distribution_percentage
         if self.role not in self.DISTRIBUTION_ROLES:
             self.distribution_percentage = None
+        # Units belong to the unit register alone.
+        if self.role != self.OfficerRole.UNIT_HOLDER and "unit_holder" not in (self.roles or []):
+            self.units_held = None
+
+    @property
+    def unit_percentage(self):
+        """This holder's share of units on issue, as a percentage."""
+        total = self.entity.total_units
+        if not total or not self.units_held:
+            return Decimal("0")
+        return (Decimal(self.units_held) / Decimal(total) * 100).quantize(
+            Decimal("0.0001")
+        )
+
+    @classmethod
+    def recalculate_unit_percentages(cls, entity):
+        """Rewrite stored percentages from the unit register.
+
+        unit_percentage divides by entity.total_units, a live DB aggregate,
+        so a holder saved before others exist has its percentage computed
+        against an incomplete total. Per-instance save() cannot fix this on
+        its own — after any register change, every unit-holding officer on
+        the entity must be re-saved so their stored distribution_percentage
+        reflects the final total.
+        """
+        holders = cls.objects.filter(
+            entity=entity, units_held__isnull=False,
+        )
+        for holder in holders:
+            holder.save()
 
     def save(self, *args, **kwargs):
+        # Units are the register; distribution_percentage is derived from
+        # them. This must happen before the old-percentage snapshot below,
+        # so the audit history records the derived value, not a stale one.
+        if self.units_held is not None:
+            self.distribution_percentage = self.unit_percentage.quantize(Decimal("0.01"))
         # Auto-assign display_order on creation if still default 0
         if not self.pk or self._state.adding:
             max_order = EntityOfficer.objects.filter(
