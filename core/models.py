@@ -1462,10 +1462,20 @@ class EntityChartOfAccount(models.Model):
                 continue
             if tpl.account_code in existing_codes:
                 continue
+            account_name = tpl.account_name
+            if entity.is_unit_trust:
+                # The shared "trust" template's own wording says
+                # "Beneficiary" (e.g. 4000 "Opening balance - Beneficiary").
+                # A unit trust's income recipients are unit holders — apply
+                # the same substitution as core.entity_terminology as an
+                # overlay on the copy, not a second template.
+                account_name = account_name.replace(
+                    "Beneficiary", "Unit Holder"
+                ).replace("beneficiary", "unit holder")
             created.append(cls(
                 entity=entity,
                 account_code=tpl.account_code,
-                account_name=tpl.account_name,
+                account_name=account_name,
                 classification=tpl.classification,
                 section=tpl.section,
                 tax_code=tpl.tax_code,

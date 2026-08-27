@@ -156,6 +156,11 @@ def _build_account_name(entry, officer):
 
     Unit-holder override applies to the "Funds loaned to trust" codes
     (4004 / 4404 / 4504) when the officer is a unit holder.
+
+    On a unit trust, BENEFICIARY_PARENT_CODES' own wording ("Opening
+    balance - Beneficiary", "Beneficiary current account") is overlaid with
+    "Unit Holder" — the same substitution seed_from_template applies to the
+    template rows — while the officer-name suffix is untouched.
     """
     from core.models import EntityOfficer
     if (
@@ -163,7 +168,12 @@ def _build_account_name(entry, officer):
         and entry["code"] in _UNIT_HOLDER_FUNDS_LOANED_CODES
     ):
         return f"Unitholders' funds introduced — {officer.full_name}"
-    return f"{entry['name']} — {officer.full_name}"
+    name = entry["name"]
+    if officer.entity.is_unit_trust:
+        name = name.replace("Beneficiary", "Unit Holder").replace(
+            "beneficiary", "unit holder"
+        )
+    return f"{name} — {officer.full_name}"
 
 
 def _has_postings(entity, account_code):
