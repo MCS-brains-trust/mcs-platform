@@ -26,8 +26,9 @@ from core.models import (
     FinancialYear, TrustWorkspace, BeneficiaryProfile,
     DistributionScenario, Section100AAssessment, TrustElectionRecord,
     EntityOfficer, ActivityLog, TaxPlanningScenario,
-    AdjustingJournal, JournalLine,
+    AdjustingJournal, JournalLine, BeneficiaryAllocation,
 )
+from core.unit_allocation import allocate_by_units
 
 logger = logging.getLogger(__name__)
 ZERO = Decimal("0")
@@ -579,6 +580,70 @@ def _entity_has_unitholders(entity):
     return entity.officers.filter(
         django_models.Q(role='unit_holder') | django_models.Q(roles__contains='unit_holder')
     ).exists()
+
+
+def allocate_unit_trust_distribution(distribution):
+    """Allocate a unit trust's distribution strictly by the unit register.
+
+    Every stream splits in the same proportion -- there is no streaming
+    choice in a fixed trust -- and franking credits follow the franked
+    dividends they attach to (there is no separate franking-credits field
+    to allocate). Rows are refreshed in place (``update_or_create`` keyed
+    on the ``[distribution, beneficiary]`` unique-together pair) so
+    re-running is idempotent: same holder, same row, refreshed values.
+
+    Deliberately does NOT use ``BeneficiaryAllocation.calculate_allocation``
+    -- that method quantizes each row independently from ``percentage``,
+    which does not guarantee the rows sum to the stream total. This
+    function instead uses Task 7's ``allocate_by_units``, which splits by
+    largest-remainder so the parts sum EXACTLY to the whole.
+
+    Holdings are keyed on the officer's pk (unique per row, as
+    ``allocate_by_units`` requires) and ``units_held is None`` rows are
+    excluded before calling in -- ``units_held`` is nullable, and a bare
+    ``None`` reaching ``allocate_by_units`` would blow up inside its
+    ``sum()`` with an unhelpful ``TypeError`` rather than a clear error.
+
+    Raises ValueError (propagated from ``allocate_by_units``) when the
+    active register is empty or has no units on issue -- allocating a
+    fixed trust's income with no register is a misconfiguration, not a
+    zero-row no-op, so this must fail loudly rather than silently
+    allocating nothing.
+    """
+    entity = distribution.financial_year.entity
+    holders = list(
+        EntityOfficer.objects.filter(
+            entity=entity, date_ceased__isnull=True, units_held__isnull=False,
+        ).order_by("display_order", "full_name")
+    )
+    holdings = [(holder.pk, holder.units_held) for holder in holders]
+
+    streams = {
+        "allocated_capital_gains": distribution.capital_gains,
+        "allocated_franked_dividends": distribution.franked_dividends,
+        "allocated_foreign_income": distribution.foreign_income,
+        "allocated_other_income": distribution.other_income,
+    }
+    split = {
+        field: allocate_by_units(amount, holdings)
+        for field, amount in streams.items()
+    }
+    entitlement = allocate_by_units(distribution.distributable_income, holdings)
+
+    rows = []
+    for holder in holders:
+        row, _ = BeneficiaryAllocation.objects.update_or_create(
+            distribution=distribution,
+            beneficiary=holder,
+            defaults={
+                "percentage": holder.unit_percentage,
+                "fixed_amount": None,
+                "total_distribution": entitlement[holder.pk],
+                **{field: values[holder.pk] for field, values in split.items()},
+            },
+        )
+        rows.append(row)
+    return rows
 
 
 def _serialize_workspace(workspace):
