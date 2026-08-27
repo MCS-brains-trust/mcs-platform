@@ -48,7 +48,7 @@ Settled with Elio before this document was written:
 
 ## Scope
 
-**In scope:** the `unit_trust` entity type and its compatibility layer; a unit
+**In scope:** the `trust_unit` entity type and its compatibility layer; a unit
 register on `EntityOfficer`; unit-proportional allocation across all income
 streams; the Tax Planning tab in locked mode; "Unit Holder" terminology through
 UI, statements and chart; migration of Minli.
@@ -62,7 +62,21 @@ changing any behaviour of discretionary trusts.
 
 ### 1. Entity type and compatibility
 
-Add `UNIT_TRUST = "unit_trust", "Unit Trust"` to `Entity.EntityType`.
+Add `UNIT_TRUST = "trust_unit", "Unit Trust"` to `Entity.EntityType`.
+
+**Why `trust_unit` and not `unit_trust`.** The value `trust_unit` is already an
+established convention across roughly twenty sites — `eva_engine.py`,
+`eva_div7a.py`, `eva_trust_planning.py`, `views_office_admin.py`, two
+`TRUST_TYPES` sets in `views.py`, and several templates. `views_trust.py:577`
+already tests `entity.entity_type == 'trust_unit'` inside
+`_entity_has_unitholders`. The value was simply never added to `EntityType`, so
+all of that code is dormant. Adopting the existing name activates it and keeps
+one convention; a new `unit_trust` value would leave it dead and create a
+second. The display label is "Unit Trust" regardless.
+
+`trust_discretionary` and `trust_hybrid` are dormant in the same places. They
+stay out of scope: neither is needed here, and each new type repeats the
+regression risk described below.
 
 The hazard is that 77 sites branch on `entity_type == "trust"` — 58 in Python,
 19 in templates — covering FS generation, distribution, tax, and chart seeding.
@@ -70,11 +84,11 @@ A sibling type value makes unit trusts fall out of all of them at once.
 
 So unit trusts inherit trust behaviour by default:
 
-- `TRUST_LIKE_TYPES = ("trust", "unit_trust")` in `core/models.py`.
+- `TRUST_LIKE_TYPES = ("trust", "trust_unit")` in `core/models.py`.
 - `Entity.is_trust_like` property, for the 19 template sites.
 - Every `entity_type == "trust"` test becomes one of these two forms.
 
-Three lookups are keyed by entity type and must resolve `unit_trust` to the
+Three lookups are keyed by entity type and must resolve `trust_unit` to the
 existing `trust` data rather than gaining copies of it:
 
 - `ChartOfAccount` — 468 template rows for `trust`.
@@ -86,7 +100,7 @@ Resolution rather than cloning is deliberate: cloned template rows drift the
 moment the xlsx source is edited, and the chart template's xlsx source is
 already known to diverge from the database.
 
-A data migration moves Minli to `unit_trust`, identified by the presence of
+A data migration moves Minli to `trust_unit`, identified by the presence of
 `unit_holder` officers. No other entity qualifies.
 
 **Failure direction.** A site missed in the sweep leaves a unit trust behaving
@@ -209,7 +223,7 @@ regression tests carry more weight than the unit-trust feature tests.
 
 **Migration:**
 
-- Minli becomes `unit_trust`, and its derived percentages still read 50/50
+- Minli becomes `trust_unit`, and its derived percentages still read 50/50
 - no other entity is reclassified
 
 ## Risks
