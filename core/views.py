@@ -315,7 +315,7 @@ def _is_retained_profits_account(account_code, account_name, mapped_line_item, e
     code_prefix = (account_code or "").split(".")[0]
     if code_prefix == "4199":
         return 2
-    expected = _RETAINED_PROFITS_STANDARD_CODES.get(entity_type)
+    expected = _RETAINED_PROFITS_STANDARD_CODES.get(template_entity_type(entity_type))
     if expected and mapped_line_item and (mapped_line_item.standard_code or "") == expected:
         return 1
     name_lower = (account_name or "").lower()
@@ -351,7 +351,7 @@ def _default_retained_profits_account(entity_type):
         "trust": ("Undistributed income", "4199"),
         "partnership": ("Partners' current accounts", "4199"),
         "sole_trader": ("Proprietor's funds", "4199"),
-    }.get(entity_type, ("Retained profits", "4199"))
+    }.get(template_entity_type(entity_type), ("Retained profits", "4199"))
 
 
 def _expected_next_year_openings(fy):

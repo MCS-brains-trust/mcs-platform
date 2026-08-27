@@ -182,7 +182,7 @@ def auto_map_account(classification: str, account_code: str, account_name: str, 
             "partnership": "BS-EQ-006",
             "sole_trader": "BS-EQ-008",
         }
-        code = equity_map.get(entity_type)
+        code = equity_map.get(template_entity_type(entity_type))
         if code:
             try:
                 return AccountMapping.objects.get(standard_code=code)

@@ -124,3 +124,54 @@ class UnitTrustAccountMappingApplicabilityTests(TestCase):
             "applicable_entities lists only 'trust' -- every financial "
             "statement line item would come out unmapped for a unit trust",
         )
+
+
+class UnitTrustClosesProfitToUndistributedIncomeTests(TestCase):
+    """A year's net P&L result must close into 'Undistributed income' (4199 /
+    BS-EQ-005) for a unit trust, exactly as it does for a discretionary trust
+    -- never into the generic 'Retained profits' default. This codebase has
+    already shipped two separate balance-sheet errors from this exact class
+    of bug (the trust equity presentation and trust profit-in-equity fixes),
+    so a visible accounting error here is the highest-value regression this
+    task can guard against.
+    """
+
+    def test_default_retained_profits_account_is_undistributed_income(self):
+        from core.views import _default_retained_profits_account
+
+        self.assertEqual(
+            _default_retained_profits_account("trust_unit"),
+            ("Undistributed income", "4199"),
+            "a trust_unit's year-end result would close into the generic "
+            "'Retained profits' account instead of Undistributed income -- "
+            "a visible error on the face of the balance sheet",
+        )
+
+    def test_mapping_engine_equity_range_resolves_to_undistributed_income(self):
+        from core.mapping_engine import auto_map_account
+
+        # Migration 0148_trust_4199_mapping already seeds BS-EQ-005 with
+        # applicable_entities=["trust"] on a fresh database -- get_or_create
+        # reuses that row rather than colliding on the unique standard_code.
+        mapping, _ = AccountMapping.objects.get_or_create(
+            standard_code="BS-EQ-005",
+            defaults={
+                "line_item_label": "Undistributed income",
+                "financial_statement": "balance_sheet",
+                "statement_section": "Equity",
+                "display_order": 510,
+                "applicable_entities": ["trust"],
+            },
+        )
+
+        result = auto_map_account(
+            classification="", account_code="4050", account_name="",
+            entity_type="trust_unit",
+        )
+
+        self.assertEqual(
+            result, mapping,
+            "a trust_unit account in the 4000-4199 equity range failed to "
+            "resolve BS-EQ-005 (Undistributed income) via the trust "
+            "equity_map -- it would fall through unmapped",
+        )
