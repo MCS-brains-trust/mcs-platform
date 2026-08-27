@@ -1098,6 +1098,34 @@ RISK_RULES = [
         "legislation_ref": "ITAA 1997 Subdiv 115-C (streaming of capital gains)",
     },
     {
+        "rule_id": "TRU-07",
+        "category": "trust",
+        "title": "Distribution exceeds available income",
+        "description": (
+            "{entity_name} distributed {distributed} against {available} of available "
+            "income ({net_profit} profit less {brought_forward} brought forward in 4199) "
+            "— over-distributed by {excess}. The trust has distributed more than it "
+            "earned after recouping prior year losses, leaving negative equity."
+        ),
+        "severity": "HIGH",
+        "tier": 2,
+        "applicable_entities": ["trust"],
+        "trigger_config": {
+            "type": "trust_distribution",
+            "check_type": "over_distribution",
+            "tolerance": "1",
+        },
+        "recommended_action": (
+            "1. Reduce the distribution to profit less the brought-forward 4199 balance. "
+            "2. Confirm whether the carried-forward loss is recoupable — the trust loss "
+            "tests in Sch 2F may deny the deduction, in which case s95 net income and "
+            "accounting distributable income will differ. "
+            "3. Check the deed's definition of distributable income before restating. "
+            "4. Re-post the appropriation journal for the corrected amount."
+        ),
+        "legislation_ref": "ITAA 1936 s97; ITAA 1936 Sch 2F (trust losses)",
+    },
+    {
         "rule_id": "TRU-04",
         "category": "trust",
         "title": "Trust loss carry-forward — trust loss provisions",

@@ -182,11 +182,50 @@ def _calculate_income_streams(financial_year):
 
     net_profit = total_revenue - total_expenses
 
+    # A trust cannot distribute income it has not earned. A loss carried
+    # forward in 4199 has to be recouped before there is distributable income;
+    # offering the raw profit is how Dr Services Family Trust FY2026 came to
+    # distribute 89,899.75 against 61,848.01 available and close the year at
+    # negative equity of exactly the 28,051.74 it never recouped.
+    #
+    # 4199 holds the brought-forward position, debit-positive: a carried-forward
+    # loss is a debit and reduces the distributable figure, carried-forward
+    # undistributed income is a credit and increases it.
+    #
+    # The rule is "everything in 4199 EXCEPT this year's own appropriation".
+    # Keying off source="rollover" instead is wrong as soon as a prior year's
+    # correction is recognised in the current year: Dr Services FY2026 opens on
+    # the lodged 29,150.97 and carries a prior-period adjustment crediting
+    # 1,099.23 (a GST reclass FY2025 could not take up, being already lodged),
+    # so the recoupable loss is 28,051.74 and not the 29,150.97 the rollover row
+    # alone reports. Excluding only the live distribution's own rows also keeps
+    # the figure idempotent -- posting a distribution must not shrink the
+    # balance that sized it.
+    from core.models import AdjustingJournal, TrialBalanceLine
+    _4199 = TrialBalanceLine.objects.filter(
+        financial_year=financial_year, account_code__startswith="4199",
+    )
+    _live = AdjustingJournal.live_trust_distribution(financial_year)
+    if _live is not None:
+        _4199 = _4199.exclude(source_journal=_live)
+    brought_forward_losses = sum((line.closing_balance or ZERO) for line in _4199)
+    net_distributable_income = net_profit - brought_forward_losses
+    # Never offer a negative figure: where losses exceed the year's profit,
+    # nothing is distributable and the balance stays carried forward.
+    if net_distributable_income < ZERO:
+        net_distributable_income = ZERO
+
+    # income_streams stays GROSS -- it is the character breakdown (CGT
+    # discount, franked, tax-free) used for streaming, and which stream a
+    # recouped loss should be charged against is a deed and Subdiv 115-C
+    # question, not one to hard-code here. net_distributable_income is the cap;
+    # TRU-07 flags an allocation that exceeds it.
     return {
         "total_revenue": str(total_revenue),
         "total_expenses": str(total_expenses),
         "net_profit": str(net_profit),
-        "net_distributable_income": str(net_profit),  # Simplified; trust law adjustments may apply
+        "brought_forward_losses": str(brought_forward_losses),
+        "net_distributable_income": str(net_distributable_income),
         "income_streams": {k: str(v) for k, v in income_streams.items()},
     }
 

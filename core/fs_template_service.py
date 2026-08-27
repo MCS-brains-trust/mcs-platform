@@ -103,6 +103,58 @@ def aggregate_tb_lines(queryset):
 # ---------------------------------------------------------------------------
 # helpers — TB section extraction (mirrors docgen._get_tb_sections logic)
 # ---------------------------------------------------------------------------
+# Chart section -> statement class. EntityChartOfAccount records an account's
+# *class*; it does not reliably distinguish current from non-current ("assets"
+# is recorded for ~1,080 accounts against 6 for "current_assets"). So the chart
+# decides the class and the numeric code range refines current vs non-current
+# within it.
+#
+# Before this, classification was pure code range and the chart's section was
+# ignored, so every 4000-4999 account landed in equity regardless. That dragged
+# 4110.NN ("Funds loaned to trust", section "liabilities" per
+# beneficiary_account_service.BENEFICIARY_PARENT_CODES) into a trust's equity
+# block -- Dr Services Family Trust FY2026 issued statements showing "Funds
+# loaned to trust - Ronen Davidov (836)" as an equity row.
+_COA_SECTION_CLASS = {
+    "revenue": "income",
+    "cost_of_sales": "cogs",
+    "expenses": "expenses",
+    "assets": "assets",
+    "current_assets": "current_assets",
+    "non_current_assets": "noncurrent_assets",
+    "liabilities": "liabilities",
+    "current_liabilities": "current_liabilities",
+    "non_current_liabilities": "noncurrent_liabilities",
+    "equity": "equity",
+    "capital_accounts": "equity",
+    "pl_appropriation": "equity",
+}
+
+
+def _resolve_section_from_coa(coa_section, code_num, is_cogs, account_code,
+                              code_to_section):
+    """Statement section for a chart section, or None to fall back to code range.
+
+    Returns None for "suspense", a blank section, an unrecognised value, or an
+    account with no chart row at all -- those keep the historical pure
+    code-range behaviour.
+    """
+    cls = _COA_SECTION_CLASS.get((coa_section or "").strip().lower())
+    if cls is None:
+        return None
+    if cls == "income":
+        # Trading vs other income is resolved per code in Pass 1 for the 0-999
+        # range; anything else the chart calls revenue is other income.
+        return code_to_section.get(account_code, "income")
+    if cls == "expenses":
+        return "cogs" if is_cogs else "expenses"
+    if cls == "assets":
+        return "noncurrent_assets" if 2500 <= code_num < 3000 else "current_assets"
+    if cls == "liabilities":
+        return "noncurrent_liabilities" if 3500 <= code_num < 4000 else "current_liabilities"
+    return cls
+
+
 def _get_tb_sections(fy):
     """Extract trial balance lines grouped into financial statement sections."""
     # Materialise once — Pass 1 (Defect B Phase 2) needs to scan all rows for
@@ -113,6 +165,12 @@ def _get_tb_sections(fy):
         .select_related("mapped_line_item")
         .order_by("account_code")
         .all()
+    )
+    from core.models import EntityChartOfAccount
+    coa_sections = dict(
+        EntityChartOfAccount.objects
+        .filter(entity=fy.entity)
+        .values_list("account_code", "section")
     )
     sections = {
         "trading_income": [],
@@ -209,6 +267,14 @@ def _get_tb_sections(fy):
         is_cogs = any(kw in name_lower for kw in [
             "cost of", "opening stock", "closing stock", "purchases", "stock on hand",
         ])
+
+        resolved = _resolve_section_from_coa(
+            coa_sections.get(line.account_code), code_num, is_cogs,
+            line.account_code, code_to_section,
+        )
+        if resolved is not None:
+            sections[resolved].append(entry)
+            continue
 
         if code_num < 1000:
             # Defect B Phase 2: per-code section pre-resolved in Pass 1 above
@@ -418,68 +484,65 @@ def _net_beneficiary_accounts(fy, sections):
     # These are all netted into the officer bucket using the .xx suffix.
     # 4004.xx = "Funds loaned to trust" (the beneficiary loan account),
     # 9003.xx = old-convention loan account, 4053.xx = physical distributions.
-    SUFFIX_PREFIXES = ("4004.", "9003.", "4053.")
+    # 4000.xx = "Opening balance - Beneficiary" (the brought-forward loan
+    # balance) and 4110.xx = "Funds loaned to trust" (the liabilities-section
+    # twin of 4004.xx) net into the same officer bucket. Omitting them left
+    # the opening balance stranded in equity and the 4110 balance
+    # misclassified -- together the 22,837 and (836) equity rows that Dr
+    # Services Family Trust FY2026 issued.
+    SUFFIX_PREFIXES = ("4000.", "4004.", "4110.", "9003.", "4053.")
 
-    # ── Scan equity section ──────────────────────────────────────────────────
-    to_remove = []
-    for item in sections.get("equity", []):
-        code = (item.get("account_code", "") or "")
+    # ── Scan every balance-sheet section ─────────────────────────────────────
+    # Not equity alone: now that the chart's section decides an account's class
+    # (_resolve_section_from_coa), 4110.xx lands in current_liabilities where
+    # its chart row says it belongs, so the netting has to reach it there too.
+    for _sec_key in ("equity", "current_liabilities", "current_assets",
+                     "noncurrent_liabilities", "noncurrent_assets"):
+        to_remove = []
+        for item in sections.get(_sec_key, []):
+            code = (item.get("account_code", "") or "")
 
-        # Skip 4199 — handled separately by the caller
-        if code.startswith("4199"):
-            continue
+            # Skip 4199 — handled separately by the caller
+            if code.startswith("4199"):
+                continue
 
-        # 4003.xx = "Interest received on loan" — NOT a loan account. Leave it
-        # in place so it flows to its normal section classification; never net.
-        if code == "4003" or code.startswith("4003."):
-            continue
+            # 4003.xx = "Interest received on loan" — NOT a loan account. Leave
+            # it in place so it flows to its normal section classification.
+            if code == "4003" or code.startswith("4003."):
+                continue
 
-        # Officer-mapped accounts (e.g. 4004.xx via ClientAccountMapping)
-        if code in code_to_officer:
-            officer_id, disp = code_to_officer[code]
-            _ensure_officer(officer_id, disp)
-            officer_nets[officer_id]["cy"] += item.get("cy_amount", Decimal("0"))
-            officer_nets[officer_id]["py"] += item.get("py_amount", Decimal("0"))
-            to_remove.append(item)
-            continue
-
-        # Suffix-matched accounts: 4004.xx, 9003.xx, 4053.xx
-        if any(code.startswith(p) for p in SUFFIX_PREFIXES):
-            suffix = code.split(".", 1)[1] if "." in code else ""
-            if suffix in suffix_to_officer:
-                officer_id, display_name = suffix_to_officer[suffix]
-                _ensure_officer(officer_id, display_name)
+            # Officer-mapped accounts (e.g. 4004.xx via ClientAccountMapping,
+            # or a Distribution Payable assigned to a beneficiary officer)
+            if code in code_to_officer:
+                officer_id, disp = code_to_officer[code]
+                _ensure_officer(officer_id, disp)
                 officer_nets[officer_id]["cy"] += item.get("cy_amount", Decimal("0"))
                 officer_nets[officer_id]["py"] += item.get("py_amount", Decimal("0"))
                 to_remove.append(item)
-            else:
-                # Unknown suffix — strip silently rather than leave in equity
-                to_remove.append(item)
-            continue
+                continue
 
-    for item in to_remove:
-        try:
-            sections["equity"].remove(item)
-        except ValueError:
-            pass
+            # Suffix-matched: 4000.xx, 4004.xx, 4110.xx, 9003.xx, 4053.xx
+            if any(code.startswith(p) for p in SUFFIX_PREFIXES):
+                suffix = code.split(".", 1)[1] if "." in code else ""
+                if suffix in suffix_to_officer:
+                    officer_id, display_name = suffix_to_officer[suffix]
+                    _ensure_officer(officer_id, display_name)
+                    officer_nets[officer_id]["cy"] += item.get("cy_amount", Decimal("0"))
+                    officer_nets[officer_id]["py"] += item.get("py_amount", Decimal("0"))
+                    to_remove.append(item)
+                elif _sec_key == "equity":
+                    # Unknown suffix — strip rather than leave a beneficiary
+                    # account stranded in equity. Only done in equity: dropping
+                    # an unmatched row from an asset or liability section would
+                    # silently unbalance the balance sheet.
+                    to_remove.append(item)
+                continue
 
-    # ── Also net beneficiary-mapped accounts out of current_liabilities ──────
-    # (e.g. Distribution Payable accounts assigned to a beneficiary officer)
-    cl_to_remove = []
-    for item in sections.get("current_liabilities", []):
-        code = (item.get("account_code", "") or "")
-        if code.startswith("4199"):
-            continue
-        if code in code_to_officer:
-            officer_id, _ = code_to_officer[code]
-            officer_nets[officer_id]["cy"] += item.get("cy_amount", Decimal("0"))
-            officer_nets[officer_id]["py"] += item.get("py_amount", Decimal("0"))
-            cl_to_remove.append(item)
-    for item in cl_to_remove:
-        try:
-            sections["current_liabilities"].remove(item)
-        except ValueError:
-            pass
+        for item in to_remove:
+            try:
+                sections[_sec_key].remove(item)
+            except ValueError:
+                pass
 
     # ── Route each officer net to assets or liabilities ──────────────────────
     # Sign convention: equity lines are credit-normal (negative = credit).
@@ -501,6 +564,51 @@ def _net_beneficiary_accounts(fy, sections):
             sections.setdefault("current_liabilities", []).append(entry)
         else:
             sections.setdefault("current_assets", []).append(entry)
+
+
+def _collapse_trust_equity_to_accumulated(sections):
+    """Collapse a trust's appropriation rows into one "Accumulated losses" line.
+
+    HandiLedger presents trust equity as a single cumulative-P&L line, and the
+    firm's issued statements follow it: Dr Services Family Trust FY2025 showed
+    "Accumulated Losses (29,151)" alone, and The Cleary Family Trust FY2025 --
+    a fully-distributed profit year -- showed only "Contribution by settlor 50".
+
+    4199 ("Undistributed income") plus the injected "Current year profit /
+    (loss)" row together *are* that cumulative figure. The distribution journal
+    debits 4199 by the year's distributed profit, so the pair nets back to the
+    brought-forward balance whenever the year is fully distributed. Rendering
+    them as two rows labels a fully-distributed year's profit "undistributed":
+    Dr Services FY2026 issued "Undistributed income (117,951)" when only 28,052
+    of that was accumulated losses and the other 89,900 was the distribution.
+
+    Genuine equity accounts -- settlor contribution, trust corpus, revaluation
+    reserves -- are matched by neither code and are left untouched.
+    """
+    rows = sections.get("equity", [])
+    appropriation = [
+        r for r in rows
+        if (r.get("account_code", "") or "").startswith("4199")
+        or (r.get("account_code", "") or "") == "NET_PROFIT"
+    ]
+    if not appropriation:
+        return
+    cy = sum((r.get("cy_amount") or Decimal("0")) for r in appropriation)
+    py = sum((r.get("py_amount") or Decimal("0")) for r in appropriation)
+    for r in appropriation:
+        rows.remove(r)
+    # A fully-distributed year with no brought-forward balance nets to nil --
+    # the Cleary shape, where no accumulated row is presented at all.
+    if cy == 0 and py == 0:
+        return
+    # Raw amounts are debit-positive: a net debit is accumulated losses.
+    label = "Accumulated losses" if (cy or py) > 0 else "Accumulated profits"
+    rows.append({
+        "account_code": "ACCUM_PL",
+        "account_name": label,
+        "cy_amount": cy,
+        "py_amount": py,
+    })
 
 
 # Placeholder for ampersand to survive docxtpl XML rendering.
@@ -776,6 +884,12 @@ def _reclassify_sign_flips(sections):
        supplier owes the entity) is moved to Current Assets under
        "Receivables".
 
+    In every rule the CURRENT year decides the section and the comparative
+    follows it, keeping its own sign -- the presentation The Cleary Family Trust
+    FY2025 uses for a beneficiary loan that changed sides, and the convention
+    ``_net_beneficiary_accounts`` already follows by routing on ``net_cy``
+    alone. Where the current year is nil the prior year decides.
+
     Sign convention reminder:
         current_assets   — debit-normal  → positive cy_amount = asset
         current_liabilities — credit-normal → negative cy_amount = liability
@@ -792,7 +906,13 @@ def _reclassify_sign_flips(sections):
             item.get("standard_code") in _CASH_STANDARD_CODES
             or any(kw in name_lower for kw in _BANK_KEYWORDS)
         )
-        if is_bank and (cy < Decimal("0") or py < Decimal("0")):
+        # The CURRENT year decides the section; the comparative follows it
+        # carrying its own sign. Testing "cy < 0 or py < 0" dragged a
+        # current-year positive balance into liabilities on the strength of a
+        # prior-year overdraft alone. Where the current year is nil the prior
+        # year decides, so a closed account still lands sensibly.
+        _decide = cy if cy != Decimal("0") else py
+        if is_bank and _decide < Decimal("0"):
             # Sign convention for current_liabilities is credit-normal:
             #   _format_lines(credit_normal=True) negates cy_amount for display.
             # A bank overdraft has a *negative* debit-normal value (e.g. -67360).
@@ -822,7 +942,13 @@ def _reclassify_sign_flips(sections):
         is_payable = any(kw in name_lower for kw in _PAYABLE_KEYWORDS)
         # In credit-normal convention, a *positive* cy_amount means the
         # account has a debit balance (entity is owed money → reclassify as asset).
-        if (is_tax or is_payable) and (cy > Decimal("0") or py > Decimal("0")):
+        # Same rule as the overdraft branch above: the current year decides.
+        # Testing "cy > 0 or py > 0" rendered Dr Services Family Trust FY2026's
+        # GST control account as a NEGATIVE current asset (-12,767.02) because
+        # FY2025's balance was a 6,102.20 debit -- when FY2026 in fact owes the
+        # ATO 12,767.02 and the line belongs in current liabilities.
+        _decide = cy if cy != Decimal("0") else py
+        if (is_tax or is_payable) and _decide > Decimal("0"):
             reclassified = dict(item)
             # In credit-normal convention a *positive* cy_amount means a debit
             # balance (entity is owed money).  Current assets are debit-normal,
@@ -1387,6 +1513,12 @@ def build_company_context(financial_year, include_watermark=True):
     # short by exactly the year's profit whenever this row is missing,
     # whether or not a distribution was posted. There is no trust-specific
     # exemption from the post-injection integrity check below.
+    # Trusts present equity as a single cumulative-P&L line. Runs after the
+    # profit row is injected above and before the integrity check below, both
+    # of which are sum-based and so are unaffected by the collapse.
+    if entity.entity_type == "trust":
+        _collapse_trust_equity_to_accumulated(sections)
+
     _final_equity = -_sum_section(sections["equity"])
     _final_net_assets = _test_net_assets
     if abs(_final_net_assets - _final_equity) > Decimal("1"):
