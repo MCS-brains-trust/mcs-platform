@@ -772,7 +772,7 @@ class EntityOfficer(models.Model):
                 role=cls.OfficerRole.UNIT_HOLDER,
             )
             .filter(cls.active_register_q(today))
-            .order_by("pk")
+            .order_by("display_order", "full_name")
         )
         if not active_holders:
             return
@@ -794,7 +794,22 @@ class EntityOfficer(models.Model):
         }
         remainder = {pk: raw[pk] - floor_alloc[pk] for pk in raw}
         shortfall = SCALE - sum(floor_alloc.values())
-        for pk in sorted(remainder, key=lambda p: (-remainder[p], p))[:shortfall]:
+        # Tie-break on (display_order, full_name) -- the SAME key
+        # allocate_by_units (core/unit_allocation.py) tie-breaks on, and the
+        # same one core/views_trust.allocate_unit_trust_distribution and
+        # core/views_tax_planning._apply_unit_distributions feed it. These
+        # are two separate largest-remainder implementations (deliberately
+        # so: one distributes 100.00% in hundredths of a percent, the other
+        # an arbitrary money amount in cents), but they must not disagree
+        # about WHO the odd unit goes to: with three equal holders, the
+        # holder displayed at 33.34% has to be the holder who actually
+        # receives the extra cent. Sorting on the row's own pk (a random
+        # UUID) made those two answers independent coin flips.
+        order_key = {
+            h.pk: (h.display_order, h.full_name, h.pk) for h in active_holders
+        }
+        ordered = sorted(remainder, key=lambda p: (-remainder[p], order_key[p]))
+        for pk in ordered[:shortfall]:
             floor_alloc[pk] += 1
 
         for holder in active_holders:
@@ -832,7 +847,7 @@ class EntityOfficer(models.Model):
         """Create/update distribution history records when percentage changes."""
         if self.role not in self.DISTRIBUTION_ROLES:
             return
-        if self.role == self.OfficerRole.UNIT_HOLDER:
+        if self.role == self.OfficerRole.UNIT_HOLDER and self.entity.is_unit_trust:
             # Unit-holder history is written exclusively by
             # recalculate_unit_percentages(), in one pass over the whole
             # register, using the same safe write helper. A per-instance
@@ -846,6 +861,19 @@ class EntityOfficer(models.Model):
             # the ORM, bypassing clean()) must still get its history
             # written here -- units_held is not what makes something a
             # unit holder, role="unit_holder" is (see clean()).
+            #
+            # ALSO qualified on entity.is_unit_trust: recalculate_unit_
+            # percentages is only the sole writer on a UNIT trust, because
+            # it is only ever called under `if entity.is_unit_trust`
+            # (core/views.py). core/forms.py still offers the Unit Holder
+            # role on a plain discretionary `trust`, and on one of those
+            # nothing recomputes the register -- so returning early here
+            # regardless of entity type saved the typed percentage while
+            # writing NO history row at all, silently losing an audit
+            # trail the four production discretionary trusts had before
+            # this branch. On a plain trust a unit holder's percentage is
+            # hand-typed like a beneficiary's, so it gets hand-typed
+            # history, below.
             return
         if self.distribution_percentage is None:
             return

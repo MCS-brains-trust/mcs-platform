@@ -104,9 +104,22 @@ def _apply_unit_distributions(worksheet):
     the Section 1 recalculation, since that is what changes
     ``distributable_income`` on every page load.
 
-    Holdings are keyed on the ``TaxPlanningBeneficiaryRow``'s own pk --
-    always unique (``unique_together = ["worksheet", "beneficiary"]``), so
-    ``allocate_by_units``'s duplicate-key guard can never fire here.
+    Holdings are keyed on ``(display_order, full_name, pk)`` of the HOLDER,
+    not on the ``TaxPlanningBeneficiaryRow``'s own pk: that is the shared
+    tie-break key (see ``EntityOfficer.recalculate_unit_percentages`` and
+    ``allocate_by_units``), so the holder this tab DISPLAYS at 33.34% is the
+    holder it also shows the extra cent. Keying on the row pk -- a random
+    UUID -- made those two answers independent. The officer pk rides along
+    last, so the key stays unique per row and ``allocate_by_units``'s
+    duplicate-key guard still cannot fire here.
+
+    Does nothing to a FINALISED worksheet. This runs on every GET of the
+    tab, and the register it derives from is TODAY's register: without this
+    guard, merely opening a finalised prior-year worksheet silently
+    rewrote its stored ``proposed_distribution`` figures from a register
+    that may have changed since -- while ``tax_planning_save`` explicitly
+    refuses to touch a finalised worksheet at all. A finalised worksheet is
+    a record of what was decided, so it is read-only here too.
 
     "Active" matches ``EntityOfficer.active_register_q()`` -- the single
     canonical predicate shared with ``Entity.total_units`` and
@@ -133,22 +146,31 @@ def _apply_unit_distributions(worksheet):
     entity = worksheet.financial_year.entity
     if not entity.is_unit_trust:
         return None
+    if worksheet.is_finalised:
+        # A finalised worksheet is a record, not a live derivation -- see
+        # docstring. tax_planning_save refuses a finalised worksheet too.
+        return None
 
     rows = list(worksheet.beneficiary_rows.select_related("beneficiary"))
 
-    active_holdings = dict(
-        EntityOfficer.objects.filter(
+    active_holders = {
+        officer.pk: officer
+        for officer in EntityOfficer.objects.filter(
             EntityOfficer.active_register_q(),
             entity=entity,
             units_held__isnull=False,
-        ).values_list("pk", "units_held")
-    )
+        )
+    }
 
-    holdings = [
-        (row.pk, active_holdings[row.beneficiary_id])
-        for row in rows
-        if row.beneficiary_id in active_holdings
-    ]
+    holdings = []
+    row_for_key = {}
+    for row in rows:
+        holder = active_holders.get(row.beneficiary_id)
+        if holder is None:
+            continue
+        key = (holder.display_order, holder.full_name, holder.pk)
+        holdings.append((key, holder.units_held))
+        row_for_key[key] = row
 
     if not holdings or not any(units for _, units in holdings):
         for row in rows:
@@ -162,9 +184,12 @@ def _apply_unit_distributions(worksheet):
         )
 
     split = allocate_by_units(worksheet.distributable_income, holdings)
+    by_row = {
+        row_for_key[key].pk: amount for key, amount in split.items()
+    }
 
     for row in rows:
-        new_value = split.get(row.pk, Decimal("0"))
+        new_value = by_row.get(row.pk, Decimal("0"))
         if row.proposed_distribution != new_value:
             row.proposed_distribution = new_value
             row.save(update_fields=["proposed_distribution"])

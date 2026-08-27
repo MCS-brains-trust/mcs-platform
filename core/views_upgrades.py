@@ -400,12 +400,26 @@ def trust_distribution(request, pk):
         dist.other_income = dist.accounting_profit
         dist.save()
 
-    # Get beneficiaries from entity officers
-    beneficiaries = EntityOfficer.objects.filter(
-        entity=entity
-    ).filter(
-        Q(role="beneficiary") | Q(roles__contains=["beneficiary"])
-    )
+    # Get the income recipients from the entity officers. A unit trust's
+    # recipients are unit_holder rows, which this list left out entirely --
+    # so `beneficiaries` came back empty, the template's
+    # `{% if beneficiaries %}` hid the whole allocations form INCLUDING its
+    # submit button, and Task 8's save_allocations wiring below (which calls
+    # allocate_unit_trust_distribution) was unreachable dead code.
+    #
+    # Same role predicate as views_tax_planning._sync_beneficiary_rows, and
+    # the same canonical active_register_q. Note the predicate is applied in
+    # Python: `roles` is a JSONField and its `contains` lookup raises
+    # NotSupportedError on SQLite outright (see that function's docstring),
+    # which is what the previous filter did on the test backend.
+    beneficiaries = [
+        officer for officer in EntityOfficer.objects.filter(entity=entity).filter(
+            EntityOfficer.active_register_q()
+        ).order_by("display_order", "full_name")
+        if officer.role in ("beneficiary", "unit_holder")
+        or "beneficiary" in (officer.roles or [])
+        or "unit_holder" in (officer.roles or [])
+    ]
 
     # Get existing allocations
     allocations = dist.allocations.select_related("beneficiary").all()

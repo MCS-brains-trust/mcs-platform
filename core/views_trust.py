@@ -646,7 +646,13 @@ def allocate_unit_trust_distribution(distribution):
     )
 
     def key_for(holder):
-        return (holder.display_order, holder.full_name)
+        # (display_order, full_name) is the shared tie-break key -- see
+        # EntityOfficer.recalculate_unit_percentages and allocate_by_units.
+        # The pk rides along last so two holders sharing a display_order AND
+        # a name cannot collide into allocate_by_units' duplicate-key
+        # ValueError; it never changes the order of two holders the user can
+        # actually tell apart.
+        return (holder.display_order, holder.full_name, holder.pk)
 
     holdings = [(key_for(holder), holder.units_held) for holder in holders]
 

@@ -7529,11 +7529,17 @@ def entity_officers(request, pk):
 
 
 def _handle_ceased_redistribution(request, officer):
-    """Auto-redistribute distribution % when a unit holder/beneficiary is ceased."""
+    """Auto-redistribute distribution % when a unit holder/beneficiary is ceased.
+
+    Messages come through ``beneficiary_noun`` -- a discretionary trust's
+    beneficiaries were being told about "unit holders" on every cessation.
+    """
     from django.db import transaction
     from django.db.models import Q, Sum
     from django.utils import timezone
     from decimal import Decimal
+
+    from core.entity_terminology import beneficiary_noun
 
     if officer.role not in EntityOfficer.DISTRIBUTION_ROLES:
         return
@@ -7586,19 +7592,53 @@ def _handle_ceased_redistribution(request, officer):
         if wrote_100:
             messages.info(
                 request,
-                f"{sole.full_name} is now the sole active unit holder and has been "
+                f"{sole.full_name} is now the sole active "
+                f"{beneficiary_noun(entity).lower()} and has been "
                 f"set to 100.00% distribution."
             )
     else:
         active_total = remaining.filter(
             distribution_percentage__isnull=False,
         ).aggregate(total=Sum("distribution_percentage"))["total"] or Decimal("0")
-        messages.warning(
-            request,
-            f"Warning: {officer.full_name} has been ceased. Their {ceased_pct}% "
-            f"distribution has not been reallocated. Active unit holders currently "
-            f"total {active_total}%. Please update distribution percentages manually."
-        )
+        plural = beneficiary_noun(entity, plural=True).lower()
+        if entity.is_unit_trust:
+            # Task 6 guarded only the count == 1 branch. On a unit trust the
+            # recompute above (entity_officer_edit calls
+            # recalculate_unit_percentages before this function) has ALREADY
+            # reallocated every surviving holder's share from the register,
+            # and distribution_percentage is `disabled` on this entity's
+            # officer form -- so telling the user their distribution "has not
+            # been reallocated... update distribution percentages manually"
+            # was both false and impossible to act on.
+            if active_total == Decimal("100.00"):
+                messages.info(
+                    request,
+                    f"{officer.full_name} has been ceased. Their "
+                    f"{ceased_pct}% has been reallocated automatically: the "
+                    f"remaining {plural} now hold "
+                    f"{active_total}% between them, derived from the unit "
+                    f"register. Change a holding to change a share."
+                )
+            else:
+                # The recompute early-returns when no active unit holder
+                # carries units (or the survivors are beneficiaries, not
+                # holders): say so instead of claiming a reallocation.
+                messages.warning(
+                    request,
+                    f"Warning: {officer.full_name} has been ceased, but the "
+                    f"remaining {plural} total {active_total}%, not 100.00% "
+                    f"— the register could not be recalculated. Set units "
+                    f"held on the surviving {plural} to restore a whole "
+                    f"register."
+                )
+        else:
+            messages.warning(
+                request,
+                f"Warning: {officer.full_name} has been ceased. Their "
+                f"{ceased_pct}% distribution has not been reallocated. Active "
+                f"{plural} currently total {active_total}%. Please update "
+                f"distribution percentages manually."
+            )
 
 
 @login_required

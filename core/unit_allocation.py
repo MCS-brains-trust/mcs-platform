@@ -77,13 +77,23 @@ def allocate_by_units(total, holdings):
         allocated += whole
 
     # Largest remainder takes the leftover cents, one each. Tie-broken on
-    # str(key) so that when two holders land on the exact same remainder,
-    # which cent goes where is deterministic rather than dependent on
-    # dict/list ordering -- the total is correct either way, but a stable
-    # result matters for reproducibility (e.g. re-running an allocation
-    # must not silently move a cent between two holders).
+    # the key ITSELF so that when two holders land on the exact same
+    # remainder, which cent goes where is deterministic rather than
+    # dependent on dict/list ordering -- the total is correct either way,
+    # but a stable result matters for reproducibility (e.g. re-running an
+    # allocation must not silently move a cent between two holders).
+    #
+    # Not str(key): every ORM caller keys holdings on
+    # ``(officer.display_order, officer.full_name)``, and stringifying that
+    # tuple would compare "(10, ...)" against "(2, ...)" lexicographically
+    # -- a different tie-break from the one EntityOfficer.
+    # recalculate_unit_percentages uses to decide which holder is DISPLAYED
+    # the larger percentage. Those two must agree (see that method's
+    # tie-break comment), so both now sort on the same tuple. Keys within a
+    # single call must therefore be mutually comparable, which they are:
+    # each caller builds them uniformly.
     leftover = cents - allocated
-    ordered = sorted(remainders, key=lambda pair: (-pair[0], str(pair[1])))
+    ordered = sorted(remainders, key=lambda pair: (-pair[0], pair[1]))
     for _, key in ordered[:leftover]:
         whole_parts[key] += 1
 
