@@ -135,6 +135,12 @@ class Client(models.Model):
 # ---------------------------------------------------------------------------
 # Entity
 # ---------------------------------------------------------------------------
+# Entity types that behave as trusts. A unit trust inherits every trust
+# behaviour by default and diverges only where the deed requires it, so new
+# trust logic should test membership here rather than equality with "trust".
+TRUST_LIKE_TYPES = ("trust", "trust_unit")
+
+
 class Entity(models.Model):
     """
     A legal entity belonging to a client.
@@ -144,6 +150,7 @@ class Entity(models.Model):
     class EntityType(models.TextChoices):
         COMPANY = "company", "Company"
         TRUST = "trust", "Trust"
+        UNIT_TRUST = "trust_unit", "Unit Trust"
         PARTNERSHIP = "partnership", "Partnership"
         SOLE_TRADER = "sole_trader", "Sole Trader"
         SMSF = "smsf", "SMSF"
@@ -418,6 +425,16 @@ class Entity(models.Model):
             except Exception:
                 pass
         return blockers
+
+    @property
+    def is_trust_like(self):
+        """True for any trust, discretionary or unit. Use in templates."""
+        return self.entity_type in TRUST_LIKE_TYPES
+
+    @property
+    def is_unit_trust(self):
+        """True only where income must follow the unit register."""
+        return self.entity_type == self.EntityType.UNIT_TRUST
 
 
 # ---------------------------------------------------------------------------
