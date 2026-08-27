@@ -7,6 +7,20 @@ distributes the remainder by largest fractional part, so the parts always sum
 to the whole.
 
 Kept free of the ORM so the arithmetic can be tested on its own.
+
+Same idea (Hare / largest-remainder), different scale: EntityOfficer.
+recalculate_unit_percentages (core/models.py) distributes a fixed 100.00%
+across hundredths-of-a-percent, fused with per-holder save() calls and audit
+history writes; this module distributes an arbitrary money amount across
+cents, with no ORM. If a third caller of this algorithm appears, the shared
+extraction should be the pure integer form
+``largest_remainder(target: int, weights: list[int]) -> list[int]`` rather
+than routing percentages through a money round-trip.
+
+Caller note: a ``None`` in a holding's unit count is not validated here --
+``sum()`` over ``holdings`` raises a bare ``TypeError``, not this module's
+own ``ValueError``. Callers building ``holdings`` from EntityOfficer rows
+should filter or coerce ``units_held`` before calling in.
 """
 from decimal import Decimal, ROUND_HALF_UP
 
@@ -16,13 +30,27 @@ CENTS = Decimal("0.01")
 def allocate_by_units(total, holdings):
     """Split ``total`` across ``holdings`` in proportion to units held.
 
-    ``holdings`` is a list of ``(key, units)`` pairs. Returns ``{key: Decimal}``
-    whose values sum exactly to ``total`` rounded to the cent.
+    ``holdings`` is an iterable of ``(key, units)`` pairs (each key must be
+    unique -- see below). Returns ``{key: Decimal}`` whose values sum exactly
+    to ``total`` rounded to the cent.
 
     Raises ValueError when no units are on issue -- distributing a fixed trust's
     income with an empty register is not a rounding question, it is a
-    misconfiguration, and it must not silently allocate nothing.
+    misconfiguration, and it must not silently allocate nothing. Raises
+    ValueError on a repeated key for the same reason: silently accumulating
+    two rows under one key would hide a caller bug (e.g. a duplicated
+    register row) behind arithmetic that still happens to tie out.
+
+    A negative ``total`` (a loss) is allocated by stripping the sign,
+    allocating on the absolute value, then re-applying the sign to every
+    result. This is NOT what prevents negative-floor-division bugs --
+    Python's ``divmod`` remainder is already non-negative whenever the
+    divisor (``total_units``) is positive, sign strip or not. What the sign
+    strip actually buys is fairness: a profit split and a loss split of the
+    same register land the odd cent on the same holder, rather than the
+    absolute-value symmetry breaking depending on the sign of ``total``.
     """
+    holdings = list(holdings)
     if not holdings:
         raise ValueError("cannot allocate across an empty unit register")
 
@@ -40,6 +68,8 @@ def allocate_by_units(total, holdings):
     remainders = []
     allocated = 0
     for key, units in holdings:
+        if key in whole_parts:
+            raise ValueError(f"duplicate key in unit register: {key!r}")
         exact = cents * units
         whole, remainder = divmod(exact, total_units)
         whole_parts[key] = whole
