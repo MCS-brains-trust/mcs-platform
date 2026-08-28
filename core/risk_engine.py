@@ -1176,13 +1176,30 @@ def _eval_trust_distribution(rule, fy, tb, ref, ctx, config):
     check_type = config.get("check_type", "undistributed")
 
     if check_type == "undistributed":
-        # Check if trust has net income but no distribution recorded
-        net_income = tb["totals"].get("net_profit", ZERO)
+        # Trust has net income but no distribution recorded.
+        #
+        # tb totals are credit-normal (revenue is negative), so the engine's
+        # net_profit is NEGATIVE for a profit. Negating is what makes this rule
+        # work at all: testing the raw value matched only LOSS years, so the
+        # rule was silent on exactly the profitable trusts it exists to catch --
+        # the s99A exposure -- and fired on loss years where there is no income
+        # to distribute.
+        net_income = -tb["totals"].get("net_profit", ZERO)
         if net_income > ZERO:
-            # Check if distributions exist
-            from core.models import TrustDistribution
-            distributions = TrustDistribution.objects.filter(financial_year=fy)
-            if not distributions.exists():
+            # A posted appropriation is the evidence, whether or not a
+            # TrustDistribution planning row was ever created.
+            # AdjustingJournal.live_trust_distribution is the structural source
+            # of truth the post gate, the un-post action and TRU-07 all use;
+            # it keys off is_trust_distribution + status='posted', so a voided
+            # journal correctly does not count. Dr Services Family Trust FY2026
+            # has a posted distribution and no TrustDistribution row, and this
+            # rule reported "no distribution recorded" for it.
+            from core.models import AdjustingJournal, TrustDistribution
+            has_distribution = (
+                AdjustingJournal.live_trust_distribution(fy) is not None
+                or TrustDistribution.objects.filter(financial_year=fy).exists()
+            )
+            if not has_distribution:
                 return {
                     "rule_id": rule.rule_id,
                     "tier": 2,
@@ -1197,6 +1214,82 @@ def _eval_trust_distribution(rule, fy, tb, ref, ctx, config):
                     "recommended_action": rule.recommended_action,
                     "legislation_ref": rule.legislation_ref,
                 }
+
+    if check_type == "over_distribution":
+        # A trust can distribute this year's profit plus any brought-forward
+        # undistributed income, less any brought-forward loss it has to recoup
+        # first. 4199 carries both halves: its rollover balance is the
+        # brought-forward position (debit-positive, so a carried-forward loss
+        # reduces headroom and carried-forward undistributed income increases
+        # it), and its non-rollover movement is this year's appropriation out
+        # to the beneficiary loan accounts.
+        #
+        # Nothing else catches this. Both legs of the distribution journal are
+        # posted, so the trial balance and the balance sheet still balance and
+        # the integrity check in fs_template_service cannot see it. The only
+        # symptom is a fully-distributing trust closing with accumulated losses
+        # instead of nil: Dr Services Family Trust FY2026 distributed 89,899.75
+        # against 61,848.01 available and closed at negative equity of exactly
+        # the 28,051.74 it never recouped.
+        # "Everything in 4199 except this year's own appropriation" is the
+        # brought-forward position; the appropriation itself is the amount
+        # distributed. Splitting on source="rollover" instead miscounts a
+        # prior-period adjustment as part of the distribution -- see the same
+        # reasoning in eva_trust_planning._calculate_income_streams.
+        from core.models import AdjustingJournal, TrialBalanceLine
+
+        brought_forward = ZERO
+        distributed = ZERO
+        _live = AdjustingJournal.live_trust_distribution(fy)
+        for line in TrialBalanceLine.objects.filter(
+            financial_year=fy, account_code__startswith="4199",
+        ):
+            amount = line.closing_balance or ZERO
+            if _live is not None and line.source_journal_id == _live.pk:
+                distributed += amount
+            else:
+                brought_forward += amount
+
+        # No appropriation posted yet — TRU-01 covers that case, not this one.
+        if distributed <= ZERO:
+            return None
+
+        # tb totals are credit-normal (revenue is negative), so the engine's
+        # net_profit is negative for a profit. Negate to get the distributable
+        # figure in the same debit-positive convention as brought_forward.
+        net_profit = -tb["totals"].get("net_profit", ZERO)
+        available = net_profit - brought_forward
+        excess = distributed - available
+        # Tolerance absorbs cent-level rounding in the appropriation journal.
+        tolerance = Decimal(str(config.get("tolerance", "1")))
+        if excess <= tolerance:
+            return None
+
+        return {
+            "rule_id": rule.rule_id,
+            "tier": 2,
+            "severity": rule.severity,
+            "title": rule.title,
+            "description": rule.description.format(
+                entity_name=ctx.get("entity_name", ""),
+                net_profit=f"${net_profit:,.2f}",
+                brought_forward=f"${brought_forward:,.2f}",
+                available=f"${available:,.2f}",
+                distributed=f"${distributed:,.2f}",
+                excess=f"${excess:,.2f}",
+            ),
+            "affected_accounts": ["4199"],
+            "calculated_values": {
+                "net_profit": str(net_profit),
+                "brought_forward": str(brought_forward),
+                "available": str(available),
+                "distributed": str(distributed),
+                "excess": str(excess),
+            },
+            "recommended_action": rule.recommended_action,
+            "legislation_ref": rule.legislation_ref,
+        }
+
     return None
 
 

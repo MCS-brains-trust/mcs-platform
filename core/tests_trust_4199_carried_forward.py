@@ -55,6 +55,13 @@ balance (90,000 debit - 30,000 credit... as raw values: +90,000 + -30,000
 Without the strip (fix): equity holds 4199.01 (+90,000) + 4199.02
 (-30,000) = +60,000 raw, plus the injected profit row (-90,000 raw),
 netting to -30,000 raw -> total_equity_cy = 30,000 = net_assets_cy.
+
+Those three rows are then collapsed into a single "Accumulated profits"
+row of -30,000 raw by _collapse_trust_equity_to_accumulated, so the
+brought-forward balance is now observable in that row's amount rather
+than in a surviving 4199.02 line. Discarding 4199.02 would leave the
+collapsed row at 0 and total_equity_cy at 90,000, so the guard still
+bites.
 """
 from datetime import date
 from decimal import Decimal
@@ -148,17 +155,32 @@ class Trust4199CarriedForwardTests(BeneficiaryAccountTestBase):
         )
 
         sections = context["_sections"]
-        equity_4199_codes = [
-            item.get("account_code") for item in sections["equity"]
-            if (item.get("account_code") or "").startswith("4199")
+        # A trust's appropriation rows are now collapsed into one cumulative
+        # line (_collapse_trust_equity_to_accumulated) to match the firm's
+        # HandiLedger presentation, so 4199.01/4199.02 no longer appear as
+        # separate codes. What this test guards is unchanged: the
+        # brought-forward balance must survive rather than be discarded, which
+        # is observable in the collapsed row's amount.
+        accum = [
+            item for item in sections["equity"]
+            if item.get("account_code") == "ACCUM_PL"
         ]
-        self.assertTrue(
-            equity_4199_codes,
-            "expected at least one 4199* line in sections['equity'], "
-            "found none -- 4199 is being stripped from equity entirely",
-        )
         self.assertEqual(
-            sorted(equity_4199_codes), ["4199.01", "4199.02"],
-            "both the current-year appropriation (4199.01) and the "
-            "brought-forward balance (4199.02) must survive into equity",
+            len(accum), 1,
+            f"expected one collapsed accumulated-P&L row in "
+            f"sections['equity'], found "
+            f"{[i.get('account_name') for i in sections['equity']]}",
+        )
+        # 4199.01 (+90,000) + 4199.02 (-30,000) + injected profit (-90,000)
+        # = -30,000 raw. A credit balance, so undistributed income survives as
+        # accumulated profits. Drop the brought-forward -30,000 and this is 0.
+        self.assertEqual(
+            accum[0]["cy_amount"], Decimal("-30000"),
+            "the brought-forward 4199.02 balance was discarded",
+        )
+        self.assertEqual(accum[0]["account_name"], "Accumulated profits")
+        self.assertFalse(
+            [i for i in sections["equity"]
+             if (i.get("account_code") or "").startswith("4199")],
+            "raw 4199* codes must not survive the collapse",
         )
