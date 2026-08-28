@@ -60,6 +60,10 @@ PACKAGE_CONTENTS = {
         ("client_cover_letter", "Cover Letter (Transmittal)", True),
     ],
 }
+# A unit trust receives exactly the trust package. Aliased rather than copied
+# so the two never drift. Without this the .get() below falls back to
+# "individual" (cover letter only).
+PACKAGE_CONTENTS["trust_unit"] = PACKAGE_CONTENTS["trust"]
 # ---------------------------------------------------------------------------
 # Step 1: Scan & Checklist
 # ---------------------------------------------------------------------------

@@ -19,7 +19,7 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
-from core.models import FinancialStatementTemplate
+from core.models import FinancialStatementTemplate, TRUST_LIKE_TYPES
 
 
 # Template layout constants — Handiledger reference standard
@@ -37,6 +37,11 @@ PAGE_MARGIN_RIGHT = Cm(2.4)     # 24mm
 COL_WIDTHS = [Cm(8.5), Cm(1.5), Cm(3), Cm(3)]
 
 # Entity types that get templates
+# "trust_unit" is deliberately absent: a unit trust has no templates of its
+# own and reads the trust rows via core.models.template_entity_type().
+# Adding it here would create the duplicate template lineage the design
+# rejects. The trust-like branches below are written for membership anyway
+# so this file stays correct if that ever changes.
 ENTITY_TYPES = ["company", "trust", "sole_trader", "partnership"]
 
 # Document types — Compilation Report last per APES 315
@@ -791,7 +796,7 @@ def _build_cover(entity_type):
     if entity_type == "company":
         contents.append("Directors' Declaration")
         contents.append("Solvency Resolution")
-    elif entity_type == "trust":
+    elif entity_type in TRUST_LIKE_TYPES:
         contents.append("Trustee's Declaration")
         contents.append("Beneficiaries Distribution Summary")
     elif entity_type == "sole_trader":
@@ -1265,7 +1270,7 @@ def _build_declaration(entity_type):
                   "position as at {{ year_end_date }} and its performance for the year ended on "
                   "that date in accordance with the accounting policies described in Note 1 to "
                   "the financial statements.")
-    elif entity_type == "trust":
+    elif entity_type in TRUST_LIKE_TYPES:
         _add_para(doc,
                   "The trustee of the trust declares that the financial statements and notes, "
                   "as set out within this report, present fairly the trust's financial position "
@@ -1297,7 +1302,7 @@ def _build_declaration(entity_type):
 
     # Signature block — trust uses corporate-trustee structure with individual signatories;
     # other entity types use the legacy directors loop.
-    if entity_type == "trust":
+    if entity_type in TRUST_LIKE_TYPES:
         _add_para(doc, "{%p for sig in declaration_signatories %}")
         _add_para(doc, "____________________________")
         _add_para(doc, "{{ sig.name }}")

@@ -22,7 +22,7 @@ def provision_capital_accounts(officer_id):
     """
     from core.models import (
         EntityOfficer, EntityChartOfAccount, CapitalAccountTemplate,
-        ClientAccountMapping,
+        ClientAccountMapping, template_entity_type, TRUST_LIKE_TYPES,
     )
 
     try:
@@ -37,12 +37,12 @@ def provision_capital_accounts(officer_id):
 
     entity = officer.entity
 
-    # Only provision for trust entities
-    if entity.entity_type != "trust":
+    # Only provision for trust entities (discretionary or unit)
+    if entity.entity_type not in TRUST_LIKE_TYPES:
         return
 
     templates = CapitalAccountTemplate.objects.filter(
-        entity_type=entity.entity_type,
+        entity_type=template_entity_type(entity.entity_type),
         is_active=True,
     ).order_by("sort_order")
 

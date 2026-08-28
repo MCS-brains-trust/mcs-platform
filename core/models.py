@@ -8,7 +8,7 @@ import hashlib
 import json
 import re
 import uuid
-from decimal import Decimal
+from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models, transaction
@@ -135,6 +135,25 @@ class Client(models.Model):
 # ---------------------------------------------------------------------------
 # Entity
 # ---------------------------------------------------------------------------
+# Entity types that behave as trusts. A unit trust inherits every trust
+# behaviour by default and diverges only where the deed requires it, so new
+# trust logic should test membership here rather than equality with "trust".
+TRUST_LIKE_TYPES = ("trust", "trust_unit")
+
+
+def template_entity_type(entity_type):
+    """Entity type to use when looking up type-keyed template data.
+
+    A unit trust has no templates of its own by design: it uses the trust
+    chart, the trust capital accounts and the trust mapping hints. Resolving
+    here keeps one source of truth — cloned template rows would drift from the
+    xlsx source the moment either was edited.
+    """
+    if entity_type == Entity.EntityType.UNIT_TRUST:
+        return Entity.EntityType.TRUST
+    return entity_type
+
+
 class Entity(models.Model):
     """
     A legal entity belonging to a client.
@@ -144,6 +163,7 @@ class Entity(models.Model):
     class EntityType(models.TextChoices):
         COMPANY = "company", "Company"
         TRUST = "trust", "Trust"
+        UNIT_TRUST = "trust_unit", "Unit Trust"
         PARTNERSHIP = "partnership", "Partnership"
         SOLE_TRADER = "sole_trader", "Sole Trader"
         SMSF = "smsf", "SMSF"
@@ -419,6 +439,29 @@ class Entity(models.Model):
                 pass
         return blockers
 
+    @property
+    def is_trust_like(self):
+        """True for any trust, discretionary or unit. Use in templates."""
+        return self.entity_type in TRUST_LIKE_TYPES
+
+    @property
+    def is_unit_trust(self):
+        """True only where income must follow the unit register."""
+        return self.entity_type == self.EntityType.UNIT_TRUST
+
+    @property
+    def total_units(self):
+        """Units on issue across active unit holders.
+
+        "Active" matches EntityOfficer.is_active and core/views.py's own
+        distribution queries: a future date_ceased does not exclude a
+        holder, only a date_ceased today-or-earlier does.
+        """
+        return self.officers.filter(
+            EntityOfficer.active_register_q(),
+            units_held__isnull=False,
+        ).aggregate(t=models.Sum("units_held"))["t"] or 0
+
 
 # ---------------------------------------------------------------------------
 # Entity Officer / Signatory
@@ -483,6 +526,13 @@ class EntityOfficer(models.Model):
     shares_held = models.PositiveIntegerField(
         null=True, blank=True,
         help_text="Number of shares held (shareholders/directors of companies only). Used for dividend calculations.",
+    )
+    units_held = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text=(
+            "Units held in a unit trust. The register is authoritative: "
+            "distribution_percentage is derived from this, not typed."
+        ),
     )
     email = models.EmailField(
         blank=True, default="",
@@ -559,11 +609,217 @@ class EntityOfficer(models.Model):
         from django.utils import timezone
         return self.date_ceased > timezone.now().date()
 
+    @classmethod
+    def active_register_q(cls, today=None):
+        """Q object matching officers whose ``date_ceased`` has not yet arrived.
+
+        A null ``date_ceased``, or one dated in the future, counts as active
+        -- matching ``is_active``, ``Entity.total_units`` and
+        ``recalculate_unit_percentages``. Extracted here as the single
+        canonical copy of this predicate: it had already drifted once, when
+        core/views_trust.py's unit-trust allocation used a plain
+        ``date_ceased__isnull=True`` filter and silently dropped a
+        future-ceased holder from a split while ``Entity.total_units`` (this
+        same rule) still counted their units in the register's denominator.
+        """
+        from django.utils import timezone
+        if today is None:
+            today = timezone.now().date()
+        return models.Q(date_ceased__isnull=True) | models.Q(date_ceased__gt=today)
+
     def clean(self):
         super().clean()
         # Only unit holders and beneficiaries may have distribution_percentage
         if self.role not in self.DISTRIBUTION_ROLES:
             self.distribution_percentage = None
+        # Units belong to the unit register alone. Checked on `role` only,
+        # NOT on membership in the `roles` list (unlike the guard above) --
+        # a unit holder must carry role="unit_holder" (see
+        # core/forms.py:382-388, which is what actually sets it). Widening
+        # this to also honour `roles` would let an officer with
+        # role="trustee", roles=[..., "beneficiary"] on a DISCRETIONARY
+        # trust keep a distribution_percentage that the guard above just
+        # nulled (its role is not in DISTRIBUTION_ROLES), which would be a
+        # behaviour change for the four existing discretionary trusts --
+        # this project's primary risk. So this check must stay narrower
+        # than the roles-aware one above, not match it.
+        if self.role != self.OfficerRole.UNIT_HOLDER:
+            self.units_held = None
+
+    @property
+    def unit_percentage(self):
+        """This holder's share of units on issue, as a percentage.
+
+        Rounded with ROUND_HALF_UP (not Decimal's default ROUND_HALF_EVEN)
+        to match this codebase's accounting convention.
+        """
+        total = self.entity.total_units
+        if not total or not self.units_held:
+            return Decimal("0")
+        return (Decimal(self.units_held) / Decimal(total) * 100).quantize(
+            Decimal("0.0001"), rounding=ROUND_HALF_UP,
+        )
+
+    @staticmethod
+    def _write_distribution_history(officer, pct):
+        """Create, or correct, today's distribution history entry.
+
+        If the newest open (effective_to is null) row already exists AND it
+        was opened today, it is corrected in place rather than closed:
+        closing it would set effective_to to yesterday, which is BEFORE
+        that row's own effective_from (today) -- an impossible, inverted
+        period. Only a row opened on an earlier day is closed
+        (effective_to = yesterday) before a new one is opened.
+
+        Any OTHER open row (there should never be more than one, but a
+        prior bug or manual data fix could leave one behind) is closed
+        alongside the newest, using the same never-invert rule, so an
+        orphaned open row can never linger forever.
+        """
+        from datetime import timedelta
+
+        from django.utils import timezone
+        today = timezone.now().date()
+        # created_at as a secondary sort key makes the "newest" pick
+        # deterministic when two rows share the same effective_from.
+        open_rows = list(
+            OfficerDistributionHistory.objects.filter(
+                officer=officer, effective_to__isnull=True,
+            ).order_by("-effective_from", "-created_at")
+        )
+        if not open_rows:
+            OfficerDistributionHistory.objects.create(
+                officer=officer, distribution_pct=pct, effective_from=today,
+                created_by=getattr(officer, "_updated_by", None),
+            )
+            return
+
+        newest, *stray = open_rows
+        for row in stray:
+            row.effective_to = max(today - timedelta(days=1), row.effective_from)
+            row.save(update_fields=["effective_to"])
+
+        if newest.distribution_pct == pct:
+            return  # unchanged -- nothing to record
+        if newest.effective_from == today:
+            newest.distribution_pct = pct
+            newest.save(update_fields=["distribution_pct"])
+            return
+        newest.effective_to = today - timedelta(days=1)
+        newest.save(update_fields=["effective_to"])
+        OfficerDistributionHistory.objects.create(
+            officer=officer, distribution_pct=pct, effective_from=today,
+            created_by=getattr(officer, "_updated_by", None),
+        )
+
+    @classmethod
+    def recalculate_unit_percentages(cls, entity):
+        """Rewrite stored percentages from the unit register.
+
+        This is the SOLE writer of both `distribution_percentage` and its
+        audit history for unit holders -- individual save() calls never
+        derive a unit holder's percentage from units_held (see save() and
+        _update_distribution_history() below). That is deliberate: unit_
+        percentage divides by entity.total_units, a live DB aggregate that
+        is necessarily wrong the moment a single holder is saved in
+        isolation --
+          - on INSERT, the row being saved is not yet in its own aggregate
+            (total_units undercounts it, or is 0 for the very first
+            holder, silently booking a wrong or 0.00% figure);
+          - a naive per-holder rounding of 1/3 + 1/3 + 1/3 stores
+            33.33 x 3 = 99.99, never summing to exactly 100.00.
+        Rather than have every individual save() race that aggregate, this
+        method is the only place percentages are computed and persisted,
+        always against the complete, final state of the active register,
+        in one pass, with a largest-remainder allocation so the stored
+        values sum to exactly 100.00.
+
+        Ceased holders (date_ceased today-or-earlier) are excluded from
+        both the total and the recompute, matching total_units and
+        EntityOfficer.is_active -- a future date_ceased does NOT exclude a
+        holder. A ceased holder's own stored distribution_percentage is
+        left untouched (frozen at its last active value) rather than
+        nulled: core/views.py sums it into `dist_ceased`, and it is the
+        audit record of what that holder was entitled to while they held
+        units -- nulling it would erase that record.
+
+        ROUND_HALF_UP is used throughout (not Decimal's default
+        ROUND_HALF_EVEN / "banker's rounding"), matching the accounting
+        convention this codebase already uses for money and percentages.
+
+        WARNING for callers (Task 6 and beyond): this MUST be the LAST
+        write in a request/transaction that touches the register. It
+        writes distribution_percentage with
+        save(update_fields=["distribution_percentage"]), so any
+        EntityOfficer instance already loaded into memory before this
+        runs is now stale on that one field. A later full-row .save() of
+        that stale instance will silently overwrite the column back to
+        whatever it held before -- there is no re-derivation on save()
+        (see save() below) to self-heal it, unlike the old per-save
+        recompute this replaced. Re-fetch (or refresh_from_db()) any
+        officer instance you need after calling this.
+        """
+        from django.utils import timezone
+        today = timezone.now().date()
+        # role=UNIT_HOLDER is included alongside units_held__isnull=False
+        # so that a role="beneficiary" officer who somehow has units_held
+        # set (bypassing clean(), e.g. via a direct ORM write) can never be
+        # pulled into a unit trust's register recompute -- consistent with
+        # _update_distribution_history()'s guard being keyed on role too.
+        active_holders = list(
+            cls.objects.filter(
+                entity=entity, units_held__isnull=False,
+                role=cls.OfficerRole.UNIT_HOLDER,
+            )
+            .filter(cls.active_register_q(today))
+            .order_by("display_order", "full_name")
+        )
+        if not active_holders:
+            return
+        total_units = sum(h.units_held for h in active_holders)
+        if not total_units:
+            return
+
+        # Largest-remainder allocation in hundredths-of-a-percent (SCALE
+        # units == 100.00%) so the stored 2dp percentages always sum to
+        # exactly 100.00.
+        SCALE = 10000
+        raw = {
+            h.pk: (Decimal(h.units_held) * SCALE / Decimal(total_units))
+            for h in active_holders
+        }
+        floor_alloc = {
+            pk: int(val.to_integral_value(rounding=ROUND_DOWN))
+            for pk, val in raw.items()
+        }
+        remainder = {pk: raw[pk] - floor_alloc[pk] for pk in raw}
+        shortfall = SCALE - sum(floor_alloc.values())
+        # Tie-break on (display_order, full_name) -- the SAME key
+        # allocate_by_units (core/unit_allocation.py) tie-breaks on, and the
+        # same one core/views_trust.allocate_unit_trust_distribution and
+        # core/views_tax_planning._apply_unit_distributions feed it. These
+        # are two separate largest-remainder implementations (deliberately
+        # so: one distributes 100.00% in hundredths of a percent, the other
+        # an arbitrary money amount in cents), but they must not disagree
+        # about WHO the odd unit goes to: with three equal holders, the
+        # holder displayed at 33.34% has to be the holder who actually
+        # receives the extra cent. Sorting on the row's own pk (a random
+        # UUID) made those two answers independent coin flips.
+        order_key = {
+            h.pk: (h.display_order, h.full_name, h.pk) for h in active_holders
+        }
+        ordered = sorted(remainder, key=lambda p: (-remainder[p], order_key[p]))
+        for pk in ordered[:shortfall]:
+            floor_alloc[pk] += 1
+
+        for holder in active_holders:
+            pct = (Decimal(floor_alloc[holder.pk]) / 100).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP,
+            )
+            if holder.distribution_percentage != pct:
+                holder.distribution_percentage = pct
+                holder.save(update_fields=["distribution_percentage"])
+            cls._write_distribution_history(holder, pct)
 
     def save(self, *args, **kwargs):
         # Auto-assign display_order on creation if still default 0
@@ -588,28 +844,43 @@ class EntityOfficer(models.Model):
         self._update_distribution_history()
 
     def _update_distribution_history(self):
-        """Create/close distribution history records when percentage changes."""
+        """Create/update distribution history records when percentage changes."""
         if self.role not in self.DISTRIBUTION_ROLES:
+            return
+        if self.role == self.OfficerRole.UNIT_HOLDER and self.entity.is_unit_trust:
+            # Unit-holder history is written exclusively by
+            # recalculate_unit_percentages(), in one pass over the whole
+            # register, using the same safe write helper. A per-instance
+            # save() here would race entity.total_units the same way the
+            # old per-save recompute did (see recalculate_unit_percentages'
+            # docstring) and could book a wrong percentage into the audit
+            # trail before the rest of the register exists.
+            #
+            # Keyed on `role`, not `units_held`: a role="beneficiary"
+            # officer that somehow has units_held set (e.g. forced through
+            # the ORM, bypassing clean()) must still get its history
+            # written here -- units_held is not what makes something a
+            # unit holder, role="unit_holder" is (see clean()).
+            #
+            # ALSO qualified on entity.is_unit_trust: recalculate_unit_
+            # percentages is only the sole writer on a UNIT trust, because
+            # it is only ever called under `if entity.is_unit_trust`
+            # (core/views.py). core/forms.py still offers the Unit Holder
+            # role on a plain discretionary `trust`, and on one of those
+            # nothing recomputes the register -- so returning early here
+            # regardless of entity type saved the typed percentage while
+            # writing NO history row at all, silently losing an audit
+            # trail the four production discretionary trusts had before
+            # this branch. On a plain trust a unit holder's percentage is
+            # hand-typed like a beneficiary's, so it gets hand-typed
+            # history, below.
             return
         if self.distribution_percentage is None:
             return
         old_pct = getattr(self, "_old_distribution_percentage", None)
         # On creation or on change
         if self._state.adding or old_pct != self.distribution_percentage:
-            from django.utils import timezone
-            today = timezone.now().date()
-            from datetime import timedelta
-            # Close the previous history record
-            OfficerDistributionHistory.objects.filter(
-                officer=self, effective_to__isnull=True,
-            ).update(effective_to=today - timedelta(days=1))
-            # Create new history record
-            OfficerDistributionHistory.objects.create(
-                officer=self,
-                distribution_pct=self.distribution_percentage,
-                effective_from=today,
-                created_by=getattr(self, "_updated_by", None),
-            )
+            self._write_distribution_history(self, self.distribution_percentage)
 
 
 class OfficerDistributionHistory(models.Model):
@@ -1182,7 +1453,7 @@ class EntityChartOfAccount(models.Model):
         super().clean()
         if self.maps_to_id and self.entity_id:
             applicable = self.maps_to.applicable_entities or []
-            if applicable and self.entity.entity_type not in applicable:
+            if applicable and template_entity_type(self.entity.entity_type) not in applicable:
                 raise ValidationError({
                     "maps_to": (
                         f"{self.maps_to.standard_code} "
@@ -1205,11 +1476,19 @@ class EntityChartOfAccount(models.Model):
         edit re-introducing client/firm-specific data of the kind that caused
         the 2026-04-28 trust template incident.
         """
+        from core.beneficiary_account_service import UNIT_HOLDER_TERMINOLOGY_CODES
+
+        def _is_unit_holder_terminology_code(account_code):
+            # Match on the pre-dot prefix so a future .NN template row
+            # (there are none today — sub-accounts are materialised
+            # per-officer, not templated) would still be scoped correctly.
+            return (account_code or "").split(".")[0] in UNIT_HOLDER_TERMINOLOGY_CODES
+
         existing_codes = set(
             cls.objects.filter(entity=entity).values_list("account_code", flat=True)
         )
         template_accounts = ChartOfAccount.objects.filter(
-            entity_type=entity.entity_type, is_active=True
+            entity_type=template_entity_type(entity.entity_type), is_active=True
         )
         created = []
         skipped = []
@@ -1219,10 +1498,35 @@ class EntityChartOfAccount(models.Model):
                 continue
             if tpl.account_code in existing_codes:
                 continue
+            account_name = tpl.account_name
+            if entity.is_unit_trust and _is_unit_holder_terminology_code(
+                tpl.account_code
+            ):
+                # The shared "trust" template's own wording says
+                # "Beneficiary" on the officer-facing capital account codes
+                # (e.g. 4000 "Opening balance - Beneficiary"). A unit
+                # trust's income recipients are unit holders — apply the
+                # same substitution as core.entity_terminology as an
+                # overlay on the copy, not a second template.
+                #
+                # Scoped to UNIT_HOLDER_TERMINOLOGY_CODES deliberately: a
+                # blanket replace on every template row also caught 4300/
+                # 4301 ("Opening balance - Corporate beneficiary - UPE/
+                # Sub-trust"), Division 7A mechanisms that exist only for a
+                # DISCRETIONARY trust's present entitlement to a corporate
+                # beneficiary. "Corporate unit holder - UPE" would invent
+                # an accounting concept that doesn't exist and would
+                # contradict the untouched 4400/4500 "Corp benef'y" series
+                # (see core/beneficiary_account_service.py). HandiLedger is
+                # the specification on this platform; we do not invent
+                # accounting design.
+                account_name = account_name.replace(
+                    "Beneficiary", "Unit Holder"
+                ).replace("beneficiary", "unit holder")
             created.append(cls(
                 entity=entity,
                 account_code=tpl.account_code,
-                account_name=tpl.account_name,
+                account_name=account_name,
                 classification=tpl.classification,
                 section=tpl.section,
                 tax_code=tpl.tax_code,
@@ -2086,6 +2390,7 @@ class DocumentTemplate(models.Model):
         Return the active template for a given category and entity type.
         Falls back to a template with blank entity_type if no exact match.
         """
+        entity_type = template_entity_type(entity_type)
         # Try exact match first
         tpl = cls.objects.filter(
             document_category=document_category,
@@ -6764,6 +7069,7 @@ class GlobalAccountMappingHint(models.Model):
             been confirmed more times, update the hint.
         If no hint exists, create one with confidence=1.
         """
+        entity_type = template_entity_type(entity_type)
         # get_or_create relies on the (entity_type, account_code) unique_together
         # to close the check-then-create race between concurrent callers.
         existing, created = cls.objects.get_or_create(

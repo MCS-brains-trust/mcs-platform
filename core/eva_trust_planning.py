@@ -35,7 +35,17 @@ TRUST_PLANNING_TRIGGERS = [
 
 def is_trust_planning_query(message_text, entity_type):
     """Check if a chat message should trigger trust planning mode."""
-    if entity_type not in ("trust_discretionary", "trust_unit", "trust_hybrid"):
+    # Deliberately NOT TRUST_LIKE_TYPES, and "trust_unit" was deliberately
+    # REMOVED. Neither value below has ever existed in Entity.EntityType, so
+    # this path has never executed for any entity on the platform. Listing
+    # "trust_unit" (added to EntityType by the unit-trust work) would switch a
+    # never-run feature on for a live client entity, and listing "trust" would
+    # do the same for the discretionary trusts. Keeping the gate dead preserves
+    # the status quo for every entity and is reversible in one line. Whether Eva
+    # trust planning should be enabled at all, and for which trust kinds, is an
+    # open product question — not a sweep's decision. Pinned by
+    # core/tests_trust_sweep_regression.py.
+    if entity_type not in ("trust_discretionary", "trust_hybrid"):
         return False
     msg_lower = message_text.lower()
     return any(trigger in msg_lower for trigger in TRUST_PLANNING_TRIGGERS)

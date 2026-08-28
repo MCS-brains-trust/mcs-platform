@@ -719,9 +719,12 @@ def handle_trust_entity_created(sender, instance, created, **kwargs):
     if not created:
         return
 
-    from core.models import Entity, EntityChartOfAccount
+    from core.models import EntityChartOfAccount, TRUST_LIKE_TYPES
 
-    if instance.entity_type != Entity.EntityType.TRUST:
+    # Membership, not equality: a unit trust seeds from the same trust master
+    # template (seed_from_template resolves trust_unit -> trust). Without this
+    # a newly created unit trust would start life with zero chart accounts.
+    if instance.entity_type not in TRUST_LIKE_TYPES:
         return
 
     try:

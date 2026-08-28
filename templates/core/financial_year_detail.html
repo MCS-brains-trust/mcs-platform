@@ -176,7 +176,7 @@
                         <span class="badge bg-warning text-dark ms-1" style="font-size: 0.65rem;">DRAFT</span>
                     </button>
                     {% endif %}
-                    {% if entity.entity_type == 'trust' %}
+                    {% if entity.is_trust_like %}
                     <div class="vr d-none d-md-block"></div>
                     <!-- Distribution Minutes -->
                     <div class="dropdown d-inline-block">
@@ -1477,7 +1477,7 @@ function quickGenerateEngagementLetter(entityPk, fyPk) {
                         <i class="bi bi-arrow-repeat"></i> Regenerate Statements
                     </button>
                 </form>
-                {% if entity.entity_type == 'trust' %}
+                {% if entity.is_trust_like %}
                 <form method="post" action="{% url 'core:regenerate_document' pk=fy.pk %}" class="d-inline">
                     {% csrf_token %}
                     <input type="hidden" name="type" value="distribution_minutes">
@@ -1593,7 +1593,7 @@ function quickGenerateEngagementLetter(entityPk, fyPk) {
                     <option value="capital_accounts">Capital Accounts</option>
                     <option value="pl_appropriation">P&amp;L Appropriation</option>
                 </select>
-                {% if entity.entity_type == 'trust' %}
+                {% if entity.is_trust_like %}
                 <button type="button"
                         class="btn btn-sm btn-outline-primary"
                         id="autoMapCapitalBtn"
@@ -1609,7 +1609,7 @@ function quickGenerateEngagementLetter(entityPk, fyPk) {
             </div>
         </div>
 
-        {% if entity.entity_type == 'trust' %}
+        {% if entity.is_trust_like %}
         <script>
         document.body.addEventListener('htmx:afterRequest', function(evt) {
             if (evt.detail.elt && evt.detail.elt.id === 'autoMapCapitalBtn') {

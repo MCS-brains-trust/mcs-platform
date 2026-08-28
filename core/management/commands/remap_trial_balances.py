@@ -9,7 +9,9 @@ Usage:
     python manage.py remap_trial_balances --dry-run
 """
 from django.core.management.base import BaseCommand
-from core.models import TrialBalanceLine, ChartOfAccount, FinancialYear
+from core.models import (
+    TrialBalanceLine, ChartOfAccount, FinancialYear, template_entity_type,
+)
 
 
 class Command(BaseCommand):
@@ -51,7 +53,9 @@ class Command(BaseCommand):
 
         for line in unmapped_lines:
             entity_type = line.financial_year.entity.entity_type
-            key = (entity_type, line.account_code)
+            # Template rows are keyed by the template type: a unit trust reads
+            # the trust chart. The raw type is kept for the log lines below.
+            key = (template_entity_type(entity_type), line.account_code)
 
             if key in coa_map:
                 mapping = coa_map[key]

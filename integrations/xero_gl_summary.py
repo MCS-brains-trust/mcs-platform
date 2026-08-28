@@ -62,13 +62,18 @@ def resolve_equity_code(entity_type):
     unrecognised entity types, incl. ``smsf`` for which the seeded mappings
     do not define a dedicated equity line.  The accountant can override in
     the wizard, and ClientAccountMapping will learn the override.
+
+    ``trust_unit`` resolves to the trust row, so a unit trust's retained
+    earnings land in Undistributed income rather than the company default.
     """
+    from core.models import template_entity_type
+
     return {
         "company":     "BS-EQ-002",  # Retained earnings
         "trust":       "BS-EQ-005",  # Undistributed income
         "partnership": "BS-EQ-007",  # Partners' current accounts
         "sole_trader": "BS-EQ-008",  # Proprietor's equity
-    }.get(entity_type, "BS-EQ-002")
+    }.get(template_entity_type(entity_type), "BS-EQ-002")
 
 
 # ---------------------------------------------------------------------------

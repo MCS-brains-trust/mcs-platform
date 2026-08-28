@@ -17,6 +17,7 @@ from core.models import (
     EntityOfficer,
     FinancialYear,
     LegalDocument,
+    TRUST_LIKE_TYPES,
 )
 
 logger = logging.getLogger(__name__)
@@ -591,7 +592,7 @@ def generate_management_rep_letter(request, pk):
 
     # Trust corporate-trustee structure: build declaration_signatories
     # so the HTML template renders one block per individual director-signatory
-    if entity.entity_type == "trust":
+    if entity.entity_type in TRUST_LIKE_TYPES:
         trustee_officer = EntityOfficer.objects.filter(
             entity=entity, date_ceased__isnull=True,
         ).filter(

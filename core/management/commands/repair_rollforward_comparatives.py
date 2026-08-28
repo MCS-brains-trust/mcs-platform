@@ -20,7 +20,7 @@ from decimal import Decimal
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
 
-from core.models import ChartOfAccount, FinancialYear, TrialBalanceLine
+from core.models import ChartOfAccount, FinancialYear, TrialBalanceLine, template_entity_type
 from core.views import _comparative_for_line, _is_balance_sheet_account
 
 DEFAULT_TARGET_IDS = [
@@ -132,7 +132,7 @@ class Command(BaseCommand):
         # Build CoA section lookup for BS/PL classification
         coa_sections = dict(
             ChartOfAccount.objects.filter(
-                entity_type=entity.entity_type, is_active=True
+                entity_type=template_entity_type(entity.entity_type), is_active=True
             ).values_list("account_code", "section")
         )
 

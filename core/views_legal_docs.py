@@ -35,6 +35,7 @@ from core.models import (
     LegalDocument,
     LegalDocumentTemplate,
     RiskFlag,
+    TRUST_LIKE_TYPES,
 )
 
 from core.legal_doc_contexts import (
@@ -598,7 +599,7 @@ def change_of_trustee_wizard(request, pk):
     fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
-    if entity.entity_type != "trust":
+    if entity.entity_type not in TRUST_LIKE_TYPES:
         return render(request, "core/legal/change_trustee_wizard.html", {
             "fy": fy,
             "entity": entity,
@@ -745,7 +746,7 @@ def fixed_unit_trust_wizard(request, pk):
     fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
-    if entity.entity_type != "trust":
+    if entity.entity_type not in TRUST_LIKE_TYPES:
         return render(request, "core/legal/unit_trust_wizard.html", {
             "fy": fy,
             "entity": entity,
@@ -910,7 +911,7 @@ def unit_transfer_wizard(request, pk):
     fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
-    if entity.entity_type != "trust":
+    if entity.entity_type not in TRUST_LIKE_TYPES:
         return render(request, "core/legal/unit_transfer_wizard.html", {
             "fy": fy,
             "entity": entity,

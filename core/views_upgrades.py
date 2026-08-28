@@ -31,7 +31,7 @@ from .models import (
     GeneratedDocument, AuditLog, EntityOfficer,
     TrustDistribution, BeneficiaryAllocation,
     PartnershipAllocation, PartnerShare, PartnerCapitalAccount,
-    WorkpaperNote, EntityImportJob,
+    WorkpaperNote, EntityImportJob, TRUST_LIKE_TYPES,
 )
 from config.authorization import get_financial_year_for_user
 
@@ -383,7 +383,7 @@ def trust_distribution(request, pk):
     fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
 
-    if entity.entity_type != "trust":
+    if entity.entity_type not in TRUST_LIKE_TYPES:
         messages.error(request, "Distribution workspace is only available for trusts.")
         return redirect("core:financial_year_detail", pk=pk)
 
@@ -400,12 +400,41 @@ def trust_distribution(request, pk):
         dist.other_income = dist.accounting_profit
         dist.save()
 
-    # Get beneficiaries from entity officers
-    beneficiaries = EntityOfficer.objects.filter(
-        entity=entity
-    ).filter(
-        Q(role="beneficiary") | Q(roles__contains=["beneficiary"])
-    )
+    # Get the income recipients from the entity officers. A unit trust's
+    # recipients are unit_holder rows, which this list left out entirely --
+    # so `beneficiaries` came back empty, the template's
+    # `{% if beneficiaries %}` hid the whole allocations form INCLUDING its
+    # submit button, and Task 8's save_allocations wiring below (which calls
+    # allocate_unit_trust_distribution) was unreachable dead code.
+    #
+    # Same role predicate as views_tax_planning._sync_beneficiary_rows. Note
+    # the predicate is applied in Python: `roles` is a JSONField and its
+    # `contains` lookup raises NotSupportedError on SQLite outright (see that
+    # function's docstring), which is what the previous filter did on the
+    # test backend.
+    #
+    # active_register_q applies to a UNIT TRUST ONLY, where it matches
+    # allocate_unit_trust_distribution's own active set. It must NOT apply to
+    # a discretionary trust: a beneficiary who ceased mid-year is still
+    # entitled to a share of THAT year's income, and filtering them out here
+    # dropped their row and its pct_<pk> input from the allocations page
+    # while the badge, the footer total and the is_fully_allocated gate all
+    # still counted their existing BeneficiaryAllocation -- so the visible
+    # rows no longer summed to the displayed total, and the 100% gate could
+    # be satisfied or blocked by a row nobody could see. active_register_q
+    # also compares to TODAY rather than to the year being distributed, so a
+    # cessation after year end hid them too. A discretionary trust therefore
+    # keeps exactly the list it had before this branch, ceased beneficiaries
+    # included.
+    candidates = EntityOfficer.objects.filter(entity=entity)
+    if entity.is_unit_trust:
+        candidates = candidates.filter(EntityOfficer.active_register_q())
+    beneficiaries = [
+        officer for officer in candidates.order_by("display_order", "full_name")
+        if officer.role in ("beneficiary", "unit_holder")
+        or "beneficiary" in (officer.roles or [])
+        or "unit_holder" in (officer.roles or [])
+    ]
 
     # Get existing allocations
     allocations = dist.allocations.select_related("beneficiary").all()
@@ -436,33 +465,42 @@ def trust_distribution(request, pk):
 
         elif action == "save_allocations":
             try:
-                with transaction.atomic():
-                    for ben in beneficiaries:
-                        pct_key = f"pct_{ben.pk}"
-                        flag_key = f"s100a_{ben.pk}"
-                        notes_key = f"s100a_notes_{ben.pk}"
+                if entity.entity_type == "trust_unit":
+                    # A unit trust has no streaming choice: every stream
+                    # follows the register, not the per-officer pct_<pk>
+                    # form fields below (which this branch never reads).
+                    # See core/views_trust.allocate_unit_trust_distribution
+                    # -- it wraps its own writes in transaction.atomic().
+                    from core.views_trust import allocate_unit_trust_distribution
+                    allocate_unit_trust_distribution(dist)
+                else:
+                    with transaction.atomic():
+                        for ben in beneficiaries:
+                            pct_key = f"pct_{ben.pk}"
+                            flag_key = f"s100a_{ben.pk}"
+                            notes_key = f"s100a_notes_{ben.pk}"
 
-                        pct = Decimal(request.POST.get(pct_key, "0") or "0")
+                            pct = Decimal(request.POST.get(pct_key, "0") or "0")
 
-                        alloc, _ = BeneficiaryAllocation.objects.update_or_create(
-                            distribution=dist,
-                            beneficiary=ben,
-                            defaults={
-                                "percentage": pct,
-                                "section_100a_flag": flag_key in request.POST,
-                                "section_100a_notes": request.POST.get(notes_key, ""),
-                            },
-                        )
-                        alloc.calculate_allocation()
-                        alloc.save()
+                            alloc, _ = BeneficiaryAllocation.objects.update_or_create(
+                                distribution=dist,
+                                beneficiary=ben,
+                                defaults={
+                                    "percentage": pct,
+                                    "section_100a_flag": flag_key in request.POST,
+                                    "section_100a_notes": request.POST.get(notes_key, ""),
+                                },
+                            )
+                            alloc.calculate_allocation()
+                            alloc.save()
 
-                    # Check if fully allocated
-                    total_pct = dist.allocations.aggregate(t=Sum("percentage"))["t"] or Decimal("0")
-                    dist.is_fully_allocated = (total_pct == Decimal("100"))
-                    dist.save(update_fields=["is_fully_allocated"])
+                        # Check if fully allocated
+                        total_pct = dist.allocations.aggregate(t=Sum("percentage"))["t"] or Decimal("0")
+                        dist.is_fully_allocated = (total_pct == Decimal("100"))
+                        dist.save(update_fields=["is_fully_allocated"])
 
                 messages.success(request, "Beneficiary allocations saved.")
-            except (InvalidOperation, TypeError) as e:
+            except (InvalidOperation, TypeError, ValueError) as e:
                 messages.error(request, f"Invalid allocation value: {e}")
             # Refresh data
             allocations = dist.allocations.select_related("beneficiary").all()

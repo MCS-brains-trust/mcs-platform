@@ -682,9 +682,9 @@ def _get_chart_of_accounts_prompt(entity_type=None):
     Uses entity-type-specific accounts when entity_type is provided,
     otherwise falls back to company accounts as a sensible default.
     """
-    from core.models import ChartOfAccount
+    from core.models import ChartOfAccount, template_entity_type
 
-    et = entity_type or "company"
+    et = template_entity_type(entity_type or "company")
     accounts = ChartOfAccount.objects.filter(
         entity_type=et, is_active=True
     ).order_by("section", "display_order")
@@ -960,7 +960,7 @@ def _enforce_account_gst(results, transactions, entity_type, is_gst_registered,
     Checks entity-specific EntityChartOfAccount first (if entity provided),
     then falls back to the master ChartOfAccount template.
     """
-    from core.models import ChartOfAccount
+    from core.models import ChartOfAccount, template_entity_type
 
     coa_tax_codes = {}
 
@@ -977,7 +977,7 @@ def _enforce_account_gst(results, transactions, entity_type, is_gst_registered,
             pass
 
     # Second: fill gaps from master ChartOfAccount template
-    et = entity_type or "company"
+    et = template_entity_type(entity_type or "company")
     for acct in ChartOfAccount.objects.filter(entity_type=et, is_active=True):
         if acct.tax_code and acct.account_code not in coa_tax_codes:
             coa_tax_codes[acct.account_code] = acct.tax_code
@@ -1122,7 +1122,10 @@ def _ai_classify_batch(transactions, is_gst_registered=True, batch_size=15, enti
                 "All tax types should be 'BAS Excluded'."
             )
 
-        entity_label = (entity_type or "company").replace("_", " ").title()
+        from core.models import Entity
+        entity_label = dict(Entity.EntityType.choices).get(
+            entity_type, (entity_type or "company").replace("_", " ").title()
+        )
         prompt = (
             f"Classify these Australian bank transactions for a {entity_label} entity:\n\n"
             f"{chart_prompt}{gst_context}\n\n"

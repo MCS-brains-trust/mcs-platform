@@ -38,6 +38,9 @@ CIRCULAR_FLOW_PCT = Decimal("50")             # 50% return flow threshold
 class Section100AModule(BaseDetectionModule):
     module_id = "section100a"
     display_name = "Section 100A Risk Assessment"
+    # Deliberately NOT TRUST_LIKE_TYPES: Section 100A concerns discretionary
+    # distributions. A fixed unit trust makes none, so it is excluded on
+    # purpose — see should_run() below. Do not widen this to "trust_unit".
     entity_types = ["trust"]
     finding_category = "COMPLIANCE"
 
@@ -55,7 +58,14 @@ class Section100AModule(BaseDetectionModule):
         self.trust_tab_complete = False
 
     def should_run(self):
-        """Only run for trust entities."""
+        """Only run for discretionary trusts.
+
+        Deliberately equality with "trust", not membership in
+        TRUST_LIKE_TYPES: a fixed unit trust distributes by the unit register
+        and makes no discretionary distribution, so Section 100A cannot apply.
+        core/views_trust.py already auto-skips the Section 100A stage for unit
+        trusts. This narrowing is intentional — do not "fix" it in a sweep.
+        """
         return self.entity.entity_type == "trust"
 
     def load_data(self):

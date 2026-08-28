@@ -26,6 +26,7 @@ from core.models import (
     EntityOfficer,
     EntityRelationship,
     GoverningDocument,
+    TRUST_LIKE_TYPES,
 )
 
 logger = logging.getLogger(__name__)
@@ -87,7 +88,7 @@ def _build_entity_description(entity):
     trustee_name = getattr(entity, "trustee_name", "") or ""
     trustee_acn = getattr(entity, "trustee_acn", "") or ""
 
-    if entity.entity_type == "trust":
+    if entity.entity_type in TRUST_LIKE_TYPES:
         if trustee_name:
             desc = trustee_name.upper()
             if trustee_acn:
@@ -885,7 +886,7 @@ def build_fixed_unit_trust_context(entity, financial_year, params):
             "unit_range": f"{unit_range_start} to {unit_range_end}" if uh_units > 1 else str(unit_range_start),
             "is_trustee": uh_is_trustee,
             "is_company": uh_entity.entity_type == "company" if uh_entity else False,
-            "is_trust": uh_entity.entity_type == "trust" if uh_entity else False,
+            "is_trust": uh_entity.entity_type in TRUST_LIKE_TYPES if uh_entity else False,
             "acn": uh_entity.acn if uh_entity else "",
             "acn_formatted": _format_acn(uh_entity.acn) if uh_entity and uh_entity.acn else "",
             "abn": uh_entity.abn if uh_entity else "",
@@ -975,7 +976,11 @@ def validate_fixed_unit_trust(entity, params):
         if uh_entity_id:
             try:
                 uh_entity = Entity.objects.get(pk=uh_entity_id)
-                if uh_entity.entity_type in ("company", "trust"):
+                # Must match the is_trust / execution-block test in
+                # build_fixed_unit_trust_context: a corporate or trust unit
+                # holder that gets an execution block must also be validated
+                # for having directors to sign it.
+                if uh_entity.entity_type in ("company",) + TRUST_LIKE_TYPES:
                     uh_directors = _get_directors_for_entity(uh_entity)
                     if not uh_directors:
                         errors.append(
@@ -1259,8 +1264,8 @@ def _build_transfer_party_context(entity_id, fallback_name):
                 "abn": party_entity.abn or "",
                 "address": _get_entity_address(party_entity),
                 "is_company": party_entity.entity_type == "company",
-                "is_trust": party_entity.entity_type == "trust",
-                "is_individual": party_entity.entity_type not in ("company", "trust"),
+                "is_trust": party_entity.entity_type in TRUST_LIKE_TYPES,
+                "is_individual": party_entity.entity_type not in ("company",) + TRUST_LIKE_TYPES,
                 "directors": [_director_context(d) for d in directors],
                 "is_sole_director": len(directors) == 1,
                 "execution": _build_execution_block(party_entity),
@@ -1322,7 +1327,7 @@ def _calculate_updated_register(current_positions, transfers_raw):
                         "entity_id": str(transferee_entity.pk),
                         "description": _build_entity_description(transferee_entity),
                         "is_company": transferee_entity.entity_type == "company",
-                        "is_trust": transferee_entity.entity_type == "trust",
+                        "is_trust": transferee_entity.entity_type in TRUST_LIKE_TYPES,
                         "directors": [_director_context(d) for d in directors],
                         "execution": _build_execution_block(transferee_entity),
                     }

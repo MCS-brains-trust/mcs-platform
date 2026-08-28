@@ -354,14 +354,14 @@ def calculate_gst_for_period(fy, period_start=None, period_end=None):
         - sales_transactions: [...]   (individual transaction details)
         - purchase_transactions: [...] (individual transaction details)
     """
-    from .models import ChartOfAccount, EntityChartOfAccount
+    from .models import ChartOfAccount, EntityChartOfAccount, template_entity_type
 
     entity = fy.entity
     entity_type = entity.entity_type
 
     # Build COA lookups
     coa_lookup = {}
-    for coa in ChartOfAccount.objects.filter(entity_type=entity_type, is_active=True):
+    for coa in ChartOfAccount.objects.filter(entity_type=template_entity_type(entity_type), is_active=True):
         coa_lookup[coa.account_code] = coa
 
     entity_coa_lookup = {}

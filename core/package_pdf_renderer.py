@@ -163,7 +163,7 @@ def render_legal_doc_to_pdf_bytes(doc):
         "management_representation_letter", "management_rep_letter",
         "management_rep_letter_trust", "management_rep_letter_partnership",
     ):
-        from core.models import EntityOfficer
+        from core.models import EntityOfficer, TRUST_LIKE_TYPES
         from django.db import models as _m
 
         officers = EntityOfficer.objects.filter(
@@ -181,7 +181,7 @@ def render_legal_doc_to_pdf_bytes(doc):
         # structure: per-director signature blocks) so stale context_data
         # frozen before the structured-signatories fix is corrected at render
         # time. Mirrors build_trust_context / _build_compliance_context logic.
-        if doc.entity.entity_type == "trust":
+        if doc.entity.entity_type in TRUST_LIKE_TYPES:
             trustee_officer = EntityOfficer.objects.filter(
                 entity=doc.entity, date_ceased__isnull=True,
             ).filter(

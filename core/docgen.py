@@ -32,7 +32,7 @@ import logging
 
 from .models import (
     Entity, FinancialYear, TrialBalanceLine, AccountMapping,
-    EntityOfficer, NoteTemplate, DepreciationAsset,
+    EntityOfficer, NoteTemplate, DepreciationAsset, TRUST_LIKE_TYPES,
 )
 from .table_helpers import FinancialTable
 
@@ -499,6 +499,7 @@ def _entity_label(entity_type, plural=False):
     labels = {
         "company": ("the director", "the directors"),
         "trust": ("the trustee", "the trustee"),
+        "trust_unit": ("the trustee", "the trustee"),
         "partnership": ("the partners", "the partners"),
         "sole_trader": ("the owner", "the owner"),
     }
@@ -511,6 +512,7 @@ def _entity_ref(entity_type):
     refs = {
         "company": "the company",
         "trust": "the trust",
+        "trust_unit": "the trust",
         "partnership": "the partnership",
         "sole_trader": "the business",
     }
@@ -1201,7 +1203,7 @@ def _get_section_order(entity, sections, fy=None):
             items.append("Compilation Report")
         return items
 
-    elif entity_type == "trust":
+    elif entity_type in TRUST_LIKE_TYPES:
         items = []
         items.append("Detailed Profit and Loss Statement")
         items.append("Detailed Balance Sheet")
@@ -1437,7 +1439,7 @@ def _add_detailed_pnl(doc, entity, fy, sections, show_cents=False,
 
     # Wording varies by entity type
     entity_type = entity.entity_type
-    if entity_type in ("trust", "sole_trader"):
+    if entity_type in TRUST_LIKE_TYPES + ("sole_trader",):
         profit_label = "Net Profit from Ordinary Activities before income tax"
     else:
         profit_label = "Profit (Loss) from Ordinary Activities before income tax"
@@ -1955,14 +1957,14 @@ def _add_detailed_balance_sheet(doc, entity, fy, sections, show_cents=False,
 
                 display_name = name
                 name_lower = name.lower()
-                if entity_type == "trust" and "retained" in name_lower:
+                if entity_type in TRUST_LIKE_TYPES and "retained" in name_lower:
                     display_name = "Undistributed income"
 
                 # Keep all equity items together with Total Equity
                 ft.add_line(display_name, val, prior_val,
                             keep_with_next=True)
         else:
-            if entity_type == "trust":
+            if entity_type in TRUST_LIKE_TYPES:
                 label = "Undistributed income"
             else:
                 label = "Retained profits / (accumulated losses)"
@@ -2116,7 +2118,7 @@ def _add_notes(doc, entity, fy, sections, show_cents=False, note_registry=None):
             f"purpose financial statements. The financial statements are therefore special purpose "
             f"financial statements that have been prepared in order to meet the needs of members.",
             size=FONT_SIZE_BODY, alignment=WD_ALIGN_PARAGRAPH.JUSTIFY, space_after=6)
-    elif entity_type == "trust":
+    elif entity_type in TRUST_LIKE_TYPES:
         _add_paragraph(
             doc,
             f"The trustee has prepared the financial statements of the trust on the basis that "
@@ -2155,7 +2157,7 @@ def _add_notes(doc, entity, fy, sections, show_cents=False, note_registry=None):
             f"the needs of members. Such accounting policies are consistent with the previous period "
             f"unless stated otherwise.",
             size=FONT_SIZE_BODY, alignment=WD_ALIGN_PARAGRAPH.JUSTIFY, space_after=6)
-    elif entity_type == "trust":
+    elif entity_type in TRUST_LIKE_TYPES:
         _add_paragraph(
             doc,
             f"The financial statements have been prepared in accordance with the significant "
@@ -2930,7 +2932,7 @@ def _add_declaration(doc, entity, fy):
             _add_paragraph(doc, officer.full_name, size=FONT_SIZE_BODY, space_after=0)
             _add_paragraph(doc, "Director", size=FONT_SIZE_BODY, space_after=6)
 
-    elif entity_type == "trust":
+    elif entity_type in TRUST_LIKE_TYPES:
         _start_report_section(doc, entity, "Trustee's Declaration",
                               footer_type="none", show_column_headers=False)
 
@@ -3062,7 +3064,7 @@ def _add_declaration(doc, entity, fy):
 
     # Shared "Dated:" line for non-trust entity types.
     # Trust declaration adds its own "Dated: ___" after the signatory loop above.
-    if entity_type != "trust":
+    if entity_type not in TRUST_LIKE_TYPES:
         _add_paragraph(doc, "Dated:", size=FONT_SIZE_BODY, space_after=2)
 
 
@@ -3108,7 +3110,7 @@ def _add_compilation_report(doc, entity, fy):
             f"the financial statements were prepared.",
             size=FONT_SIZE_BODY, alignment=WD_ALIGN_PARAGRAPH.JUSTIFY, space_after=10)
 
-    elif entity_type == "trust":
+    elif entity_type in TRUST_LIKE_TYPES:
         _add_paragraph(doc, "The Responsibility of the Trustee",
                        size=FONT_SIZE_BODY, italic=True, space_after=4)
         _add_paragraph(
@@ -3383,7 +3385,7 @@ def generate_financial_statements(financial_year_id, has_open_risks=False, is_fi
             # Simple company: compilation report LAST
             _add_compilation_report(doc, entity, fy)
 
-    elif entity_type == "trust":
+    elif entity_type in TRUST_LIKE_TYPES:
         # Trust order: Notes > Depreciation > Trustee's Declaration > Compilation Report
         _add_notes(doc, entity, fy, sections, show_cents=show_cents,
                    note_registry=note_registry)

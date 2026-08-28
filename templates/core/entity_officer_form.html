@@ -96,18 +96,28 @@
             </div>
             {% endif %}
 
-            {% if entity.entity_type == 'trust' %}
+            {% if entity.is_trust_like %}
             <div class="row" id="distribution-pct-row" style="display:none;">
+                {% if entity.is_unit_trust %}
+                <div class="col-md-4 mb-3">
+                    <label for="{{ form.units_held.id_for_label }}" class="form-label">Units Held</label>
+                    {{ form.units_held }}
+                    <small class="text-muted">Number of units held. Distribution % is recalculated for every holder whenever this changes.</small>
+                </div>
+                {% endif %}
                 <div class="col-md-4 mb-3">
                     <label for="{{ form.distribution_percentage.id_for_label }}" class="form-label">Distribution %</label>
                     {{ form.distribution_percentage }}
-                    <small class="text-muted">Percentage of trust distribution allocated to this beneficiary/unit holder</small>
+                    <small class="text-muted">
+                        {% if entity.is_unit_trust %}Derived from units held.{% else %}Percentage of trust distribution allocated to this beneficiary/unit holder{% endif %}
+                    </small>
                 </div>
             </div>
             {% endif %}
 
             {{ form.profit_share_percentage.as_hidden }}
-            {% if entity.entity_type != 'trust' %}{{ form.distribution_percentage.as_hidden }}{% endif %}
+            {% if not entity.is_trust_like %}{{ form.distribution_percentage.as_hidden }}{% endif %}
+            {% if not entity.is_unit_trust %}{{ form.units_held.as_hidden }}{% endif %}
 
             <div class="d-flex gap-2">
                 <button type="submit" class="btn btn-primary">
@@ -119,7 +129,7 @@
     </div>
 </div>
 
-{% if entity.entity_type == 'trust' %}
+{% if entity.is_trust_like %}
 <script>
 (function() {
     var distRow = document.getElementById('distribution-pct-row');

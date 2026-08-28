@@ -26,8 +26,9 @@ from core.models import (
     FinancialYear, TrustWorkspace, BeneficiaryProfile,
     DistributionScenario, Section100AAssessment, TrustElectionRecord,
     EntityOfficer, ActivityLog, TaxPlanningScenario,
-    AdjustingJournal, JournalLine,
+    AdjustingJournal, JournalLine, BeneficiaryAllocation,
 )
+from core.unit_allocation import allocate_by_units
 
 logger = logging.getLogger(__name__)
 ZERO = Decimal("0")
@@ -579,6 +580,134 @@ def _entity_has_unitholders(entity):
     return entity.officers.filter(
         django_models.Q(role='unit_holder') | django_models.Q(roles__contains='unit_holder')
     ).exists()
+
+
+def allocate_unit_trust_distribution(distribution):
+    """Allocate a unit trust's distribution strictly by the unit register.
+
+    Every stream splits in the same proportion -- there is no streaming
+    choice in a fixed trust -- and franking credits follow the franked
+    dividends they attach to (there is no separate franking-credits field
+    to allocate). Rows are refreshed in place (``update_or_create`` keyed
+    on the ``[distribution, beneficiary]`` unique-together pair) so
+    re-running is idempotent: same holder, same row, refreshed values.
+
+    Deliberately does NOT use ``BeneficiaryAllocation.calculate_allocation``
+    -- that method quantizes each row independently from ``percentage``,
+    which does not guarantee the rows sum to the stream total. This
+    function instead uses Task 7's ``allocate_by_units``, which splits by
+    largest-remainder so the parts sum EXACTLY to the whole.
+
+    "Active" holder matches ``EntityOfficer.active_register_q`` (shared with
+    ``Entity.total_units`` and ``recalculate_unit_percentages``): a future
+    ``date_ceased`` does NOT exclude a holder, only a today-or-earlier one
+    does. ``units_held is None`` rows are excluded before calling in --
+    ``units_held`` is nullable, and a bare ``None`` reaching
+    ``allocate_by_units`` would blow up inside its ``sum()`` with an
+    unhelpful ``TypeError`` rather than a clear error.
+
+    Holdings are keyed on ``(display_order, full_name, pk)`` rather than on
+    the officer's pk alone. ``allocate_by_units`` breaks ties on the KEY
+    ITSELF (not ``str(key)``), and ``EntityOfficer.
+    recalculate_unit_percentages`` sorts its own largest-remainder tie-break
+    on the same tuple, so the odd cent goes to the same holder the stored
+    percentage shows as the larger one -- register order, not an arbitrary
+    UUID. The pk rides along last purely so two holders sharing a
+    display_order AND a name cannot collide into ``allocate_by_units``'
+    duplicate-key ValueError; it never reorders two holders a user can tell
+    apart.
+
+    A holder who drops out of the active set since the last run (units
+    zeroed/nulled, or ceased) keeps their ``BeneficiaryAllocation`` row --
+    it is never deleted, since that would discard ``section_100a_flag`` /
+    ``section_100a_notes`` for a holder who ceased mid-year, the same
+    reason ``recalculate_unit_percentages`` freezes rather than nulls a
+    ceased holder's stored percentage. Instead every stream, the
+    percentage, and total_distribution on that stale row are zeroed, so a
+    stale row can never silently keep contributing money and the
+    allocations for this distribution still sum to exactly the whole.
+
+    ``percentage`` is written from the STORED, largest-remainder
+    ``distribution_percentage`` (written by ``recalculate_unit_percentages``),
+    not the live ``unit_percentage`` property, which quantizes each row
+    independently and does not sum to exactly 100.00. ``is_fully_allocated``
+    is set True unconditionally: for a unit trust there is no partial
+    allocation, by construction the active register's stored percentages
+    already sum to 100.00.
+
+    Raises ValueError (propagated from ``allocate_by_units``) when the
+    active register is empty or has no units on issue -- allocating a
+    fixed trust's income with no register is a misconfiguration, not a
+    zero-row no-op, so this must fail loudly rather than silently
+    allocating nothing.
+    """
+    entity = distribution.financial_year.entity
+    holders = list(
+        EntityOfficer.objects.filter(
+            EntityOfficer.active_register_q(),
+            entity=entity, units_held__isnull=False,
+        ).order_by("display_order", "full_name")
+    )
+
+    def key_for(holder):
+        # (display_order, full_name) is the shared tie-break key -- see
+        # EntityOfficer.recalculate_unit_percentages and allocate_by_units.
+        # The pk rides along last so two holders sharing a display_order AND
+        # a name cannot collide into allocate_by_units' duplicate-key
+        # ValueError; it never changes the order of two holders the user can
+        # actually tell apart.
+        return (holder.display_order, holder.full_name, holder.pk)
+
+    holdings = [(key_for(holder), holder.units_held) for holder in holders]
+
+    streams = {
+        "allocated_capital_gains": distribution.capital_gains,
+        "allocated_franked_dividends": distribution.franked_dividends,
+        "allocated_foreign_income": distribution.foreign_income,
+        "allocated_other_income": distribution.other_income,
+    }
+    split = {
+        field: allocate_by_units(amount, holdings)
+        for field, amount in streams.items()
+    }
+    entitlement = allocate_by_units(distribution.distributable_income, holdings)
+
+    with transaction.atomic():
+        # Zero (never delete) any existing row for a holder who is no
+        # longer in the active set -- see docstring. This must run inside
+        # the same transaction as the writes below so a mid-sequence
+        # failure cannot leave rows zeroed without being rewritten.
+        active_ids = [holder.pk for holder in holders]
+        BeneficiaryAllocation.objects.filter(
+            distribution=distribution,
+        ).exclude(beneficiary_id__in=active_ids).update(
+            percentage=Decimal("0"),
+            allocated_capital_gains=Decimal("0"),
+            allocated_franked_dividends=Decimal("0"),
+            allocated_foreign_income=Decimal("0"),
+            allocated_other_income=Decimal("0"),
+            total_distribution=Decimal("0"),
+        )
+
+        rows = []
+        for holder in holders:
+            key = key_for(holder)
+            row, _ = BeneficiaryAllocation.objects.update_or_create(
+                distribution=distribution,
+                beneficiary=holder,
+                defaults={
+                    "percentage": holder.distribution_percentage or Decimal("0"),
+                    "fixed_amount": None,
+                    "total_distribution": entitlement[key],
+                    **{field: values[key] for field, values in split.items()},
+                },
+            )
+            rows.append(row)
+
+        distribution.is_fully_allocated = True
+        distribution.save(update_fields=["is_fully_allocated"])
+
+    return rows
 
 
 def _serialize_workspace(workspace):

@@ -181,7 +181,8 @@ class ProactiveScanner:
 
     def _check_trust_vesting(self):
         """Check if a trust is approaching its vesting date."""
-        if self.entity.entity_type != "trust":
+        from core.models import TRUST_LIKE_TYPES
+        if self.entity.entity_type not in TRUST_LIKE_TYPES:
             return
         if not self.entity.vesting_date:
             return

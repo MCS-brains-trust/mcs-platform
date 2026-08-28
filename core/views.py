@@ -25,7 +25,7 @@ from .models import (
     ClientAssociate, AccountingSoftware, MeetingNote,
     DepreciationAsset, RiskFlag, StockItem, ActivityLog, EntityChartOfAccount,
     BulkJournalUpload, BASPeriod, BankAccountMapping, BASPeriodCommentary,
-    EvaReview,
+    EvaReview, template_entity_type, TRUST_LIKE_TYPES,
 )
 from .forms import (
     ClientForm, EntityForm, FinancialYearForm,
@@ -99,7 +99,7 @@ def _resolve_account_name(entity, account_code, raw_name):
 
     # Attempt 2: master chart of accounts template
     coa = ChartOfAccount.objects.filter(
-        entity_type=entity.entity_type, account_code=account_code, is_active=True
+        entity_type=template_entity_type(entity.entity_type), account_code=account_code, is_active=True
     ).first()
     if coa and coa.account_name:
         return coa.account_name
@@ -234,7 +234,7 @@ def _coa_sections_for_entity(entity):
     """
     sections = dict(
         ChartOfAccount.objects.filter(
-            entity_type=entity.entity_type, is_active=True
+            entity_type=template_entity_type(entity.entity_type), is_active=True
         ).values_list("account_code", "section")
     )
     sections.update(
@@ -315,7 +315,7 @@ def _is_retained_profits_account(account_code, account_name, mapped_line_item, e
     code_prefix = (account_code or "").split(".")[0]
     if code_prefix == "4199":
         return 2
-    expected = _RETAINED_PROFITS_STANDARD_CODES.get(entity_type)
+    expected = _RETAINED_PROFITS_STANDARD_CODES.get(template_entity_type(entity_type))
     if expected and mapped_line_item and (mapped_line_item.standard_code or "") == expected:
         return 1
     name_lower = (account_name or "").lower()
@@ -351,7 +351,7 @@ def _default_retained_profits_account(entity_type):
         "trust": ("Undistributed income", "4199"),
         "partnership": ("Partners' current accounts", "4199"),
         "sole_trader": ("Proprietor's funds", "4199"),
-    }.get(entity_type, ("Retained profits", "4199"))
+    }.get(template_entity_type(entity_type), ("Retained profits", "4199"))
 
 
 def _expected_next_year_openings(fy):
@@ -463,7 +463,7 @@ def _build_coa_section_lookup(entity):
 
     # Priority 2 first (lower priority — will be overwritten by Priority 1)
     for code, section in ChartOfAccount.objects.filter(
-        entity_type=entity.entity_type, is_active=True,
+        entity_type=template_entity_type(entity.entity_type), is_active=True,
     ).values_list('account_code', 'section'):
         ds = _COA_SECTION_TO_DISPLAY.get(section, 'Unmapped')
         if ds != 'Unmapped':
@@ -499,7 +499,7 @@ def _infer_section_for_unmapped(entity, account_code):
 
     # Priority 2: master chart of accounts template
     coa = ChartOfAccount.objects.filter(
-        entity_type=entity.entity_type, account_code=account_code, is_active=True,
+        entity_type=template_entity_type(entity.entity_type), account_code=account_code, is_active=True,
     ).first()
     if coa and coa.section:
         return _COA_SECTION_TO_DISPLAY.get(coa.section, 'Unmapped')
@@ -1885,12 +1885,21 @@ def entity_detail(request, pk):
     # Surface a one-time prompt after entity creation for companies/trusts
     # so the user can consciously initiate the establishment package.
     legal_doc_prompt = None
-    if not entity.legal_doc_prompt_dismissed and entity.entity_type in ("company", "trust"):
+    # The dict IS the gate. Keying the membership test off it means the two
+    # cannot drift: a future entity type — a third TRUST_LIKE_TYPES member
+    # included — is simply not prompted until it is given its own entry here,
+    # rather than passing a widened gate and then raising KeyError on the
+    # subscript below.
+    doc_type_map = {
+        "company": ("company_establishment", "Company Establishment Package"),
+        "trust": ("discretionary_trust_deed", "Discretionary Trust Deed"),
+        # A unit trust is established by a fixed unit trust deed, never a
+        # discretionary one — see core/views_office_admin.py's
+        # DOC_TYPE_ENTITY_MAP, which already routes "unit_trust_deed" here.
+        "trust_unit": ("unit_trust_deed", "Fixed Unit Trust Deed"),
+    }
+    if not entity.legal_doc_prompt_dismissed and entity.entity_type in doc_type_map:
         from core.models import LegalDocument
-        doc_type_map = {
-            "company": ("company_establishment", "Company Establishment Package"),
-            "trust": ("discretionary_trust_deed", "Discretionary Trust Deed"),
-        }
         doc_type_key, doc_type_label = doc_type_map[entity.entity_type]
         # Only show if no document of this type has been generated yet
         already_generated = LegalDocument.objects.filter(
@@ -2643,7 +2652,7 @@ def financial_year_detail(request, pk):
             entity=fy.entity, is_active=True
         ).count(),
         "account_mappings": AccountMapping.objects.filter(
-            applicable_entities__contains=fy.entity.entity_type
+            applicable_entities__contains=template_entity_type(fy.entity.entity_type)
         ).order_by('financial_statement', 'line_item_label'),
         # General Pool
         "general_pool": getattr(fy, "general_pool", None),
@@ -2758,7 +2767,7 @@ def financial_year_finalise_full(request, pk):
         return redirect("core:financial_year_detail", pk=pk)
 
     # ── Pre-check: Trust distribution must be complete ───────────────
-    if fy.entity.entity_type == "trust":
+    if fy.entity.entity_type in TRUST_LIKE_TYPES:
         trust_ws = getattr(fy, "trust_workspace", None)
         if not trust_ws or not trust_ws.all_stages_completed():
             messages.warning(
@@ -2785,7 +2794,7 @@ def financial_year_finalise_full(request, pk):
             )
 
     # ── Step 2: Block finalisation if trust balance sheet doesn't reconcile
-    if fy.entity.entity_type == "trust":
+    if fy.entity.entity_type in TRUST_LIKE_TYPES:
         try:
             from core.fs_template_service import _get_tb_sections, _sum_section
             from decimal import Decimal
@@ -2948,7 +2957,7 @@ def financial_year_status(request, pk):
         return redirect("core:financial_year_detail", pk=pk)
 
     # Block finalisation if trust balance sheet does not reconcile
-    if new_status == "finalised" and fy.entity.entity_type == "trust":
+    if new_status == "finalised" and fy.entity.entity_type in TRUST_LIKE_TYPES:
         try:
             from core.fs_template_service import _get_tb_sections, _sum_section
             from decimal import Decimal
@@ -3466,15 +3475,7 @@ def reroll_forward(request, pk):
 
         tax_amount = income_tax_line.closing_balance if income_tax_line else Decimal("0")
         if retained_profits_line is None and (net_pl_result != 0 or tax_amount != 0):
-            etype = entity.entity_type
-            if etype == "trust":
-                rp_name, rp_code = "Undistributed income", "4199"
-            elif etype == "partnership":
-                rp_name, rp_code = "Partners' current accounts", "4199"
-            elif etype == "sole_trader":
-                rp_name, rp_code = "Proprietor's funds", "4199"
-            else:
-                rp_name, rp_code = "Retained profits", "4199"
+            rp_name, rp_code = _default_retained_profits_account(entity.entity_type)
 
             rp_opening = net_pl_result + tax_amount
             TrialBalanceLine.objects.create(
@@ -4625,7 +4626,7 @@ def _process_trial_balance_upload(fy, file):
         coa_match = None
         if not mapped_item:
             coa_match = ChartOfAccount.objects.filter(
-                entity_type=entity.entity_type,
+                entity_type=template_entity_type(entity.entity_type),
                 account_code=account_code,
                 is_active=True,
             ).first()
@@ -4635,7 +4636,7 @@ def _process_trial_balance_upload(fy, file):
         if not mapped_item:
             from core.models import GlobalAccountMappingHint
             hint = GlobalAccountMappingHint.objects.filter(
-                entity_type=entity.entity_type,
+                entity_type=template_entity_type(entity.entity_type),
                 account_code=account_code,
             ).select_related('mapped_line_item').first()
             if hint:
@@ -4972,7 +4973,7 @@ def review_tb_import(request, pk):
     # Beneficiary officers for the Beneficiary column (trust entities only)
     from django.db import models as _m
     beneficiary_officers = []
-    if entity.entity_type == "trust":
+    if entity.entity_type in TRUST_LIKE_TYPES:
         beneficiary_officers = list(
             EntityOfficer.objects.filter(
                 entity=entity,
@@ -5008,7 +5009,7 @@ def review_tb_import(request, pk):
         "balance_blocked": balance_blocked,
         "balance_warning": balance_warning,
         "beneficiary_officers": beneficiary_officers,
-        "is_trust": entity.entity_type == "trust",
+        "is_trust": entity.entity_type in TRUST_LIKE_TYPES,
     }
     return render(request, "core/review_tb_import.html", context)
 
@@ -5878,7 +5879,7 @@ def adjustment_create(request, pk):
         ]
     # Always merge with the entity's Chart of Accounts so that accounts
     # which exist in the CoA but have no TB line yet are still selectable.
-    entity_type = fy.entity.entity_type
+    entity_type = template_entity_type(fy.entity.entity_type)
     coa_accounts = (
         EntityChartOfAccount.objects.filter(entity=fy.entity, is_active=True)
         .order_by("account_code")
@@ -6672,7 +6673,7 @@ def journal_edit(request, pk):
     ]
     coa_qs = EntityChartOfAccount.objects.filter(entity=entity, is_active=True).order_by("account_code").values("account_code", "account_name")
     if not coa_qs.exists():
-        coa_qs = ChartOfAccount.objects.filter(entity_type=entity.entity_type, is_active=True).order_by("account_code").values("account_code", "account_name")
+        coa_qs = ChartOfAccount.objects.filter(entity_type=template_entity_type(entity.entity_type), is_active=True).order_by("account_code").values("account_code", "account_name")
     merged = {}
     for a in coa_qs:
         merged[a["account_code"]] = {"client_account_code": a["account_code"], "client_account_name": a["account_name"]}
@@ -7065,7 +7066,7 @@ def generate_document(request, pk):
     # Also create/update a LegalDocument record so the package assembly
     # checklist can detect that distribution minutes have been generated.
     entity = fy.entity
-    if entity.entity_type == "trust":
+    if entity.entity_type in TRUST_LIKE_TYPES:
         from core.models import LegalDocument
         from core.views_compliance_docs import _sanitise_context_for_storage
         try:
@@ -7481,9 +7482,11 @@ def entity_officers(request, pk):
     entity = get_entity_for_user(request, pk)
     officers = entity.officers.all()
 
+    from core.entity_terminology import beneficiary_noun
     officer_label_map = {
         "company": "Director / Officer",
-        "trust": "Trustee / Beneficiary",
+        "trust": f"Trustee / {beneficiary_noun(entity)}",
+        "trust_unit": f"Trustee / {beneficiary_noun(entity)}",
         "partnership": "Partner",
         "sole_trader": "Proprietor",
         "smsf": "Trustee / Director",
@@ -7494,7 +7497,7 @@ def entity_officers(request, pk):
     dist_active = 0
     dist_ceased = 0
     dist_total = 0
-    if entity.entity_type == "trust":
+    if entity.entity_type in TRUST_LIKE_TYPES:
         from decimal import Decimal
         from django.db.models import Q, Sum
         from django.utils import timezone
@@ -7526,11 +7529,17 @@ def entity_officers(request, pk):
 
 
 def _handle_ceased_redistribution(request, officer):
-    """Auto-redistribute distribution % when a unit holder/beneficiary is ceased."""
+    """Auto-redistribute distribution % when a unit holder/beneficiary is ceased.
+
+    Messages come through ``beneficiary_noun`` -- a discretionary trust's
+    beneficiaries were being told about "unit holders" on every cessation.
+    """
     from django.db import transaction
     from django.db.models import Q, Sum
     from django.utils import timezone
     from decimal import Decimal
+
+    from core.entity_terminology import beneficiary_noun
 
     if officer.role not in EntityOfficer.DISTRIBUTION_ROLES:
         return
@@ -7554,25 +7563,82 @@ def _handle_ceased_redistribution(request, officer):
         return
     if count == 1:
         sole = remaining.first()
-        with transaction.atomic():
-            sole.distribution_percentage = Decimal("100.00")
-            sole._updated_by = getattr(request, "user", None)
-            sole.save()
-        messages.info(
-            request,
-            f"{sole.full_name} is now the sole active unit holder and has been "
-            f"set to 100.00% distribution."
-        )
+        if entity.is_unit_trust:
+            # The register decides the percentage, not this view: for a
+            # unit trust, hand-setting 100.00 here would write the field
+            # without writing matching audit history (EntityOfficer.save()
+            # no longer derives a unit holder's percentage from units_held
+            # at all -- see recalculate_unit_percentages()'s docstring).
+            # Recomputing from the register keeps the stored field and its
+            # OfficerDistributionHistory row in agreement.
+            EntityOfficer.recalculate_unit_percentages(entity)
+            sole.refresh_from_db()
+            # recalculate_unit_percentages() only rewrites unit_holder
+            # rows, and early-returns entirely if there is no active
+            # unit_holder left (e.g. the sole survivor is a beneficiary,
+            # not a unit holder). Guard the message on the actual outcome
+            # rather than assuming the recompute wrote 100.00 -- fix
+            # round 1 reviewer finding: without this, ceasing the only
+            # unit holder on a unit trust that also carries a beneficiary
+            # produced a false "set to 100.00% distribution" message when
+            # nothing was written at all.
+            wrote_100 = sole.distribution_percentage == Decimal("100.00")
+        else:
+            with transaction.atomic():
+                sole.distribution_percentage = Decimal("100.00")
+                sole._updated_by = getattr(request, "user", None)
+                sole.save()
+            wrote_100 = True
+        if wrote_100:
+            messages.info(
+                request,
+                f"{sole.full_name} is now the sole active "
+                f"{beneficiary_noun(entity).lower()} and has been "
+                f"set to 100.00% distribution."
+            )
     else:
         active_total = remaining.filter(
             distribution_percentage__isnull=False,
         ).aggregate(total=Sum("distribution_percentage"))["total"] or Decimal("0")
-        messages.warning(
-            request,
-            f"Warning: {officer.full_name} has been ceased. Their {ceased_pct}% "
-            f"distribution has not been reallocated. Active unit holders currently "
-            f"total {active_total}%. Please update distribution percentages manually."
-        )
+        plural = beneficiary_noun(entity, plural=True).lower()
+        if entity.is_unit_trust:
+            # Task 6 guarded only the count == 1 branch. On a unit trust the
+            # recompute above (entity_officer_edit calls
+            # recalculate_unit_percentages before this function) has ALREADY
+            # reallocated every surviving holder's share from the register,
+            # and distribution_percentage is `disabled` on this entity's
+            # officer form -- so telling the user their distribution "has not
+            # been reallocated... update distribution percentages manually"
+            # was both false and impossible to act on.
+            if active_total == Decimal("100.00"):
+                messages.info(
+                    request,
+                    f"{officer.full_name} has been ceased. Their "
+                    f"{ceased_pct}% has been reallocated automatically: the "
+                    f"remaining {plural} now hold "
+                    f"{active_total}% between them, derived from the unit "
+                    f"register. Change a holding to change a share."
+                )
+            else:
+                # The recompute early-returns when no active unit holder
+                # carries units (or the survivors are beneficiaries, not
+                # holders): say so instead of claiming a reallocation.
+                messages.warning(
+                    request,
+                    f"Warning: {officer.full_name} has been ceased, but the "
+                    f"remaining {plural} total {active_total}%, not 100.00% "
+                    f"— the register could not be recalculated. Set units "
+                    f"held on the surviving {plural} to restore a whole "
+                    f"register."
+                )
+        else:
+            messages.warning(
+                request,
+                f"Warning: {officer.full_name} has been ceased. Their "
+                f"{ceased_pct}% distribution has not been reallocated. Active "
+                f"{plural} currently total {active_total}%. Please update "
+                f"distribution percentages manually."
+            )
 
 
 @login_required
@@ -7593,6 +7659,15 @@ def entity_officer_create(request, entity_pk):
             officer.roles = form.cleaned_data["roles_multi"]
             officer._updated_by = request.user
             officer.save()
+            if entity.is_unit_trust:
+                # Adding a holder changes every other holder's share too.
+                # This MUST be the last write touching the register in
+                # this request -- see recalculate_unit_percentages'
+                # docstring (core/models.py). Nothing below re-saves
+                # `officer` as a full row, so its stale in-memory
+                # distribution_percentage can't get written back over the
+                # fresh value this just persisted.
+                EntityOfficer.recalculate_unit_percentages(entity)
             _log_action(request, "user_change",
                         f"Added officer {officer.full_name} to {entity.entity_name}",
                         officer)
@@ -7629,6 +7704,16 @@ def entity_officer_edit(request, pk):
             obj.roles = form.cleaned_data["roles_multi"]
             obj._updated_by = request.user
             obj.save()
+            if entity.is_unit_trust:
+                # Editing a holder (units_held, or ceasing them) changes
+                # every other holder's share too. Last write touching the
+                # register in this request -- see recalculate_unit_
+                # percentages' docstring (core/models.py).
+                EntityOfficer.recalculate_unit_percentages(entity)
+                # `obj` may now be stale on distribution_percentage (the
+                # recompute re-fetched and re-saved its own row): refresh
+                # before anything below reads it.
+                obj.refresh_from_db()
             _log_action(request, "user_change",
                         f"Updated officer {officer.full_name} for {entity.entity_name}",
                         officer)
@@ -7666,6 +7751,12 @@ def entity_officer_delete(request, pk):
             beneficiary_officer=officer, auto_provisioned=True,
         ).delete()
         officer.delete()
+        if entity.is_unit_trust:
+            # Removing a holder changes every remaining holder's share.
+            # Last write in this transaction -- see recalculate_unit_
+            # percentages' docstring (core/models.py). `officer` is
+            # already deleted, so there is nothing left to go stale.
+            EntityOfficer.recalculate_unit_percentages(entity)
     messages.success(request, f"Removed {name}.")
     return redirect("core:entity_officers", pk=entity.pk)
 
@@ -7680,7 +7771,7 @@ def auto_map_capital_accounts(request, entity_pk):
     entity = get_object_or_404(Entity, pk=entity_pk)
     get_entity_for_user(request, entity.pk)  # IDOR check
 
-    if entity.entity_type != "trust":
+    if entity.entity_type not in TRUST_LIKE_TYPES:
         return JsonResponse(
             {"status": "error", "message": "Only available for trust entities."},
             status=400,
@@ -8696,7 +8787,7 @@ def gst_activity_statement(request, pk):
         pk=pk,
     )
     entity = fy.entity
-    entity_type = entity.entity_type  # company, trust, partnership, sole_trader
+    entity_type = template_entity_type(entity.entity_type)  # company, trust, partnership, sole_trader
 
     # Build a lookup: account_code -> ChartOfAccount for this entity type
     # First load template COA, then overlay with entity-specific COA
@@ -8956,7 +9047,7 @@ def gst_activity_statement_download(request, pk):
         pk=pk,
     )
     entity = fy.entity
-    entity_type = entity.entity_type
+    entity_type = template_entity_type(entity.entity_type)
 
     # Re-run the calculation (same logic as the view)
     coa_lookup = {}
@@ -11131,7 +11222,8 @@ def review_bank_account_mapping(request, pk):
     else:
         # Try master CoA
         coa = ChartOfAccount.objects.filter(
-            entity_type=fy.entity.entity_type, account_code=tb_account_code, is_active=True,
+            entity_type=template_entity_type(fy.entity.entity_type),
+            account_code=tb_account_code, is_active=True,
         ).select_related('maps_to').first()
         if coa and coa.maps_to:
             mapped_item = coa.maps_to
@@ -12414,7 +12506,7 @@ def htmx_update_tb_mapping(request, pk):
                 pass
 
     # Return the updated row
-    entity_type = line.financial_year.entity.entity_type
+    entity_type = template_entity_type(line.financial_year.entity.entity_type)
     coa_items = ChartOfAccount.objects.filter(
         entity_type=entity_type, is_active=True
     ).select_related("maps_to").order_by("section", "account_code")
@@ -12432,7 +12524,7 @@ def htmx_update_tb_mapping(request, pk):
 @login_required
 def coa_search_api(request):
     """JSON API for searching chart of accounts — used by the review tab dropdown."""
-    entity_type = request.GET.get("entity_type", "company")
+    entity_type = template_entity_type(request.GET.get("entity_type", "company"))
     q = request.GET.get("q", "")
 
     qs = ChartOfAccount.objects.filter(
@@ -13980,7 +14072,7 @@ def entity_coa_add(request, pk):
     section_choices = EntityChartOfAccount.StatementSection.choices
     tax_code_choices = ['GST', 'ADS', 'ITS', 'FRE', 'CAP', 'INP', 'GNR', 'N-T']
     mapping_options = AccountMapping.objects.filter(
-        applicable_entities__contains=entity.entity_type
+        applicable_entities__contains=template_entity_type(entity.entity_type)
     ).order_by('financial_statement', 'line_item_label')
 
     if request.method == 'POST':
@@ -14089,7 +14181,7 @@ def entity_coa_edit(request, pk):
     section_choices = EntityChartOfAccount.StatementSection.choices
     tax_code_choices = ['GST', 'ADS', 'ITS', 'FRE', 'CAP', 'INP', 'GNR', 'N-T']
     mapping_options = AccountMapping.objects.filter(
-        applicable_entities__contains=entity.entity_type
+        applicable_entities__contains=template_entity_type(entity.entity_type)
     ).order_by('financial_statement', 'line_item_label')
 
     if request.method == 'POST':

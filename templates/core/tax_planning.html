@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% load humanize %}
+{% load entity_terminology %}
 {% block title %}Tax Planning — {{ fy.entity.entity_name }} — {{ fy.year_label }}{% endblock %}
 
 {% block extra_head %}
@@ -297,7 +298,7 @@
 <!-- ===== SECTION 2: BENEFICIARY TAX POSITION (single unified table per spec) ===== -->
 <div class="section-card {% if is_finalised %}finalised-overlay{% endif %}">
     <div class="section-header d-flex justify-content-between align-items-center" data-bs-toggle="collapse" data-bs-target="#section2Body">
-        <span><i class="bi bi-2-circle-fill text-primary me-2"></i> Beneficiary Tax Position</span>
+        <span><i class="bi bi-2-circle-fill text-primary me-2"></i> {{ entity|beneficiary_noun }} Tax Position</span>
         <i class="bi bi-chevron-down"></i>
     </div>
     <div class="collapse show" id="section2Body">
@@ -306,8 +307,11 @@
                 <table class="table table-sm table-bordered table-hover align-middle mb-0" style="font-size: 0.82rem;">
                     <thead class="table-dark">
                         <tr>
-                            <th>Beneficiary</th>
+                            <th>{{ entity|beneficiary_noun }}</th>
                             <th style="width: 120px;">Type</th>
+                            {% if entity.is_unit_trust %}
+                            <th class="text-end" style="width: 100px;">Units</th>
+                            {% endif %}
                             <th class="text-end" style="width: 130px;">Outside Income</th>
                             <th class="text-end" style="width: 140px;">Proposed Distribution</th>
                             <th class="text-end" style="width: 90px;">Franking Cr.</th>
@@ -350,6 +354,12 @@
                                     <option value="trust" {% if row.beneficiary_type == 'trust' %}selected{% endif %}>Trust</option>
                                 </select>
                             </td>
+                            {% if entity.is_unit_trust %}
+                            <td class="text-end">
+                                {{ row.beneficiary.units_held|default:0 }}
+                                <br><small class="text-muted">{{ row.beneficiary.unit_percentage }}%</small>
+                            </td>
+                            {% endif %}
                             <td class="text-end">
                                 {% if row.beneficiary_type != 'company' %}
                                 <input type="number" class="form-control form-control-sm beneficiary-input outside-income"
@@ -360,9 +370,14 @@
                                 {% endif %}
                             </td>
                             <td class="text-end">
+                                {% if entity.is_unit_trust %}
+                                <span class="fw-semibold">${{ row.proposed_distribution|floatformat:2|intcomma }}</span>
+                                <input type="hidden" class="proposed-dist" value="{{ row.proposed_distribution|floatformat:2 }}">
+                                {% else %}
                                 <input type="number" class="form-control form-control-sm beneficiary-input proposed-dist"
                                        value="{{ row.proposed_distribution|floatformat:2 }}" step="0.01" min="0"
                                        {% if is_finalised %}disabled{% endif %}>
+                                {% endif %}
                             </td>
                             <!-- Calculated columns — filled by JS after calculate -->
                             <td class="text-end res-fc">—</td>
@@ -379,7 +394,7 @@
                     </tbody>
                     <tfoot class="table-light fw-bold">
                         <tr>
-                            <td colspan="3" class="text-end">TOTAL:</td>
+                            <td colspan="{% if entity.is_unit_trust %}4{% else %}3{% endif %}" class="text-end">TOTAL:</td>
                             <td class="text-end" id="totalDistributed">$0.00</td>
                             <td class="text-end" id="resTotalFc">—</td>
                             <td class="text-end" id="resTotalTaxable">—</td>
@@ -455,18 +470,43 @@
     </div>
 </div>
 
-<!-- ===== SECTION 4: SCENARIO MODELLING ===== -->
+<!-- ===== SECTION 4: SCENARIO MODELLING =====
+     MODELLING is not applicable to a unit trust: there is no discretion to
+     model, so apply/compare/delete are hidden for one. SAVING is NOT
+     hidden. A saved TaxPlanningScenario is the only thing this codebase
+     ever creates one from (tax_planning_scenario_save), and
+     TrustWorkspace.selected_tax_scenario -- which every client-facing
+     product of a distribution reads -- can only point at a saved scenario:
+     the distribution journal (hard 400 without one), the distribution
+     minutes table, the holder statements, and the capital accounts note
+     (whose profit_dist stays 0 without one, so the year's distribution is
+     silently derived as funds LOANED to the trust on the face of the
+     financial statements). Hiding this button hid the feature. It is safe
+     to keep: a unit trust's figures are register-derived and read-only
+     (Section 2 renders them as text with a hidden input, and
+     tax_planning_save overwrites any posted proposed_distribution from the
+     register), so saving a scenario records the register's own split -- it
+     cannot let discretion in. -->
 <div class="section-card">
     <div class="section-header d-flex justify-content-between align-items-center" data-bs-toggle="collapse" data-bs-target="#section4Body">
-        <span><i class="bi bi-4-circle-fill text-primary me-2"></i> Scenario Modelling (Save up to 3)</span>
+        <span><i class="bi bi-4-circle-fill text-primary me-2"></i>
+            {% if entity.is_unit_trust %}Distribution Scenario (register-derived){% else %}Scenario Modelling (Save up to 3){% endif %}
+        </span>
         <i class="bi bi-chevron-down"></i>
     </div>
     <div class="collapse show" id="section4Body">
         <div class="section-body">
+            {% if entity.is_unit_trust %}
+            <p class="text-muted small mb-3">
+                <i class="bi bi-info-circle"></i> There is nothing to model on a unit trust — income follows the unit register.
+                Save the register's split as a scenario, then select it in the Trust Distribution workspace (Stage 2)
+                to post the distribution journal and generate the minutes and {{ entity|beneficiary_noun:True|lower }} statements.
+            </p>
+            {% endif %}
             <!-- Save controls -->
             {% if not is_finalised %}
             <div class="d-flex gap-2 align-items-center mb-3">
-                <input type="text" class="form-control form-control-sm" id="scenarioName" placeholder="Scenario name (e.g. Option A — Equal Split)..." style="max-width: 300px;">
+                <input type="text" class="form-control form-control-sm" id="scenarioName" placeholder="{% if entity.is_unit_trust %}Scenario name (e.g. FY2026 Register Split)...{% else %}Scenario name (e.g. Option A — Equal Split)...{% endif %}" style="max-width: 300px;">
                 <button class="btn btn-sm btn-outline-primary" id="btnSaveScenario">
                     <i class="bi bi-bookmark-plus"></i> Save Current as Scenario
                 </button>
@@ -480,9 +520,14 @@
                     <i class="bi bi-bookmark-fill text-primary"></i>
                     <span>{{ s.scenario_name }}</span>
                     <small class="text-muted">(Tax: ${{ s.total_tax|floatformat:2|intcomma }})</small>
+                    {% if not entity.is_unit_trust %}
+                    <!-- Apply and delete stay hidden for a unit trust: applying a
+                         saved split back over a register-derived one is exactly the
+                         modelling a unit trust does not have. -->
                     <button class="btn btn-sm btn-link text-primary p-0 ms-1 scenario-load" title="Apply this scenario"><i class="bi bi-box-arrow-in-down"></i></button>
                     {% if not is_finalised %}
                     <button class="btn btn-sm btn-link text-danger p-0 ms-1 scenario-delete" title="Delete"><i class="bi bi-x-circle"></i></button>
+                    {% endif %}
                     {% endif %}
                 </div>
                 {% endfor %}
@@ -491,14 +536,16 @@
                 {% endif %}
             </div>
 
-            <!-- Side-by-side comparison table (only shown when scenarios exist) -->
-            {% if scenarios.count > 0 %}
+            <!-- Side-by-side comparison table (only shown when scenarios
+                 exist, and never for a unit trust: comparing register-derived
+                 splits compares a number with itself) -->
+            {% if scenarios.count > 0 and not entity.is_unit_trust %}
             <h6 class="mt-3 mb-2"><i class="bi bi-layout-three-columns"></i> Scenario Comparison</h6>
             <div class="table-responsive">
                 <table class="table table-sm table-bordered scenario-compare-table">
                     <thead class="table-light">
                         <tr>
-                            <th>Beneficiary</th>
+                            <th>{{ entity|beneficiary_noun }}</th>
                             {% for s in scenarios %}
                             <th class="text-center" colspan="2">
                                 {{ s.scenario_name }}

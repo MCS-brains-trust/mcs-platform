@@ -339,9 +339,10 @@ def _calculate_materiality(financial_year):
         base = Decimal("100000")  # Default minimum
 
     # Entity-type specific percentages
+    from core.models import TRUST_LIKE_TYPES
     if entity_type == "smsf":
         pct = Decimal("0.005")  # 0.5% for SMSFs
-    elif entity_type in ("trust", "partnership"):
+    elif entity_type in TRUST_LIKE_TYPES + ("partnership",):
         pct = Decimal("0.01")   # 1% for trusts/partnerships
     elif total_revenue < Decimal("500000"):
         pct = Decimal("0.02")   # 2% for small entities

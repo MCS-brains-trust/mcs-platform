@@ -51,6 +51,13 @@ ENTITY_CHECK_MAP = {
         "going_concern", "related_party",
     ],
 }
+# A unit trust runs exactly the trust compliance checks. Aliased rather than
+# copied so the two never drift. Without this the .get() at the consumer falls
+# back to ["going_concern"] alone, dropping Div 7A, superannuation, ATO
+# benchmarks, related party and TPAR. Note this is the Eva *AI* distribution
+# check, not the Section 100A detection module — that one stays discretionary
+# only (see core/risk_modules/section100a.py).
+ENTITY_CHECK_MAP["trust_unit"] = ENTITY_CHECK_MAP["trust"]
 
 
 # ---------------------------------------------------------------------------

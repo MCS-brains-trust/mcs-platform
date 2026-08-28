@@ -92,7 +92,7 @@ def run_risk_engine(financial_year, tiers=None):
     Returns:
         dict with 'run_id', 'flags_created', 'flags_auto_resolved', 'errors'
     """
-    from core.models import RiskFlag, RiskRule, RiskReferenceData
+    from core.models import RiskFlag, RiskRule, RiskReferenceData, template_entity_type
 
     if tiers is None:
         tiers = [1, 2]
@@ -182,7 +182,7 @@ def run_risk_engine(financial_year, tiers=None):
             if is_covered_by_module(rule.rule_id):
                 continue
             # Check if rule applies to this entity type
-            if rule.applicable_entities and entity.entity_type not in rule.applicable_entities:
+            if rule.applicable_entities and template_entity_type(entity.entity_type) not in rule.applicable_entities:
                 continue
             try:
                 flag_data = _evaluate_tier2_rule(
@@ -521,7 +521,8 @@ def _run_tier1_variance(financial_year, tb_data, ref_data, entity_context, run_i
     # Division 7A detection: flag loan accounts with DEBIT closing balances
     # (i.e. money owed BY a shareholder/director TO the company).
     # This applies to companies and trusts.
-    if entity_context.get("entity_type") in ("company", "trust", ""):
+    from core.models import TRUST_LIKE_TYPES
+    if entity_context.get("entity_type") in ("company", "") + TRUST_LIKE_TYPES:
         flags.extend(_check_div7a_loans(tb_data, entity_context))
 
     return flags
@@ -1168,7 +1169,8 @@ def _eval_superannuation(rule, fy, tb, ref, ctx, config):
 
 def _eval_trust_distribution(rule, fy, tb, ref, ctx, config):
     """Check trust-specific compliance."""
-    if ctx.get("entity_type") != "trust":
+    from core.models import TRUST_LIKE_TYPES
+    if ctx.get("entity_type") not in TRUST_LIKE_TYPES:
         return None
 
     check_type = config.get("check_type", "undistributed")

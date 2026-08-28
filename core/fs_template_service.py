@@ -27,6 +27,7 @@ from docx.shared import Pt, Cm, Emu, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
 from core.libreoffice_utils import convert_docx_to_pdf
+from core.models import TRUST_LIKE_TYPES
 
 logger = logging.getLogger(__name__)
 
@@ -1246,7 +1247,7 @@ def build_company_context(financial_year, include_watermark=True):
     sections = _get_tb_sections(fy)
 
     # Trust only: net beneficiary capital accounts into assets/liabilities
-    if entity.entity_type == "trust":
+    if entity.entity_type in TRUST_LIKE_TYPES:
         _net_beneficiary_accounts(fy, sections)
         # 4199 ("Undistributed income") is a real balance-sheet equity
         # account, not a P&L account — its closing balance is the current
@@ -2325,12 +2326,13 @@ def _post_process_fs_doc(buffer, doc_type, has_prior=True, entity_type=None):
                 # figures whose section-total label overlap would otherwise apply a
                 # rule above. Suppress ALL borders on these rows so rules appear only
                 # on truly computed subtotals and terminal figures.
-                # entity_type must be truthy AND not "trust" — a missing entity_type
-                # (legacy / unknown caller) leaves borders intact (fail-safe).
+                # entity_type must be truthy AND not trust-like — a missing
+                # entity_type (legacy / unknown caller) leaves borders intact
+                # (fail-safe).
                 is_summary_carry_forward = (
                     doc_type == "SUMMARY_PL"
                     and bool(entity_type)
-                    and entity_type != "trust"
+                    and entity_type not in TRUST_LIKE_TYPES
                     and any(lbl in first_cell_text for lbl in _SUMMARY_PL_CARRY_FORWARD_LABELS)
                 )
 
@@ -3284,7 +3286,7 @@ def _generate_notes_document(context):
             "Corporations Act 2001. The directors have determined that the entity is "
             "not a reporting entity.",
             space_before=6, space_after=6)
-    elif entity_type == "trust":
+    elif entity_type in TRUST_LIKE_TYPES:
         _notes_add_para(
             doc,
             "The financial statements are special purpose financial statements "
@@ -3518,7 +3520,7 @@ def _generate_notes_document(context):
         # Entity-type language
         if entity_type == "company":
             entity_leader = "director of the company"
-        elif entity_type == "trust":
+        elif entity_type in TRUST_LIKE_TYPES:
             entity_leader = "trustee of the trust"
         elif entity_type == "partnership":
             entity_leader = "partner in the partnership"
@@ -4249,7 +4251,7 @@ def generate_financial_statements(financial_year_id, include_watermark=True):
 
     Returns dict of document_type → BytesIO.
     """
-    from core.models import FinancialStatementTemplate, FinancialYear
+    from core.models import FinancialStatementTemplate, FinancialYear, template_entity_type
 
     fy = FinancialYear.objects.select_related(
         "entity", "entity__client", "prior_year",
@@ -4261,6 +4263,10 @@ def generate_financial_statements(financial_year_id, include_watermark=True):
     context_builders = {
         "company": build_company_context,
         "trust": build_trust_context,
+        # A unit trust uses the trust context builder unchanged — same
+        # statements, same equity presentation. Without this key it would
+        # silently fall back to build_company_context below.
+        "trust_unit": build_trust_context,
         "sole_trader": build_sole_trader_context,
     }
     builder = context_builders.get(entity_type, build_company_context)
@@ -4299,7 +4305,7 @@ def generate_financial_statements(financial_year_id, include_watermark=True):
 
     # Get active templates for this entity type
     templates = FinancialStatementTemplate.objects.filter(
-        entity_type=entity_type,
+        entity_type=template_entity_type(entity_type),
         is_active=True,
     )
 
@@ -4308,7 +4314,7 @@ def generate_financial_statements(financial_year_id, include_watermark=True):
     skip_types = set()
     if entity_type != "company":
         skip_types.add("SUMMARY_PL")
-    if entity_type != "trust":
+    if entity_type not in TRUST_LIKE_TYPES:
         skip_types.add("DISTRIBUTION")
 
     has_prior = context.get("has_prior", False)

@@ -603,11 +603,11 @@ def _apply_bs_movement_differencing(entity, raw_lines):
     untouched-rollover block separately preserve those openings.
     """
     from core.views import _is_balance_sheet_account
-    from core.models import ChartOfAccount
+    from core.models import ChartOfAccount, template_entity_type
 
     coa_sections = dict(
         ChartOfAccount.objects.filter(
-            entity_type=entity.entity_type, is_active=True,
+            entity_type=template_entity_type(entity.entity_type), is_active=True,
         ).values_list("account_code", "section")
     )
 
