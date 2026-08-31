@@ -12,6 +12,8 @@ from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.db import models, transaction
+
+from core.name_case import normalise_person_name
 from django.urls import reverse
 
 
@@ -111,6 +113,11 @@ class Client(models.Model):
     class Meta:
         ordering = ["name"]
 
+    def save(self, *args, **kwargs):
+        # A client is a person or a family group -- see core/name_case.py.
+        self.name = normalise_person_name(self.name)
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return self.name
 
@@ -152,6 +159,7 @@ def template_entity_type(entity_type):
     if entity_type == Entity.EntityType.UNIT_TRUST:
         return Entity.EntityType.TRUST
     return entity_type
+
 
 
 class Entity(models.Model):
@@ -466,6 +474,18 @@ class Entity(models.Model):
 # ---------------------------------------------------------------------------
 # Entity Officer / Signatory
 # ---------------------------------------------------------------------------
+    # entity_name is a person's name for a sole trader and a company or trust
+    # name otherwise, where title case would damage acronyms ("ABC PTY LTD"
+    # becomes "Abc Pty Ltd"). Only the person case is normalised.
+    PERSON_NAMED_TYPES = frozenset({"sole_trader"})
+
+    def save(self, *args, **kwargs):
+        if self.entity_type in self.PERSON_NAMED_TYPES:
+            self.entity_name = normalise_person_name(self.entity_name)
+            self.trading_as = normalise_person_name(self.trading_as)
+        super().save(*args, **kwargs)
+
+
 class EntityOfficer(models.Model):
     """
     Directors, partners, trustees, or beneficiaries of an entity.
@@ -822,6 +842,8 @@ class EntityOfficer(models.Model):
             cls._write_distribution_history(holder, pct)
 
     def save(self, *args, **kwargs):
+        # An officer is always a person -- see core/name_case.py.
+        self.full_name = normalise_person_name(self.full_name)
         # Auto-assign display_order on creation if still default 0
         if not self.pk or self._state.adding:
             max_order = EntityOfficer.objects.filter(
