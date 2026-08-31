@@ -4935,8 +4935,6 @@ def _build_beneficiary_distribution_summary(context):
         cy_b = cy[oid]
         py_b = py[oid]
 
-        cy_subtotal = cy_b["opening"] + cy_b["funds_loaned"] + cy_b["profit_dist"]
-        py_subtotal = py_b["opening"] + py_b["funds_loaned"] + py_b["profit_dist"]
         show_physical = cy_b["physical_dist"] != 0 or py_b["physical_dist"] != 0
 
         story.append(Paragraph(_safe_amp(meta["name"]), h_section))
@@ -4951,26 +4949,17 @@ def _build_beneficiary_distribution_summary(context):
             _row("Funds loaned to trust", cy_b["funds_loaned"], py_b["funds_loaned"]),
             _row("Profit distribution for year", cy_b["profit_dist"], py_b["profit_dist"]),
         ]
-        subtotal_idx = len(rows)
-        if show_py:
-            rows.append(["", _fmt(cy_subtotal), _fmt(py_subtotal)])
-        else:
-            rows.append(["", _fmt(cy_subtotal)])
-
         if show_physical:
-            if show_py:
-                rows.append(["Less:", "", ""])
-                rows.append([
-                    "Physical distribution",
-                    _fmt(cy_b["physical_dist"]) if cy_b["physical_dist"] else ZERO_GLYPH,
-                    _fmt(py_b["physical_dist"]) if py_b["physical_dist"] else ZERO_GLYPH,
-                ])
-            else:
-                rows.append(["Less:", ""])
-                rows.append([
-                    "Physical distribution",
-                    _fmt(cy_b["physical_dist"]) if cy_b["physical_dist"] else ZERO_GLYPH,
-                ])
+            # A journal movement on the loan, like funds loaned to trust -- not a
+            # cash deduction. It carries its own sign and is added with the other
+            # movements, so the column foots and the same row cannot print a
+            # positive in one year and a bracketed negative in the next.
+            #
+            # physical_dist is accumulated debit-positive (debit - credit) and a
+            # debit reduces what the trust owes, so it is negated for display:
+            # money out of the loan prints negative, money in prints positive.
+            rows.append(_row("Physical distribution",
+                             -cy_b["physical_dist"], -py_b["physical_dist"]))
 
         rows.append(_row("Closing balance", cy_b["closing"], py_b["closing"]))
 
@@ -4983,8 +4972,6 @@ def _build_beneficiary_distribution_summary(context):
             ("FONTSIZE", (0, 0), (-1, -1), 10),
             ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
             ("ALIGN", (0, 0), (0, -1), "LEFT"),
-            ("LINEABOVE", (1, subtotal_idx), (-1, subtotal_idx),
-             0.5, colors.black),
             ("FONTNAME", (0, last_idx), (-1, last_idx), "Helvetica-Bold"),
             ("LINEABOVE", (1, last_idx), (-1, last_idx), 0.5, colors.black),
             ("TOPPADDING", (0, 0), (-1, -1), 2),
