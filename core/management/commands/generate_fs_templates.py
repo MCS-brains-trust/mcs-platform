@@ -312,11 +312,18 @@ def _add_total_row(doc, label, cy_tag, py_tag, size=None,
     _apply_row_borders(row, row_type)
 
 
-def _add_repeating_header(doc, document_title, date_field="{{ date_text }}"):
+def _add_repeating_header(doc, document_title, date_field="{{ date_text }}",
+                          column_headers=False):
     """Add a repeating page header: entity name, ABN, doc title, date, horizontal rule.
 
     Uses Jinja2 variables rendered by docxtpl. Repeats on every page.
     Also includes the DRAFT watermark (hidden when context is empty).
+
+    With *column_headers*, the "Note / year / prior year" and "$ / $" block is
+    appended below the rule. Handiledger prints that block once at the top of
+    each page rather than above every section; putting it in the page header
+    gets the per-page repeat for free, including page 2 of the balance sheet.
+    Only the two statements with amount columns pass it.
     """
     section = doc.sections[0]
     section.different_first_page_header_footer = False
@@ -378,6 +385,37 @@ def _add_repeating_header(doc, document_title, date_field="{{ date_text }}"):
     bottom_border.set(qn('w:color'), '000000')
     pBdr.append(bottom_border)
     pPr_rule.append(pBdr)
+
+    # Column header block — laid out as a table with the body's own COL_WIDTHS
+    # and the same full-width/zeroed-margin treatment, so the columns land in
+    # exactly the same place as the amounts below. Tab stops were tried first
+    # and drift on the last column: tblW (9356 dxa) is wider than the sum of
+    # COL_WIDTHS (16cm), and the slack is absorbed unevenly across the columns.
+    if column_headers:
+        col_table = header.add_table(rows=2, cols=4, width=COL_WIDTHS[0])
+        _set_table_full_width(col_table)
+        _clear_table_borders(col_table)
+        col_table.autofit = False
+        for i, width in enumerate(COL_WIDTHS):
+            col_table.columns[i].width = width
+
+        for row, values in (
+            (col_table.rows[0], ["", "Note", "{{ year }}", "{{ prior_year }}"]),
+            (col_table.rows[1], ["", "", "$", "$"]),
+        ):
+            for i, value in enumerate(values):
+                row.cells[i].text = value
+                for para in row.cells[i].paragraphs:
+                    para.alignment = (
+                        WD_ALIGN_PARAGRAPH.RIGHT if i >= 2
+                        else WD_ALIGN_PARAGRAPH.LEFT
+                    )
+                    para.paragraph_format.space_before = Pt(0)
+                    para.paragraph_format.space_after = Pt(0)
+                    for run in para.runs:
+                        run.font.name = FONT_HEADING
+                        run.font.size = Pt(9)
+                        run.bold = True
 
     # DRAFT watermark — right-aligned, red, only visible when non-empty
     pw = header.add_paragraph()
@@ -456,15 +494,11 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
     for i, width in enumerate(COL_WIDTHS):
         table.columns[i].width = width
 
-    # Row 0 — Combined section heading + column headers (Handiledger layout)
-    # cells[0]: section title (Arial Bold 11pt, left-aligned)
-    # cells[1-3]: Note / year / prior_year (Arial Bold 9pt, right-aligned)
+    # Row 0 — Section heading only. The Note/year/$ block lives in the page
+    # header (see _add_repeating_header) so it prints once per page, matching
+    # Handiledger, instead of being repeated above every section.
     heading_row = table.rows[0]
     heading_row.cells[0].text = section_title
-    heading_row.cells[1].text = "Note"
-    heading_row.cells[2].text = "{{ year }}"
-    heading_row.cells[3].text = "{{ prior_year }}"
-    # Style cell 0 (section title) — Arial Bold 11pt
     for p in heading_row.cells[0].paragraphs:
         p.alignment = WD_ALIGN_PARAGRAPH.LEFT
         p.paragraph_format.space_before = Pt(0)
@@ -473,48 +507,17 @@ def _add_financial_table(doc, section_title, items_tag, total_label, total_cy_ta
             run.font.name = FONT_HEADING
             run.font.size = FONT_SIZE_HEADING
             run.bold = True
-    # Style cells 1-3 (column headers) — Arial Bold 9pt
-    for i in range(1, 4):
-        for p in heading_row.cells[i].paragraphs:
-            p.alignment = WD_ALIGN_PARAGRAPH.RIGHT if i >= 2 else WD_ALIGN_PARAGRAPH.LEFT
-            p.paragraph_format.space_before = Pt(0)
-            p.paragraph_format.space_after = Pt(0)
-            for run in p.runs:
-                run.font.name = FONT_HEADING
-                run.font.size = Pt(9)
-                run.bold = True
     for i in range(4):
         _apply_cell_border(heading_row.cells[i])
-    # Keep heading row with the dollar row below it
+    # Keep the heading with the first data row below it
     tr_heading = heading_row._tr
     trPr_heading = tr_heading.get_or_add_trPr()
     cantSplit_heading = OxmlElement('w:cantSplit')
     cantSplit_heading.set(qn('w:val'), '1')
     trPr_heading.append(cantSplit_heading)
-
-    # Row 1 — Dollar sign row: "$" below each year column
-    dollar_row = table.add_row()
-    dollar_row.cells[0].text = ""
-    dollar_row.cells[1].text = ""
-    dollar_row.cells[2].text = "$"
-    dollar_row.cells[3].text = "$"
-    for i in range(4):
-        for p in dollar_row.cells[i].paragraphs:
-            p.alignment = WD_ALIGN_PARAGRAPH.RIGHT if i >= 2 else WD_ALIGN_PARAGRAPH.LEFT
-            p.paragraph_format.space_before = Pt(0)
-            p.paragraph_format.space_after = Pt(0)
-            for run in p.runs:
-                run.font.name = FONT_HEADING  # Arial
-                run.font.size = Pt(9)
-                run.bold = True
-    # No borders on dollar row — matches Handiledger
-    _apply_row_borders(dollar_row, ROW_TYPE_DATA)
-    # Keep dollar row with first data row
-    tr_dollar = dollar_row._tr
-    trPr_dollar = tr_dollar.get_or_add_trPr()
-    kn_dollar = OxmlElement('w:keepNext')
-    kn_dollar.set(qn('w:val'), '1')
-    trPr_dollar.append(kn_dollar)
+    kn_heading = OxmlElement('w:keepNext')
+    kn_heading.set(qn('w:val'), '1')
+    trPr_heading.append(kn_heading)
 
     # Row 2 — {%tr for %} tag in its own row (docxtpl requirement)
     for_row = table.add_row()
@@ -793,12 +796,19 @@ def _build_cover(entity_type):
     if entity_type == "company":
         contents.append("Summary Profit and Loss Statement")
     contents.append("Notes to the Financial Statements")
+    # The Depreciation Report is skipped at render time when the year has no
+    # DepreciationAsset rows, so its line is a docxtpl conditional row rather
+    # than a static entry promising a document that may not be in the pack.
+    contents.append("{%tr if has_depreciation_report %}")
+    contents.append("Depreciation Report")
+    contents.append("{%tr endif %}")
     if entity_type == "company":
         contents.append("Directors' Declaration")
         contents.append("Solvency Resolution")
     elif entity_type in TRUST_LIKE_TYPES:
         contents.append("Trustee's Declaration")
-        contents.append("Beneficiaries Distribution Summary")
+        # Matches the heading on the document's own pages.
+        contents.append("Beneficiaries Profit Distribution Summary")
     elif entity_type == "sole_trader":
         contents.append("Proprietor Declaration")
     elif entity_type == "partnership":
@@ -858,13 +868,17 @@ def _build_detailed_pl(entity_type):
     doc = Document()
     _set_default_font(doc)
     _set_page_setup(doc)
-    _add_repeating_header(doc, "Detailed Profit and Loss Statement", "{{ date_text }}")
+    _add_repeating_header(doc, "Detailed Profit and Loss Statement", "{{ date_text }}",
+                          column_headers=True)
     _add_footer(doc)
 
-    # 0.5cm gap between header rule and first body content
+    # Gap between the header block and the first body content. The header now
+    # carries the Note/year/$ rows, so this is trimmed to land the first section
+    # heading ~33pt below the $ row, matching handiledger_reference.
     _p0 = doc.add_paragraph()
-    _p0.paragraph_format.space_before = Emu(71050)
+    _p0.paragraph_format.space_before = Pt(0)
     _p0.paragraph_format.space_after = Pt(0)
+    _p0.paragraph_format.line_spacing = Pt(6)
 
     # Income section
     _add_financial_table(doc, "Income", "income", "Total Income",
@@ -952,13 +966,17 @@ def _build_balance_sheet(entity_type):
     doc = Document()
     _set_default_font(doc)
     _set_page_setup(doc)
-    _add_repeating_header(doc, "Detailed Balance Sheet", "As at {{ year_end_date }}")
+    _add_repeating_header(doc, "Detailed Balance Sheet", "As at {{ year_end_date }}",
+                          column_headers=True)
     _add_footer(doc)
 
-    # 0.5cm gap between header rule and first body content
+    # Gap between the header block and the first body content. The header now
+    # carries the Note/year/$ rows, so this is trimmed to land the first section
+    # heading ~33pt below the $ row, matching handiledger_reference.
     _p0 = doc.add_paragraph()
-    _p0.paragraph_format.space_before = Emu(71050)
+    _p0.paragraph_format.space_before = Pt(0)
     _p0.paragraph_format.space_after = Pt(0)
+    _p0.paragraph_format.line_spacing = Pt(6)
 
     # Current Assets
     _add_financial_table(doc, "Current Assets", "current_assets", "Total Current Assets",
@@ -1018,55 +1036,47 @@ def _build_balance_sheet(entity_type):
         ["{%tr if has_noncurrent_liabilities %}", "", "", ""],
         trheight_twips=1)
 
-    # Row 2: NCL section heading -- "Non-Current Liabilities" / "Note" / year / prior_year.
-    # Cell 0 Arial Bold 11pt; cells 1-3 Arial Bold 9pt. No borders.
+    # Row 2: NCL section heading -- label only; the column block is in the
+    # page header. Cell 0 Arial Bold 11pt. No borders.
     _chain_setup_row(chain.add_row(),
-        ["Non-Current Liabilities", "Note", "{{ year }}", "{{ prior_year }}"],
+        ["Non-Current Liabilities", "", "", ""],
         fonts=[FONT_HEADING] * 4,
         sizes=[FONT_SIZE_HEADING, Pt(9), Pt(9), Pt(9)],
         bolds=[True] * 4,
         space_after=Pt(0))
 
-    # Row 3: NCL dollar row -- "" / "" / "$" / "$".
-    _chain_setup_row(chain.add_row(),
-        ["", "", "$", "$"],
-        fonts=[FONT_HEADING] * 4,
-        sizes=[Pt(9)] * 4,
-        bolds=[True] * 4,
-        space_after=Pt(0))
-
-    # Row 4: {%tr for item in noncurrent_liabilities %} -- loop opener, consumed.
+    # Row 3: {%tr for item in noncurrent_liabilities %} -- loop opener, consumed.
     _chain_setup_row(chain.add_row(),
         ["{%tr for item in noncurrent_liabilities %}", "", "", ""],
         trheight_twips=1)
 
-    # Row 5: NCL data row template (expands to N rows during docxtpl render).
+    # Row 4: NCL data row template (expands to N rows during docxtpl render).
     _chain_setup_row(chain.add_row(),
         ["{{ item.account_name }}", "{{ item.note_ref }}",
          "{{ item.cy_formatted }}", "{{ item.py_formatted }}"])
 
-    # Row 6: {%tr endfor %} -- loop closer, consumed.
+    # Row 5: {%tr endfor %} -- loop closer, consumed.
     _chain_setup_row(chain.add_row(),
         ["{%tr endfor %}", "", "", ""],
         trheight_twips=1)
 
-    # Row 7: Total Non-Current Liabilities -- SECTION_TOTAL (single top on cols 2-3).
+    # Row 6: Total Non-Current Liabilities -- SECTION_TOTAL (single top on cols 2-3).
     _chain_setup_row(chain.add_row(),
         ["Total Non-Current Liabilities", "",
          "{{ total_noncurrent_liab_cy }}", "{{ total_noncurrent_liab_py }}"],
         bolds=[True] * 4,
         row_type=ROW_TYPE_SECTION_TOTAL)
 
-    # Row 8: small spacer matching _add_spacer(pts=4) between NCL section and
+    # Row 7: small spacer matching _add_spacer(pts=4) between NCL section and
     # {%tr endif %} -- gives the same visual gap as the body-level spacer it replaces.
     _chain_setup_small_spacer(chain.add_row())
 
-    # Row 9: {%tr endif %} -- conditional closer, consumed.
+    # Row 8: {%tr endif %} -- conditional closer, consumed.
     _chain_setup_row(chain.add_row(),
         ["{%tr endif %}", "", "", ""],
         trheight_twips=1)
 
-    # Row 10: Total Liabilities -- SUBCATEGORY_SUBTOTAL (single top on cols 2-3 only).
+    # Row 9: Total Liabilities -- SUBCATEGORY_SUBTOTAL (single top on cols 2-3 only).
     # Label deliberately excluded from all label lists in fs_template_service.py
     # (see comment at 1797-1799 there); border set by builder and untouched by
     # post-processor.
@@ -1076,53 +1086,45 @@ def _build_balance_sheet(entity_type):
         bolds=[True] * 4,
         row_type=ROW_TYPE_SUBCATEGORY_SUBTOTAL)
 
-    # Row 11: small spacer matching _add_spacer(pts=4) between Total Liabilities
+    # Row 10: small spacer matching _add_spacer(pts=4) between Total Liabilities
     # and Net Assets.
     _chain_setup_small_spacer(chain.add_row())
 
-    # Row 12: Net Assets -- MAJOR_TOTAL (single top + double bottom on cols 2-3).
+    # Row 11: Net Assets -- MAJOR_TOTAL (single top + double bottom on cols 2-3).
     _chain_setup_row(chain.add_row(),
         ["Net Assets", "",
          "{{ net_assets_cy }}", "{{ net_assets_py }}"],
         bolds=[True] * 4,
         row_type=ROW_TYPE_MAJOR_TOTAL)
 
-    # Row 13: big spacer matching the former _eq_spacer paragraph (space_before
+    # Row 12: big spacer matching the former _eq_spacer paragraph (space_before
     # Pt(18), default font, space_after Pt(0)).
     _chain_setup_big_spacer(chain.add_row())
 
-    # Row 14: Equity section heading -- "Equity" / "Note" / year / prior_year.
+    # Row 13: Equity section heading -- label only; column block is in the header.
     _chain_setup_row(chain.add_row(),
-        ["Equity", "Note", "{{ year }}", "{{ prior_year }}"],
+        ["Equity", "", "", ""],
         fonts=[FONT_HEADING] * 4,
         sizes=[FONT_SIZE_HEADING, Pt(9), Pt(9), Pt(9)],
         bolds=[True] * 4,
         space_after=Pt(0))
 
-    # Row 15: Equity dollar row.
-    _chain_setup_row(chain.add_row(),
-        ["", "", "$", "$"],
-        fonts=[FONT_HEADING] * 4,
-        sizes=[Pt(9)] * 4,
-        bolds=[True] * 4,
-        space_after=Pt(0))
-
-    # Row 16: {%tr for item in equity %} -- loop opener, consumed.
+    # Row 14: {%tr for item in equity %} -- loop opener, consumed.
     _chain_setup_row(chain.add_row(),
         ["{%tr for item in equity %}", "", "", ""],
         trheight_twips=1)
 
-    # Row 17: Equity data row template (expands to M rows during render).
+    # Row 15: Equity data row template (expands to M rows during render).
     _chain_setup_row(chain.add_row(),
         ["{{ item.account_name }}", "{{ item.note_ref }}",
          "{{ item.cy_formatted }}", "{{ item.py_formatted }}"])
 
-    # Row 18: {%tr endfor %} -- loop closer, consumed.
+    # Row 16: {%tr endfor %} -- loop closer, consumed.
     _chain_setup_row(chain.add_row(),
         ["{%tr endfor %}", "", "", ""],
         trheight_twips=1)
 
-    # Row 19: Total Equity -- MAJOR_TOTAL (single top + double bottom).
+    # Row 17: Total Equity -- MAJOR_TOTAL (single top + double bottom).
     # LAST visible row in the chain table; Fix 8 leaves keepNext OFF here so
     # the table can move forward as a block on overflow without binding past
     # itself (the chain terminates here cleanly).
