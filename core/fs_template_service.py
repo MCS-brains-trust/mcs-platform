@@ -4821,6 +4821,15 @@ def _build_beneficiary_distribution_summary(context):
             return f"({abs(val):,.0f})"
         return f"{val:,.0f}"
 
+    def _disp(val):
+        """The whole-dollar figure _fmt will print for *val*.
+
+        Amounts print to 0dp, so the sum of the rounded components need not
+        equal the rounded sum. Everything below is totalled from these values
+        rather than from the exact ones, so the document adds up as printed.
+        """
+        return Decimal(f"{(val or Decimal('0')):.0f}")
+
     buf = _io.BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=A4,
@@ -4895,8 +4904,8 @@ def _build_beneficiary_distribution_summary(context):
     cy_profit_total = Decimal("0")
     py_profit_total = Decimal("0")
     for oid, meta in officer_meta.items():
-        cy_amt = cy[oid]["profit_dist"]
-        py_amt = py[oid]["profit_dist"]
+        cy_amt = _disp(cy[oid]["profit_dist"])
+        py_amt = _disp(py[oid]["profit_dist"])
         cy_profit_total += cy_amt
         py_profit_total += py_amt
         if show_py:
@@ -4944,10 +4953,22 @@ def _build_beneficiary_distribution_summary(context):
                 return [label, _fmt(cy_val), _fmt(py_val)]
             return [label, _fmt(cy_val)]
 
+        # Round the four figures that have a value of their own, then derive
+        # the funds-loaned plug from them. _resolve already back-solves that
+        # line from the other four, so it is the only one with nothing to
+        # distort -- and letting it absorb the rounding is what an accountant
+        # does by hand.
+        cy_open, py_open = _disp(cy_b["opening"]), _disp(py_b["opening"])
+        cy_profit, py_profit = _disp(cy_b["profit_dist"]), _disp(py_b["profit_dist"])
+        cy_phys, py_phys = -_disp(cy_b["physical_dist"]), -_disp(py_b["physical_dist"])
+        cy_close, py_close = _disp(cy_b["closing"]), _disp(py_b["closing"])
+        cy_funds = cy_close - cy_open - cy_profit - cy_phys
+        py_funds = py_close - py_open - py_profit - py_phys
+
         rows = [
-            _row("Opening balance - Beneficiary", cy_b["opening"], py_b["opening"]),
-            _row("Funds loaned to trust", cy_b["funds_loaned"], py_b["funds_loaned"]),
-            _row("Profit distribution for year", cy_b["profit_dist"], py_b["profit_dist"]),
+            _row("Opening balance - Beneficiary", cy_open, py_open),
+            _row("Funds loaned to trust", cy_funds, py_funds),
+            _row("Profit distribution for year", cy_profit, py_profit),
         ]
         if show_physical:
             # A journal movement on the loan, like funds loaned to trust -- not a
@@ -4958,13 +4979,12 @@ def _build_beneficiary_distribution_summary(context):
             # physical_dist is accumulated debit-positive (debit - credit) and a
             # debit reduces what the trust owes, so it is negated for display:
             # money out of the loan prints negative, money in prints positive.
-            rows.append(_row("Physical distribution",
-                             -cy_b["physical_dist"], -py_b["physical_dist"]))
+            rows.append(_row("Physical distribution", cy_phys, py_phys))
 
-        rows.append(_row("Closing balance", cy_b["closing"], py_b["closing"]))
+        rows.append(_row("Closing balance", cy_close, py_close))
 
-        cy_total_closing += cy_b["closing"]
-        py_total_closing += py_b["closing"]
+        cy_total_closing += cy_close
+        py_total_closing += py_close
 
         bf_table = Table(rows, colWidths=col_widths)
         last_idx = len(rows) - 1

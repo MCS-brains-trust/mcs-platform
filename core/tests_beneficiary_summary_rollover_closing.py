@@ -146,13 +146,20 @@ class BeneficiarySummaryRolloverClosingTests(TestCase):
     def test_funds_loaned_row_reports_the_actual_loan_movement(self):
         """4004.01 moved 24,049.02; the back-solved row must say so.
 
-        Before the fix it rendered (8,655). Asserting on the label/value pair
-        rather than the bare number: 24,049 also appears pre-fix as the
-        opening+movement subtotal, so a bare substring match passes for the
-        wrong reason.
+        Before the fix it rendered (8,655) -- back-solved from a closing
+        balance that had dropped the brought-forward amount.
+
+        It prints 24,048 rather than 24,049 because this row also absorbs
+        whole-dollar rounding for the column (see
+        core/tests_fs_distribution_rounding.py): 32,704 + 24,048 - 9,866 =
+        46,886, the printed closing balance. The row is within a dollar of the
+        real movement and the column foots, which the exact 24,049 could not
+        do. Asserting on the label/value pair rather than the bare number:
+        24,049 also appeared pre-fix as the opening+movement subtotal, so a
+        bare substring match passed for the wrong reason.
         """
         buffer = _build_beneficiary_distribution_summary({"_fy": self.fy})
         text = _pdf_text(buffer)
 
-        self.assertIn("Funds loaned to trust\n24,049", text)
+        self.assertIn("Funds loaned to trust\n24,048", text)
         self.assertNotIn("Funds loaned to trust\n(8,655)", text)
