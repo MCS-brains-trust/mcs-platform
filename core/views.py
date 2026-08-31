@@ -331,7 +331,13 @@ def _is_income_tax_account(account_code, account_name, mapped_line_item):
     always identified it. Extracted so the reconciliation endpoints ask the same
     question as the roll itself rather than carrying their own copy.
     """
-    if (account_code or "").split(".")[0] == "4110":
+    # 4110 with no suffix only. The bare code is "Income tax, operating
+    # profit" (core/trust_coa_seed.py), but core/beneficiary_account_service
+    # also materialises 4110.NN per officer as "Funds loaned to trust" in the
+    # liabilities section. Matching on split(".")[0] made every unitholder loan
+    # answer yes, and the roll forward cleared whichever one it saw last.
+    parent, _dot, suffix = (account_code or "").partition(".")
+    if parent == "4110" and not suffix:
         return True
     if mapped_line_item and (mapped_line_item.standard_code or "") == "BS-EQ-011":
         return True
