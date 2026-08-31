@@ -4652,13 +4652,10 @@ def _build_beneficiary_distribution_summary(context):
 
         Opening = PY closing balance — from rollover lines of *target_fy*
         (prior_credit - prior_debit). 0 if no rollover line exists.
-        Closing = sum of -closing_balance from non-rollover lines for the
-        officer's mapped accounts (sign-flipped credit-normal).
-            * When *is_prior* is True and an account has NO non-rollover
-              lines in target_fy, the rollover line's closing_balance is
-              used as a fallback so that prior-year-only entities (where
-              fy.prior_year has tb_import data without a separate rollover
-              import) still produce non-zero PY closing figures.
+        Closing = sum of -closing_balance across ALL lines for the officer's
+        mapped accounts, rollover included (sign-flipped credit-normal). This
+        is the same set the Balance Sheet sums for the beneficiary loan, so
+        the two tie by construction.
         Physical_dist = sum of (debit - credit) from non-rollover lines on
         accounts whose code starts with "4053" (Handiledger convention for
         physical distribution accounts). Zero when no 4053 account exists.
@@ -4692,25 +4689,24 @@ def _build_beneficiary_distribution_summary(context):
             if not oid:
                 continue
             is_physical = str(code).startswith("4053")
-            has_non_rollover = any(l.source != "rollover" for l in lines)
             for line in lines:
+                # Every line on the beneficiary's accounts counts towards the
+                # closing balance -- including the rollover line carrying the
+                # brought-forward balance. Excluding it understated closing by
+                # the whole b/f amount and, because _resolve back-solves
+                # funds_loaned from closing, corrupted that row too.
+                cb = line.closing_balance or Decimal("0")
+                result[oid]["closing"] += -cb
                 if line.source == "rollover":
-                    opening = (
+                    result[oid]["opening"] += (
                         (line.prior_credit or Decimal("0"))
                         - (line.prior_debit or Decimal("0"))
                     )
-                    result[oid]["opening"] += opening
-                    if is_prior and not has_non_rollover:
-                        cb = line.closing_balance or Decimal("0")
-                        result[oid]["closing"] += -cb
-                else:
-                    cb = line.closing_balance or Decimal("0")
-                    result[oid]["closing"] += -cb
-                    if is_physical:
-                        result[oid]["physical_dist"] += (
-                            (line.debit or Decimal("0"))
-                            - (line.credit or Decimal("0"))
-                        )
+                elif is_physical:
+                    result[oid]["physical_dist"] += (
+                        (line.debit or Decimal("0"))
+                        - (line.credit or Decimal("0"))
+                    )
 
         try:
             workspace = getattr(target_fy, "trust_workspace", None)
