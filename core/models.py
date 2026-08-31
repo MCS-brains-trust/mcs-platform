@@ -2273,6 +2273,18 @@ class JournalLine(models.Model):
             "makes the split idempotent."
         ),
     )
+    gst_override = models.DecimalField(
+        max_digits=15, decimal_places=2, null=True, blank=True,
+        help_text=(
+            "The GST figure the accountant typed, when they overrode the "
+            "calculated 1/11th (a partial input tax credit). Kept separate "
+            "from gst_amount so that field stays purely derived: gst_amount "
+            "doing double duty as both the input and the output made the "
+            "reconstructed gross (debit + gst_amount) double-count on a "
+            "first split. NULL means 'calculate it', which is a different "
+            "answer from a deliberate 0.00."
+        ),
+    )
     is_gst_control = models.BooleanField(
         default=False,
         help_text=(
