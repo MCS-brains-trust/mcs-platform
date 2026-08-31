@@ -627,6 +627,44 @@ def _txn_gross_and_gst(txn, tax_code):
     return gross, (gross / Decimal("11")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
+def _jl_gross_and_gst(jl, tax_code):
+    """Return (gross, gst) for one journal line under the resolved tax code.
+
+    Mirrors _txn_gross_and_gst: a stored GST amount wins, because it carries
+    the accountant's overrides and partial input tax credits; otherwise fall
+    back to the ATO 1/11th method.
+
+    Cashbook lines store NET with the GST alongside, so gross is reconstructed
+    by adding it back. Every pre-existing journal line has gst_amount = 0, so
+    gross is unchanged and the 1/11th fallback reproduces today's behaviour
+    exactly.
+    """
+    stored = abs(jl.gst_amount or Decimal("0"))
+    gross = max(jl.debit, jl.credit) + stored
+    if tax_code not in TAXABLE_CODES:
+        return gross, Decimal("0.00")
+    if stored:
+        return gross, stored
+    return gross, (gross / Decimal("11")).quantize(
+        Decimal("0.01"), rounding=ROUND_HALF_UP
+    )
+
+
+def _accumulate_actual_gst(section, gst, collected, paid):
+    """Add one line's GST to the collected/paid running totals.
+
+    Revenue sections feed 1A; expense, cost-of-sales and asset sections feed
+    1B. Sections that classify to nothing (N-T lines, accounts absent from the
+    chart) contribute to neither, which matches their G-label treatment.
+    """
+    if section in ("revenue", "Revenue"):
+        return collected + gst, paid
+    if section in ("expenses", "Expenses", "cost_of_sales", "Cost of Sales",
+                   "assets", "Assets"):
+        return collected, paid + gst
+    return collected, paid
+
+
 def _calculate_gst(fy, entity, entity_type, coa_lookup, entity_coa_lookup,
                    window_start, window_end, full_year):
     """
@@ -647,6 +685,8 @@ def _calculate_gst(fy, entity, entity_type, coa_lookup, entity_coa_lookup,
     from .models import AdjustingJournal, TrialBalanceLine
 
     g_totals = {f"G{i}": Decimal("0") for i in range(1, 21)}
+    actual_gst_collected = Decimal("0.00")
+    actual_gst_paid = Decimal("0.00")
     sales_lines = []
     purchase_lines = []
     capital_lines = []
@@ -712,6 +752,10 @@ def _calculate_gst(fy, entity, entity_type, coa_lookup, entity_coa_lookup,
             # returns magnitudes; the sign belongs to the movement.
             if _is_contra(section, txn.amount):
                 gross, gst = -gross, -gst
+
+            actual_gst_collected, actual_gst_paid = _accumulate_actual_gst(
+                section, gst, actual_gst_collected, actual_gst_paid,
+            )
 
             # Aggregate by account *and* resolved tax treatment, so one account
             # carrying both GST-free and taxable amounts produces one line per
@@ -784,12 +828,17 @@ def _calculate_gst(fy, entity, entity_type, coa_lookup, entity_coa_lookup,
     ):
         counted_journal_ids.add(journal.pk)
         for jl in journal.lines.all():
+            # The line's own tax code wins over the chart. That hardcoded ""
+            # meant a journal line could never override its account default —
+            # which is what let an explicit N-T on Drawings be ignored.
+            # Pre-existing lines carry "", so they still fall through to the
+            # chart exactly as before.
             section, tax_code, exclude_reason = _resolve_section_and_tax(
-                jl.account_code, coa_lookup, entity_coa_lookup, ""
+                jl.account_code, coa_lookup, entity_coa_lookup, jl.tax_code
             )
             if exclude_reason:
                 continue
-            amount = max(jl.debit, jl.credit)
+            amount, jl_gst = _jl_gross_and_gst(jl, tax_code)
             if amount == 0:
                 continue
 
@@ -806,9 +855,9 @@ def _calculate_gst(fy, entity, entity_type, coa_lookup, entity_coa_lookup,
             })
 
             has_gst = tax_code in TAXABLE_CODES
-            gst = (
-                (amount / Decimal("11")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
-                if has_gst else Decimal("0")
+            gst = jl_gst
+            actual_gst_collected, actual_gst_paid = _accumulate_actual_gst(
+                section, gst, actual_gst_collected, actual_gst_paid,
             )
             txn_row = {
                 "date": journal.journal_date,
@@ -847,10 +896,18 @@ def _calculate_gst(fy, entity, entity_type, coa_lookup, entity_coa_lookup,
     sales_transactions.sort(key=lambda x: x["date"])
     purchase_transactions.sort(key=lambda x: x["date"])
 
+    # Imported/rollover TB lines carry no per-line GST, so they cannot feed the
+    # accounts method. When nothing at all contributed a recorded GST figure,
+    # fall back to the worksheet division rather than reporting nil.
+    if actual_gst_collected == 0 and actual_gst_paid == 0:
+        actual_gst_collected = actual_gst_paid = None
+
     return _build_bas_result(
         g_totals, sales_lines, purchase_lines, capital_lines, excluded_lines,
         sales_transactions=sales_transactions,
         purchase_transactions=purchase_transactions,
+        actual_gst_collected=actual_gst_collected,
+        actual_gst_paid=actual_gst_paid,
     )
 
 
@@ -914,7 +971,8 @@ def _add_tb_line(line, coa_lookup, entity_coa_lookup, g_totals,
     })
 
 def _build_bas_result(g_totals, sales_lines, purchase_lines, capital_lines, excluded_lines,
-                      sales_transactions=None, purchase_transactions=None):
+                      sales_transactions=None, purchase_transactions=None,
+                      actual_gst_collected=None, actual_gst_paid=None):
     """Build the final BAS result dict from G-label totals and line lists."""
     g = g_totals
 
@@ -922,13 +980,29 @@ def _build_bas_result(g_totals, sales_lines, purchase_lines, capital_lines, excl
     g["G5"] = g["G2"] + g["G3"] + g["G4"]
     g["G6"] = g["G1"] - g["G5"]
     g["G8"] = g["G6"] + g["G7"]
-    g["G9"] = (g["G8"] / Decimal("11")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) if g["G8"] else Decimal("0")
+    # Accounts method: 1A and 1B are the GST actually recorded, not G8/11.
+    # Summing per-line GST and dividing an aggregate by 11 disagree by cents —
+    # 418.68 against 418.67 on the first live cashbook quarter — and only one
+    # can be authoritative if the 3380 control account is to tie to the BAS.
+    # The recorded figure wins, so a hand-overridden partial input tax credit
+    # reaches the BAS instead of being averaged away.
+    #
+    # G9/G20 move with 1A/1B rather than keeping the worksheet division: left
+    # as G8/11 they would print 418.67 directly above 1B's 418.68 on the same
+    # screen. G1 and G11 stay gross — they are turnover and purchases.
+    if actual_gst_collected is not None:
+        g["G9"] = Decimal(actual_gst_collected).quantize(Decimal("0.01"))
+    else:
+        g["G9"] = (g["G8"] / Decimal("11")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) if g["G8"] else Decimal("0")
 
     g["G12"] = g["G10"] + g["G11"]
     g["G16"] = g["G13"] + g["G14"] + g["G15"]
     g["G17"] = g["G12"] - g["G16"]
     g["G19"] = g["G17"] + g["G18"]
-    g["G20"] = (g["G19"] / Decimal("11")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) if g["G19"] else Decimal("0")
+    if actual_gst_paid is not None:
+        g["G20"] = Decimal(actual_gst_paid).quantize(Decimal("0.01"))
+    else:
+        g["G20"] = (g["G19"] / Decimal("11")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) if g["G19"] else Decimal("0")
 
     label_1a = g["G9"]
     label_1b = g["G20"]
