@@ -4558,16 +4558,123 @@ def generate_financial_statements(financial_year_id, include_watermark=True):
 # ---------------------------------------------------------------------------
 # Page-number stamping — absolute numbering on the final merged PDF
 # ---------------------------------------------------------------------------
-def _stamp_page_numbers(pdf_bytes):
-    """No-op passthrough — page numbers are intentionally suppressed.
+# Contents-page wording -> the document it points at. The Contents is built by
+# _build_cover in core/management/commands/generate_fs_templates.py; these
+# strings must match the entries it writes. Labels absent from this map (the
+# Solvency Resolution and the Management Representation Letter, both added by
+# package assembly rather than generate_financial_statements) get no number.
+CONTENTS_LABEL_TO_DOC_TYPE = {
+    "Detailed Profit and Loss Statement": "DETAILED_PL",
+    "Summary Profit and Loss Statement": "SUMMARY_PL",
+    "Detailed Balance Sheet": "BALANCE_SHEET",
+    "Notes to the Financial Statements": "NOTES",
+    "Depreciation Report": "DEPRECIATION_REPORT",
+    "Directors' Declaration": "DECLARATION",
+    "Trustee's Declaration": "DECLARATION",
+    "Proprietor Declaration": "DECLARATION",
+    "Partners' Declaration": "DECLARATION",
+    "Beneficiaries Profit Distribution Summary": "DISTRIBUTION",
+    "Compilation Report": "COMPILATION",
+}
 
-    Previously stamped centred page numbers at the bottom of every page
-    via a reportlab overlay. Removed per client requirement: no page
-    numbers anywhere in generated FS / package outputs. The call sites
-    (generate_combined_pdf, build_package_bundle) are retained so the
-    function can be re-enabled by restoring the original body.
+# 0-based index of the Contents page in the merged PDF, and the first page that
+# carries a printed number. Numbering is absolute from the cover, so the cover
+# (1) and the Contents (2) are counted but not stamped, and the first document
+# starts at 3 -- which is what the Contents reports for it.
+_CONTENTS_PAGE_INDEX = 1
+_FIRST_NUMBERED_PAGE = 3
+
+# Points from the foot of the page for the stamped number. Every footer in the
+# pack must sit above this: the reportlab-built distribution pages draw their
+# own footer, and at its original 1.0cm it landed on the number, extracting as
+# "These financial statements are10".
+PAGE_NUMBER_BASELINE_PT = 28
+DIST_FOOTER_LOWER_LINE_CM = 1.25
+DIST_FOOTER_UPPER_LINE_CM = 1.6
+
+# The Contents table is 16cm wide with the label in a 12cm first column, so the
+# number is right-aligned 16cm from where the label starts. Measuring from the
+# label rather than the page edge keeps this correct whatever the page margins.
+_CONTENTS_TABLE_WIDTH_PT = 16 * 28.3464567
+
+
+def _contents_label_positions(page):
+    """{label: (x, y)} for every Contents entry drawn on *page*.
+
+    Read off the rendered page rather than assumed: the rows are laid out by
+    LibreOffice, so their positions are not knowable from the template.
     """
-    return pdf_bytes
+    found = {}
+    pending = []
+
+    def visitor(text, cm, tm, font_dict, font_size):
+        stripped = text.strip()
+        if stripped:
+            pending.append((stripped, tm[4], tm[5]))
+
+    page.extract_text(visitor_text=visitor)
+
+    for label in CONTENTS_LABEL_TO_DOC_TYPE:
+        for text, x, y in pending:
+            if text == label and label not in found:
+                found[label] = (x, y)
+    return found
+
+
+def _stamp_page_numbers(pdf_bytes, doc_start_pages=None):
+    """Stamp page numbers on the merged PDF, and fill in the Contents column.
+
+    *doc_start_pages* maps a document type to the 1-based page it starts on, as
+    recorded by generate_combined_pdf while merging. Without it only the footer
+    numbers are drawn and the Contents is left alone -- which is what
+    core.package_pdf_renderer wants, since it merges a different set of
+    documents behind the same cover.
+    """
+    import io as _io
+
+    from pypdf import PdfReader, PdfWriter
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfgen import canvas
+
+    reader = PdfReader(_io.BytesIO(pdf_bytes))
+    writer = PdfWriter()
+
+    for index, page in enumerate(reader.pages):
+        page_number = index + 1
+        box = page.mediabox
+        width, height = float(box.width), float(box.height)
+
+        overlay_entries = []
+        if page_number >= _FIRST_NUMBERED_PAGE:
+            overlay_entries.append(
+                ("centre", width / 2, PAGE_NUMBER_BASELINE_PT, str(page_number)))
+
+        if doc_start_pages and index == _CONTENTS_PAGE_INDEX:
+            for label, (x, y) in _contents_label_positions(page).items():
+                start = doc_start_pages.get(CONTENTS_LABEL_TO_DOC_TYPE[label])
+                if start:
+                    overlay_entries.append(
+                        ("right", x + _CONTENTS_TABLE_WIDTH_PT, y, str(start))
+                    )
+
+        if overlay_entries:
+            buf = _io.BytesIO()
+            c = canvas.Canvas(buf, pagesize=(width, height))
+            c.setFont("Helvetica", 10)
+            for align, x, y, text in overlay_entries:
+                if align == "centre":
+                    c.drawCentredString(x, y, text)
+                else:
+                    c.drawRightString(x, y, text)
+            c.save()
+            buf.seek(0)
+            page.merge_page(PdfReader(buf).pages[0])
+
+        writer.add_page(page)
+
+    out = _io.BytesIO()
+    writer.write(out)
+    return out.getvalue()
 
 
 def _build_beneficiary_distribution_summary(context):
@@ -5045,13 +5152,16 @@ def _build_beneficiary_distribution_summary(context):
         usable_w = right_x - left_x
         text_w = canvas.stringWidth(FOOTER_TEXT, "Helvetica-Oblique", 9)
         if text_w <= usable_w:
-            canvas.drawCentredString(page_w / 2, 0.9 * cm, FOOTER_TEXT)
+            canvas.drawCentredString(
+                page_w / 2, DIST_FOOTER_LOWER_LINE_CM * cm, FOOTER_TEXT)
         else:
             split = FOOTER_TEXT.rfind("conjunction with")
             line1 = FOOTER_TEXT[:split].strip()
             line2 = FOOTER_TEXT[split:].strip()
-            canvas.drawCentredString(page_w / 2, 1.0 * cm, line1)
-            canvas.drawCentredString(page_w / 2, 0.65 * cm, line2)
+            canvas.drawCentredString(
+                page_w / 2, DIST_FOOTER_UPPER_LINE_CM * cm, line1)
+            canvas.drawCentredString(
+                page_w / 2, DIST_FOOTER_LOWER_LINE_CM * cm, line2)
         canvas.restoreState()
 
     doc.build(story, onFirstPage=_draw_footer, onLaterPages=_draw_footer)
@@ -5187,14 +5297,17 @@ def _build_distribution_docx(financial_year, context):
         usable_w = right_x - left_x
         text_w = canvas.stringWidth(FOOTER_TEXT, "Times-Italic", 9)
         if text_w <= usable_w:
-            canvas.drawCentredString(page_w / 2, 0.9 * cm, FOOTER_TEXT)
+            canvas.drawCentredString(
+                page_w / 2, DIST_FOOTER_LOWER_LINE_CM * cm, FOOTER_TEXT)
         else:
             # Split at the roughly-midway "the" word for a balanced break
             split = FOOTER_TEXT.rfind("conjunction with")
             line1 = FOOTER_TEXT[:split].strip()
             line2 = FOOTER_TEXT[split:].strip()
-            canvas.drawCentredString(page_w / 2, 1.0 * cm, line1)
-            canvas.drawCentredString(page_w / 2, 0.65 * cm, line2)
+            canvas.drawCentredString(
+                page_w / 2, DIST_FOOTER_UPPER_LINE_CM * cm, line1)
+            canvas.drawCentredString(
+                page_w / 2, DIST_FOOTER_LOWER_LINE_CM * cm, line2)
         canvas.restoreState()
 
     doc.build(story, onFirstPage=_draw_footer, onLaterPages=_draw_footer)
@@ -5274,6 +5387,10 @@ def generate_combined_pdf(financial_year_id, include_watermark=True, exclude_typ
     writer = PdfWriter()
     tmpdir = tempfile.mkdtemp(prefix="shub_combined_pdf_")
     pdfs_merged = 0
+    # 1-based page each document starts on, for the Contents column. Only
+    # knowable here: pagination settles once LibreOffice has laid every
+    # document out and they have been merged in order.
+    doc_start_pages = {}
 
     try:
         for doc_type in ordered_keys:
@@ -5283,6 +5400,7 @@ def generate_combined_pdf(financial_year_id, include_watermark=True, exclude_typ
             if doc_type == "DISTRIBUTION":
                 buffer.seek(0)
                 dist_reader = PdfReader(buffer)
+                doc_start_pages[doc_type] = len(writer.pages) + 1
                 for page in dist_reader.pages:
                     writer.add_page(page)
                 pdfs_merged += 1
@@ -5303,6 +5421,7 @@ def generate_combined_pdf(financial_year_id, include_watermark=True, exclude_typ
             pdf_path = os.path.join(tmpdir, f"{doc_type}.pdf")
             if os.path.exists(pdf_path):
                 reader = PdfReader(pdf_path)
+                doc_start_pages[doc_type] = len(writer.pages) + 1
                 for page in reader.pages:
                     writer.add_page(page)
                 pdfs_merged += 1
@@ -5317,8 +5436,9 @@ def generate_combined_pdf(financial_year_id, include_watermark=True, exclude_typ
         writer.write(output)
         raw_bytes = output.getvalue()
 
-        # Stamp continuous page numbers on the merged PDF
-        stamped = _stamp_page_numbers(raw_bytes)
+        # Stamp continuous page numbers on the merged PDF, and fill in the
+        # Contents column from the offsets recorded above.
+        stamped = _stamp_page_numbers(raw_bytes, doc_start_pages=doc_start_pages)
 
         result = io.BytesIO(stamped)
         result.seek(0)
