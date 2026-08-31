@@ -1283,6 +1283,48 @@ def _compute_note_map(sections, entity_type, has_income_tax):
     return note_map, note_lookup
 
 
+def _is_related_party_note(nl):
+    """Related-party rules, shared by the balance sheet and expense classifiers."""
+    if "loan" in nl and ("director" in nl or "majoti" in nl or "ets" in nl or "related" in nl):
+        return True
+    if "management" in nl and "fee" in nl:
+        return True
+    return False
+
+
+def _classify_balance_sheet_note(item):
+    """Return note_type for a balance sheet account, or None."""
+    nl = item["account_name"].lower()
+    if "trade" in nl and "debtor" in nl:
+        return "receivables"
+    if _is_inventory_item(item):
+        return "inventories"
+    if any(kw in nl for kw in [
+        "equipment", "vehicle", "furniture", "building", "fixture",
+        "plant", "motor", "computer", "office", "at cost",
+    ]):
+        # Exclude depreciation/amortisation lines — note ref goes on cost only
+        if not any(kw in nl for kw in ["accumulated", "amortisation", "depreciation"]) and not nl.startswith("less:"):
+            return "ppe"
+    if "deposit" in nl:
+        return "ppe"
+    if _is_related_party_note(nl):
+        return "related_party"
+    return None
+
+
+def _classify_expense_note(item):
+    """Return note_type for a P&L expense line, or None.
+
+    Deliberately not _classify_balance_sheet_note: that classifier's PP&E
+    keyword list contains "office", so "Home office" claimed the PP&E note and
+    printed a reference to a note about motor vehicles. Receivables,
+    inventories and PP&E all describe balance sheet items; the related-party
+    note is the only one an expense can legitimately point at.
+    """
+    return "related_party" if _is_related_party_note(item["account_name"].lower()) else None
+
+
 def _assign_note_refs(items, note_lookup, classify_fn):
     """Add a 'note_ref' key to each item dict based on a classification function.
 
@@ -1569,32 +1611,17 @@ def build_company_context(financial_year, include_watermark=True):
     # Compute note_map and assign note_ref to items for the Note column
     note_map, note_lookup = _compute_note_map(sections, entity_type, has_income_tax)
 
-    def _classify_note(item):
-        """Return note_type for an account, or None."""
-        nl = item["account_name"].lower()
-        if "trade" in nl and "debtor" in nl:
-            return "receivables"
-        if _is_inventory_item(item):
-            return "inventories"
-        if any(kw in nl for kw in [
-            "equipment", "vehicle", "furniture", "building", "fixture",
-            "plant", "motor", "computer", "office", "at cost",
-        ]):
-            # Exclude depreciation/amortisation lines — note ref goes on cost only
-            if not any(kw in nl for kw in ["accumulated", "amortisation", "depreciation"]) and not nl.startswith("less:"):
-                return "ppe"
-        if "deposit" in nl:
-            return "ppe"
-        if "loan" in nl and ("director" in nl or "majoti" in nl or "ets" in nl or "related" in nl):
-            return "related_party"
-        if "management" in nl and "fee" in nl:
-            return "related_party"
-        return None
+    # Drives the conditional Depreciation Report line on the Contents page.
+    # Mirrors _generate_depreciation_report's own condition exactly.
+    from core.models import DepreciationAsset
+    has_depreciation_report = DepreciationAsset.objects.filter(
+        financial_year=financial_year
+    ).exists()
 
-    _assign_note_refs(sections["current_assets"], note_lookup, _classify_note)
-    _assign_note_refs(sections["noncurrent_assets"], note_lookup, _classify_note)
-    _assign_note_refs(sections["noncurrent_liabilities"], note_lookup, _classify_note)
-    _assign_note_refs(sections["expenses"], note_lookup, _classify_note)
+    _assign_note_refs(sections["current_assets"], note_lookup, _classify_balance_sheet_note)
+    _assign_note_refs(sections["noncurrent_assets"], note_lookup, _classify_balance_sheet_note)
+    _assign_note_refs(sections["noncurrent_liabilities"], note_lookup, _classify_balance_sheet_note)
+    _assign_note_refs(sections["expenses"], note_lookup, _classify_expense_note)
     # Sections that don't have note refs — add empty note_ref
     for sec_key in ["trading_income", "cogs", "income", "current_liabilities", "equity"]:
         for item in sections[sec_key]:
@@ -1719,6 +1746,7 @@ def build_company_context(financial_year, include_watermark=True):
         "financial_year_end": year_end.strftime("%d %B %Y") if year_end else "",
         "year_end_date": year_end.strftime("%d %B %Y") if year_end else "",
         "has_prior": has_prior,
+        "has_depreciation_report": has_depreciation_report,
         "has_trading": has_trading,
         "watermark": "DRAFT" if include_watermark else "",
         # P&L
@@ -4816,7 +4844,9 @@ def _build_beneficiary_distribution_summary(context):
     else:
         col_widths = [page_width * 0.70, page_width * 0.30]
 
-    entity_display = _safe_amp((entity.entity_name or "").upper())
+    # Rendered as stored: every other document in the pack does, and
+    # upper-casing only here made pages 10-11 disagree with the rest.
+    entity_display = _safe_amp(entity.entity_name or "")
 
     def _header_block():
         return [

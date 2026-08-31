@@ -796,12 +796,19 @@ def _build_cover(entity_type):
     if entity_type == "company":
         contents.append("Summary Profit and Loss Statement")
     contents.append("Notes to the Financial Statements")
+    # The Depreciation Report is skipped at render time when the year has no
+    # DepreciationAsset rows, so its line is a docxtpl conditional row rather
+    # than a static entry promising a document that may not be in the pack.
+    contents.append("{%tr if has_depreciation_report %}")
+    contents.append("Depreciation Report")
+    contents.append("{%tr endif %}")
     if entity_type == "company":
         contents.append("Directors' Declaration")
         contents.append("Solvency Resolution")
     elif entity_type in TRUST_LIKE_TYPES:
         contents.append("Trustee's Declaration")
-        contents.append("Beneficiaries Distribution Summary")
+        # Matches the heading on the document's own pages.
+        contents.append("Beneficiaries Profit Distribution Summary")
     elif entity_type == "sole_trader":
         contents.append("Proprietor Declaration")
     elif entity_type == "partnership":
