@@ -446,11 +446,18 @@ def _expected_next_year_openings(fy):
 
 
 def _comparative_for_line(line):
-    """Return (prior_debit, prior_credit) for a BS rollover line's comparative column.
+    """Return (prior_debit, prior_credit) for a rollover line's comparative column.
 
     closing_balance is debit-positive (negative = credit balance).  The period
-    debit/credit movements must not be used for balance-sheet comparatives — they
-    record the movement for the year, not the year-end position.
+    debit/credit movements must not be used for comparatives — they record the
+    movement for the year, not the year-end position.
+
+    Used for P&L lines as well as balance sheet ones. An account journalled in
+    and then back out has gross movements on both sides and a net of nil: Minli
+    FY2026 booked a property disposal into 601 Capital gains and reversed it
+    when the sale slipped a year. Storing the gross figures put 505,845.52 in
+    both comparative columns of the next year's trial balance, contradicting
+    the P&L, which correctly showed nothing.
     """
     cb = line.closing_balance or Decimal("0")
     if cb >= 0:
@@ -3445,6 +3452,7 @@ def reroll_forward(request, pk):
                     continue
 
             if line == income_tax_line:
+                _itd, _itc = _comparative_for_line(line)
                 TrialBalanceLine.objects.create(
                     financial_year=next_fy,
                     account_code=line.account_code,
@@ -3453,8 +3461,8 @@ def reroll_forward(request, pk):
                     debit=Decimal("0"),
                     credit=Decimal("0"),
                     closing_balance=Decimal("0"),
-                    prior_debit=line.debit,
-                    prior_credit=line.credit,
+                    prior_debit=_itd,
+                    prior_credit=_itc,
                     mapped_line_item=line.mapped_line_item,
                     is_adjustment=False,
                     source='rollover',
@@ -3547,6 +3555,7 @@ def reroll_forward(request, pk):
                         is_closing_stock = True
                         break
 
+            _pld, _plc = _comparative_for_line(line)
             TrialBalanceLine.objects.create(
                 financial_year=next_fy,
                 account_code=line.account_code,
@@ -3555,8 +3564,8 @@ def reroll_forward(request, pk):
                 debit=Decimal("0"),
                 credit=Decimal("0"),
                 closing_balance=Decimal("0"),
-                prior_debit=line.debit,
-                prior_credit=line.credit,
+                prior_debit=_pld,
+                prior_credit=_plc,
                 mapped_line_item=line.mapped_line_item,
                 is_adjustment=False,
                 source='rollover',
@@ -4073,6 +4082,7 @@ def _populate_rolled_forward_fy(current_fy, new_fy):
                 if kw in name_lower:
                     is_closing_stock = True
                     break
+        _pld, _plc = _comparative_for_line(line)
         TrialBalanceLine.objects.create(
             financial_year=new_fy,
             account_code=line.account_code,
@@ -4081,8 +4091,8 @@ def _populate_rolled_forward_fy(current_fy, new_fy):
             debit=_D("0"),
             credit=_D("0"),
             closing_balance=_D("0"),
-            prior_debit=line.debit,
-            prior_credit=line.credit,
+            prior_debit=_pld,
+            prior_credit=_plc,
             mapped_line_item=line.mapped_line_item,
             is_adjustment=False,
             source='rollover',
