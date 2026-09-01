@@ -5141,8 +5141,14 @@ def _build_beneficiary_distribution_summary(context):
 
         rows.append(_row("Closing balance", cy_close, py_close))
 
-        cy_total_closing += cy_close
-        py_total_closing += py_close
+        # Accumulate the exact closings, not the rounded ones. These two
+        # totals also appear on the face of the balance sheet, where
+        # _net_beneficiary_accounts writes the same per-officer nets and
+        # _sum_section totals them from the exact Decimals -- so summing the
+        # printed figures here put the schedule a dollar away from the
+        # statement it supports (Minli FY2027: 2,039,009 against 2,039,010).
+        cy_total_closing += cy_b["closing"]
+        py_total_closing += py_b["closing"]
 
         bf_table = Table(rows, colWidths=col_widths)
         last_idx = len(rows) - 1
@@ -5159,17 +5165,20 @@ def _build_beneficiary_distribution_summary(context):
         story.append(bf_table)
         story.append(Spacer(1, 4 * mm))
 
+    # Rounded once, at the total -- the same basis the balance sheet uses.
+    cy_total_disp = _disp(cy_total_closing)
+    py_total_disp = _disp(py_total_closing)
     if show_py:
         totals_rows = [
             ["Total of beneficiary loans",
-             _fmt(cy_total_closing), _fmt(py_total_closing)],
+             _fmt(cy_total_disp), _fmt(py_total_disp)],
             ["Total Beneficiary Funds",
-             _fmt(cy_total_closing), _fmt(py_total_closing)],
+             _fmt(cy_total_disp), _fmt(py_total_disp)],
         ]
     else:
         totals_rows = [
-            ["Total of beneficiary loans", _fmt(cy_total_closing)],
-            ["Total Beneficiary Funds", _fmt(cy_total_closing)],
+            ["Total of beneficiary loans", _fmt(cy_total_disp)],
+            ["Total Beneficiary Funds", _fmt(cy_total_disp)],
         ]
     totals_table = Table(totals_rows, colWidths=col_widths)
     totals_table.setStyle(TableStyle([
