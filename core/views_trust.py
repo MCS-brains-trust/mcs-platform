@@ -1303,6 +1303,35 @@ def trust_post_distribution(request, pk):
             status=400,
         )
 
+    # A trust cannot distribute what it has not got. _calculate_income_streams
+    # recoups a brought-forward 4199 loss before offering anything, but that
+    # figure is computed once and stored on the workspace, so posting is
+    # recomputed from the ledger rather than trusting the snapshot.
+    #
+    # Minli Enterprise Unit Trust FY2026 is why. Its workspace stored
+    # 876,322.95, computed before both the recoupment rule and the
+    # income-streams netting fix, and 626,802.51 was posted from it into a year
+    # with nil distributable income and 2,255,231.40 of losses carried forward.
+    # The profit went to the unitholders instead of reducing the deficit.
+    from core.eva_trust_planning import _calculate_income_streams
+
+    _income = _calculate_income_streams(fy)
+    _distributable = Decimal(_income["net_distributable_income"])
+    if total_distributed > _distributable:
+        _bf = Decimal(_income["brought_forward_losses"])
+        _profit = Decimal(_income["net_profit"])
+        detail = (
+            f"Cannot post distribution: ${total_distributed:,.2f} allocated "
+            f"against ${_distributable:,.2f} of distributable income."
+        )
+        if _bf > 0:
+            detail += (
+                f" The year's profit of ${_profit:,.2f} is reduced by "
+                f"${_bf:,.2f} of losses carried forward in 4199, which must be "
+                f"recouped before income is distributed."
+            )
+        return JsonResponse({"error": detail}, status=400)
+
     fy_year = "".join(c for c in fy.year_label if c.isdigit()) or str(fy.end_date.year)
 
     try:
@@ -1452,6 +1481,11 @@ def trust_unpost_distribution(request, pk):
                     journal_type=AdjustingJournal.JournalType.YEAR_END,
                     status=AdjustingJournal.JournalStatus.POSTED,
                     is_trust_distribution=False,  # the reversal is not the distribution
+                    # ...but it must stay linked to what it reverses. The
+                    # original stays posted in a finalised year, so anything
+                    # reading the ledger for "what was distributed" sees the
+                    # distribution and needs this to find its undoing.
+                    reverses=journal,
                     journal_date=fy.end_date,
                     description=f"Reversal of {orig_ref} — Trust distribution",
                     narration=(

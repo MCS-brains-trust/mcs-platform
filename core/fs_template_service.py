@@ -4827,9 +4827,10 @@ def _build_beneficiary_distribution_summary(context):
         Physical_dist = sum of (debit - credit) from non-rollover lines on
         accounts whose code starts with "4053" (Handiledger convention for
         physical distribution accounts). Zero when no 4053 account exists.
-        Profit_dist = beneficiary's allocated share from selected tax scenario.
-        Falls back to 0 when target_fy.trust_workspace is missing or has no
-        selected scenario — guarded with getattr.
+        Profit_dist = what the distribution journals actually moved onto the
+        beneficiary's accounts, net of any journal reversing them. Falls back to
+        the selected tax scenario's allocation only while no distribution has
+        been posted, so a draft year still previews Stage 2's proposal.
         """
         result = {oid: {
             "opening": Decimal("0"),
@@ -4876,6 +4877,50 @@ def _build_beneficiary_distribution_summary(context):
                         - (line.credit or Decimal("0"))
                     )
 
+        # What was actually distributed, from the ledger. A distribution is
+        # the movement that came from a distribution journal -- netting the
+        # beneficiary's 4004 account wholesale would not do, because that
+        # account also carries genuine loan movements (Dr Services Family
+        # Trust FY2026 nets 85,897.03 there: a 61,848 distribution plus 24,049
+        # of loans).
+        #
+        # A reversal in a finalised year leaves the original posted, so the
+        # reversing journal is included through the ``reverses`` link and the
+        # pair nets to nil. Minli Enterprise Unit Trust FY2026 printed 313,401
+        # to each unitholder after JE-008 reversed JE-007, because this read
+        # the Tax Planning scenario instead.
+        from core.models import AdjustingJournal as _AJ
+
+        distribution_journals = list(
+            _AJ.objects.filter(
+                financial_year=target_fy,
+                is_trust_distribution=True,
+                status=_AJ.JournalStatus.POSTED,
+            )
+        )
+        journal_ids = [j.pk for j in distribution_journals]
+        if journal_ids:
+            journal_ids += list(
+                _AJ.objects.filter(
+                    financial_year=target_fy,
+                    reverses__in=journal_ids,
+                    status=_AJ.JournalStatus.POSTED,
+                ).values_list("pk", flat=True)
+            )
+            for code, lines in lines_by_code.items():
+                oid = code_to_officer.get(code)
+                if not oid or str(code).startswith("4053"):
+                    continue
+                for line in lines:
+                    if line.source_journal_id in journal_ids:
+                        result[oid]["profit_dist"] += (
+                            (line.credit or Decimal("0"))
+                            - (line.debit or Decimal("0"))
+                        )
+            return result
+
+        # Nothing posted: fall back to the selected Tax Planning scenario so a
+        # draft year still previews what Stage 2 proposes.
         try:
             workspace = getattr(target_fy, "trust_workspace", None)
             scenario = (
@@ -5141,8 +5186,14 @@ def _build_beneficiary_distribution_summary(context):
 
         rows.append(_row("Closing balance", cy_close, py_close))
 
-        cy_total_closing += cy_close
-        py_total_closing += py_close
+        # Accumulate the exact closings, not the rounded ones. These two
+        # totals also appear on the face of the balance sheet, where
+        # _net_beneficiary_accounts writes the same per-officer nets and
+        # _sum_section totals them from the exact Decimals -- so summing the
+        # printed figures here put the schedule a dollar away from the
+        # statement it supports (Minli FY2027: 2,039,009 against 2,039,010).
+        cy_total_closing += cy_b["closing"]
+        py_total_closing += py_b["closing"]
 
         bf_table = Table(rows, colWidths=col_widths)
         last_idx = len(rows) - 1
@@ -5159,17 +5210,20 @@ def _build_beneficiary_distribution_summary(context):
         story.append(bf_table)
         story.append(Spacer(1, 4 * mm))
 
+    # Rounded once, at the total -- the same basis the balance sheet uses.
+    cy_total_disp = _disp(cy_total_closing)
+    py_total_disp = _disp(py_total_closing)
     if show_py:
         totals_rows = [
             ["Total of beneficiary loans",
-             _fmt(cy_total_closing), _fmt(py_total_closing)],
+             _fmt(cy_total_disp), _fmt(py_total_disp)],
             ["Total Beneficiary Funds",
-             _fmt(cy_total_closing), _fmt(py_total_closing)],
+             _fmt(cy_total_disp), _fmt(py_total_disp)],
         ]
     else:
         totals_rows = [
-            ["Total of beneficiary loans", _fmt(cy_total_closing)],
-            ["Total Beneficiary Funds", _fmt(cy_total_closing)],
+            ["Total of beneficiary loans", _fmt(cy_total_disp)],
+            ["Total Beneficiary Funds", _fmt(cy_total_disp)],
         ]
     totals_table = Table(totals_rows, colWidths=col_widths)
     totals_table.setStyle(TableStyle([
