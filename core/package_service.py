@@ -50,35 +50,35 @@ PACKAGE_CONTENTS = {
         ("directors_report", "Director's Report", False, False),
         ("solvency_resolution", "Solvency Resolution", True, True),
         ("dividend_statement", "Dividend Statements", False, False),
-        ("shareholder_loan_acknowledgment", "Loan Acknowledgment", False, False),
-        ("management_representation_letter", "Management Representation Letter", True, True),
+        ("shareholder_loan_ack", "Loan Acknowledgment", False, False),
+        ("management_rep_letter", "Management Representation Letter", True, True),
         ("engagement_letter", "Engagement Letter", True, True),
-        ("cover_letter", "Cover Letter (Transmittal)", True, True),
+        ("client_cover_letter", "Cover Letter (Transmittal)", True, True),
     ],
     "trust": [
         ("financial_statements", "Financial Statements", True, False),
-        ("trust_distribution_minutes", "Trust Distribution Minutes", True, False),
-        ("management_representation_letter", "Management Representation Letter", True, True),
+        ("distribution_minutes", "Trust Distribution Minutes", True, False),
+        ("management_rep_letter", "Management Representation Letter", True, True),
         ("engagement_letter", "Engagement Letter", True, True),
-        ("cover_letter", "Cover Letter (Transmittal)", True, True),
+        ("client_cover_letter", "Cover Letter (Transmittal)", True, True),
     ],
     "partnership": [
         ("financial_statements", "Financial Statements", True, False),
         ("partner_statement", "Partner Statements", True, False),
         ("partnership_tax_summary", "Partnership Tax Summary", True, False),
-        ("management_representation_letter", "Management Representation Letter", True, True),
+        ("management_rep_letter", "Management Representation Letter", True, True),
         ("engagement_letter", "Engagement Letter", True, True),
-        ("cover_letter", "Cover Letter (Transmittal)", True, True),
+        ("client_cover_letter", "Cover Letter (Transmittal)", True, True),
     ],
     "individual": [
         ("engagement_letter", "Engagement Letter", True, True),
-        ("cover_letter", "Cover Letter (Transmittal)", True, True),
+        ("client_cover_letter", "Cover Letter (Transmittal)", True, True),
     ],
     "smsf": [
         ("financial_statements", "Financial Statements", True, False),
-        ("management_representation_letter", "Management Representation Letter", True, True),
+        ("management_rep_letter", "Management Representation Letter", True, True),
         ("engagement_letter", "Engagement Letter", True, True),
-        ("cover_letter", "Cover Letter (Transmittal)", True, True),
+        ("client_cover_letter", "Cover Letter (Transmittal)", True, True),
     ],
 }
 
@@ -94,13 +94,13 @@ DOCUMENT_ORDER = [
     "solvency_resolution",
     "directors_report",
     "dividend_statement",
-    # trust_distribution_minutes excluded — standalone legal doc, not part of FS package
+    # distribution_minutes excluded — standalone legal doc, not part of FS package
     "partner_statement",
     "partnership_tax_summary",
-    "shareholder_loan_acknowledgment",
-    "management_representation_letter",
+    "shareholder_loan_ack",
+    "management_rep_letter",
     "engagement_letter",
-    "cover_letter",
+    "client_cover_letter",
 ]
 
 
@@ -161,7 +161,7 @@ def assemble_package(financial_year_id, assembled_by_id=None):
             is_required = False
         if doc_type == "dividend_statement":
             is_required = DividendEvent.objects.filter(financial_year=fy).exists()
-        if doc_type == "shareholder_loan_acknowledgment":
+        if doc_type == "shareholder_loan_ack":
             is_required = _has_director_loan_over_10k(fy)
 
         is_present = doc_type in existing_types
@@ -320,17 +320,7 @@ def _auto_generate_document(fy, entity, doc_type, user=None):
     Auto-generate a single compliance document.
     Returns the created LegalDocument or None.
     """
-    from core.models import LegalDocument
-
-    generators = {
-        "directors_declaration": _gen_directors_declaration,
-        "solvency_resolution": _gen_solvency_resolution,
-        "management_representation_letter": _gen_management_rep_letter,
-        "engagement_letter": _gen_engagement_letter,
-        "cover_letter": _gen_cover_letter,
-    }
-
-    generator = generators.get(doc_type)
+    generator = AUTO_GENERATORS.get(doc_type)
     if not generator:
         logger.warning("No auto-generator for document type: %s", doc_type)
         return None
@@ -356,7 +346,7 @@ def _gen_solvency_resolution(fy, entity, user=None):
 def _gen_management_rep_letter(fy, entity, user=None):
     """Generate a Management Representation Letter."""
     return _invoke_compliance_generator(
-        "management_representation_letter", fy, entity, user,
+        "management_rep_letter", fy, entity, user,
     )
 
 
@@ -370,8 +360,20 @@ def _gen_engagement_letter(fy, entity, user=None):
 def _gen_cover_letter(fy, entity, user=None):
     """Generate a Cover Letter with dynamic document list."""
     return _invoke_compliance_generator(
-        "cover_letter", fy, entity, user,
+        "client_cover_letter", fy, entity, user,
     )
+
+
+# Module level so a PACKAGE_CONTENTS entry marked auto-generatable can be
+# checked against the generators that exist, rather than discovering at
+# assembly time that one was never registered.
+AUTO_GENERATORS = {
+    "directors_declaration": _gen_directors_declaration,
+    "solvency_resolution": _gen_solvency_resolution,
+    "management_rep_letter": _gen_management_rep_letter,
+    "engagement_letter": _gen_engagement_letter,
+    "client_cover_letter": _gen_cover_letter,
+}
 
 
 def _invoke_compliance_generator(doc_type, fy, entity, user=None):
@@ -392,9 +394,9 @@ def _invoke_compliance_generator(doc_type, fy, entity, user=None):
         type_labels = {
             "directors_declaration": "Director's Declaration",
             "solvency_resolution": "Solvency Resolution",
-            "management_representation_letter": "Management Representation Letter",
+            "management_rep_letter": "Management Representation Letter",
             "engagement_letter": "Engagement Letter",
-            "cover_letter": "Cover Letter",
+            "client_cover_letter": "Cover Letter",
         }
         label = type_labels.get(doc_type, doc_type.replace("_", " ").title())
         title = f"{label} \u2014 {entity.entity_name} \u2014 {fy.end_date.year}"
@@ -486,7 +488,7 @@ def _build_compliance_context(doc_type, fy, entity):
         ]
 
     # Add document-type-specific context
-    if doc_type == "cover_letter":
+    if doc_type == "client_cover_letter":
         from core.models import LegalDocument
         existing_docs = LegalDocument.objects.filter(
             financial_year=fy,
@@ -508,13 +510,13 @@ def _combine_pdfs(fy, entity, existing_types):
     """
     from core.models import GeneratedDocument, LegalDocument
 
-    try:
-        from PyPDF2 import PdfMerger
-    except ImportError:
-        logger.warning("PyPDF2 not available, skipping PDF combination")
-        return None
+    # pypdf, not PyPDF2: requirements has pinned pypdf since >=5.0.0, and
+    # pypdf 5 removed PdfMerger in favour of PdfWriter.append. The old import
+    # raised ImportError on every call, which this function caught and turned
+    # into a silent "no package produced".
+    from pypdf import PdfWriter
 
-    merger = PdfMerger()
+    merger = PdfWriter()
     docs_added = 0
 
     for doc_type in DOCUMENT_ORDER:
@@ -561,10 +563,14 @@ def _combine_pdfs(fy, entity, existing_types):
                             logger.warning("Failed to add stored FS PDF: %s", e2)
         else:
             # Other documents come from LegalDocument
+            # LegalDocument stamps generated_at, not created_at -- ordering on
+            # the latter raised FieldError, which the caller caught as "PDF
+            # combination failed". Invisible until the PyPDF2 import above was
+            # fixed, because that returned before ever reaching this line.
             legal_docs = LegalDocument.objects.filter(
                 financial_year=fy,
                 document_type=doc_type,
-            ).order_by("-created_at")
+            ).order_by("-generated_at")
 
             for legal_doc in legal_docs[:1]:
                 pdf_path = None
@@ -653,15 +659,21 @@ def _has_director_loan_over_10k(fy):
     return False
 
 
-def _log_activity(fy, user, action, description):
-    """Log an activity entry for the financial year."""
+def _log_activity(fy, user, event_type, description, title=None):
+    """Log an activity entry for the financial year.
+
+    ActivityLog takes ``event_type`` and a non-blank ``title``; this passed
+    ``action=`` instead, so every call raised TypeError into the except below
+    and no assembly has ever appeared in an entity's activity feed.
+    """
     try:
         from core.models import ActivityLog
         ActivityLog.objects.create(
             financial_year=fy,
             entity=fy.entity,
             user=user,
-            action=action,
+            event_type=event_type,
+            title=title or description[:200],
             description=description,
         )
     except Exception as e:
