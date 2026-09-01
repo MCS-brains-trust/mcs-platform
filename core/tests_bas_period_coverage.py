@@ -242,3 +242,23 @@ class JournalledPeriodViewTest(Require2FAMixin, PeriodCoverageTestBase):
         self.assertEqual(body["status"], "complete")
         self.assertEqual(body["source"], "journal")
         self.assertEqual(body["journal_refs"], ["JE-001"])
+
+    def test_the_status_card_does_not_claim_all_months_are_covered(self):
+        """The 'ready' branch says 'All months covered'. For a journalled
+        period no months were covered -- there is no bank feed at all."""
+        html = self.client.get(
+            reverse("core:gst_activity_statement", args=[self.fy.pk]),
+            secure=True,
+        ).content.decode()
+        self.assertNotIn("All months covered", html)
+        self.assertIn("Journalled", html)
+        self.assertIn("JE-001", html)
+
+    def test_a_banked_period_still_says_all_months_covered(self):
+        self.make_bank_months("2026-01-15", "2026-02-15", "2026-03-15")
+        html = self.client.get(
+            reverse("core:gst_activity_statement", args=[self.fy.pk])
+            + "?period=3",
+            secure=True,
+        ).content.decode()
+        self.assertIn("All months covered", html)

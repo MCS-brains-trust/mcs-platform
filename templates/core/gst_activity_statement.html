@@ -129,7 +129,13 @@
                     Net: ${{ pd.period.snapshot_net|floatformat:2 }}
                 </div>
                 {% endif %}
-                {% if pd.coverage.missing %}
+                {% if pd.coverage.source == 'journal' %}
+                <div class="mt-1" style="font-size: 0.7rem;">
+                    <span class="text-primary" title="Journalled: {{ pd.coverage.journal_refs|join:", " }}">
+                        <i class="bi bi-journal-check"></i> Journalled
+                    </span>
+                </div>
+                {% elif pd.coverage.missing %}
                 <div class="mt-1" style="font-size: 0.7rem;">
                     {% for m in pd.coverage.months %}
                     <span class="{% if m.covered %}text-success{% else %}text-danger{% endif %}" title="{{ m.month }}: {% if m.covered %}Covered{% else %}Missing{% endif %}">
@@ -209,7 +215,13 @@
                     <button type="button" class="btn btn-success btn-sm" data-bs-toggle="modal" data-bs-target="#lodgeModal">
                         <i class="bi bi-check2-square"></i> Mark as Lodged
                     </button>
+                    {% if selected_period.coverage.source == 'journal' %}
+                    <div class="small text-muted mt-1">
+                        Journalled &mdash; {{ selected_period.coverage.journal_refs|join:", " }}
+                    </div>
+                    {% else %}
                     <div class="small text-muted mt-1">All months covered</div>
+                    {% endif %}
                 {% elif selected_period.status == 'partial' %}
                     <button type="button" class="btn btn-warning btn-sm" data-bs-toggle="modal" data-bs-target="#lodgePartialModal">
                         <i class="bi bi-exclamation-triangle"></i> Lodge with Warning
