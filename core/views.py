@@ -2523,11 +2523,19 @@ def financial_year_detail(request, pk):
         reverse=True,
     )
 
-    # Check if this entity has bank statement uploads
+    # Check if this entity has bank statement uploads. Read by the
+    # opening-balance branch below, which is genuinely about bank feeds --
+    # do not widen it to mean "has GST".
     has_bank_statements = (
         TrialBalanceLine.objects.filter(financial_year=fy, source='bank_statement').exists()
         or review_jobs.exists()
     )
+
+    # Whether this year has a BAS to lodge at all. Deliberately not
+    # has_bank_statements: a cashbook journal now carries its own GST, so an
+    # entity with no bank feed can still owe a BAS. Registration is the rule
+    # the ATO applies, and it does not care where the GST came from.
+    can_lodge_bas = fy.entity.is_gst_registered
 
     # Bank account mapping for double-entry posting
     bank_account_mappings = BankAccountMapping.objects.filter(entity=fy.entity)
@@ -2583,6 +2591,7 @@ def financial_year_detail(request, pk):
         "fy": fy,
         "entity": fy.entity,
         "has_bank_statements": has_bank_statements,
+        "can_lodge_bas": can_lodge_bas,
         "tb_lines": tb_lines,
         "tb_sections": aggregated_sections,
         "adjustments": adjustments,

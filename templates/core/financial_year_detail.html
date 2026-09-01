@@ -100,12 +100,12 @@
             <i class="bi bi-exclamation-triangle"></i> Map {{ unmapped_count }} Accounts
         </a>
         {% endif %}
-        {% if has_bank_statements %}
+        {% if can_lodge_bas %}
         <a href="{% url 'core:gst_activity_statement' pk=fy.pk %}" class="btn btn-outline-info btn-sm">
             <i class="bi bi-receipt"></i> GST / BAS
         </a>
         {% else %}
-        <span class="d-inline-block" tabindex="0" data-bs-toggle="tooltip" data-bs-placement="bottom" title="GST/BAS is available for entities with bank statement uploads">
+        <span class="d-inline-block" tabindex="0" data-bs-toggle="tooltip" data-bs-placement="bottom" title="GST/BAS is available for GST-registered entities">
             <button class="btn btn-outline-secondary btn-sm" disabled style="pointer-events: none;">
                 <i class="bi bi-receipt"></i> GST / BAS
             </button>
