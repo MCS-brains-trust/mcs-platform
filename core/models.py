@@ -3206,6 +3206,7 @@ class ActivityLog(models.Model):
         REVIEW_APPROVED = "review_approved", "Transactions Approved"
         DOCUMENT_GENERATED = "doc_generated", "Document Generated"
         MGMT_ACCOUNTS_GENERATED = "mgmt_accts_gen", "Management Accounts Generated"
+        PACKAGE_ASSEMBLED = "package_assembled", "Client Package Assembled"
         EVA_REVIEW_TRIGGERED = "eva_review_triggered", "Eva Review Triggered"
         EVA_REVIEW_CLEARED = "eva_review_cleared", "Eva Review Cleared"
         EVA_FINDING_ADDRESSED = "eva_finding_addressed", "Eva Finding Addressed"

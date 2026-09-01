@@ -12,7 +12,6 @@ Functions:
   build_sole_trader_context — Full Jinja2 context for sole trader entity
   render_template         — Load + render a .docx template via DocxTemplate
   generate_financial_statements — Orchestrate all templates for a FY
-  assemble_pdf_package    — Generate clean PDFs, merge into single package
 """
 import io
 import logging
@@ -5500,71 +5499,3 @@ def generate_combined_pdf(financial_year_id, include_watermark=True, exclude_typ
     finally:
         import shutil
         shutil.rmtree(tmpdir, ignore_errors=True)
-
-
-# ---------------------------------------------------------------------------
-# 8. assemble_pdf_package
-# ---------------------------------------------------------------------------
-def assemble_pdf_package(financial_year_id):
-    """Generate all docs with include_watermark=False, convert to PDF, merge.
-
-    Returns bytes of the merged PDF.
-    """
-    docs = generate_financial_statements(
-        financial_year_id, include_watermark=False,
-    )
-
-    if not docs:
-        logger.warning("No documents generated for FY %s", financial_year_id)
-        return None
-
-    try:
-        from PyPDF2 import PdfMerger
-    except ImportError:
-        logger.error("PyPDF2 not available — cannot merge PDFs")
-        return None
-
-    merger = PdfMerger()
-    tmpdir = tempfile.mkdtemp(prefix="shub_fs_pkg_")
-    pdfs_added = 0
-
-    for doc_type in DOCUMENT_TYPE_ORDER:
-        if doc_type not in docs:
-            continue
-
-        buffer = docs[doc_type]
-        docx_path = os.path.join(tmpdir, f"{doc_type}.docx")
-        with open(docx_path, "wb") as f:
-            f.write(buffer.read())
-
-        # Convert to PDF via LibreOffice
-        pdf_path = os.path.join(tmpdir, f"{doc_type}.pdf")
-        try:
-            convert_docx_to_pdf(docx_path, tmpdir, timeout=60)
-        except RuntimeError:
-            logger.error("LibreOffice not available — skipping PDF conversion for %s", doc_type)
-            continue
-
-        if os.path.exists(pdf_path):
-            try:
-                merger.append(pdf_path)
-                pdfs_added += 1
-            except Exception as e:
-                logger.error("Failed to append PDF %s: %s", doc_type, e)
-        else:
-            logger.warning("PDF conversion produced no output for %s", doc_type)
-
-    if pdfs_added == 0:
-        merger.close()
-        return None
-
-    output = io.BytesIO()
-    merger.write(output)
-    merger.close()
-    output.seek(0)
-
-    logger.info(
-        "Assembled PDF package for FY %s: %d documents",
-        financial_year_id, pdfs_added,
-    )
-    return output.read()
