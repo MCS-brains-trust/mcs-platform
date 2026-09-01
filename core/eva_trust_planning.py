@@ -165,30 +165,52 @@ def _calculate_income_streams(financial_year):
         "tax_free_income": ZERO,
     }
 
+    # Net per account BEFORE classifying. Two journals on one account must
+    # offset, not add: Minli FY2027 settled a property sale with 744,189.00
+    # credit to 601 and its 527,945.52 CGT cost base as a debit, and the gain
+    # is the 216,243.48 difference. Accumulating abs() per line reported
+    # 1,272,134.52. Minli FY2026 is starker -- a disposal booked and journalled
+    # back out, a true gain of nil, reported as 1,011,691.04.
+    accounts = {}
     for line in lines:
-        net = (line.debit or ZERO) - (line.credit or ZERO)
-        name_lower = (line.account_name or "").lower()
-        section = ""
-        if line.mapped_line_item:
-            section = (line.mapped_line_item.statement_section or "").lower()
+        entry = accounts.setdefault(
+            line.account_code or "",
+            {"net": ZERO, "name": line.account_name or "", "section": ""},
+        )
+        entry["net"] += (line.debit or ZERO) - (line.credit or ZERO)
+        if not entry["name"]:
+            entry["name"] = line.account_name or ""
+        if not entry["section"] and line.mapped_line_item:
+            entry["section"] = (
+                line.mapped_line_item.statement_section or ""
+            ).lower()
+
+    for entry in accounts.values():
+        # net is debit-positive; revenue and gains are credit-normal, so they
+        # are reported sign-flipped. abs() was used here, which turned a net
+        # capital LOSS into a gain -- and 601 is named "Capital gains/Loss".
+        net = entry["net"]
+        earned = -net
+        name_lower = entry["name"].lower()
+        section = entry["section"]
 
         # Classify into income streams
         if "capital gain" in name_lower and "discount" in name_lower:
-            income_streams["cgt_discount"] += abs(net)
+            income_streams["cgt_discount"] += earned
         elif "capital gain" in name_lower:
-            income_streams["cgt_non_discount"] += abs(net)
+            income_streams["cgt_non_discount"] += earned
         elif "franked dividend" in name_lower or "franking credit" in name_lower:
             if "credit" in name_lower:
-                income_streams["franking_credits"] += abs(net)
+                income_streams["franking_credits"] += earned
             else:
-                income_streams["franked_dividends"] += abs(net)
+                income_streams["franked_dividends"] += earned
         elif "tax free" in name_lower or "tax-free" in name_lower:
-            income_streams["tax_free_income"] += abs(net)
+            income_streams["tax_free_income"] += earned
         elif "revenue" in section or "income" in section:
-            total_revenue += abs(net)
-            income_streams["ordinary_income"] += abs(net)
+            total_revenue += earned
+            income_streams["ordinary_income"] += earned
         elif "expense" in section or "cost" in section:
-            total_expenses += abs(net)
+            total_expenses += net
 
     net_profit = total_revenue - total_expenses
 
