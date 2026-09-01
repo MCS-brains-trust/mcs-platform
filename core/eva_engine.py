@@ -719,6 +719,30 @@ def _format_risk_flags_as_hard_facts(flags):
 # ---------------------------------------------------------------------------
 # Build Check Context for LLM (v2.0 — uses effective balances)
 # ---------------------------------------------------------------------------
+def _bucket_gst_account(account_name, effective_dr, effective_cr):
+    """Split one GST account's balance into (collected, input credits).
+
+    Named accounts bucket by name, as before. A combined control account --
+    "GST payable control account", which is what the cashbook journal and the
+    bank-posting path both post to -- matches the outer "gst" filter but
+    neither name pattern, so it used to contribute to neither total and the
+    check reported $0.00 on both sides while a real balance sat in the
+    account. Bucket that one off its columns instead: credits are GST
+    collected, debits are input tax credits.
+    """
+    name_lower = (account_name or "").lower()
+    collected_names = ("gst collected", "gst on sales", "output tax")
+    paid_names = ("gst paid", "gst on purchases", "input tax")
+    dr = effective_dr or ZERO
+    cr = effective_cr or ZERO
+
+    if any(kw in name_lower for kw in collected_names):
+        return abs(cr - dr), ZERO
+    if any(kw in name_lower for kw in paid_names):
+        return ZERO, abs(dr - cr)
+    return abs(cr), abs(dr)
+
+
 def _build_check_context(financial_year, check_id, risk_flags=None):
     """
     Build the specific context needed for a compliance check.
@@ -1004,11 +1028,13 @@ def _build_check_context(financial_year, check_id, risk_flags=None):
                     f"Movement ${net_movement:,.2f}{pct_str}"
                 )
                 found_any = True
-                # Classify for totals
-                if any(kw in name_lower for kw in ["gst collected", "gst on sales", "output tax"]):
-                    total_gst_collected += abs(cy_net)
-                elif any(kw in name_lower for kw in ["gst paid", "gst on purchases", "input tax"]):
-                    total_input_credits += abs(cy_net)
+                # Classify for totals. A combined control account buckets off
+                # its columns, not its name -- see _bucket_gst_account.
+                collected, paid = _bucket_gst_account(
+                    line.account_name, line.effective_dr, line.effective_cr,
+                )
+                total_gst_collected += collected
+                total_input_credits += paid
         if not found_any:
             extra.append("  No GST accounts found in TB.")
         else:
