@@ -612,6 +612,40 @@ def _collapse_trust_equity_to_accumulated(sections):
     })
 
 
+def _closing_undistributed_income(fy):
+    """Closing undistributed income / (accumulated loss), credit-positive.
+
+    The same cumulative figure the balance sheet prints as "Accumulated
+    losses" -- 4199 plus the year's own result -- so the two tie by
+    construction rather than by two independent calculations agreeing.
+
+    HandiLedger's Beneficiaries Profit Distribution Summary reports this
+    position, not the year's result: Minli Enterprise Unit Trust FY2024
+    earned 114,554 against 1,800,906 of brought-forward losses and the pack
+    printed "Undistributed income (loss) (1,686,352)" -- the deficit after
+    absorbing the profit -- with a nil share to each beneficiary.
+
+    4199 is read from ``_get_tb_sections``' equity section, before
+    ``_net_beneficiary_accounts`` moves anything out of it, and the P&L
+    sections are raw debit-positive there, so their sum is the year's result
+    with the sign already inverted. Returned credit-positive: a carried
+    deficit is negative and prints in brackets.
+    """
+    if fy is None:
+        return Decimal("0")
+    sections = _get_tb_sections(fy)
+    profit_and_loss = sum(
+        _sum_section(sections[key])
+        for key in ("trading_income", "cogs", "income", "expenses")
+    )
+    appropriation = sum(
+        (row.get("cy_amount") or Decimal("0"))
+        for row in sections["equity"]
+        if (row.get("account_code", "") or "").startswith("4199")
+    )
+    return -(appropriation + profit_and_loss)
+
+
 # Placeholder for ampersand to survive docxtpl XML rendering.
 # docxtpl's Jinja2→XML pipeline strips bare "&" from values.
 # We replace "&" with this placeholder before template rendering,
@@ -1559,7 +1593,7 @@ def build_company_context(financial_year, include_watermark=True):
     # Trusts present equity as a single cumulative-P&L line. Runs after the
     # profit row is injected above and before the integrity check below, both
     # of which are sum-based and so are unaffected by the collapse.
-    if entity.entity_type == "trust":
+    if entity.entity_type in TRUST_LIKE_TYPES:
         _collapse_trust_equity_to_accumulated(sections)
 
     _final_equity = -_sum_section(sections["equity"])
@@ -5019,10 +5053,28 @@ def _build_beneficiary_distribution_summary(context):
             p1_rows.append([f"- {meta['name']}", _fmt(cy_amt), _fmt(py_amt)])
         else:
             p1_rows.append([f"- {meta['name']}", _fmt(cy_amt)])
+    # What the year did not distribute stays in the trust, and the summary
+    # foots to the cumulative position rather than to the shares alone. In a
+    # year whose brought-forward losses swallow the profit every share above
+    # is nil and this line carries the whole deficit -- the Minli FY2024
+    # shape. See _closing_undistributed_income.
+    cy_undistributed = _disp(_closing_undistributed_income(fy))
+    py_undistributed = _disp(_closing_undistributed_income(fy.prior_year))
     if show_py:
-        p1_rows.append(["Total Profit", _fmt(cy_profit_total), _fmt(py_profit_total)])
+        p1_rows.append([
+            "Undistributed income (loss)",
+            _fmt(cy_undistributed), _fmt(py_undistributed),
+        ])
+        p1_rows.append([
+            "Total Profit (Loss)",
+            _fmt(cy_profit_total + cy_undistributed),
+            _fmt(py_profit_total + py_undistributed),
+        ])
     else:
-        p1_rows.append(["Total Profit", _fmt(cy_profit_total)])
+        p1_rows.append(["Undistributed income (loss)", _fmt(cy_undistributed)])
+        p1_rows.append([
+            "Total Profit (Loss)", _fmt(cy_profit_total + cy_undistributed),
+        ])
 
     p1_table = Table(p1_rows, colWidths=col_widths)
     p1_table.setStyle(TableStyle([

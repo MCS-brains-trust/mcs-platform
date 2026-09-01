@@ -8,7 +8,7 @@ Three places on the document have this shape:
 
   * the per-beneficiary reconciliation column
   * "Total of beneficiary loans" / "Total Beneficiary Funds"
-  * "Total Profit" on page 1
+  * "Total Profit (Loss)" on page 1
 
 The reconciliation absorbs its difference into "Funds loaned to trust", which
 _resolve already derives from the other four figures -- it is the one line with
@@ -34,7 +34,8 @@ STORAGES_OVERRIDE = {
 LABELS = {
     "Opening balance - Beneficiary", "Funds loaned to trust",
     "Profit distribution for year", "Physical distribution", "Closing balance",
-    "Total of beneficiary loans", "Total Beneficiary Funds", "Total Profit",
+    "Total of beneficiary loans", "Total Beneficiary Funds",
+    "Undistributed income (loss)", "Total Profit (Loss)",
 }
 
 
@@ -221,7 +222,10 @@ class TotalProfitMatchesTheSharesTests(TestCase):
         shares = [
             _num(lines[i + 1]) for i, l in enumerate(lines) if l.startswith("- ")
         ]
-        total = _num(lines[lines.index("Total Profit") + 1])
+        undistributed = _num(
+            lines[lines.index("Undistributed income (loss)") + 1]
+        )
+        total = _num(lines[lines.index("Total Profit (Loss)") + 1])
 
         self.assertEqual(shares, [100, 100])
-        self.assertEqual(total, sum(shares))
+        self.assertEqual(total, sum(shares) + undistributed)
