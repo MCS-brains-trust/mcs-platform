@@ -185,7 +185,10 @@ def _calculate_income_streams(financial_year):
                 line.mapped_line_item.statement_section or ""
             ).lower()
 
-    for entry in accounts.values():
+    # Lazy: core.views imports models. Same pattern as coa_sync.py:39.
+    from core.views import _hl_section_for_code
+
+    for code, entry in accounts.items():
         # net is debit-positive; revenue and gains are credit-normal, so they
         # are reported sign-flipped. abs() was used here, which turned a net
         # capital LOSS into a gain -- and 601 is named "Capital gains/Loss".
@@ -194,7 +197,31 @@ def _calculate_income_streams(financial_year):
         name_lower = entry["name"].lower()
         section = entry["section"]
 
-        # Classify into income streams
+        # Which side of the P&L the account sits on. This is a SEPARATE
+        # question from its character below: an account is both revenue and a
+        # capital gain, not one or the other. Chaining them into a single
+        # if/elif dropped 601 out of total_revenue entirely, so Minli FY2027
+        # planned against -141.82 while its statements printed 216,101.66.
+        #
+        # The HandiLedger code range is authoritative (see _HL_RANGE_SECTION);
+        # 601/0905 capital gains and 550/551 franked dividends are all Income
+        # in the master chart for every entity type. mapped_line_item's section
+        # is a fallback only for a code the range cannot resolve, because a
+        # line with no mapping at all used to reach neither side and vanish.
+        hl_section = _hl_section_for_code(code)
+        if hl_section is not None:
+            is_revenue = hl_section == "Income"
+            is_expense = hl_section in ("Expenses", "Cost of Sales")
+        else:
+            is_revenue = "revenue" in section or "income" in section
+            is_expense = "expense" in section or "cost" in section
+
+        if is_revenue:
+            total_revenue += earned
+        elif is_expense:
+            total_expenses += net
+
+        # Character, for streaming. Ordinary income is the residual bucket.
         if "capital gain" in name_lower and "discount" in name_lower:
             income_streams["cgt_discount"] += earned
         elif "capital gain" in name_lower:
@@ -206,11 +233,8 @@ def _calculate_income_streams(financial_year):
                 income_streams["franked_dividends"] += earned
         elif "tax free" in name_lower or "tax-free" in name_lower:
             income_streams["tax_free_income"] += earned
-        elif "revenue" in section or "income" in section:
-            total_revenue += earned
+        elif is_revenue:
             income_streams["ordinary_income"] += earned
-        elif "expense" in section or "cost" in section:
-            total_expenses += net
 
     net_profit = total_revenue - total_expenses
 
