@@ -241,17 +241,73 @@ def get_bank_coverage(fy, period_start, period_end):
     }
 
 
+def get_period_coverage(fy, period_start, period_end):
+    """Is this BAS period accounted for?
+
+    ``get_bank_coverage`` answers a narrower question -- is the *bank* data
+    complete -- and stays the primitive. This one adds the other way a period
+    can be accounted for: a posted cashbook journal, which is the accountant
+    asserting the quarter is written up, the same assertion that importing and
+    confirming every bank transaction makes.
+
+    The journal only counts when the period has no bank activity at all. The
+    moment one bank month is present the month-by-month rule governs
+    unchanged, so a forgotten import is still flagged on a mixed period.
+
+    Adds two keys to the bank-coverage dict:
+        source        -- "bank" | "journal" | "none"
+        journal_refs  -- reference numbers, empty unless source == "journal"
+
+    A journalled period reports no months and nothing missing: JournalLine has
+    no date (only AdjustingJournal.journal_date), so month-level coverage is
+    not derivable and naming months would be inventing data.
+    """
+    from .models import AdjustingJournal
+
+    coverage = get_bank_coverage(fy, period_start, period_end)
+
+    if any(m["covered"] for m in coverage["months"]):
+        coverage["source"] = "bank"
+        coverage["journal_refs"] = []
+        return coverage
+
+    journal_refs = list(
+        AdjustingJournal.objects.filter(
+            financial_year=fy,
+            journal_type=AdjustingJournal.JournalType.CASHBOOK,
+            status="posted",
+            journal_date__gte=period_start,
+            journal_date__lte=period_end,
+        )
+        .order_by("reference_number")
+        .values_list("reference_number", flat=True)
+    )
+    if journal_refs:
+        return {
+            "status": "complete",
+            "months": [],
+            "missing": [],
+            "source": "journal",
+            "journal_refs": journal_refs,
+        }
+
+    coverage["source"] = "none"
+    coverage["journal_refs"] = []
+    return coverage
+
+
 def compute_period_status(fy, period_start, period_end, bas_period=None):
     """
-    Compute the dynamic status of a BAS period based on bank transaction
-    coverage. If the period is explicitly lodged, that status is preserved.
+    Compute the dynamic status of a BAS period from its coverage -- bank
+    transactions, or a posted cashbook journal. If the period is explicitly
+    lodged, that status is preserved.
 
     Returns one of: 'lodged', 'ready', 'partial', 'empty'
     """
     if bas_period and bas_period.status == "lodged":
         return "lodged"
 
-    coverage = get_bank_coverage(fy, period_start, period_end)
+    coverage = get_period_coverage(fy, period_start, period_end)
     if coverage["status"] == "complete":
         return "ready"
     elif coverage["status"] == "partial":
