@@ -93,7 +93,7 @@ Answers "is this period accounted for?". Calls `get_bank_coverage`, then:
 | Period has | Returns | Lodge gate |
 |---|---|---|
 | any covered bank month | the bank coverage verbatim, plus `source: "bank"` | unchanged |
-| no covered bank month, and a posted CASHBOOK journal dated inside the period | `status: "complete"`, `months` all covered, `missing: []`, `source: "journal"`, `journal_refs: [...]` | passes, no override |
+| no covered bank month, and a posted CASHBOOK journal dated inside the period | `status: "complete"`, `months: []`, `missing: []`, `source: "journal"`, `journal_refs: [...]` | passes, no override |
 | neither | the bank coverage verbatim (`status: "none"`), plus `source: "none"` | blocked, as today |
 
 The "any covered bank month" test reads the `months` list `get_bank_coverage`
@@ -113,6 +113,19 @@ consumer keeps working on the keys it already reads:
     "journal_refs": ["JE-001"],              # new, empty unless source == "journal"
 }
 ```
+
+`months` is **empty** when `source == "journal"`, and that is deliberate. The
+constraint above says month-level coverage is not derivable from a journal;
+returning a list of months marked covered would be inventing exactly the data
+we just said we do not have, and any future consumer that trusted it would be
+misled. A journalled period asserts completeness at the period level and says
+nothing about its months. `missing` is empty for the same reason — there is no
+month we can name as missing.
+
+This is why the template must branch on `source` *before* it looks at `months`
+or `missing`: with both empty, the existing `{% if pd.coverage.missing %}` /
+`{% elif pd.coverage.status == 'complete' %}` chain would fall through to a
+month loop that renders nothing.
 
 ### `compute_period_status` — no change
 
@@ -166,6 +179,15 @@ branches, the endpoint fields, and their tests.
   written up in a journal dated 5 January will not count for Oct–Dec. This is
   the accepted cost of the "dated inside the period" rule; revisit only if it
   bites in practice.
+
+## Implementation note
+
+`views_bas.py:92` calls `compute_period_status` and `:98` calls the coverage
+function, once per period — so coverage is computed twice per period, and will
+still be after this change. That duplication exists today and this design does
+not add to it; leave it alone. If it ever matters, the fix is an optional
+`coverage=` argument on `compute_period_status`, not a change to either
+function's meaning.
 
 ## Judgment calls
 
