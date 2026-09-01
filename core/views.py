@@ -5899,21 +5899,33 @@ def adjustment_create(request, pk):
     coa_accounts = (
         EntityChartOfAccount.objects.filter(entity=fy.entity, is_active=True)
         .order_by("account_code")
-        .values("account_code", "account_name")
+        .values("account_code", "account_name", "tax_code")
     )
     if not coa_accounts.exists():
         coa_accounts = (
             ChartOfAccount.objects.filter(entity_type=entity_type, is_active=True)
             .order_by("account_code")
-            .values("account_code", "account_name")
+            .values("account_code", "account_name", "tax_code")
         )
     # Build a merged, deduplicated list keyed by account_code.
     # TB lines take priority (they carry the entity-specific name).
     merged = {}
     for a in coa_accounts:
-        merged[a["account_code"]] = {"client_account_code": a["account_code"], "client_account_name": a["account_name"]}
+        merged[a["account_code"]] = {
+            "client_account_code": a["account_code"],
+            "client_account_name": a["account_name"],
+            "client_account_tax_code": a.get("tax_code", "") or "",
+        }
     for a in entity_accounts:
-        merged[a["client_account_code"]] = a  # TB name wins
+        # The TB / mapping name wins, but neither source carries a tax code —
+        # replacing the entry wholesale would drop the chart's default, which is
+        # what the cashbook grid pre-fills from.
+        merged[a["client_account_code"]] = {
+            **a,
+            "client_account_tax_code": merged.get(
+                a["client_account_code"], {}
+            ).get("client_account_tax_code", ""),
+        }
     accounts = sorted(merged.values(), key=lambda x: x["client_account_code"])
 
     if request.method == "POST":
@@ -5933,9 +5945,25 @@ def adjustment_create(request, pk):
                 line.line_number = i
                 line.save(update_fields=["line_number"])
 
-            # Validate debits = credits
-            total_dr = sum(l.debit for l in lines)
-            total_cr = sum(l.credit for l in lines)
+            # Cashbook journals are keyed GROSS. Split before the balance
+            # check so it validates what will actually be posted: net lines
+            # plus the two 3380 control lines. A no-op for every other type.
+            from core.gst_journal import split_cashbook_journal
+            try:
+                split_cashbook_journal(journal)
+            except ValueError as exc:
+                journal.delete()
+                messages.error(request, str(exc))
+                return render(request, "core/adjustment_form.html", {
+                    "form": form, "formset": formset, "fy": fy,
+                    "accounts": accounts,
+                })
+
+            # Validate debits = credits — re-read, because the split rewrote
+            # the rows and appended new ones.
+            all_lines = list(journal.lines.all())
+            total_dr = sum(l.debit for l in all_lines)
+            total_cr = sum(l.credit for l in all_lines)
             if total_dr != total_cr:
                 journal.delete()
                 messages.error(request, f"Journal does not balance: Dr ${total_dr:,.2f} \u2260 Cr ${total_cr:,.2f}")
@@ -6687,14 +6715,26 @@ def journal_edit(request, pk):
         {"client_account_code": a["account_code"], "client_account_name": a["account_name"]}
         for a in tb_accounts
     ]
-    coa_qs = EntityChartOfAccount.objects.filter(entity=entity, is_active=True).order_by("account_code").values("account_code", "account_name")
+    coa_qs = EntityChartOfAccount.objects.filter(entity=entity, is_active=True).order_by("account_code").values("account_code", "account_name", "tax_code")
     if not coa_qs.exists():
-        coa_qs = ChartOfAccount.objects.filter(entity_type=template_entity_type(entity.entity_type), is_active=True).order_by("account_code").values("account_code", "account_name")
+        coa_qs = ChartOfAccount.objects.filter(entity_type=template_entity_type(entity.entity_type), is_active=True).order_by("account_code").values("account_code", "account_name", "tax_code")
     merged = {}
     for a in coa_qs:
-        merged[a["account_code"]] = {"client_account_code": a["account_code"], "client_account_name": a["account_name"]}
+        merged[a["account_code"]] = {
+            "client_account_code": a["account_code"],
+            "client_account_name": a["account_name"],
+            "client_account_tax_code": a.get("tax_code", "") or "",
+        }
     for a in tb_list:
-        merged[a["client_account_code"]] = a  # TB name wins
+        # The TB / mapping name wins, but neither source carries a tax code —
+        # replacing the entry wholesale would drop the chart's default, which is
+        # what the cashbook grid pre-fills from.
+        merged[a["client_account_code"]] = {
+            **a,
+            "client_account_tax_code": merged.get(
+                a["client_account_code"], {}
+            ).get("client_account_tax_code", ""),
+        }
     accounts = sorted(merged.values(), key=lambda x: x["client_account_code"])
 
     # Snapshot the journal state before any changes (for audit log)
@@ -6726,7 +6766,13 @@ def journal_edit(request, pk):
 
     if request.method == "POST":
         form = AdjustingJournalForm(request.POST, instance=journal)
-        formset = EditJournalLineFormSet(request.POST, instance=journal)
+        # The derived 3380 rows are excluded: the split deletes and
+        # regenerates them on every save, so any edit made here would be
+        # silently discarded.
+        formset = EditJournalLineFormSet(
+            request.POST, instance=journal,
+            queryset=journal.lines.filter(is_gst_control=False),
+        )
         if form.is_valid() and formset.is_valid():
             # Wrap the entire reverse → save → re-apply cycle in an atomic
             # block so a failure at any step rolls back all changes.
@@ -6746,6 +6792,31 @@ def journal_edit(request, pk):
                 for i, line in enumerate(journal.lines.order_by("line_number", "id"), start=1):
                     line.line_number = i
                     line.save(update_fields=["line_number"])
+
+                # Cashbook journals are keyed GROSS — re-split before
+                # validating, so the balance check sees the net lines plus the
+                # regenerated 3380 pair. A no-op for every other type.
+                from core.gst_journal import split_cashbook_journal
+                if journal.journal_type == AdjustingJournal.JournalType.CASHBOOK:
+                    # The grid rendered gross (net + GST) and has just posted
+                    # gross straight back into debit/credit, but gst_amount is
+                    # not a form field so the previous split's figure is still
+                    # sitting beside it. The engine reconstructs gross as
+                    # amount + gst_amount, so leaving it would add the GST a
+                    # second time. Clearing it puts the rows in exactly the
+                    # state a freshly created journal is in: gross, unsplit.
+                    journal.lines.filter(is_gst_control=False).update(
+                        gst_amount=Decimal("0.00"),
+                    )
+                try:
+                    split_cashbook_journal(journal)
+                except ValueError as exc:
+                    db_transaction.set_rollback(True)
+                    messages.error(request, str(exc))
+                    return render(request, "core/journal_edit.html", {
+                        "form": form, "formset": formset, "journal": journal,
+                        "fy": fy, "entity": entity, "accounts": accounts,
+                    })
 
                 # Validate balance
                 all_lines = list(journal.lines.all())
@@ -6823,7 +6894,23 @@ def journal_edit(request, pk):
 
     else:
         form = AdjustingJournalForm(instance=journal)
-        formset = EditJournalLineFormSet(instance=journal)
+        formset = EditJournalLineFormSet(
+            instance=journal,
+            queryset=journal.lines.filter(is_gst_control=False),
+        )
+
+        # The grid is a GROSS grid. Stored rows are net with the GST beside
+        # them, so add it back for display; the split reconstructs the same
+        # figure on save, which is what makes the round trip idempotent.
+        if journal.journal_type == AdjustingJournal.JournalType.CASHBOOK:
+            for line_form in formset.forms:
+                inst = line_form.instance
+                if not inst.pk or not inst.gst_amount:
+                    continue
+                if inst.debit:
+                    line_form.initial["debit"] = inst.debit + inst.gst_amount
+                elif inst.credit:
+                    line_form.initial["credit"] = inst.credit + inst.gst_amount
 
     # Phase 2: read-only banner counting parent-code postings whose entity
     # has per-beneficiary children. Display only — no auto-action.

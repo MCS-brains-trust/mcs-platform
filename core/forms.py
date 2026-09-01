@@ -252,7 +252,10 @@ class JournalLineForm(forms.ModelForm):
 
     class Meta:
         model = JournalLine
-        fields = ("account_code", "account_name", "description", "debit", "credit")
+        fields = (
+            "account_code", "account_name", "description", "debit", "credit",
+            "tax_code", "gst_override",
+        )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -260,6 +263,16 @@ class JournalLineForm(forms.ModelForm):
             field.widget.attrs["class"] = "form-control form-control-sm"
         self.fields["description"].required = False
         self.fields["description"].widget.attrs["placeholder"] = "Line description (optional)"
+        # Only the accountant's override is editable. gst_amount is derived by
+        # the split and is deliberately not a form field — if it were, the
+        # rendered net figure would be posted back as an override.
+        self.fields["tax_code"].required = False
+        self.fields["gst_override"].required = False
+        self.fields["gst_override"].widget = forms.TextInput(attrs={
+            "class": "form-control form-control-sm gst-field",
+            "inputmode": "decimal",
+            "placeholder": "auto",
+        })
         # Use text inputs for debit/credit so we can show comma formatting
         self.fields["debit"].widget = forms.TextInput(attrs={
             "class": "form-control form-control-sm dr-cr-field",
@@ -326,6 +339,22 @@ class JournalLineForm(forms.ModelForm):
             return self._eval_expr(val)
         except (InvalidOperation, ValueError):
             raise forms.ValidationError('Enter a valid number or expression (e.g. 25000+8745).')
+
+    def clean_gst_override(self):
+        """Blank means "calculate 1/11th", which is None, not zero.
+
+        Zero would be indistinguishable from a deliberate nil override, and
+        the split engine reads a falsy override as absent.
+        """
+        from decimal import InvalidOperation
+        raw = (self.data.get(self.add_prefix('gst_override'), '') or '').strip()
+        if not raw:
+            return None
+        try:
+            return self._eval_expr(raw)
+        except (InvalidOperation, ValueError):
+            raise forms.ValidationError(
+                'Enter a valid GST amount, or leave blank to calculate it.')
 
     def clean_credit(self):
         """Strip commas and evaluate arithmetic expressions before validation."""

@@ -106,7 +106,13 @@ class ContraMovementTests(TestCase):
 
         bas = self._bas()
         self.assertEqual(D(str(bas["G1"])), D("101762.38"))
-        self.assertEqual(D(str(bas["1A"])), D("9251.13"))
+        # 1A is the GST actually recorded on the three transactions
+        # (9,421.35 - 72.73 - 97.54), not G8/11. This was 9,251.13 while the
+        # worksheet division was authoritative; the accounts method reports
+        # 9,251.08, which is what the ledger holds. The 5c difference is the
+        # rounding gap between summing per-transaction GST and dividing an
+        # aggregate by 11 — see the cashbook GST design, 2026-08-31.
+        self.assertEqual(D(str(bas["1A"])), D("9251.08"))
 
     # ── the regression that matters most ────────────────────────────────────
 
