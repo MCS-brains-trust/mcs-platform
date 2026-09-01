@@ -306,7 +306,7 @@ Also update that function's docstring first line, which currently claims bank co
 
 Run: `SECRET_KEY=x DATABASE_URL="sqlite:///$(pwd)/test_db.sqlite3" ./venv/bin/python manage.py test core.tests_bas_period_coverage -v 2`
 
-Expected: PASS, 12 tests.
+Expected: PASS, 11 tests.
 
 - [ ] **Step 6: Verify nothing else regressed**
 
@@ -483,7 +483,7 @@ In `core/views_bas.py`, `bas_coverage_check`'s `JsonResponse`:
 
 Run: `SECRET_KEY=x DATABASE_URL="sqlite:///$(pwd)/test_db.sqlite3" ./venv/bin/python manage.py test core.tests_bas_period_coverage -v 2`
 
-Expected: PASS, 16 tests.
+Expected: PASS, 15 tests.
 
 - [ ] **Step 7: Commit**
 
@@ -591,7 +591,7 @@ The rest of the chain (the `{% for m in pd.coverage.months %}` loop, the
 
 Run: `SECRET_KEY=x DATABASE_URL="sqlite:///$(pwd)/test_db.sqlite3" ./venv/bin/python manage.py test core.tests_bas_period_coverage -v 2`
 
-Expected: PASS, 18 tests.
+Expected: PASS, 17 tests.
 
 - [ ] **Step 6: Commit**
 
@@ -640,7 +640,7 @@ grep -E "^(FAIL|ERROR):" /tmp/bas_after.txt | sort > /tmp/bas_after_set.txt
 diff /tmp/bas_baseline_set.txt /tmp/bas_after_set.txt
 ```
 
-Expected: no diff. Test *count* rises by 18; the failure *set* must be byte-identical. If anything new appears, read it — do not assume it is baseline.
+Expected: no diff. Test *count* rises by 17; the failure *set* must be byte-identical. If anything new appears, read it — do not assume it is baseline.
 
 - [ ] **Step 3: Confirm the driving client end to end**
 
