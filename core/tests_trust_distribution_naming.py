@@ -15,14 +15,15 @@ without secure=True.
 """
 import json
 from datetime import date
+from decimal import Decimal
 
 from django.contrib.auth import get_user_model
 from django.test import override_settings
 from django.urls import reverse
 
 from core.models import (
-    EntityChartOfAccount, EntityOfficer, FinancialYear, JournalLine,
-    TaxPlanningScenario, TrustWorkspace,
+    AccountMapping, EntityChartOfAccount, EntityOfficer, FinancialYear,
+    JournalLine, TaxPlanningScenario, TrialBalanceLine, TrustWorkspace,
 )
 from core.tests_beneficiary_accounts import BeneficiaryAccountTestBase
 
@@ -49,6 +50,22 @@ class DistributionDebitLineNamingTestsBase(BeneficiaryAccountTestBase):
             start_date=date(2024, 7, 1),
             end_date=date(2025, 6, 30),
         )
+        # 10,000 of revenue, so the 10,000 allocated below is actually
+        # distributable. trust_post_distribution recomputes distributable
+        # income from the ledger and refuses to post beyond it; without income
+        # these naming tests would be posting against nil.
+        revenue_mapping, _ = AccountMapping.objects.get_or_create(
+            standard_code="NAMING-revenue",
+            defaults={"line_item_label": "Revenue",
+                      "financial_statement": "income_statement",
+                      "statement_section": "revenue"},
+        )
+        TrialBalanceLine.objects.create(
+            financial_year=self.fy, account_code="0630", account_name="Sales",
+            closing_balance=Decimal("-10000.00"), credit=Decimal("10000.00"),
+            source="tb_import", mapped_line_item=revenue_mapping,
+        )
+
         self.workspace = TrustWorkspace.objects.create(financial_year=self.fy)
         self.scenario = TaxPlanningScenario.objects.create(
             financial_year=self.fy,
