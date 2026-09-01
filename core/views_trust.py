@@ -1481,6 +1481,11 @@ def trust_unpost_distribution(request, pk):
                     journal_type=AdjustingJournal.JournalType.YEAR_END,
                     status=AdjustingJournal.JournalStatus.POSTED,
                     is_trust_distribution=False,  # the reversal is not the distribution
+                    # ...but it must stay linked to what it reverses. The
+                    # original stays posted in a finalised year, so anything
+                    # reading the ledger for "what was distributed" sees the
+                    # distribution and needs this to find its undoing.
+                    reverses=journal,
                     journal_date=fy.end_date,
                     description=f"Reversal of {orig_ref} — Trust distribution",
                     narration=(

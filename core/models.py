@@ -2127,6 +2127,17 @@ class AdjustingJournal(models.Model):
             "matching on the description text."
         ),
     )
+    reverses = models.ForeignKey(
+        "self", null=True, blank=True, on_delete=models.SET_NULL,
+        related_name="reversed_by",
+        help_text=(
+            "The journal this one reverses. Set when a distribution is "
+            "un-posted in a finalised year, where the original must stay "
+            "posted on the audit trail. Without the link the two are only "
+            "connected by description text, and anything reading the ledger "
+            "sees the distribution but not its reversal."
+        ),
+    )
     journal_date = models.DateField()
     description = models.TextField()
     narration = models.TextField(
