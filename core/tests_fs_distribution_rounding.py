@@ -133,8 +133,29 @@ class ReconciliationColumnFootsTests(TestCase):
 
 
 @override_settings(STORAGES=STORAGES_OVERRIDE)
-class TotalsMatchTheRowsAboveTests(TestCase):
-    """Two closings of 100.40 each: 100 + 100 printed, exact sum 200.80 -> 201."""
+class TotalsTieToTheBalanceSheetTests(TestCase):
+    """Two closings of 100.40 each: 100 + 100 printed, exact sum 200.80 -> 201.
+
+    This total also appears on the face of the balance sheet, where
+    ``_net_beneficiary_accounts`` writes the same per-officer nets and
+    ``_sum_section`` totals them from the exact Decimals. Summing the printed
+    figures instead gave 200 here against 201 there -- Minli Enterprise Unit
+    Trust FY2027 printed beneficiary loans as 2,039,009 on the distribution
+    summary and 2,039,010 on the balance sheet, one dollar apart inside one
+    client pack.
+
+    Round-then-sum cannot fix that by being adopted everywhere: the balance
+    sheet's own "Total Current Liabilities" is derived from exact values, so
+    rounding the group subtotal first only moves the break one line down.
+    Sum-then-round is the only basis on which the schedule, the group subtotal
+    and every total above it agree.
+
+    The cost is that a column of rounded closings need not visually add to the
+    rounded total. That is inherent to whole-dollar presentation and is what
+    the balance sheet has always done. The per-beneficiary reconciliation still
+    foots exactly -- ``funds_loaned`` absorbs it, unchanged from the fix that
+    introduced it.
+    """
 
     @classmethod
     def setUpTestData(cls):
@@ -162,14 +183,30 @@ class TotalsMatchTheRowsAboveTests(TestCase):
                 credit=Decimal("100.40"), source="manual_journal",
             )
 
-    def test_total_of_beneficiary_loans_equals_the_printed_closings(self):
+    def test_total_of_beneficiary_loans_is_the_rounded_exact_sum(self):
         pairs = _pairs(self.fy)
         closings = [v for label, v in pairs if label == "Closing balance"]
         totals = dict(pairs)
 
         self.assertEqual(closings, [100, 100])
-        self.assertEqual(totals["Total of beneficiary loans"], sum(closings))
-        self.assertEqual(totals["Total Beneficiary Funds"], sum(closings))
+        # 100.40 + 100.40 = 200.80 -> 201, which is what the balance sheet
+        # prints for the same two officers. Summing the printed 100s gives 200.
+        self.assertEqual(totals["Total of beneficiary loans"], 201)
+        self.assertEqual(totals["Total Beneficiary Funds"], 201)
+
+    def test_the_total_equals_what_the_balance_sheet_prints(self):
+        """Tie the schedule to the face of the statements, not to the column."""
+        from core.fs_template_service import (
+            _get_tb_sections, _net_beneficiary_accounts, _sum_section,
+        )
+
+        # The same two calls build_company_context makes for a trust.
+        sections = _get_tb_sections(self.fy)
+        _net_beneficiary_accounts(self.fy, sections)
+        bs_total = -_sum_section(sections["current_liabilities"])
+
+        totals = dict(_pairs(self.fy))
+        self.assertEqual(totals["Total of beneficiary loans"], round(bs_total))
 
 
 @override_settings(STORAGES=STORAGES_OVERRIDE)
