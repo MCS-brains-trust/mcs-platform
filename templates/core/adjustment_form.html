@@ -62,8 +62,10 @@
                                     <th style="width: 200px;">Account</th>
                                     <th style="width: 200px;">Account Name</th>
                                     <th>Description</th>
-                                    <th style="width: 130px;">Debit</th>
-                                    <th style="width: 130px;">Credit</th>
+                                    <th class="cashbook-col" style="width: 110px;">Tax</th>
+                                    <th class="cashbook-col" style="width: 110px;">GST</th>
+                                    <th style="width: 130px;">Debit<span class="cashbook-hint text-muted fw-normal small"> (gross)</span></th>
+                                    <th style="width: 130px;">Credit<span class="cashbook-hint text-muted fw-normal small"> (gross)</span></th>
                                     <th style="width: 50px;">Del</th>
                                 </tr>
                             </thead>
@@ -77,6 +79,8 @@
                                         <div class="d-none">{{ line_form.account_name }}</div>
                                     </td>
                                     <td>{{ line_form.description }}</td>
+                                    <td class="cashbook-col">{{ line_form.tax_code }}</td>
+                                    <td class="cashbook-col"><div class="dr-cr-wrapper">{{ line_form.gst_override }}</div></td>
                                     <td><div class="dr-cr-wrapper">{{ line_form.debit }}</div></td>
                                     <td><div class="dr-cr-wrapper">{{ line_form.credit }}</div></td>
                                     <td class="text-center">
@@ -85,13 +89,13 @@
                                     </td>
                                 </tr>
                                 {% if line_form.errors %}
-                                <tr><td colspan="6" class="text-danger small py-0 border-0">{% for field, errors in line_form.errors.items %}{{ field }}: {{ errors.0 }} {% endfor %}</td></tr>
+                                <tr><td colspan="8" class="text-danger small py-0 border-0">{% for field, errors in line_form.errors.items %}{{ field }}: {{ errors.0 }} {% endfor %}</td></tr>
                                 {% endif %}
                                 {% endfor %}
                             </tbody>
                             <tfoot>
                                 <tr class="table-light fw-bold">
-                                    <td colspan="3" class="text-end">Totals:</td>
+                                    <td colspan="5" class="text-end">Totals:</td>
                                     <td class="text-end" id="total-debit">$0.00</td>
                                     <td class="text-end" id="total-credit">$0.00</td>
                                     <td></td>
@@ -179,6 +183,16 @@
 .calc-preview .calc-hint { font-size: 0.7rem; color: #aaa; margin-top: 1px; }
 .calc-preview.calc-error { background: #3d0000; color: #ff8080; }
 .dr-cr-wrapper { position: relative; display: block; }
+
+/* Cashbook-only grid columns. Hidden for every other journal type, so the
+   same grid still reads as a plain two-column Dr/Cr sheet. */
+.cashbook-col, .cashbook-hint { display: none; }
+table.cashbook-mode th.cashbook-col,
+table.cashbook-mode td.cashbook-col { display: table-cell; }
+table.cashbook-mode .cashbook-hint { display: inline; }
+/* A placeholder GST figure is the calculated one; a typed figure is an
+   override. They must not look alike. */
+.gst-field::placeholder { color: #9aa0a6; font-style: italic; opacity: 1; }
 </style>
 
 <!-- Create Account Modal -->
@@ -254,7 +268,8 @@ const ACCOUNTS = {{ accounts|safe }};
 const ACCOUNT_LIST = ACCOUNTS.map(function(acc) {
     return {
         code: acc.client_account_code || acc.code || '',
-        name: acc.client_account_name || acc.name || ''
+        name: acc.client_account_name || acc.name || '',
+        tax_code: acc.client_account_tax_code || acc.tax_code || ''
     };
 });
 
@@ -364,7 +379,7 @@ document.addEventListener('DOMContentLoaded', function() {
         .then(function(r) { return r.json().then(function(d) { return {ok: r.ok, data: d}; }); })
         .then(function(result) {
             if (result.ok && result.data.success) {
-                var newAcc = { code: result.data.code, name: result.data.name };
+                var newAcc = { code: result.data.code, name: result.data.name, tax_code: taxCode };
                 ACCOUNT_LIST.push(newAcc);
                 ACCOUNT_LIST.sort(function(a, b) { return a.code.localeCompare(b.code); });
                 caModal.hide();
@@ -440,6 +455,13 @@ document.addEventListener('DOMContentLoaded', function() {
             input.value = acc.code + ' - ' + acc.name;
             if (codeInput) codeInput.value = acc.code;
             if (nameInput) nameInput.value = acc.name;
+            // Default the tax code from the chart, but never over a code the
+            // accountant has already set on this row.
+            var taxEl = row.querySelector('[name$="-tax_code"]');
+            if (taxEl && !taxEl.value.trim() && acc.tax_code) {
+                taxEl.value = acc.tax_code;
+                refreshGstPlaceholder(row);
+            }
             dropdown.classList.remove('show');
         }
 
@@ -461,6 +483,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     item.className = 'account-dropdown-item';
                     item.dataset.code = acc.code;
                     item.dataset.name = acc.name;
+                    item.dataset.taxCode = acc.tax_code || '';
                     item.innerHTML = '<code>' + acc.code + '</code> ' + acc.name;
                     item.addEventListener('mousedown', function(e) {
                         e.preventDefault();
@@ -510,14 +533,14 @@ document.addEventListener('DOMContentLoaded', function() {
             } else if (e.key === 'Enter') {
                 e.preventDefault();
                 if (activeIndex >= 0 && items[activeIndex]) {
-                    selectAccount({ code: items[activeIndex].dataset.code, name: items[activeIndex].dataset.name });
+                    selectAccount({ code: items[activeIndex].dataset.code, name: items[activeIndex].dataset.name, tax_code: items[activeIndex].dataset.taxCode });
                 }
             } else if (e.key === 'Escape') {
                 dropdown.classList.remove('show');
                 input.blur();
             } else if (e.key === 'Tab') {
                 if (items.length > 0 && input.value) {
-                    selectAccount({ code: items[0].dataset.code, name: items[0].dataset.name });
+                    selectAccount({ code: items[0].dataset.code, name: items[0].dataset.name, tax_code: items[0].dataset.taxCode });
                 }
                 dropdown.classList.remove('show');
             }
@@ -871,6 +894,12 @@ document.addEventListener('DOMContentLoaded', function() {
             <td>
                 <input type="text" name="lines-${idx}-description" class="form-control form-control-sm" id="id_lines-${idx}-description" placeholder="Line description (optional)">
             </td>
+            <td class="cashbook-col">
+                <input type="text" name="lines-${idx}-tax_code" class="form-control form-control-sm" id="id_lines-${idx}-tax_code" maxlength="20">
+            </td>
+            <td class="cashbook-col"><div class="dr-cr-wrapper">
+                <input type="text" inputmode="decimal" name="lines-${idx}-gst_override" class="form-control form-control-sm gst-field" id="id_lines-${idx}-gst_override" placeholder="auto">
+            </div></td>
             <td><div class="dr-cr-wrapper">
                 <input type="text" inputmode="decimal" name="lines-${idx}-debit" class="form-control form-control-sm dr-cr-field" id="id_lines-${idx}-debit" value="0">
             </div></td>
@@ -894,9 +923,102 @@ document.addEventListener('DOMContentLoaded', function() {
         totalForms.value = idx + 1;
 
         // Focus the new account picker input
+        refreshGstPlaceholder(tr);
+
         const newInput = container.querySelector('.account-picker-input');
         if (newInput) newInput.focus();
     });
+
+
+    // ===================================================================
+    // CASHBOOK GST COLUMNS
+    // The Tax and GST cells belong to Cashbook journals only. The accountant
+    // keys GROSS and core.gst_journal.split_cashbook_journal rewrites each
+    // line to net plus a 3380 control pair on save.
+    //
+    // The GST cell is the OVERRIDE field, and blank there means "calculate
+    // 1/11th", not nil. So the calculated figure is only ever shown as a
+    // placeholder and is never written into the value: an untouched row must
+    // post an empty override so the server does the arithmetic. A typed figure
+    // is a deliberate override -- a partial input tax credit -- and is left
+    // alone.
+    // ===================================================================
+
+    // Mirrors bas_utils.TAX_TREATMENT_ALIASES and TAXABLE_CODES so the
+    // preview agrees with what the server will actually compute.
+    var TAX_ALIASES = {
+        'GST ON INCOME': 'GST', 'GST ON EXPENSES': 'INP',
+        'GST FREE INCOME': 'FRE', 'GST FREE EXPENSES': 'FRE', 'GST FREE': 'FRE',
+        'INPUT TAXED': 'ITS', 'BAS EXCLUDED': 'N-T', 'NOT REPORTABLE': 'N-T',
+        'N-T': 'N-T', 'GST': 'GST', 'INP': 'INP', 'GNR': 'GST', 'ADS': 'ADS',
+        'CAP': 'CAP', 'FCA': 'FCA', 'FRE': 'FRE', 'FOA': 'FOA',
+        'ITS': 'ITS', 'IOA': 'IOA'
+    };
+    var GST_TAXABLE_CODES = ['GST', 'INP', 'GNR', 'CAP', 'ADS'];
+
+    var linesTable = document.getElementById('journal-lines');
+    var journalTypeSel = document.querySelector('[name="journal_type"]');
+
+    function normaliseTaxCode(raw) {
+        return TAX_ALIASES[(raw || '').trim().toUpperCase()] || '';
+    }
+
+    function syncCashbookMode() {
+        if (!linesTable) return;
+        var on = !!journalTypeSel && journalTypeSel.value === 'cashbook';
+        linesTable.classList.toggle('cashbook-mode', on);
+    }
+
+    // Recompute the GST *placeholder* for one row. Never touches .value.
+    function refreshGstPlaceholder(row) {
+        if (!row) return;
+        var taxEl = row.querySelector('[name$="-tax_code"]');
+        var gstEl = row.querySelector('[name$="-gst_override"]');
+        if (!taxEl || !gstEl) return;
+
+        if (GST_TAXABLE_CODES.indexOf(normaliseTaxCode(taxEl.value)) === -1) {
+            gstEl.placeholder = '';
+            return;
+        }
+        var gross = parseRaw(row.querySelector('[name$="-debit"]')?.value)
+                 || parseRaw(row.querySelector('[name$="-credit"]')?.value);
+        gstEl.placeholder = gross
+            ? fmtNum(Math.round((gross / 11) * 100) / 100)
+            : 'auto';
+    }
+
+    function refreshAllGstPlaceholders() {
+        document.querySelectorAll('.journal-line-row').forEach(refreshGstPlaceholder);
+    }
+
+    if (linesTable) {
+        linesTable.addEventListener('input', function(e) {
+            var n = e.target.name || '';
+            if (n.endsWith('-debit') || n.endsWith('-credit') || n.endsWith('-tax_code')) {
+                refreshGstPlaceholder(e.target.closest('tr'));
+            }
+        });
+        linesTable.addEventListener('change', function(e) {
+            if (!(e.target.name || '').endsWith('-tax_code')) return;
+            // A tax-code change invalidates a typed override: that figure was
+            // for the old treatment. GST -> FRE must not leave 2,107.91 sitting
+            // there. The server clears it too, but the grid should not display
+            // a number it is about to discard.
+            var row = e.target.closest('tr');
+            var gstEl = row && row.querySelector('[name$="-gst_override"]');
+            if (gstEl) gstEl.value = '';
+            refreshGstPlaceholder(row);
+        });
+    }
+
+    if (journalTypeSel) {
+        journalTypeSel.addEventListener('change', function() {
+            syncCashbookMode();
+            refreshAllGstPlaceholders();
+        });
+    }
+    syncCashbookMode();
+    refreshAllGstPlaceholders();
 
     // Initial totals
     updateTotals();

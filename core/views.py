@@ -5889,21 +5889,33 @@ def adjustment_create(request, pk):
     coa_accounts = (
         EntityChartOfAccount.objects.filter(entity=fy.entity, is_active=True)
         .order_by("account_code")
-        .values("account_code", "account_name")
+        .values("account_code", "account_name", "tax_code")
     )
     if not coa_accounts.exists():
         coa_accounts = (
             ChartOfAccount.objects.filter(entity_type=entity_type, is_active=True)
             .order_by("account_code")
-            .values("account_code", "account_name")
+            .values("account_code", "account_name", "tax_code")
         )
     # Build a merged, deduplicated list keyed by account_code.
     # TB lines take priority (they carry the entity-specific name).
     merged = {}
     for a in coa_accounts:
-        merged[a["account_code"]] = {"client_account_code": a["account_code"], "client_account_name": a["account_name"]}
+        merged[a["account_code"]] = {
+            "client_account_code": a["account_code"],
+            "client_account_name": a["account_name"],
+            "client_account_tax_code": a.get("tax_code", "") or "",
+        }
     for a in entity_accounts:
-        merged[a["client_account_code"]] = a  # TB name wins
+        # The TB / mapping name wins, but neither source carries a tax code —
+        # replacing the entry wholesale would drop the chart's default, which is
+        # what the cashbook grid pre-fills from.
+        merged[a["client_account_code"]] = {
+            **a,
+            "client_account_tax_code": merged.get(
+                a["client_account_code"], {}
+            ).get("client_account_tax_code", ""),
+        }
     accounts = sorted(merged.values(), key=lambda x: x["client_account_code"])
 
     if request.method == "POST":
@@ -6693,14 +6705,26 @@ def journal_edit(request, pk):
         {"client_account_code": a["account_code"], "client_account_name": a["account_name"]}
         for a in tb_accounts
     ]
-    coa_qs = EntityChartOfAccount.objects.filter(entity=entity, is_active=True).order_by("account_code").values("account_code", "account_name")
+    coa_qs = EntityChartOfAccount.objects.filter(entity=entity, is_active=True).order_by("account_code").values("account_code", "account_name", "tax_code")
     if not coa_qs.exists():
-        coa_qs = ChartOfAccount.objects.filter(entity_type=template_entity_type(entity.entity_type), is_active=True).order_by("account_code").values("account_code", "account_name")
+        coa_qs = ChartOfAccount.objects.filter(entity_type=template_entity_type(entity.entity_type), is_active=True).order_by("account_code").values("account_code", "account_name", "tax_code")
     merged = {}
     for a in coa_qs:
-        merged[a["account_code"]] = {"client_account_code": a["account_code"], "client_account_name": a["account_name"]}
+        merged[a["account_code"]] = {
+            "client_account_code": a["account_code"],
+            "client_account_name": a["account_name"],
+            "client_account_tax_code": a.get("tax_code", "") or "",
+        }
     for a in tb_list:
-        merged[a["client_account_code"]] = a  # TB name wins
+        # The TB / mapping name wins, but neither source carries a tax code —
+        # replacing the entry wholesale would drop the chart's default, which is
+        # what the cashbook grid pre-fills from.
+        merged[a["client_account_code"]] = {
+            **a,
+            "client_account_tax_code": merged.get(
+                a["client_account_code"], {}
+            ).get("client_account_tax_code", ""),
+        }
     accounts = sorted(merged.values(), key=lambda x: x["client_account_code"])
 
     # Snapshot the journal state before any changes (for audit log)

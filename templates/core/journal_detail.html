@@ -86,17 +86,28 @@
                                 <th style="width: 100px;">Account</th>
                                 <th>Account Name</th>
                                 <th>Description</th>
+                                {% if journal.journal_type == "cashbook" %}
+                                <th style="width: 80px;">Tax</th>
+                                <th class="text-end" style="width: 110px;">GST</th>
+                                {% endif %}
                                 <th class="text-end" style="width: 130px;">Debit</th>
                                 <th class="text-end" style="width: 130px;">Credit</th>
                             </tr>
                         </thead>
                         <tbody>
                             {% for line in journal.lines.all %}
-                            <tr>
+                            <tr{% if line.is_gst_control %} class="table-light text-muted"{% endif %}>
                                 <td class="text-muted">{{ forloop.counter }}</td>
                                 <td><code>{{ line.account_code }}</code></td>
                                 <td>{{ line.account_name }}</td>
-                                <td class="text-muted small">{{ line.description }}</td>
+                                <td class="text-muted small">
+                                    {{ line.description }}
+                                    {% if line.is_gst_control %}<span class="badge bg-secondary-subtle text-secondary-emphasis border ms-1" title="Derived by the cashbook GST split, not keyed">generated</span>{% endif %}
+                                </td>
+                                {% if journal.journal_type == "cashbook" %}
+                                <td class="small">{% if line.tax_code %}<code>{{ line.tax_code }}</code>{% else %}&mdash;{% endif %}</td>
+                                <td class="text-end small">{% if line.gst_amount %}{{ line.gst_amount|floatformat:2 }}{% if line.gst_override is not None %} <span class="badge bg-warning-subtle text-warning-emphasis border" title="Overridden by the accountant, not 1/11th">override</span>{% endif %}{% else %}&mdash;{% endif %}</td>
+                                {% endif %}
                                 <td class="text-end">{% if line.debit %}<strong>{{ line.debit|floatformat:2 }}</strong>{% else %}&mdash;{% endif %}</td>
                                 <td class="text-end">{% if line.credit %}<strong>{{ line.credit|floatformat:2 }}</strong>{% else %}&mdash;{% endif %}</td>
                             </tr>
@@ -104,12 +115,12 @@
                         </tbody>
                         <tfoot class="table-light fw-bold">
                             <tr>
-                                <td colspan="4" class="text-end">Totals:</td>
+                                <td colspan="{% if journal.journal_type == "cashbook" %}6{% else %}4{% endif %}" class="text-end">Totals:</td>
                                 <td class="text-end">${{ journal.total_debit|floatformat:2 }}</td>
                                 <td class="text-end">${{ journal.total_credit|floatformat:2 }}</td>
                             </tr>
                             <tr>
-                                <td colspan="4" class="text-end">Balance:</td>
+                                <td colspan="{% if journal.journal_type == "cashbook" %}6{% else %}4{% endif %}" class="text-end">Balance:</td>
                                 <td colspan="2" class="text-center {% if journal.is_balanced %}text-success{% else %}text-danger{% endif %}">
                                     {% if journal.is_balanced %}
                                     <i class="bi bi-check-circle"></i> Balanced
