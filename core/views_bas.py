@@ -31,7 +31,7 @@ from .models import (
 )
 from .bas_utils import (
     ensure_bas_periods,
-    get_bank_coverage,
+    get_period_coverage,
     calculate_gst_for_period,
     compute_period_status,
 )
@@ -95,7 +95,7 @@ def bas_dashboard(request, pk):
             bp.status = dynamic_status
             bp.save(update_fields=["status"])
 
-        coverage = get_bank_coverage(fy, bp.period_start, bp.period_end)
+        coverage = get_period_coverage(fy, bp.period_start, bp.period_end)
         period_data.append({
             "period": bp,
             "status": bp.status,
@@ -257,7 +257,7 @@ def bas_lodge_period(request, pk, period_number):
         return redirect("core:gst_activity_statement", pk=pk)
 
     # Check coverage
-    coverage = get_bank_coverage(fy, bp.period_start, bp.period_end)
+    coverage = get_period_coverage(fy, bp.period_start, bp.period_end)
     override_reason = request.POST.get("override_reason", "").strip()
 
     if coverage["status"] != "complete" and not override_reason:
@@ -363,7 +363,7 @@ def bas_coverage_check(request, pk, period_number):
     period_type = getattr(entity, "bas_frequency", "quarterly") or "quarterly"
 
     bp = get_object_or_404(BASPeriod, financial_year=fy, period_type=period_type, period_number=period_number)
-    coverage = get_bank_coverage(fy, bp.period_start, bp.period_end)
+    coverage = get_period_coverage(fy, bp.period_start, bp.period_end)
 
     return JsonResponse({
         "period": bp.period_number,
@@ -371,6 +371,8 @@ def bas_coverage_check(request, pk, period_number):
         "status": coverage["status"],
         "months": coverage["months"],
         "missing": coverage["missing"],
+        "source": coverage["source"],
+        "journal_refs": coverage["journal_refs"],
     })
 
 

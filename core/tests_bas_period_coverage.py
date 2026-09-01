@@ -164,3 +164,81 @@ class BankPeriodsUnchangedTest(PeriodCoverageTestBase):
         bank = get_bank_coverage(self.fy, Q2_START, Q2_END)
         self.assertEqual(bank["status"], "none")
         self.assertNotIn("source", bank)
+
+
+from django.contrib.auth import get_user_model
+from django.urls import reverse
+
+from core.bas_utils import ensure_bas_periods
+from core.models import BASPeriod
+from core.test_support import Require2FAMixin
+
+
+class JournalledPeriodViewTest(Require2FAMixin, PeriodCoverageTestBase):
+    """The three view-level consequences: which quarter opens, whether the
+    lodge gate demands an override, and what the endpoint reports."""
+
+    def setUp(self):
+        super().setUp()
+        User = get_user_model()
+        # Require2FAMiddleware checks has_2fa before it looks at the session
+        # flag, so the user needs the secret as well as the verified session.
+        self.user = User.objects.create_user(
+            username="acct", email="acct@example.com", password="pw",
+            role="accountant", totp_secret="TESTSECRET", totp_confirmed=True,
+        )
+        # An accountant reaches only entities assigned to them.
+        self.entity.assigned_accountant = self.user
+        self.entity.save(update_fields=["assigned_accountant"])
+        self.login_as(self.user)
+        self.make_journal()
+
+    def test_the_dashboard_opens_on_the_journalled_quarter(self):
+        """Auto-selection looks for a 'ready' period. Q2 is journalled, so it
+        is ready, and the page must not fall back to the empty Q1."""
+        # SECURE_SSL_REDIRECT is on; without secure=True this is a bare 301.
+        r = self.client.get(
+            reverse("core:gst_activity_statement", args=[self.fy.pk]),
+            secure=True,
+        )
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.context["selected_period"]["period"].period_number, 2)
+        self.assertEqual(r.context["selected_period"]["status"], "ready")
+
+    def test_a_journalled_period_lodges_without_an_override_reason(self):
+        r = self.client.post(
+            reverse("core:bas_lodge_period",
+                    args=[self.fy.pk, 2]),
+            {}, secure=True, follow=True,
+        )
+        self.assertEqual(r.status_code, 200)
+        bp = BASPeriod.objects.get(
+            financial_year=self.fy, period_type="quarterly", period_number=2,
+        )
+        self.assertEqual(bp.status, "lodged")
+
+    def test_an_empty_period_still_cannot_lodge_without_an_override(self):
+        r = self.client.post(
+            reverse("core:bas_lodge_period", args=[self.fy.pk, 1]),
+            {}, secure=True, follow=True,
+        )
+        bp = BASPeriod.objects.get(
+            financial_year=self.fy, period_type="quarterly", period_number=1,
+        )
+        self.assertNotEqual(bp.status, "lodged")
+
+    def test_the_coverage_endpoint_reports_the_journal_source(self):
+        # Unlike the dashboard and the lodge gate, this endpoint does not call
+        # ensure_bas_periods -- it 404s on a period row that was never created.
+        # The frontend only polls it from an already-rendered dashboard, which
+        # has created them.
+        ensure_bas_periods(self.fy, "quarterly")
+        r = self.client.get(
+            reverse("core:bas_coverage_check", args=[self.fy.pk, 2]),
+            secure=True,
+        )
+        self.assertEqual(r.status_code, 200)
+        body = r.json()
+        self.assertEqual(body["status"], "complete")
+        self.assertEqual(body["source"], "journal")
+        self.assertEqual(body["journal_refs"], ["JE-001"])
