@@ -566,6 +566,80 @@ def _net_beneficiary_accounts(fy, sections):
             sections.setdefault("current_assets", []).append(entry)
 
 
+# Equity accounts that are contributed capital rather than accumulated result.
+# These stay on the face as their own lines; everything else in equity folds
+# into the single closing retained-profits figure below.
+_CAPITAL_STANDARD_CODES = {"BS-EQ-001"}
+_CAPITAL_NAME_KEYWORDS = (
+    "issued & paid up capital", "issued and paid up capital",
+    "issued capital", "share capital", "paid up capital",
+    "contribution by settlor", "settled sum",
+)
+
+COMPANY_RETAINED_LABEL = "Retained profits / (accumulated losses)"
+
+
+def _is_contributed_capital(item):
+    """Is this equity line contributed capital rather than accumulated result?"""
+    if item.get("standard_code") in _CAPITAL_STANDARD_CODES:
+        return True
+    name_lower = (item.get("account_name") or "").lower()
+    return any(kw in name_lower for kw in _CAPITAL_NAME_KEYWORDS)
+
+
+def _collapse_company_equity_to_retained(sections):
+    """Present a company's equity as capital plus one closing retained line.
+
+    HandiLedger is the specification. DJLH Properties Pty Ltd FY2024::
+
+        Equity
+          Issued Capital
+            Issued & paid up capital                    12        12
+          Retained profits / (accumulated losses)  193,542   291,274
+        Total Equity                               193,554   291,286
+
+    StatementHub presented the *movement* instead -- opening retained profits,
+    the year's result, and dividends as three separate face lines. Both foot to
+    the same Total Equity; only the presentation differed.
+
+    Everything that is not contributed capital folds into one line: brought-
+    forward retained profits, the injected "Current year profit / (loss)" row,
+    dividends provided for or paid, and any income-tax appropriation still
+    sitting in equity. The sum is unchanged by construction, so the balance
+    sheet integrity check downstream is unaffected.
+
+    The trust equivalent is ``_collapse_trust_equity_to_accumulated``. They are
+    deliberately separate: a trust's line is "Accumulated losses" and carries
+    its own rules about undistributed income.
+    """
+    rows = sections.get("equity") or []
+    if not rows:
+        return
+
+    capital = [r for r in rows if _is_contributed_capital(r)]
+    rest = [r for r in rows if not _is_contributed_capital(r)]
+    if not rest:
+        return
+
+    zero = Decimal("0")
+    retained_cy = sum((r.get("cy_amount") or zero for r in rest), zero)
+    retained_py = sum((r.get("py_amount") or zero for r in rest), zero)
+
+    # Carry the real account's code where there is one, so the note map and
+    # any downstream lookup still resolve against 4199.
+    code = next((r.get("account_code") for r in rest
+                 if (r.get("account_code") or "").startswith("4199")),
+                "RETAINED")
+
+    sections["equity"] = capital + [{
+        "account_code": code,
+        "account_name": COMPANY_RETAINED_LABEL,
+        "cy_amount": retained_cy,
+        "py_amount": retained_py,
+        "standard_code": "BS-EQ-002",
+    }]
+
+
 def _collapse_trust_equity_to_accumulated(sections):
     """Collapse a trust's appropriation rows into one "Accumulated losses" line.
 
@@ -899,103 +973,161 @@ _PAYABLE_KEYWORDS = (
 )
 
 
-def _reclassify_sign_flips(sections):
-    """Reclassify accounts whose balance has flipped to the wrong side.
+# Keywords for accounts that can legitimately sit on either side of the balance
+# sheet as their balance moves: loans and receivables between related parties,
+# which is most of a property company's balance sheet.
+_CROSSABLE_KEYWORDS = (
+    "loan", "receivable", "debtor", "advance", "intercompany", "inter-company",
+)
 
-    Rules applied (all are render-time only — TB data is never mutated):
+# Accounts that hold a credit balance inside an ASSET section by design and must
+# never be moved out of it. Accumulated depreciation is the obvious one: it is a
+# contra-asset, not a liability, and a naive sign rule would file it under
+# liabilities and break both the balance sheet and the depreciation note.
+_CONTRA_ASSET_KEYWORDS = (
+    "accumulated depreciation", "accum depreciation", "accum. depreciation",
+    "less accumulated", "provision for depreciation", "amortisation",
+    "impairment", "allowance for", "provision for doubtful",
+)
 
-    1. **Bank overdraft**: A current asset account with bank/cash keywords
-       that has a *negative* CY or PY balance is moved to Current Liabilities
-       under the sub-group "Bank Overdraft".
+_ASSET_SECTIONS = ("current_assets", "noncurrent_assets")
+_LIABILITY_SECTIONS = ("current_liabilities", "noncurrent_liabilities")
 
-    2. **GST / tax refund receivable**: A current liability account with
-       tax/ATO keywords that has a *positive* balance (credit-normal means
-       a positive raw value is a debit — i.e. the ATO owes the entity) is
-       moved to Current Assets under "Other Current Assets".
 
-    3. **Overpaid creditor / prepayment**: A current liability account with
-       payable/creditor keywords that has a *positive* balance (debit — the
-       supplier owes the entity) is moved to Current Assets under
-       "Receivables".
+def _may_cross_sides(item, section):
+    """Can this account legitimately be presented on the other side?
 
-    In every rule the CURRENT year decides the section and the comparative
-    follows it, keeping its own sign -- the presentation The Cleary Family Trust
-    FY2025 uses for a beneficiary loan that changed sides, and the convention
-    ``_net_beneficiary_accounts`` already follows by routing on ``net_cy``
-    alone. Where the current year is nil the prior year decides.
-
-    Sign convention reminder:
-        current_assets   — debit-normal  → positive cy_amount = asset
-        current_liabilities — credit-normal → negative cy_amount = liability
-            (a positive cy_amount in current_liabilities means the balance
-             is actually a debit, i.e. the entity is owed money)
+    Deliberately narrow. Every amount on a balance sheet has a sign, and most
+    of them are supposed to: a contra-asset holds a credit inside an asset
+    section on purpose. Only accounts that genuinely represent a two-way
+    position -- bank accounts that can overdraw, tax control accounts that can
+    swing between payable and refundable, and inter-party loans that can be
+    owed either way -- are candidates.
     """
-    # ── Rule 1: Bank overdraft (current asset → current liability) ──────────
-    ca_keep = []
-    for item in sections.get("current_assets", []):
-        name_lower = (item.get("account_name") or "").lower()
-        cy = item.get("cy_amount") or Decimal("0")
-        py = item.get("py_amount") or Decimal("0")
-        is_bank = (
-            item.get("standard_code") in _CASH_STANDARD_CODES
-            or any(kw in name_lower for kw in _BANK_KEYWORDS)
-        )
-        # The CURRENT year decides the section; the comparative follows it
-        # carrying its own sign. Testing "cy < 0 or py < 0" dragged a
-        # current-year positive balance into liabilities on the strength of a
-        # prior-year overdraft alone. Where the current year is nil the prior
-        # year decides, so a closed account still lands sensibly.
-        _decide = cy if cy != Decimal("0") else py
-        if is_bank and _decide < Decimal("0"):
-            # Sign convention for current_liabilities is credit-normal:
-            #   _format_lines(credit_normal=True) negates cy_amount for display.
-            # A bank overdraft has a *negative* debit-normal value (e.g. -67360).
-            # We keep that negative value as-is so that:
-            #   display = -(-67360) = +67360  → shows as 67,360 (no brackets).
-            # DO NOT negate here — negating would produce +67360 stored, then
-            # _format_lines would negate again to -67360 → (67,360) brackets.
-            reclassified = dict(item)
-            reclassified["cy_amount"] = cy   # keep negative: credit_normal display will negate → positive
-            reclassified["py_amount"] = py
-            reclassified["_reclassified_overdraft"] = True
-            sections.setdefault("current_liabilities", []).append(reclassified)
-        else:
-            ca_keep.append(item)
-    sections["current_assets"] = ca_keep
+    # A netted trust beneficiary loan keeps the trust convention, which is not
+    # this one. _net_beneficiary_accounts runs first and routes each officer's
+    # net position on net_cy ALONE -- one row, the comparative following with
+    # its own sign -- the presentation The Cleary Family Trust FY2025 uses for
+    # a beneficiary loan that changed sides. Its rows are labelled "Beneficiary
+    # loan: <name>" and would otherwise be caught by the "loan" keyword below
+    # and split in two, silently overriding that convention.
+    if (item.get("account_code") or "").startswith("BEN_"):
+        return False
+    name_lower = (item.get("account_name") or "").lower()
+    if any(kw in name_lower for kw in _CONTRA_ASSET_KEYWORDS):
+        return False
+    if item.get("standard_code") in _CASH_STANDARD_CODES:
+        return True
+    return any(
+        kw in name_lower
+        for kw in _BANK_KEYWORDS + _TAX_LIABILITY_KEYWORDS
+        + _PAYABLE_KEYWORDS + _CROSSABLE_KEYWORDS
+    )
 
-    # ── Rule 2: GST / tax refund receivable (current liability → current asset) ─
-    cl_keep = []
-    for item in sections.get("current_liabilities", []):
-        if item.get("_reclassified_overdraft"):
-            cl_keep.append(item)
-            continue
-        name_lower = (item.get("account_name") or "").lower()
-        cy = item.get("cy_amount") or Decimal("0")
-        py = item.get("py_amount") or Decimal("0")
-        is_tax = any(kw in name_lower for kw in _TAX_LIABILITY_KEYWORDS)
-        is_payable = any(kw in name_lower for kw in _PAYABLE_KEYWORDS)
-        # In credit-normal convention, a *positive* cy_amount means the
-        # account has a debit balance (entity is owed money → reclassify as asset).
-        # Same rule as the overdraft branch above: the current year decides.
-        # Testing "cy > 0 or py > 0" rendered Dr Services Family Trust FY2026's
-        # GST control account as a NEGATIVE current asset (-12,767.02) because
-        # FY2025's balance was a 6,102.20 debit -- when FY2026 in fact owes the
-        # ATO 12,767.02 and the line belongs in current liabilities.
-        _decide = cy if cy != Decimal("0") else py
-        if (is_tax or is_payable) and _decide > Decimal("0"):
-            reclassified = dict(item)
-            # In credit-normal convention a *positive* cy_amount means a debit
-            # balance (entity is owed money).  Current assets are debit-normal,
-            # so a positive value is already correct — keep the sign as-is.
-            # Do NOT negate: the value is already positive and should display
-            # as a positive asset (e.g. $8,190 not ($8,190)).
-            reclassified["cy_amount"] = cy
-            reclassified["py_amount"] = py
-            reclassified["_reclassified_refund"] = True
-            sections.setdefault("current_assets", []).append(reclassified)
-        else:
-            cl_keep.append(item)
-    sections["current_liabilities"] = cl_keep
+
+def _reclassify_sign_flips(sections):
+    """Present each account on the side its balance dictates, per column.
+
+    HandiLedger is the specification, and DJLH Properties Pty Ltd's FY2024
+    report shows the rule exactly. ``Loan - Li Penman Property Family Trust``
+    appears in BOTH sections::
+
+        Non-Current Assets → Receivables            3,331,159        --
+        Non-Current Liabilities → Financial Liab.          --    66,421
+
+    Each column is classified on its own balance, and an account that crossed
+    sides between the years is shown in both places with a dash in the year it
+    does not apply to.
+
+    This previously worked the other way: "the CURRENT year decides the section
+    and the comparative follows it, keeping its own sign". That reasoning was
+    sound for a single column but wrong across two. On DJLH FY2025 it put the
+    GST control account's 2024 credit of 316,467 into Other Current Assets as
+    (316,467) -- a *negative* Total Current Assets of (315,650) -- and every
+    subtotal above Net Assets disagreed with HandiLedger while Net Assets
+    itself agreed, because the error cancelled in the total.
+
+    It also only covered current assets and liabilities, so a non-current loan
+    that had swung to a debit stayed in liabilities as a negative payable.
+
+    All render-time only: the trial balance is never mutated.
+
+    Sign convention: every section stores DEBIT-NORMAL amounts, so a positive
+    value is a debit wherever it sits. ``_format_lines(credit_normal=True)``
+    negates liabilities and equity at display time. That makes the rule
+    uniform -- positive belongs on the asset side, negative on the liability
+    side -- regardless of which section the account currently occupies.
+    """
+    zero = Decimal("0")
+
+    def _side(amount):
+        """"asset", "liability", or None where the account is nil."""
+        if amount > zero:
+            return "asset"
+        if amount < zero:
+            return "liability"
+        return None
+
+    def _partner(section):
+        """The section on the other side, at the same currency."""
+        return {
+            "current_assets": "current_liabilities",
+            "noncurrent_assets": "noncurrent_liabilities",
+            "current_liabilities": "current_assets",
+            "noncurrent_liabilities": "noncurrent_assets",
+        }[section]
+
+    def _home(section):
+        """Which side this section represents."""
+        return "asset" if section in _ASSET_SECTIONS else "liability"
+
+    moves = []          # (target_section, item)
+    for section in _ASSET_SECTIONS + _LIABILITY_SECTIONS:
+        keep = []
+        for item in sections.get(section, []):
+            cy = item.get("cy_amount") or zero
+            py = item.get("py_amount") or zero
+            if not _may_cross_sides(item, section):
+                keep.append(item)
+                continue
+
+            cy_side, py_side = _side(cy), _side(py)
+            sides = {x for x in (cy_side, py_side) if x is not None}
+            if not sides:
+                keep.append(item)          # nil in both years — leave it be
+                continue
+
+            if len(sides) == 1:
+                # Both columns agree. Move the whole row if it is in the wrong
+                # place, otherwise leave it alone.
+                side = sides.pop()
+                if side == _home(section):
+                    keep.append(item)
+                else:
+                    moves.append((_partner(section), dict(item)))
+                continue
+
+            # The account crossed sides. Emit it in both, each column carrying
+            # only the year it belongs to -- the other renders as a dash.
+            asset_copy = dict(item)
+            asset_copy["cy_amount"] = cy if cy > zero else zero
+            asset_copy["py_amount"] = py if py > zero else zero
+            liab_copy = dict(item)
+            liab_copy["cy_amount"] = cy if cy < zero else zero
+            liab_copy["py_amount"] = py if py < zero else zero
+
+            asset_section = section if _home(section) == "asset" else _partner(section)
+            liab_section = _partner(asset_section)
+            for target, copy in ((asset_section, asset_copy),
+                                 (liab_section, liab_copy)):
+                if target == section:
+                    keep.append(copy)
+                else:
+                    moves.append((target, copy))
+        sections[section] = keep
+
+    for target, item in moves:
+        sections.setdefault(target, []).append(item)
 
 
 def _is_inventory_item(item):
@@ -1031,19 +1163,19 @@ def _classify_current_asset(item):
     if _is_inventory_item(item):
         return "Inventories"
     if item.get("standard_code") in _CASH_STANDARD_CODES:
-        return "Cash and Cash Equivalents"
+        return "Cash Assets"
     name_lower = (item.get("account_name") or "").lower()
     if any(kw in name_lower for kw in [
         "cash", "bank", "petty cash", "on hand",
         "anz", "nab", "cba", "commonwealth bank", "westpac", "bendigo",
         "suncorp", "macquarie", "bankwest", "st george", "stgeorge",
     ]):
-        return "Cash and Cash Equivalents"
+        return "Cash Assets"
     if any(kw in name_lower for kw in [
         "debtor", "receivable", "trade debtor", "loan",
     ]):
         return "Receivables"
-    return "Other Current Assets"
+    return "Other"
 
 
 def _classify_current_liability(item):
@@ -1075,7 +1207,7 @@ def _classify_current_liability(item):
     if any(kw in name_lower for kw in [
         "gst", "payg", "tax", "taxation", "withholding", "bas", "ato", "clearing",
     ]):
-        return "Tax Liabilities"
+        return "Current Tax Liabilities"
     # Trade payables / creditors
     if any(kw in name_lower for kw in [
         "creditor", "payable", "accrual", "accounts payable", "trade creditor",
@@ -1148,7 +1280,73 @@ def _interleave_subaccounts(items):
     return result
 
 
-def _build_subgrouped_items(items, classify_fn, credit_normal=False):
+# The order HandiLedger prints each sub-group in. Group order was previously
+# whatever order the accounts happened to occupy in the trial balance, which put
+# Property, Plant and Equipment above Receivables on DJLH FY2024 where
+# HandiLedger has Receivables first. Groups not listed here sort last, in
+# first-seen order, so an unrecognised group still renders.
+CURRENT_ASSET_GROUP_ORDER = (
+    "Cash Assets", "Receivables", "Inventories", "Other",
+)
+NONCURRENT_ASSET_GROUP_ORDER = (
+    "Receivables", "Investments", "Property, Plant and Equipment", "Intangibles",
+)
+CURRENT_LIABILITY_GROUP_ORDER = (
+    "Bank Overdraft", "Payables", "Current Tax Liabilities", "Provisions",
+    "Other",
+)
+NONCURRENT_LIABILITY_GROUP_ORDER = (
+    "Financial Liabilities", "Financial Liabilities — Secured", "Provisions",
+)
+
+
+def _classify_noncurrent_asset(item):
+    """Sub-heading for a non-current asset, per HandiLedger.
+
+    DJLH Properties Pty Ltd FY2024 lists Receivables before Property, Plant and
+    Equipment, each with its own subtotal. Non-current assets were previously
+    rendered as a flat list with neither.
+    """
+    name_lower = (item.get("account_name") or "").lower()
+    if any(kw in name_lower for kw in (
+        "loan", "receivable", "debtor", "advance",
+    )):
+        return "Receivables"
+    if any(kw in name_lower for kw in (
+        "investment", "shares in", "units in", "managed fund",
+    )):
+        return "Investments"
+    if any(kw in name_lower for kw in (
+        "goodwill", "trademark", "patent", "formation", "intangible",
+    )):
+        return "Intangibles"
+    return "Property, Plant and Equipment"
+
+
+def _classify_noncurrent_liability(item):
+    """Sub-heading for a non-current liability, per HandiLedger.
+
+    HandiLedger nests two levels -- "Financial Liabilities" then "Unsecured:"
+    and "Secured:". The sub-group mechanism here is one level deep, so the
+    security status is carried in the heading itself rather than as a second
+    tier. The grouping and the subtotals are what the reader needs; a bank loan
+    secured by mortgage still separates from the related-party loans above it.
+    """
+    name_lower = (item.get("account_name") or "").lower()
+    if any(kw in name_lower for kw in (
+        "bank loan", "mortgage", "secured", "finance lease", "hire purchase",
+        "chattel",
+    )):
+        return "Financial Liabilities — Secured"
+    if any(kw in name_lower for kw in (
+        "deferred tax", "provision",
+    )):
+        return "Provisions"
+    return "Financial Liabilities"
+
+
+def _build_subgrouped_items(items, classify_fn, credit_normal=False,
+                            group_order=None):
     """Group items into sub-categories and add formatted amounts.
 
     Returns a list of dicts suitable for the template. Each entry is either:
@@ -1168,6 +1366,19 @@ def _build_subgrouped_items(items, classify_fn, credit_normal=False):
     for item in items:
         group = classify_fn(item)
         groups.setdefault(group, []).append(item)
+
+    # Print the groups in the order HandiLedger does, not the order the trial
+    # balance happens to list the accounts in. Anything unrecognised keeps its
+    # first-seen position at the end rather than being dropped.
+    if group_order:
+        ranked = OrderedDict()
+        for name in group_order:
+            if name in groups:
+                ranked[name] = groups[name]
+        for name, rows in groups.items():
+            if name not in ranked:
+                ranked[name] = rows
+        groups = ranked
 
     # If there's only one group, return a flat list (no sub-headings needed)
     if len(groups) <= 1:
@@ -1594,6 +1805,12 @@ def build_company_context(financial_year, include_watermark=True):
     # of which are sum-based and so are unaffected by the collapse.
     if entity.entity_type in TRUST_LIKE_TYPES:
         _collapse_trust_equity_to_accumulated(sections)
+    else:
+        # Companies, sole traders and partnerships present capital plus a
+        # single closing retained line, as HandiLedger does. Same placement as
+        # the trust collapse: after the profit row is injected and before the
+        # integrity check, both of which are sum-based and so unaffected.
+        _collapse_company_equity_to_retained(sections)
 
     _final_equity = -_sum_section(sections["equity"])
     _final_net_assets = _test_net_assets
@@ -1691,12 +1908,18 @@ def build_company_context(financial_year, include_watermark=True):
 
     # Balance Sheet — sub-grouped current assets and current liabilities
     current_assets = _build_subgrouped_items(
-        sections["current_assets"], _classify_current_asset)
-    noncurrent_assets = _format_lines(sections["noncurrent_assets"])
+        sections["current_assets"], _classify_current_asset,
+        group_order=CURRENT_ASSET_GROUP_ORDER)
+    noncurrent_assets = _build_subgrouped_items(
+        sections["noncurrent_assets"], _classify_noncurrent_asset,
+        group_order=NONCURRENT_ASSET_GROUP_ORDER)
     # Liabilities and equity are credit-normal (raw TB value is negative)
     current_liabilities = _build_subgrouped_items(
-        sections["current_liabilities"], _classify_current_liability, credit_normal=True)
-    noncurrent_liabilities = _format_lines(sections["noncurrent_liabilities"], credit_normal=True)
+        sections["current_liabilities"], _classify_current_liability,
+        credit_normal=True, group_order=CURRENT_LIABILITY_GROUP_ORDER)
+    noncurrent_liabilities = _build_subgrouped_items(
+        sections["noncurrent_liabilities"], _classify_noncurrent_liability,
+        credit_normal=True, group_order=NONCURRENT_LIABILITY_GROUP_ORDER)
     equity = _format_lines(sections["equity"], credit_normal=True)
 
     total_current_assets_cy = _sum_section(sections["current_assets"])
