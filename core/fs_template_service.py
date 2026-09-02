@@ -1403,17 +1403,113 @@ def _classify_security_tier(item):
     return "Unsecured:"
 
 
-# A contra line reduces the account immediately above it -- "Less: Accumulated
+# A contra line reduces the account it belongs to -- "Less: Accumulated
 # depreciation" under the asset at cost, "Less: Unexpired interest charges"
 # under the hire purchase liability. It carries no meaning on its own, so it
 # must never be separated from its parent by a sub-heading or a subtotal.
-_CONTRA_LINE_PREFIXES = ("less:", "less ")
+#
+# "unexpired" is here because the firm's charts do not always write the "Less"
+# prefix: Berwick Mechanical Services FY2022 has "Unexpired HP - Kluger" and
+# Hazaway Operations "Unexpired Hire Purchase Liability - Porsche Boxster CL".
+# Both are deductions from the hire purchase above them, and without this they
+# were classified on their own names -- landing under "Unsecured:" while the
+# liability they reduce sat under "Secured:".
+_CONTRA_LINE_PREFIXES = ("less:", "less ", "unexpired")
 
 
 def _is_contra_line(item):
-    """Does this line reduce the account immediately above it?"""
+    """Does this line reduce another account rather than stand on its own?"""
     name = (item.get("account_name") or "").strip().lower()
     return name.startswith(_CONTRA_LINE_PREFIXES)
+
+
+def _split_account_code(item):
+    """``("3523", "02")`` for 3523.02, ``("3524", "")`` for 3524, else None."""
+    code = (item.get("account_code") or "").strip()
+    if not code:
+        return None
+    base, _, suffix = code.partition(".")
+    if not base.isdigit() or (suffix and not suffix.isdigit()):
+        return None
+    return base, suffix
+
+
+def _pair_contras_with_parents(items):
+    """Move each contra line to sit directly beneath the account it reduces.
+
+    ``_interleave_subaccounts`` pairs dotted sub-accounts on their suffix, and
+    the firm's hire-purchase codes do not always carry matching suffixes.
+    Berwick Mechanical Services FY2022::
+
+        3523.02  Hire Purchase - Toyota Landcruiser
+        3523.03  Hire Purchase - Kluger
+        3524     Less: Unexpired interest charges     <- Toyota's
+        3524.01  Unexpired HP - Kluger
+
+    Plain codes sort ahead of every dotted one and ".01" ahead of ".03", so
+    both contras were stranded above both parents, and the security tier then
+    printed them under "Unsecured:" while the liabilities they reduce printed
+    under "Secured:".
+
+    A contra claims the parent whose base code is nearest below its own
+    (3524 -> 3523), preferring one that carries the same suffix and otherwise
+    taking them in suffix order, first come first served. So Hazaway
+    Operations' 3245.0N pairs with 3244.0N on the matching suffix and does not
+    move, while Berwick's 3524 takes Toyota (.02) and 3524.01 takes Kluger
+    (.03). A contra with no account code, or none below it, is left where it
+    is -- there is nothing to pair it to and guessing would be worse.
+
+    Returns a new list; ``items`` is not mutated.
+    """
+    contras = [i for i, item in enumerate(items) if _is_contra_line(item)]
+    if not contras:
+        return list(items)
+
+    parents = {}  # index -> (base, suffix) for everything a contra may claim
+    for i, item in enumerate(items):
+        if i in contras:
+            continue
+        split = _split_account_code(item)
+        if split:
+            parents[i] = split
+
+    claimed = set()
+    adopted = {}  # parent index -> [contra index, ...]
+    # Suffix order, so Berwick's plain 3524 claims .02 before 3524.01 claims .03
+    for contra_idx in sorted(contras,
+                             key=lambda i: (_split_account_code(items[i]) or
+                                            ("", ""))[1]):
+        split = _split_account_code(items[contra_idx])
+        if not split:
+            continue
+        base, suffix = split
+        below = [b for (b, _s) in parents.values() if int(b) < int(base)]
+        if not below:
+            continue
+        nearest = max(below, key=int)
+        candidates = [(i, s) for i, (b, s) in parents.items() if b == nearest]
+        same_suffix = [i for i, s in candidates
+                       if s == suffix and i not in claimed]
+        if same_suffix:
+            chosen = same_suffix[0]
+        else:
+            free = [i for i, _s in sorted(candidates, key=lambda t: t[1])
+                    if i not in claimed]
+            if not free:
+                continue
+            chosen = free[0]
+        claimed.add(chosen)
+        adopted.setdefault(chosen, []).append(contra_idx)
+
+    relocated = {i for group in adopted.values() for i in group}
+    result = []
+    for i, item in enumerate(items):
+        if i in relocated:
+            continue
+        result.append(item)
+        for contra_idx in adopted.get(i, ()):
+            result.append(items[contra_idx])
+    return result
 
 
 def _heading_row(name, nested=False):
@@ -1486,8 +1582,11 @@ def _build_subgrouped_items(items, classify_fn, credit_normal=False,
     """
     from collections import OrderedDict
 
-    # Interleave dotted sub-accounts by suffix BEFORE classifying into groups
-    items = _interleave_subaccounts(items)
+    # Interleave dotted sub-accounts by suffix BEFORE classifying into groups,
+    # then pull each contra line back under the account it reduces -- the
+    # interleave pairs on the suffix, and not every contra's code carries its
+    # parent's (Berwick Mechanical Services FY2022).
+    items = _pair_contras_with_parents(_interleave_subaccounts(items))
 
     groups = OrderedDict()
     previous_group = None

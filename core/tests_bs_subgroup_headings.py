@@ -35,6 +35,7 @@ from core.fs_template_service import (
     _classify_noncurrent_asset,
     _classify_noncurrent_liability,
     _classify_security_tier,
+    _is_contra_line,
 )
 
 D = Decimal
@@ -488,3 +489,168 @@ class ASingleGroupStillGetsItsHeadingTests(SimpleTestCase):
     def test_an_empty_section_renders_nothing(self):
         self.assertEqual(
             _build_subgrouped_items([], _classify_noncurrent_asset), [])
+
+
+class AContraSitsWithTheAccountItReducesTests(SimpleTestCase):
+    """Contra lines are paired to their parent by account code.
+
+    ``_interleave_subaccounts`` pairs dotted sub-accounts on their SUFFIX, and
+    Berwick Mechanical Services' hire-purchase codes do not carry matching
+    suffixes: FY2022 holds
+
+        3523.02  Hire Purchase - Toyota Landcruiser
+        3523.03  Hire Purchase - Kluger
+        3524     Less: Unexpired interest charges     (Toyota's)
+        3524.01  Unexpired HP - Kluger
+
+    Plain codes sort ahead of every dotted one and ".01" ahead of ".03", so
+    both contras were stranded above both parents -- and once the security
+    tier landed, the contras printed under "Unsecured:" while the hire
+    purchases they reduce printed under "Secured:".
+
+    A contra now attaches to the parent whose base code is nearest below its
+    own (3524 -> 3523), preferring a parent with the same suffix, and
+    otherwise claiming them in suffix order. Hazaway Operations' five pairs
+    carry matching suffixes and are already adjacent, so nothing moves there.
+    """
+
+    def _render(self, items):
+        return _build_subgrouped_items(
+            items, _classify_noncurrent_liability, credit_normal=True,
+            group_order=NONCURRENT_LIABILITY_GROUP_ORDER)
+
+    def _pairs(self, rendered):
+        """Each line and the line directly above it, headings excluded."""
+        names = [r["account_name"] for r in rendered
+                 if not r.get("is_heading") and not r.get("is_subtotal")]
+        return names
+
+    def test_unexpired_interest_is_recognised_as_a_contra(self):
+        """Berwick FY2022 names it "Unexpired HP - Kluger", not "Less: ..."."""
+        self.assertTrue(_is_contra_line(_row("Unexpired HP - Kluger")))
+        self.assertTrue(
+            _is_contra_line(_row("Unexpired Hire Purchase Liability - Porsche")))
+        self.assertTrue(_is_contra_line(_row("Less: Unexpired interest charges")))
+        self.assertFalse(_is_contra_line(_row("Hire Purchase - Kluger")))
+
+    def test_a_plain_contra_follows_its_dotted_parent(self):
+        """Berwick FY2021: 3524 belongs under 3523.02."""
+        items = [
+            _row("Hire Purchase - Toyota Landcruiser", "-38696.25", "0",
+                 "3523.02"),
+            _row("Less: Unexpired interest charges", "7275.75", "0", "3524"),
+            _row("Loans from Greg Smart", "0", "-7000.00", "3565"),
+            _row("Loan - Directors", "-14570.00", "-26475.00", "3566"),
+        ]
+        names = self._pairs(self._render(items))
+        self.assertEqual(
+            names.index("Less: Unexpired interest charges"),
+            names.index("Hire Purchase - Toyota Landcruiser") + 1,
+            f"the contra was stranded away from its parent: {names}",
+        )
+
+    def test_the_pair_lands_in_the_secured_tier_together(self):
+        items = [
+            _row("Hire Purchase - Toyota Landcruiser", "-38696.25", "0",
+                 "3523.02"),
+            _row("Less: Unexpired interest charges", "7275.75", "0", "3524"),
+            _row("Loan - Directors", "-14570.00", "-26475.00", "3566"),
+        ]
+        rendered = self._render(items)
+        names = [r["account_name"] for r in rendered]
+        secured = names.index("Secured:")
+        self.assertLess(secured, names.index("Hire Purchase - Toyota Landcruiser"))
+        self.assertLess(secured, names.index("Less: Unexpired interest charges"))
+
+    def test_two_mismatched_pairs_each_find_their_own_parent(self):
+        """Berwick FY2022: 3524 -> 3523.02 (Toyota), 3524.01 -> 3523.03."""
+        items = [
+            _row("Hire Purchase - Toyota Landcruiser", "0", "-38696.25",
+                 "3523.02"),
+            _row("Hire Purchase - Kluger", "-63265.66", "0", "3523.03"),
+            _row("Less: Unexpired interest charges", "0", "7275.75", "3524"),
+            _row("Unexpired HP - Kluger", "4537.46", "0", "3524.01"),
+            _row("Loan - Directors", "-59988.00", "-14570.00", "3566"),
+        ]
+        names = self._pairs(self._render(items))
+        self.assertEqual(
+            names.index("Less: Unexpired interest charges"),
+            names.index("Hire Purchase - Toyota Landcruiser") + 1,
+        )
+        self.assertEqual(
+            names.index("Unexpired HP - Kluger"),
+            names.index("Hire Purchase - Kluger") + 1,
+        )
+
+    def test_all_four_hire_purchase_lines_are_secured(self):
+        items = [
+            _row("Hire Purchase - Toyota Landcruiser", "0", "-38696.25",
+                 "3523.02"),
+            _row("Hire Purchase - Kluger", "-63265.66", "0", "3523.03"),
+            _row("Less: Unexpired interest charges", "0", "7275.75", "3524"),
+            _row("Unexpired HP - Kluger", "4537.46", "0", "3524.01"),
+            _row("Loan - Directors", "-59988.00", "-14570.00", "3566"),
+        ]
+        rendered = self._render(items)
+        self.assertEqual(
+            _headings(rendered),
+            ["Financial Liabilities", "Unsecured:", "Secured:"],
+        )
+        names = [r["account_name"] for r in rendered]
+        self.assertEqual(names.index("Loan - Directors"),
+                         names.index("Unsecured:") + 1)
+        # Group subtotal: 63,266 - 4,537 + 59,988 = 118,716 (Berwick FY2022)
+        subtotals = [r for r in rendered if r.get("is_subtotal")]
+        self.assertEqual(len(subtotals), 1)
+        self.assertEqual(subtotals[0]["cy_formatted"], "118,716")
+
+    def test_matched_suffixes_are_left_as_they_are(self):
+        """Hazaway Operations FY2024: 3245.0N already pairs with 3244.0N."""
+        items = [
+            _row("HP - Porsche Boxster CL", "-122028.00", "0", "3244.01"),
+            _row("HP - 2022 Fuso Fighter XW86HQ", "-181156.00", "0", "3244.02"),
+            _row("Unexpired HP - Porsche Boxster CL", "17572.00", "0",
+                 "3245.01"),
+            _row("Unexpired HP - 2022 Fuso Fighter XW86HQ", "35734.00", "0",
+                 "3245.02"),
+        ]
+        names = self._pairs(self._render(items))
+        self.assertEqual(names, [
+            "HP - Porsche Boxster CL",
+            "Unexpired HP - Porsche Boxster CL",
+            "HP - 2022 Fuso Fighter XW86HQ",
+            "Unexpired HP - 2022 Fuso Fighter XW86HQ",
+        ])
+
+    def test_an_already_adjacent_plain_pair_does_not_move(self):
+        """Berwick FY2017/18 and Dr Services carry both codes undotted."""
+        items = [
+            _row("Bank loans - CBA", "-100000.00", "0", "3500"),
+            _row("Hire purchase", "-28392.74", "0", "3523"),
+            _row("Less: Unexpired interest charges", "8757.00", "0", "3524"),
+            _row("Loans from Greg Smart", "-7000.00", "0", "3565"),
+        ]
+        names = self._pairs(self._render(items))
+        self.assertEqual(names, [
+            "Loans from Greg Smart",
+            "Bank loans - CBA",
+            "Hire purchase",
+            "Less: Unexpired interest charges",
+        ])
+
+    def test_a_contra_with_no_parent_below_it_stays_put(self):
+        items = [
+            _row("Less: Unexpired interest charges", "8757.00", "0", "3524"),
+            _row("Loan - Directors", "-14570.00", "0", "3566"),
+        ]
+        names = self._pairs(self._render(items))
+        self.assertEqual(names[0], "Less: Unexpired interest charges")
+
+    def test_a_contra_with_no_account_code_stays_put(self):
+        items = [
+            _row("Loan - Directors", "-14570.00", "0", "3566"),
+            _row("Less: something unnumbered", "500.00", "0", ""),
+        ]
+        names = self._pairs(self._render(items))
+        self.assertEqual(names, ["Loan - Directors",
+                                 "Less: something unnumbered"])
