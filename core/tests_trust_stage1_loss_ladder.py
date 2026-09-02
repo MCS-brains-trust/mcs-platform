@@ -147,11 +147,62 @@ class Stage1LossLadderTests(TestCase):
         self.assertEqual(
             Decimal(data["net_distributable_income"]), Decimal("110000.00"))
 
-    def test_the_ladder_is_persisted_on_the_workspace(self):
+    def test_an_existing_workspace_still_reports_a_truthful_ladder(self):
+        """The ladder must not read 0/0/0 above a non-zero NDI.
+
+        Every workspace already on the platform predates these fields, so
+        their snapshots default to nil while net_distributable_income keeps
+        its stored value. Six of the seven live workspaces also have Stage 1
+        marked completed, and trust_recalculate_income refuses to run on a
+        completed stage -- so a snapshot-driven ladder could not be refreshed
+        by the user at all. It is derived from the ledger instead.
+        """
+        self._build("216101.66", "0.00", "1628428.89")
+        TrustWorkspace.objects.create(
+            financial_year=self.fy,
+            stage_1_status=TrustWorkspace.StageStatus.COMPLETED,
+            net_distributable_income=Decimal("876322.95"),  # stale
+        )
+        data = self._workspace_payload()
+        self.assertEqual(Decimal(data["net_profit"]), Decimal("216101.66"))
+        self.assertEqual(Decimal(data["total_revenue"]), Decimal("216101.66"))
+        self.assertEqual(
+            Decimal(data["losses_absorbed"]), Decimal("216101.66"))
+        self.assertEqual(
+            Decimal(data["losses_carried_forward"]), Decimal("1412327.23"))
+
+    def test_a_stale_stored_figure_does_not_survive_into_the_ladder(self):
+        """Minli's workspace held 876,322.95 from superseded calculations.
+
+        The post gate already refuses to trust the stored figure and
+        recomputes from the ledger; Stage 1 must show the same number the
+        gate will enforce, or it invites a distribution that cannot post.
+        """
+        self._build("216101.66", "0.00", "1628428.89")
+        TrustWorkspace.objects.create(
+            financial_year=self.fy,
+            stage_1_status=TrustWorkspace.StageStatus.COMPLETED,
+            net_distributable_income=Decimal("876322.95"),
+        )
+        data = self._workspace_payload()
+        self.assertEqual(
+            Decimal(data["net_distributable_income"]), Decimal("0"),
+            "Stage 1 offered a stale figure the post gate would refuse",
+        )
+
+    def test_the_ladder_survives_a_trial_balance_change(self):
+        """Derived, not snapshotted: a later TB edit must be reflected."""
         self._build("216101.66", "0.00", "1628428.89")
         self._workspace_payload()
-        w = TrustWorkspace.objects.get(financial_year=self.fy)
-        self.assertEqual(w.total_revenue, Decimal("216101.66"))
-        self.assertEqual(w.total_expenses, Decimal("0.00"))
-        self.assertEqual(w.net_profit, Decimal("216101.66"))
-        self.assertEqual(w.brought_forward_losses, Decimal("1628428.89"))
+        TrialBalanceLine.objects.create(
+            financial_year=self.fy, account_code="0631",
+            account_name="Other income", closing_balance=Decimal("-1000.00"),
+            debit=Decimal("0"), credit=Decimal("1000.00"), source="tb_import",
+            mapped_line_item=self._mapping("revenue"),
+        )
+        data = self._workspace_payload()
+        self.assertEqual(
+            Decimal(data["total_revenue"]), Decimal("217101.66"),
+            "the ladder was read from a stale snapshot",
+        )
+        self.assertEqual(Decimal(data["net_profit"]), Decimal("217101.66"))

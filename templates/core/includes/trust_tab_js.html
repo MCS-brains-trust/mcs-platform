@@ -104,9 +104,13 @@
 
         document.getElementById('trust-total-revenue').textContent =
             formatCurrency(parseFloat(workspace.total_revenue) || 0);
+        // Bracketed: it is subtracted in the ladder, like losses absorbed.
         document.getElementById('trust-total-expenses').textContent =
-            formatCurrency(parseFloat(workspace.total_expenses) || 0);
-        document.getElementById('trust-net-profit').textContent = formatCurrency(netProfit);
+            '(' + formatCurrency(parseFloat(workspace.total_expenses) || 0) + ')';
+        document.getElementById('trust-net-profit').textContent =
+            netProfit < 0
+                ? '(' + formatCurrency(Math.abs(netProfit)) + ')'
+                : formatCurrency(netProfit);
         document.getElementById('trust-ndi').textContent = formatCurrency(ndi);
         document.getElementById('trust-ndi-card').textContent = formatCurrency(ndi);
         document.getElementById('trust-losses-absorbed').textContent =
@@ -120,6 +124,10 @@
         toggleRow('trust-losses-absorbed-row', absorbed > 0);
         toggleRow('trust-undistributed-bf-row', undistributedBf > 0);
         toggleRow('trust-losses-cf-row', lossesCf > 0);
+        // The ladder does not foot when the result is floored: a loss year,
+        // or losses exceeding the profit, both arrive at nil rather than a
+        // negative figure. Say so rather than leaving the reader to subtract.
+        toggleRow('trust-ndi-floored-row', ndi <= 0 && (netProfit - absorbed) < 0);
 
         const notice = document.getElementById('trust-no-profit-notice');
         if (ndi <= 0) {

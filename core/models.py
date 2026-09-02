@@ -4987,24 +4987,11 @@ class TrustWorkspace(models.Model):
         help_text="Documents",
     )
     # Financial data
-    # The Stage 1 ladder: revenue and expenses give the year's profit, the
-    # brought-forward 4199 position absorbs it, and what survives is
-    # distributable. Snapshotted here the way net_distributable_income always
-    # has been, and refreshed together by _auto_populate_income.
-    total_revenue = models.DecimalField(
-        max_digits=15, decimal_places=2, default=0,
-    )
-    total_expenses = models.DecimalField(
-        max_digits=15, decimal_places=2, default=0,
-    )
-    net_profit = models.DecimalField(
-        max_digits=15, decimal_places=2, default=0,
-    )
-    brought_forward_losses = models.DecimalField(
-        max_digits=15, decimal_places=2, default=0,
-        help_text="Signed 4199 position: positive is a loss to recoup, "
-                  "negative is undistributed income brought forward",
-    )
+    # The Stage 1 ladder (revenue, expenses, profit, the brought-forward
+    # position) is deliberately NOT stored here. _serialize_workspace derives
+    # it from the ledger on every read: a stored copy would be nil on every
+    # workspace that predates it, could not be refreshed once Stage 1 is
+    # marked complete, and would go stale exactly the way this figure did.
     net_distributable_income = models.DecimalField(
         max_digits=15, decimal_places=2, null=True, blank=True,
     )

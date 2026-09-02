@@ -302,6 +302,13 @@ def calculate_section1_from_tb(fy):
     franking_credits = ZERO
 
     for line in tb_lines:
+        # 4199 is the appropriation account the recoupment below reads. It is
+        # equity and never reaches the P&L sweep on any live chart, but a line
+        # with no EntityChartOfAccount row and an income_statement mapping
+        # would fall through to it and be counted twice -- once as profit and
+        # again as brought forward. Exclude it explicitly.
+        if (line.account_code or "").split(".")[0] == "4199":
+            continue
         tags = coa_tags.get(line.account_code, {})
         section = tags.get("section", "")
 
@@ -340,29 +347,21 @@ def calculate_section1_from_tb(fy):
     # The brought-forward position is signed and debit-positive: a positive
     # balance is a loss to recoup, a negative one is undistributed income
     # brought forward, which is itself distributable.
-    from core.trust_losses import brought_forward_losses
+    from core.trust_losses import brought_forward_losses, recoup
 
-    brought_forward = brought_forward_losses(fy)
-    recoupable = max(brought_forward, ZERO)
-    undistributed_bf = max(-brought_forward, ZERO)
-
-    # Only a positive result can absorb a loss, and only up to the loss.
-    losses_recouped = min(max(income_before_recoupment, ZERO), recoupable)
-    distributable = max(income_before_recoupment - brought_forward, ZERO)
-    # The year's own loss joins the balance carried into the next year.
-    losses_carried_forward = (
-        recoupable - losses_recouped + max(-income_before_recoupment, ZERO)
-    )
+    ladder = recoup(income_before_recoupment, brought_forward_losses(fy))
 
     return {
         "net_profit_before_distributions": net_profit.quantize(TWO_PLACES),
         "non_deductible_expenses": non_deductible.quantize(TWO_PLACES),
         "non_assessable_income": non_assessable.quantize(TWO_PLACES),
         "income_before_recoupment": income_before_recoupment.quantize(TWO_PLACES),
-        "losses_recouped": losses_recouped.quantize(TWO_PLACES),
-        "undistributed_brought_forward": undistributed_bf.quantize(TWO_PLACES),
-        "losses_carried_forward": losses_carried_forward.quantize(TWO_PLACES),
-        "distributable_income": distributable.quantize(TWO_PLACES),
+        "losses_recouped": ladder["losses_recouped"].quantize(TWO_PLACES),
+        "undistributed_brought_forward":
+            ladder["undistributed_brought_forward"].quantize(TWO_PLACES),
+        "losses_carried_forward":
+            ladder["losses_carried_forward"].quantize(TWO_PLACES),
+        "distributable_income": ladder["distributable"].quantize(TWO_PLACES),
         "capital_gains": capital_gains.quantize(TWO_PLACES),
         "franked_dividends": franked_dividends.quantize(TWO_PLACES),
         "franking_credits": franking_credits.quantize(TWO_PLACES),

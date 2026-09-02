@@ -154,6 +154,91 @@ class NoProfitToDistributeTests(TestCase):
         w = TaxPlanningWorksheet.objects.get(financial_year=self.fy)
         self.assertFalse(w.is_finalised)
 
+    # --- the lock is an invariant, not a UI convention -------------------
+
+    def _nil_year(self):
+        self._earn("216101.66")
+        self._carry_losses("1628428.89")
+        self._load_tab()
+
+    def test_saving_rows_is_refused_when_nothing_is_distributable(self):
+        self._nil_year()
+        w = TaxPlanningWorksheet.objects.get(financial_year=self.fy)
+        response = self.client.post(
+            reverse("core:tax_planning_save", kwargs={"pk": self.fy.pk}),
+            data={"beneficiary_rows": []}, content_type="application/json",
+            secure=True,
+        )
+        self.assertEqual(
+            response.status_code, 400,
+            "the tab is locked but the endpoint still accepts writes",
+        )
+
+    def test_saving_notes_is_refused_when_nothing_is_distributable(self):
+        self._nil_year()
+        response = self.client.post(
+            reverse("core:tax_planning_save_notes", kwargs={"pk": self.fy.pk}),
+            data={"recommendation_notes": "<p>hello</p>"},
+            content_type="application/json", secure=True,
+        )
+        self.assertEqual(response.status_code, 400)
+        w = TaxPlanningWorksheet.objects.get(financial_year=self.fy)
+        self.assertEqual(w.recommendation_notes, "")
+
+    def test_saving_a_scenario_is_refused_when_nothing_is_distributable(self):
+        self._nil_year()
+        response = self.client.post(
+            reverse("core:tax_planning_scenario_save", kwargs={"pk": self.fy.pk}),
+            data={"scenario_name": "Option A", "distributions": []},
+            content_type="application/json", secure=True,
+        )
+        self.assertEqual(response.status_code, 400)
+
+    def test_the_endpoints_stay_open_when_income_remains(self):
+        """Regression guard: the lock must not fire on a normal year."""
+        self._earn("100000.00")
+        self._load_tab()
+        response = self.client.post(
+            reverse("core:tax_planning_save_notes", kwargs={"pk": self.fy.pk}),
+            data={"recommendation_notes": "<p>fine</p>"},
+            content_type="application/json", secure=True,
+        )
+        self.assertEqual(response.status_code, 200)
+
+    def test_finalising_is_refused_even_from_a_stale_worksheet(self):
+        """The gate must recompute, not trust the stored figure.
+
+        distributable_income is refreshed only by a GET of the tab, so an
+        existing worksheet carries its pre-recoupment value until someone
+        opens the page. A finalise POST that skips the GET would evaluate the
+        old number -- and report "$0.00 of losses are carried forward",
+        because that field is stale too.
+        """
+        self._earn("216101.66")
+        self._carry_losses("1628428.89")
+        TaxPlanningWorksheet.objects.create(
+            financial_year=self.fy,
+            distributable_income=Decimal("216101.66"),  # pre-recoupment
+        )
+        response = self.client.post(
+            reverse("core:tax_planning_finalise", kwargs={"pk": self.fy.pk}),
+            data={}, content_type="application/json", secure=True,
+        )
+        payload = response.json()
+        self.assertFalse(payload["success"])
+        self.assertTrue(
+            any("no profit to distribute" in e.lower()
+                for e in payload["errors"]),
+            f"the gate trusted a stale snapshot: {payload['errors']}",
+        )
+        # The figure carried forward AFTER this year recoups its 216,101.66.
+        # A stale worksheet's losses_carried_forward is nil, so this also
+        # proves the gate recomputed rather than reading the snapshot.
+        self.assertTrue(
+            any("1,412,327.23" in e for e in payload["errors"]),
+            f"the refusal named a stale loss figure: {payload['errors']}",
+        )
+
     def test_finalising_still_works_when_income_is_fully_allocated(self):
         """The new gate must not block a legitimate plan."""
         self._earn("100000.00")

@@ -15,6 +15,36 @@ from decimal import Decimal
 ZERO = Decimal("0")
 
 
+def recoup(income, brought_forward):
+    """Apply ``brought_forward`` to ``income`` and report the whole ladder.
+
+    ``brought_forward`` is signed and debit-positive: a positive figure is a
+    loss to recoup, a negative one is undistributed income brought forward,
+    which is itself distributable.
+
+    Returns ``distributable`` (never negative -- a trust cannot distribute
+    what it has not got), ``losses_recouped``, ``undistributed_brought_forward``
+    and ``losses_carried_forward``.
+
+    The carried-forward figure is the closing 4199 position: the opening
+    position less what the year earned, floored at nil. Computing it as
+    ``recoupable - recouped + max(-income, 0)`` instead discarded a credit
+    brought forward whenever the year was also a loss, and could report
+    distributable income and carried-forward losses simultaneously.
+
+    Both tabs call this. They each had their own copy, which agreed only
+    because they shared the same bug.
+    """
+    recoupable = max(brought_forward, ZERO)
+    return {
+        # Only a profit can absorb a loss, and only up to the loss.
+        "losses_recouped": min(max(income, ZERO), recoupable),
+        "undistributed_brought_forward": max(-brought_forward, ZERO),
+        "distributable": max(income - brought_forward, ZERO),
+        "losses_carried_forward": max(brought_forward - income, ZERO),
+    }
+
+
 def brought_forward_losses(financial_year):
     """Return the brought-forward 4199 balance, debit-positive.
 

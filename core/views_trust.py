@@ -516,26 +516,16 @@ def trust_recalculate_income(request, pk):
 
 
 def _auto_populate_income(workspace):
-    """Auto-populate the Stage 1 ladder and income streams from trial balance.
+    """Auto-populate income streams and the distributable figure from the TB.
 
-    Revenue, expenses and the brought-forward position are stored alongside
-    the distributable figure so Stage 1 can show the profit being absorbed by
-    carried-forward losses rather than presenting a bare $0. The two cards for
-    revenue and expenses had no data behind them at all before this.
+    The Stage 1 ladder itself is not stored -- _serialize_workspace derives it
+    from the ledger on every read. See TrustWorkspace's own note.
     """
     from core.eva_trust_planning import _calculate_income_streams
     income_data = _calculate_income_streams(workspace.financial_year)
     workspace.income_streams = income_data["income_streams"]
-    workspace.total_revenue = Decimal(income_data["total_revenue"])
-    workspace.total_expenses = Decimal(income_data["total_expenses"])
-    workspace.net_profit = Decimal(income_data["net_profit"])
-    workspace.brought_forward_losses = Decimal(
-        income_data["brought_forward_losses"])
     workspace.net_distributable_income = Decimal(income_data["net_distributable_income"])
-    workspace.save(update_fields=[
-        "income_streams", "total_revenue", "total_expenses", "net_profit",
-        "brought_forward_losses", "net_distributable_income",
-    ])
+    workspace.save(update_fields=["income_streams", "net_distributable_income"])
 
 
 def _auto_create_beneficiary_profiles(workspace):
@@ -725,14 +715,34 @@ def allocate_unit_trust_distribution(distribution):
 
 
 def _serialize_workspace(workspace):
-    """Serialize a TrustWorkspace to JSON."""
+    """Serialize a TrustWorkspace to JSON.
+
+    The Stage 1 ladder is derived from the ledger on every read, not from the
+    workspace's stored snapshot. Two reasons, and each is sufficient:
+
+    * Every workspace that predates these fields would report a ladder of
+      nil revenue, nil expenses and nil profit sitting above whatever
+      net_distributable_income it had stored -- an arithmetic claim that is
+      simply false. Six of the seven live workspaces also have Stage 1 marked
+      completed, and trust_recalculate_income refuses to run on a completed
+      stage, so the user could not refresh it.
+    * The stored figure goes stale. Minli FY2026's workspace held 876,322.95
+      from superseded calculations, which is why the post gate already
+      recomputes from the ledger rather than trusting it. Stage 1 must show
+      the number the gate will enforce, or it invites a distribution that
+      cannot post.
+
+    The stored columns remain, refreshed by _auto_populate_income, as the
+    audit snapshot of what Stage 1 was confirmed against.
+    """
+    from core.eva_trust_planning import _calculate_income_streams
+    from core.trust_losses import recoup
+
     entity = workspace.financial_year.entity
     has_unitholders = _entity_has_unitholders(entity)
-    net_profit = workspace.net_profit or Decimal("0")
-    brought_forward = workspace.brought_forward_losses or Decimal("0")
-    recoupable = max(brought_forward, Decimal("0"))
-    # Only a profit can absorb a loss, and only up to the loss.
-    losses_absorbed = min(max(net_profit, Decimal("0")), recoupable)
+    income = _calculate_income_streams(workspace.financial_year)
+    net_profit = Decimal(income["net_profit"])
+    ladder = recoup(net_profit, Decimal(income["brought_forward_losses"]))
     return {
         "id": str(workspace.pk),
         "financial_year_id": str(workspace.financial_year_id),
@@ -746,18 +756,17 @@ def _serialize_workspace(workspace):
             "5": {"status": workspace.stage_5_status, "name": "Documents"},
         },
         "all_completed": workspace.all_stages_completed(),
-        # The Stage 1 ladder. brought_forward_losses is signed and
+        # The Stage 1 ladder. The brought-forward position is signed and
         # debit-positive, so it splits into a loss the year's profit absorbs
         # and undistributed income brought forward, which is added instead.
-        "total_revenue": str(workspace.total_revenue or 0),
-        "total_expenses": str(workspace.total_expenses or 0),
+        "total_revenue": income["total_revenue"],
+        "total_expenses": income["total_expenses"],
         "net_profit": str(net_profit),
-        "losses_absorbed": str(losses_absorbed),
-        "undistributed_brought_forward": str(max(-brought_forward, Decimal("0"))),
-        "losses_carried_forward": str(
-            recoupable - losses_absorbed + max(-net_profit, Decimal("0"))
-        ),
-        "net_distributable_income": str(workspace.net_distributable_income or 0),
+        "losses_absorbed": str(ladder["losses_recouped"]),
+        "undistributed_brought_forward":
+            str(ladder["undistributed_brought_forward"]),
+        "losses_carried_forward": str(ladder["losses_carried_forward"]),
+        "net_distributable_income": str(ladder["distributable"]),
         "income_streams": workspace.income_streams,
         "section_100a_overall_risk": workspace.section_100a_overall_risk,
         "confirmed_scenario_id": str(workspace.confirmed_scenario_id) if workspace.confirmed_scenario_id else None,

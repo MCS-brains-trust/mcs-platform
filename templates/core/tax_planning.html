@@ -233,6 +233,12 @@
 </div>
 {% endif %}
 
+{# The optimiser measures allocations against distributable income. With none #}
+{# to allocate it reports a Variance the user cannot clear -- a discretionary #}
+{# trust keeps its previously saved proposed_distribution rows, and the       #}
+{# inputs that would zero them are now disabled. The notice above says what   #}
+{# the bar would have, and Section 1 below shows the workings.                #}
+{% if not no_distributable_income %}
 <!-- ===== STICKY OPTIMISER BAR ===== -->
 <div class="sticky-bar" id="optimiserBar">
     <div class="d-flex justify-content-between align-items-center flex-wrap">
@@ -258,6 +264,7 @@
         </div>
     </div>
 </div>
+{% endif %}
 
 <!-- ===== SECTION 1: DISTRIBUTABLE INCOME ===== -->
 <div class="section-card">
@@ -295,7 +302,7 @@
                                 </td>
                                 <td class="text-end">${{ section1.undistributed_brought_forward|floatformat:2|intcomma }}</td>
                             </tr>
-                            {% else %}
+                            {% elif section1.losses_recouped > 0 or section1.losses_carried_forward > 0 %}
                             <tr class="table-danger">
                                 <td>
                                     <i class="bi bi-dash-circle text-danger"></i>
@@ -578,7 +585,9 @@
                     <!-- Apply and delete stay hidden for a unit trust: applying a
                          saved split back over a register-derived one is exactly the
                          modelling a unit trust does not have. -->
+                    {% if not locked %}
                     <button class="btn btn-sm btn-link text-primary p-0 ms-1 scenario-load" title="Apply this scenario"><i class="bi bi-box-arrow-in-down"></i></button>
+                    {% endif %}
                     {% if not locked %}
                     <button class="btn btn-sm btn-link text-danger p-0 ms-1 scenario-delete" title="Delete"><i class="bi bi-x-circle"></i></button>
                     {% endif %}
@@ -691,13 +700,21 @@
     const fyPk = '{{ fy.pk }}';
     const distributableIncome = parseFloat('{{ section1.distributable_income }}');
     const frankingCredits = parseFloat('{{ section1.franking_credits }}');
-    const isFinalised = {{ is_finalised|yesno:"true,false" }};
     // Inputs are read-only when finalised OR when losses leave nothing to plan.
     const isLocked = {{ locked|yesno:"true,false" }};
     const taxFreeThreshold = parseFloat('{{ tax_free_threshold }}');
     let scenarios = JSON.parse('{{ scenarios_json|escapejs }}');
 
     // ===== HELPERS =====
+    // The sticky optimiser bar is not rendered when there is nothing to
+    // distribute, so writes to it must tolerate a missing element.
+    function setBar(id, text, className) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.textContent = text;
+        if (className) el.className = className;
+    }
+
     function fmt(n) {
         return '$' + parseFloat(n).toLocaleString('en-AU', {minimumFractionDigits: 2, maximumFractionDigits: 2});
     }
@@ -739,10 +756,9 @@
         document.getElementById('totalDistributed').textContent = fmt(totalDist);
 
         // Sticky bar
-        document.getElementById('barDistributed').textContent = fmt(totalDist);
-        const barUndist = document.getElementById('barUndistributed');
-        barUndist.textContent = fmt(undist);
-        barUndist.className = undist === 0 ? 'value text-success' : 'value text-danger';
+        setBar('barDistributed', fmt(totalDist));
+        setBar('barUndistributed', fmt(undist),
+               undist === 0 ? 'value text-success' : 'value text-danger');
 
         // Section 3 optimiser panel
         document.getElementById('optDistributed').textContent = fmt(totalDist);
@@ -847,19 +863,19 @@
         document.getElementById('resTotalRate').textContent = (avgRate * 100).toFixed(2) + '%';
 
         // Sticky bar
-        document.getElementById('barTotalTax').textContent = fmt(totals.net);
-        document.getElementById('barEffRate').textContent = (avgRate * 100).toFixed(2) + '%';
+        setBar('barTotalTax', fmt(totals.net));
+        setBar('barEffRate', (avgRate * 100).toFixed(2) + '%');
 
         // Section 3 optimiser
         document.getElementById('optTotalTax').textContent = fmt(totals.net);
         document.getElementById('optEffRate').textContent = (avgRate * 100).toFixed(2) + '%';
 
         if (result.optimiser) {
-            document.getElementById('barDistributed').textContent = fmt(result.optimiser.total_distributed);
+            setBar('barDistributed', fmt(result.optimiser.total_distributed));
             document.getElementById('optDistributed').textContent = fmt(result.optimiser.total_distributed);
-            const barUndist = document.getElementById('barUndistributed');
-            barUndist.textContent = fmt(result.optimiser.undistributed);
-            barUndist.className = parseFloat(result.optimiser.undistributed) === 0 ? 'value text-success' : 'value text-danger';
+            setBar('barUndistributed', fmt(result.optimiser.undistributed),
+                   parseFloat(result.optimiser.undistributed) === 0
+                       ? 'value text-success' : 'value text-danger');
 
             const optUndist = document.getElementById('optUndistributed');
             optUndist.textContent = fmt(result.optimiser.undistributed);

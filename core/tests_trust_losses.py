@@ -21,7 +21,87 @@ from django.test import TestCase
 from core.models import (
     AdjustingJournal, Client, Entity, FinancialYear, TrialBalanceLine,
 )
-from core.trust_losses import brought_forward_losses
+from core.trust_losses import brought_forward_losses, recoup
+
+
+class RecoupTests(TestCase):
+    """The ladder arithmetic, in one place for both tabs.
+
+    ``losses_carried_forward`` was computed as
+    ``max(bf, 0) - recouped + max(-income, 0)``, which throws away a CREDIT
+    brought-forward whenever the year is also a loss. With 20 of undistributed
+    income brought forward and a 30 loss it reported 30 carried forward instead
+    of 10; with 50 brought forward and a 30 loss it offered 20 to distribute
+    *and* claimed 30 of losses carried forward in the same breath.
+
+    The closing 4199 position is simply the opening position less what the
+    year earned, floored at nil.
+    """
+
+    def _l(self, income, bf):
+        return recoup(Decimal(income), Decimal(bf))
+
+    def test_profit_partly_absorbed(self):
+        r = self._l("100", "40")
+        self.assertEqual(r["distributable"], Decimal("60"))
+        self.assertEqual(r["losses_recouped"], Decimal("40"))
+        self.assertEqual(r["losses_carried_forward"], Decimal("0"))
+
+    def test_profit_fully_absorbed(self):
+        r = self._l("100", "150")
+        self.assertEqual(r["distributable"], Decimal("0"))
+        self.assertEqual(r["losses_recouped"], Decimal("100"))
+        self.assertEqual(r["losses_carried_forward"], Decimal("50"))
+
+    def test_loss_year_against_a_carried_loss(self):
+        r = self._l("-30", "40")
+        self.assertEqual(r["distributable"], Decimal("0"))
+        self.assertEqual(r["losses_recouped"], Decimal("0"))
+        self.assertEqual(r["losses_carried_forward"], Decimal("70"))
+
+    def test_profit_on_top_of_undistributed_income(self):
+        r = self._l("100", "-20")
+        self.assertEqual(r["distributable"], Decimal("120"))
+        self.assertEqual(r["undistributed_brought_forward"], Decimal("20"))
+        self.assertEqual(r["losses_carried_forward"], Decimal("0"))
+
+    def test_a_loss_partly_eating_undistributed_income(self):
+        """20 brought forward, 30 lost: 10 of losses carry forward, not 30."""
+        r = self._l("-30", "-20")
+        self.assertEqual(r["distributable"], Decimal("0"))
+        self.assertEqual(r["losses_recouped"], Decimal("0"))
+        self.assertEqual(
+            r["losses_carried_forward"], Decimal("10"),
+            "the credit brought forward was thrown away",
+        )
+
+    def test_a_loss_inside_undistributed_income_carries_no_loss(self):
+        """50 brought forward, 30 lost: 20 still distributable, 0 carried."""
+        r = self._l("-30", "-50")
+        self.assertEqual(r["distributable"], Decimal("20"))
+        self.assertEqual(
+            r["losses_carried_forward"], Decimal("0"),
+            "distributable income and carried-forward losses were reported "
+            "at the same time, which cannot both be true",
+        )
+
+    def test_minli_fy2027(self):
+        r = self._l("216101.66", "1628428.89")
+        self.assertEqual(r["distributable"], Decimal("0"))
+        self.assertEqual(r["losses_recouped"], Decimal("216101.66"))
+        self.assertEqual(
+            r["losses_carried_forward"], Decimal("1412327.23"))
+
+    def test_minli_fy2025_loss_year(self):
+        r = self._l("-568879.30", "1686352.10")
+        self.assertEqual(
+            r["losses_carried_forward"], Decimal("2255231.40"))
+
+    def test_no_losses_at_all(self):
+        r = self._l("100000", "0")
+        self.assertEqual(r["distributable"], Decimal("100000"))
+        self.assertEqual(r["losses_recouped"], Decimal("0"))
+        self.assertEqual(r["losses_carried_forward"], Decimal("0"))
 
 
 class BroughtForwardLossesTests(TestCase):

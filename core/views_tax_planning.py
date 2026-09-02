@@ -48,6 +48,32 @@ def _get_or_create_worksheet(fy, user):
     return worksheet
 
 
+def _nothing_to_distribute(fy):
+    """Is this year's distributable income nil after recouping losses?
+
+    Recomputed from the ledger, never read from the worksheet: Section 1 is
+    refreshed only by a GET of the tab, so an existing worksheet carries its
+    pre-recoupment figure until someone opens the page. A finalise or a save
+    that skips the GET would otherwise evaluate the stale number.
+    """
+    return calculate_section1_from_tb(fy)["distributable_income"] <= Decimal("0")
+
+
+def _locked_response(fy):
+    """A 400 for a write against a worksheet that has nothing to plan.
+
+    The template's `locked` flag hides the controls; this is what makes it an
+    invariant rather than a UI convention.
+    """
+    if not _nothing_to_distribute(fy):
+        return None
+    return JsonResponse(
+        {"error": "There is no profit to distribute for this year, so the "
+                  "tax plan cannot be edited."},
+        status=400,
+    )
+
+
 def _sync_beneficiary_rows(worksheet):
     """
     Ensure one TaxPlanningBeneficiaryRow per active beneficiary or unit
@@ -399,6 +425,10 @@ def tax_planning_save(request, pk):
     if worksheet.is_finalised:
         return JsonResponse({"error": "Worksheet is finalised. Reopen to edit."}, status=400)
 
+    locked = _locked_response(fy)
+    if locked is not None:
+        return locked
+
     try:
         body = json.loads(request.body)
     except json.JSONDecodeError:
@@ -482,6 +512,14 @@ def tax_planning_save_notes(request, pk):
     fy = get_financial_year_for_user(request, pk)
     worksheet = _get_or_create_worksheet(fy, request.user)
 
+    # This endpoint had no guard at all -- a finalised worksheet's notes were
+    # writable through it, and the editor is now read-only for a second reason.
+    if worksheet.is_finalised:
+        return JsonResponse({"error": "Worksheet is finalised. Reopen to edit."}, status=400)
+    locked = _locked_response(fy)
+    if locked is not None:
+        return locked
+
     try:
         body = json.loads(request.body)
     except json.JSONDecodeError:
@@ -503,6 +541,10 @@ def tax_planning_scenario_save(request, pk):
     Save current distribution as a named scenario. Max 3.
     """
     fy = get_financial_year_for_user(request, pk)
+
+    locked = _locked_response(fy)
+    if locked is not None:
+        return locked
 
     try:
         body = json.loads(request.body)
@@ -559,6 +601,9 @@ def tax_planning_scenario_delete(request, pk, scenario_pk):
     POST /years/<pk>/tax-planning/scenario/<scenario_pk>/delete/
     """
     fy = get_financial_year_for_user(request, pk)
+    locked = _locked_response(fy)
+    if locked is not None:
+        return locked
     scenario = get_object_or_404(TaxPlanningScenario, pk=scenario_pk, financial_year=fy)
     name = scenario.scenario_name
     scenario.delete()
@@ -603,10 +648,11 @@ def tax_planning_finalise(request, pk):
     # below, which compares distributable income against what is allocated:
     # nil against nil balances, so an empty plan on a loss-carrying trust
     # would otherwise finalise cleanly.
-    if worksheet.distributable_income <= Decimal("0"):
+    _section1 = calculate_section1_from_tb(fy)
+    if _section1["distributable_income"] <= Decimal("0"):
         errors.append(
             f"There is no profit to distribute. "
-            f"${worksheet.losses_carried_forward:,.2f} of losses are carried "
+            f"${_section1['losses_carried_forward']:,.2f} of losses are carried "
             f"forward and no tax plan is required for this year."
         )
 
