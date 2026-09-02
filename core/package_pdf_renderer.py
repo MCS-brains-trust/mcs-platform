@@ -89,6 +89,23 @@ DOCUMENT_ORDER = [
 ]
 
 
+def _merge_start_pages(fs_start_pages, fs_offset, legal_start_pages):
+    """One offsets map for the whole pack, in the Contents' vocabulary.
+
+    The FS bundle carries its own 1-based offsets relative to itself, so they
+    shift by wherever the bundle was placed in the pack. Appended legal
+    documents already carry pack-absolute pages.
+
+    Both namespaces live in one dict deliberately: a Contents label resolves
+    against whichever of its candidate keys is present, so "Directors'
+    Declaration" finds the FS ``DECLARATION`` in a trust pack and the
+    ``directors_declaration`` LegalDocument in a company's.
+    """
+    merged = {k: v + fs_offset for k, v in (fs_start_pages or {}).items()}
+    merged.update(legal_start_pages or {})
+    return merged
+
+
 def render_legal_doc_to_pdf_bytes(doc):
     """
     Render a LegalDocument record to PDF bytes using weasyprint.
@@ -228,6 +245,11 @@ def build_package_bundle(fy, include_types=None):
 
     writer = PdfWriter()
     docs_added = 0
+    # Where each document starts, for the Contents page. The FS bundle reports
+    # offsets relative to itself; appended legal documents are pack-absolute.
+    fs_start_pages = {}
+    fs_offset = 0
+    legal_start_pages = {}
 
     # Build a map of existing LegalDocuments by type (most recent first)
     legal_docs_by_type = {}
@@ -265,9 +287,14 @@ def build_package_bundle(fy, include_types=None):
                 _fs_exclude = set()
                 if entity.entity_type == "company":
                     _fs_exclude.add("DECLARATION")
-                pdf_buffer = generate_combined_pdf(
+                # Unstamped, with its offsets: the pack appends documents
+                # behind this bundle and stamps once at the end, so the
+                # Contents can number them too.
+                fs_offset = len(writer.pages)
+                pdf_buffer, fs_start_pages = generate_combined_pdf(
                     fy.pk, include_watermark=False,
                     exclude_types=_fs_exclude,
+                    return_start_pages=True,
                 )
 
                 reader = PdfReader(pdf_buffer)
@@ -303,6 +330,9 @@ def build_package_bundle(fy, include_types=None):
                         for page in reader.pages:
                             writer.add_page(page)
                         docs_added += 1
+                        # A stored PDF carries no offsets, so the Contents
+                        # keeps whatever numbers were stamped into it when it
+                        # was first generated.
                         logger.warning(
                             "Added Financial Statements from STORED PDF fallback (%d pages)",
                             len(reader.pages),
@@ -339,6 +369,8 @@ def build_package_bundle(fy, include_types=None):
         if pdf_bytes:
             try:
                 reader = PdfReader(io.BytesIO(pdf_bytes))
+                # 1-based page this document starts on, for the Contents.
+                legal_start_pages[doc_type] = len(writer.pages) + 1
                 for page in reader.pages:
                     writer.add_page(page)
                 docs_added += 1
@@ -355,7 +387,11 @@ def build_package_bundle(fy, include_types=None):
     raw_bytes = output.getvalue()
 
     from core.fs_template_service import _stamp_page_numbers
-    pdf_bytes = _stamp_page_numbers(raw_bytes)
+    pdf_bytes = _stamp_page_numbers(
+        raw_bytes,
+        doc_start_pages=_merge_start_pages(
+            fs_start_pages, fs_offset, legal_start_pages),
+    )
 
     safe_name = entity_name.replace(" ", "_").replace("/", "_")
     filename = f"Client_Package_{safe_name}_{fy_year}.pdf"

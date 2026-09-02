@@ -518,6 +518,12 @@ def _combine_pdfs(fy, entity, existing_types):
 
     merger = PdfWriter()
     docs_added = 0
+    # Where each document starts, so the Contents page can name its page. The
+    # FS bundle reports offsets relative to itself and is shifted by wherever
+    # it lands; everything appended after it is already pack-absolute.
+    fs_start_pages = {}
+    fs_offset = 0
+    legal_start_pages = {}
 
     for doc_type in DOCUMENT_ORDER:
         if doc_type not in existing_types:
@@ -530,7 +536,8 @@ def _combine_pdfs(fy, entity, existing_types):
             # never appear in the bundled PDF.
             fs_added = False
             try:
-                fs_pdf_path = _regenerate_fs_for_package(fy)
+                fs_offset = len(merger.pages)
+                fs_pdf_path, fs_start_pages = _regenerate_fs_for_package(fy)
                 if fs_pdf_path and os.path.exists(fs_pdf_path):
                     merger.append(fs_pdf_path)
                     docs_added += 1
@@ -581,6 +588,8 @@ def _combine_pdfs(fy, entity, existing_types):
 
                 if pdf_path and os.path.exists(pdf_path):
                     try:
+                        # 1-based page this document starts on.
+                        legal_start_pages[doc_type] = len(merger.pages) + 1
                         merger.append(pdf_path)
                         docs_added += 1
                     except Exception as e:
@@ -599,8 +608,25 @@ def _combine_pdfs(fy, entity, existing_types):
         f"client_package_{entity.entity_name}_{fy.end_date.year}.pdf",
     )
 
-    merger.write(output_path)
+    # Stamp continuous page numbers and fill the Contents column. This step
+    # was missing entirely: every document appended behind the financial
+    # statements came out unnumbered, and the Contents could name none of them.
+    import io as _io
+
+    from core.fs_template_service import _stamp_page_numbers
+    from core.package_pdf_renderer import _merge_start_pages
+
+    raw = _io.BytesIO()
+    merger.write(raw)
     merger.close()
+
+    stamped = _stamp_page_numbers(
+        raw.getvalue(),
+        doc_start_pages=_merge_start_pages(
+            fs_start_pages, fs_offset, legal_start_pages),
+    )
+    with open(output_path, "wb") as f:
+        f.write(stamped)
 
     logger.info("Combined PDF created: %s (%d documents)", output_path, docs_added)
     return output_path
@@ -612,8 +638,11 @@ def _combine_pdfs(fy, entity, existing_types):
 def _regenerate_fs_for_package(fy):
     """
     Regenerate financial statements as a clean PDF (no watermarks) for
-    inclusion in the client package.  Returns the path to a temporary PDF
-    file, or None on failure.
+    inclusion in the client package.
+
+    Returns ``(path, doc_start_pages)``. The PDF is left UNSTAMPED: the caller
+    appends more documents behind it and stamps the whole pack once, so the
+    Contents can number those too and no page is stamped twice.
     """
     import tempfile
 
@@ -623,8 +652,9 @@ def _regenerate_fs_for_package(fy):
 
     # Exclude embedded DECLARATION — the standalone directors_declaration
     # legal document is included separately in the package.
-    pdf_buffer = generate_combined_pdf(
+    pdf_buffer, doc_start_pages = generate_combined_pdf(
         fy.pk, include_watermark=False, exclude_types={"DECLARATION"},
+        return_start_pages=True,
     )
     logger.info("_regenerate_fs_for_package: PDF generated, %d bytes",
                 pdf_buffer.getbuffer().nbytes)
@@ -635,7 +665,7 @@ def _regenerate_fs_for_package(fy):
     with open(pdf_path, "wb") as f:
         f.write(pdf_buffer.read())
 
-    return pdf_path
+    return pdf_path, doc_start_pages
 
 
 def _has_director_loan_over_10k(fy):

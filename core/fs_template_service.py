@@ -4591,24 +4591,53 @@ def generate_financial_statements(financial_year_id, include_watermark=True):
 # ---------------------------------------------------------------------------
 # Page-number stamping — absolute numbering on the final merged PDF
 # ---------------------------------------------------------------------------
-# Contents-page wording -> the document it points at. The Contents is built by
-# _build_cover in core/management/commands/generate_fs_templates.py; these
-# strings must match the entries it writes. Labels absent from this map (the
-# Solvency Resolution and the Management Representation Letter, both added by
-# package assembly rather than generate_financial_statements) get no number.
+# Contents-page wording -> the documents it may point at. The Contents is
+# built by _build_cover in core/management/commands/generate_fs_templates.py;
+# these strings must match the entries it writes, and
+# tests_pack_contents_numbering asserts every one of them is here.
+#
+# Each value is a tuple of CANDIDATE keys, tried in order against the offsets
+# map, because one label can point at different documents in different packs.
+# A trust's declaration is rendered inside the FS bundle and keyed by the FS
+# document type "DECLARATION"; a company's is excluded from that bundle
+# (see core/package_pdf_renderer.py) and appended afterwards as the
+# LegalDocument "directors_declaration". A single key could only ever satisfy
+# one of them, which is why a company pack showed the declaration, the
+# solvency resolution and the representation letter with no page number.
 CONTENTS_LABEL_TO_DOC_TYPE = {
-    "Detailed Profit and Loss Statement": "DETAILED_PL",
-    "Summary Profit and Loss Statement": "SUMMARY_PL",
-    "Detailed Balance Sheet": "BALANCE_SHEET",
-    "Notes to the Financial Statements": "NOTES",
-    "Depreciation Report": "DEPRECIATION_REPORT",
-    "Directors' Declaration": "DECLARATION",
-    "Trustee's Declaration": "DECLARATION",
-    "Proprietor Declaration": "DECLARATION",
-    "Partners' Declaration": "DECLARATION",
-    "Beneficiaries Profit Distribution Summary": "DISTRIBUTION",
-    "Compilation Report": "COMPILATION",
+    "Detailed Profit and Loss Statement": ("DETAILED_PL",),
+    "Summary Profit and Loss Statement": ("SUMMARY_PL",),
+    "Detailed Balance Sheet": ("BALANCE_SHEET",),
+    "Notes to the Financial Statements": ("NOTES",),
+    "Depreciation Report": ("DEPRECIATION_REPORT",),
+    "Directors' Declaration": ("DECLARATION", "directors_declaration"),
+    "Trustee's Declaration": ("DECLARATION", "directors_declaration"),
+    "Proprietor Declaration": ("DECLARATION", "directors_declaration"),
+    "Partners' Declaration": ("DECLARATION", "directors_declaration"),
+    "Solvency Resolution": ("solvency_resolution",),
+    "Beneficiaries Profit Distribution Summary": ("DISTRIBUTION",),
+    "Compilation Report": ("COMPILATION", "compilation_report"),
+    "Management Representation Letter": (
+        "management_rep_letter",
+        "management_rep_letter_trust",
+        "management_rep_letter_partnership",
+    ),
 }
+
+
+def _resolve_contents_start(label, doc_start_pages):
+    """The 1-based page *label* points at, or None if that document is absent.
+
+    Absent is a normal outcome, not an error: the Summary P&L and the
+    Depreciation Report are skipped for some years, and a Contents row for a
+    document that was not produced is left unnumbered rather than pointing
+    somewhere wrong.
+    """
+    for key in CONTENTS_LABEL_TO_DOC_TYPE.get(label, ()):
+        start = doc_start_pages.get(key)
+        if start:
+            return start
+    return None
 
 # 0-based index of the Contents page in the merged PDF, and the first page that
 # carries a printed number. Numbering is absolute from the cover, so the cover
@@ -4684,7 +4713,7 @@ def _stamp_page_numbers(pdf_bytes, doc_start_pages=None):
 
         if doc_start_pages and index == _CONTENTS_PAGE_INDEX:
             for label, (x, y) in _contents_label_positions(page).items():
-                start = doc_start_pages.get(CONTENTS_LABEL_TO_DOC_TYPE[label])
+                start = _resolve_contents_start(label, doc_start_pages)
                 if start:
                     overlay_entries.append(
                         ("right", x + _CONTENTS_TABLE_WIDTH_PT, y, str(start))
@@ -5461,13 +5490,20 @@ def _reapply_distribution_widths(docx_path):
 # ---------------------------------------------------------------------------
 # generate_combined_pdf — render each template to PDF individually, merge
 # ---------------------------------------------------------------------------
-def generate_combined_pdf(financial_year_id, include_watermark=True, exclude_types=None):
+def generate_combined_pdf(financial_year_id, include_watermark=True,
+                          exclude_types=None, return_start_pages=False):
     """Generate all templates, convert each to PDF, merge into single PDF BytesIO.
 
     Args:
         exclude_types: optional set of document type keys to skip (e.g. {"DECLARATION"})
+        return_start_pages: return ``(BytesIO, doc_start_pages)`` with the PDF
+            left UNSTAMPED, so a caller that appends further documents behind
+            this bundle can stamp once with a complete map. Package assembly
+            needs this: it excludes DECLARATION for a company and appends it as
+            a LegalDocument, so the Contents cannot be finished here.
 
-    Returns a BytesIO containing the merged PDF bytes.
+    Returns a BytesIO containing the merged PDF bytes, or that plus the
+    1-based start page of each document when *return_start_pages* is set.
     """
     from pypdf import PdfWriter, PdfReader
 
@@ -5540,6 +5576,19 @@ def generate_combined_pdf(financial_year_id, include_watermark=True, exclude_typ
         output = io.BytesIO()
         writer.write(output)
         raw_bytes = output.getvalue()
+
+        if return_start_pages:
+            # Left unstamped on purpose -- the caller is appending more
+            # documents and will stamp once, so the Contents can name them
+            # too and no page gets a number drawn over it twice.
+            result = io.BytesIO(raw_bytes)
+            result.seek(0)
+            logger.info(
+                "generate_combined_pdf complete (unstamped): %d documents, "
+                "%d bytes, offsets %s", pdfs_merged, len(raw_bytes),
+                doc_start_pages,
+            )
+            return result, doc_start_pages
 
         # Stamp continuous page numbers on the merged PDF, and fill in the
         # Contents column from the offsets recorded above.
