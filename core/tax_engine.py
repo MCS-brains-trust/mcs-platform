@@ -330,12 +330,38 @@ def calculate_section1_from_tb(fy):
         if tags.get("is_franking_credit"):
             franking_credits += abs(line.closing_balance)
 
-    distributable = net_profit + non_deductible - non_assessable
+    income_before_recoupment = net_profit + non_deductible - non_assessable
+
+    # A trust cannot distribute income its carried-forward losses have already
+    # absorbed. This calculator ignored 4199 entirely, so the Tax Planning tab
+    # offered Minli FY2027 $216,101.66 against $1,628,428.89 of losses while
+    # the Trust tab, and the post gate, correctly said nil.
+    #
+    # The brought-forward position is signed and debit-positive: a positive
+    # balance is a loss to recoup, a negative one is undistributed income
+    # brought forward, which is itself distributable.
+    from core.trust_losses import brought_forward_losses
+
+    brought_forward = brought_forward_losses(fy)
+    recoupable = max(brought_forward, ZERO)
+    undistributed_bf = max(-brought_forward, ZERO)
+
+    # Only a positive result can absorb a loss, and only up to the loss.
+    losses_recouped = min(max(income_before_recoupment, ZERO), recoupable)
+    distributable = max(income_before_recoupment - brought_forward, ZERO)
+    # The year's own loss joins the balance carried into the next year.
+    losses_carried_forward = (
+        recoupable - losses_recouped + max(-income_before_recoupment, ZERO)
+    )
 
     return {
         "net_profit_before_distributions": net_profit.quantize(TWO_PLACES),
         "non_deductible_expenses": non_deductible.quantize(TWO_PLACES),
         "non_assessable_income": non_assessable.quantize(TWO_PLACES),
+        "income_before_recoupment": income_before_recoupment.quantize(TWO_PLACES),
+        "losses_recouped": losses_recouped.quantize(TWO_PLACES),
+        "undistributed_brought_forward": undistributed_bf.quantize(TWO_PLACES),
+        "losses_carried_forward": losses_carried_forward.quantize(TWO_PLACES),
         "distributable_income": distributable.quantize(TWO_PLACES),
         "capital_gains": capital_gains.quantize(TWO_PLACES),
         "franked_dividends": franked_dividends.quantize(TWO_PLACES),

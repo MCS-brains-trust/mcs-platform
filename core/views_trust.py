@@ -516,12 +516,26 @@ def trust_recalculate_income(request, pk):
 
 
 def _auto_populate_income(workspace):
-    """Auto-populate income streams from trial balance."""
+    """Auto-populate the Stage 1 ladder and income streams from trial balance.
+
+    Revenue, expenses and the brought-forward position are stored alongside
+    the distributable figure so Stage 1 can show the profit being absorbed by
+    carried-forward losses rather than presenting a bare $0. The two cards for
+    revenue and expenses had no data behind them at all before this.
+    """
     from core.eva_trust_planning import _calculate_income_streams
     income_data = _calculate_income_streams(workspace.financial_year)
     workspace.income_streams = income_data["income_streams"]
+    workspace.total_revenue = Decimal(income_data["total_revenue"])
+    workspace.total_expenses = Decimal(income_data["total_expenses"])
+    workspace.net_profit = Decimal(income_data["net_profit"])
+    workspace.brought_forward_losses = Decimal(
+        income_data["brought_forward_losses"])
     workspace.net_distributable_income = Decimal(income_data["net_distributable_income"])
-    workspace.save(update_fields=["income_streams", "net_distributable_income"])
+    workspace.save(update_fields=[
+        "income_streams", "total_revenue", "total_expenses", "net_profit",
+        "brought_forward_losses", "net_distributable_income",
+    ])
 
 
 def _auto_create_beneficiary_profiles(workspace):
@@ -714,6 +728,11 @@ def _serialize_workspace(workspace):
     """Serialize a TrustWorkspace to JSON."""
     entity = workspace.financial_year.entity
     has_unitholders = _entity_has_unitholders(entity)
+    net_profit = workspace.net_profit or Decimal("0")
+    brought_forward = workspace.brought_forward_losses or Decimal("0")
+    recoupable = max(brought_forward, Decimal("0"))
+    # Only a profit can absorb a loss, and only up to the loss.
+    losses_absorbed = min(max(net_profit, Decimal("0")), recoupable)
     return {
         "id": str(workspace.pk),
         "financial_year_id": str(workspace.financial_year_id),
@@ -727,6 +746,17 @@ def _serialize_workspace(workspace):
             "5": {"status": workspace.stage_5_status, "name": "Documents"},
         },
         "all_completed": workspace.all_stages_completed(),
+        # The Stage 1 ladder. brought_forward_losses is signed and
+        # debit-positive, so it splits into a loss the year's profit absorbs
+        # and undistributed income brought forward, which is added instead.
+        "total_revenue": str(workspace.total_revenue or 0),
+        "total_expenses": str(workspace.total_expenses or 0),
+        "net_profit": str(net_profit),
+        "losses_absorbed": str(losses_absorbed),
+        "undistributed_brought_forward": str(max(-brought_forward, Decimal("0"))),
+        "losses_carried_forward": str(
+            recoupable - losses_absorbed + max(-net_profit, Decimal("0"))
+        ),
         "net_distributable_income": str(workspace.net_distributable_income or 0),
         "income_streams": workspace.income_streams,
         "section_100a_overall_risk": workspace.section_100a_overall_risk,

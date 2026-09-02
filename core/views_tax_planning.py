@@ -246,7 +246,9 @@ def tax_planning_tab(request, pk):
     worksheet.last_updated_by = request.user
     worksheet.save(update_fields=[
         "distributable_income", "non_deductible_expenses", "non_assessable_income",
-        "net_profit_before_distributions", "capital_gains", "franked_dividends",
+        "net_profit_before_distributions", "income_before_recoupment",
+        "losses_recouped", "undistributed_brought_forward",
+        "losses_carried_forward", "capital_gains", "franked_dividends",
         "franking_credits", "last_updated_at", "last_updated_by",
     ])
 
@@ -290,11 +292,20 @@ def tax_planning_tab(request, pk):
     # Log access
     _log_action(request, "view", f"Viewed Tax Planning tab for {entity.entity_name}", fy)
 
+    # Where carried-forward losses absorb the year's income there is nothing
+    # to plan: the tab says so and stops modelling a distribution the Trust
+    # tab's post gate would refuse.
+    no_distributable_income = section1["distributable_income"] <= Decimal("0")
+
     context = {
         "fy": fy,
         "entity": entity,
         "worksheet": worksheet,
         "section1": section1,
+        "no_distributable_income": no_distributable_income,
+        # Inputs are read-only for either reason; `is_finalised` keeps its own
+        # chrome (the overlay badge and the Reopen button).
+        "locked": worksheet.is_finalised or no_distributable_income,
         "rows": rows,
         "optimiser": calc_result["optimiser"],
         "scenarios": scenarios,
@@ -587,6 +598,17 @@ def tax_planning_finalise(request, pk):
     # Pre-flight checks
     warnings = []
     errors = []
+
+    # 0. Nothing to distribute. This must come before the balance check
+    # below, which compares distributable income against what is allocated:
+    # nil against nil balances, so an empty plan on a loss-carrying trust
+    # would otherwise finalise cleanly.
+    if worksheet.distributable_income <= Decimal("0"):
+        errors.append(
+            f"There is no profit to distribute. "
+            f"${worksheet.losses_carried_forward:,.2f} of losses are carried "
+            f"forward and no tax plan is required for this year."
+        )
 
     # 1. Balance check
     rows = worksheet.beneficiary_rows.all()

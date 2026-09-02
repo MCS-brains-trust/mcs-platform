@@ -94,7 +94,44 @@
         const streams = workspace.income_streams || {};
         const ndi = parseFloat(workspace.net_distributable_income) || 0;
 
+        // The Stage 1 ladder: profit, then the losses that absorb it. Without
+        // the absorption step a loss-carrying trust showed a bare $0 with no
+        // explanation of where the year's profit went.
+        const netProfit = parseFloat(workspace.net_profit) || 0;
+        const absorbed = parseFloat(workspace.losses_absorbed) || 0;
+        const undistributedBf = parseFloat(workspace.undistributed_brought_forward) || 0;
+        const lossesCf = parseFloat(workspace.losses_carried_forward) || 0;
+
+        document.getElementById('trust-total-revenue').textContent =
+            formatCurrency(parseFloat(workspace.total_revenue) || 0);
+        document.getElementById('trust-total-expenses').textContent =
+            formatCurrency(parseFloat(workspace.total_expenses) || 0);
+        document.getElementById('trust-net-profit').textContent = formatCurrency(netProfit);
         document.getElementById('trust-ndi').textContent = formatCurrency(ndi);
+        document.getElementById('trust-ndi-card').textContent = formatCurrency(ndi);
+        document.getElementById('trust-losses-absorbed').textContent =
+            '(' + formatCurrency(absorbed) + ')';
+        document.getElementById('trust-undistributed-bf').textContent =
+            formatCurrency(undistributedBf);
+        document.getElementById('trust-losses-cf').textContent = formatCurrency(lossesCf);
+
+        // A brought-forward 4199 balance is either a loss or undistributed
+        // income, never both, so at most one of these rows is shown.
+        toggleRow('trust-losses-absorbed-row', absorbed > 0);
+        toggleRow('trust-undistributed-bf-row', undistributedBf > 0);
+        toggleRow('trust-losses-cf-row', lossesCf > 0);
+
+        const notice = document.getElementById('trust-no-profit-notice');
+        if (ndi <= 0) {
+            document.getElementById('trust-no-profit-detail').textContent =
+                lossesCf > 0
+                    ? `Carried-forward losses absorb the year's income in full, and `
+                      + `${formatCurrency(lossesCf)} of losses carry forward.`
+                    : 'This trust made no distributable profit this year.';
+            notice.classList.remove('d-none');
+        } else {
+            notice.classList.add('d-none');
+        }
 
         // Populate income stream inputs
         document.querySelectorAll('.income-stream-input').forEach(input => {
@@ -1188,6 +1225,11 @@
         return '$' + (parseFloat(val) || 0).toLocaleString('en-AU', {
             minimumFractionDigits: 2, maximumFractionDigits: 2
         });
+    }
+
+    function toggleRow(id, show) {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle('d-none', !show);
     }
 
     function escapeHtml(str) {
