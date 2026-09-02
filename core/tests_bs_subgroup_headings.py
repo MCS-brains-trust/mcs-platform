@@ -408,3 +408,83 @@ class CurrentLiabilityGroupOrderTests(SimpleTestCase):
             group_order=CURRENT_LIABILITY_GROUP_ORDER)
         groups = [h for h in _headings(rendered) if not h.endswith(":")]
         self.assertEqual(groups, ["Bank Overdrafts", "Payables"])
+
+
+class ASingleGroupStillGetsItsHeadingTests(SimpleTestCase):
+    """HandiLedger prints the heading and subtotal even for a lone group.
+
+    DJLH Properties Pty Ltd FY2024's Non-Current Liabilities hold one group,
+    and HandiLedger prints it in full -- the group subtotal repeats the
+    section total immediately below it::
+
+        Non-Current Liabilities
+
+        Financial Liabilities
+        Unsecured: ... Secured: ...
+                                                 3,827,292   3,838,942
+        Total Non-Current Liabilities             3,827,292   3,838,942
+
+    StatementHub returned a flat list whenever a section resolved to a single
+    group, dropping both rows -- so a one-group section read as a bare list of
+    accounts with no heading at all.
+    """
+
+    def test_a_lone_group_prints_its_heading(self):
+        items = [
+            _row("Motor vehicles (cost)", "38354.00", "38354.00", "2890"),
+            _row("Less: Accumulated depreciation", "-19160.75", "-12763.00",
+                 "2895"),
+        ]
+        rendered = _build_subgrouped_items(
+            items, _classify_noncurrent_asset,
+            group_order=NONCURRENT_ASSET_GROUP_ORDER)
+        self.assertEqual(_headings(rendered),
+                         ["Property, Plant and Equipment"])
+
+    def test_a_lone_group_prints_its_subtotal(self):
+        """Dr Services FY2026: 38,354 less 19,161 accumulated = 19,193."""
+        items = [
+            _row("Motor vehicles (cost)", "38354.00", "38354.00", "2890"),
+            _row("Less: Accumulated depreciation", "-19160.75", "-12763.00",
+                 "2895"),
+        ]
+        rendered = _build_subgrouped_items(
+            items, _classify_noncurrent_asset,
+            group_order=NONCURRENT_ASSET_GROUP_ORDER)
+        subtotals = [r for r in rendered if r.get("is_subtotal")]
+        self.assertEqual(len(subtotals), 1)
+        self.assertEqual(subtotals[0]["cy_formatted"], "19,193")
+        self.assertEqual(subtotals[0]["py_formatted"], "25,591")
+
+    def test_a_lone_untiered_liability_group_prints_both(self):
+        """Elliott Jaques FY2025 carries GST alone in current liabilities."""
+        items = [
+            _row("GST payable control account", "-1689.00", "0", "3200"),
+        ]
+        rendered = _build_subgrouped_items(
+            items, _classify_current_liability, credit_normal=True,
+            group_order=CURRENT_LIABILITY_GROUP_ORDER)
+        self.assertEqual(_headings(rendered), ["Current Tax Liabilities"])
+        subtotals = [r for r in rendered if r.get("is_subtotal")]
+        self.assertEqual(len(subtotals), 1)
+        self.assertEqual(subtotals[0]["cy_formatted"], "1,689")
+
+    def test_the_contra_still_sits_under_its_parent(self):
+        """The heading must not come between an asset and its contra."""
+        items = [
+            _row("Motor vehicles (cost)", "38354.00", "38354.00", "2890"),
+            _row("Less: Accumulated depreciation", "-19160.75", "-12763.00",
+                 "2895"),
+        ]
+        rendered = _build_subgrouped_items(
+            items, _classify_noncurrent_asset,
+            group_order=NONCURRENT_ASSET_GROUP_ORDER)
+        names = [r["account_name"] for r in rendered]
+        self.assertEqual(
+            names.index("Less: Accumulated depreciation"),
+            names.index("Motor vehicles (cost)") + 1,
+        )
+
+    def test_an_empty_section_renders_nothing(self):
+        self.assertEqual(
+            _build_subgrouped_items([], _classify_noncurrent_asset), [])

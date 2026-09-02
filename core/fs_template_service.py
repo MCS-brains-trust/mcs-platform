@@ -1522,16 +1522,13 @@ def _build_subgrouped_items(items, classify_fn, credit_normal=False,
                 ranked[name] = rows
         groups = ranked
 
-    # If there's only one group, return a flat list (no sub-headings needed).
-    # A group that nests a security tier is the exception: collapsing secured
-    # loans back into "Financial Liabilities" leaves DJLH FY2024's non-current
-    # liabilities as ONE group, and a flat list there would drop the
-    # "Financial Liabilities" heading and its subtotal -- both of which
-    # HandiLedger prints and both of which already ship.
-    _has_tiered_group = any(name in SECURITY_TIER_GROUPS for name in groups)
-    if len(groups) <= 1 and not _has_tiered_group:
-        return _format_lines(list(items), credit_normal=credit_normal)
-
+    # Every group prints its heading and its subtotal, including a section
+    # that resolves to a single group. A flat list used to be returned in that
+    # case, which dropped both rows -- but HandiLedger prints them: DJLH
+    # FY2024's Non-Current Liabilities hold only "Financial Liabilities", and
+    # its group subtotal (3,827,292) is printed directly above the identical
+    # Total Non-Current Liabilities. An empty section still renders nothing,
+    # since there are no groups to walk.
     result = []
     for group_name, group_items in groups.items():
         # Sub-heading row
@@ -2571,8 +2568,14 @@ _SUB_HEADING_LABELS = sorted({
     )
 })
 
-# The nested second tier, styled the same way as a group heading.
+# The nested second tier, which stays at the body size so the sub-group
+# heading above it reads as a level up.
 _NESTED_SUB_HEADING_LABELS = [label.lower() for label in SECURITY_TIER_ORDER]
+
+# Half a point above the body's Pt(10) and half below the section heading's
+# FONT_SIZE_HEADING = Pt(11) (both in generate_fs_templates), giving the
+# sub-group heading a level of its own between them.
+_SUB_HEADING_SIZE = Pt(10.5)
 
 
 # ---------------------------------------------------------------------------
@@ -3012,20 +3015,38 @@ def _post_process_fs_doc(buffer, doc_type, has_prior=True, entity_type=None):
                                 run.bold = True
 
                 # Sub-group headings (Cash Assets, Financial Liabilities,
-                # Issued Capital, ...) and the nested tier inside a liability
-                # group ("Unsecured:", "Secured:") — bold, no indent.
+                # Issued Capital, ...) — bold and a half point above the body
+                # size, which puts them between the section heading
+                # (FONT_SIZE_HEADING) above and the nested tier below.
                 #
-                # HandiLedger separates the two levels typographically, setting
-                # the group in Arial and the tier in its body face; this
-                # template is single-face Arial throughout, so the tier is
-                # marked by its trailing colon and its position under the group
-                # heading. Neither level is indented -- HandiLedger prints both
-                # at the same left margin as the account names.
-                is_sub_heading = any(
-                    lbl == first_cell_text
-                    for lbl in _SUB_HEADING_LABELS + _NESTED_SUB_HEADING_LABELS
+                # HandiLedger separates all four levels: section, sub-group,
+                # tier, account line. It does it with two faces and four
+                # sizes; this template is single-face Arial, so size carries
+                # the distinction. Styling the sub-group and the tier
+                # identically -- as this did -- flattened them into one level
+                # and made the nesting invisible.
+                # Balance sheet only: the labels are its own group names, and
+                # one of them is the bare word "Other" -- an ordinary expense
+                # account name. Ungated, an expense called "Other" would be
+                # styled as though it headed a group the P&L does not have.
+                is_sub_heading = doc_type == "BALANCE_SHEET" and any(
+                    lbl == first_cell_text for lbl in _SUB_HEADING_LABELS
                 )
                 if is_sub_heading:
+                    for cell in row.cells:
+                        for para in cell.paragraphs:
+                            for run in para.runs:
+                                run.bold = True
+                                run.font.size = _SUB_HEADING_SIZE
+
+                # The nested tier ("Unsecured:", "Secured:") — bold at the body
+                # size, no indent. HandiLedger prints it at the same left
+                # margin as the account names beneath it, distinguished from
+                # them by weight and by its trailing colon, and from the
+                # sub-group heading above it by size.
+                if doc_type == "BALANCE_SHEET" and any(
+                        lbl == first_cell_text
+                        for lbl in _NESTED_SUB_HEADING_LABELS):
                     for cell in row.cells:
                         for para in cell.paragraphs:
                             for run in para.runs:
