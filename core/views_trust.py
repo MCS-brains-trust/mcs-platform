@@ -844,45 +844,69 @@ def _serialize_election(election):
 # Stage 6 — Document Generation Views
 # =============================================================================
 
-def _get_confirmed_scenario_data(workspace):
-    """
-    Return a list of dicts describing each beneficiary's confirmed allocation.
-    Each dict: {name, type, total, streams, percentage}
-    Returns (rows, total_distributed, ndi)
-    """
-    confirmed = workspace.confirmed_scenario
-    if not confirmed or not confirmed.allocations:
-        return [], Decimal("0"), workspace.net_distributable_income or Decimal("0")
+def _posted_distribution_data(workspace):
+    """What was actually distributed, read from the posted journal.
 
-    profiles = {
-        str(p.beneficiary_id): p
-        for p in workspace.beneficiary_profiles.select_related("beneficiary").all()
-    }
+    Each dict: {name, account_code, total, percentage}
+    Returns (rows, total_distributed, ndi)
+
+    This read ``workspace.confirmed_scenario`` -- a ``DistributionScenario``.
+    That field is None on every workspace on the platform: the live flow
+    selects a ``TaxPlanningScenario`` and posts a journal, and nothing ever
+    confirms a DistributionScenario. So this always returned no rows, and the
+    generated summary printed a heading, a figure and an empty table for the
+    five trusts that had genuinely distributed.
+
+    The NDI came from ``workspace.net_distributable_income``, the stored
+    snapshot. Minli FY2026 held 876,322.95 there from superseded calculations
+    against a true nil -- which is why the post gate already recomputes rather
+    than trusting it, and why this does too.
+
+    Same principle as _figures_for_year: a document reports what was posted,
+    not what was planned. ``live_trust_distribution`` excludes a journal that
+    has been reversed, so an un-posted distribution correctly reports nothing.
+
+    The journal records per-beneficiary totals and carries no stream
+    character, so there is no stream breakdown to return -- inventing one is
+    exactly the plan-vs-ledger confusion this removes.
+    """
+    from core.eva_trust_planning import _calculate_income_streams
+
+    fy = workspace.financial_year
+    ndi = Decimal(
+        _calculate_income_streams(fy)["net_distributable_income"]
+    )
+
+    journal = AdjustingJournal.live_trust_distribution(fy)
+    if journal is None:
+        return [], Decimal("0"), ndi
 
     rows = []
     total_distributed = Decimal("0")
-    for ben_id, streams in confirmed.allocations.items():
-        total_for_ben = sum(Decimal(str(v or 0)) for v in streams.values())
-        if total_for_ben <= 0:
+    for line in journal.lines.order_by("line_number", "id"):
+        # 4199 is the debit side of the appropriation, not a recipient.
+        if (line.account_code or "").split(".")[0] == "4199":
             continue
-        profile = profiles.get(str(ben_id))
-        name = profile.beneficiary.full_name if profile else f"Beneficiary {str(ben_id)[:8]}"
-        ben_type = profile.get_beneficiary_type_display() if profile else ""
+        amount = line.credit or Decimal("0")
+        if amount <= 0:
+            continue
+        # The account name is "Distribution — <name>"; fall back to the whole
+        # name rather than guessing if it is not in that shape.
+        name = (line.account_name or "").split("—")[-1].strip() or line.account_name
         rows.append({
             "name": name,
-            "type": ben_type,
-            "total": total_for_ben,
-            "streams": {k: Decimal(str(v or 0)) for k, v in streams.items()},
+            "account_code": line.account_code,
+            "total": amount,
             "percentage": Decimal("0"),
         })
-        total_distributed += total_for_ben
+        total_distributed += amount
 
     rows.sort(key=lambda r: r["name"])
     if total_distributed > 0:
         for r in rows:
             r["percentage"] = (r["total"] / total_distributed * 100).quantize(Decimal("0.01"))
 
-    return rows, total_distributed, workspace.net_distributable_income or Decimal("0")
+    return rows, total_distributed, ndi
 
 
 @login_required
@@ -1018,11 +1042,11 @@ def trust_generate_distribution_summary(request, pk):
         from django.http import JsonResponse as JR
         return JR({"error": "No trust workspace found."}, status=404)
 
-    rows, total_distributed, ndi = _get_confirmed_scenario_data(workspace)
+    rows, total_distributed, ndi = _posted_distribution_data(workspace)
     entity = fy.entity
     fy_year = "".join(c for c in fy.year_label if c.isdigit()) or str(fy.end_date.year)
     fy_end = f"30 June {fy_year}"
-    confirmed = workspace.confirmed_scenario
+    journal = AdjustingJournal.live_trust_distribution(fy)
 
     doc = Document()
     style = doc.styles["Normal"]
@@ -1034,82 +1058,64 @@ def trust_generate_distribution_summary(request, pk):
 
     doc.add_paragraph(f"Trust: {entity.entity_name}")
     doc.add_paragraph(f"Financial Year: {fy.year_label}  |  Year Ended: {fy_end}")
-    doc.add_paragraph(f"Scenario: {confirmed.name if confirmed else 'N/A'}")
+    if journal is not None:
+        doc.add_paragraph(
+            f"Distribution journal: {journal.reference_number}, posted "
+            f"{journal.journal_date:%d %B %Y}"
+        )
     doc.add_paragraph(f"Net Distributable Income: ${ndi:,.2f}")
     doc.add_paragraph("")
 
     if rows:
-        # Build column headers: Stream | Ben1 | Ben2 | ... | Total
-        STREAM_LABELS = {
-            "ordinary": "Ordinary",
-            "cgt_discount": "CGT Discount",
-            "cgt_non_discount": "CGT Non-Discount",
-            "franked_dividends": "Franked Dividends",
-            "franking_credits": "Franking Credits",
-            "tax_free": "Tax-Free",
-        }
-        all_streams = list(STREAM_LABELS.keys())
-        col_count = 1 + len(rows) + 1  # Stream + beneficiaries + Total
-
-        table = doc.add_table(rows=1, cols=col_count)
+        # Beneficiary and amount, as posted. The journal credits one account
+        # per beneficiary and records no stream character, so there is no
+        # stream grid to build -- the previous Stream x Beneficiary table drew
+        # on a DistributionScenario that is None on every workspace, and so
+        # rendered empty for every trust that had actually distributed.
+        table = doc.add_table(rows=1, cols=3)
         table.style = "Table Grid"
         hdr = table.rows[0].cells
-        hdr[0].text = "Income Stream"
-        for i, row in enumerate(rows):
-            hdr[i + 1].text = row["name"]
-        hdr[-1].text = "Total"
+        hdr[0].text = "Beneficiary"
+        hdr[1].text = "Amount"
+        hdr[2].text = "Percentage"
         for cell in hdr:
             for para in cell.paragraphs:
                 for run in para.runs:
                     run.bold = True
 
-        stream_totals = {s: Decimal("0") for s in all_streams}
-        for stream_key in all_streams:
-            label = STREAM_LABELS.get(stream_key, stream_key)
+        for ben_row in rows:
             r = table.add_row().cells
-            r[0].text = label
-            row_total = Decimal("0")
-            for i, ben_row in enumerate(rows):
-                amt = ben_row["streams"].get(stream_key, Decimal("0"))
-                r[i + 1].text = f"${amt:,.2f}" if amt else "-"
-                row_total += amt
-                stream_totals[stream_key] += amt
-            r[-1].text = f"${row_total:,.2f}"
+            r[0].text = ben_row["name"]
+            r[1].text = f"${ben_row['total']:,.2f}"
+            r[2].text = f"{ben_row['percentage']}%"
 
-        # Total row
         total_row = table.add_row().cells
         total_row[0].text = "TOTAL"
-        for i, ben_row in enumerate(rows):
-            total_row[i + 1].text = f"${ben_row['total']:,.2f}"
-        total_row[-1].text = f"${total_distributed:,.2f}"
+        total_row[1].text = f"${total_distributed:,.2f}"
+        total_row[2].text = "100.00%"
         for cell in total_row:
             for para in cell.paragraphs:
                 for run in para.runs:
                     run.bold = True
 
         doc.add_paragraph("")
-
-        # Percentage summary
-        doc.add_heading("Distribution Percentages", level=2)
-        pct_table = doc.add_table(rows=1, cols=3)
-        pct_table.style = "Table Grid"
-        ph = pct_table.rows[0].cells
-        ph[0].text = "Beneficiary"
-        ph[1].text = "Amount"
-        ph[2].text = "Percentage"
-        for cell in ph:
-            for para in cell.paragraphs:
-                for run in para.runs:
-                    run.bold = True
-        for ben_row in rows:
-            pr = pct_table.add_row().cells
-            pr[0].text = ben_row["name"]
-            pr[1].text = f"${ben_row['total']:,.2f}"
-            pr[2].text = f"{ben_row['percentage']}%"
+        undistributed = ndi - total_distributed
+        if undistributed != Decimal("0"):
+            doc.add_paragraph(
+                f"Undistributed income: ${undistributed:,.2f}. Income not "
+                f"distributed by 30 June is assessed to the trustee."
+            )
+    elif ndi <= Decimal("0"):
+        doc.add_paragraph(
+            "No income was distributable for this year. Carried-forward "
+            "losses absorb the year's income in full, so there is nothing to "
+            "distribute and no distribution has been posted."
+        )
     else:
         doc.add_paragraph(
-            "No confirmed distribution scenario found. Please complete Stage 3 "
-            "(Distribution Modelling) and confirm a scenario before generating this summary."
+            "No distribution has been posted for this year. Complete the "
+            "distribution in the Trust tab and post it to the trial balance "
+            "before generating this summary."
         )
 
     buffer = io.BytesIO()
