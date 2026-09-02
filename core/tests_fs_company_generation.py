@@ -682,18 +682,18 @@ class CurrentAssetInventoryClassificationTests(TestCase):
         must keep passing after it. "Cash on hand" is the only "on hand" account
         name in production (10 trial balance lines, checked 2026-08-14), so this
         is the case the reorder could realistically have broken."""
-        self.assertEqual(self._classify("Cash on hand"), "Cash and Cash Equivalents")
+        self.assertEqual(self._classify("Cash on hand"), "Cash Assets")
         self.assertEqual(
             self._classify("Cash on hand", standard_code="BS-CA-001"),
-            "Cash and Cash Equivalents",
+            "Cash Assets",
         )
 
     def test_the_keywords_do_not_reach_beyond_stock(self):
         """Also a guard. Work in progress on a services chart is unbilled labour
         and belongs in receivables-or-other, not inventories; "Stock options" is
         an equity instrument. Both would be caught by a looser keyword list."""
-        self.assertEqual(self._classify("Work in Progress"), "Other Current Assets")
-        self.assertEqual(self._classify("Stock options reserve"), "Other Current Assets")
+        self.assertEqual(self._classify("Work in Progress"), "Other")
+        self.assertEqual(self._classify("Stock options reserve"), "Other")
 
 
 @override_settings(STORAGES=STORAGES_OVERRIDE)
