@@ -87,3 +87,63 @@ class BroughtForwardLossesTests(TestCase):
     def test_other_accounts_are_ignored(self):
         self._line("500000.00", "rollover", code="4110")
         self.assertEqual(brought_forward_losses(self.fy), Decimal("0"))
+
+    def test_a_reversed_distribution_leaves_no_half_behind(self):
+        """Both sides of a reversed appropriation, or neither.
+
+        Minli FY2026: JE-007 posted 626,802.51 to 4199 and JE-008 reversed it.
+        ``live_trust_distribution`` returns JE-007, so excluding only the live
+        distribution dropped the debit and left the reversing credit standing,
+        counted as though it were a prior-period adjustment. The carried
+        balance read 1,628,428.89 against a true 2,255,231.40.
+
+        The reversal is identifiable: JE-008.reverses is JE-007. The helper
+        simply never asked.
+        """
+        self._line("2255231.40", "rollover")
+        distribution = AdjustingJournal.objects.create(
+            financial_year=self.fy, reference_number="JE-007",
+            journal_type=AdjustingJournal.JournalType.GENERAL,
+            status=AdjustingJournal.JournalStatus.POSTED,
+            journal_date=self.fy.end_date, description="Trust distribution",
+            is_trust_distribution=True,
+        )
+        reversal = AdjustingJournal.objects.create(
+            financial_year=self.fy, reference_number="JE-008",
+            journal_type=AdjustingJournal.JournalType.GENERAL,
+            status=AdjustingJournal.JournalStatus.POSTED,
+            journal_date=self.fy.end_date,
+            description="Reversal of JE-007", reverses=distribution,
+        )
+        self._line("626802.51", "manual_journal", journal=distribution)
+        self._line("-626802.51", "manual_journal", journal=reversal)
+
+        self.assertEqual(
+            brought_forward_losses(self.fy), Decimal("2255231.40"),
+            "the reversing credit was counted as brought forward",
+        )
+
+    def test_an_unposted_reversal_does_not_exclude_anything(self):
+        """A draft reversal has not happened yet."""
+        self._line("2255231.40", "rollover")
+        distribution = AdjustingJournal.objects.create(
+            financial_year=self.fy, reference_number="JE-007",
+            journal_type=AdjustingJournal.JournalType.GENERAL,
+            status=AdjustingJournal.JournalStatus.POSTED,
+            journal_date=self.fy.end_date, description="Trust distribution",
+            is_trust_distribution=True,
+        )
+        reversal = AdjustingJournal.objects.create(
+            financial_year=self.fy, reference_number="JE-008",
+            journal_type=AdjustingJournal.JournalType.GENERAL,
+            status=AdjustingJournal.JournalStatus.DRAFT,
+            journal_date=self.fy.end_date,
+            description="Reversal of JE-007", reverses=distribution,
+        )
+        self._line("626802.51", "manual_journal", journal=distribution)
+        self._line("-626802.51", "manual_journal", journal=reversal)
+
+        # The live distribution's own row is excluded as always; the draft
+        # reversal's row is not, because it has not been posted.
+        self.assertEqual(
+            brought_forward_losses(self.fy), Decimal("1628428.89"))

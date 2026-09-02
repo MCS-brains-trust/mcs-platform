@@ -39,7 +39,17 @@ def brought_forward_losses(financial_year):
     )
     live = AdjustingJournal.live_trust_distribution(financial_year)
     if live is not None:
-        lines = lines.exclude(source_journal=live)
+        # Both sides of the appropriation, or neither. A reversal is still a
+        # posted journal on the ledger, and excluding only the distribution
+        # left the reversing credit standing where it read as a prior-period
+        # adjustment: Minli FY2026's JE-007/JE-008 pair reported a carried
+        # balance of 1,628,428.89 against a true 2,255,231.40.
+        own = [live.pk] + list(
+            live.reversed_by.filter(
+                status=AdjustingJournal.JournalStatus.POSTED,
+            ).values_list("pk", flat=True)
+        )
+        lines = lines.exclude(source_journal__in=own)
     # ZERO as the start value so an empty 4199 returns Decimal("0") rather
     # than int 0, which would poison Decimal arithmetic downstream.
     return sum((line.closing_balance or ZERO for line in lines), ZERO)
