@@ -2226,17 +2226,29 @@ class AdjustingJournal(models.Model):
 
     @classmethod
     def live_trust_distribution(cls, financial_year):
-        """Return the single live (posted, non-voided) trust distribution
-        journal for a financial year, or None.
+        """Return the trust distribution currently standing on the ledger for
+        a financial year, or None.
 
         Single source of truth for the post gate, the idempotency guard and
         the un-post action. Keys off the ``is_trust_distribution`` structural
         flag and ``status='posted'`` so a voided journal no longer counts.
+
+        A REVERSED distribution does not count either. ``trust_unpost_distribution``
+        voids the journal on an editable year -- which this query already
+        handled -- but on a finalised year it must leave the original posted
+        for the audit trail and create a reversing journal beside it. Nothing
+        here saw that, so a distribution that had been un-posted still read as
+        live, and Minli FY2026 (JE-007 posted, JE-008 reversing it) could
+        neither be re-distributed nor safely un-posted again: the un-post
+        action would have taken the reverse branch a second time and credited
+        4199 by another 626,802.51.
         """
         return cls.objects.filter(
             financial_year=financial_year,
             is_trust_distribution=True,
             status=cls.JournalStatus.POSTED,
+        ).exclude(
+            reversed_by__status=cls.JournalStatus.POSTED,
         ).first()
 
     def recalculate_totals(self):
@@ -3893,6 +3905,25 @@ class TaxPlanningWorksheet(models.Model):
     net_profit_before_distributions = models.DecimalField(
         max_digits=15, decimal_places=2, default=0,
     )
+    # Loss recoupment — a trust cannot distribute income its carried-forward
+    # losses have already absorbed. Read from 4199 via core.trust_losses, the
+    # same source the Trust tab uses, so the two tabs cannot disagree.
+    income_before_recoupment = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Net profit after tax adjustments, before recouping losses",
+    )
+    losses_recouped = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Carried-forward losses absorbed by this year's income",
+    )
+    undistributed_brought_forward = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Credit balance in 4199 brought forward — itself distributable",
+    )
+    losses_carried_forward = models.DecimalField(
+        max_digits=15, decimal_places=2, default=0,
+        help_text="Losses remaining after recoupment, carried to the next year",
+    )
     capital_gains = models.DecimalField(
         max_digits=15, decimal_places=2, default=0,
         help_text="Subset of distributable income",
@@ -4956,6 +4987,11 @@ class TrustWorkspace(models.Model):
         help_text="Documents",
     )
     # Financial data
+    # The Stage 1 ladder (revenue, expenses, profit, the brought-forward
+    # position) is deliberately NOT stored here. _serialize_workspace derives
+    # it from the ledger on every read: a stored copy would be nil on every
+    # workspace that predates it, could not be refreshed once Stage 1 is
+    # marked complete, and would go stale exactly the way this figure did.
     net_distributable_income = models.DecimalField(
         max_digits=15, decimal_places=2, null=True, blank=True,
     )

@@ -198,7 +198,7 @@
                 </ul>
             </div>
             {% endif %}
-        {% elif can_finalise %}
+        {% elif can_finalise and not no_distributable_income %}
         <button class="btn btn-success btn-sm" id="btnFinalise">
             <i class="bi bi-check-circle"></i> Finalise Tax Plan
         </button>
@@ -206,6 +206,39 @@
     </div>
 </div>
 
+{% if no_distributable_income %}
+<!-- ===== NO PROFIT TO DISTRIBUTE ===== -->
+<div class="alert alert-warning d-flex align-items-start gap-3 mb-3" id="noProfitNotice">
+    <i class="bi bi-exclamation-octagon-fill fs-4 flex-shrink-0"></i>
+    <div>
+        <h5 class="alert-heading mb-1">No profit to distribute</h5>
+        {% if section1.losses_recouped > 0 %}
+        <p class="mb-1">
+            This trust has carried-forward losses that absorb the year's income of
+            <strong>${{ section1.income_before_recoupment|floatformat:2|intcomma }}</strong>
+            in full. Nothing is distributable and no tax plan is required for this year.
+        </p>
+        {% else %}
+        <p class="mb-1">
+            This trust made no distributable profit this year. Nothing is
+            distributable and no tax plan is required.
+        </p>
+        {% endif %}
+        <p class="mb-0 small">
+            <strong>${{ section1.losses_carried_forward|floatformat:2|intcomma }}</strong>
+            of losses carry forward to the next year. Distribution modelling is
+            disabled below; Section 1 shows the workings.
+        </p>
+    </div>
+</div>
+{% endif %}
+
+{# The optimiser measures allocations against distributable income. With none #}
+{# to allocate it reports a Variance the user cannot clear -- a discretionary #}
+{# trust keeps its previously saved proposed_distribution rows, and the       #}
+{# inputs that would zero them are now disabled. The notice above says what   #}
+{# the bar would have, and Section 1 below shows the workings.                #}
+{% if not no_distributable_income %}
 <!-- ===== STICKY OPTIMISER BAR ===== -->
 <div class="sticky-bar" id="optimiserBar">
     <div class="d-flex justify-content-between align-items-center flex-wrap">
@@ -231,6 +264,7 @@
         </div>
     </div>
 </div>
+{% endif %}
 
 <!-- ===== SECTION 1: DISTRIBUTABLE INCOME ===== -->
 <div class="section-card">
@@ -256,10 +290,37 @@
                                 <td><i class="bi bi-dash-circle text-info"></i> Non-Assessable Income (Deduct)</td>
                                 <td class="text-end">(${{ section1.non_assessable_income|floatformat:2|intcomma }})</td>
                             </tr>
+                            <tr class="border-top">
+                                <td>Income Before Loss Recoupment</td>
+                                <td class="text-end">${{ section1.income_before_recoupment|floatformat:2|intcomma }}</td>
+                            </tr>
+                            {% if section1.undistributed_brought_forward > 0 %}
+                            <tr class="table-warning">
+                                <td>
+                                    <i class="bi bi-plus-circle text-warning"></i>
+                                    Undistributed Income Brought Forward
+                                </td>
+                                <td class="text-end">${{ section1.undistributed_brought_forward|floatformat:2|intcomma }}</td>
+                            </tr>
+                            {% elif section1.losses_recouped > 0 or section1.losses_carried_forward > 0 %}
+                            <tr class="table-danger">
+                                <td>
+                                    <i class="bi bi-dash-circle text-danger"></i>
+                                    Losses Recouped (brought forward)
+                                </td>
+                                <td class="text-end">(${{ section1.losses_recouped|floatformat:2|intcomma }})</td>
+                            </tr>
+                            {% endif %}
                             <tr class="table-success fw-bold" style="font-size: 1.05rem;">
                                 <td>Distributable Income</td>
                                 <td class="text-end">${{ section1.distributable_income|floatformat:2|intcomma }}</td>
                             </tr>
+                            {% if section1.losses_carried_forward > 0 %}
+                            <tr class="text-muted">
+                                <td class="small">Losses Still Carried Forward</td>
+                                <td class="text-end small">${{ section1.losses_carried_forward|floatformat:2|intcomma }}</td>
+                            </tr>
+                            {% endif %}
                         </tbody>
                     </table>
                 </div>
@@ -348,7 +409,7 @@
                                 {% endif %}
                             </td>
                             <td>
-                                <select class="form-select form-select-sm ben-type-select" {% if is_finalised %}disabled{% endif %}>
+                                <select class="form-select form-select-sm ben-type-select" {% if locked %}disabled{% endif %}>
                                     <option value="individual" {% if row.beneficiary_type == 'individual' %}selected{% endif %}>Individual</option>
                                     <option value="company" {% if row.beneficiary_type == 'company' %}selected{% endif %}>Company</option>
                                     <option value="trust" {% if row.beneficiary_type == 'trust' %}selected{% endif %}>Trust</option>
@@ -364,7 +425,7 @@
                                 {% if row.beneficiary_type != 'company' %}
                                 <input type="number" class="form-control form-control-sm beneficiary-input outside-income"
                                        value="{{ row.outside_income|floatformat:2 }}" step="0.01" min="0"
-                                       {% if is_finalised %}disabled{% endif %}>
+                                       {% if locked %}disabled{% endif %}>
                                 {% else %}
                                 <span class="text-muted">N/A</span>
                                 {% endif %}
@@ -376,7 +437,7 @@
                                 {% else %}
                                 <input type="number" class="form-control form-control-sm beneficiary-input proposed-dist"
                                        value="{{ row.proposed_distribution|floatformat:2 }}" step="0.01" min="0"
-                                       {% if is_finalised %}disabled{% endif %}>
+                                       {% if locked %}disabled{% endif %}>
                                 {% endif %}
                             </td>
                             <!-- Calculated columns — filled by JS after calculate -->
@@ -409,7 +470,7 @@
                     </tfoot>
                 </table>
             </div>
-            {% if not is_finalised %}
+            {% if not locked %}
             <div class="mt-3 d-flex gap-2">
                 <button class="btn btn-sm btn-outline-primary" id="btnEqualSplit">
                     <i class="bi bi-distribute-horizontal"></i> Equal Split
@@ -504,7 +565,7 @@
             </p>
             {% endif %}
             <!-- Save controls -->
-            {% if not is_finalised %}
+            {% if not locked %}
             <div class="d-flex gap-2 align-items-center mb-3">
                 <input type="text" class="form-control form-control-sm" id="scenarioName" placeholder="{% if entity.is_unit_trust %}Scenario name (e.g. FY2026 Register Split)...{% else %}Scenario name (e.g. Option A — Equal Split)...{% endif %}" style="max-width: 300px;">
                 <button class="btn btn-sm btn-outline-primary" id="btnSaveScenario">
@@ -524,8 +585,10 @@
                     <!-- Apply and delete stay hidden for a unit trust: applying a
                          saved split back over a register-derived one is exactly the
                          modelling a unit trust does not have. -->
+                    {% if not locked %}
                     <button class="btn btn-sm btn-link text-primary p-0 ms-1 scenario-load" title="Apply this scenario"><i class="bi bi-box-arrow-in-down"></i></button>
-                    {% if not is_finalised %}
+                    {% endif %}
+                    {% if not locked %}
                     <button class="btn btn-sm btn-link text-danger p-0 ms-1 scenario-delete" title="Delete"><i class="bi bi-x-circle"></i></button>
                     {% endif %}
                     {% endif %}
@@ -585,7 +648,7 @@
     </div>
     <div class="collapse show" id="section5Body">
         <div class="section-body">
-            {% if not is_finalised %}
+            {% if not locked %}
             <div class="notes-toolbar">
                 <button type="button" onclick="document.execCommand('bold')" title="Bold"><b>B</b></button>
                 <button type="button" onclick="document.execCommand('italic')" title="Italic"><i>I</i></button>
@@ -593,8 +656,8 @@
                 <button type="button" onclick="document.execCommand('insertOrderedList')" title="Numbered List"><i class="bi bi-list-ol"></i></button>
             </div>
             {% endif %}
-            <div class="notes-editor" id="recommendationNotes" contenteditable="{% if is_finalised %}false{% else %}true{% endif %}"
-                 {% if is_finalised %}style="background: #f8f9fa; cursor: not-allowed;"{% endif %}>{{ worksheet.recommendation_notes|safe }}</div>
+            <div class="notes-editor" id="recommendationNotes" contenteditable="{% if locked %}false{% else %}true{% endif %}"
+                 {% if locked %}style="background: #f8f9fa; cursor: not-allowed;"{% endif %}>{{ worksheet.recommendation_notes|safe }}</div>
             <div class="form-text mt-1">
                 <i class="bi bi-info-circle"></i> Auto-saves when you click outside the editor. Supports bold, italic, and lists.
                 <span id="notesSaveStatus" class="ms-2"></span>
@@ -637,11 +700,21 @@
     const fyPk = '{{ fy.pk }}';
     const distributableIncome = parseFloat('{{ section1.distributable_income }}');
     const frankingCredits = parseFloat('{{ section1.franking_credits }}');
-    const isFinalised = {{ is_finalised|yesno:"true,false" }};
+    // Inputs are read-only when finalised OR when losses leave nothing to plan.
+    const isLocked = {{ locked|yesno:"true,false" }};
     const taxFreeThreshold = parseFloat('{{ tax_free_threshold }}');
     let scenarios = JSON.parse('{{ scenarios_json|escapejs }}');
 
     // ===== HELPERS =====
+    // The sticky optimiser bar is not rendered when there is nothing to
+    // distribute, so writes to it must tolerate a missing element.
+    function setBar(id, text, className) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.textContent = text;
+        if (className) el.className = className;
+    }
+
     function fmt(n) {
         return '$' + parseFloat(n).toLocaleString('en-AU', {minimumFractionDigits: 2, maximumFractionDigits: 2});
     }
@@ -683,10 +756,9 @@
         document.getElementById('totalDistributed').textContent = fmt(totalDist);
 
         // Sticky bar
-        document.getElementById('barDistributed').textContent = fmt(totalDist);
-        const barUndist = document.getElementById('barUndistributed');
-        barUndist.textContent = fmt(undist);
-        barUndist.className = undist === 0 ? 'value text-success' : 'value text-danger';
+        setBar('barDistributed', fmt(totalDist));
+        setBar('barUndistributed', fmt(undist),
+               undist === 0 ? 'value text-success' : 'value text-danger');
 
         // Section 3 optimiser panel
         document.getElementById('optDistributed').textContent = fmt(totalDist);
@@ -791,19 +863,19 @@
         document.getElementById('resTotalRate').textContent = (avgRate * 100).toFixed(2) + '%';
 
         // Sticky bar
-        document.getElementById('barTotalTax').textContent = fmt(totals.net);
-        document.getElementById('barEffRate').textContent = (avgRate * 100).toFixed(2) + '%';
+        setBar('barTotalTax', fmt(totals.net));
+        setBar('barEffRate', (avgRate * 100).toFixed(2) + '%');
 
         // Section 3 optimiser
         document.getElementById('optTotalTax').textContent = fmt(totals.net);
         document.getElementById('optEffRate').textContent = (avgRate * 100).toFixed(2) + '%';
 
         if (result.optimiser) {
-            document.getElementById('barDistributed').textContent = fmt(result.optimiser.total_distributed);
+            setBar('barDistributed', fmt(result.optimiser.total_distributed));
             document.getElementById('optDistributed').textContent = fmt(result.optimiser.total_distributed);
-            const barUndist = document.getElementById('barUndistributed');
-            barUndist.textContent = fmt(result.optimiser.undistributed);
-            barUndist.className = parseFloat(result.optimiser.undistributed) === 0 ? 'value text-success' : 'value text-danger';
+            setBar('barUndistributed', fmt(result.optimiser.undistributed),
+                   parseFloat(result.optimiser.undistributed) === 0
+                       ? 'value text-success' : 'value text-danger');
 
             const optUndist = document.getElementById('optUndistributed');
             optUndist.textContent = fmt(result.optimiser.undistributed);
@@ -861,7 +933,7 @@
 
     // ===== NOTES AUTO-SAVE (rich text) =====
     const notesEditor = document.getElementById('recommendationNotes');
-    if (notesEditor && !isFinalised) {
+    if (notesEditor && !isLocked) {
         notesEditor.addEventListener('blur', async function() {
             const status = document.getElementById('notesSaveStatus');
             status.textContent = 'Saving...';
@@ -1103,10 +1175,10 @@
                 }
                 if (outsideTd) outsideTd.innerHTML = '<span class="text-muted">N/A</span>';
             } else if (this.value === 'trust') {
-                if (outsideInput) outsideInput.disabled = isFinalised;
+                if (outsideInput) outsideInput.disabled = isLocked;
             } else {
                 if (outsideInput) {
-                    outsideInput.disabled = isFinalised;
+                    outsideInput.disabled = isLocked;
                     outsideInput.style.display = '';
                 }
             }

@@ -95,28 +95,71 @@
 
             <p class="text-muted small">Auto-populated from the Trial Balance. Adjust income streams and confirm Net Distributable Income (NDI).</p>
 
+            <div class="alert alert-warning d-none" id="trust-no-profit-notice">
+                <div class="d-flex align-items-start gap-2">
+                    <i class="bi bi-exclamation-octagon-fill flex-shrink-0"></i>
+                    <div class="small">
+                        <strong>No profit to distribute.</strong>
+                        <span id="trust-no-profit-detail"></span>
+                        Tax planning is not required for this year.
+                    </div>
+                </div>
+            </div>
+
             <div class="row g-3 mb-4">
-                <div class="col-md-4">
-                    <div class="card border-primary">
-                        <div class="card-body text-center">
-                            <div class="small text-muted">Total Revenue</div>
-                            <h4 class="text-primary mb-0" id="trust-total-revenue">$0</h4>
-                        </div>
-                    </div>
+                <div class="col-md-8">
+                    <table class="table table-sm table-bordered mb-0" id="trust-income-ladder">
+                        <tbody>
+                            <tr>
+                                <td>Total Revenue</td>
+                                <td class="text-end" style="width: 180px;" id="trust-total-revenue">$0.00</td>
+                            </tr>
+                            <tr>
+                                <td>Total Expenses</td>
+                                <td class="text-end" id="trust-total-expenses">$0.00</td>
+                            </tr>
+                            <tr class="fw-semibold border-top">
+                                <td>Net Profit for the year</td>
+                                <td class="text-end" id="trust-net-profit">$0.00</td>
+                            </tr>
+                            {# Losses absorbed, or undistributed income brought #}
+                            {# forward. Only one of these is ever shown.        #}
+                            <tr class="table-danger d-none" id="trust-losses-absorbed-row">
+                                <td>
+                                    <i class="bi bi-dash-circle text-danger"></i>
+                                    Less: losses absorbed (brought forward)
+                                </td>
+                                <td class="text-end" id="trust-losses-absorbed">$0.00</td>
+                            </tr>
+                            <tr class="table-warning d-none" id="trust-undistributed-bf-row">
+                                <td>
+                                    <i class="bi bi-plus-circle text-warning"></i>
+                                    Add: undistributed income brought forward
+                                </td>
+                                <td class="text-end" id="trust-undistributed-bf">$0.00</td>
+                            </tr>
+                            <tr class="text-muted d-none" id="trust-ndi-floored-row">
+                                <td class="small fst-italic" colspan="2">
+                                    Limited to nil &mdash; a trust cannot distribute
+                                    more than it has earned.
+                                </td>
+                            </tr>
+                            <tr class="table-success fw-bold border-top">
+                                <td>Net Distributable Income</td>
+                                <td class="text-end" id="trust-ndi">$0.00</td>
+                            </tr>
+                            <tr class="text-muted d-none" id="trust-losses-cf-row">
+                                <td class="small">Losses remaining carried forward</td>
+                                <td class="text-end small" id="trust-losses-cf">$0.00</td>
+                            </tr>
+                        </tbody>
+                    </table>
                 </div>
                 <div class="col-md-4">
-                    <div class="card border-danger">
-                        <div class="card-body text-center">
-                            <div class="small text-muted">Total Expenses</div>
-                            <h4 class="text-danger mb-0" id="trust-total-expenses">$0</h4>
-                        </div>
-                    </div>
-                </div>
-                <div class="col-md-4">
-                    <div class="card border-success">
-                        <div class="card-body text-center">
-                            <div class="small text-muted">Net Distributable Income</div>
-                            <h4 class="text-success mb-0" id="trust-ndi">$0</h4>
+                    <div class="card border-success h-100">
+                        <div class="card-body text-center d-flex flex-column justify-content-center">
+                            <div class="small text-muted">Available to Distribute</div>
+                            <h3 class="text-success mb-0" id="trust-ndi-card">$0.00</h3>
                         </div>
                     </div>
                 </div>

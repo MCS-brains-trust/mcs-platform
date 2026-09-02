@@ -248,23 +248,11 @@ def _calculate_income_streams(financial_year):
     # loss is a debit and reduces the distributable figure, carried-forward
     # undistributed income is a credit and increases it.
     #
-    # The rule is "everything in 4199 EXCEPT this year's own appropriation".
-    # Keying off source="rollover" instead is wrong as soon as a prior year's
-    # correction is recognised in the current year: Dr Services FY2026 opens on
-    # the lodged 29,150.97 and carries a prior-period adjustment crediting
-    # 1,099.23 (a GST reclass FY2025 could not take up, being already lodged),
-    # so the recoupable loss is 28,051.74 and not the 29,150.97 the rollover row
-    # alone reports. Excluding only the live distribution's own rows also keeps
-    # the figure idempotent -- posting a distribution must not shrink the
-    # balance that sized it.
-    from core.models import AdjustingJournal, TrialBalanceLine
-    _4199 = TrialBalanceLine.objects.filter(
-        financial_year=financial_year, account_code__startswith="4199",
-    )
-    _live = AdjustingJournal.live_trust_distribution(financial_year)
-    if _live is not None:
-        _4199 = _4199.exclude(source_journal=_live)
-    brought_forward_losses = sum((line.closing_balance or ZERO) for line in _4199)
+    # The precise rule -- and why it is not simply the rollover row -- lives
+    # with the helper in core/trust_losses.py, which the Tax Planning tab's
+    # Section 1 now shares so the two tabs cannot drift apart again.
+    from core.trust_losses import brought_forward_losses as _bf_losses
+    brought_forward_losses = _bf_losses(financial_year)
     net_distributable_income = net_profit - brought_forward_losses
     # Never offer a negative figure: where losses exceed the year's profit,
     # nothing is distributable and the balance stays carried forward.
