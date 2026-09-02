@@ -391,13 +391,58 @@ def trust_distribution(request, pk):
     dist, created = TrustDistribution.objects.get_or_create(financial_year=fy)
 
     if created:
-        # Auto-populate from trial balance
-        tb_lines = fy.trial_balance_lines.all()
-        total_credit = tb_lines.aggregate(t=Sum("credit"))["t"] or Decimal("0")
-        total_debit = tb_lines.aggregate(t=Sum("debit"))["t"] or Decimal("0")
-        dist.accounting_profit = total_credit - total_debit
-        dist.distributable_income = dist.accounting_profit
-        dist.other_income = dist.accounting_profit
+        # Seed from the ledger, through the same helper every other trust
+        # surface uses.
+        #
+        # This was `sum(credit) - sum(debit)` over EVERY trial balance line,
+        # balance sheet included. A trial balance balances by definition, so
+        # that expression is structurally zero -- $0.00 on all twelve live
+        # trust financial years, not merely wrong on some. It then copied that
+        # zero into distributable_income and other_income.
+        #
+        # Zero is not a harmless starting figure here. distributable_income is
+        # what allocate_unit_trust_distribution splits across the unit
+        # register, and what risk_modules/section100a.py multiplies by each
+        # allocation percentage to decide whether a distribution is large
+        # enough to assess.
+        #
+        # Seeded only on creation: unlike the Stage 1 ladder these figures are
+        # a user-editable input (the update_income form below), not a display
+        # of the ledger, so re-deriving them on every visit would discard the
+        # accountant's own reconciliation adjustments.
+        from core.eva_trust_planning import _calculate_income_streams
+
+        income = _calculate_income_streams(fy)
+        streams = income["income_streams"]
+        dist.accounting_profit = Decimal(income["net_profit"])
+        # Net of recouped carried-forward losses, as the Trust tab, Section 1
+        # and the distribution post gate all are.
+        dist.distributable_income = Decimal(income["net_distributable_income"])
+        # The component fields divide distributable_income up, so they have to
+        # add back to it. income_streams is a GROSS character breakdown of
+        # revenue, not a split of the distributable figure: Dr Services FY2026
+        # earns 138,676.98 of ordinary income but only 61,848.01 survives its
+        # expenses and its carried-forward loss. Seeding straight from the
+        # streams would state components larger than the total they divide.
+        #
+        # So each character is taken only up to what is left, and ordinary
+        # income is the residual. Which stream a recouped loss should be
+        # charged against is a deed and Subdiv 115-C question that
+        # _calculate_income_streams deliberately declines to answer (see its
+        # note), so this is a starting point the accountant can overwrite via
+        # the update_income form -- not a determination.
+        remaining = dist.distributable_income
+        dist.capital_gains = min(
+            Decimal(streams.get("cgt_discount", 0))
+            + Decimal(streams.get("cgt_non_discount", 0)),
+            remaining,
+        )
+        remaining -= dist.capital_gains
+        dist.franked_dividends = min(
+            Decimal(streams.get("franked_dividends", 0)), remaining)
+        remaining -= dist.franked_dividends
+        dist.foreign_income = Decimal("0")
+        dist.other_income = remaining
         dist.save()
 
     # Get the income recipients from the entity officers. A unit trust's
