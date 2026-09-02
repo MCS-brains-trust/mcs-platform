@@ -578,6 +578,13 @@ _CAPITAL_NAME_KEYWORDS = (
 
 COMPANY_RETAINED_LABEL = "Retained profits / (accumulated losses)"
 
+# HandiLedger heads a company's equity section with a sub-group heading, in the
+# same style as "Payables" or "Financial Liabilities", above both equity lines
+# and with no subtotal of its own -- Total Equity closes the section. The
+# wording is company-specific, so sole traders and partnerships get no heading
+# rather than an invented one.
+COMPANY_EQUITY_HEADING = "Issued Capital"
+
 
 def _is_contributed_capital(item):
     """Is this equity line contributed capital rather than accumulated result?"""
@@ -636,6 +643,34 @@ def _collapsed_company_equity(rows):
         "py_amount": sum((r.get("py_amount") or zero for r in rest), zero),
         "standard_code": "BS-EQ-002",
     }]
+
+
+def _with_issued_capital_heading(entity_type, rows):
+    """Prepend HandiLedger's "Issued Capital" heading to a company's equity.
+
+    DJLH Properties Pty Ltd FY2024::
+
+        Equity
+        Issued Capital
+        Issued & paid up capital                        12        12
+        Retained profits / (accumulated losses)    193,542   291,274
+        Total Equity                               193,554   291,286
+
+    Both lines sit under the heading and there is no group subtotal. Returns
+    ``rows`` unchanged for every other entity type, for an empty section, and
+    for a company holding no contributed capital -- Berwick Mechanical
+    Services FY2021 has no issued capital account at all, and a heading over a
+    lone retained-profits line reads as a capital figure that failed to print.
+
+    ``rows`` is already formatted by ``_format_lines``, which mutates in place
+    and keeps ``standard_code``, so the capital test still works here. This
+    only adds a presentation row; nothing about the equity amounts moves.
+    """
+    if entity_type != "company" or not rows:
+        return rows
+    if not any(_is_contributed_capital(row) for row in rows):
+        return rows
+    return [_heading_row(COMPANY_EQUITY_HEADING)] + list(rows)
 
 
 def _collapse_trust_equity_to_accumulated(sections):
@@ -1289,12 +1324,27 @@ CURRENT_ASSET_GROUP_ORDER = (
 NONCURRENT_ASSET_GROUP_ORDER = (
     "Receivables", "Investments", "Property, Plant and Equipment", "Intangibles",
 )
+# These must be the names the classifier actually returns. "Bank Overdraft"
+# and "Other" never matched "Bank Overdrafts" and "Other Current Liabilities",
+# so both groups fell past the ordering to the end in first-seen order and an
+# overdraft printed last where HandiLedger prints it first.
 CURRENT_LIABILITY_GROUP_ORDER = (
-    "Bank Overdraft", "Payables", "Current Tax Liabilities", "Provisions",
-    "Other",
+    "Bank Overdrafts", "Payables", "Current Tax Liabilities", "Provisions",
+    "Other Current Liabilities",
 )
 NONCURRENT_LIABILITY_GROUP_ORDER = (
-    "Financial Liabilities", "Financial Liabilities — Secured", "Provisions",
+    "Financial Liabilities", "Provisions",
+)
+
+# The second tier HandiLedger nests INSIDE a liability group, and the groups
+# that carry it. DJLH FY2024 prints "Financial Liabilities" then "Unsecured:"
+# and "Secured:" beneath it, and "Payables" then "Unsecured:"; the tax and
+# provision groups carry no security tier at all.
+SECURITY_TIER_GROUPS = ("Payables", "Financial Liabilities")
+SECURITY_TIER_ORDER = ("Unsecured:", "Secured:")
+_SECURED_KEYWORDS = (
+    "bank loan", "mortgage", "secured", "finance lease", "hire purchase",
+    "chattel",
 )
 
 
@@ -1324,23 +1374,33 @@ def _classify_noncurrent_asset(item):
 def _classify_noncurrent_liability(item):
     """Sub-heading for a non-current liability, per HandiLedger.
 
-    HandiLedger nests two levels -- "Financial Liabilities" then "Unsecured:"
-    and "Secured:". The sub-group mechanism here is one level deep, so the
-    security status is carried in the heading itself rather than as a second
-    tier. The grouping and the subtotals are what the reader needs; a bank loan
-    secured by mortgage still separates from the related-party loans above it.
+    Security status is NOT part of the group: HandiLedger prints one
+    "Financial Liabilities" heading with "Unsecured:" and "Secured:" nested
+    inside it and a single subtotal for the group. Returning a separate
+    "Financial Liabilities — Secured" group produced two subtotals where
+    HandiLedger prints one. ``_classify_security_tier`` splits the tier.
     """
     name_lower = (item.get("account_name") or "").lower()
-    if any(kw in name_lower for kw in (
-        "bank loan", "mortgage", "secured", "finance lease", "hire purchase",
-        "chattel",
-    )):
-        return "Financial Liabilities — Secured"
     if any(kw in name_lower for kw in (
         "deferred tax", "provision",
     )):
         return "Provisions"
     return "Financial Liabilities"
+
+
+def _classify_security_tier(item):
+    """"Unsecured:" or "Secured:" -- the tier nested inside a liability group.
+
+    A bank loan, mortgage, finance lease, hire purchase or chattel mortgage is
+    secured; everything else in the group -- related-party loans, trade
+    creditors -- is unsecured. HandiLedger prints the tier heading even when
+    only one tier is present (DJLH FY2024's Payables are all unsecured and it
+    still prints "Unsecured:").
+    """
+    name_lower = (item.get("account_name") or "").lower()
+    if any(kw in name_lower for kw in _SECURED_KEYWORDS):
+        return "Secured:"
+    return "Unsecured:"
 
 
 # A contra line reduces the account immediately above it -- "Less: Accumulated
@@ -1356,14 +1416,70 @@ def _is_contra_line(item):
     return name.startswith(_CONTRA_LINE_PREFIXES)
 
 
+def _heading_row(name, nested=False):
+    """A sub-heading row for the templates' flat row loop.
+
+    ``nested`` marks the second tier ("Unsecured:", "Secured:") so a caller
+    can tell the two levels apart -- the tests use it to prove a group heading
+    is not a tier heading, and it keeps the distinction available if the two
+    levels are ever styled differently.
+    """
+    return {
+        "is_heading": True,
+        "is_nested": nested,
+        "account_name": name,
+        "cy_formatted": "",
+        "py_formatted": "",
+        "note_ref": "",
+    }
+
+
+def _build_security_tiers(items, credit_normal=False):
+    """Nest a liability group's items under "Unsecured:" then "Secured:".
+
+    The tier is a second level INSIDE the group, so it gets a heading of its
+    own and NO subtotal -- HandiLedger prints one subtotal for the group.
+
+    A contra line inherits its parent's tier for the same reason it inherits
+    its parent's group: "Less: Unexpired interest charges" is not itself
+    secured, so on its own name it would land under "Unsecured:" while the
+    hire purchase it reduces sits under "Secured:" (Dr Services Family Trust
+    FY2026).
+    """
+    from collections import OrderedDict
+
+    tiers = OrderedDict()
+    previous_tier = None
+    for item in items:
+        if previous_tier is not None and _is_contra_line(item):
+            tier = previous_tier
+        else:
+            tier = _classify_security_tier(item)
+        tiers.setdefault(tier, []).append(item)
+        previous_tier = tier
+
+    rows = []
+    for tier_name in SECURITY_TIER_ORDER:
+        tier_items = tiers.get(tier_name)
+        if not tier_items:
+            continue
+        rows.append(_heading_row(tier_name, nested=True))
+        rows.extend(_format_lines(list(tier_items), credit_normal=credit_normal))
+    return rows
+
+
 def _build_subgrouped_items(items, classify_fn, credit_normal=False,
                             group_order=None):
     """Group items into sub-categories and add formatted amounts.
 
     Returns a list of dicts suitable for the template. Each entry is either:
       - A sub-heading row: {"is_heading": True, "account_name": "Cash Assets"}
+      - A tier heading:    {"is_heading": True, "is_nested": True, ...}
       - A line item row:   {"account_name": ..., "cy_formatted": ..., "py_formatted": ...}
       - A subtotal row:    {"is_subtotal": True, "cy_formatted": ..., "py_formatted": ...}
+
+    Groups named in ``SECURITY_TIER_GROUPS`` nest a second tier inside
+    themselves, with one subtotal for the whole group.
 
     Sub-accounts with dotted codes (e.g. 3244.01, 3245.01) are interleaved by
     suffix so that paired accounts appear consecutively before sub-grouping.
@@ -1406,23 +1522,27 @@ def _build_subgrouped_items(items, classify_fn, credit_normal=False,
                 ranked[name] = rows
         groups = ranked
 
-    # If there's only one group, return a flat list (no sub-headings needed)
-    if len(groups) <= 1:
+    # If there's only one group, return a flat list (no sub-headings needed).
+    # A group that nests a security tier is the exception: collapsing secured
+    # loans back into "Financial Liabilities" leaves DJLH FY2024's non-current
+    # liabilities as ONE group, and a flat list there would drop the
+    # "Financial Liabilities" heading and its subtotal -- both of which
+    # HandiLedger prints and both of which already ship.
+    _has_tiered_group = any(name in SECURITY_TIER_GROUPS for name in groups)
+    if len(groups) <= 1 and not _has_tiered_group:
         return _format_lines(list(items), credit_normal=credit_normal)
 
     result = []
     for group_name, group_items in groups.items():
         # Sub-heading row
-        result.append({
-            "is_heading": True,
-            "account_name": group_name,
-            "cy_formatted": "",
-            "py_formatted": "",
-            "note_ref": "",
-        })
-        # Line items
-        formatted = _format_lines(list(group_items), credit_normal=credit_normal)
-        result.extend(formatted)
+        result.append(_heading_row(group_name))
+        # Line items — nested under their security tier where the group has one
+        if group_name in SECURITY_TIER_GROUPS:
+            result.extend(_build_security_tiers(
+                group_items, credit_normal=credit_normal))
+        else:
+            result.extend(_format_lines(
+                list(group_items), credit_normal=credit_normal))
         # Subtotal row
         sub_cy = sum(item["cy_amount"] for item in group_items)
         sub_py = sum(item["py_amount"] for item in group_items)
@@ -1948,7 +2068,8 @@ def build_company_context(financial_year, include_watermark=True):
     _equity_rows = sections["equity"]
     if entity.entity_type not in TRUST_LIKE_TYPES:
         _equity_rows = _collapsed_company_equity(_equity_rows)
-    equity = _format_lines(_equity_rows, credit_normal=True)
+    equity = _with_issued_capital_heading(
+        entity.entity_type, _format_lines(_equity_rows, credit_normal=True))
 
     total_current_assets_cy = _sum_section(sections["current_assets"])
     total_current_assets_py = _sum_section(sections["current_assets"], "py_amount")
@@ -2435,10 +2556,23 @@ _CARRY_FORWARD_BOLD_LABELS = ("total income", "total expenses")
 # All summary labels (union of above — used for detecting any total row)
 _SUMMARY_LABELS = _SECTION_TOTAL_LABELS + _MAJOR_TOTAL_LABELS + _GRAND_TOTAL_LABELS
 
-_SUB_HEADING_LABELS = [
-    "cash and cash equivalents", "receivables", "other current assets",
-    "bank overdrafts", "payables", "tax liabilities", "other current liabilities",
-]
+# Sub-group headings, derived from the declared group order so the list cannot
+# drift from the wording actually rendered. It did: the labels were the old
+# pre-HandiLedger wording ("cash and cash equivalents", "tax liabilities"), so
+# "Cash Assets", "Financial Liabilities" and "Current Tax Liabilities" matched
+# nothing and printed as plain data rows instead of headings.
+_SUB_HEADING_LABELS = sorted({
+    label.lower() for label in (
+        *CURRENT_ASSET_GROUP_ORDER,
+        *NONCURRENT_ASSET_GROUP_ORDER,
+        *CURRENT_LIABILITY_GROUP_ORDER,
+        *NONCURRENT_LIABILITY_GROUP_ORDER,
+        COMPANY_EQUITY_HEADING,
+    )
+})
+
+# The nested second tier, styled the same way as a group heading.
+_NESTED_SUB_HEADING_LABELS = [label.lower() for label in SECURITY_TIER_ORDER]
 
 
 # ---------------------------------------------------------------------------
@@ -2877,9 +3011,19 @@ def _post_process_fs_doc(buffer, doc_type, has_prior=True, entity_type=None):
                             for run in para.runs:
                                 run.bold = True
 
-                # Sub-group headings (Cash Assets, Receivables, etc.) — bold only
+                # Sub-group headings (Cash Assets, Financial Liabilities,
+                # Issued Capital, ...) and the nested tier inside a liability
+                # group ("Unsecured:", "Secured:") — bold, no indent.
+                #
+                # HandiLedger separates the two levels typographically, setting
+                # the group in Arial and the tier in its body face; this
+                # template is single-face Arial throughout, so the tier is
+                # marked by its trailing colon and its position under the group
+                # heading. Neither level is indented -- HandiLedger prints both
+                # at the same left margin as the account names.
                 is_sub_heading = any(
-                    lbl == first_cell_text for lbl in _SUB_HEADING_LABELS
+                    lbl == first_cell_text
+                    for lbl in _SUB_HEADING_LABELS + _NESTED_SUB_HEADING_LABELS
                 )
                 if is_sub_heading:
                     for cell in row.cells:

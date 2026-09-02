@@ -26,6 +26,7 @@ from decimal import Decimal
 from django.test import SimpleTestCase
 
 from core.fs_template_service import (
+    CURRENT_LIABILITY_GROUP_ORDER,
     NONCURRENT_ASSET_GROUP_ORDER,
     NONCURRENT_LIABILITY_GROUP_ORDER,
     _build_subgrouped_items,
@@ -33,6 +34,7 @@ from core.fs_template_service import (
     _classify_current_liability,
     _classify_noncurrent_asset,
     _classify_noncurrent_liability,
+    _classify_security_tier,
 )
 
 D = Decimal
@@ -105,10 +107,16 @@ class NonCurrentLiabilityGroupingTests(SimpleTestCase):
         )
 
     def test_a_bank_loan_is_secured(self):
-        """HandiLedger splits Unsecured: from Secured: within the group."""
+        """HandiLedger splits Unsecured: from Secured: WITHIN the group.
+
+        The security status is a tier inside "Financial Liabilities", not a
+        group of its own -- carrying it in the group name produced two
+        subtotals where HandiLedger prints one.
+        """
+        self.assertEqual(_classify_security_tier(_row("Bank loans")), "Secured:")
         self.assertEqual(
             _classify_noncurrent_liability(_row("Bank loans")),
-            "Financial Liabilities — Secured",
+            "Financial Liabilities",
         )
 
     def test_djlh_non_current_liabilities_group_as_handiledger_does(self):
@@ -125,10 +133,10 @@ class NonCurrentLiabilityGroupingTests(SimpleTestCase):
             group_order=NONCURRENT_LIABILITY_GROUP_ORDER)
         self.assertEqual(
             _headings(rendered),
-            ["Financial Liabilities", "Financial Liabilities — Secured"],
+            ["Financial Liabilities", "Unsecured:", "Secured:"],
         )
         subtotals = [r for r in rendered if r.get("is_subtotal")]
-        self.assertEqual(len(subtotals), 2)
+        self.assertEqual(len(subtotals), 1)
 
 
 class ContraAccountsStayWithTheirParentTests(SimpleTestCase):
@@ -171,11 +179,9 @@ class ContraAccountsStayWithTheirParentTests(SimpleTestCase):
         """Net hire purchase is 20,280.50 - 6,565.19 = 13,715.31.
 
         With the contra inheriting its parent's group there is only one group
-        here, and _build_subgrouped_items returns a flat list in that case --
-        long-standing behaviour, unrelated to this fix. What matters is that
-        the pair is never split into two groups each carrying its own
-        subtotal, which is what made the hire purchase read as 20,280 gross
-        with a stray 6,565 liability elsewhere.
+        here. What matters is that the pair is never split into two groups
+        each carrying its own subtotal, which is what made the hire purchase
+        read as 20,280 gross with a stray 6,565 liability elsewhere.
         """
         items = [
             _row("Hire purchase", "-20280.50", "-28392.74", "3523"),
@@ -185,8 +191,10 @@ class ContraAccountsStayWithTheirParentTests(SimpleTestCase):
             items, _classify_noncurrent_liability, credit_normal=True,
             group_order=NONCURRENT_LIABILITY_GROUP_ORDER)
 
+        group_headings = [r for r in rendered
+                          if r.get("is_heading") and not r.get("is_nested")]
         self.assertLessEqual(
-            len([r for r in rendered if r.get("is_heading")]), 1,
+            len(group_headings), 1,
             "the pair was split across two groups",
         )
         amounts = [r["cy_amount"] for r in rendered if "cy_amount" in r]
@@ -208,3 +216,195 @@ class ContraAccountsStayWithTheirParentTests(SimpleTestCase):
             names.index("Less: Accumulated depreciation"),
             names.index("Motor vehicles (cost)") + 1,
         )
+
+
+class SecurityTierNestingTests(SimpleTestCase):
+    """HandiLedger nests two levels, and prints ONE subtotal for the group.
+
+    DJLH Properties Pty Ltd FY2024, Non-Current Liabilities::
+
+        Financial Liabilities
+        Unsecured:
+        Loan - Director                                617,466    511,697
+        Loan - Jim Penman                              166,600    166,600
+        Loan - Jim's Group                           1,467,400  1,467,400
+        Loan - Li Penman Property Family Trust               -     66,421
+        Loan - ALIC                                    876,257    914,107
+        Loan - Jim's Properties                         10,000     10,000
+        Secured:
+        Bank loans                                     689,569    702,717
+                                                     3,827,292  3,838,942
+
+    StatementHub carried the security status in the heading itself --
+    "Financial Liabilities" and "Financial Liabilities — Secured" -- which
+    produced two groups and therefore two subtotals where HandiLedger prints
+    one. "Unsecured:"/"Secured:" are a second tier inside the group.
+
+    Current Liabilities nests the same way: HandiLedger prints "Payables"
+    then "Unsecured:" above the trade creditors.
+    """
+
+    def _djlh_ncl(self):
+        return [
+            _row("Loan - Director", "-617466.24", "-511697.00", "3545"),
+            _row("Loan - Jim Penman", "-166600.36", "-166600.36", "3546"),
+            _row("Loan - Jim's Group", "-1467400.00", "-1467400.00", "3548"),
+            _row("Loan - Li Penman Property Family Trust", "0", "-66421.00",
+                 "3565"),
+            _row("Loan - ALIC", "-876256.82", "-914107.00", "3566"),
+            _row("Loan - Jim's Properties", "-10000.00", "-10000.00", "3567"),
+            _row("Bank loans", "-689568.55", "-702717.00", "3625"),
+        ]
+
+    def _render(self, items):
+        return _build_subgrouped_items(
+            items, _classify_noncurrent_liability, credit_normal=True,
+            group_order=NONCURRENT_LIABILITY_GROUP_ORDER)
+
+    def test_a_bank_loan_keeps_the_financial_liabilities_group(self):
+        """Security is a tier inside the group, not a group of its own."""
+        self.assertEqual(
+            _classify_noncurrent_liability(_row("Bank loans")),
+            "Financial Liabilities",
+        )
+
+    def test_djlh_nests_unsecured_then_secured_under_one_heading(self):
+        rendered = self._render(self._djlh_ncl())
+        self.assertEqual(
+            _headings(rendered),
+            ["Financial Liabilities", "Unsecured:", "Secured:"],
+        )
+
+    def test_the_group_prints_exactly_one_subtotal(self):
+        rendered = self._render(self._djlh_ncl())
+        subtotals = [r for r in rendered if r.get("is_subtotal")]
+        self.assertEqual(
+            len(subtotals), 1,
+            "HandiLedger prints one subtotal for Financial Liabilities, "
+            "not one per security tier",
+        )
+        self.assertEqual(subtotals[0]["cy_formatted"], "3,827,292")
+        self.assertEqual(subtotals[0]["py_formatted"], "3,838,942")
+
+    def test_the_subtotal_comes_after_both_tiers(self):
+        rendered = self._render(self._djlh_ncl())
+        kinds = [
+            "subtotal" if r.get("is_subtotal")
+            else r["account_name"] if r.get("is_heading")
+            else "line"
+            for r in rendered
+        ]
+        self.assertEqual(kinds[-1], "subtotal")
+        self.assertLess(kinds.index("Secured:"), kinds.index("subtotal"))
+
+    def test_only_the_tier_rows_are_marked_nested(self):
+        rendered = self._render(self._djlh_ncl())
+        nested = [r["account_name"] for r in rendered if r.get("is_nested")]
+        self.assertEqual(nested, ["Unsecured:", "Secured:"])
+
+    def test_a_tier_heading_carries_no_amounts(self):
+        rendered = self._render(self._djlh_ncl())
+        tier = next(r for r in rendered if r["account_name"] == "Unsecured:")
+        self.assertEqual(tier["cy_formatted"], "")
+        self.assertEqual(tier["py_formatted"], "")
+
+    def test_payables_names_its_single_tier(self):
+        """HandiLedger prints "Unsecured:" even when it is the only tier."""
+        items = [_row("Trade creditors", "-1291.00", "-12353.00", "3000")]
+        rendered = _build_subgrouped_items(
+            items, _classify_current_liability, credit_normal=True,
+            group_order=CURRENT_LIABILITY_GROUP_ORDER)
+        self.assertEqual(_headings(rendered), ["Payables", "Unsecured:"])
+        self.assertEqual(len([r for r in rendered if r.get("is_subtotal")]), 1)
+
+    def test_a_lone_tiered_group_keeps_its_heading_and_subtotal(self):
+        """The single-group flat shortcut must not swallow a nested group.
+
+        Collapsing "Financial Liabilities — Secured" back into its parent
+        leaves DJLH's non-current liabilities as ONE group. Returning a flat
+        list there would drop the heading and the subtotal that already ship.
+        """
+        rendered = self._render(self._djlh_ncl())
+        self.assertTrue(any(r.get("is_heading") for r in rendered))
+        self.assertTrue(any(r.get("is_subtotal") for r in rendered))
+
+    def test_an_untiered_group_gets_no_tier_heading(self):
+        """DJLH FY2024's Current Tax Liabilities carry no security tier."""
+        items = [
+            _row("Trade creditors", "-1291.00", "-12353.00", "3000"),
+            _row("GST payable control account", "-316467.00", "-182975.00",
+                 "3200"),
+            _row("Taxation", "0", "-98193.00", "3300"),
+        ]
+        rendered = _build_subgrouped_items(
+            items, _classify_current_liability, credit_normal=True,
+            group_order=CURRENT_LIABILITY_GROUP_ORDER)
+        self.assertEqual(
+            _headings(rendered),
+            ["Payables", "Unsecured:", "Current Tax Liabilities"],
+        )
+
+    def test_a_contra_line_stays_inside_its_parents_tier(self):
+        """Dr Services FY2026's hire purchase pair must not straddle a tier.
+
+        The contra already inherits its parent's GROUP; it must inherit the
+        parent's TIER too, or "Less: Unexpired interest charges" lands under
+        "Unsecured:" while the hire purchase it reduces sits under "Secured:".
+        """
+        items = [
+            _row("Hire purchase", "-20280.50", "-28392.74", "3523"),
+            _row("Less: Unexpired interest charges", "6565.19", "8757.00",
+                 "3524"),
+            _row("Loan - Jewish Care", "-22382.24", "-13289.52", "3565"),
+        ]
+        rendered = self._render(items)
+        names = [r["account_name"] for r in rendered]
+        hp = names.index("Hire purchase")
+        self.assertEqual(names[hp + 1], "Less: Unexpired interest charges")
+        self.assertEqual(
+            _headings(rendered),
+            ["Financial Liabilities", "Unsecured:", "Secured:"],
+        )
+        self.assertLess(names.index("Secured:"), hp)
+
+    def test_the_hire_purchase_pair_nets_inside_one_subtotal(self):
+        items = [
+            _row("Hire purchase", "-20280.50", "-28392.74", "3523"),
+            _row("Less: Unexpired interest charges", "6565.19", "8757.00",
+                 "3524"),
+        ]
+        rendered = self._render(items)
+        subtotals = [r for r in rendered if r.get("is_subtotal")]
+        self.assertEqual(len(subtotals), 1)
+        self.assertEqual(subtotals[0]["cy_formatted"], "13,715")
+
+
+class CurrentLiabilityGroupOrderTests(SimpleTestCase):
+    """The declared order must use the names the classifier actually returns.
+
+    ``CURRENT_LIABILITY_GROUP_ORDER`` said "Bank Overdraft" and "Other" while
+    ``_classify_current_liability`` returns "Bank Overdrafts" and "Other
+    Current Liabilities", so neither matched and both groups silently fell to
+    the end in first-seen order instead of the overdraft printing first.
+    """
+
+    def test_every_group_the_classifier_returns_is_ordered(self):
+        returned = {
+            _classify_current_liability(_row("Shift Overdraft *9989")),
+            _classify_current_liability(_row("GST payable control account")),
+            _classify_current_liability(_row("Trade creditors")),
+            _classify_current_liability(_row("Accrued settlements")),
+        }
+        missing = returned - set(CURRENT_LIABILITY_GROUP_ORDER)
+        self.assertEqual(missing, set(), f"unordered groups: {missing}")
+
+    def test_a_bank_overdraft_prints_before_payables(self):
+        items = [
+            _row("Trade creditors", "-1291.00", "-12353.00", "3000"),
+            _row("Shift Overdraft *9989", "-5000.00", "-4000.00", "2100"),
+        ]
+        rendered = _build_subgrouped_items(
+            items, _classify_current_liability, credit_normal=True,
+            group_order=CURRENT_LIABILITY_GROUP_ORDER)
+        groups = [h for h in _headings(rendered) if not h.endswith(":")]
+        self.assertEqual(groups, ["Bank Overdrafts", "Payables"])
