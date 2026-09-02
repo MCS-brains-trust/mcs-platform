@@ -97,8 +97,10 @@ class ContentsPageNumberTests(SimpleTestCase):
 
     def test_a_listed_document_that_was_not_produced_gets_no_number(self):
         """SUMMARY_PL and DEPRECIATION_REPORT are skipped for some years, and
-        the Management Representation Letter is added by package assembly and
-        never appears in doc_start_pages at all."""
+        a document that was not produced must be left unnumbered rather than
+        pointed somewhere wrong. The Management Representation Letter is
+        mapped now, but package assembly is what puts it in doc_start_pages --
+        absent from the map passed here, it stays blank."""
         pdf = _stamp_page_numbers(
             _make_pdf([["Cover"],
                        CONTENTS + ["Management Representation Letter"],
@@ -119,16 +121,21 @@ class ContentsPageNumberTests(SimpleTestCase):
 
 
 class ContentsLabelMapTests(SimpleTestCase):
+    """Each value is a tuple of candidates: a label can point at the FS
+    document type in one pack and at a LegalDocument type in another (a
+    company's declaration is appended by package assembly, a trust's is
+    rendered inside the FS bundle). See tests_pack_contents_numbering."""
+
     def test_every_declaration_variant_maps_to_the_declaration_document(self):
         for label in ("Directors' Declaration", "Trustee's Declaration",
                       "Proprietor Declaration", "Partners' Declaration"):
             with self.subTest(label=label):
-                self.assertEqual(CONTENTS_LABEL_TO_DOC_TYPE[label], "DECLARATION")
+                self.assertIn("DECLARATION", CONTENTS_LABEL_TO_DOC_TYPE[label])
 
     def test_the_distribution_label_matches_the_contents_page_wording(self):
-        self.assertEqual(
-            CONTENTS_LABEL_TO_DOC_TYPE["Beneficiaries Profit Distribution Summary"],
+        self.assertIn(
             "DISTRIBUTION",
+            CONTENTS_LABEL_TO_DOC_TYPE["Beneficiaries Profit Distribution Summary"],
         )
 
 
