@@ -654,3 +654,163 @@ class AContraSitsWithTheAccountItReducesTests(SimpleTestCase):
         names = self._pairs(self._render(items))
         self.assertEqual(names, ["Loan - Directors",
                                  "Less: something unnumbered"])
+
+
+class CurrentFinancialLiabilitiesTests(SimpleTestCase):
+    """Current-liability loans and hire purchases head "Financial Liabilities".
+
+    HandiLedger, Scarton Family Trust FY2024 (``handiledger_reference/
+    Financial Statements SCARFT.pdf``), Current Liabilities::
+
+        Financial Liabilities
+        Unsecured:
+        Hire purchase - BMW                        33,671    52,912
+        Less: Unexpired interest charges          (2,064)   (4,902)
+        Beneficiary loan: Elio Scarton            113,647    94,407
+        Beneficiary loan: Jess Scarton            269,621   291,240
+                                                  414,875   433,657
+
+        Current Tax Liabilities
+        GST payable control account                   584       584
+
+    ``_classify_current_liability`` had no Financial Liabilities group at all,
+    so every one of those lines fell into the residual "Other Current
+    Liabilities" -- untiered, and named nothing like HandiLedger. It is live on
+    Dr Services Family Trust FY2026, whose beneficiary loan is the only
+    client-facing instance.
+
+    The master chart is the evidence for what belongs here: HandiLedger's
+    current-liability block runs Bank loans, Trade creditors, Bills of
+    exchange, Other loans, Hire purchase and its contra, the cards, Debentures
+    and Lease liabilities (3000-3155, mirrored at 3156-3299). Trade creditors
+    head "Payables" in HandiLedger's own DJLH report, so they stay there; the
+    rest are financial liabilities.
+    """
+
+    def test_a_beneficiary_loan_is_a_financial_liability(self):
+        """Dr Services FY2026. Both namings: the trial balance carries
+        "Funds loaned to trust", and beneficiary netting renames the row."""
+        self.assertEqual(
+            _classify_current_liability(
+                _row("Funds loaned to trust — Ronen Davidov", code="4110.01")),
+            "Financial Liabilities",
+        )
+        self.assertEqual(
+            _classify_current_liability(
+                _row("Beneficiary loan: Ronen Davidov", code="BEN_4110")),
+            "Financial Liabilities",
+        )
+
+    def test_hire_purchase_and_its_abbreviation_agree(self):
+        """Hazaway writes both "HP - Porsche Boxster CL" and "Hire Purchase - "."""
+        for name in ("Hire purchase - BMW", "HP - Porsche Boxster CL",
+                     "Chattel Mortgage - Fuso Truck 2020",
+                     "Loan Current - 2022 Fuso Fighter XW86HQ"):
+            self.assertEqual(
+                _classify_current_liability(_row(name)),
+                "Financial Liabilities", name,
+            )
+
+    def test_the_chart_block_all_lands_in_one_group(self):
+        for name in ("Bank loans", "Bills of exchange", "Other loans",
+                     "Debentures", "Lease liabilities", "Fleet Card",
+                     "Altitude Black Card", "Credit card - Amex"):
+            self.assertEqual(
+                _classify_current_liability(_row(name)),
+                "Financial Liabilities", name,
+            )
+
+    def test_the_groups_handiledger_already_prints_are_untouched(self):
+        """DJLH's Payables and Current Tax Liabilities must not move."""
+        self.assertEqual(
+            _classify_current_liability(_row("Trade creditors")), "Payables")
+        self.assertEqual(
+            _classify_current_liability(_row("Superannuation payable")),
+            "Payables")
+        self.assertEqual(
+            _classify_current_liability(_row("GST payable control account")),
+            "Current Tax Liabilities")
+        self.assertEqual(
+            _classify_current_liability(_row("Creditors - ATO")),
+            "Current Tax Liabilities")
+        self.assertEqual(
+            _classify_current_liability(
+                _row("Cash at bank - Overdraft *9989",
+                     standard_code="BS-CA-001")),
+            "Bank Overdrafts")
+        self.assertEqual(
+            _classify_current_liability(
+                _row("Amounts withheld from salary & wages")),
+            "Other Current Liabilities")
+
+    def test_financial_liabilities_prints_before_payables(self):
+        """Chart order: Bank loans 3000 comes before Trade creditors 3048."""
+        order = list(CURRENT_LIABILITY_GROUP_ORDER)
+        self.assertIn("Financial Liabilities", order)
+        self.assertLess(order.index("Financial Liabilities"),
+                        order.index("Payables"))
+        self.assertLess(order.index("Payables"),
+                        order.index("Current Tax Liabilities"))
+
+    def test_the_scarton_current_liabilities_render(self):
+        """Its group subtotal is 414,875 / 433,657 and there is one of them.
+
+        The tier split differs from that report on purpose: HandiLedger shows
+        the BMW hire purchase as unsecured, and Elio ruled a hire purchase is
+        secured over the asset by law, so it prints under "Secured:" here.
+        The grouping and the group total are what must match.
+        """
+        items = [
+            _row("Hire purchase - BMW", "-33671.00", "-52912.00", "3100"),
+            _row("Less: Unexpired interest charges", "2064.00", "4902.00",
+                 "3101"),
+            _row("Beneficiary loan: Elio Scarton", "-113647.00", "-94407.00",
+                 "BEN_1"),
+            _row("Beneficiary loan: Jess Scarton", "-269621.00", "-291240.00",
+                 "BEN_2"),
+            _row("GST payable control account", "-584.00", "-584.00", "3380"),
+        ]
+        rendered = _build_subgrouped_items(
+            items, _classify_current_liability, credit_normal=True,
+            group_order=CURRENT_LIABILITY_GROUP_ORDER)
+        self.assertEqual(
+            _headings(rendered),
+            ["Financial Liabilities", "Unsecured:", "Secured:",
+             "Current Tax Liabilities"],
+        )
+        subtotals = [r for r in rendered if r.get("is_subtotal")]
+        self.assertEqual(len(subtotals), 2)
+        self.assertEqual(subtotals[0]["cy_formatted"], "414,875")
+        self.assertEqual(subtotals[0]["py_formatted"], "433,657")
+
+    def test_the_hire_purchase_pair_stays_together_in_the_tier(self):
+        items = [
+            _row("Hire purchase - BMW", "-33671.00", "-52912.00", "3100"),
+            _row("Less: Unexpired interest charges", "2064.00", "4902.00",
+                 "3101"),
+            _row("Beneficiary loan: Elio Scarton", "-113647.00", "-94407.00",
+                 "BEN_1"),
+        ]
+        rendered = _build_subgrouped_items(
+            items, _classify_current_liability, credit_normal=True,
+            group_order=CURRENT_LIABILITY_GROUP_ORDER)
+        names = [r["account_name"] for r in rendered]
+        self.assertEqual(
+            names.index("Less: Unexpired interest charges"),
+            names.index("Hire purchase - BMW") + 1,
+        )
+
+    def test_a_card_is_grouped_however_it_is_named(self):
+        """Hazaway's account 3142 is named two ways across two years.
+
+        FY2024 calls it "Credit card - Amex" and FY2025 "American Express
+        Platinum Busi". Grouping on the name alone put one year's spelling in
+        Financial Liabilities and the other's in Other Current Liabilities --
+        the same account in two different groups depending on the year.
+        """
+        for name in ("Credit card - Amex", "American Express Platinum Busi",
+                     "Hazaway Credit Card", "Visa card", "Mastercard"):
+            self.assertEqual(
+                _classify_current_liability(_row(name, code="3142")),
+                "Financial Liabilities", name,
+            )

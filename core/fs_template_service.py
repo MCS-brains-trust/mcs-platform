@@ -1219,22 +1219,27 @@ def _classify_current_liability(item):
     ``_reclassify_sign_flips``), then "overdraft" in the name, then the
     keyword fallbacks. Tax Liabilities are checked before Payables because
     accounts like "GST payable" contain "payable" which would otherwise
-    match the Payables group.
+    match the Payables group. Financial Liabilities are checked before the
+    bank keywords, or "Bank loans" would read as an overdraft.
     """
     # Bank overdraft via mapping — covers names that don't include a bank
     # keyword (e.g. "Shift Overdraft *9989" mapped to BS-CA-001).
     if item.get("standard_code") in _CASH_STANDARD_CODES:
         return "Bank Overdrafts"
     name_lower = (item.get("account_name") or "").lower()
+    # Bank overdraft via the literal word "overdraft" in the account name
+    if "overdraft" in name_lower:
+        return "Bank Overdrafts"
+    # Borrowings — before the bank keywords below, which would otherwise
+    # take "Bank loans" for an overdraft.
+    if any(kw in name_lower for kw in _CURRENT_FINANCIAL_LIABILITY_KEYWORDS):
+        return "Financial Liabilities"
     # Bank overdraft via name keywords — reclassified from current assets
     if any(kw in name_lower for kw in [
         "cash", "bank", "petty cash", "on hand",
         "anz", "nab", "cba", "commonwealth bank", "westpac", "bendigo",
         "suncorp", "macquarie", "bankwest", "st george", "stgeorge",
     ]):
-        return "Bank Overdrafts"
-    # Bank overdraft via the literal word "overdraft" in the account name
-    if "overdraft" in name_lower:
         return "Bank Overdrafts"
     # Tax / ATO statutory obligations — check before payables (higher priority)
     if any(kw in name_lower for kw in [
@@ -1328,9 +1333,16 @@ NONCURRENT_ASSET_GROUP_ORDER = (
 # and "Other" never matched "Bank Overdrafts" and "Other Current Liabilities",
 # so both groups fell past the ordering to the end in first-seen order and an
 # overdraft printed last where HandiLedger prints it first.
+#
+# "Financial Liabilities" sits before "Payables" because HandiLedger's chart
+# does: its current-liability block opens with Bank loans (3000) and reaches
+# Trade creditors (3048) after. Its Scarton Family Trust FY2024 report prints
+# Financial Liabilities above Current Tax Liabilities, and its DJLH report
+# prints Payables above Current Tax Liabilities; no exemplar carries both, so
+# the chart settles their relative order.
 CURRENT_LIABILITY_GROUP_ORDER = (
-    "Bank Overdrafts", "Payables", "Current Tax Liabilities", "Provisions",
-    "Other Current Liabilities",
+    "Bank Overdrafts", "Financial Liabilities", "Payables",
+    "Current Tax Liabilities", "Provisions", "Other Current Liabilities",
 )
 NONCURRENT_LIABILITY_GROUP_ORDER = (
     "Financial Liabilities", "Provisions",
@@ -1342,9 +1354,40 @@ NONCURRENT_LIABILITY_GROUP_ORDER = (
 # provision groups carry no security tier at all.
 SECURITY_TIER_GROUPS = ("Payables", "Financial Liabilities")
 SECURITY_TIER_ORDER = ("Unsecured:", "Secured:")
+# "hp -" is here so Hazaway Operations' abbreviated "HP - Porsche Boxster CL"
+# is treated the same as its own "Hire Purchase - Porsche Boxster NCL"; the two
+# spellings otherwise landed in different tiers within one entity.
+#
+# HandiLedger does not infer this from the name at all -- it carries the tier
+# in the code range, mirroring every borrowing account at 3000-3155 (unsecured)
+# and 3156-3299 (secured), and again at 3500-3624 and 3625-3749. That is why
+# its Scarton report shows a 3100 hire purchase as unsecured while DJLH's 3625
+# bank loan is secured. Elio ruled a hire purchase is secured over the asset by
+# law, so the keyword stays; reading the tier from the code range instead is a
+# separate, larger change.
 _SECURED_KEYWORDS = (
     "bank loan", "mortgage", "secured", "finance lease", "hire purchase",
-    "chattel",
+    "chattel", "hp -",
+)
+
+# Borrowings, per HandiLedger's current-liability chart block: Bank loans,
+# Bills of exchange, Other loans, Hire purchase and its contra, the cards,
+# Debentures and Lease liabilities. Trade creditors sit in the same code block
+# but head "Payables" in HandiLedger's own DJLH report, so they are matched by
+# the Payables branch below instead. Beneficiary and unit-holder loans belong
+# here too -- HandiLedger's Scarton report prints them under Financial
+# Liabilities -- and are matched both as the trial balance names them ("Funds
+# loaned to trust") and as beneficiary netting renames them ("Beneficiary
+# loan: ...").
+#
+# The card issuers are listed because an account's NAME changes between years
+# while its code does not: Hazaway's 3142 is "Credit card - Amex" in FY2024 and
+# "American Express Platinum Busi" in FY2025, which put one year's spelling in
+# Financial Liabilities and the other's in Other Current Liabilities.
+_CURRENT_FINANCIAL_LIABILITY_KEYWORDS = (
+    "loan", "loaned", "hire purchase", "hp -", "chattel", "lease",
+    "debenture", "bills of exchange", "card", "mortgage", "borrowing",
+    "amex", "american express", "visa", "diners",
 )
 
 
