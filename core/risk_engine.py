@@ -1236,19 +1236,23 @@ def _eval_trust_distribution(rule, fy, tb, ref, ctx, config):
         # distributed. Splitting on source="rollover" instead miscounts a
         # prior-period adjustment as part of the distribution -- see the same
         # reasoning in eva_trust_planning._calculate_income_streams.
+        # The brought-forward half of that split is core.trust_losses'
+        # single source of truth, shared with the Trust tab and the Tax
+        # Planning tab's Section 1. This rule used to carry its own third copy
+        # and drifted with it: a reversed distribution left its reversing
+        # credit counted as brought forward.
         from core.models import AdjustingJournal, TrialBalanceLine
+        from core.trust_losses import brought_forward_losses
 
-        brought_forward = ZERO
+        brought_forward = brought_forward_losses(fy)
         distributed = ZERO
         _live = AdjustingJournal.live_trust_distribution(fy)
-        for line in TrialBalanceLine.objects.filter(
-            financial_year=fy, account_code__startswith="4199",
-        ):
-            amount = line.closing_balance or ZERO
-            if _live is not None and line.source_journal_id == _live.pk:
-                distributed += amount
-            else:
-                brought_forward += amount
+        if _live is not None:
+            for line in TrialBalanceLine.objects.filter(
+                financial_year=fy, account_code__startswith="4199",
+                source_journal=_live,
+            ):
+                distributed += line.closing_balance or ZERO
 
         # No appropriation posted yet — TRU-01 covers that case, not this one.
         if distributed <= ZERO:
