@@ -159,8 +159,8 @@ class CashClassificationTests(TestCase):
                          f"Expected exactly one HAZAWAY row in current_assets; got {matches!r}")
         sub, _ = matches[0]
         self.assertEqual(
-            sub, "Cash and Cash Equivalents",
-            f"HAZAWAY row must classify under 'Cash and Cash Equivalents' "
+            sub, "Cash Assets",
+            f"HAZAWAY row must classify under 'Cash Assets' "
             f"(mapped to BS-CA-001); got sub={sub!r}",
         )
 
@@ -184,8 +184,8 @@ class CashClassificationTests(TestCase):
                          f"Expected exactly one ANZ row; got {matches!r}")
         sub, _ = matches[0]
         self.assertEqual(
-            sub, "Cash and Cash Equivalents",
-            f"Unmapped ANZ account must fall through to 'Cash and Cash Equivalents' "
+            sub, "Cash Assets",
+            f"Unmapped ANZ account must fall through to 'Cash Assets' "
             f"via keyword fallback; got sub={sub!r}",
         )
 
@@ -259,9 +259,9 @@ class CashClassificationTests(TestCase):
         self.assertEqual(len(matches), 1, f"Expected exactly one Bond Deposit row; got {matches!r}")
         sub, _ = matches[0]
         self.assertEqual(
-            sub, "Other Current Assets",
+            sub, "Other",
             f"BS-CA-005-mapped row with no cash keyword must classify under "
-            f"'Other Current Assets'; got sub={sub!r}",
+            f"'Other'; got sub={sub!r}",
         )
 
     # ------------------------------------------------------------------

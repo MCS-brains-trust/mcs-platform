@@ -587,14 +587,21 @@ def _is_contributed_capital(item):
     return any(kw in name_lower for kw in _CAPITAL_NAME_KEYWORDS)
 
 
-def _collapse_company_equity_to_retained(sections):
-    """Present a company's equity as capital plus one closing retained line.
+def _collapsed_company_equity(rows):
+    """Company equity as contributed capital plus one closing retained line.
+
+    Returns a NEW list; ``rows`` is not mutated. That matters: this is a
+    presentation transform, and the underlying ``_sections["equity"]`` must go
+    on reproducing each account's own cy/py faithfully. An earlier cut of this
+    mutated the section in place and broke that guarantee -- 4199 stopped
+    reporting its own balance because the year's result had been folded into
+    it, and the injected "Current year profit / (loss)" row vanished from the
+    data as well as from the page.
 
     HandiLedger is the specification. DJLH Properties Pty Ltd FY2024::
 
         Equity
-          Issued Capital
-            Issued & paid up capital                    12        12
+          Issued & paid up capital                    12        12
           Retained profits / (accumulated losses)  193,542   291,274
         Total Equity                               193,554   291,286
 
@@ -603,39 +610,30 @@ def _collapse_company_equity_to_retained(sections):
     the same Total Equity; only the presentation differed.
 
     Everything that is not contributed capital folds into one line: brought-
-    forward retained profits, the injected "Current year profit / (loss)" row,
-    dividends provided for or paid, and any income-tax appropriation still
-    sitting in equity. The sum is unchanged by construction, so the balance
-    sheet integrity check downstream is unaffected.
+    forward retained profits, the injected current-year result, dividends
+    provided for or paid, and any income-tax appropriation still in equity. The
+    sum is unchanged by construction.
 
     The trust equivalent is ``_collapse_trust_equity_to_accumulated``. They are
     deliberately separate: a trust's line is "Accumulated losses" and carries
     its own rules about undistributed income.
     """
-    rows = sections.get("equity") or []
     if not rows:
-        return
+        return list(rows)
 
     capital = [r for r in rows if _is_contributed_capital(r)]
     rest = [r for r in rows if not _is_contributed_capital(r)]
     if not rest:
-        return
+        return list(rows)
 
     zero = Decimal("0")
-    retained_cy = sum((r.get("cy_amount") or zero for r in rest), zero)
-    retained_py = sum((r.get("py_amount") or zero for r in rest), zero)
-
-    # Carry the real account's code where there is one, so the note map and
-    # any downstream lookup still resolve against 4199.
-    code = next((r.get("account_code") for r in rest
-                 if (r.get("account_code") or "").startswith("4199")),
-                "RETAINED")
-
-    sections["equity"] = capital + [{
-        "account_code": code,
+    return capital + [{
+        # A synthetic code on purpose: this row is an aggregate, not account
+        # 4199, and anything keyed by account_code must not mistake it for one.
+        "account_code": "RETAINED",
         "account_name": COMPANY_RETAINED_LABEL,
-        "cy_amount": retained_cy,
-        "py_amount": retained_py,
+        "cy_amount": sum((r.get("cy_amount") or zero for r in rest), zero),
+        "py_amount": sum((r.get("py_amount") or zero for r in rest), zero),
         "standard_code": "BS-EQ-002",
     }]
 
@@ -1345,6 +1343,19 @@ def _classify_noncurrent_liability(item):
     return "Financial Liabilities"
 
 
+# A contra line reduces the account immediately above it -- "Less: Accumulated
+# depreciation" under the asset at cost, "Less: Unexpired interest charges"
+# under the hire purchase liability. It carries no meaning on its own, so it
+# must never be separated from its parent by a sub-heading or a subtotal.
+_CONTRA_LINE_PREFIXES = ("less:", "less ")
+
+
+def _is_contra_line(item):
+    """Does this line reduce the account immediately above it?"""
+    name = (item.get("account_name") or "").strip().lower()
+    return name.startswith(_CONTRA_LINE_PREFIXES)
+
+
 def _build_subgrouped_items(items, classify_fn, credit_normal=False,
                             group_order=None):
     """Group items into sub-categories and add formatted amounts.
@@ -1363,9 +1374,24 @@ def _build_subgrouped_items(items, classify_fn, credit_normal=False,
     items = _interleave_subaccounts(items)
 
     groups = OrderedDict()
+    previous_group = None
     for item in items:
-        group = classify_fn(item)
+        # A contra line belongs directly beneath the account it offsets.
+        # Dr Services Family Trust FY2026 carries a hire-purchase pair:
+        #     3523  Hire purchase                     (20,280.50)
+        #     3524  Less: Unexpired interest charges    6,565.19
+        # Classified on its own name the contra is not "Secured" while its
+        # parent is, so sub-grouping filed them under different headings and
+        # left "Less: Unexpired interest charges" standing alone as an
+        # apparent positive liability. It inherits the group above it instead,
+        # which also keeps the pair inside one subtotal so the net hire
+        # purchase reads correctly.
+        if previous_group is not None and _is_contra_line(item):
+            group = previous_group
+        else:
+            group = classify_fn(item)
         groups.setdefault(group, []).append(item)
+        previous_group = group
 
     # Print the groups in the order HandiLedger does, not the order the trial
     # balance happens to list the accounts in. Anything unrecognised keeps its
@@ -1805,12 +1831,8 @@ def build_company_context(financial_year, include_watermark=True):
     # of which are sum-based and so are unaffected by the collapse.
     if entity.entity_type in TRUST_LIKE_TYPES:
         _collapse_trust_equity_to_accumulated(sections)
-    else:
-        # Companies, sole traders and partnerships present capital plus a
-        # single closing retained line, as HandiLedger does. Same placement as
-        # the trust collapse: after the profit row is injected and before the
-        # integrity check, both of which are sum-based and so unaffected.
-        _collapse_company_equity_to_retained(sections)
+    # Companies collapse at render time instead, in the equity block below, so
+    # that _sections keeps reproducing each equity account's own figures.
 
     _final_equity = -_sum_section(sections["equity"])
     _final_net_assets = _test_net_assets
@@ -1920,7 +1942,13 @@ def build_company_context(financial_year, include_watermark=True):
     noncurrent_liabilities = _build_subgrouped_items(
         sections["noncurrent_liabilities"], _classify_noncurrent_liability,
         credit_normal=True, group_order=NONCURRENT_LIABILITY_GROUP_ORDER)
-    equity = _format_lines(sections["equity"], credit_normal=True)
+    # Companies, sole traders and partnerships present capital plus a single
+    # closing retained line, as HandiLedger does. Trusts have already been
+    # collapsed to their own "Accumulated losses" line above.
+    _equity_rows = sections["equity"]
+    if entity.entity_type not in TRUST_LIKE_TYPES:
+        _equity_rows = _collapsed_company_equity(_equity_rows)
+    equity = _format_lines(_equity_rows, credit_normal=True)
 
     total_current_assets_cy = _sum_section(sections["current_assets"])
     total_current_assets_py = _sum_section(sections["current_assets"], "py_amount")

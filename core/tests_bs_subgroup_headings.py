@@ -129,3 +129,82 @@ class NonCurrentLiabilityGroupingTests(SimpleTestCase):
         )
         subtotals = [r for r in rendered if r.get("is_subtotal")]
         self.assertEqual(len(subtotals), 2)
+
+
+class ContraAccountsStayWithTheirParentTests(SimpleTestCase):
+    """A "Less:" line belongs directly beneath the account it offsets.
+
+    Dr Services Family Trust FY2026 carries a hire-purchase pair::
+
+        3523  Hire purchase                     (20,280.50)
+        3524  Less: Unexpired interest charges    6,565.19
+
+    Classified on their own names, the parent is Secured and the contra is not,
+    so sub-grouping put them under different headings -- leaving "Less:
+    Unexpired interest charges" alone under Financial Liabilities, reading as a
+    standalone positive liability instead of a deduction from the hire purchase
+    above it.
+    """
+
+    def test_a_less_line_inherits_the_group_above_it(self):
+        items = [
+            _row("Hire purchase", "-20280.50", "-28392.74", "3523"),
+            _row("Less: Unexpired interest charges", "6565.19", "8757.00", "3524"),
+            _row("Loan - Jewish Care", "-22382.24", "-13289.52", "3565"),
+        ]
+        rendered = _build_subgrouped_items(
+            items, _classify_noncurrent_liability, credit_normal=True,
+            group_order=NONCURRENT_LIABILITY_GROUP_ORDER)
+
+        names = [r["account_name"] for r in rendered]
+        hp = names.index("Hire purchase")
+        contra = names.index("Less: Unexpired interest charges")
+        self.assertEqual(
+            contra, hp + 1,
+            f"the contra was separated from its parent: {names}",
+        )
+        # And no heading or subtotal may come between them.
+        self.assertFalse(rendered[hp + 1].get("is_heading"))
+        self.assertFalse(rendered[hp + 1].get("is_subtotal"))
+
+    def test_the_pair_is_never_split_across_two_groups(self):
+        """Net hire purchase is 20,280.50 - 6,565.19 = 13,715.31.
+
+        With the contra inheriting its parent's group there is only one group
+        here, and _build_subgrouped_items returns a flat list in that case --
+        long-standing behaviour, unrelated to this fix. What matters is that
+        the pair is never split into two groups each carrying its own
+        subtotal, which is what made the hire purchase read as 20,280 gross
+        with a stray 6,565 liability elsewhere.
+        """
+        items = [
+            _row("Hire purchase", "-20280.50", "-28392.74", "3523"),
+            _row("Less: Unexpired interest charges", "6565.19", "8757.00", "3524"),
+        ]
+        rendered = _build_subgrouped_items(
+            items, _classify_noncurrent_liability, credit_normal=True,
+            group_order=NONCURRENT_LIABILITY_GROUP_ORDER)
+
+        self.assertLessEqual(
+            len([r for r in rendered if r.get("is_heading")]), 1,
+            "the pair was split across two groups",
+        )
+        amounts = [r["cy_amount"] for r in rendered if "cy_amount" in r]
+        self.assertEqual(
+            sum(amounts), D("-13715.31"),
+            "the pair no longer nets to the hire purchase carrying value",
+        )
+
+    def test_accumulated_depreciation_stays_with_its_asset(self):
+        items = [
+            _row("Motor vehicles (cost)", "38354.00", "38354.00", "2890"),
+            _row("Less: Accumulated depreciation", "-19160.75", "-12763.00", "2895"),
+        ]
+        rendered = _build_subgrouped_items(
+            items, _classify_noncurrent_asset,
+            group_order=NONCURRENT_ASSET_GROUP_ORDER)
+        names = [r["account_name"] for r in rendered]
+        self.assertEqual(
+            names.index("Less: Accumulated depreciation"),
+            names.index("Motor vehicles (cost)") + 1,
+        )

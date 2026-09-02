@@ -25,7 +25,7 @@ from decimal import Decimal
 
 from django.test import SimpleTestCase
 
-from core.fs_template_service import _collapse_company_equity_to_retained
+from core.fs_template_service import _collapsed_company_equity
 
 D = Decimal
 
@@ -51,7 +51,8 @@ class CompanyEquityCollapseTests(SimpleTestCase):
             _row("Current year profit / (loss)", "97731.92", "-587966.00",
                  "NET_PROFIT"),
         ]}
-        _collapse_company_equity_to_retained(self.sections)
+        self.sections["equity"] = _collapsed_company_equity(
+            self.sections["equity"])
 
     def test_capital_comes_first(self):
         self.assertEqual(_names(self.sections)[0], "Issued & paid up capital")
@@ -98,7 +99,7 @@ class DividendsAreAbsorbedTests(SimpleTestCase):
                  "NET_PROFIT"),
         ]}
         before = sum(r["cy_amount"] for r in sections["equity"])
-        _collapse_company_equity_to_retained(sections)
+        sections["equity"] = _collapsed_company_equity(sections["equity"])
 
         names = [r["account_name"] for r in sections["equity"]]
         self.assertNotIn("Dividends provided for or paid", names)
@@ -118,12 +119,12 @@ class EdgeCaseTests(SimpleTestCase):
             _row("Issued & paid up capital", "-12.00", "-12.00", "4200",
                  standard_code="BS-EQ-001"),
         ]}
-        _collapse_company_equity_to_retained(sections)
+        sections["equity"] = _collapsed_company_equity(sections["equity"])
         self.assertEqual(len(sections["equity"]), 1)
         self.assertEqual(sections["equity"][0]["account_name"],
                          "Issued & paid up capital")
 
     def test_an_empty_equity_section_is_safe(self):
         sections = {"equity": []}
-        _collapse_company_equity_to_retained(sections)
+        sections["equity"] = _collapsed_company_equity(sections["equity"])
         self.assertEqual(sections["equity"], [])
