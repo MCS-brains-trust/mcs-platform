@@ -2,17 +2,31 @@
 Section 100A Risk Assessment Module
 ====================================
 
-5-rule detection module for Section 100A reimbursement agreement risk
-on trust entities.  Reads data from the Trust Tab (TrustWorkspace,
-BeneficiaryProfile, TrustDistribution, BeneficiaryAllocation) and
-cross-references entity relationships.
+Detection module for Section 100A reimbursement agreement risk on
+discretionary trusts. Distributions are read from the POSTED distribution
+journal, not from a plan: see load_data.
 
 Rules:
     S100A-01: Distribution to Low-Tax Beneficiary (ADVISORY)
-    S100A-02: Circular Money Flow (CRITICAL)
-    S100A-03: UPE to Related Entity (ADVISORY)
-    S100A-04: Resolution Date Compliance (CRITICAL)
+    S100A-04: Distribution and resolution recorded (ADVISORY)
     S100A-05: Four-Factor Summary Assessment (ADVISORY → CRITICAL)
+
+Retired 2026-09-02, and deliberately not replaced with a silent gap:
+    S100A-02: Circular Money Flow
+    S100A-03: UPE to Related Entity
+
+Both resolved a beneficiary's entity as ``alloc.beneficiary.entity``, but
+``EntityOfficer.entity`` is a foreign key to the TRUST -- so they compared the
+trust against itself, and would have reported a UPE from a trust to itself had
+their data ever arrived. There is no officer-to-beneficiary-entity link in the
+schema and no beneficiary exists as an Entity, so the rules cannot be made
+correct by rewriting them. assess() states plainly that these two exposures are
+not assessed rather than leaving their absence to be read as "no risk found".
+See docs/superpowers/specs/2026-09-02-section-100a-design.md.
+
+Where a rule cannot be evaluated -- no marginal rates recorded, no four-factor
+assessment completed -- it says so. Returning early in silence puts a clean
+assessment on the finding card, which is worse than no rule at all.
 
 Dependency: Trust Tab data (Stages 1–4).  If not completed, fires an
 ADVISORY finding that the assessment is incomplete.
@@ -32,7 +46,6 @@ logger = logging.getLogger(__name__)
 # Thresholds
 LOW_TAX_DISTRIBUTION_MIN = Decimal("10000")   # $10K minimum to flag
 MARGINAL_RATE_DIFF = Decimal("0.15")          # 15% rate difference
-CIRCULAR_FLOW_PCT = Decimal("50")             # 50% return flow threshold
 
 
 class Section100AModule(BaseDetectionModule):
@@ -54,8 +67,12 @@ class Section100AModule(BaseDetectionModule):
         self.trust_workspace = None
         self.beneficiary_profiles = []
         self.allocations = []
-        self.distribution = None
+        self.distribution_journal = None
         self.trust_tab_complete = False
+        # Exposures this run could not evaluate. Severity reads this, so an
+        # assessment that tested nothing cannot come back CLEAR.
+        self.unassessed = []
+        self._unassessed_summaries = []
 
     def should_run(self):
         """Only run for discretionary trusts.
@@ -69,8 +86,10 @@ class Section100AModule(BaseDetectionModule):
         return self.entity.entity_type == "trust"
 
     def load_data(self):
-        """Load Trust Tab data."""
-        from core.models import TrustWorkspace, TrustDistribution
+        """Load Trust Tab data and what was actually distributed."""
+        from core.models import (
+            AdjustingJournal, EntityChartOfAccount, TrustWorkspace,
+        )
 
         # Load trust workspace
         try:
@@ -97,16 +116,42 @@ class Section100AModule(BaseDetectionModule):
                 ).all()
             )
 
-        # Load distribution data
-        try:
-            self.distribution = TrustDistribution.objects.get(
-                financial_year=self.fy,
-            )
-            self.allocations = list(
-                self.distribution.allocations.select_related("beneficiary").all()
-            )
-        except TrustDistribution.DoesNotExist:
-            self.distribution = None
+        # What was actually distributed, from the posted journal.
+        #
+        # This read BeneficiaryAllocation, of which there are zero rows
+        # platform-wide: only the orphaned /years/<pk>/distribution/ page
+        # creates them, and nothing links to it. So every rule that opened with
+        # `if not self.allocations: return` was dead on arrival.
+        #
+        # The journal holds the same facts. live_trust_distribution excludes a
+        # journal that has been reversed, so an un-posted distribution
+        # correctly yields nothing, and the 4199 line is the debit side of the
+        # appropriation rather than a recipient.
+        self.distribution_journal = AdjustingJournal.live_trust_distribution(
+            self.fy)
+        self.allocations = []
+        if self.distribution_journal is None:
+            return
+
+        officer_by_code = {
+            coa.account_code: coa.beneficiary_officer
+            for coa in EntityChartOfAccount.objects.filter(
+                entity=self.entity, beneficiary_officer__isnull=False,
+            ).select_related("beneficiary_officer")
+        }
+        for line in self.distribution_journal.lines.order_by("line_number", "id"):
+            code = line.account_code or ""
+            if code.split(".")[0] == "4199":
+                continue
+            amount = line.credit or ZERO
+            if amount <= ZERO:
+                continue
+            self.allocations.append({
+                "beneficiary": officer_by_code.get(code),
+                "account_code": code,
+                "account_name": line.account_name or "",
+                "amount": amount,
+            })
 
     def assess(self):
         """Run all Section 100A rules."""
@@ -130,10 +175,10 @@ class Section100AModule(BaseDetectionModule):
 
         # Run rules (even with partial data — report what we can)
         self._rule_s100a_01()
-        self._rule_s100a_02()
-        self._rule_s100a_03()
         self._rule_s100a_04()
         self._rule_s100a_05()
+        self._note_retired_rules()
+        self._report_unassessed()
 
         # Composite severity
         self.overall_severity = self._composite_severity()
@@ -170,45 +215,93 @@ class Section100AModule(BaseDetectionModule):
 
         return controller_rate
 
-    def _rule_s100a_01(self):
-        """S100A-01: Distribution to Low-Tax Beneficiary."""
-        if not self.allocations or not self.beneficiary_profiles:
-            return
+    def _cannot_assess(self, exposure, summary):
+        """Record an exposure this run could not evaluate.
 
-        controller_rate = self._get_controller_marginal_rate()
-        if controller_rate is None:
+        Returning early in silence is what made the module dangerous: the
+        finding card reported a clean Section 100A assessment on trusts where
+        nothing had been tested. Every early return that is a gap rather than a
+        pass goes through here. ``_report_unassessed`` states them, and
+        ``_composite_severity`` refuses to report CLEAR while any remain.
+
+        *summary* is a short noun phrase naming the gap and why, not a
+        sentence: they are joined into one line rather than listed separately,
+        so that a trust which has simply distributed does not carry four
+        near-identical findings.
+        """
+        self.unassessed.append(exposure)
+        self._unassessed_summaries.append(summary)
+
+    def _report_unassessed(self):
+        """One line naming every gap, or nothing if there are none."""
+        if not self._unassessed_summaries:
+            return
+        self.finding_lines.append(
+            "Not assessed — " + "; ".join(self._unassessed_summaries) + ". "
+            "These exposures were not tested and are not cleared; review them "
+            "manually."
+        )
+
+    def _rule_s100a_01(self):
+        """S100A-01: Distribution to Low-Tax Beneficiary.
+
+        Comparing a beneficiary's marginal rate against the controller's needs
+        both figures. Neither is recorded anywhere on the platform today --
+        BeneficiaryProfile.marginal_rate is a manual field nobody fills in, and
+        the controller is looked up through EntityRelationship, which has no
+        rows. Rather than return in silence, say which input is missing: a rule
+        that cannot run should not read as a rule that found nothing.
+        """
+        if not self.allocations:
             return
 
         profile_map = {
             str(p.beneficiary_id): p for p in self.beneficiary_profiles
         }
+        material = [
+            a for a in self.allocations
+            if a["amount"] >= LOW_TAX_DISTRIBUTION_MIN
+        ]
+        if not material:
+            return
 
-        for alloc in self.allocations:
-            # Calculate allocated amount
-            if alloc.fixed_amount and alloc.fixed_amount > ZERO:
-                amount = alloc.fixed_amount
-            elif self.distribution and alloc.percentage > ZERO:
-                amount = (
-                    self.distribution.distributable_income
-                    * alloc.percentage / Decimal("100")
-                )
-            else:
+        rated = [
+            a for a in material
+            if a["beneficiary"] is not None
+            and (profile_map.get(str(a["beneficiary"].pk)) or None)
+            and profile_map[str(a["beneficiary"].pk)].marginal_rate
+        ]
+        if not rated:
+            self._cannot_assess(
+                "low_tax_beneficiary",
+                f"low-tax beneficiary, across {len(material)} material "
+                f"distribution(s) (no beneficiary marginal rate is recorded)",
+            )
+            return
+
+        controller_rate = self._get_controller_marginal_rate()
+        if controller_rate is None:
+            self._cannot_assess(
+                "low_tax_beneficiary",
+                "low-tax beneficiary (the trust controller could not be "
+                "identified, so no marginal rate comparison is possible)",
+            )
+            return
+
+        for alloc in material:
+            officer = alloc["beneficiary"]
+            if officer is None:
                 continue
-
-            if amount < LOW_TAX_DISTRIBUTION_MIN:
-                continue
-
-            # Find beneficiary's profile
-            profile = profile_map.get(str(alloc.beneficiary_id))
+            profile = profile_map.get(str(officer.pk))
             if not profile or not profile.marginal_rate:
                 continue
 
             rate_diff = controller_rate - profile.marginal_rate
             if rate_diff >= MARGINAL_RATE_DIFF:
                 self.rules_fired.append("S100A-01")
-                ben_name = alloc.beneficiary.full_name if hasattr(alloc.beneficiary, 'full_name') else str(alloc.beneficiary)
                 self.finding_lines.append(
-                    f"Distribution of ${amount:,.2f} to {ben_name} "
+                    f"Distribution of ${alloc['amount']:,.2f} to "
+                    f"{officer.full_name} "
                     f"(marginal rate {profile.marginal_rate * 100:.1f}%) "
                     f"is {rate_diff * 100:.1f}% lower than the trust "
                     f"controller's rate ({controller_rate * 100:.1f}%). "
@@ -216,158 +309,55 @@ class Section100AModule(BaseDetectionModule):
                 )
                 break  # Only fire once — list all in finding card
 
-    def _rule_s100a_02(self):
-        """S100A-02: Circular Money Flow — funds flow back to controller."""
+    def _note_retired_rules(self):
+        """State the two exposures this module does not assess.
+
+        Circular money flow and unpaid present entitlements are the patterns
+        Section 100A most often turns on. Dropping the rules without saying so
+        would leave the finding card implying they were checked and found
+        clean, which is the same fault the rules already had.
+        """
         if not self.allocations:
             return
-
-        from core.models import EntityRelationship
-
-        # Get entities related to the trust controller
-        controller_entities = set()
-        controller_rels = EntityRelationship.objects.filter(
-            to_entity=self.entity,
-            relationship_type__in=["trustee_of", "director_of"],
+        self._cannot_assess(
+            "circular_flow_and_upe",
+            "circular money flow and unpaid present entitlement (beneficiaries "
+            "are not linked to their own entities, which this platform does "
+            "not yet record)",
         )
-        for rel in controller_rels:
-            controller_entities.add(rel.from_entity_id)
-            # Also add entities the controller controls
-            sub_rels = EntityRelationship.objects.filter(
-                from_entity=rel.from_entity,
-                relationship_type__in=["director_of", "shareholder_of"],
-            )
-            for sub_rel in sub_rels:
-                controller_entities.add(sub_rel.to_entity_id)
-
-        if not controller_entities:
-            return
-
-        # Check if any beneficiary is related to the controller AND
-        # has payments flowing back (via TB inter-entity accounts)
-        tb_data = self.load_trial_balance()
-        for alloc in self.allocations:
-            if not hasattr(alloc.beneficiary, 'entity'):
-                continue
-
-            ben_entity = getattr(alloc.beneficiary, 'entity', None)
-            if ben_entity is None:
-                continue
-
-            # Calculate allocated amount
-            if alloc.fixed_amount and alloc.fixed_amount > ZERO:
-                amount = alloc.fixed_amount
-            elif self.distribution and alloc.percentage > ZERO:
-                amount = (
-                    self.distribution.distributable_income
-                    * alloc.percentage / Decimal("100")
-                )
-            else:
-                continue
-
-            if amount <= ZERO:
-                continue
-
-            # Check for return flows in TB (inter-entity payables/receivables)
-            return_flow = ZERO
-            for line in tb_data["lines"]:
-                name_lower = (line.account_name or "").lower()
-                # Look for accounts referencing the beneficiary entity
-                ben_name_lower = (ben_entity.entity_name or "").lower()
-                if ben_name_lower and ben_name_lower in name_lower:
-                    net = line.effective_dr - line.effective_cr
-                    if net < ZERO:  # Credit = money flowing back
-                        return_flow += abs(net)
-
-            if return_flow > ZERO and amount > ZERO:
-                return_pct = (return_flow / amount * Decimal("100"))
-                if return_pct >= CIRCULAR_FLOW_PCT:
-                    self.rules_fired.append("S100A-02")
-                    self.finding_lines.append(
-                        f"Circular money flow detected: ${return_flow:,.2f} "
-                        f"({return_pct:.0f}% of distribution) flowed back from "
-                        f"{ben_entity.entity_name} to trust-related entities. "
-                        f"This is the primary 'reimbursement agreement' pattern "
-                        f"targeted by the ATO under Section 100A."
-                    )
-                    return  # Fire once
-
-    def _rule_s100a_03(self):
-        """S100A-03: UPE to Related Entity — distribution unpaid."""
-        if not self.allocations:
-            return
-
-        from core.models import EntityRelationship
-
-        for alloc in self.allocations:
-            if not hasattr(alloc.beneficiary, 'entity'):
-                continue
-
-            ben_entity = getattr(alloc.beneficiary, 'entity', None)
-            if ben_entity is None:
-                continue
-
-            # Calculate allocated amount
-            if alloc.fixed_amount and alloc.fixed_amount > ZERO:
-                amount = alloc.fixed_amount
-            elif self.distribution and alloc.percentage > ZERO:
-                amount = (
-                    self.distribution.distributable_income
-                    * alloc.percentage / Decimal("100")
-                )
-            else:
-                continue
-
-            if amount <= ZERO:
-                continue
-
-            # Check if the beneficiary entity has a receivable from the trust
-            # (i.e. distribution recorded but not paid = UPE)
-            tb_data = self.load_trial_balance()
-            trust_name_lower = self.entity.entity_name.lower()
-            has_receivable = False
-            for line in tb_data["lines"]:
-                name_lower = (line.account_name or "").lower()
-                if trust_name_lower in name_lower:
-                    net = line.effective_dr - line.effective_cr
-                    if net > ZERO:  # Debit = receivable from trust
-                        has_receivable = True
-                        break
-
-            if has_receivable:
-                self.rules_fired.append("S100A-03")
-                msg = (
-                    f"Distribution to {ben_entity.entity_name} of "
-                    f"${amount:,.2f} appears unpaid (UPE). "
-                    f"The beneficiary has not received economic benefit."
-                )
-                # Cross-module link for companies
-                if ben_entity.entity_type == "company":
-                    msg += (
-                        f" See Division 7A Assessment on "
-                        f"{ben_entity.entity_name} for loan compliance."
-                    )
-                self.finding_lines.append(msg)
-                return  # Fire once
 
     def _rule_s100a_04(self):
-        """S100A-04: Resolution Date Compliance."""
-        # Check if trust workspace has stage 6 (Documents) data
-        # Resolution date would be in the trust workspace or distribution
-        if self.trust_workspace is None:
+        """S100A-04: is there a distribution, and can its timing be checked?
+
+        This fired CRITICAL "resolution not confirmed" on every discretionary
+        trust on the platform. Both its guards were broken: it required
+        ``stage_6_status == "completed"``, but the Trust tab has five stages and
+        nothing ever sets a sixth; and it fell back to
+        ``workspace.confirmed_scenario``, which is None on every workspace
+        because the live flow selects a TaxPlanningScenario and posts a journal.
+
+        What can honestly be said is narrower. Whether a distribution was posted
+        is knowable from the ledger. WHEN the trustee resolved is not: no
+        resolution date is stored anywhere -- it exists only as transient wizard
+        input at document-generation time, defaulted to year end. So this states
+        the position and asks for the check to be made by a person, instead of
+        asserting a breach it cannot evidence.
+        """
+        if self.distribution_journal is None:
+            self.finding_lines.append(
+                "No distribution has been posted for this year. Income not "
+                "distributed by 30 June is assessed to the trustee at the top "
+                "marginal rate under s 99A ITAA 1936."
+            )
             return
 
-        # The trust workspace stage_6 is "Documents" — check if completed
-        if self.trust_workspace.stage_6_status != "completed":
-            # Check if we can determine resolution date from confirmed scenario
-            if self.trust_workspace.confirmed_scenario is None:
-                self.rules_fired.append("S100A-04")
-                self.finding_lines.append(
-                    "Trust distribution resolution not confirmed. "
-                    "Ensure resolution was made on or before 30 June of the "
-                    "income year. A late resolution means income may be "
-                    "assessed to the trustee at the top marginal rate "
-                    "under s 99A ITAA 1936."
-                )
+        self.finding_lines.append(
+            f"Distribution posted as {self.distribution_journal.reference_number}. "
+            f"The resolution date is not recorded, so it cannot be verified "
+            f"here — confirm the trustee resolved on or before "
+            f"{self.fy.end_date:%d %B %Y}. A late resolution means the income is "
+            f"assessed to the trustee under s 99A ITAA 1936."
+        )
 
     def _rule_s100a_05(self):
         """S100A-05: Four-Factor Summary Assessment.
@@ -385,6 +375,17 @@ class Section100AModule(BaseDetectionModule):
         assessments = Section100AAssessment.objects.filter(
             trust_workspace=self.trust_workspace,
         )
+
+        if not assessments.exists():
+            # Stage 3 can be marked complete with no assessment recorded, and
+            # is on every trust-year on the platform. Silence here reads as a
+            # clean four-factor result on a test that was never performed.
+            self._cannot_assess(
+                "four_factor",
+                "the four-factor test (the Stage 3 questionnaire has not been "
+                "completed for any beneficiary)",
+            )
+            return
 
         red_count = assessments.filter(risk_rating="red").count()
         amber_count = assessments.filter(risk_rating="amber").count()
@@ -414,20 +415,23 @@ class Section100AModule(BaseDetectionModule):
         fired = set(self.rules_fired)
 
         if not fired:
-            return "CLEAR"
+            # CLEAR asserts "no Section 100A risk found", which is only true if
+            # the exposures were actually tested. While any went unassessed the
+            # honest answer is ADVISORY -- and today that means a trust which
+            # distributed can never be cleared, because circular flow and UPE
+            # cannot be tested at all. That is the correct reading of the
+            # platform's position, not a defect.
+            return "ADVISORY" if self.unassessed else "CLEAR"
 
         if fired == {"S100A-INCOMPLETE"}:
             return "ADVISORY"
 
-        # S100A-02 (circular flow) → CRITICAL
-        if "S100A-02" in fired:
-            return "CRITICAL"
-
-        # S100A-04 (late resolution) → CRITICAL
-        if "S100A-04" in fired:
-            return "CRITICAL"
-
-        # S100A-05 with RED ratings → CRITICAL
+        # S100A-05 with RED ratings → CRITICAL. This is the only CRITICAL
+        # path left, and deliberately so: it rests on a judgement a person
+        # actually recorded. S100A-02 (circular flow) is retired, and S100A-04
+        # no longer asserts a late resolution it cannot evidence -- between
+        # them they raised a CRITICAL on every discretionary trust regardless
+        # of the facts.
         if "S100A-05" in fired:
             from core.models import Section100AAssessment
             if self.trust_workspace:
@@ -449,6 +453,7 @@ class Section100AModule(BaseDetectionModule):
             "trust_tab_complete": self.trust_tab_complete,
             "beneficiary_count": len(self.beneficiary_profiles),
             "allocation_count": len(self.allocations),
+            "unassessed": self.unassessed,
             "rules_fired": self.rules_fired,
             "overall_severity": self.overall_severity,
             "finding_lines": self.finding_lines,
