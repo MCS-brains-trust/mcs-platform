@@ -114,6 +114,25 @@ class ContextValidationError(Exception):
         super().__init__(message)
 
 
+def _total_trust_income(financial_year):
+    """The year's distributable income, recomputed from the ledger.
+
+    ``TrustWorkspace.net_distributable_income`` is a snapshot refreshed only
+    when Stage 1 is populated, and it goes stale: Minli FY2026 held 876,322.95
+    there from superseded calculations against a true nil. The post gate and
+    the distribution summary both recompute for that reason, and a document
+    that will be signed should not be the one surface still quoting the
+    snapshot.
+    """
+    if financial_year is None:
+        return Decimal("0")
+    from core.eva_trust_planning import _calculate_income_streams
+
+    return Decimal(
+        _calculate_income_streams(financial_year)["net_distributable_income"]
+    )
+
+
 # ---------------------------------------------------------------------------
 # Jinja2 filter helpers
 # ---------------------------------------------------------------------------
@@ -1929,7 +1948,11 @@ class DocumentContextBuilder:
             "resolution_deadline": format_date_long(fy_end_date),
             "days_to_deadline": days_to_deadline,
             "resolution_is_late": resolution_is_late,
-            "total_trust_income": format_currency(workspace.net_distributable_income if workspace else 0),
+            # Recomputed from the ledger, not read from the workspace
+            # snapshot. That column goes stale -- Minli FY2026 held 876,322.95
+            # there against a true nil -- which is why the post gate and the
+            # distribution summary both recompute rather than trust it.
+            "total_trust_income": format_currency(_total_trust_income(self.financial_year)),
             "tax_free_component": "$-",
             "capital_gains_component": "$-",
             "franked_dividend_component": "$-",
