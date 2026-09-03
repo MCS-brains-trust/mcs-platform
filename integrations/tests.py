@@ -642,3 +642,243 @@ class XeroPeriodImportViewTests(TestCase):
         self.assertTrue(
             any("must start on the financial year start date" in m for m in messages)
         )
+
+
+class QuickBooksTrialBalanceSidePeriodTests(TestCase):
+    """The debit/credit side of each account is read from a QBO TrialBalance
+    report. QBO's TrialBalance needs a date PAIR: given only ``end_date`` it
+    silently discards it and falls back to its ``this month-to-date`` macro,
+    so the side map would describe today instead of the year being imported.
+    """
+
+    def setUp(self):
+        self.provider = QuickBooksProvider()
+
+    @patch("integrations.providers.requests.get")
+    def test_trial_balance_side_lookup_requests_the_import_period(self, mock_get):
+        mock_get.side_effect = [
+            _mock_response({"QueryResponse": {}}),
+            _mock_response({"Rows": {}}),
+            _mock_response({"Rows": {}}),
+        ]
+
+        self.provider.fetch_period_movement(
+            "token", "realm-1", date(2025, 7, 1), date(2026, 6, 30)
+        )
+
+        tb_call = mock_get.call_args_list[1]
+        self.assertTrue(tb_call.args[0].endswith("/reports/TrialBalance"))
+        tb_params = tb_call.kwargs["params"]
+        self.assertEqual(tb_params["start_date"], "2025-07-01")
+        self.assertEqual(tb_params["end_date"], "2026-06-30")
+
+    @patch("integrations.providers.requests.get")
+    def test_trial_balance_side_lookup_spans_the_year_for_a_trial_balance_import(
+        self, mock_get
+    ):
+        mock_get.side_effect = [
+            _mock_response({"QueryResponse": {}}),
+            _mock_response({"Rows": {}}),
+            _mock_response({"Rows": {}}),
+        ]
+
+        self.provider.fetch_trial_balance("token", "realm-1", date(2026, 6, 30))
+
+        tb_params = mock_get.call_args_list[1].kwargs["params"]
+        self.assertEqual(tb_params["start_date"], "2025-07-01")
+        self.assertEqual(tb_params["end_date"], "2026-06-30")
+
+
+class QuickBooksNestedSubAccountTests(TestCase):
+    """QBO nests sub-accounts as Sections inside their parent's Section in the
+    GeneralLedger report. Every posting account must produce a line, however
+    deeply nested, or the import silently drops that account's activity and
+    the trial balance no longer balances.
+    """
+
+    ACCOUNTS_PAYLOAD = {
+        "QueryResponse": {
+            "Account": [
+                {"Id": "1", "AcctNum": "1", "Name": "Sales"},
+                {"Id": "2", "AcctNum": "53", "Name": "Bank"},
+                {"Id": "3", "AcctNum": "59", "Name": "Cost of sales"},
+                {"Id": "4", "AcctNum": "60", "Name": "Materials Purchased"},
+                {"Id": "5", "AcctNum": "62", "Name": "Plant & Equipment Hire"},
+                {"Id": "6", "AcctNum": "98", "Name": "Plant & Equipment Hire"},
+            ]
+        }
+    }
+
+    TB_PAYLOAD = {
+        "Rows": {
+            "Row": [
+                {
+                    "type": "Data",
+                    "ColData": [
+                        {"value": "Sales", "id": "1"},
+                        {"value": ""},
+                        {"value": "1538001.81"},
+                    ],
+                },
+                {
+                    "type": "Data",
+                    "ColData": [
+                        {"value": "Bank", "id": "2"},
+                        {"value": "988846.44"},
+                        {"value": ""},
+                    ],
+                },
+                {
+                    "type": "Data",
+                    "ColData": [
+                        {"value": "Cost of sales:Materials Purchased", "id": "4"},
+                        {"value": "541564.46"},
+                        {"value": ""},
+                    ],
+                },
+                {
+                    "type": "Data",
+                    "ColData": [
+                        {"value": "Cost of sales:Plant & Equipment Hire", "id": "5"},
+                        {"value": "7590.91"},
+                        {"value": ""},
+                    ],
+                },
+            ]
+        }
+    }
+
+    @staticmethod
+    def _gl_data_row(*, label="", amount="", balance=""):
+        values = [label, "", "", "", "", "", "", amount, balance]
+        return {"type": "Data", "ColData": [{"value": v} for v in values]}
+
+    @classmethod
+    def _gl_payload(cls):
+        return {
+            "Rows": {
+                "Row": [
+                    {
+                        "type": "Section",
+                        "Header": {"ColData": [{"value": "Sales", "id": "1"}]},
+                        "Rows": {
+                            "Row": [
+                                cls._gl_data_row(
+                                    label="2025-08-01",
+                                    amount="1538001.81",
+                                    balance="1538001.81",
+                                )
+                            ]
+                        },
+                    },
+                    {
+                        "type": "Section",
+                        "Header": {"ColData": [{"value": "Bank", "id": "2"}]},
+                        "Rows": {
+                            "Row": [
+                                cls._gl_data_row(
+                                    label="2025-08-02",
+                                    amount="988846.44",
+                                    balance="988846.44",
+                                )
+                            ]
+                        },
+                    },
+                    {
+                        # Parent header account: no direct postings of its
+                        # own, two posting sub-accounts nested beneath it.
+                        "type": "Section",
+                        "Header": {"ColData": [{"value": "Cost of sales", "id": "3"}]},
+                        "Rows": {
+                            "Row": [
+                                {
+                                    "type": "Section",
+                                    "Header": {
+                                        "ColData": [
+                                            {"value": "Materials Purchased", "id": "4"}
+                                        ]
+                                    },
+                                    "Rows": {
+                                        "Row": [
+                                            cls._gl_data_row(
+                                                label="2025-09-01",
+                                                amount="541564.46",
+                                                balance="541564.46",
+                                            )
+                                        ]
+                                    },
+                                },
+                                {
+                                    "type": "Section",
+                                    "Header": {
+                                        "ColData": [
+                                            {
+                                                "value": "Plant & Equipment Hire",
+                                                "id": "5",
+                                            }
+                                        ]
+                                    },
+                                    "Rows": {
+                                        "Row": [
+                                            cls._gl_data_row(
+                                                label="2025-10-01",
+                                                amount="7590.91",
+                                                balance="7590.91",
+                                            )
+                                        ]
+                                    },
+                                },
+                            ]
+                        },
+                    },
+                ]
+            }
+        }
+
+    def setUp(self):
+        self.provider = QuickBooksProvider()
+
+    def _fetch(self, mock_get):
+        mock_get.side_effect = [
+            _mock_response(self.ACCOUNTS_PAYLOAD),
+            _mock_response(self.TB_PAYLOAD),
+            _mock_response(self._gl_payload()),
+        ]
+        return self.provider.fetch_period_movement(
+            "token", "realm-1", date(2025, 7, 1), date(2026, 6, 30)
+        )
+
+    @patch("integrations.providers.requests.get")
+    def test_nested_sub_accounts_produce_their_own_lines(self, mock_get):
+        lines = self._fetch(mock_get)
+
+        by_code = {line["account_code"]: line for line in lines}
+        self.assertIn("60", by_code)
+        self.assertEqual(by_code["60"]["debit"], Decimal("541564.46"))
+        self.assertEqual(by_code["60"]["credit"], Decimal("0"))
+        self.assertIn("62", by_code)
+        self.assertEqual(by_code["62"]["debit"], Decimal("7590.91"))
+
+    @patch("integrations.providers.requests.get")
+    def test_nested_sub_accounts_are_named_under_their_parent(self, mock_get):
+        # Kinross carries both "Cost of sales:Plant & Equipment Hire" (62) and
+        # a standalone "Plant & Equipment Hire" (98). A bare leaf name would
+        # give the reviewer two identical rows to map.
+        lines = self._fetch(mock_get)
+
+        by_code = {line["account_code"]: line for line in lines}
+        self.assertEqual(
+            by_code["60"]["account_name"], "Cost of sales:Materials Purchased"
+        )
+        self.assertEqual(
+            by_code["62"]["account_name"], "Cost of sales:Plant & Equipment Hire"
+        )
+
+    @patch("integrations.providers.requests.get")
+    def test_nested_sub_accounts_keep_the_import_in_balance(self, mock_get):
+        lines = self._fetch(mock_get)
+
+        debits = sum(line["debit"] for line in lines)
+        credits = sum(line["credit"] for line in lines)
+        self.assertEqual(debits, credits)
+        self.assertEqual(debits, Decimal("1538001.81"))
