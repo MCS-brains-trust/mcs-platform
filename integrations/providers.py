@@ -583,10 +583,20 @@ class QuickBooksProvider(BaseProvider):
             for a in accounts
         }
 
-    def _fetch_qbo_tb_sides(self, access_token, tenant_id, end_date, account_codes=None):
+    def _fetch_qbo_tb_sides(
+        self, access_token, tenant_id, start_date, end_date, account_codes=None
+    ):
         """Fetch QBO TrialBalance to determine debit/credit side per account.
 
         Returns dict of {account_key: 'D' or 'C'}.
+
+        QBO's TrialBalance report needs a date PAIR. Given only ``end_date``
+        it discards it without complaint and falls back to its default
+        ``this month-to-date`` macro, so the side map ends up describing the
+        last few days of the CURRENT month rather than the period being
+        imported. Accounts idle in that window drop out of the map entirely
+        and fall back to the "D" default below — which is how Kinross
+        Builders' FY2026 sales came through as a $1.5m DEBIT.
         """
         base_url = f"https://quickbooks.api.intuit.com/v3/company/{tenant_id}"
         resp = requests.get(
@@ -597,6 +607,7 @@ class QuickBooksProvider(BaseProvider):
             },
             params={
                 "minorversion": "65",
+                "start_date": start_date.isoformat(),
                 "end_date": end_date.isoformat(),
                 "accounting_method": "Accrual",
             },
@@ -682,86 +693,112 @@ class QuickBooksProvider(BaseProvider):
 
         lines = []
 
-        for row in rows:
-            if row.get("type") != "Section":
-                continue
+        def walk(section_rows, parent_name=""):
+            """Collect one line per posting account.
 
-            header_cols = row.get("Header", {}).get("ColData", [])
-            if not header_cols:
-                continue
-            account_name = (header_cols[0].get("value", "") or "").strip()
-            internal_id = header_cols[0].get("id", "")
-            account_code = (account_codes or {}).get(internal_id) or account_name
-            if not account_name:
-                continue
-
-            child_rows = row.get("Rows", {}).get("Row", [])
-
-            beginning_balance = Decimal("0")
-            net = Decimal("0")
-
-            last_balance = Decimal("0")
-            for data_row in child_rows:
-                if data_row.get("type") == "Section":
+            QBO nests a sub-account as its own Section INSIDE its parent's
+            Section, so the tree has to be walked to the leaves. A parent
+            that only heads sub-accounts carries no postings of its own and
+            nets to zero — it is skipped as a line but must still be
+            descended into, or every account beneath it is lost. Kinross
+            Builders' whole cost of sales (five sub-accounts, 328
+            transactions, $1,416,246.74) sat under one such parent.
+            """
+            for row in section_rows:
+                if row.get("type") != "Section":
                     continue
-                cols = data_row.get("ColData", [])
-                if not cols:
-                    continue
-                label = (cols[0].get("value", "") or "").strip()
 
-                if label == "Beginning Balance":
+                header_cols = row.get("Header", {}).get("ColData", [])
+                if not header_cols:
+                    continue
+                leaf_name = (header_cols[0].get("value", "") or "").strip()
+                internal_id = header_cols[0].get("id", "")
+                if not leaf_name:
+                    continue
+                # Qualify the name with its parent, matching how QBO's own
+                # TrialBalance names sub-accounts. Kinross carries both
+                # "Cost of sales:Plant & Equipment Hire" and a standalone
+                # "Plant & Equipment Hire"; bare leaf names would give the
+                # reviewer two identical rows to map.
+                account_name = (
+                    f"{parent_name}:{leaf_name}" if parent_name else leaf_name
+                )
+                account_code = (account_codes or {}).get(internal_id) or account_name
+
+                child_rows = row.get("Rows", {}).get("Row", [])
+
+                beginning_balance = Decimal("0")
+                net = Decimal("0")
+
+                last_balance = Decimal("0")
+                for data_row in child_rows:
+                    if data_row.get("type") == "Section":
+                        continue
+                    cols = data_row.get("ColData", [])
+                    if not cols:
+                        continue
+                    label = (cols[0].get("value", "") or "").strip()
+
+                    if label == "Beginning Balance":
+                        if len(cols) > 8:
+                            beginning_balance = _to_decimal(
+                                (cols[8].get("value") or "").strip() or "0"
+                            )
+                        continue
+
+                    if len(cols) > 7:
+                        amount_str = (cols[7].get("value") or "").strip()
+                        if amount_str:
+                            net += _to_decimal(amount_str)
+                    # Capture running balance for sign convention detection
                     if len(cols) > 8:
-                        beginning_balance = _to_decimal(
-                            (cols[8].get("value") or "").strip() or "0"
-                        )
-                    continue
+                        bal_str = (cols[8].get("value") or "").strip()
+                        if bal_str:
+                            last_balance = _to_decimal(bal_str)
 
-                if len(cols) > 7:
-                    amount_str = (cols[7].get("value") or "").strip()
-                    if amount_str:
-                        net += _to_decimal(amount_str)
-                # Capture running balance for sign convention detection
-                if len(cols) > 8:
-                    bal_str = (cols[8].get("value") or "").strip()
-                    if bal_str:
-                        last_balance = _to_decimal(bal_str)
+                ending_balance = last_balance
 
-            ending_balance = last_balance
+                if net != 0:
+                    # Determine sign convention from TB side and ending balance
+                    key = account_code  # already resolved above
+                    tb_side = tb_sides.get(key, "D")
+                    use_credit_convention = (
+                        (tb_side == "C")
+                        or (tb_side == "D" and ending_balance < 0)
+                    )
 
-            if net == 0:
-                continue
+                    if use_credit_convention:
+                        if net > 0:
+                            out_debit, out_credit = Decimal("0"), net
+                        else:
+                            out_debit, out_credit = abs(net), Decimal("0")
+                    else:
+                        if net > 0:
+                            out_debit, out_credit = net, Decimal("0")
+                        else:
+                            out_debit, out_credit = Decimal("0"), abs(net)
 
-            # Determine sign convention from TB side and ending balance
-            key = account_code  # already resolved above
-            tb_side = tb_sides.get(key, "D")
-            use_credit_convention = (tb_side == "C") or (tb_side == "D" and ending_balance < 0)
+                    lines.append({
+                        "account_code": account_code,
+                        "account_name": account_name,
+                        "opening_balance": beginning_balance,
+                        "debit": out_debit,
+                        "credit": out_credit,
+                        "movement_amount": net,
+                    })
 
-            if use_credit_convention:
-                if net > 0:
-                    out_debit, out_credit = Decimal("0"), net
-                else:
-                    out_debit, out_credit = abs(net), Decimal("0")
-            else:
-                if net > 0:
-                    out_debit, out_credit = net, Decimal("0")
-                else:
-                    out_debit, out_credit = Decimal("0"), abs(net)
+                walk(child_rows, account_name)
 
-            lines.append({
-                "account_code": account_code,
-                "account_name": account_name,
-                "opening_balance": beginning_balance,
-                "debit": out_debit,
-                "credit": out_credit,
-                "movement_amount": net,
-            })
+        walk(rows)
 
         return lines
 
     def _fetch_qbo_net_activity(self, access_token, tenant_id, start_date, end_date):
         """Orchestrate TB sides + GL summary for correct debit/credit assignment."""
         account_codes = self._fetch_qbo_account_codes(access_token, tenant_id)
-        tb_sides = self._fetch_qbo_tb_sides(access_token, tenant_id, end_date, account_codes)
+        tb_sides = self._fetch_qbo_tb_sides(
+            access_token, tenant_id, start_date, end_date, account_codes
+        )
         return self._fetch_qbo_gl_summary(
             access_token, tenant_id, start_date, end_date, tb_sides, account_codes
         )
