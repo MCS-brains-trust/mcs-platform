@@ -957,7 +957,7 @@ class DocumentContextBuilder:
             and fy.prior_year.trial_balance_lines.exists()
         )
         has_prior_year = (
-            getattr(fy.entity, 'include_comparative_figures', True)
+            fy.comparatives_enabled
             and _has_prior_data
         )
         prior_year_label = str(fy.prior_year.end_date.year) if fy.prior_year is not None else ""

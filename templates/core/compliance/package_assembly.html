@@ -89,6 +89,38 @@
                     <span class="badge bg-warning text-dark"><i class="bi bi-exclamation-circle"></i> Missing Documents</span>
                     {% endif %}
                 </div>
+                <!-- Comparatives: this year only. The client-wide default lives on
+                     the entity record; unticking here overrides it for this year
+                     and leaves every other year of the client untouched. -->
+                <div class="card-body border-bottom py-2">
+                    <div class="form-check form-switch d-inline-flex align-items-center">
+                        <input class="form-check-input me-2" type="checkbox" role="switch"
+                               id="comparativesToggle"
+                               {% if comparatives_enabled %}checked{% endif %}>
+                        <label class="form-check-label small" for="comparativesToggle">
+                            Include prior-year comparative figures
+                            {% if comparatives_overridden %}
+                            <span class="badge bg-info-subtle text-info-emphasis ms-1"
+                                  title="Set for this year, overriding the client default">this year only</span>
+                            {% else %}
+                            <span class="text-muted">— following the client default</span>
+                            {% endif %}
+                        </label>
+                    </div>
+                    {% if comparatives_stale %}
+                    <div class="alert alert-warning py-2 px-3 mt-2 mb-0 d-flex justify-content-between align-items-center">
+                        <span class="small">
+                            <i class="bi bi-exclamation-triangle-fill"></i>
+                            The financial statements on file were generated under the
+                            opposite setting. Regenerate them before assembling the package.
+                        </span>
+                        <a href="{% url 'core:generate_document' pk=fy.pk %}?format=docx"
+                           class="btn btn-sm btn-warning ms-3 text-nowrap">
+                            <i class="bi bi-arrow-clockwise"></i> Regenerate
+                        </a>
+                    </div>
+                    {% endif %}
+                </div>
                 <div class="card-body p-0">
                     <table class="table table-sm mb-0">
                         <thead class="table-light">
@@ -401,6 +433,34 @@
 
 <script>
 const CSRF_TOKEN = '{{ csrf_token }}';
+
+// Comparatives switch. Reloads on success so the stale banner and the badge
+// reflect the new state rather than being reasoned about twice, here and in
+// the template.
+document.getElementById('comparativesToggle')?.addEventListener('change', function() {
+    const enabled = this.checked;
+    this.disabled = true;
+    fetch("{% url 'core:package_comparatives' pk=fy.pk %}", {
+        method: 'POST',
+        headers: {
+            'X-CSRFToken': CSRF_TOKEN,
+            'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: 'enabled=' + (enabled ? '1' : '0'),
+    }).then(r => r.json()).then(data => {
+        if (data.status === 'ok') {
+            window.location.reload();
+        } else {
+            this.checked = !enabled;
+            this.disabled = false;
+            alert(data.error || 'Could not change the comparatives setting.');
+        }
+    }).catch(() => {
+        this.checked = !enabled;
+        this.disabled = false;
+        alert('Could not change the comparatives setting.');
+    });
+});
 const ASSEMBLE_URL = '{% url "core:package_assemble" pk=fy.pk %}';
 const SIGN_URL = '{% url "core:package_send_for_signing" pk=fy.pk %}';
 const DOWNLOAD_BUNDLE_URL = '{% url "core:package_download_bundle" pk=fy.pk %}';

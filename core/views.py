@@ -2300,7 +2300,7 @@ def financial_year_detail(request, pk):
     # Determine whether prior-year comparative data exists in the trial balance
     # and whether the entity wants comparatives shown.
     has_prior_tb = bool(
-        entity.include_comparative_figures
+        fy.comparatives_enabled
         and fy.prior_year
         and fy.prior_year.trial_balance_lines.exists()
     )
@@ -7031,7 +7031,7 @@ def financial_statements_view(request, pk):
             balance_sheet.append(entry)
 
     has_prior = bool(
-        fy.entity.include_comparative_figures
+        fy.comparatives_enabled
         and fy.prior_year
         and fy.prior_year.trial_balance_lines.exists()
     )
@@ -7184,6 +7184,9 @@ def generate_document(request, pk):
         financial_year=fy,
         file_format=file_format,
         generated_by=request.user,
+        # Record what was in force, so the package page can tell the accountant
+        # when the file on disk no longer matches the year's setting.
+        comparatives_included=fy.comparatives_enabled,
     )
     doc.file.save(filename, ContentFile(file_content), save=True)
     # Also create/update a LegalDocument record so the package assembly
@@ -8022,7 +8025,7 @@ def trial_balance_pdf(request, pk):
     fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
     show_comparative = bool(
-        entity.include_comparative_figures
+        fy.comparatives_enabled
         and fy.prior_year
         and fy.prior_year.trial_balance_lines.exists()
     )
@@ -13225,7 +13228,7 @@ def trial_balance_download(request, pk):
     fy = get_financial_year_for_user(request, pk)
     entity = fy.entity
     show_comparative = bool(
-        entity.include_comparative_figures
+        fy.comparatives_enabled
         and fy.prior_year
         and fy.prior_year.trial_balance_lines.exists()
     )

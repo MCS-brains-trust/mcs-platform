@@ -127,9 +127,25 @@ def package_assembly(request, pk):
     # Year-end commentary (if exists)
     commentary = YearEndCommentary.objects.filter(financial_year=fy).first()
 
+    # Comparatives: the year's own switch, resolved against the client default.
+    # Statements are generated before this stage, so a .docx already on disk was
+    # built under whatever was in force then. Each one records that, and a
+    # document whose record disagrees with the current setting is stale. NULL
+    # predates the field and counts as unknown -- otherwise every document
+    # generated before today would announce itself as out of date.
+    comparatives_enabled = fy.comparatives_enabled
+    comparatives_stale = GeneratedDocument.objects.filter(
+        financial_year=fy,
+        document_type=GeneratedDocument.DocumentType.FINANCIAL_STATEMENTS,
+        comparatives_included__isnull=False,
+    ).exclude(comparatives_included=comparatives_enabled).exists()
+
     return render(request, "core/compliance/package_assembly.html", {
         "fy": fy,
         "entity": entity,
+        "comparatives_enabled": comparatives_enabled,
+        "comparatives_stale": comparatives_stale,
+        "comparatives_overridden": fy.include_comparative_figures is not None,
         "checklist": checklist,
         "risk_alerts": risk_alerts,
         "all_required_present": all_required_present,
@@ -161,6 +177,44 @@ def package_assemble(request, pk):
     return JsonResponse({
         "status": "ok",
         "message": "Client package assembled successfully.",
+    })
+
+
+@login_required
+@require_POST
+def package_comparatives(request, pk):
+    """Turn prior-year comparatives on or off for THIS financial year.
+
+    Writes FinancialYear.include_comparative_figures, never the entity's. The
+    client-wide switch stays where it is on the entity form: using it to drop
+    comparatives from one package would change every other year of that client,
+    finalised ones included, the next time anything regenerated them.
+    """
+    from core.views import _log_action
+
+    fy = get_financial_year_for_user(request, pk)
+
+    if not request.user.can_do_accounting:
+        return JsonResponse(
+            {"status": "error", "error": "You do not have permission."}, status=403)
+
+    enabled = request.POST.get("enabled") == "1"
+    fy.include_comparative_figures = enabled
+    fy.save(update_fields=["include_comparative_figures"])
+
+    _log_action(
+        request, "adjustment",
+        f"Comparatives turned {'on' if enabled else 'off'} for "
+        f"{fy.entity.entity_name} {fy.year_label} (this year only)",
+    )
+    return JsonResponse({
+        "status": "ok",
+        "comparatives_enabled": enabled,
+        "message": (
+            "Comparatives will be included for this year."
+            if enabled else
+            "Comparatives will be excluded for this year."
+        ),
     })
 
 
