@@ -286,6 +286,14 @@ var ImportWizard = (function() {
         }
 
         updateCounts();
+        // Setting select.value above fires no `change` event, so the listener in
+        // bindCountUpdates never runs and the commit button keeps whatever state
+        // it had at page load. Assigning entity accounts to every row therefore
+        // filled every statement line, zeroed the counter, and left Confirm grey
+        // -- 40 accounts of unsaved mapping against a button that could not be
+        // pressed. Re-run the gate here so an assignment counts for as much as
+        // choosing the statement line by hand.
+        checkUnmapped();
     }
 
     // ================================================================
@@ -578,9 +586,11 @@ var ImportWizard = (function() {
     function updateCounts() {
         var mapped = 0, unmapped = 0;
         document.querySelectorAll('.mapping-row').forEach(function(row) {
+            // Counts exactly what checkUnmapped() gates on, so the number on
+            // screen always explains the state of the button. The two drifting
+            // apart is what put "Needs Mapping: 0" beside a dead button.
             var entityVal = row.querySelector('.entity-acct-input').value;
-            var mappingVal = row.querySelector('.mapping-select').value;
-            if (entityVal || mappingVal) {
+            if (entityVal) {
                 mapped++;
             } else {
                 unmapped++;
@@ -593,29 +603,44 @@ var ImportWizard = (function() {
     }
 
     // ================================================================
-    // UNMAPPED STATEMENT LINE GUARD
-    // Disables the commit button and shows a warning when any rows have
-    // no "Maps To" statement line selected.
+    // ENTITY ACCOUNT GUARD
+    //
+    // Gates on the same thing commit_import does, and nothing more. That
+    // endpoint's only hard requirement is an Entity Account (COA) on every
+    // row -- "Cannot commit — N row(s) have no Entity Account (COA)
+    // assigned" -- because without one it would write source-system codes
+    // into TrialBalanceLine.account_code.
+    //
+    // This used to demand a statement line instead, which the endpoint
+    // treats as optional: it feeds mapped_line_item and the learning
+    // system, and a row without one imports perfectly well and can be
+    // mapped later from the trial balance screen. A browser gate stricter
+    // than the endpoint it guards is not a safety net, it is a wall --
+    // Kinross FY2026 had all 44 rows assigned, a balanced TB the server
+    // would have accepted, and a Confirm button that could not be pressed,
+    // because six of the entity's chart accounts (1000 Sales, 9100 GST
+    // Collected, 9110 GST Paid among them) carry no maps_to and so filled
+    // in no statement line.
     // ================================================================
     function checkUnmapped() {
-        var unmappedStatementLines = 0;
+        var withoutEntityAccount = 0;
         document.querySelectorAll('.mapping-row').forEach(function(row) {
-            var mappingVal = row.querySelector('.mapping-select').value;
-            if (!mappingVal) unmappedStatementLines++;
+            var entityVal = row.querySelector('.entity-acct-input').value;
+            if (!entityVal) withoutEntityAccount++;
         });
 
         var commitBtn = document.getElementById('commitBtn');
         var unmappedWarning = document.getElementById('unmappedWarning');
 
-        if (unmappedStatementLines > 0) {
+        if (withoutEntityAccount > 0) {
             if (commitBtn) {
                 commitBtn.disabled = true;
                 commitBtn.classList.remove('btn-success');
                 commitBtn.classList.add('btn-secondary');
-                commitBtn.title = unmappedStatementLines + ' account(s) still need a statement line mapped before you can post.';
+                commitBtn.title = withoutEntityAccount + ' account(s) still need an entity account assigned before you can post.';
             }
             if (unmappedWarning) {
-                unmappedWarning.textContent = unmappedStatementLines + ' account(s) not yet mapped to a statement line — map all accounts before posting.';
+                unmappedWarning.textContent = withoutEntityAccount + ' account(s) have no entity account assigned — assign one to each before posting.';
                 unmappedWarning.style.display = 'inline';
             }
         } else {

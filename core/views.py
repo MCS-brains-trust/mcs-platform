@@ -2095,16 +2095,23 @@ def financial_year_detail(request, pk):
     }
     tb_lines = list(tb_lines)
     for line in tb_lines:
-        if line.source == 'rollover':
-            # BS lines carried forward have a real closing_balance (the opening
-            # balance for the new year). P&L comparative-only lines have
-            # closing_balance == 0 and carry data only in prior_debit/prior_credit.
-            cb = line.closing_balance or Decimal('0')
-            line._cy = cb  # non-zero for BS rollover lines, zero for P&L comparative-only
-            line._py = (line.prior_debit or Decimal('0')) - (line.prior_credit or Decimal('0'))
-        else:
-            line._cy = line.closing_balance or Decimal('0')
-            line._py = Decimal('0')
+        # The prior-year figure is taken from wherever it is stored. It used to
+        # be read from rollover rows alone, and commit_import writes the
+        # comparatives it carries forward onto the rows it recreates, which are
+        # source='tb_import' -- so importing a year silently emptied its prior
+        # column. On Kinross FY2026 that dropped 27 rows including Sales at
+        # -2,099,805.00, and what survived came from the rollover rows alone and
+        # did not balance. Sixteen years across six clients were affected.
+        #
+        # No account anywhere carries a comparative on both a rollover row and a
+        # non-rollover one, so summing every row cannot double-count, and doing
+        # so reproduces the prior year's closing balances exactly.
+        line._py = (line.prior_debit or Decimal('0')) - (line.prior_credit or Decimal('0'))
+        # closing_balance carries the current-year figure on every row. On a
+        # carried-forward balance-sheet row it is the new year's opening
+        # balance; on a comparative-only P&L rollover row it is zero and the
+        # figures live in prior_debit/prior_credit, which _py above now reads.
+        line._cy = line.closing_balance or Decimal('0')
 
     for line in tb_lines:
         cy = line._cy
@@ -13227,16 +13234,23 @@ def trial_balance_download(request, pk):
     ).select_related('mapped_line_item').order_by('account_code', 'source'))
 
     for line in tb_lines:
-        if line.source == 'rollover':
-            # BS lines carried forward have a real closing_balance (the opening
-            # balance for the new year). P&L comparative-only lines have
-            # closing_balance == 0 and carry data only in prior_debit/prior_credit.
-            cb = line.closing_balance or Decimal('0')
-            line._cy = cb  # non-zero for BS rollover lines, zero for P&L comparative-only
-            line._py = (line.prior_debit or Decimal('0')) - (line.prior_credit or Decimal('0'))
-        else:
-            line._cy = line.closing_balance or Decimal('0')
-            line._py = Decimal('0')
+        # The prior-year figure is taken from wherever it is stored. It used to
+        # be read from rollover rows alone, and commit_import writes the
+        # comparatives it carries forward onto the rows it recreates, which are
+        # source='tb_import' -- so importing a year silently emptied its prior
+        # column. On Kinross FY2026 that dropped 27 rows including Sales at
+        # -2,099,805.00, and what survived came from the rollover rows alone and
+        # did not balance. Sixteen years across six clients were affected.
+        #
+        # No account anywhere carries a comparative on both a rollover row and a
+        # non-rollover one, so summing every row cannot double-count, and doing
+        # so reproduces the prior year's closing balances exactly.
+        line._py = (line.prior_debit or Decimal('0')) - (line.prior_credit or Decimal('0'))
+        # closing_balance carries the current-year figure on every row. On a
+        # carried-forward balance-sheet row it is the new year's opening
+        # balance; on a comparative-only P&L rollover row it is zero and the
+        # figures live in prior_debit/prior_credit, which _py above now reads.
+        line._cy = line.closing_balance or Decimal('0')
 
     _coa_lookup = _build_coa_section_lookup(entity)
     # Section ordering
