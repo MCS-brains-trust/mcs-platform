@@ -30,6 +30,7 @@ from core.models import (
     Client as ClientModel,
     DepreciationAsset,
     Entity,
+    EntityChartOfAccount,
     FinancialYear,
     TrialBalanceLine,
 )
@@ -197,3 +198,115 @@ class ReconcileAssetAgainstTrialBalanceTests(TestCase):
 
         self.assertEqual(result.proposed_depreciation, Decimal("6397.75"))
         self.assertEqual(result.proposed_closing_wdv, Decimal("19193.25"))
+
+
+class TheFallbackDoesNotGuessAtAccountsTests(TestCase):
+    """Kinross Builders, 2026-09-04.
+
+    Three assets carried no account codes, so the audit matched accounts by
+    name. Its cost regex looks for "cost|vehicle|motor|plant|equipment|
+    furniture" and takes the lowest matching account code, and account 1740
+    "Hire/Rent of plant & equipment" -- a rental expense -- matched on both
+    "plant" and "equipment" and sorted ahead of the real 2860 and 2890. The
+    accumulated side was no better: 2869 and 2895 both matched "accum" and the
+    lower code won regardless of which asset it belonged to. The audit reported
+    cost 18,691 against accumulated depreciation 34,081 -- a written-down value
+    of -15,390 assembled from two accounts that have nothing to do with each
+    other, let alone with the asset.
+
+    Two rules, both of them "do not guess", which is what this module says of
+    itself: a P&L account is never an asset's cost account, and a name that
+    matches more than one account identifies none of them.
+    """
+
+    def setUp(self):
+        self.client_obj = ClientModel.objects.create(name="Fallback Client")
+        self.entity = Entity.objects.create(
+            entity_name="Kinross Builders Pty Ltd", entity_type="company",
+            client=self.client_obj)
+        self.fy = FinancialYear.objects.create(
+            entity=self.entity, year_label="2025",
+            start_date=date(2024, 7, 1), end_date=date(2025, 6, 30),
+            status=FinancialYear.Status.DRAFT)
+        EntityChartOfAccount.objects.filter(entity=self.entity).delete()
+
+    def _tb(self, code, name, closing):
+        TrialBalanceLine.objects.create(
+            financial_year=self.fy, account_code=code, account_name=name,
+            debit=Decimal("0"), credit=Decimal("0"),
+            closing_balance=Decimal(closing))
+
+    def _chart(self, code, name, section):
+        EntityChartOfAccount.objects.update_or_create(
+            entity=self.entity, account_code=code,
+            defaults={"account_name": name, "section": section})
+
+    def _asset(self):
+        return DepreciationAsset.objects.create(
+            financial_year=self.fy, category="Motor Vehicles",
+            asset_name="Range Rover AZJ923", total_cost=Decimal("68108.00"),
+            opening_wdv=Decimal("68108.00"), method="D", rate=Decimal("25.00"))
+
+    def test_a_rental_expense_is_not_a_candidate_for_an_asset_cost_account(self):
+        """1740 is excluded, leaving 2890 as the only candidate."""
+        from core.depreciation_audit import reconcile_asset
+        self._tb("1740", "Hire/Rent of plant & equipment", "18691.00")
+        self._tb("2890", "Motor vehicles (cost)", "76734.00")
+        self._tb("2895", "Less: Accumulated depreciation", "-4373.00")
+        self._chart("1740", "Hire/Rent of plant & equipment", "expenses")
+        self._chart("2890", "Motor vehicles (cost)", "assets")
+
+        result = reconcile_asset(self._asset())
+
+        self.assertEqual(result.cost_account_code, "2890")
+        self.assertEqual(result.tb_cost, Decimal("76734.00"))
+
+    def test_two_candidate_cost_accounts_identify_neither(self):
+        """Kinross holds both 2860 and 2890; no rule says which is this asset's."""
+        from core.depreciation_audit import reconcile_asset
+        self._tb("2860", "Plant & equipment (cost)", "34081.00")
+        self._tb("2890", "Motor vehicles (cost)", "76734.00")
+        self._tb("2895", "Less: Accumulated depreciation", "-4373.00")
+
+        result = reconcile_asset(self._asset())
+
+        self.assertIsNone(result.tb_cost)
+        self.assertFalse(result.is_reconcilable)
+
+    def test_two_candidate_accumulated_accounts_identify_neither(self):
+        """2869 and 2895 both match "accum"; the lower code is not an answer."""
+        from core.depreciation_audit import reconcile_asset
+        self._tb("2890", "Motor vehicles (cost)", "76734.00")
+        self._tb("2869", "Less: Accumulated depreciation", "-34081.00")
+        self._tb("2895", "Less: Accumulated depreciation", "-4373.00")
+
+        result = reconcile_asset(self._asset())
+
+        self.assertIsNone(result.tb_accumulated)
+        self.assertFalse(result.is_reconcilable)
+
+    def test_it_never_reports_the_negative_position_it_used_to_assemble(self):
+        """The whole Kinross shape: the audit declines instead of inventing."""
+        from core.depreciation_audit import reconcile_asset
+        self._tb("1740", "Hire/Rent of plant & equipment", "18691.00")
+        self._tb("2860", "Plant & equipment (cost)", "34081.00")
+        self._tb("2890", "Motor vehicles (cost)", "76734.00")
+        self._tb("2869", "Less: Accumulated depreciation", "-34081.00")
+        self._tb("2895", "Less: Accumulated depreciation", "-4373.00")
+        self._chart("1740", "Hire/Rent of plant & equipment", "expenses")
+
+        result = reconcile_asset(self._asset())
+
+        self.assertIsNone(result.tb_written_down_value)
+        self.assertFalse(result.is_reconcilable)
+
+    def test_a_single_unambiguous_match_is_still_used(self):
+        """The fallback keeps working where it can only mean one thing."""
+        from core.depreciation_audit import reconcile_asset
+        self._tb("2890", "Motor vehicles (cost)", "76734.00")
+        self._tb("2895", "Less: Accumulated depreciation", "-4373.00")
+
+        result = reconcile_asset(self._asset())
+
+        self.assertEqual(result.cost_account_code, "2890")
+        self.assertEqual(result.tb_accumulated, Decimal("4373.00"))

@@ -136,15 +136,51 @@ def _closing_for(fy, code):
     return Decimal(total).quantize(Decimal("0.01"))
 
 
-def _find_account(fy, pattern, exclude=None):
-    """First trial-balance account whose name matches, as (code, closing)."""
+# Sections of the chart that can never hold an asset's cost or its accumulated
+# depreciation. Kinross Builders' 1740 "Hire/Rent of plant & equipment" matched
+# the cost regex on both "plant" and "equipment" and, at a lower account code
+# than the real 2860 and 2890, won the match outright.
+_PROFIT_AND_LOSS_SECTIONS = ("expenses", "revenue", "pl_appropriation")
+
+
+def _profit_and_loss_codes(fy):
+    """Account codes the entity's own chart puts in the P&L.
+
+    Empty when the chart says nothing, which leaves the name match exactly as
+    it was for entities whose chart is unclassified.
+    """
+    from core.models import EntityChartOfAccount
+    return set(
+        EntityChartOfAccount.objects
+        .filter(entity=fy.entity, section__in=_PROFIT_AND_LOSS_SECTIONS)
+        .values_list("account_code", flat=True)
+    )
+
+
+def _find_account(fy, pattern, exclude=None, balance_sheet_only=True):
+    """The one trial-balance account whose name matches, as (code, closing).
+
+    Returns (None, None) unless exactly one account matches. A name that fits
+    several accounts identifies none of them: Kinross Builders carries both
+    2869 and 2895 as "Less: Accumulated depreciation", and taking the lower
+    code paired one asset's cost with another asset's accumulated depreciation.
+    Guessing here is what produced a written-down value of -15,390, and this
+    module's whole purpose is to report what it cannot resolve rather than
+    invent an answer for it.
+
+    ``balance_sheet_only`` drops candidates the chart puts in the P&L. It is
+    off for the depreciation EXPENSE lookup, which is a P&L account by
+    definition -- excluding it there left every posted year looking unposted
+    and understated the proposed opening by a full year's charge.
+    """
     qs = _tb_lines(fy).filter(account_name__iregex=pattern)
     if exclude:
         qs = qs.exclude(account_name__iregex=exclude)
-    row = qs.order_by("account_code").first()
-    if row is None:
+    barred = _profit_and_loss_codes(fy) if balance_sheet_only else set()
+    codes = sorted({r.account_code for r in qs if r.account_code not in barred})
+    if len(codes) != 1:
         return None, None
-    return row.account_code, _closing_for(fy, row.account_code)
+    return codes[0], _closing_for(fy, codes[0])
 
 
 def reconcile_asset(asset) -> Reconciliation:
@@ -190,15 +226,28 @@ def reconcile_asset(asset) -> Reconciliation:
     if asset.dep_expense_code:
         result.tb_depreciation_expense = _closing_for(fy, asset.dep_expense_code)
     else:
-        _, expense = _find_account(fy, r"depreciation", exclude=r"accum")
+        _, expense = _find_account(
+            fy, r"depreciation", exclude=r"accum", balance_sheet_only=False)
         result.tb_depreciation_expense = expense
 
     if result.tb_cost is None:
-        result.reason = "No asset cost account found in the trial balance."
+        result.reason = (
+            "No asset cost account could be identified in the trial balance — "
+            "the asset carries no cost account code, and its name matches no "
+            "single balance-sheet account."
+        ) if not asset.asset_account_code else (
+            f"Account {asset.asset_account_code} is not in the trial balance."
+        )
         result.is_reconcilable = False
         return result
     if result.tb_accumulated is None:
-        result.reason = "No accumulated depreciation account found in the trial balance."
+        result.reason = (
+            "No accumulated depreciation account could be identified — the "
+            "asset carries no accumulated depreciation code, and its name "
+            "matches no single account."
+        ) if not asset.accum_dep_code else (
+            f"Account {asset.accum_dep_code} is not in the trial balance."
+        )
         result.is_reconcilable = False
         return result
 
