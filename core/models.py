@@ -1011,6 +1011,17 @@ class FinancialYear(models.Model):
         related_name="next_year",
         help_text="Link to prior year for comparatives",
     )
+    include_comparative_figures = models.BooleanField(
+        null=True, blank=True, default=None,
+        help_text=(
+            "Whether this year's statements and trial balance carry prior-year "
+            "comparatives. NULL inherits the client's own setting; True or False "
+            "decides for this year alone. A year with no meaningful prior figures "
+            "is a property of the year, not of the client -- turning the client "
+            "switch off to fix one year would change every other year too, "
+            "finalised ones included."
+        ),
+    )
     status = models.CharField(
         max_length=20, choices=Status.choices, default=Status.DRAFT
     )
@@ -1122,6 +1133,22 @@ class FinancialYear(models.Model):
     @property
     def is_locked(self):
         return self.status == self.Status.FINALISED
+
+    @property
+    def comparatives_enabled(self):
+        """Whether this year shows prior-year comparatives.
+
+        The single place that resolves the year's override against the client
+        default, so the trial balance screen, its download, the statement
+        builder and the .docx generator cannot reach different answers. They
+        each used to read entity.include_comparative_figures directly, and
+        _has_prior_year in particular exists as an identical copy in two
+        modules -- one of them being missed is how the preview and the issued
+        document would come to disagree.
+        """
+        if self.include_comparative_figures is not None:
+            return self.include_comparative_figures
+        return self.entity.include_comparative_figures
 
     @property
     def can_ask_eva(self):
@@ -2589,6 +2616,16 @@ class GeneratedDocument(models.Model):
     # Identity as used at generation time. Reopening a prior-year statement must
     # show what it said when it was signed, not what Job Tracker says today —
     # so this is written once, on insert, and never re-derived.
+    comparatives_included = models.BooleanField(
+        null=True, blank=True, default=None,
+        help_text=(
+            "Whether comparatives were in force when this document was built. "
+            "Compared against the year's current setting to tell the accountant "
+            "the file on disk no longer matches. NULL means the document predates "
+            "this field -- unknown, not stale, so existing documents do not all "
+            "announce themselves as out of date."
+        ),
+    )
     identity_snapshot = models.JSONField(default=dict, blank=True)
 
     def save(self, *args, **kwargs):

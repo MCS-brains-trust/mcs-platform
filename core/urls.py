@@ -99,6 +99,7 @@ urlpatterns = [
     # Package Assembly
     path("years/<uuid:pk>/package/", views_package_assembly.package_assembly, name="package_assembly"),
     path("years/<uuid:pk>/package/assemble/", views_package_assembly.package_assemble, name="package_assemble"),
+    path("years/<uuid:pk>/package/comparatives/", views_package_assembly.package_comparatives, name="package_comparatives"),
     path("years/<uuid:pk>/package/send-for-signing/", views_package_assembly.package_send_for_signing, name="package_send_for_signing"),
     path("years/<uuid:pk>/package/download-bundle/", views_package_assembly.package_download_bundle, name="package_download_bundle"),
 

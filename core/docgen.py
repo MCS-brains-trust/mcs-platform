@@ -773,8 +773,12 @@ def _get_prior_balance(fy, account_code):
 
 
 def _has_prior_year(fy):
-    """Check if there is prior year data and the entity wants comparatives shown."""
-    if not getattr(fy.entity, 'include_comparative_figures', True):
+    """Check if there is prior year data and comparatives are wanted for this year.
+
+    Resolved through FinancialYear.comparatives_enabled so the year's own
+    override is honoured, not just the client-wide default.
+    """
+    if not fy.comparatives_enabled:
         return False
     if not fy.prior_year:
         return False
