@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% load static %}
 {% block title %}Edit {{ journal.reference_number }} - StatementHub{% endblock %}
 {% block content %}
 <div class="row">
@@ -33,7 +34,7 @@
                 </h5>
             </div>
             <div class="card-body">
-                <form method="post" id="journal-form">
+                <form method="post" id="journal-form" class="journal-scroll-room">
                     {% csrf_token %}
                     <!-- Journal Header -->
                     <div class="row mb-3">
@@ -142,6 +143,10 @@
 </div>
 
 <style>
+/* Room to scroll into. The browser cannot lift the last row into the top
+   half of the screen unless something sits below it, so the grid reserves
+   most of a screen underneath. static/js/journal_grid.js depends on it. */
+.journal-scroll-room { padding-bottom: 45vh; }
 .account-picker-wrapper { position: relative; }
 .account-picker-input { cursor: text; }
 .account-dropdown {
@@ -278,6 +283,7 @@ table.cashbook-mode .cashbook-hint { display: inline; }
     </div>
 </div>
 
+<script src="{% static 'js/journal_grid.js' %}"></script>
 <script>
 const ACCOUNTS = {{ accounts|safe }};
 const ACCOUNT_LIST = ACCOUNTS.map(function(acc) {
@@ -534,6 +540,8 @@ document.addEventListener('DOMContentLoaded', function() {
             dropdown.appendChild(createItem);
             positionDropdown();
             dropdown.classList.add('show');
+            // Make room for the list when the row sits near the bottom.
+            window.journalGrid.keepDropdownInView(input, dropdown);
         }
 
         input.addEventListener('focus', function() { positionDropdown(); renderDropdown(input.value.split(' - ')[0]); });
@@ -857,6 +865,8 @@ document.addEventListener('DOMContentLoaded', function() {
         refreshGstPlaceholder(tr);
         const newInput = container.querySelector('.account-picker-input');
         if (newInput) newInput.focus();
+        // Follow the new row down instead of leaving it under the fold.
+        window.journalGrid.keepRowInView(tr);
     });
 
 

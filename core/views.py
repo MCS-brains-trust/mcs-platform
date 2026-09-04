@@ -6788,6 +6788,19 @@ def journal_edit(request, pk):
                 # Save the updated lines
                 new_lines = formset.save()
 
+                # Drop the prefetch cache before anything reads the lines
+                # again. The journal was loaded with prefetch_related("lines")
+                # to snapshot the before state for the audit log, and Django
+                # serves a bare .all() on a related manager out of that cache
+                # without touching the database -- so the balance check, the
+                # cached header totals, the cashbook split's own guard and the
+                # audit diff below were all still reading the pre-edit rows.
+                # Kinross Builders FY2024 JE-002 was edited down to $131,656.00
+                # and went on showing $286,477.00, and an edit that unbalanced
+                # a journal passed validation because the figures it checked
+                # were the ones the page had loaded with.
+                journal.refresh_from_db()
+
                 # Renumber lines
                 for i, line in enumerate(journal.lines.order_by("line_number", "id"), start=1):
                     line.line_number = i
@@ -9844,6 +9857,41 @@ def _rollforward_wdv_note(prior_asset):
     )
 
 
+def _acquisition_year_factor(asset):
+    """The share of the year an asset was actually held, or None for all of it.
+
+    A depreciating asset earns depreciation for the days it was held, not for
+    the whole year it happened to be bought in. Kinross Builders' Range Rover,
+    bought 29 March 2024, was charged a full year's 17,027.00 where the days it
+    was held were worth 4,373.00 -- and the overcharge then rolled forward as a
+    written-down value that was wrong by the difference.
+
+    The denominator is the financial year's own length rather than a flat 365.
+    FY2024 was a leap year and 17,027 x 94/366 is the 4,373.00 that Kinross's
+    trial balance carries at account 2895; 365 would give 4,385.00 and put the
+    schedule at odds with the ledger it exists to explain.
+
+    Returns None -- meaning charge the full year -- when there is no purchase
+    date to count from (101 of 119 live assets), when the asset was already
+    held at the start of the year, and for General Pool assets, whose Div 328
+    convention substitutes a 15% acquisition-year rate for counting days and
+    would otherwise be halved twice.
+    """
+    if asset.category == "General Pool":
+        return None
+    purchased = asset.purchase_date
+    if not purchased:
+        return None
+    fy = asset.financial_year
+    if not (fy.start_date <= purchased <= fy.end_date):
+        return None
+    days_held = (fy.end_date - purchased).days + 1
+    days_in_year = (fy.end_date - fy.start_date).days + 1
+    if days_held >= days_in_year:
+        return None
+    return Decimal(days_held) / Decimal(days_in_year)
+
+
 def _calc_depreciation(asset, force_ato_rate=False):
     """Calculate depreciation amount and closing WDV for an asset.
 
@@ -9873,6 +9921,9 @@ def _calc_depreciation(asset, force_ato_rate=False):
         # User has set an explicit rate — still lock method to Diminishing Value
         asset.method = "D"
     # ────────────────────────────────────────────────────────────────────────────
+    # Resolved after the pool branch above, which may have just set the rate.
+    held = _acquisition_year_factor(asset)
+
     if asset.disposal_date:
         # On disposal, depreciation is up to disposal date
         # Profit/loss = disposal consideration - WDV at disposal
@@ -9886,13 +9937,19 @@ def _calc_depreciation(asset, force_ato_rate=False):
         asset.depreciation_amount = depreciable
         asset.closing_wdv = Decimal("0")
     elif asset.method == "D":
-        # Diminishing value
-        dep = (depreciable * asset.rate / Decimal("100")).quantize(Decimal("0.01"))
+        # Diminishing value, for the days the asset was held.
+        dep = depreciable * asset.rate / Decimal("100")
+        if held is not None:
+            dep = dep * held
+        dep = dep.quantize(Decimal("0.01"))
         asset.depreciation_amount = dep
         asset.closing_wdv = (depreciable - dep).quantize(Decimal("0.01"))
     elif asset.method == "P":
-        # Prime cost (straight line)
-        dep = (asset.total_cost * asset.rate / Decimal("100")).quantize(Decimal("0.01"))
+        # Prime cost (straight line), for the days the asset was held.
+        dep = asset.total_cost * asset.rate / Decimal("100")
+        if held is not None:
+            dep = dep * held
+        dep = dep.quantize(Decimal("0.01"))
         asset.depreciation_amount = min(dep, depreciable)
         asset.closing_wdv = (depreciable - asset.depreciation_amount).quantize(Decimal("0.01"))
     else:
